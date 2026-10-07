@@ -7,6 +7,9 @@
 #include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf/aggregation.hpp>
+#include <cudf/binaryop.hpp>
+#include <cudf/filling.hpp>
+#include <cudf/scalar/scalar.hpp>
 #include <cudf/copying.hpp>
 #include <cudf/fixed_point/fixed_point.hpp>
 #include <cudf/groupby.hpp>
@@ -149,3 +152,91 @@ NVBENCH_BENCH(bench_streaming_groupby_decimal128_sum)
   .add_int64_power_of_two_axis("num_rows", {20, 24})
   .add_int64_power_of_two_axis("batch_size", {12, 16, 20})
   .add_int64_axis("cardinality", {128, 4'096});
+
+
+static void bench_streaming_tune(nvbench::state& state)
+{
+  auto const num_rows    = static_cast<cudf::size_type>(state.get_int64("num_rows"));
+  auto const batch_size  = static_cast<cudf::size_type>(state.get_int64("batch_size"));
+  auto const cardinality = static_cast<cudf::size_type>(state.get_int64("cardinality"));
+  auto const pattern     = state.get_string("pattern");
+  auto const aggs        = state.get_string("aggs");
+  auto const finalizes   = static_cast<int>(state.get_int64("finalizes"));
+
+  auto keys = [&] {
+    if (pattern == "random") {
+      data_profile const p = data_profile_builder().cardinality(0).no_validity().distribution(
+        cudf::type_id::INT32, distribution_id::UNIFORM, 0, cardinality - 1);
+      return create_random_column(cudf::type_id::INT32, row_count{num_rows}, p);
+    }
+    auto seq = cudf::sequence(num_rows, cudf::numeric_scalar<int32_t>(0));
+    if (pattern == "cyclic") {
+      return cudf::binary_operation(seq->view(),
+                                    cudf::numeric_scalar<int32_t>(cardinality),
+                                    cudf::binary_operator::PYMOD,
+                                    cudf::data_type{cudf::type_id::INT32});
+    }
+    // sorted runs within each batch
+    auto const run = std::max(1, batch_size / cardinality);
+    auto div       = cudf::binary_operation(seq->view(),
+                                      cudf::numeric_scalar<int32_t>(run),
+                                      cudf::binary_operator::DIV,
+                                      cudf::data_type{cudf::type_id::INT32});
+    return cudf::binary_operation(div->view(),
+                                  cudf::numeric_scalar<int32_t>(cardinality),
+                                  cudf::binary_operator::PYMOD,
+                                  cudf::data_type{cudf::type_id::INT32});
+  }();
+  data_profile const ip = data_profile_builder().cardinality(0).no_validity().distribution(
+    cudf::type_id::INT32, distribution_id::UNIFORM, 0, 100);
+  auto ivals = create_random_column(cudf::type_id::INT32, row_count{num_rows}, ip);
+  data_profile const dp = data_profile_builder().cardinality(0).no_validity().distribution(
+    cudf::type_id::FLOAT64, distribution_id::UNIFORM, 0, 100);
+  auto dvals = create_random_column(cudf::type_id::FLOAT64, row_count{num_rows}, dp);
+
+  std::vector<cudf::size_type> slice_indices;
+  for (cudf::size_type start = 0; start < num_rows; start += batch_size) {
+    slice_indices.push_back(start);
+    slice_indices.push_back(std::min(start + batch_size, num_rows));
+  }
+  auto const batches =
+    cudf::slice(cudf::table_view({keys->view(), ivals->view(), dvals->view()}), slice_indices);
+
+  std::vector<cudf::groupby::streaming_aggregation_request> requests;
+  auto add = [&](cudf::size_type col, std::unique_ptr<cudf::groupby_aggregation> agg) {
+    requests.emplace_back();
+    requests.back().column_index = col;
+    requests.back().aggregation  = std::move(agg);
+  };
+  add(1, cudf::make_sum_aggregation<cudf::groupby_aggregation>());
+  if (aggs == "mixed") {
+    add(2, cudf::make_max_aggregation<cudf::groupby_aggregation>());
+    add(2, cudf::make_mean_aggregation<cudf::groupby_aggregation>());
+    add(1, cudf::make_min_aggregation<cudf::groupby_aggregation>());
+  }
+
+  state.add_element_count(num_rows);
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+  state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
+    auto sgb = cudf::groupby::streaming_groupby(
+      std::vector<cudf::size_type>{0}, requests, std::max(batch_size, cardinality));
+    for (auto const& batch : batches) {
+      sgb.aggregate(batch);
+    }
+    for (int i = 0; i < finalizes; ++i) {
+      auto const result = sgb.finalize();
+    }
+  });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
+}
+
+NVBENCH_BENCH(bench_streaming_tune)
+  .set_name("streaming_tune")
+  .add_int64_power_of_two_axis("num_rows", {24})
+  .add_int64_power_of_two_axis("batch_size", {10, 14, 20})
+  .add_int64_axis("cardinality", {32, 256, 512})
+  .add_string_axis("pattern", {"random", "cyclic", "sorted"})
+  .add_string_axis("aggs", {"sum", "mixed"})
+  .add_int64_axis("finalizes", {1});

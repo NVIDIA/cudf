@@ -1602,3 +1602,287 @@ TEST_F(StreamingGroupbyTest, StructKeySumTwoBatches)
 
   verify_against_groupby(keys, results, {batch1, batch2}, KEY_COL, reqs);
 }
+
+TEST_F(StreamingGroupbyTest, DictionarySumCount)
+{
+  using K = int32_t;
+  using V = int32_t;
+
+  cudf::test::fixed_width_column_wrapper<K> keys1{1, 2, 3, 1};
+  cudf::test::dictionary_column_wrapper<V> vals1({10, 20, 30, 40}, {true, true, false, true});
+  cudf::test::fixed_width_column_wrapper<K> keys2{2, 3, 1, 4};
+  cudf::test::dictionary_column_wrapper<V> vals2{5, 15, 25, 35};
+
+  cudf::table_view batch1{{keys1, vals1}};
+  cudf::table_view batch2{{keys2, vals2}};
+
+  std::vector<cudf::groupby::streaming_aggregation_request> reqs;
+  reqs.push_back(make_req(1, cudf::make_sum_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(1, cudf::make_count_aggregation<cudf::groupby_aggregation>()));
+
+  cudf::groupby::streaming_groupby streaming_agg(KEY_COL, reqs, DEFAULT_MAX_DISTINCT_KEYS);
+  streaming_agg.aggregate(batch1);
+  streaming_agg.aggregate(batch2);
+  auto [keys, results] = streaming_agg.finalize();
+
+  verify_against_groupby(keys, results, {batch1, batch2}, KEY_COL, reqs);
+}
+
+namespace {
+
+// Low-cardinality batches with many rows per group are aggregated into partial result copies
+// that are merged back on finalize/merge.  The tests below use batches far above and far below
+// the thresholds for that so they do not depend on the exact values.
+cudf::size_type constexpr LARGE_BATCH = 1 << 17;
+cudf::size_type constexpr SMALL_BATCH = 32;
+
+/// {key, int32 value with nulls, int8 value, double value, double value} for rows
+/// `[0, num_rows)`.
+template <typename KeyFn>
+std::unique_ptr<cudf::table> make_partial_agg_table(cudf::size_type num_rows, KeyFn key_fn)
+{
+  std::vector<int32_t> keys(num_rows);
+  std::vector<int32_t> ints(num_rows);
+  std::vector<bool> ints_valid(num_rows);
+  std::vector<int8_t> bytes(num_rows);
+  std::vector<double> doubles(num_rows);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    keys[i]       = key_fn(i);
+    ints[i]       = (i * 7) % 1000 - 500;
+    ints_valid[i] = i % 11 != 0;
+    bytes[i]      = static_cast<int8_t>((i * 13) % 251 - 125);
+    // Multiples of 1/8 keep the double sums exact regardless of summation order.
+    doubles[i] = ((i * 31) % 997) / 8.0;
+  }
+  std::vector<std::unique_ptr<cudf::column>> cols;
+  cols.push_back(
+    cudf::test::fixed_width_column_wrapper<int32_t>(keys.begin(), keys.end()).release());
+  cols.push_back(cudf::test::fixed_width_column_wrapper<int32_t>(
+                   ints.begin(), ints.end(), ints_valid.begin())
+                   .release());
+  cols.push_back(
+    cudf::test::fixed_width_column_wrapper<int8_t>(bytes.begin(), bytes.end()).release());
+  cols.push_back(
+    cudf::test::fixed_width_column_wrapper<double>(doubles.begin(), doubles.end()).release());
+  cols.push_back(
+    cudf::test::fixed_width_column_wrapper<double>(doubles.rbegin(), doubles.rend()).release());
+  return std::make_unique<cudf::table>(std::move(cols));
+}
+
+std::vector<cudf::groupby::streaming_aggregation_request> partial_agg_requests()
+{
+  std::vector<cudf::groupby::streaming_aggregation_request> reqs;
+  reqs.push_back(make_req(1, cudf::make_sum_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(1, cudf::make_count_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(
+    1, cudf::make_count_aggregation<cudf::groupby_aggregation>(cudf::null_policy::INCLUDE)));
+  reqs.push_back(make_req(2, cudf::make_min_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(2, cudf::make_max_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(3, cudf::make_mean_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(4, cudf::make_variance_aggregation<cudf::groupby_aggregation>()));
+  return reqs;
+}
+
+/// Splits `data` into consecutive batches of `batch_size` rows.
+std::vector<cudf::table_view> split_batches(cudf::table_view data, cudf::size_type batch_size)
+{
+  std::vector<cudf::size_type> bounds;
+  for (cudf::size_type start = 0; start < data.num_rows(); start += batch_size) {
+    bounds.push_back(start);
+    bounds.push_back(std::min(start + batch_size, data.num_rows()));
+  }
+  return cudf::slice(data, bounds);
+}
+
+void aggregate_and_verify(std::vector<cudf::table_view> const& batches,
+                          cudf::size_type max_distinct_keys)
+{
+  auto const reqs = partial_agg_requests();
+  cudf::groupby::streaming_groupby streaming_agg(KEY_COL, reqs, max_distinct_keys);
+  for (auto const& batch : batches) {
+    streaming_agg.aggregate(batch);
+  }
+  // Finalizing twice checks that merging the partial results does not modify the state.
+  for (int i = 0; i < 2; ++i) {
+    auto [keys, results] = streaming_agg.finalize();
+    verify_against_groupby(keys, results, batches, KEY_COL, reqs);
+  }
+}
+
+}  // namespace
+
+struct StreamingGroupbyPartialAggTest
+  : public cudf::test::BaseFixture,
+    public ::testing::WithParamInterface<std::tuple<cudf::size_type, cudf::size_type>> {};
+
+INSTANTIATE_TEST_SUITE_P(StreamingGroupbyTest,
+                         StreamingGroupbyPartialAggTest,
+                         ::testing::Combine(::testing::Values(SMALL_BATCH, 16383, LARGE_BATCH),
+                                            ::testing::Values(1, 3, 128, 255, 256, 257)));
+
+TEST_P(StreamingGroupbyPartialAggTest, CyclicKeys)
+{
+  auto const [batch_size, cardinality] = GetParam();
+  auto const num_rows = batch_size == SMALL_BATCH ? 4 * cardinality + 7 : 3 * batch_size;
+  auto const data =
+    make_partial_agg_table(num_rows, [c = cardinality](cudf::size_type i) { return i % c; });
+  aggregate_and_verify(split_batches(data->view(), batch_size), std::max(batch_size, 1024));
+}
+
+TEST_P(StreamingGroupbyPartialAggTest, SortedKeys)
+{
+  auto const [batch_size, cardinality] = GetParam();
+  auto const num_rows = batch_size == SMALL_BATCH ? 4 * cardinality + 7 : 3 * batch_size;
+  auto const run      = std::max(1, num_rows / cardinality);
+  auto const data     = make_partial_agg_table(
+    num_rows, [run, c = cardinality](cudf::size_type i) { return (i / run) % c; });
+  aggregate_and_verify(split_batches(data->view(), batch_size), std::max(batch_size, 1024));
+}
+
+// The distinct keys grow past the partial result rows, which folds the partial results into the
+// dense results and reallocates them, and then past every partial result row.
+TEST_F(StreamingGroupbyTest, PartialAggCardinalityGrows)
+{
+  std::vector<std::unique_ptr<cudf::table>> owners;
+  std::vector<cudf::table_view> batches;
+  for (cudf::size_type cardinality : {5, 5, 100, 200, 256, 1000, 50}) {
+    owners.push_back(make_partial_agg_table(
+      LARGE_BATCH, [cardinality](cudf::size_type i) { return (i * 17) % cardinality; }));
+    batches.push_back(owners.back()->view());
+  }
+
+  auto const reqs = partial_agg_requests();
+  cudf::groupby::streaming_groupby streaming_agg(KEY_COL, reqs, LARGE_BATCH);
+  for (size_t i = 0; i < batches.size(); ++i) {
+    streaming_agg.aggregate(batches[i]);
+    auto [keys, results] = streaming_agg.finalize();
+    verify_against_groupby(
+      keys, results, {batches.begin(), batches.begin() + i + 1}, KEY_COL, reqs);
+  }
+}
+
+// Small batches between large ones use the dense results while partial results exist.
+TEST_F(StreamingGroupbyTest, PartialAggMixedBatchSizes)
+{
+  auto const data = make_partial_agg_table(4 * LARGE_BATCH,
+                                           [](cudf::size_type i) { return (i * 7) % 64; });
+  std::vector<cudf::size_type> bounds{0,
+                                      LARGE_BATCH,
+                                      LARGE_BATCH,
+                                      LARGE_BATCH + SMALL_BATCH,
+                                      LARGE_BATCH + SMALL_BATCH,
+                                      3 * LARGE_BATCH,
+                                      3 * LARGE_BATCH,
+                                      3 * LARGE_BATCH + 1,
+                                      3 * LARGE_BATCH + 1,
+                                      4 * LARGE_BATCH};
+  aggregate_and_verify(cudf::slice(data->view(), bounds), 2 * LARGE_BATCH);
+}
+
+TEST_F(StreamingGroupbyTest, PartialAggMerge)
+{
+  auto const data_a =
+    make_partial_agg_table(2 * LARGE_BATCH, [](cudf::size_type i) { return i % 100; });
+  auto const data_b =
+    make_partial_agg_table(2 * LARGE_BATCH, [](cudf::size_type i) { return (i % 150) + 50; });
+  // Pushes the merge target past the partial result rows.
+  auto const data_c =
+    make_partial_agg_table(LARGE_BATCH, [](cudf::size_type i) { return (i % 300) + 1000; });
+  auto const data_d =
+    make_partial_agg_table(LARGE_BATCH, [](cudf::size_type i) { return i % 7; });
+
+  auto const reqs = partial_agg_requests();
+  cudf::groupby::streaming_groupby a(KEY_COL, reqs, LARGE_BATCH);
+  cudf::groupby::streaming_groupby b(KEY_COL, reqs, LARGE_BATCH);
+  cudf::groupby::streaming_groupby c(KEY_COL, reqs, LARGE_BATCH);
+  cudf::groupby::streaming_groupby d(KEY_COL, reqs, LARGE_BATCH);
+  for (auto const& batch : split_batches(data_a->view(), LARGE_BATCH)) {
+    a.aggregate(batch);
+  }
+  for (auto const& batch : split_batches(data_b->view(), LARGE_BATCH)) {
+    b.aggregate(batch);
+  }
+  c.aggregate(data_c->view());
+  d.aggregate(data_d->view());
+
+  // Both sides have partial results.
+  a.merge(b);
+  {
+    auto [keys, results] = a.finalize();
+    verify_against_groupby(keys, results, {data_a->view(), data_b->view()}, KEY_COL, reqs);
+  }
+  a.aggregate(data_d->view());
+  a.merge(c);
+  a.merge(d);
+  a.aggregate(data_d->view());
+  auto [keys, results] = a.finalize();
+  verify_against_groupby(keys,
+                         results,
+                         {data_a->view(),
+                          data_b->view(),
+                          data_d->view(),
+                          data_c->view(),
+                          data_d->view(),
+                          data_d->view()},
+                         KEY_COL,
+                         reqs);
+}
+
+TEST_F(StreamingGroupbyTest, PartialAggConcurrentAggregate)
+{
+  constexpr int num_batches = 8;
+
+  // Every batch hits the same 64 groups, and the last ones add enough keys to fold the partial
+  // results while other calls may still be using them.
+  std::vector<std::unique_ptr<cudf::table>> owners;
+  std::vector<cudf::table_view> batches;
+  for (int b = 0; b < num_batches; ++b) {
+    auto const extra = b < num_batches - 2 ? 0 : 200 * (b - num_batches + 3);
+    owners.push_back(make_partial_agg_table(LARGE_BATCH, [extra](cudf::size_type i) {
+      return i % 1024 < extra ? 64 + i % 1024 : (i * 5) % 64;
+    }));
+    batches.push_back(owners.back()->view());
+  }
+
+  int device{};
+  CUDF_CUDA_TRY(cudaGetDevice(&device));
+  std::vector<std::unique_ptr<cuda::stream>> streams;
+  for (int i = 0; i < num_batches; ++i) {
+    streams.push_back(std::make_unique<cuda::stream>(cuda::device_ref{device}));
+  }
+
+  auto const reqs = partial_agg_requests();
+  cudf::groupby::streaming_groupby streaming_agg(KEY_COL, reqs, LARGE_BATCH);
+  // Allocate the partial results before the concurrent calls.
+  streaming_agg.aggregate(batches[0]);
+
+  std::vector<std::thread> threads;
+  std::vector<std::exception_ptr> errors(num_batches);
+  std::atomic<bool> start{false};
+  for (int i = 1; i < num_batches; ++i) {
+    threads.emplace_back([&, i] {
+      CUDF_CUDA_TRY(cudaSetDevice(device));
+      while (!start.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+      }
+      try {
+        streaming_agg.aggregate(batches[i], *streams[i]);
+      } catch (...) {
+        errors[i] = std::current_exception();
+      }
+    });
+  }
+  start.store(true, std::memory_order_release);
+  for (auto& thread : threads) {
+    thread.join();
+  }
+  for (auto const& error : errors) {
+    EXPECT_FALSE(error);
+  }
+  for (auto const& stream : streams) {
+    stream->sync();
+  }
+
+  auto [keys, results] = streaming_agg.finalize();
+  verify_against_groupby(keys, results, batches, KEY_COL, reqs);
+}

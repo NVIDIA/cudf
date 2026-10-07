@@ -30,6 +30,7 @@
 #include <atomic>
 #include <memory>
 #include <mutex>
+#include <utility>
 #include <vector>
 
 namespace cudf::groupby {
@@ -68,8 +69,30 @@ class insert_order_event {
  */
 using key_location_t = cuda::std::pair<size_type, size_type>;
 
-inline constexpr size_type agg_replica_count    = 32;
-inline constexpr size_type max_agg_replica_rows = 256;
+/*
+ * Low-cardinality batches spread their atomic updates over `num_partial_agg_results` copies of
+ * the leading result rows, which are merged back into the dense results when they are read.
+ * Partial results are only used while every dense ID fits in `max_partial_agg_rows`, and only
+ * for batches with at least `min_partial_agg_batch_size` rows and
+ * `min_partial_agg_rows_per_group` rows per group, below which atomic contention is too low to
+ * pay for the extra merge.
+ */
+inline constexpr size_type num_partial_agg_results        = 32;
+inline constexpr size_type max_partial_agg_rows           = 256;
+inline constexpr size_type min_partial_agg_batch_size     = 16384;
+inline constexpr size_type min_partial_agg_rows_per_group = 64;
+
+/// Whether a batch has enough rows per group for partial results to pay off.
+constexpr bool use_partial_agg_results(size_type batch_size, size_type distinct_keys) noexcept
+{
+  return distinct_keys > 0 && distinct_keys <= max_partial_agg_rows &&
+         batch_size >= min_partial_agg_batch_size &&
+         batch_size / distinct_keys >= min_partial_agg_rows_per_group;
+}
+
+/// Owning device-side table descriptor, as returned by `mutable_table_device_view::create()`.
+using owning_mutable_table_device_view =
+  decltype(mutable_table_device_view::create(std::declval<mutable_table_view>()));
 
 using streaming_probing_scheme_t =
   cuco::linear_probing<detail::hash::GROUPBY_CG_SIZE,
@@ -346,11 +369,25 @@ struct streaming_groupby::impl {
    * built once and reused on every aggregate() / merge() call rather than rebuilt
    * (which requires a host-to-device copy of the column metadata).
    */
-  std::unique_ptr<mutable_table_device_view, void (*)(mutable_table_device_view*)> _d_agg_results;
+  owning_mutable_table_device_view _d_agg_results;
 
-  size_type _replica_rows{0};
-  std::unique_ptr<table> _agg_replicas;
-  std::unique_ptr<mutable_table_device_view, void (*)(mutable_table_device_view*)> _d_agg_replicas;
+  /*
+   * Partial aggregation results for low-cardinality inputs: `num_partial_agg_results` copies of
+   * the first `_partial_agg_rows` result rows, with copy `c` holding row `r` at
+   * `c * _partial_agg_rows + r`.  The value for dense ID `r` is the merge of `_agg_results` row
+   * `r` with every copy's row `r`.  Allocated on the first batch that benefits from them and
+   * merged into `_agg_results` and freed once the distinct keys outgrow `_partial_agg_rows`.
+   *
+   * The merge into `_agg_results` uses plain stores, so while partial results exist every
+   * kernel that writes either table is enqueued under `_insert_mutex` and ordered by
+   * `_insert_done`.
+   */
+  size_type _partial_agg_rows{0};
+  std::unique_ptr<table> _partial_agg_results;
+  owning_mutable_table_device_view _d_partial_agg_results;
+
+  /// Empty columns with the (dictionary-decoded) types of the aggregated values, used to
+  /// allocate result tables after the first batch is gone.
   std::unique_ptr<table> _values_schema;
 
   std::vector<size_type> _value_col_indices;
@@ -374,8 +411,10 @@ struct streaming_groupby::impl {
 
   void initialize(table_view const& data, cuda::stream_ref stream);
 
-  std::unique_ptr<table> make_results_table(size_type num_rows, cuda::stream_ref stream) const;
-  void create_agg_replicas(cuda::stream_ref stream);
+  std::unique_ptr<table> make_results_table(size_type num_rows,
+                                            cuda::stream_ref stream,
+                                            cudf::memory_resources mr) const;
+  void update_partial_agg_results(size_type batch_size, cuda::stream_ref stream);
   void create_key_set(cuda::stream_ref stream);
   void update_nullable_state(table_view const& batch_keys);
 
@@ -439,11 +478,15 @@ struct streaming_groupby::impl {
 
   void do_merge(impl const& other, cuda::stream_ref stream);
 
-  void merge_agg_replicas(impl const& source,
-                          size_type source_distinct_keys,
-                          size_type const* target_indices,
-                          mutable_table_device_view const& target,
-                          cuda::stream_ref stream) const;
+  /*
+   * Merges the partial results of dense IDs `[0, min(num_keys, _partial_agg_rows))` into the
+   * same rows of `target`, one plain store per element.  Requires exclusive access to those
+   * rows of `target`.
+   */
+  void merge_partial_agg_results(mutable_table_device_view const& target,
+                                 size_type num_keys,
+                                 cuda::stream_ref stream,
+                                 cudf::memory_resources mr) const;
 };
 
 }  // namespace cudf::groupby

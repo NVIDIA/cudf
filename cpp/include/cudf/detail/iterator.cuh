@@ -461,7 +461,7 @@ struct scalar_pair_accessor : public scalar_value_accessor<Element> {
  * @brief Compile-time reflection to check if `Element` type has a `rep()` member.
  */
 template <typename Element>
-constexpr inline bool has_rep_member = requires { std::declval<Element>().rep(); };
+constexpr inline bool has_rep_member = requires { cuda::std::declval<Element>().rep(); };
 
 /**
  * @brief Pair accessor for scalar's representation value and validity.

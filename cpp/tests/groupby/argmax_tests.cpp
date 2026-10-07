@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,6 +12,8 @@
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/aggregation.hpp>
+
+#include <vector>
 
 template <typename V>
 struct groupby_argmax_test : public cudf::test::BaseFixture {};
@@ -37,6 +39,63 @@ TYPED_TEST(groupby_argmax_test, basic)
 
   auto agg2 = cudf::make_argmax_aggregation<cudf::groupby_aggregation>();
   test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg2), force_use_sort_impl::YES);
+}
+
+using groupby_argmax_tie_test = groupby_argmax_test<int8_t>;
+
+TEST_F(groupby_argmax_tie_test, first_index)
+{
+  cudf::test::fixed_width_column_wrapper<int8_t> keys{2, 1, 1, 2};
+  cudf::test::fixed_width_column_wrapper<int8_t> vals{-128, 127, 127, -128};
+  cudf::test::fixed_width_column_wrapper<int8_t> expect_keys{1, 2};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> expect_vals{1, 0};
+
+  for (auto const use_sort : {force_use_sort_impl::NO, force_use_sort_impl::YES}) {
+    test_single_agg(keys,
+                    vals,
+                    expect_keys,
+                    expect_vals,
+                    cudf::make_argmax_aggregation<cudf::groupby_aggregation>(),
+                    use_sort);
+  }
+}
+
+TEST_F(groupby_argmax_tie_test, reduction_boundaries)
+{
+  // Exercise warp and multi-chunk reductions, including ties in different lanes/chunks.
+  for (cudf::size_type const group_size : {33, 4097}) {
+    for (bool const nullable : {false, true}) {
+      SCOPED_TRACE(::testing::Message()
+                   << "group_size=" << group_size << ", nullable=" << nullable);
+      std::vector<K> keys(group_size + 2, 0);
+      keys[group_size] = keys[group_size + 1] = 1;
+      std::vector<int8_t> values(group_size + 2, 0);
+      values[1] = values[group_size - 1] = 1;
+      std::vector<bool> validity(group_size + 2, true);
+      if (nullable) {
+        // Ignore an earlier tied null and preserve an all-null group's null result.
+        values[0]   = 1;
+        validity[0] = validity[group_size] = validity[group_size + 1] = false;
+      }
+      cudf::test::fixed_width_column_wrapper<K> key_column(keys.begin(), keys.end());
+      auto vals = nullable
+                    ? cudf::test::fixed_width_column_wrapper<int8_t>(
+                        values.begin(), values.end(), validity.begin())
+                    : cudf::test::fixed_width_column_wrapper<int8_t>(values.begin(), values.end());
+      cudf::test::fixed_width_column_wrapper<K> expect_keys{0, 1};
+      cudf::test::fixed_width_column_wrapper<cudf::size_type> expect_vals({1, group_size},
+                                                                          {true, !nullable});
+
+      for (auto const use_sort : {force_use_sort_impl::NO, force_use_sort_impl::YES}) {
+        test_single_agg(key_column,
+                        vals,
+                        expect_keys,
+                        expect_vals,
+                        cudf::make_argmax_aggregation<cudf::groupby_aggregation>(),
+                        use_sort);
+      }
+    }
+  }
 }
 
 TYPED_TEST(groupby_argmax_test, zero_valid_keys)
@@ -112,8 +171,9 @@ TEST_F(groupby_argmax_string_test, basic)
   using R = cudf::size_type;
 
   cudf::test::fixed_width_column_wrapper<K> keys{1, 2, 3, 1, 2, 2, 1, 3, 3, 2};
+  // Tied extrema must select the first original row.
   cudf::test::strings_column_wrapper vals{
-    "año", "bit", "₹1", "aaa", "zit", "bat", "aab", "$1", "€1", "wut"};
+    "año", "bit", "₹1", "aaa", "zit", "bat", "año", "$1", "₹1", "zit"};
 
   cudf::test::fixed_width_column_wrapper<K> expect_keys{1, 2, 3};
   cudf::test::fixed_width_column_wrapper<R> expect_vals({0, 4, 2});
@@ -151,7 +211,7 @@ TEST_F(groupby_dictionary_argmax_test, basic)
 
   // clang-format off
   cudf::test::fixed_width_column_wrapper<K> keys{     1,     2,    3,     1,     2,     2,     1,    3,    3,    2 };
-  cudf::test::dictionary_column_wrapper<V>  vals{ "año", "bit", "₹1", "aaa", "zit", "bat", "aab", "$1", "€1", "wut"};
+  cudf::test::dictionary_column_wrapper<V>  vals{ "año", "bit", "₹1", "aaa", "zit", "bat", "año", "$1", "₹1", "zit"};
   cudf::test::fixed_width_column_wrapper<K> expect_keys({ 1, 2, 3 });
   cudf::test::fixed_width_column_wrapper<R> expect_vals({ 0, 4, 2 });
   // clang-format on

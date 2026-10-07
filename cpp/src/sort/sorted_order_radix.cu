@@ -82,15 +82,13 @@ struct sorted_order_radix_fn {
     if (ascending) {
       cub::DeviceRadixSort::SortPairs(
         nullptr, tmp_bytes, d_in, d_out, dv_in, dv_out, n, 0, end_bit, sv);
-      auto tmp_stg =
-        cuda::device_buffer<std::byte>(stream, temp_mr, tmp_bytes, cuda::no_init);
+      auto tmp_stg = cuda::device_buffer<std::byte>(stream, temp_mr, tmp_bytes, cuda::no_init);
       cub::DeviceRadixSort::SortPairs(
         tmp_stg.data(), tmp_bytes, d_in, d_out, dv_in, dv_out, n, 0, end_bit, sv);
     } else {
       cub::DeviceRadixSort::SortPairsDescending(
         nullptr, tmp_bytes, d_in, d_out, dv_in, dv_out, n, 0, end_bit, sv);
-      auto tmp_stg =
-        cuda::device_buffer<std::byte>(stream, temp_mr, tmp_bytes, cuda::no_init);
+      auto tmp_stg = cuda::device_buffer<std::byte>(stream, temp_mr, tmp_bytes, cuda::no_init);
       cub::DeviceRadixSort::SortPairsDescending(
         tmp_stg.data(), tmp_bytes, d_in, d_out, dv_in, dv_out, n, 0, end_bit, sv);
     }
@@ -125,15 +123,13 @@ struct sorted_order_radix_fn {
     if (ascending) {
       cub::DeviceRadixSort::SortPairs(
         nullptr, tmp_bytes, d_in, d_out, dv_in, dv_out, n, decomposer, 0, end_bit, sv);
-      auto tmp_stg =
-        cuda::device_buffer<std::byte>(stream, temp_mr, tmp_bytes, cuda::no_init);
+      auto tmp_stg = cuda::device_buffer<std::byte>(stream, temp_mr, tmp_bytes, cuda::no_init);
       cub::DeviceRadixSort::SortPairs(
         tmp_stg.data(), tmp_bytes, d_in, d_out, dv_in, dv_out, n, decomposer, 0, end_bit, sv);
     } else {
       cub::DeviceRadixSort::SortPairsDescending(
         nullptr, tmp_bytes, d_in, d_out, dv_in, dv_out, n, decomposer, 0, end_bit, sv);
-      auto tmp_stg =
-        cuda::device_buffer<std::byte>(stream, temp_mr, tmp_bytes, cuda::no_init);
+      auto tmp_stg = cuda::device_buffer<std::byte>(stream, temp_mr, tmp_bytes, cuda::no_init);
       cub::DeviceRadixSort::SortPairsDescending(
         tmp_stg.data(), tmp_bytes, d_in, d_out, dv_in, dv_out, n, decomposer, 0, end_bit, sv);
     }

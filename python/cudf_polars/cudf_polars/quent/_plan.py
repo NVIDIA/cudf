@@ -195,7 +195,7 @@ def emit_plan(
             port_lookup[(operator_id, port_name)] = uuid.uuid5(
                 operator_id, f"port:{port_name}"
             )
-    if not emit:
+    if not emit:  # pragma: no cover; multi-rank
         return operator_by_ir_id
 
     edges: list[quent_bindings.PlanEdgeDict] = []

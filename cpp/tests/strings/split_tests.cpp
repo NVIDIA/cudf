@@ -50,12 +50,12 @@ TEST_F(StringsSplitTest, WideExplicitDelimiter)
   CUDF_TEST_EXPECT_TABLES_EQUAL(reverse->view(), cudf::table_view({reverse_first, reverse_last}));
 
   using LCW = cudf::test::lists_column_wrapper<cudf::string_view>;
-  LCW const expected_record({LCW{left, right}, LCW{}, LCW{""}, LCW{left, "é" + right}},
+  LCW const expected_record({{left, right}, {}, {""}, {left, "é" + right}},
                             cudf::test::iterators::null_at(1));
   auto const record = cudf::strings::split_record(view, delimiter, 1);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(record->view(), expected_record);
 
-  LCW const expected_reverse({LCW{left, right}, LCW{}, LCW{""}, LCW{left + "é", right}},
+  LCW const expected_reverse({{left, right}, {}, {""}, {left + "é", right}},
                              cudf::test::iterators::null_at(1));
   auto const reverse_record = cudf::strings::rsplit_record(view, delimiter, 1);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(reverse_record->view(), expected_reverse);

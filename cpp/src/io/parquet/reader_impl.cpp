@@ -1251,9 +1251,9 @@ std::vector<parquet::FileMetaData> read_parquet_footers(
   constexpr auto read_page_indexes = true;
 
   // Parse sources into FileMetaData objects
-  return parallel_construct_metadatas(
-    sources,
-    [](auto const& source) { return FileMetaData{metadata{source.get(), read_page_indexes}}; });
+  return parallel_construct_metadatas(sources, [](auto const& source) {
+    return FileMetaData{metadata{source.get(), read_page_indexes}};
+  });
 }
 
 }  // namespace cudf::io::parquet::detail

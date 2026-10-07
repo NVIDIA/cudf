@@ -1115,8 +1115,7 @@ void decode_footer_bytes(std::span<uint8_t const> footer_bytes,
   CUDF_EXPECTS(not reader.overread(), overread_message);
 }
 
-void decode_footer_and_init_schema(std::span<uint8_t const> footer_bytes,
-                                   FileMetaData* metadata)
+void decode_footer_and_init_schema(std::span<uint8_t const> footer_bytes, FileMetaData* metadata)
 {
   CompactProtocolReader reader{footer_bytes.data(), footer_bytes.size()};
   reader.read(metadata);

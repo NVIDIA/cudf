@@ -1495,7 +1495,10 @@ class StreamingExecutor:
     def __hash__(self) -> int:  # noqa: D105
         # dynamic_planning factory, a dataclass, isn't natively hashable. We'll dump it
         # to json and hash that.
-        d = dataclasses.asdict(self)
+        # Cluster contexts contain live process-local objects (including thread
+        # locks) that cannot be deep-copied. They do not describe executor
+        # behavior, so exclude them from the hash just as we do for transport.
+        d = dataclasses.asdict(self.drop_unserializable())
         d["dynamic_planning"] = json.dumps(d["dynamic_planning"])
         d["join_filter_pushdown"] = json.dumps(d["join_filter_pushdown"])
         d["max_concurrent_io_tasks"] = json.dumps(
@@ -1506,8 +1509,9 @@ class StreamingExecutor:
         quent_context = d["quent_context"]
         if quent_context is not None:
             quent_context["engine_id"] = int(quent_context["engine_id"])
-            quent_context["query_group_id"] = int(quent_context["query_group_id"])
-            d["quent_context"] = json.dumps(quent_context)
+            query_config = quent_context["query"]
+            query_config["query_group_id"] = int(query_config["query_group_id"])
+            d["quent_context"] = json.dumps(quent_context, sort_keys=True)
         return hash(tuple(sorted(d.items())))
 
     def drop_unserializable(self) -> StreamingExecutor:

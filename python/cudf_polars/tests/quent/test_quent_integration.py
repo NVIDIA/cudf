@@ -16,6 +16,8 @@ import pytest
 
 import polars as pl
 
+from cudf_polars.utils.config import ConfigOptions
+
 pytest.importorskip("cudf_polars_quent")
 
 import cudf_polars.quent
@@ -37,13 +39,17 @@ def engine_with_quent_context(
     ray_init_options: dict[str, Any],
 ) -> Iterator[StreamingEngine]:
     backend = request.param
+    executor_options = {
+        "quent_context": quent_context,
+        "fallback_mode": "silent",
+    }
     engine: StreamingEngine
     if backend == "ray":
         pytest.importorskip("ray")
         from cudf_polars.engine.ray import RayEngine
 
         engine = RayEngine(
-            executor_options={"quent_context": quent_context},
+            executor_options=executor_options,
             engine_options={"allow_gpu_sharing": True},
             ray_init_options=ray_init_options,
             num_ranks=ray_num_ranks,
@@ -52,7 +58,7 @@ def engine_with_quent_context(
         pytest.importorskip("distributed")
         from cudf_polars.engine.dask import DaskEngine
 
-        engine = DaskEngine(executor_options={"quent_context": quent_context})
+        engine = DaskEngine(executor_options=executor_options)
     else:
         from rapidsmpf import bootstrap
         from rapidsmpf.communicator.single import new_communicator
@@ -70,9 +76,7 @@ def engine_with_quent_context(
                 Options(get_environment_variables()), ProgressThread()
             )
         )
-        engine = SPMDEngine(
-            executor_options={"quent_context": quent_context}, comm=comm
-        )
+        engine = SPMDEngine(executor_options=executor_options, comm=comm)
     try:
         yield engine
     finally:
@@ -138,6 +142,7 @@ def suppress_worker_exceptions(
             dask_client.run(_disable_logging, logging.NOTSET)
 
 
+@pytest.mark.filterwarnings("ignore:Rolling.*:UserWarning")
 def test_quent_lifecycle(
     engine_with_quent_context: StreamingEngine,
     quent_context: QuentConfig,
@@ -197,6 +202,12 @@ def test_quent_lifecycle(
             engine_with_quent_context._reset(
                 executor_options={"quent_context": cudf_polars.quent.QuentConfig()}
             )
+
+        # StreamingExecutor
+        config_options = ConfigOptions.from_polars_engine(engine_with_quent_context)
+        hash_a = hash(config_options)
+        hash_b = hash(config_options)
+        assert hash_a == hash_b
 
     assert engine_with_quent_context._quent_output_root is not None
     events = _stored_events(engine_with_quent_context._quent_output_root)

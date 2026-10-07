@@ -34,7 +34,8 @@ namespace CUDF_EXPORT cudf {
 
 /**
  * @brief Typedef for inputs to the transform function. Each input can be either a column or a
- * scalar column.
+ * scalar column. Fixed-width list rows use `cudf::list_element<T const>` in CUDA and LTO UDFs,
+ * where T is the child storage type. Null-aware UDFs receive optional list elements.
  */
 using transform_input = std::variant<column_view, scalar_column_view>;
 
@@ -49,6 +50,11 @@ struct transform_output {
   output_nullability nullability =
     output_nullability::PRESERVE;  ///< Signifies if a null mask should be created for the output
                                    ///< column
+
+  // LIST UDF outputs receive cudf::list_element<T>* (optional when null-aware), initialized
+  // from supplied offsets. Write the elements in place without changing the row range.
+  std::optional<data_type> list_element_type =
+    std::nullopt;  ///< The element type for LIST outputs, if applicable
 };
 
 /**
@@ -85,9 +91,9 @@ struct transform_output {
  * @brief Describes a transform input independently of a particular column.
  *
  * An input specification contains the type information needed to reflect and retrieve a transform
- * kernel. Dictionary specifications recursively describe their indices and keys through `children`.
- * String specifications retain their offsets child type so `INT32` and `INT64` layouts can be
- * distinguished.
+ * kernel. Dictionary and list specifications recursively describe their children through
+ * `children`. String specifications retain their offsets child type so `INT32` and `INT64` layouts
+ * can be distinguished.
  */
 struct transform_input_spec {
   type_id type = type_id::EMPTY;  ///< Logical type of the input
@@ -95,15 +101,15 @@ struct transform_input_spec {
   bool is_scalar = false;  ///< Whether the input is presented to the UDF as a scalar
 
   std::vector<transform_input_spec> children =
-    {};  ///< Specifications of dictionary children or string offsets
+    {};  ///< Specifications of dictionary/list children or string offsets
 };
 
 /**
  * @brief Describes a transform output independently of a particular output column.
  *
- * The string-offset setting identifies the device-view representation required by the kernel. The
- * nullability setting is retained so inputs to `transform_program::run` can be validated against
- * the output policy used to construct the program.
+ * The offset setting for string and list outputs identifies the device-view representation required
+ * by the kernel. The nullability setting is retained so inputs to `transform_program::run` can be
+ * validated against the output policy used to construct the program.
  */
 struct transform_output_spec {
   type_id type = type_id::EMPTY;  ///< Logical type of the output
@@ -111,7 +117,7 @@ struct transform_output_spec {
   output_nullability nullability =
     output_nullability::PRESERVE;  ///< Null-mask policy for the output
 
-  bool has_string_offsets = false;  ///< Whether a string output uses preallocated offsets
+  bool has_offsets = false;  ///< Whether a string or list output uses supplied offsets
   std::vector<transform_output_spec> children =
     {};  ///< Specifications of string offsets or nested child columns
 };
@@ -145,7 +151,7 @@ struct transform_program {
    * UDF by `run`
    * @param inputs Inputs from which to derive the input specifications
    * @param outputs Outputs from which to derive the output type and nullability specifications
-   * @param string_offsets Optional string offsets used to determine each string output
+   * @param output_offsets Optional string and required list offsets used to determine the output
    * representation
    */
   transform_program(std::string const& udf,
@@ -154,7 +160,7 @@ struct transform_program {
                     std::optional<void*> user_data,
                     std::span<transform_input const> inputs,
                     std::span<transform_output const> outputs,
-                    std::span<std::unique_ptr<column> const> string_offsets);
+                    std::span<std::unique_ptr<column> const> output_offsets);
 
   /**
    * @brief Constructs a reusable program from explicit input and output specifications.
@@ -214,13 +220,14 @@ struct transform_program {
   /**
    * @brief Runs the transform program on the given inputs and outputs.
    *
-   * @throws std::invalid_argument if the inputs, outputs, or string offsets are not compatible with
+   * @throws std::invalid_argument if the inputs, outputs, or output offsets are not compatible with
    * the specifications used to construct the program
    *
    * @param inputs The inputs to the transform program
    * @param outputs The outputs of the transform program
-   * @param string_offsets For string output columns, the offsets can be pre-allocated and passed in
-   * to prevent overhead of compacting string views into run-end strings column.
+   * @param output_offsets For string and list output columns, offsets can be preallocated and
+   * passed in. String offsets avoid compaction; list offsets are required and allocate the child
+   * storage.
    * @param row_size The row size of the transform operation. If not provided, it will be inferred
    * from the inputs.
    * @param stream CUDA stream used for device memory operations and kernel launches
@@ -231,7 +238,7 @@ struct transform_program {
   std::unique_ptr<table> run(
     std::span<transform_input const> inputs,
     std::span<transform_output const> outputs,
-    std::vector<std::unique_ptr<column>>&& string_offsets,
+    std::vector<std::unique_ptr<column>>&& output_offsets,
     std::optional<size_type> row_size,
     cuda::stream_ref stream           = cudf::get_default_stream(),
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
@@ -261,19 +268,20 @@ struct transform_program {
  * `(outputs[i]...) =  UDF(inputs[i]...)`.
  *
  * @throws std::invalid_argument if any of the input columns have different sizes (except scalars)
- * @throws std::invalid_argument if `output_type` or any of the inputs are not fixed-width or string
- * types
+ * @throws std::invalid_argument if an output is not fixed-width, STRING, or fixed-width LIST, or an
+ * input is not a supported fixed-width, string, dictionary, or fixed-width list type
  * @throws std::invalid_argument if the inputs only have a scalar with no column inputs and
  * `row_size` is not provided. This is because the row size cannot be inferred from the inputs in
  * this case.
  * @throws std::invalid_argument if any of the output or input types are not supported.
- * CUDA-supported input types are fixed-width, string, and their dictionary types. PTX-supported
- * input types are integrals, floats, and their dictionary types. CUDA-supported output types are
- * fixed-width, string, and their dictionary types. PTX-supported output types are integrals,
- * floats, and their dictionary types.
- * @throws std::invalid_argument if string offsets are provided for non-string output columns, or
- * if the number of string offsets does not match the number of output columns.
+ * CUDA-supported input types include fixed-width, string, dictionary, and lists with fixed-width
+ * children without null elements, including such lists used as dictionary keys. PTX-supported input
+ * types are integrals, floats, and their dictionary types. CUDA-supported output types are
+ * fixed-width, STRING, and fixed-width LIST. PTX-supported output types are integrals and floats.
+ * @throws std::invalid_argument if output offsets are provided for outputs other than strings or
+ * lists, or if the number of output offsets does not match the number of output columns.
  * @throws cudf::evaluation_error if the UDF produces an error during execution.
+ * @throws std::overflow_error if a list child allocation exceeds addressable storage.
  *
  * The size of the resulting column is the `row_size` if provided, otherwise it is inferred from
  * the input and pre-allocated output columns.
@@ -284,8 +292,11 @@ struct transform_program {
  * @param user_data     User-defined device data to pass to the UDF.
  * @param inputs        Immutable views of the inputs to transform (columns and scalar columns)
  * @param outputs       Specification of the output columns to be created
- * @param string_offsets For string output columns, the offsets can be pre-allocated and passed in
- * to prevent overhead of compacting string views into run-end strings column.
+ * @param output_offsets For string and list output columns, offsets can be preallocated and passed
+ * in. String offsets avoid compaction; list offsets are required and allocate the child storage.
+ * String UDF outputs with supplied offsets receive `cudf::mutable_string_view*` (optional when
+ * null-aware), initialized to the allocated byte range. Write the bytes in place without changing
+ * the view's pointer or size.
  * @param row_size The row size of the transform operation. If not provided, it is inferred from the
  * input columns.
  * @param stream        CUDA stream used for device memory operations and kernel launches
@@ -301,7 +312,7 @@ std::unique_ptr<table> transform(
   std::optional<void*> user_data,
   std::span<transform_input const> inputs,
   std::span<transform_output const> outputs,
-  std::vector<std::unique_ptr<column>>&& string_offsets,
+  std::vector<std::unique_ptr<column>>&& output_offsets,
   std::optional<size_type> row_size,
   cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
@@ -318,7 +329,7 @@ std::unique_ptr<table> transform(
  * @param user_data User-defined device data to pass to the UDF
  * @param inputs Immutable views of the inputs to transform (columns and scalar columns)
  * @param outputs Specification of the output columns to be created
- * @param string_offsets Pre-allocated offsets for string output columns
+ * @param output_offsets Preallocated offsets for string or list output columns
  * @param row_size The row size of the transform operation
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned column's device memory
@@ -331,7 +342,7 @@ std::unique_ptr<table> transform(
   std::optional<void*> user_data,
   std::span<transform_input const> inputs,
   std::span<transform_output const> outputs,
-  std::vector<std::unique_ptr<column>>&& string_offsets,
+  std::vector<std::unique_ptr<column>>&& output_offsets,
   std::optional<size_type> row_size,
   cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
@@ -353,14 +364,15 @@ enum class lto_binary_type : uint8_t {
  *
  *
  * @throws std::invalid_argument if any of the input columns have different sizes (except scalars)
- * @throws std::invalid_argument if `output_type` or any of the inputs are not fixed-width or string
- * types
+ * @throws std::invalid_argument if an output is not fixed-width, STRING, or fixed-width LIST, or an
+ * input is not a supported fixed-width, string, dictionary, or fixed-width list type
  * @throws std::invalid_argument if the inputs only have a scalar with no column inputs and
  * `row_size` is not provided. This is because the row size cannot be inferred from the inputs in
  * this case
- * @throws std::invalid_argument if string offsets are provided for non-string output columns, or
- * if the number of string offsets does not match the number of output columns
+ * @throws std::invalid_argument if output offsets are provided for outputs other than strings or
+ * lists, or if the number of output offsets does not match the number of output columns
  * @throws cudf::evaluation_error if the UDF produces an error during execution
+ * @throws std::overflow_error if a list child allocation exceeds addressable storage
  *
  * The size of the resulting column is the `row_size` if provided, otherwise it is inferred from
  * the input and pre-allocated output columns.
@@ -372,8 +384,8 @@ enum class lto_binary_type : uint8_t {
  * @param user_data     User-defined device data to pass to the UDF
  * @param inputs        Immutable views of the inputs to transform
  * @param outputs       Specification of the output columns to be created
- * @param string_offsets For string output columns, the offsets can be pre-allocated and passed in
- * to prevent overhead of compacting string views into run-end strings column.
+ * @param output_offsets For string and list output columns, offsets can be preallocated and passed
+ * in. String offsets avoid compaction; list offsets are required and allocate the child storage.
  * @param row_size The row size of the transform operation. If not provided, it is inferred from the
  * input columns
  * @param stream        CUDA stream used for device memory operations and kernel launches
@@ -389,7 +401,7 @@ std::unique_ptr<table> transform_lto(
   std::optional<void*> user_data,
   std::span<transform_input const> inputs,
   std::span<transform_output const> outputs,
-  std::vector<std::unique_ptr<column>>&& string_offsets,
+  std::vector<std::unique_ptr<column>>&& output_offsets,
   std::optional<size_type> row_size,
   cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());

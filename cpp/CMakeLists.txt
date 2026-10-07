@@ -578,7 +578,7 @@ endfunction()
 # amortize the cost of JIT compilation for kernels that have matching signatures
 function(precompile_string_kernel_fragments)
   list(APPEND CUDF_PRECOMPILE_STRING_OUTPUT_PHYSICAL_TYPES uint8_t uint16_t uint32_t uint64_t
-       cuda::std::span<char>
+       cudf::mutable_string_view
   )
   list(
     APPEND

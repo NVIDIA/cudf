@@ -3,11 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <cudf/strings/mutable_string_view.cuh>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/types.hpp>
 
 #include <cuda/std/cstdint>
-#include <cuda/std/span>
 
 struct range32 {
   int32_t begin{};
@@ -179,18 +179,18 @@ __device__ int compute_url_component_sizes(int32_t* protocol_size,
 }
 
 // Copies the six parsed URL components into their preallocated string buffers.
-__device__ int write_url_components(cuda::std::span<char>* protocol,
-                                    cuda::std::span<char>* host,
-                                    cuda::std::span<char>* port,
-                                    cuda::std::span<char>* path,
-                                    cuda::std::span<char>* query,
-                                    cuda::std::span<char>* fragment,
+__device__ int write_url_components(cudf::mutable_string_view* protocol,
+                                    cudf::mutable_string_view* host,
+                                    cudf::mutable_string_view* port,
+                                    cudf::mutable_string_view* path,
+                                    cudf::mutable_string_view* query,
+                                    cudf::mutable_string_view* fragment,
                                     cudf::string_view input)
 {
   url_ranges ranges;
   if (!parse_url(input, &ranges)) { return 0; }
-  cuda::std::span<char>* outputs[] = {protocol, host, port, path, query, fragment};
-  range32 components[]             = {
+  cudf::mutable_string_view* outputs[] = {protocol, host, port, path, query, fragment};
+  range32 components[]                 = {
     ranges.protocol, ranges.host, ranges.port, ranges.path, ranges.query, ranges.fragment};
   for (auto component = 0; component < 6; ++component) {
     auto range = components[component];
@@ -216,12 +216,12 @@ extern "C" __device__ int transform(int32_t* protocol_size,
 #else
 #ifdef UDF_WRITE_OUTPUT
 // Exposes the component-writing pass through the transform LTO ABI.
-extern "C" __device__ int transform(cuda::std::span<char>* protocol,
-                                    cuda::std::span<char>* host,
-                                    cuda::std::span<char>* port,
-                                    cuda::std::span<char>* path,
-                                    cuda::std::span<char>* query,
-                                    cuda::std::span<char>* fragment,
+extern "C" __device__ int transform(cudf::mutable_string_view* protocol,
+                                    cudf::mutable_string_view* host,
+                                    cudf::mutable_string_view* port,
+                                    cudf::mutable_string_view* path,
+                                    cudf::mutable_string_view* query,
+                                    cudf::mutable_string_view* fragment,
                                     cudf::string_view input)
 {
   return write_url_components(protocol, host, port, path, query, fragment, input);

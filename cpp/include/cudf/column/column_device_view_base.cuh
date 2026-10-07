@@ -69,7 +69,7 @@ struct nullate {
  * @tparam KeyType The type of the dictionary keys
  */
 template <typename IndexType, typename KeyType>
-  requires(is_index_type<IndexType>() && is_relationally_comparable<KeyType, KeyType>())
+  requires(is_index_type<IndexType>())
 struct dictionary_element {
   using index_type = IndexType;  ///< The type of the dictionary indices
   using key_type   = KeyType;    ///< The type of the dictionary keys
@@ -91,6 +91,91 @@ inline constexpr bool is_dictionary_encoded = false;
  */
 template <typename IndexType, typename KeyType>
 inline constexpr bool is_dictionary_encoded<dictionary_element<IndexType, KeyType>> = true;
+
+/**
+ * @brief A non-owning view of a list row's device storage.
+ *
+ * The child element type must be layout-compatible with its device representation.
+ * Use `list_element<T const>` for read-only input rows and `list_element<T>` for
+ * output rows written into storage allocated from supplied offsets. Decimal children
+ * use their integer storage type; their scale is maintained by the column.
+ *
+ * The caller must keep the underlying device memory alive while using this view or
+ * its iterators. Access to that memory must occur in device code. Child nulls are not
+ * represented, and writes must stay within the existing row range.
+ *
+ * Constness of the view does not change element mutability: a const `list_element<T>`
+ * still permits writes when `T` is mutable.
+ *
+ * @tparam T The device storage type of the child elements
+ */
+template <typename T>
+  requires(is_rep_layout_compatible<T>())
+struct list_element {
+  using element_type = T;  ///< The type of the elements in the list
+
+  /**
+   * @brief Construct a row over existing device storage.
+   *
+   * @param data Pointer to the first child element in the row
+   * @param size Number of child elements in the row
+   */
+  CUDF_HOST_DEVICE list_element(T* data, size_type size) : data_{data}, size_{size} {}
+
+  /** @brief Construct an empty row with a null data pointer. */
+  CUDF_HOST_DEVICE list_element() {}
+
+  /**
+   * @brief Return an iterator to the first child element.
+   * @return Pointer to the first element
+   */
+  CUDF_HOST_DEVICE T* begin() const { return data_; }
+
+  /**
+   * @brief Return an iterator past the last child element.
+   * @return Pointer past the last element
+   */
+  CUDF_HOST_DEVICE T* end() const { return data_ + size_; }
+
+  /**
+   * @brief Return the underlying device storage.
+   * @return Pointer to the first child element
+   */
+  CUDF_HOST_DEVICE T* data() const { return data_; }
+
+  /**
+   * @brief Return the number of child elements in the row.
+   * @return Number of elements
+   */
+  CUDF_HOST_DEVICE size_type size() const { return size_; }
+
+  /**
+   * @brief Return whether the row is empty.
+   * @return true if the row contains no elements
+   */
+  CUDF_HOST_DEVICE bool empty() const { return size_ == 0; }
+
+  /**
+   * @brief Return the child element at the specified row-relative position.
+   *
+   * The position must be in `[0, size())` and the element must be valid.
+   * @param idx Position of the child element within the row
+   * @return Reference to the child element, with constness determined by `T`
+   */
+  CUDF_HOST_DEVICE T& operator[](size_type idx) const { return data_[idx]; }
+
+ private:
+  T* data_        = nullptr;  ///< Pointer to the first child element in the row
+  size_type size_ = 0;        ///< Number of child elements in the row
+};
+
+/** @brief Whether a type represents a list row. */
+template <typename T>
+inline constexpr bool is_list_element = false;
+
+/** @brief Identifies a list row by its child storage type. */
+template <typename T>
+inline constexpr bool is_list_element<list_element<T>> = true;
 
 namespace detail {
 /**
@@ -522,20 +607,33 @@ class alignas(16) column_device_view_core : public detail::column_device_view_ba
     return keys.template element<typename T::key_type>(index);
   }
 
+  template <
+    typename L,
+    CUDF_ENABLE_IF(is_list_element<L>&& is_rep_layout_compatible<typename L::element_type>() &&
+                   cuda::std::is_const_v<typename L::element_type>)>
+  [[nodiscard]] __device__ L element(size_type element_index) const noexcept
+  {
+    auto const& offsets = child(list_offsets_column_index);
+    auto const begin    = offsets.template element<size_type>(element_index + offset());
+    auto const end      = offsets.template element<size_type>(element_index + offset() + 1);
+    auto const& values  = child(list_values_column_index);
+    return L{values.data<typename L::element_type>() + begin, end - begin};
+  }
+
   /**
    * @brief Returns a nullable element at the specified index. If the element is null, returns
    * `nullopt`.
    *
    * @param element_index Position of the desired element
-   * @return `optional` containing the element at the specified index, or `nullopt` if the element
-   * is null
+   * @return `optional` containing the decoded value returned by `element<T>()`, or `nullopt`
+   * if the element is null. For dictionary tags, the optional contains the decoded key type.
    */
   template <typename T>
-  [[nodiscard]] __device__ cuda::std::optional<T> nullable_element(
-    size_type element_index) const noexcept
+  [[nodiscard]] __device__ auto nullable_element(size_type element_index) const noexcept
   {
-    if (is_null(element_index)) { return cuda::std::nullopt; }
-    return element<T>(element_index);
+    using value_type = cuda::std::remove_cvref_t<decltype(element<T>(element_index))>;
+    if (is_null(element_index)) { return cuda::std::optional<value_type>{}; }
+    return cuda::std::optional<value_type>{element<T>(element_index)};
   }
 
   /**

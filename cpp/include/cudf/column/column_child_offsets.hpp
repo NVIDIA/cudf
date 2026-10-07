@@ -22,4 +22,9 @@ static constexpr size_type dictionary_indices_column_index =
 static constexpr size_type dictionary_keys_column_index =
   1;  ///< Child index of the dictionary key column
 
+static constexpr size_type list_offsets_column_index =
+  0;  ///< Child index of the list offsets column
+
+static constexpr size_type list_values_column_index = 1;  ///< Child index of the list values column
+
 }  // namespace CUDF_EXPORT cudf

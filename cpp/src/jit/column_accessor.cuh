@@ -26,8 +26,9 @@ struct column_accessor {
 
   static constexpr bool as_scalar = AsScalar;
 
-  static constexpr bool is_mutable_string =
-    cuda::std::is_same_v<element_type, cuda::std::span<char>>;
+  static constexpr bool is_inplace_output =
+    cuda::std::is_same_v<element_type, cudf::mutable_string_view> ||
+    cudf::is_list_element<element_type>;
 
   static __device__ constexpr size_type map_index(size_type row)
   {
@@ -86,7 +87,7 @@ struct column_accessor {
   static __device__ element_type output_arg(auto const* __restrict__ cols, size_type row)
     requires(!as_scalar)
   {
-    if constexpr (is_mutable_string) {
+    if constexpr (is_inplace_output) {
       return element(cols, row);
     } else {
       return {};
@@ -97,7 +98,7 @@ struct column_accessor {
                                                           size_type row)
     requires(!as_scalar)
   {
-    if constexpr (is_mutable_string) {
+    if constexpr (is_inplace_output) {
       return element(cols, row);
     } else {
       return {};

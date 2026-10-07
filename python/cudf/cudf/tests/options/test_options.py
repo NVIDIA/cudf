@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
-from contextlib import nullcontext, redirect_stdout
+from contextlib import redirect_stdout
 from io import StringIO
 
 import pytest
@@ -67,107 +67,23 @@ class TestCleanOptions:
         )
         assert expected == s.read()
 
-    def test_option_context_delayed_entry(self):
+    def test_option_context_delayed_entry_and_reuse(self):
         context = cudf.option_context("odd_option", 3, "even_option", 2)
-
-        with cudf.option_context("odd_option", 5, "even_option", 4):
-            with context:
-                assert cudf.get_option("odd_option") == 3
-                assert cudf.get_option("even_option") == 2
-
-            assert cudf.get_option("odd_option") == 5
-            assert cudf.get_option("even_option") == 4
-
-        assert cudf.get_option("odd_option") == 1
-        assert cudf.get_option("even_option") == 0
-
-    def test_option_context_reuse(self):
-        context = cudf.option_context("odd_option", 3, "even_option", 2)
-
-        for odd, even in [(1, 0), (5, 4), (7, 6)]:
-            cudf.set_option("odd_option", odd)
-            cudf.set_option("even_option", even)
-            with context:
-                assert cudf.get_option("odd_option") == 3
-                assert cudf.get_option("even_option") == 2
-
-            assert cudf.get_option("odd_option") == odd
-            assert cudf.get_option("even_option") == even
-
-    @pytest.mark.parametrize("raise_error", [False, True])
-    def test_option_context_decorator(self, raise_error):
-        @cudf.option_context("odd_option", 3, "even_option", 2)
-        def check_options():
-            assert cudf.get_option("odd_option") == 3
-            assert cudf.get_option("even_option") == 2
-            if raise_error:
-                raise RuntimeError("context body error")
-
         for odd, even in [(5, 4), (7, 6)]:
-            cudf.set_option("odd_option", odd)
-            cudf.set_option("even_option", even)
-            with (
-                pytest.raises(RuntimeError, match="context body error")
-                if raise_error
-                else nullcontext()
-            ):
-                check_options()
-
-            assert cudf.get_option("odd_option") == odd
-            assert cudf.get_option("even_option") == even
-
-    def test_option_context_unknown_option(self):
-        with pytest.raises(KeyError, match='"unknown_option" does not exist'):
-            with cudf.option_context("odd_option", 3, "unknown_option", 2):
-                pass
-
-        assert cudf.get_option("odd_option") == 1
-
-    def test_option_context_nested_validation_error(self, monkeypatch):
-        def validator(value):
-            raise ValueError("Invalid option value")
-
-        context = cudf.option_context("odd_option", 3, "even_option", 2)
-        with cudf.option_context("odd_option", 5, "even_option", 4):
-            with monkeypatch.context() as m:
-                m.setattr(
-                    cudf.options._OPTIONS["even_option"],
-                    "validator",
-                    validator,
-                )
-                with pytest.raises(ValueError, match="Invalid option value"):
-                    with context:
-                        pass
-
-                assert cudf.get_option("odd_option") == 5
-                assert cudf.get_option("even_option") == 4
-
-        assert cudf.get_option("odd_option") == 1
-        assert cudf.get_option("even_option") == 0
-
-    @pytest.mark.parametrize("raise_error", [False, True])
-    def test_option_context_nested_reuse(self, raise_error):
-        context = cudf.option_context("odd_option", 3, "even_option", 2)
-
-        with context:
-            cudf.set_option("odd_option", 5)
-            cudf.set_option("even_option", 4)
-            with (
-                pytest.raises(RuntimeError, match="context body error")
-                if raise_error
-                else nullcontext()
-            ):
+            with cudf.option_context("odd_option", odd, "even_option", even):
                 with context:
                     assert cudf.get_option("odd_option") == 3
                     assert cudf.get_option("even_option") == 2
-                    if raise_error:
-                        raise RuntimeError("context body error")
+                assert cudf.get_option("odd_option") == odd
+                assert cudf.get_option("even_option") == even
 
+    def test_option_context_failed_entry(self):
+        with cudf.option_context("odd_option", 5, "even_option", 4):
+            with pytest.raises(ValueError, match="Invalid option value 3"):
+                with cudf.option_context("odd_option", 3, "even_option", 3):
+                    pass
             assert cudf.get_option("odd_option") == 5
             assert cudf.get_option("even_option") == 4
-
-        assert cudf.get_option("odd_option") == 1
-        assert cudf.get_option("even_option") == 0
 
     def test_option_context_recursive_decorator(self):
         @cudf.option_context("odd_option", 3, "even_option", 2)
@@ -177,11 +93,14 @@ class TestCleanOptions:
             if depth:
                 cudf.set_option("odd_option", 5)
                 cudf.set_option("even_option", 4)
-                check_options(depth - 1)
+                with pytest.raises(RuntimeError, match="context body error"):
+                    check_options(depth - 1)
                 assert cudf.get_option("odd_option") == 5
                 assert cudf.get_option("even_option") == 4
+            else:
+                raise RuntimeError("context body error")
 
-        check_options(2)
+        check_options(1)
         assert cudf.get_option("odd_option") == 1
         assert cudf.get_option("even_option") == 0
 

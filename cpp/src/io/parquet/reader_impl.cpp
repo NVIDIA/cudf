@@ -1252,7 +1252,7 @@ std::vector<parquet::FileMetaData> read_parquet_footers(
 
   // Parse sources into FileMetaData objects
   return parallel_construct_metadatas(
-    host_span<std::unique_ptr<datasource> const>{sources.data(), sources.size()},
+    sources,
     [](auto const& source) { return FileMetaData{metadata{source.get(), read_page_indexes}}; });
 }
 

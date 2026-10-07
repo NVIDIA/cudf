@@ -103,3 +103,53 @@ def _lower_len(str_view: ir.Value) -> ir.Value:
         )
         scf.yield_([arith.addi(acc, inc)])
     return loop.results[0]
+
+
+def _lower_compare(lhs: ir.Value, rhs: ir.Value) -> ir.Value:
+    """Byte-wise lexicographic compare of two views -> ``i32`` (sign gives order).
+
+    Matches ``cudf::string_view::compare``: the signed difference of the first
+    differing byte, else a length comparison. Callers turn the sign into the
+    boolean result for a specific comparison operator. The scan early-exits at
+    the first differing byte (``scf.while``).
+    """
+    i32 = ir.IntegerType.get_signless(32)
+    lhs_data = _view_data(lhs)
+    rhs_data = _view_data(rhs)
+    lhs_nb = llvm.zext(T.i64(), _view_nbytes(lhs))
+    rhs_nb = llvm.zext(T.i64(), _view_nbytes(rhs))
+    zero_i32 = arith.constant(i32, 0)
+    zero_i64 = arith.constant(T.i64(), 0)
+
+    min_len = arith.select(
+        arith.cmpi(arith.CmpIPredicate.slt, lhs_nb, rhs_nb), lhs_nb, rhs_nb
+    )
+
+    # Walk the shared prefix carrying (byte_index, diff). ``diff`` stays 0 until
+    # the first differing byte; a non-zero ``diff`` is the signed ordering value
+    # and ends the loop (so we never scan past the first mismatch).
+    loop = scf.WhileOp([T.i64(), i32], [zero_i64, zero_i32])
+    before = loop.before.blocks.append(T.i64(), i32)
+    with ir.InsertionPoint(before):
+        idx, diff = before.arguments
+        in_bounds = arith.cmpi(arith.CmpIPredicate.ult, idx, min_len)
+        no_diff = arith.cmpi(arith.CmpIPredicate.eq, diff, zero_i32)
+        scf.condition(arith.andi(in_bounds, no_diff), [idx, diff])
+    after = loop.after.blocks.append(T.i64(), i32)
+    with ir.InsertionPoint(after):
+        idx, _diff = after.arguments
+        b1 = arith.extui(i32, _byte_at(lhs_data, idx))
+        b2 = arith.extui(i32, _byte_at(rhs_data, idx))
+        next_idx = arith.addi(idx, arith.constant(T.i64(), 1))
+        scf.YieldOp([next_idx, arith.subi(b1, b2)])
+
+    byte_diff = loop.results[1]
+    found = arith.cmpi(arith.CmpIPredicate.ne, byte_diff, zero_i32)
+    lhs_longer = arith.cmpi(arith.CmpIPredicate.sgt, lhs_nb, rhs_nb)
+    rhs_longer = arith.cmpi(arith.CmpIPredicate.slt, lhs_nb, rhs_nb)
+    len_cmp = arith.select(
+        lhs_longer,
+        arith.constant(i32, 1),
+        arith.select(rhs_longer, arith.constant(i32, -1), zero_i32),
+    )
+    return arith.select(found, byte_diff, len_cmp)

@@ -50,6 +50,8 @@ std::unique_ptr<column> sorted_order(table_view input,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
 {
+  auto const temp_mr = cudf::get_current_device_resource_ref();
+
   if (input.num_rows() == 0 or input.num_columns() == 0) {
     return cudf::make_numeric_column(
       data_type(type_to_id<size_type>()), 0, mask_state::UNALLOCATED, stream, mr);
@@ -76,7 +78,7 @@ std::unique_ptr<column> sorted_order(table_view input,
   std::unique_ptr<column> sorted_indices = cudf::make_numeric_column(
     data_type(type_to_id<size_type>()), input.num_rows(), mask_state::UNALLOCATED, stream, mr);
   mutable_column_view mutable_indices_view = sorted_indices->mutable_view();
-  thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::sequence(rmm::exec_policy_nosync(stream, temp_mr),
                    mutable_indices_view.begin<size_type>(),
                    mutable_indices_view.end<size_type>(),
                    0);
@@ -85,12 +87,12 @@ std::unique_ptr<column> sorted_order(table_view input,
     // Compiling `thrust::*sort*` APIs is expensive.
     // Thus, we should optimize that by using constexpr condition to only compile what we need.
     if constexpr (method == sort_method::STABLE) {
-      thrust::stable_sort(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      thrust::stable_sort(rmm::exec_policy_nosync(stream, temp_mr),
                           mutable_indices_view.begin<size_type>(),
                           mutable_indices_view.end<size_type>(),
                           comparator);
     } else {
-      thrust::sort(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      thrust::sort(rmm::exec_policy_nosync(stream, temp_mr),
                    mutable_indices_view.begin<size_type>(),
                    mutable_indices_view.end<size_type>(),
                    comparator);
@@ -103,7 +105,7 @@ std::unique_ptr<column> sorted_order(table_view input,
     do_sort(comp.less(nullate::DYNAMIC{has_nulls(input)}));
   } else {
     auto const comp = cudf::detail::row::lexicographic::self_comparator(
-      input, column_order, null_precedence, stream, cudf::memory_resources{mr, mr});
+      input, column_order, null_precedence, stream, temp_mr);
     if (cudf::detail::has_nested_columns(input)) {
       auto const comparator = comp.less<true>(nullate::DYNAMIC{has_nested_nulls(input)});
       do_sort(comparator);

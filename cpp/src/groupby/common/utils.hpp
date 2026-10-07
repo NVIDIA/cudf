@@ -13,8 +13,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/device_buffer.hpp>
-
+#include <cuda/buffer>
 #include <cuda/stream>
 
 #include <memory>
@@ -23,6 +22,12 @@
 #include <vector>
 
 namespace cudf::groupby::detail {
+
+// Non-template bridges share mask-kernel instantiations across groupby reductions.
+std::pair<cuda::device_buffer<std::byte>, size_type> make_mask_from_validity(
+  bool* begin, bool* end, cuda::stream_ref stream, cudf::memory_resources mr);
+std::pair<cuda::device_buffer<std::byte>, size_type> make_mask_from_counts(
+  size_type const* begin, size_type const* end, cuda::stream_ref stream, cudf::memory_resources mr);
 
 template <typename RequestType>
 inline std::vector<aggregation_result> extract_results(std::span<RequestType const> requests,

@@ -297,7 +297,7 @@ auto decompose_structs(table_view table,
  * This helper function generates dremel data for any list-type columns in a
  * table. This data is necessary for lexicographic comparisons.
  */
-auto list_lex_preprocess(table_view const& table, cuda::stream_ref stream)
+auto list_lex_preprocess(table_view const& table, cuda::stream_ref stream, memory_resources mr)
 {
   std::vector<detail::dremel_data> dremel_data;
   auto const num_list_columns = std::count_if(
@@ -306,14 +306,12 @@ auto list_lex_preprocess(table_view const& table, cuda::stream_ref stream)
     cudf::detail::make_empty_host_vector<detail::dremel_device_view>(num_list_columns, stream);
   for (auto const& col : table) {
     if (col.type().id() == type_id::LIST) {
-      auto const current_mr = cudf::get_current_device_resource_ref();
-      dremel_data.push_back(
-        detail::get_comparator_data(col, {}, false, stream, {current_mr, current_mr}));
+      dremel_data.push_back(detail::get_comparator_data(col, {}, false, stream, mr));
       dremel_device_views.push_back(dremel_data.back());
     }
   }
-  auto d_dremel_device_views = detail::make_device_uvector(
-    dremel_device_views, stream, cudf::get_current_device_resource_ref());
+  auto d_dremel_device_views =
+    detail::make_device_uvector(dremel_device_views, stream, mr.get_output_mr());
   return std::make_tuple(std::move(dremel_data), std::move(d_dremel_device_views));
 }
 
@@ -644,17 +642,15 @@ std::shared_ptr<preprocessed_table> preprocessed_table::create(
 {
   check_lex_compatibility(preprocessed_input);
 
-  auto d_table        = table_device_view::create(preprocessed_input, stream);
-  auto d_column_order = detail::make_device_uvector_async(
-    column_order, stream, cudf::get_current_device_resource_ref());
-  auto d_null_precedence = detail::make_device_uvector_async(
-    null_precedence, stream, cudf::get_current_device_resource_ref());
-  auto d_depths = detail::make_device_uvector_async(
-    verticalized_col_depths, stream, cudf::get_current_device_resource_ref());
+  auto const mr          = cudf::get_current_device_resource_ref();
+  auto d_table           = table_device_view::create(preprocessed_input, stream, mr);
+  auto d_column_order    = detail::make_device_uvector_async(column_order, stream, mr);
+  auto d_null_precedence = detail::make_device_uvector_async(null_precedence, stream, mr);
+  auto d_depths          = detail::make_device_uvector_async(verticalized_col_depths, stream, mr);
   cudf::detail::sync_stream(stream);
 
   if (detail::has_nested_columns(preprocessed_input)) {
-    auto [dremel_data, d_dremel_device_view] = list_lex_preprocess(preprocessed_input, stream);
+    auto [dremel_data, d_dremel_device_view] = list_lex_preprocess(preprocessed_input, stream, mr);
     return std::shared_ptr<preprocessed_table>(
       new preprocessed_table(std::move(d_table),
                              std::move(d_column_order),

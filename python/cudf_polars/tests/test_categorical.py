@@ -220,6 +220,16 @@ def test_rename(categorical_frame, engine):
     assert_passthrough(q, engine)
 
 
+def test_explode(categorical_frame, engine):
+    q = (
+        categorical_frame.collect()
+        .with_columns(lst=pl.concat_list(pl.col("int"), pl.col("int")))
+        .lazy()
+        .explode("lst")
+    )
+    assert_passthrough(q, engine)
+
+
 @pytest.mark.parametrize(
     "dtype",
     [pl.Enum(["a", "b", "c"]), pl.Enum([str(i) for i in range(300)])],
@@ -315,12 +325,6 @@ def test_mapping_lifetime():
         ),
         pytest.param(
             lambda lf, _: lf.unpivot(index="cat", on=["int"]), id="unpivot_index"
-        ),
-        pytest.param(
-            lambda lf, _: lf.with_columns(
-                lst=pl.concat_list(pl.col("int"), pl.col("int"))
-            ).explode("lst"),
-            id="explode",
         ),
     ],
 )

@@ -3848,7 +3848,7 @@ class MapFunction(IR):
             raise NotImplementedError(
                 f"Unhandled map function {self.name}"
             )  # pragma: no cover
-        if self.name in {"explode", "unpivot"} and any(
+        if self.name == "unpivot" and any(
             _contains_categorical(dtype.polars_type) for dtype in df.schema.values()
         ):
             raise NotImplementedError(

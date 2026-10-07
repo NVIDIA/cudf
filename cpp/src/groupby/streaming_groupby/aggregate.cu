@@ -22,6 +22,7 @@
 #include <cub/warp/warp_reduce.cuh>
 #include <cuda/iterator>
 #include <cuda/std/limits>
+#include <cuda/std/type_traits>
 #include <cuda/stream>
 #include <thrust/for_each.h>
 
@@ -38,8 +39,6 @@ namespace {
 
 constexpr int aggs_block_size      = 256;
 constexpr int aggs_warps_per_block = aggs_block_size / cudf::detail::warp_size;
-/// Bytes of `cub::WarpReduce` temporary storage reserved per warp.
-constexpr int warp_reduce_storage_size = 64;
 
 /*
  * Whether aggregation `k` of `Source` values reduces runs of equal keys within a warp.  The rest
@@ -73,7 +72,6 @@ struct warp_reduce_aggregator {
   bool active;
   size_type key;
   size_type target_row;
-  void* storage;
 
   template <typename Source, aggregation::Kind k>
   __device__ void operator()(mutable_column_device_view target,
@@ -93,8 +91,12 @@ struct warp_reduce_aggregator {
       using S           = cudf::device_storage_type_t<Source>;
       using WarpReduce  = cub::WarpReduce<T>;
       using ValidReduce = cub::WarpReduce<int>;
-      static_assert(sizeof(typename WarpReduce::TempStorage) <= warp_reduce_storage_size);
-      static_assert(sizeof(typename ValidReduce::TempStorage) <= warp_reduce_storage_size);
+      // A full warp reduces with shuffles only, so the temporary storage is empty and need not be
+      // shared.
+      static_assert(cuda::std::is_empty_v<typename WarpReduce::InternalWarpReduce::TempStorage>);
+      static_assert(cuda::std::is_empty_v<typename ValidReduce::InternalWarpReduce::TempStorage>);
+      typename WarpReduce::TempStorage warp_storage;
+      typename ValidReduce::TempStorage valid_storage;
 
       // Lanes without a valid input contribute the identity of the aggregation.
       auto const valid = active && (k == aggregation::COUNT_ALL || source.is_valid(source_index));
@@ -119,8 +121,6 @@ struct warp_reduce_aggregator {
       auto const lane     = threadIdx.x % cudf::detail::warp_size;
       auto const prev_key = __shfl_up_sync(0xffff'ffffu, key, 1);
       int const is_head   = lane == 0 || prev_key != key;
-      auto& warp_storage  = *static_cast<typename WarpReduce::TempStorage*>(storage);
-      auto& valid_storage = *static_cast<typename ValidReduce::TempStorage*>(storage);
       auto const reduced  = [&] {
         if constexpr (k == aggregation::MIN) {
           return WarpReduce(warp_storage).HeadSegmentedReduce(value, is_head, cudf::DeviceMin{});
@@ -130,8 +130,6 @@ struct warp_reduce_aggregator {
           return WarpReduce(warp_storage).HeadSegmentedSum(value, is_head);
         }
       }();
-      // The two reductions share the temporary storage.
-      __syncwarp();
       auto const num_valid = ValidReduce(valid_storage).HeadSegmentedSum(valid ? 1 : 0, is_head);
 
       if (!active || !is_head || num_valid == 0) { return; }
@@ -156,7 +154,7 @@ struct aggs_fn {
   table_device_view input_values;
   mutable_table_device_view output_values;
 
-  __device__ void operator()(size_type col_idx, size_type row, void* storage) const
+  __device__ void operator()(size_type col_idx, size_type row) const
   {
     auto const lane     = static_cast<size_type>(threadIdx.x % cudf::detail::warp_size);
     auto const in_range = row < input_values.num_rows();
@@ -166,14 +164,13 @@ struct aggs_fn {
     auto const key         = active ? target : -1 - lane;
     auto const target_row  = active ? target : 0;
     auto const& source_col = input_values.column(col_idx);
-    cudf::detail::dispatch_type_and_aggregation(
-      source_col.type(),
-      aggs[col_idx],
-      warp_reduce_aggregator{active, key, target_row, storage},
-      output_values.column(col_idx),
-      target_row,
-      source_col,
-      in_range ? row : 0);
+    cudf::detail::dispatch_type_and_aggregation(source_col.type(),
+                                                aggs[col_idx],
+                                                warp_reduce_aggregator{active, key, target_row},
+                                                output_values.column(col_idx),
+                                                target_row,
+                                                source_col,
+                                                in_range ? row : 0);
   }
 };
 
@@ -181,7 +178,6 @@ struct aggs_fn {
 CUDF_KERNEL void __launch_bounds__(aggs_block_size)
   aggs_kernel(size_type num_rows, size_type num_cols, aggs_fn fn)
 {
-  __shared__ alignas(16) char storage[aggs_warps_per_block][warp_reduce_storage_size];
   auto const warp          = threadIdx.x / cudf::detail::warp_size;
   auto const lane          = static_cast<size_type>(threadIdx.x % cudf::detail::warp_size);
   auto const warps_per_col = static_cast<int64_t>(
@@ -193,8 +189,7 @@ CUDF_KERNEL void __launch_bounds__(aggs_block_size)
     auto const col = static_cast<size_type>(step / warps_per_col);
     auto const row =
       static_cast<size_type>((step % warps_per_col) * cudf::detail::warp_size) + lane;
-    fn(col, row, storage[warp]);
-    __syncwarp();
+    fn(col, row);
   }
 }
 

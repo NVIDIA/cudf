@@ -173,6 +173,9 @@ extensions = [
 
 remove_from_toctrees = ["cudf/api_docs/api/*"]
 
+# The docs environment does not install PyTorch.
+autodoc_mock_imports = ["torch"]
+
 
 # Preprocess doxygen xml for compatibility with latest Breathe
 def clean_definitions(root):

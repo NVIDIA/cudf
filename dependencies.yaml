@@ -201,7 +201,6 @@ files:
       - depends_on_pylibcudf
       - depends_on_libcudf
       - depends_on_cudf_polars
-      - depends_on_pytorch
       - depends_on_ray
       - docs
       - py_version

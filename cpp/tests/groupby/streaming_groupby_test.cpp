@@ -1761,3 +1761,22 @@ TEST_F(StreamingGroupbyTest, WarpReducedRuns)
     }
   }
 }
+
+// Without requests no aggregation kernel is launched, and only the distinct keys are returned.
+TEST_F(StreamingGroupbyTest, NoRequests)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> keys{1, 2, 3, 1};
+  cudf::test::fixed_width_column_wrapper<int32_t> vals{10, 20, 30, 40};
+  cudf::table_view batch{{keys, vals}};
+
+  std::vector<cudf::groupby::streaming_aggregation_request> reqs;
+  cudf::groupby::streaming_groupby streaming_agg(KEY_COL, reqs, DEFAULT_MAX_DISTINCT_KEYS);
+  streaming_agg.aggregate(batch);
+  streaming_agg.aggregate(batch);
+  auto [out_keys, results] = streaming_agg.finalize();
+
+  EXPECT_TRUE(results.empty());
+  auto const sorted_keys = cudf::sort(out_keys->view());
+  cudf::test::fixed_width_column_wrapper<int32_t> expect_keys{1, 2, 3};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expect_keys, sorted_keys->get_column(0));
+}

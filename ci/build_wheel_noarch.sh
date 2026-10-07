@@ -9,5 +9,10 @@ source ./ci/build_wheel_common.sh
 
 # Build pure-Python wheels independently of the non-noarch wheel chain.
 
-build_noarch_wheel dask_cudf dask-cudf python/dask_cudf 10M
-build_noarch_wheel cudf_polars cudf-polars python/cudf_polars 10M
+SCCACHE_SERVER_PORT=4227 run_logged_build dask-cudf-parallel-build.log \
+  build_noarch_wheel dask_cudf dask-cudf python/dask_cudf 10M &
+dask_pid=$!
+SCCACHE_SERVER_PORT=4228 run_logged_build cudf-polars-parallel-build.log \
+  build_noarch_wheel cudf_polars cudf-polars python/cudf_polars 10M &
+polars_pid=$!
+wait_for_builds "${dask_pid}" dask-cudf-parallel-build.log "${polars_pid}" cudf-polars-parallel-build.log

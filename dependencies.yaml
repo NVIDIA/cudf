@@ -131,9 +131,12 @@ files:
       - depends_on_cudf_kafka
       - depends_on_custreamz
       - depends_on_cudf_polars
-      - depends_on_pytorch_cuda
       - depends_on_ray
       - depends_on_cudf_streaming
+  test_python_pytorch_cuda:
+    output: none
+    includes:
+      - depends_on_pytorch_cuda
   build_cudf_polars_quent:
     output: none
     includes:

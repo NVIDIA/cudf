@@ -75,9 +75,12 @@ void generate_depth_remappings(
 /**
  * @brief Allocate bounded temporary descriptors for fused header counting and parsing.
  *
- * At most 16,384 descriptors per chunk and 64 MiB total. Indexed reads return empty storage;
- * if the budget cannot hold one descriptor per chunk, empty storage selects separate parsing.
- * Keep the returned buffer alive through count_page_headers and decode_page_headers.
+ * At most 16,384 descriptors per chunk. The total budget defaults to 64 MiB and is configurable
+ * through LIBCUDF_PARQUET_PAGE_HEADER_SCRATCH_MIB (a nonnegative integer, read for nonempty
+ * no-index passes). Zero disables scratch. Invalid values throw cudf::logic_error. Indexed reads
+ * return empty storage; if the budget cannot hold one descriptor per chunk, empty storage selects
+ * separate parsing. Keep the returned buffer alive through count_page_headers and
+ * decode_page_headers.
  *
  * @param num_chunks Number of column chunks in the pass
  * @param has_offset_index Whether counts and page locations are already known from indexes

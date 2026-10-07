@@ -519,14 +519,15 @@ void __forceinline__ __device__ zero_out_page_header_info(byte_stream_s* bs)
   bs->page.kernel_mask    = decode_kernel_mask::NONE;
 }
 
-// Return 0 for a data page, 1 for a dictionary page, and -1 for an invalid header/type.
+enum class parsed_page_kind { invalid, data, dictionary };
+
 // Shared by separate decoding, fused counting/parsing, and overflow reparsing.
 // chunk_row is a running estimate for flat schemas; preprocessing resolves nested row counts.
-__device__ __forceinline__ int parse_next_descriptor(byte_stream_s* bs,
-                                                     size_t& values_found,
-                                                     uint32_t& data_pages,
-                                                     uint32_t& dict_pages,
-                                                     uint32_t& error)
+__device__ __forceinline__ parsed_page_kind parse_next_descriptor(byte_stream_s* bs,
+                                                                  size_t& values_found,
+                                                                  uint32_t& data_pages,
+                                                                  uint32_t& dict_pages,
+                                                                  uint32_t& error)
 {
   bs->page.chunk_row += bs->page.num_rows;
   bs->page.num_rows                          = 0;
@@ -537,20 +538,20 @@ __device__ __forceinline__ int parse_next_descriptor(byte_stream_s* bs,
   bs->page.num_nulls                         = 0;
   bs->page.lvl_bytes[level_type::DEFINITION] = 0;
   bs->page.lvl_bytes[level_type::REPETITION] = 0;
-  int kind                                   = -1;
+  auto kind                                  = parsed_page_kind::invalid;
   if (parse_valid_page_header(bs)) {
     if (not is_supported_encoding(bs->page.encoding)) {
       error |= static_cast<uint32_t>(decode_error::UNSUPPORTED_ENCODING);
     }
     switch (bs->page_type) {
       case PageType::DATA_PAGE:
-        kind = 0;
+        kind = parsed_page_kind::data;
         ++data_pages;
         bs->page.num_rows = bs->page.num_input_values;
         values_found += bs->page.num_input_values;
         break;
       case PageType::DATA_PAGE_V2:
-        kind = 0;
+        kind = parsed_page_kind::data;
         ++data_pages;
         bs->page.flags |= PAGEINFO_FLAGS_V2;
         values_found += bs->page.num_input_values;
@@ -558,7 +559,7 @@ __device__ __forceinline__ int parse_next_descriptor(byte_stream_s* bs,
         bs->page.repetition_level_encoding = Encoding::RLE;
         break;
       case PageType::DICTIONARY_PAGE:
-        kind = 1;
+        kind = parsed_page_kind::dictionary;
         ++dict_pages;
         bs->page.flags |= PAGEINFO_FLAGS_DICTIONARY;
         break;
@@ -578,9 +579,9 @@ __device__ __forceinline__ int parse_next_descriptor(byte_stream_s* bs,
   return kind;
 }
 
-__device__ __forceinline__ void initialize_stream(byte_stream_s* bs,
-                                                  ColumnChunkDesc const& chunk,
-                                                  int chunk_idx)
+__device__ __forceinline__ void initialize_page_header_stream(byte_stream_s* bs,
+                                                              ColumnChunkDesc const& chunk,
+                                                              int chunk_idx)
 {
   bs->ck   = chunk;
   bs->base = bs->cur = chunk.compressed_data;
@@ -592,20 +593,22 @@ __device__ __forceinline__ void initialize_stream(byte_stream_s* bs,
 }
 
 // One local stream per chunk. Fully materializes PageInfo; this is not the count-only parser.
-__device__ __forceinline__ void decode_local(ColumnChunkDesc const& chunk,
-                                             int chunk_idx,
-                                             PageInfo* output,
-                                             uint32_t* error_code)
+__device__ __forceinline__ void decode_chunk_page_headers(ColumnChunkDesc const& chunk,
+                                                          int chunk_idx,
+                                                          PageInfo* output,
+                                                          uint32_t* error_code)
 {
   byte_stream_s bs;
-  initialize_stream(&bs, chunk, chunk_idx);
+  initialize_page_header_stream(&bs, chunk, chunk_idx);
   size_t values_found = 0;
   uint32_t data_pages = 0, dict_pages = 0, error = 0;
   auto const maximum = static_cast<uint32_t>(chunk.num_data_pages + chunk.num_dict_pages);
   while (values_found < chunk.num_values and bs.cur < bs.end) {
-    int const kind = parse_next_descriptor(&bs, values_found, data_pages, dict_pages, error);
-    if (kind >= 0) {
-      auto const index = kind ? dict_pages - 1 : chunk.num_dict_pages + data_pages - 1;
+    auto const kind = parse_next_descriptor(&bs, values_found, data_pages, dict_pages, error);
+    if (kind != parsed_page_kind::invalid) {
+      auto const index = kind == parsed_page_kind::dictionary
+                           ? dict_pages - 1
+                           : chunk.num_dict_pages + data_pages - 1;
       if (index < maximum) { cuda::std::memcpy(output + index, &bs.page, sizeof(PageInfo)); }
     }
   }
@@ -675,8 +678,9 @@ void __launch_bounds__(decode_page_headers_block_size)
     if (lane_id == 0) {
       auto const kind = parse_next_descriptor(
         bs, values_found, data_page_count, dictionary_page_count, error[warp_id]);
-      if (kind >= 0) {
-        index_out = kind ? dictionary_page_count - 1 : num_dict_pages + data_page_count - 1;
+      if (kind != parsed_page_kind::invalid) {
+        index_out = kind == parsed_page_kind::dictionary ? dictionary_page_count - 1
+                                                         : num_dict_pages + data_page_count - 1;
       }
       if (index_out >= 0 and index_out < max_num_pages) { page_info[index_out] = bs->page; }
     }
@@ -701,14 +705,16 @@ CUDF_KERNEL void __launch_bounds__(32) count_and_decode_page_headers_kernel(Colu
   auto const chunk_idx = static_cast<int>(blockIdx.x);
   if (chunk_idx >= num_chunks) { return; }
   byte_stream_s bs;
-  initialize_stream(&bs, chunks[chunk_idx], chunk_idx);
+  initialize_page_header_stream(&bs, chunks[chunk_idx], chunk_idx);
   size_t values_found = 0;
   uint32_t data_pages = 0, dict_pages = 0, error = 0;
   while (values_found < bs.ck.num_values and bs.cur < bs.end) {
-    int const kind = parse_next_descriptor(&bs, values_found, data_pages, dict_pages, error);
+    auto const kind = parse_next_descriptor(&bs, values_found, data_pages, dict_pages, error);
     // On overflow we continue exact counting and validation, allowing an exact-size fallback.
-    if (kind >= 0 and static_cast<uint64_t>(data_pages) + dict_pages <= capacity) {
-      auto const index        = kind ? dict_pages - 1 : capacity - data_pages;
+    if (kind != parsed_page_kind::invalid and
+        static_cast<uint64_t>(data_pages) + dict_pages <= capacity) {
+      auto const index =
+        kind == parsed_page_kind::dictionary ? dict_pages - 1 : capacity - data_pages;
       auto* const destination = scratch + static_cast<size_t>(chunk_idx) * capacity + index;
       cuda::std::memcpy(destination, &bs.page, sizeof(PageInfo));
     }
@@ -734,7 +740,9 @@ CUDF_KERNEL void __launch_bounds__(128) finish_page_headers_kernel(ColumnChunkDe
   if (count > capacity) {
     // Only overflowing chunks pay for a second header walk. The original parser and exact counts
     // make this safe even for zero-value pages, many dictionaries, and arbitrarily small capacity.
-    if (threadIdx.x == 0) { decode_local(chunk, chunk_idx, pages[chunk_idx].pages, error_code); }
+    if (threadIdx.x == 0) {
+      decode_chunk_page_headers(chunk, chunk_idx, pages[chunk_idx].pages, error_code);
+    }
     return;
   }
   // The count stage defers unsupported-encoding errors until descriptors are available.
@@ -748,13 +756,16 @@ CUDF_KERNEL void __launch_bounds__(128) finish_page_headers_kernel(ColumnChunkDe
   constexpr size_t words_per_page = sizeof(PageInfo) / sizeof(uint32_t);
   static_assert(sizeof(PageInfo) % sizeof(uint32_t) == 0);
   auto const* source = scratch + static_cast<size_t>(chunk_idx) * capacity;
-  auto* destination  = reinterpret_cast<uint32_t*>(pages[chunk_idx].pages);
+  auto* destination  = reinterpret_cast<unsigned char*>(pages[chunk_idx].pages);
   // Threads cover consecutive words in each descriptor for coalesced stores and loads.
   for (size_t word = threadIdx.x; word < count * words_per_page; word += blockDim.x) {
     auto const page          = word / words_per_page;
     auto const source_page   = page < dict_pages ? page : capacity - 1 - (page - dict_pages);
-    auto const* source_words = reinterpret_cast<uint32_t const*>(source + source_page);
-    destination[word]        = source_words[word % words_per_page];
+    auto const* source_bytes = reinterpret_cast<unsigned char const*>(source + source_page);
+    // memcpy preserves the object representation without aliasing PageInfo as uint32_t.
+    cuda::std::memcpy(destination + word * sizeof(uint32_t),
+                      source_bytes + (word % words_per_page) * sizeof(uint32_t),
+                      sizeof(uint32_t));
   }
 }
 

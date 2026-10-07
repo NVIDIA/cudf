@@ -55,6 +55,45 @@ auto page_boundary_slices(cudf::size_type const num_rows)
 
 }  // namespace
 
+TEST_F(ParquetReaderTest, PageHeaderScratchBudget)
+{
+  auto const expected = create_random_fixed_table<int>(2, 100, false);
+  auto const path     = temp_env->get_temp_filepath("header_scratch_budget.parquet");
+  cudf::io::write_parquet(
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{path}, *expected)
+      .stats_level(cudf::io::statistics_freq::STATISTICS_ROWGROUP)
+      .max_page_size_rows(1)
+      .max_page_fragment_size(1));
+  auto const options =
+    cudf::io::parquet_reader_options::builder(cudf::io::source_info{path}).build();
+  for (auto const* budget : {"0", "1", "64", "128"}) {
+    SCOPED_TRACE(budget);
+    tmp_env_var const env("LIBCUDF_PARQUET_PAGE_HEADER_SCRATCH_MIB", budget);
+    auto const result = cudf::io::read_parquet(options);
+    CUDF_TEST_EXPECT_TABLES_EQUAL(expected->view(), result.tbl->view());
+  }
+  for (auto const* budget : {"", "-1", "abc", "64MiB", "1.5", "18446744073709551615"}) {
+    SCOPED_TRACE(budget);
+    tmp_env_var const env("LIBCUDF_PARQUET_PAGE_HEADER_SCRATCH_MIB", budget);
+    EXPECT_THROW(cudf::io::read_parquet(options), cudf::logic_error);
+  }
+}
+
+TEST_F(ParquetReaderTest, IndexedReadIgnoresPageHeaderScratchBudget)
+{
+  cudf::test::strings_column_wrapper strings{{"one", "two", "three"}};
+  cudf::table_view const expected{{strings}};
+  auto const path = temp_env->get_temp_filepath("indexed_header_scratch.parquet");
+  cudf::io::write_parquet(
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{path}, expected)
+      .stats_level(cudf::io::statistics_freq::STATISTICS_COLUMN));
+  auto const options =
+    cudf::io::parquet_reader_options::builder(cudf::io::source_info{path}).build();
+  tmp_env_var const env("LIBCUDF_PARQUET_PAGE_HEADER_SCRATCH_MIB", "unused");
+  auto const result = cudf::io::read_parquet(options);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
+}
+
 TEST_F(ParquetReaderTest, FusedPageHeadersOverflow)
 {
   // One source fits in scratch; the other has more pages than the per-chunk capacity.
@@ -108,8 +147,9 @@ TEST_F(ParquetReaderTest, FusedPageHeadersOverflow)
         EXPECT_EQ(data_pages, i == 0 ? small_rows : num_rows);
         EXPECT_EQ(dictionary_pages, dictionary == cudf::io::dictionary_policy::ALWAYS ? 1 : 0);
       }
-      auto const options = cudf::io::parquet_reader_options::builder(cudf::io::source_info{paths}).build();
-      auto const result  = cudf::io::read_parquet(options);
+      auto const options =
+        cudf::io::parquet_reader_options::builder(cudf::io::source_info{paths}).build();
+      auto const result = cudf::io::read_parquet(options);
       CUDF_TEST_EXPECT_TABLES_EQUAL(expected->view(), result.tbl->view());
     }
   }

@@ -29,6 +29,10 @@
 
 #include <algorithm>
 #include <bitset>
+#include <charconv>
+#include <cstdlib>
+#include <limits>
+#include <string_view>
 #if defined(PREPROCESS_DEBUG)
 #include <iostream>
 #endif  // PREPROCESS_DEBUG
@@ -228,12 +232,22 @@ rmm::device_uvector<PageInfo> make_page_header_scratch(size_t num_chunks,
 {
   // Bound speculative storage independently of file size. Count/parse continues on overflow;
   // finish reparses those chunks after exact output allocation. Indexed reads need no scratch.
+  if (has_offset_index || num_chunks == 0) { return rmm::device_uvector<PageInfo>(0, stream); }
+
   constexpr size_t max_pages_per_chunk = 16'384;
-  constexpr size_t scratch_byte_limit  = 64 * 1024 * 1024;
+  constexpr size_t mib                 = 1024 * 1024;
+  size_t scratch_mib                   = 64;
+  if (auto const* value = std::getenv("LIBCUDF_PARQUET_PAGE_HEADER_SCRATCH_MIB")) {
+    auto const text         = std::string_view{value};
+    auto const [end, error] = std::from_chars(text.data(), text.data() + text.size(), scratch_mib);
+    CUDF_EXPECTS(error == std::errc{} && end == text.data() + text.size() &&
+                   scratch_mib <= std::numeric_limits<size_t>::max() / mib,
+                 "LIBCUDF_PARQUET_PAGE_HEADER_SCRATCH_MIB must be a nonnegative integer "
+                 "representable as a byte count");
+  }
+  auto const scratch_byte_limit = scratch_mib * mib;
   auto const capacity =
-    has_offset_index || num_chunks == 0
-      ? size_t{0}
-      : std::min(max_pages_per_chunk, scratch_byte_limit / sizeof(PageInfo) / num_chunks);
+    std::min(max_pages_per_chunk, scratch_byte_limit / sizeof(PageInfo) / num_chunks);
   return rmm::device_uvector<PageInfo>(num_chunks * capacity, stream);
 }
 

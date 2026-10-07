@@ -459,21 +459,14 @@ dremel_data get_encoding(column_view h_col,
   rep_level.resize(level_vals_size, stream);
   def_level.resize(level_vals_size, stream);
 
-  rmm::device_uvector<size_type> output_offsets(new_offsets.size(), stream, output_mr);
-  rmm::device_uvector<uint8_t> output_rep_level(rep_level.size(), stream, output_mr);
-  rmm::device_uvector<uint8_t> output_def_level(def_level.size(), stream, output_mr);
-  thrust::copy_n(rmm::exec_policy_nosync(stream, temp_mr),
-                 new_offsets.begin(),
-                 new_offsets.size(),
-                 output_offsets.begin());
-  thrust::copy_n(rmm::exec_policy_nosync(stream, temp_mr),
-                 rep_level.begin(),
-                 rep_level.size(),
-                 output_rep_level.begin());
-  thrust::copy_n(rmm::exec_policy_nosync(stream, temp_mr),
-                 def_level.begin(),
-                 def_level.size(),
-                 output_def_level.begin());
+  // Results were built in temp_mr buffers. If output_mr is a different resource, copy them into
+  // output_mr since the caller owns them; otherwise hand over the existing buffers.
+  auto const to_output = [&]<typename T>(rmm::device_uvector<T>& vec) {
+    return output_mr == temp_mr ? std::move(vec) : rmm::device_uvector<T>(vec, stream, output_mr);
+  };
+  auto output_offsets   = to_output(new_offsets);
+  auto output_rep_level = to_output(rep_level);
+  auto output_def_level = to_output(def_level);
 
   stream.sync();
 

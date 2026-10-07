@@ -120,8 +120,6 @@ add_wheel_constraint pylibcudf "${RAPIDS_WHEEL_BLD_OUTPUT_DIR}/pylibcudf_*.whl"
     "$(rapids-artifact-name wheel_python cudf cudf --stable --cuda "${RAPIDS_CUDA_VERSION}")"
 ) &
 cudf_pid=$!
-# Keep build paths and cache settings identical for the serial CI control.
-wait "${cudf_pid}"
 
 (
   setup_build_log cudf-streaming-parallel-build.log

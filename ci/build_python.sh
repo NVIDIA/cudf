@@ -44,8 +44,6 @@ for index in "${!packages[@]}"; do
     run_logged_build "${packages[index]}-parallel-build.log" \
       build_conda_package "${packages[index]}" "${PARALLEL_OUTPUT_DIR}/${packages[index]}" &
   builds+=("$!" "${packages[index]}-parallel-build.log")
-  # Keep build paths and cache settings identical for the serial CI control.
-  wait "$!"
 done
 wait_for_builds "${builds[@]}"
 collect_conda_packages "${PARALLEL_OUTPUT_DIR}"/*

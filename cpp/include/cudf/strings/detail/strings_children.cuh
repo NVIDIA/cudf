@@ -24,6 +24,7 @@
 #include <cub/device/device_memcpy.cuh>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/std/execution>
 #include <cuda/stream>
 #include <thrust/for_each.h>
 
@@ -104,17 +105,11 @@ rmm::device_uvector<char> make_chars_buffer(column_view const& offsets,
     cuda::proclaim_return_type<char*>(
       [output = chars_data.data()] __device__(auto offset) { return output + offset; }));
 
-  size_t temp_storage_bytes = 0;
-  CUDF_CUDA_TRY(cub::DeviceMemcpy::Batched(
-    nullptr, temp_storage_bytes, src_ptrs, dst_ptrs, src_sizes, strings_count, stream.get()));
-  rmm::device_buffer d_temp_storage(temp_storage_bytes, stream);
-  CUDF_CUDA_TRY(cub::DeviceMemcpy::Batched(d_temp_storage.data(),
-                                           temp_storage_bytes,
-                                           src_ptrs,
-                                           dst_ptrs,
-                                           src_sizes,
-                                           strings_count,
-                                           stream.get()));
+  auto env =
+    cuda::std::execution::env{cuda::std::execution::prop{cuda::get_stream_t{}, stream},
+                              cuda::std::execution::prop{cuda::mr::get_memory_resource_t{},
+                                                         cudf::get_current_device_resource_ref()}};
+  CUDF_CUDA_TRY(cub::DeviceMemcpy::Batched(src_ptrs, dst_ptrs, src_sizes, strings_count, env));
 
   return chars_data;
 }

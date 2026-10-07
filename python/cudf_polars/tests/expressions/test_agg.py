@@ -17,8 +17,8 @@ from cudf_polars.testing.asserts import (
 from cudf_polars.testing.engine_utils import is_streaming_engine
 from cudf_polars.utils.versions import (
     POLARS_VERSION_LT_136,
-    POLARS_VERSION_LT_137,
     POLARS_VERSION_LT_138,
+    POLARS_VERSION_LT_139,
 )
 
 
@@ -137,7 +137,7 @@ def test_product(engine: pl.GPUEngine, data, dtype):
 
 
 @pytest.mark.skipif(
-    POLARS_VERSION_LT_137, reason="polars 1.37.0 introduced max_by and min_by"
+    POLARS_VERSION_LT_138, reason="polars 1.38.0 introduced max_by and min_by"
 )
 @pytest.mark.parametrize("expr", ["max_by", "min_by"])
 @pytest.mark.parametrize(
@@ -169,7 +169,7 @@ def test_max_min_by(engine: pl.GPUEngine, expr: str, data, by_dtype) -> None:
 
 
 @pytest.mark.skipif(
-    POLARS_VERSION_LT_137, reason="polars 1.37.0 introduced max_by and min_by"
+    POLARS_VERSION_LT_138, reason="polars 1.38.0 introduced max_by and min_by"
 )
 @pytest.mark.parametrize("expr", ["max_by", "min_by"])
 @pytest.mark.parametrize(
@@ -196,7 +196,7 @@ def test_max_min_by_float_nan(engine: pl.GPUEngine, expr: str, by) -> None:
 
 
 @pytest.mark.skipif(
-    POLARS_VERSION_LT_137, reason="polars 1.37.0 introduced max_by and min_by"
+    POLARS_VERSION_LT_138, reason="polars 1.38.0 introduced max_by and min_by"
 )
 @pytest.mark.parametrize("expr", ["max_by", "min_by"])
 @pytest.mark.parametrize(
@@ -221,7 +221,7 @@ def test_max_min_by_mismatched_length_raises(
 
 
 @pytest.mark.skipif(
-    POLARS_VERSION_LT_137, reason="polars 1.37.0 introduced max_by and min_by"
+    POLARS_VERSION_LT_138, reason="polars 1.38.0 introduced max_by and min_by"
 )
 @pytest.mark.parametrize("expr", ["max_by", "min_by"])
 def test_max_min_by_scalar_value(engine: pl.GPUEngine, expr: str) -> None:
@@ -235,8 +235,13 @@ def test_max_min_by_scalar_value(engine: pl.GPUEngine, expr: str) -> None:
             q.collect(engine=engine)
 
 
+SKIP_IF_POLARS_VERSION_LT_139 = pytest.mark.skipif(
+    POLARS_VERSION_LT_139, reason="polars bug in single-value max_by and min_by."
+)
+
+
 @pytest.mark.skipif(
-    POLARS_VERSION_LT_137, reason="polars 1.37.0 introduced max_by and min_by"
+    POLARS_VERSION_LT_138, reason="polars 1.38.0 introduced max_by and min_by"
 )
 @pytest.mark.parametrize("agg", ["max_by", "min_by"])
 @pytest.mark.parametrize(
@@ -264,9 +269,15 @@ def test_max_min_by_scalar_value(engine: pl.GPUEngine, expr: str) -> None:
         ([], [], [], pl.Int64),
         ([], [], [], pl.Float64),
         ([1, 2, 3], [10, 20, 30], [None, None, None], pl.Float64),
-        ([1], [10], [3.0], pl.Float64),
-        ([1], [10], [None], pl.Float64),
-        ([1], [10], [float("nan")], pl.Float64),
+        pytest.param(
+            [1], [10], [3.0], pl.Float64, marks=[SKIP_IF_POLARS_VERSION_LT_139]
+        ),
+        pytest.param(
+            [1], [10], [None], pl.Float64, marks=[SKIP_IF_POLARS_VERSION_LT_139]
+        ),
+        pytest.param(
+            [1], [10], [float("nan")], pl.Float64, marks=[SKIP_IF_POLARS_VERSION_LT_139]
+        ),
         (
             [1, 1, 1, 2, 2, 2],
             [10, 20, 30, 40, 50, 60],
@@ -294,7 +305,7 @@ def test_groupby_max_min_by(engine: pl.GPUEngine, agg: str, g, a, b, by_dtype) -
 
 
 @pytest.mark.skipif(
-    POLARS_VERSION_LT_137, reason="polars 1.37.0 introduced max_by and min_by"
+    POLARS_VERSION_LT_138, reason="polars 1.38.0 introduced max_by and min_by"
 )
 @pytest.mark.parametrize("agg", ["max_by", "min_by"])
 def test_groupby_max_min_by_nested_unsupported(engine: pl.GPUEngine, agg: str) -> None:
@@ -310,7 +321,7 @@ def test_groupby_max_min_by_nested_unsupported(engine: pl.GPUEngine, agg: str) -
 
 
 @pytest.mark.skipif(
-    POLARS_VERSION_LT_137, reason="polars 1.37.0 introduced max_by and min_by"
+    POLARS_VERSION_LT_138, reason="polars 1.38.0 introduced max_by and min_by"
 )
 @pytest.mark.parametrize("agg", ["max_by", "min_by"])
 @pytest.mark.parametrize(
@@ -332,7 +343,7 @@ def test_groupby_max_min_by_group_length_unsupported(
 
 
 @pytest.mark.skipif(
-    POLARS_VERSION_LT_137, reason="polars 1.37.0 introduced max_by and min_by"
+    POLARS_VERSION_LT_138, reason="polars 1.38.0 introduced max_by and min_by"
 )
 @pytest.mark.parametrize("agg", ["max_by", "min_by"])
 def test_groupby_max_min_by_literal_column_value_unsupported(
@@ -346,7 +357,8 @@ def test_groupby_max_min_by_literal_column_value_unsupported(
 
 
 @pytest.mark.skipif(
-    POLARS_VERSION_LT_137, reason="polars 1.37.0 introduced max_by and min_by"
+    POLARS_VERSION_LT_139,
+    reason="polars 1.38.0 introduced max_by and min_by, but has a bug with literals (fixed in 1.39)",
 )
 @pytest.mark.parametrize("agg", ["max_by", "min_by"])
 def test_groupby_max_min_by_scalar_value(engine: pl.GPUEngine, agg: str) -> None:
@@ -356,7 +368,7 @@ def test_groupby_max_min_by_scalar_value(engine: pl.GPUEngine, agg: str) -> None
 
 
 @pytest.mark.skipif(
-    POLARS_VERSION_LT_137, reason="polars 1.37.0 introduced max_by and min_by"
+    POLARS_VERSION_LT_138, reason="polars 1.38.0 introduced max_by and min_by"
 )
 @pytest.mark.parametrize("agg", ["max_by", "min_by"])
 def test_rolling_max_min_by_unsupported(engine: pl.GPUEngine, agg: str) -> None:

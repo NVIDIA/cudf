@@ -15,6 +15,7 @@ import polars as pl
 # handlers at import time so the dispatch table is populated before any query
 # is lowered.
 import cudf_polars.streaming.distinct
+import cudf_polars.streaming.filter_hint
 import cudf_polars.streaming.groupby
 import cudf_polars.streaming.io
 import cudf_polars.streaming.join
@@ -357,7 +358,7 @@ def _(
     if partition_info[child].count > 1 and _contains_over([ir.mask.value]):
         # mask contains .over(...), collapse to single partition
         return _lower_ir_fallback(
-            ir.reconstruct([child]),
+            ir,
             rec,
             msg=(
                 "over(...) inside filter is not supported for multiple partitions; "

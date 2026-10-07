@@ -17,12 +17,20 @@ import java.io.RandomAccessFile;
 import java.net.URL;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.FileAlreadyExistsException;
+import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.PosixFilePermission;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -36,7 +44,6 @@ import java.util.zip.CRC32;
  * This class will load the native dependencies.
  */
 public class NativeDepsLoader {
-  private static final Logger log = LoggerFactory.getLogger(NativeDepsLoader.class);
   private static final int COPY_BUFFER_SIZE = 1024 * 1024;
   // Positional extraction uses one copy buffer per worker.
   private static final int MAX_CONCURRENT_CHUNK_READS =
@@ -98,6 +105,23 @@ public class NativeDepsLoader {
 
   private static boolean loaded = false;
 
+  /** Avoid requiring SLF4J when NativeDepUtil extracts a library directly from the JAR. */
+  private static final class Log {
+    private static final Logger INSTANCE = LoggerFactory.getLogger(NativeDepsLoader.class);
+
+    private static void info(String message, Object... args) {
+      INSTANCE.info(message, args);
+    }
+
+    private static void warn(String message, Object... args) {
+      INSTANCE.warn(message, args);
+    }
+
+    private static void error(String message, Throwable throwable) {
+      INSTANCE.error(message, throwable);
+    }
+  }
+
   /**
    * Load the native libraries needed for libcudf, if not loaded already.
    */
@@ -106,7 +130,7 @@ public class NativeDepsLoader {
       try {
         String[][] deps = loadOrder;
         if (!hasNativeResource("nvcomp")) {
-          log.info("Skipping optional native dependency {}", System.mapLibraryName("nvcomp"));
+          Log.info("Skipping optional native dependency {}", System.mapLibraryName("nvcomp"));
           deps = Arrays.stream(loadOrder)
               .filter(stage -> Arrays.stream(stage).noneMatch("nvcomp"::equals))
               .toArray(String[][]::new);
@@ -114,7 +138,7 @@ public class NativeDepsLoader {
         loadNativeDeps(deps, preserveDepsAfterLoad);
         loaded = true;
       } catch (Throwable t) {
-        log.error("Could not load cudf jni library...", t);
+        Log.error("Could not load cudf jni library...", t);
       }
     }
   }
@@ -237,7 +261,7 @@ public class NativeDepsLoader {
       loadNativeDeps(loadOrder, preserveDepsAfterLoad);
       return true;
     } catch (Throwable t) {
-      log.warn("Could not load optional native dependencies: " + t.getMessage());
+      Log.warn("Could not load optional native dependencies: " + t.getMessage());
       return false;
     }
   }
@@ -387,39 +411,120 @@ public class NativeDepsLoader {
     if (libNativeDir != null) {
       File loc = new File(libNativeDir, mappedName);
       if (libLogLoadTiming) {
-        log.info("Skipped JAR extraction for {} (using lib-native-dir={})",
+        Log.info("Skipped JAR extraction for {} (using lib-native-dir={})",
             mappedName, libNativeDir);
       }
       return loc;
-    }
-    String path = arch + "/" + os + "/" + mappedName;
-    URL chunkManifestResource = loader.getResource(path + CHUNK_MANIFEST_SUFFIX);
-    URL resource = chunkManifestResource == null ? loader.getResource(path) : null;
-    if (chunkManifestResource == null && resource == null) {
-      throw new FileNotFoundException("Could not locate native dependency " + path);
     }
     long t0 = System.currentTimeMillis();
     File loc = File.createTempFile(baseName, ".so");
     loc.deleteOnExit();
     boolean success = false;
     try {
-      if (chunkManifestResource == null) {
-        extractConventionalResource(resource, loc);
-      } else {
-        extractChunkedResource(chunkManifestResource, mappedName, loc);
-      }
+      extractNativeResource(os, arch, baseName, loc);
       success = true;
     } finally {
       if (!success && loc.exists() && !loc.delete()) {
-        log.warn("Could not delete partial native dependency {}", loc);
+        Log.warn("Could not delete partial native dependency {}", loc);
       }
     }
     if (libLogLoadTiming) {
       long elapsed = System.currentTimeMillis() - t0;
       long sizeMB = loc.length() / (1024L * 1024L);
-      log.info("Extracted {} in {} ms (size={} MB)", mappedName, elapsed, sizeMB);
+      Log.info("Extracted {} in {} ms (size={} MB)", mappedName, elapsed, sizeMB);
     }
     return loc;
+  }
+
+  /**
+   * Extract a native library resource without loading it. The library is searched for under
+   * {@code ${os.arch}/${os.name}/} in the class path using the class loader for this class.
+   * Both conventional resources and chunked resources are supported.
+   *
+   * <p>The destination is replaced only after the resource has been completely extracted and
+   * validated. If extraction fails, an existing destination is left unchanged.</p>
+   *
+   * @param depName the base name of the library; for example, use {@code "cudf"} for
+   *                {@code libcudf.so}
+   * @param destination the file where the reconstructed library will be written
+   * @return the absolute destination file
+   * @throws IOException on any error locating or extracting the library
+   */
+  public static File extractNativeDep(String depName, File destination) throws IOException {
+    String os = System.getProperty("os.name");
+    String arch = System.getProperty("os.arch");
+    return extractNativeDep(os, arch, depName, destination);
+  }
+
+  static File extractNativeDep(String os, String arch, String baseName, File destination)
+      throws IOException {
+    if (baseName == null || baseName.isEmpty()) {
+      throw new IllegalArgumentException("baseName must not be empty");
+    }
+    if (destination == null) {
+      throw new NullPointerException("destination");
+    }
+
+    Path destinationPath = destination.toPath().toAbsolutePath();
+    Path parent = destinationPath.getParent();
+    if (parent == null || !Files.isDirectory(parent)) {
+      throw new IOException("Native dependency destination directory does not exist: " + parent);
+    }
+
+    Set<PosixFilePermission> destinationPermissions = null;
+    try {
+      destinationPermissions = Files.getPosixFilePermissions(destinationPath);
+    } catch (NoSuchFileException | UnsupportedOperationException e) {
+      // There are no existing POSIX permissions to preserve.
+    }
+
+    Path temporaryPath = Files.createTempFile(parent,
+        "." + destinationPath.getFileName(), ".tmp");
+    boolean moved = false;
+    try {
+      extractNativeResource(os, arch, baseName, temporaryPath.toFile());
+      if (destinationPermissions != null) {
+        Files.setPosixFilePermissions(temporaryPath, destinationPermissions);
+      }
+      try {
+        Files.move(temporaryPath, destinationPath,
+            StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+      } catch (AtomicMoveNotSupportedException | FileAlreadyExistsException e) {
+        Files.move(temporaryPath, destinationPath, StandardCopyOption.REPLACE_EXISTING);
+      }
+      moved = true;
+      return destinationPath.toFile();
+    } finally {
+      if (!moved) {
+        try {
+          Files.deleteIfExists(temporaryPath);
+        } catch (IOException e) {
+          try {
+            Log.warn("Could not delete partial native dependency {}", temporaryPath, e);
+          } catch (LinkageError loggerUnavailable) {
+            // NativeDepUtil supports running with only the cuDF JAR on the class path.
+            System.err.println("Could not delete partial native dependency " + temporaryPath);
+            e.printStackTrace(System.err);
+          }
+        }
+      }
+    }
+  }
+
+  private static void extractNativeResource(
+      String os, String arch, String baseName, File destination) throws IOException {
+    String mappedName = System.mapLibraryName(baseName);
+    String path = arch + "/" + os + "/" + mappedName;
+    URL chunkManifestResource = loader.getResource(path + CHUNK_MANIFEST_SUFFIX);
+    URL resource = chunkManifestResource == null ? loader.getResource(path) : null;
+    if (chunkManifestResource == null && resource == null) {
+      throw new FileNotFoundException("Could not locate native dependency " + path);
+    }
+    if (chunkManifestResource == null) {
+      extractConventionalResource(resource, destination);
+    } else {
+      extractChunkedResource(chunkManifestResource, mappedName, destination);
+    }
   }
 
   private static void extractConventionalResource(URL resource, File loc) throws IOException {
@@ -727,7 +832,7 @@ public class NativeDepsLoader {
               n, t[EXTRACT_MS_IDX], t[LOAD_MS_IDX]);
         })
         .collect(Collectors.joining("\n"));
-    log.info("Native dependency load complete  total={} ms\n{}", totalMs, body);
+    Log.info("Native dependency load complete  total={} ms\n{}", totalMs, body);
   }
 
   public static boolean libraryLoaded() {

@@ -123,3 +123,19 @@ def test_get_stable_plan_id() -> None:
     # And uniqueness
     node3 = node.children[0]
     assert node3.get_stable_plan_id() != plan_id
+
+
+def test_all_pointwise_walks_descendants() -> None:
+    i64 = DataType(pl.Int64())
+    col = expr.Col(i64, "a")
+    lit = expr.Literal(i64, 1)
+    agg = expr.Agg(i64, "sum", None, ExecutionContext.FRAME, col)
+    pointwise_over_agg = expr.Cast(DataType(pl.Float64()), True, agg)  # noqa: FBT003
+
+    assert col.all_pointwise()
+    assert expr.BinOp(i64, plc.binaryop.BinaryOperator.ADD, col, lit).all_pointwise()
+    assert not agg.all_pointwise()
+    assert not expr.NamedExpr("a", agg).all_pointwise()
+    # Root is pointwise, descendant is not.
+    assert pointwise_over_agg.is_pointwise
+    assert not pointwise_over_agg.all_pointwise()

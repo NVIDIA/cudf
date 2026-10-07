@@ -4,7 +4,6 @@
  */
 
 #include "rolling.cuh"
-#include "rolling_udf.cuh"
 
 #include <cudf/detail/aggregation/aggregation.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
@@ -35,28 +34,16 @@ std::unique_ptr<column> rolling_window(column_view const& input,
   CUDF_EXPECTS(preceding_window.size() == input.size() && following_window.size() == input.size(),
                "preceding_window/following_window size must match input size");
 
-  if (agg.kind == aggregation::CUDA || agg.kind == aggregation::PTX) {
-    // TODO: In future, might need to clamp preceding/following to column boundaries.
-    return cudf::detail::rolling_window_udf(
-      input,
-      cudf::detail::variable_window_wrapper{preceding_window.begin<size_type>()},
-      cudf::detail::variable_window_wrapper{following_window.begin<size_type>()},
-      min_periods,
-      agg,
-      stream,
-      mr);
-  } else {
-    auto defaults_col =
-      cudf::is_dictionary(input.type()) ? dictionary_column_view(input).indices() : input;
-    return cudf::detail::rolling_window(input,
-                                        empty_like(defaults_col)->view(),
-                                        preceding_window.begin<size_type>(),
-                                        following_window.begin<size_type>(),
-                                        min_periods,
-                                        agg,
-                                        stream,
-                                        mr);
-  }
+  auto defaults_col =
+    cudf::is_dictionary(input.type()) ? dictionary_column_view(input).indices() : input;
+  return cudf::detail::rolling_window(input,
+                                      empty_like(defaults_col)->view(),
+                                      preceding_window.begin<size_type>(),
+                                      following_window.begin<size_type>(),
+                                      min_periods,
+                                      agg,
+                                      stream,
+                                      mr);
 }
 
 }  // namespace cudf::detail

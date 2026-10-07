@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -31,7 +31,7 @@ TEST_F(StringsFilterTest, Translate)
 
   std::vector<std::pair<cudf::char_utf8, cudf::char_utf8>> translate_table{
     make_entry("b", nullptr), make_entry("a", "A"), make_entry(" ", "_")};
-  cudf::strings::translate(view, translate_table, cudf::test::get_default_stream());
+  cudf::strings::translate(view, std::span{translate_table}, cudf::test::get_default_stream());
 }
 
 TEST_F(StringsFilterTest, Filter)

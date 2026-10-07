@@ -71,7 +71,7 @@ cpdef Table split(
         delimiter.c_obj.get()
     )
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef column_view c_strings_column = strings_column.view()
@@ -125,7 +125,7 @@ cpdef Table rsplit(
         delimiter.c_obj.get()
     )
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef column_view c_strings_column = strings_column.view()
@@ -174,7 +174,7 @@ cpdef Column split_record(
         delimiter.c_obj.get()
     )
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef column_view c_strings = strings.view()
@@ -225,7 +225,7 @@ cpdef Column rsplit_record(
         delimiter.c_obj.get()
     )
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef column_view c_strings = strings.view()
@@ -273,7 +273,7 @@ cpdef Table split_re(
     """
     cdef unique_ptr[table] c_result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef column_view c_input = input.view()
@@ -321,7 +321,7 @@ cpdef Table rsplit_re(
     """
     cdef unique_ptr[table] c_result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef column_view c_input = input.view()
@@ -368,7 +368,7 @@ cpdef Column split_record_re(
     """
     cdef unique_ptr[column] c_result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef column_view c_input = input.view()
@@ -412,7 +412,7 @@ cpdef Column rsplit_record_re(
     """
     cdef unique_ptr[column] c_result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef column_view c_input = input.view()
@@ -437,7 +437,7 @@ cpdef Column split_part(
         delimiter.c_obj.get()
     )
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef column_view c_input = input.view()

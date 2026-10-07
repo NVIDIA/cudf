@@ -52,9 +52,10 @@ REQUIRED:
     -o, --output-dir     Host parent directory. The script creates and writes
                          to <output-dir>/<classifier>/, which must not already
                          exist.
-    -c, --cuda-version   CUDA version to build for (e.g. "12.9" or "12.9.2").
-                         Must match --cuda-version of the static libcudf tree;
-                         determines the cuda12/cuda13 classifier.
+    -c, --cuda-version   CUDA toolkit version to build for (e.g. "12.9.2").
+                         Must match a rapidsai/ci-wheel image tag and the
+                         --cuda-version of the static libcudf tree. The major
+                         version determines the cuda12/cuda13 classifier.
 
 OPTIONS:
     -A, --cmake-cuda-architectures
@@ -68,8 +69,8 @@ OPTIONS:
     -h, --help           Show this help message.
 
 EXAMPLES:
-    build_cudf_java_jar.sh -l /tmp/libcudf-cuda12 -o /tmp/jars -c 12.9
-    build_cudf_java_jar.sh -l /tmp/libcudf-cuda13 -o /tmp/jars -c 13.3 -A 80
+    build_cudf_java_jar.sh -l /tmp/libcudf-cuda12 -o /tmp/jars -c 12.9.2
+    build_cudf_java_jar.sh -l /tmp/libcudf-cuda13 -o /tmp/jars -c 13.3.0 -A 80
     # writes:
     #   /tmp/jars/cuda12/cudf-<version>-cuda12.jar
     #   /tmp/jars/cuda12/cudf-<version>.pom
@@ -131,7 +132,6 @@ fi
 
 CLASSIFIER="$(cudf_java_maven_classifier "${CUDA_VERSION}")"
 IMAGE="$(cudf_java_ci_wheel_image "${CUDA_VERSION}")"
-CUDA_VERSION_FULL="$(cudf_java_normalize_cuda_version "${CUDA_VERSION}")"
 
 mkdir -p "${OUTPUT_DIR}"
 OUTPUT_DIR="$(cd "${OUTPUT_DIR}" && pwd)"
@@ -159,7 +159,7 @@ mkdir -p "${TARGET_SCRATCH}"
 
 echo "Packaging cuDF Java JAR"
 echo "  image:        ${IMAGE}"
-echo "  cuda version: ${CUDA_VERSION_FULL}"
+echo "  cuda version: ${CUDA_VERSION}"
 echo "  classifier:   ${CLASSIFIER}"
 echo "  parallel:     ${PARALLEL_LEVEL}"
 echo "  libcudf dir:  ${LIBCUDF_DIR}"
@@ -176,7 +176,7 @@ DOCKER_ARGS=(
   --volume "${CLASSIFIER_OUT}:/output"
   --volume "${TARGET_SCRATCH}:/repo/java/target"
   --workdir /repo
-  --env RAPIDS_CUDA_VERSION="${CUDA_VERSION_FULL}"
+  --env RAPIDS_CUDA_VERSION="${CUDA_VERSION}"
   --env PARALLEL_LEVEL="${PARALLEL_LEVEL}"
   --env HOST_UID="$(id -u)"
   --env HOST_GID="$(id -g)"

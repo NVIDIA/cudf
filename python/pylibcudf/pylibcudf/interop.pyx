@@ -70,7 +70,7 @@ cpdef Table from_dlpack(
         raise ValueError("PyCapsule object contained a NULL pointer")
     PyCapsule_SetName(managed_tensor, "used_dltensor")
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     # Note: A copy is always performed when converting the dlpack
@@ -118,7 +118,7 @@ cpdef object to_dlpack(Table input, object stream: CudaStreamLike | None = None,
             )
     cdef DLManagedTensor *dlpack_tensor
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     c_input = input.view()

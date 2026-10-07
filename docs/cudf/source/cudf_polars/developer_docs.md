@@ -2,7 +2,7 @@
 
 You will need:
 
-1. Rust development environment. If you use the rapids [combined
+1. Rust development environment. If you use the [combined
    devcontainer](https://github.com/rapidsai/devcontainers/), add
    `"./features/src/rust": {"version": "latest", "profile": "default"},` to your
    preferred configuration. Or else, use
@@ -625,25 +625,21 @@ another `nvtx` range (e.g. `Scan.do_evaluate`, `GroupBy.do_evaluate`, etc.).
 These provide a higher-level grouping over the lower-level libcudf calls (e.g.
 `read_chunk`, `aggregate`).
 
-Finally, if using [rapidsmpf](https://docs.rapids.ai/api/rapidsmpf/nightly/)
-for shuffling, the methods inserting and extracting partitions to shuffle are
-annotated with nvtx ranges.
-
 # Query Plans
 
-The module `cudf_polars.experimental.explain` contains functions for dumping
+The module `cudf_polars.streaming.explain` contains functions for dumping
 the query for a given `LazyFrame`.
 
 
 ## Structured Output
 
-`cudf_polars.experimental.explain.serialize_query` can be used to output
+`cudf_polars.streaming.explain.serialize_query` can be used to output
 the query plan in a structured format.
 
 ```python
 >>> import dataclasses
 >>> import polars as pl
->>> from cudf_polars.experimental.explain import serialize_query
+>>> from cudf_polars.streaming.explain import serialize_query
 >>> q = pl.LazyFrame({"a": ['a', 'b', 'a'], "b": [1, 2, 3]}).group_by("a").agg(pl.len())
 >>> dataclasses.asdict(serialize_query(q, engine=pl.GPUEngine()))
 {'roots': ['526964741'],

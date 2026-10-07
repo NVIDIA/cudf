@@ -265,6 +265,12 @@ def test_expr_is_in_empty_list(engine: pl.GPUEngine):
     assert_gpu_result_equal(q, engine=engine)
 
 
+def test_expr_is_in_empty_list_with_nulls(engine: pl.GPUEngine):
+    ldf = pl.LazyFrame({"a": [1, None, 3]})
+    q = ldf.select(pl.col("a").is_in([]))
+    assert_gpu_result_equal(q, engine=engine)
+
+
 @pytest.mark.parametrize(
     "needles,haystack",
     [
@@ -440,18 +446,3 @@ def test_boolean_is_sorted(
     )
 
     assert_gpu_result_equal(q, engine=engine)
-
-
-@pytest.mark.parametrize(
-    "expr",
-    [
-        pl.sum_horizontal("a", "b"),
-        pl.mean_horizontal("a", "b"),
-        pl.min_horizontal("a", "b"),
-    ],
-    ids=["sum_horizontal", "mean_horizontal", "min_horizontal"],
-)
-def test_numeric_horizontal_unsupported(engine: pl.GPUEngine, expr: pl.Expr) -> None:
-    df = pl.LazyFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
-    q = df.select(expr)
-    assert_ir_translation_raises(q, engine, NotImplementedError)

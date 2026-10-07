@@ -30,7 +30,7 @@ void bench_transpose(nvbench::state& state)
   auto input       = input_table.view();
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
 
   // Collect memory statistics.
   auto const bytes_read = static_cast<uint64_t>(input.num_columns()) * input.num_rows() *

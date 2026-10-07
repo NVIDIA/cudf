@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,7 +12,9 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
 
-#include <rmm/device_buffer.hpp>
+#include <rmm/device_uvector.hpp>
+
+#include <cuda/buffer>
 
 #include <nvbench/nvbench.cuh>
 
@@ -178,12 +180,16 @@ void type_dispatcher_benchmark(nvbench::state& state)
   cudf::mutable_table_view source_table{source_columns};
 
   // For no dispatching
-  std::vector<rmm::device_buffer> h_vec(n_cols);
+  std::vector<cuda::device_buffer<TypeParam>> h_vec;
+  h_vec.reserve(n_cols);
+  for (int i = 0; i < n_cols; ++i) {
+    h_vec.emplace_back(cudf::get_default_stream(),
+                       cudf::get_current_device_resource_ref(),
+                       source_size,
+                       cuda::no_init);
+  }
   std::vector<TypeParam*> h_vec_p(n_cols);
-  std::transform(h_vec.begin(), h_vec.end(), h_vec_p.begin(), [source_size](auto& col) {
-    col.resize(source_size * sizeof(TypeParam), cudf::get_default_stream());
-    return static_cast<TypeParam*>(col.data());
-  });
+  std::transform(h_vec.begin(), h_vec.end(), h_vec_p.begin(), [](auto& col) { return col.data(); });
   rmm::device_uvector<TypeParam*> d_vec(n_cols, cudf::get_default_stream());
 
   if (dispatching_type == NO_DISPATCHING) {
@@ -192,7 +198,7 @@ void type_dispatcher_benchmark(nvbench::state& state)
   }
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
 
   auto const data_size = source_size * n_cols * 2 * sizeof(TypeParam);
   state.add_global_memory_reads<nvbench::int8_t>(data_size);

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,8 +8,10 @@
 
 #include <cudf/reshape.hpp>
 #include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 
 #include <nvbench/nvbench.cuh>
@@ -28,11 +30,14 @@ static void bench_table_to_array(nvbench::state& state)
   auto input_view = input_table->view();
   auto stream     = cudf::get_default_stream();
 
-  rmm::device_buffer output(num_rows * num_cols * sizeof(int32_t), stream);
+  cuda::device_buffer<std::byte> output(stream,
+                                        cudf::get_current_device_resource_ref(),
+                                        num_rows * num_cols * sizeof(int32_t),
+                                        cuda::no_init);
   auto span = cudf::device_span<cuda::std::byte>(reinterpret_cast<cuda::std::byte*>(output.data()),
                                                  output.size());
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   state.add_global_memory_reads<int32_t>(num_rows * num_cols);   // all bytes are read
   state.add_global_memory_writes<int32_t>(num_rows * num_cols);  // all bytes are written
 

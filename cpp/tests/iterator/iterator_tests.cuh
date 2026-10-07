@@ -18,6 +18,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_reduce.cuh>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/std/iterator>
 #include <thrust/equal.h>
@@ -51,10 +52,13 @@ struct IteratorTest : public cudf::test::BaseFixture {
                               num_items,
                               cuda::minimum{},
                               init,
-                              cudf::get_default_stream().value());
+                              cudf::get_default_stream().get());
 
     // Allocate temporary storage
-    rmm::device_buffer d_temp_storage(temp_storage_bytes, cudf::get_default_stream());
+    cuda::device_buffer<std::byte> d_temp_storage(cudf::get_default_stream(),
+                                                  cudf::get_current_device_resource_ref(),
+                                                  temp_storage_bytes,
+                                                  cuda::no_init);
 
     // Run reduction
     cub::DeviceReduce::Reduce(d_temp_storage.data(),
@@ -64,7 +68,7 @@ struct IteratorTest : public cudf::test::BaseFixture {
                               num_items,
                               cuda::minimum{},
                               init,
-                              cudf::get_default_stream().value());
+                              cudf::get_default_stream().get());
 
     evaluate(expected, dev_result, "cub test");
   }

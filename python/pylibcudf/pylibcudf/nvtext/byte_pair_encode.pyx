@@ -40,7 +40,7 @@ cdef class BPEMergePairs:
     ):
         cdef column_view c_pairs = merge_pairs.view()
         cdef Stream _stream = _get_stream(stream)
-        cdef cudaStream_t _cs = _stream.view().value()
+        cdef cudaStream_t _cs = _stream.view().get()
         mr = _get_memory_resource(mr)
         with nogil:
             self.c_obj = move(
@@ -79,12 +79,12 @@ cpdef Column byte_pair_encoding(
     """
     cdef unique_ptr[column] c_result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     if separator is None:
         separator = Scalar.from_libcudf(
-            cpp_make_string_scalar(" ".encode(), _stream.view().value(), mr.get_mr())
+            cpp_make_string_scalar(" ".encode(), _stream.view().get(), mr.get_mr())
         )
 
     cdef column_view c_input = input.view()

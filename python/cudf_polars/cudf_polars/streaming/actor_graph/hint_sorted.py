@@ -161,7 +161,12 @@ async def hint_sorted_actor(
 ) -> None:
     """Forward data and attach safe ordering metadata for ``hint_sorted``."""
     async with shutdown_on_error(
-        context, ch_in, ch_replay, ch_out, trace_ir=ir, ir_context=ir_context
+        context,
+        chs_in=(ch_in,),
+        chs_out=(ch_out,),
+        chs_aux=(ch_replay,),
+        trace_ir=ir,
+        ir_context=ir_context,
     ):
         metadata = await recv_metadata(ch_in, context)
         metadata, ch_forward = await extract_hint_sorted_metadata(

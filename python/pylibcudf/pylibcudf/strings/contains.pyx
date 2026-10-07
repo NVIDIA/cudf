@@ -46,7 +46,7 @@ cpdef Column contains_re(
 
     cdef unique_ptr[column] result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     if _stream is None:
         _stream = _get_stream(None)
     mr = _get_memory_resource(mr)
@@ -88,7 +88,7 @@ cpdef Column count_re(
 
     cdef unique_ptr[column] result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
     cdef column_view c_input = input.view()
     with nogil:
@@ -129,7 +129,7 @@ cpdef Column matches_re(
 
     cdef unique_ptr[column] result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
     cdef column_view c_input = input.view()
     with nogil:
@@ -173,7 +173,7 @@ cpdef Column like(
     """
     cdef unique_ptr[column] result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
     cdef column_view c_input
 

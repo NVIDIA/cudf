@@ -37,13 +37,13 @@ namespace dictionary::detail {
  * @param column The column to dictionary encode.
  * @param indices_type The integer type to use for the indices.
  * @param stream CUDA stream used for device memory operations and kernel launches.
- * @param mr Device memory resource used to allocate the returned column's device memory.
+ * @param mr Memory resources used for temporary allocations and the returned column.
  * @return Returns a dictionary column.
  */
 std::unique_ptr<column> encode(column_view const& column,
                                data_type indices_type,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr);
+                               memory_resources mr);
 
 /**
  * @brief Create a column by gathering the keys from the provided
@@ -57,12 +57,12 @@ std::unique_ptr<column> encode(column_view const& column,
  *
  * @param dictionary_column Existing dictionary column.
  * @param stream CUDA stream used for device memory operations and kernel launches.
- * @param mr Device memory resource used to allocate the returned column's device memory.
+ * @param mr Memory resources used for temporary allocations and the returned column.
  * @return New column with type matching the dictionary_column's keys.
  */
 std::unique_ptr<column> decode(dictionary_column_view const& dictionary_column,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr);
+                               memory_resources mr);
 
 /**
  * @brief Return minimal integer type for the given number of elements.

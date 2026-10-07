@@ -211,16 +211,13 @@ void tdigest_simple_aggregation(Func op,
 
     // create a tdigest that has far fewer values in it than the delta value. this should result
     // in every value remaining uncompressed
-    fixed_width_column_wrapper<T> values(
-      {126, 15, 1, 99, 67}, rmm::cuda_stream_view{stream}, temporary_resources);
+    fixed_width_column_wrapper<T> values({126, 15, 1, 99, 67}, stream, temporary_resources);
     int const delta = 1000;
     auto result     = cudf::type_dispatcher(
       static_cast<column_view>(values).type(), tdigest_gen{}, op, values, delta);
 
-    fixed_width_column_wrapper<T> raw_mean(
-      {1, 15, 67, 99, 126}, rmm::cuda_stream_view{stream}, temporary_resources);
-    fixed_width_column_wrapper<double> weight(
-      {1, 1, 1, 1, 1}, rmm::cuda_stream_view{stream}, temporary_resources);
+    fixed_width_column_wrapper<T> raw_mean({1, 15, 67, 99, 126}, stream, temporary_resources);
+    fixed_width_column_wrapper<double> weight({1, 1, 1, 1, 1}, stream, temporary_resources);
     auto mean        = cudf::cast(raw_mean, data_type{type_id::FLOAT64}, stream, temporary_mr);
     double const min = 1;
     double const max = 126;
@@ -253,16 +250,14 @@ void tdigest_simple_with_nulls_aggregation(
     // in every value remaining uncompressed
     fixed_width_column_wrapper<T> values({122, 15, 1, 99, 67, 101, 100, 84, 44, 2},
                                          {1, 0, 1, 0, 1, 0, 1, 0, 1, 0},
-                                         rmm::cuda_stream_view{stream},
+                                         stream,
                                          temporary_resources);
     int const delta = 1000;
     auto result     = cudf::type_dispatcher(
       static_cast<column_view>(values).type(), tdigest_gen{}, op, values, delta);
 
-    fixed_width_column_wrapper<T> raw_mean(
-      {1, 44, 67, 100, 122}, rmm::cuda_stream_view{stream}, temporary_resources);
-    fixed_width_column_wrapper<double> weight(
-      {1, 1, 1, 1, 1}, rmm::cuda_stream_view{stream}, temporary_resources);
+    fixed_width_column_wrapper<T> raw_mean({1, 44, 67, 100, 122}, stream, temporary_resources);
+    fixed_width_column_wrapper<double> weight({1, 1, 1, 1, 1}, stream, temporary_resources);
     auto mean        = cudf::cast(raw_mean, data_type{type_id::FLOAT64}, stream, temporary_mr);
     double const min = 1;
     double const max = 122;
@@ -295,7 +290,7 @@ void tdigest_simple_all_nulls_aggregation(
     // in every value remaining uncompressed
     fixed_width_column_wrapper<T> values({122, 15, 1, 99, 67, 101, 100, 84, 44, 2},
                                          {0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-                                         rmm::cuda_stream_view{stream},
+                                         stream,
                                          temporary_resources);
     int const delta = 1000;
     auto result     = cudf::type_dispatcher(

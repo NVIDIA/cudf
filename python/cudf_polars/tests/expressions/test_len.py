@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -38,4 +38,14 @@ def test_col_len(engine: pl.GPUEngine, data):
         (pl.col("a").len() * 2).alias("l2"),
         pl.col("b").len().alias("l3"),
     )
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_concat_len(engine: pl.GPUEngine):
+    # polars rewrites concat(...).select(len()) into
+    # col("len").cast(UInt128).sum().cast(IDX_DTYPE); see
+    # cudf_polars.dsl.translate._is_len_sum_uint128_node.
+    df1 = pl.LazyFrame({"a": [1, 2, 3]})
+    df2 = pl.LazyFrame({"a": [4, 5, 6, 7]})
+    q = pl.concat([df1, df2]).select(pl.len())
     assert_gpu_result_equal(q, engine=engine)

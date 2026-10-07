@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import cupy as cp
@@ -48,14 +48,14 @@ def test_buffer_from_cuda_iface_contiguous(data, expect_success, arr_len):
         lambda arr_len: cp.arange(arr_len**2).reshape(arr_len, arr_len),
     ],
 )
-@pytest.mark.parametrize("dtype", ["uint8", "int8", "float32", "int32"])
-def test_buffer_from_cuda_iface_dtype(data, dtype, arr_len):
+def test_buffer_from_cuda_iface_dtype(data, arr_len):
     data = data(arr_len)
-    data = data.astype(dtype)
-    buf = as_buffer(data)
-    got = cp.array(buf).reshape(-1).view("uint8")
-    expect = data.reshape(-1).view("uint8")
-    assert (expect == got).all()
+    for dtype in ("uint8", "int8", "float32", "int32"):
+        typed_data = data.astype(dtype)
+        buf = as_buffer(typed_data)
+        got = cp.array(buf).reshape(-1).view("uint8")
+        expect = typed_data.reshape(-1).view("uint8")
+        assert (expect == got).all()
 
 
 def test_buffer_creation_from_any(arr_len):

@@ -24,7 +24,9 @@
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
-#include <cub/cub.cuh>
+#include <cub/device/device_segmented_sort.cuh>
+#include <cub/warp/warp_reduce.cuh>
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/functional>
 #include <cuda/std/iterator>
@@ -307,11 +309,12 @@ void segmented_sort(uint32_t const* input,
                     int64_t const* offsets,
                     cuda::stream_ref stream)
 {
-  rmm::device_buffer temp;
+  cuda::device_buffer<std::byte> temp{stream, cudf::get_current_device_resource_ref()};
   std::size_t temp_bytes = 0;
   cub::DeviceSegmentedSort::SortKeys(
     temp.data(), temp_bytes, input, output, items, segments, offsets, offsets + 1, stream.get());
-  temp = rmm::device_buffer(temp_bytes, stream);
+  temp = cuda::device_buffer<std::byte>(
+    stream, cudf::get_current_device_resource_ref(), temp_bytes, cuda::no_init);
   cub::DeviceSegmentedSort::SortKeys(
     temp.data(), temp_bytes, input, output, items, segments, offsets, offsets + 1, stream.get());
 }
@@ -339,8 +342,12 @@ std::pair<rmm::device_uvector<uint32_t>, rmm::device_uvector<int64_t>> hash_subs
   count_substrings_kernel<<<num_blocks, block_size, 0, stream.get()>>>(
     *d_strings, width, offsets.data());
   CUDF_CUDA_TRY(cudaGetLastError());
-  auto const total_hashes =
-    cudf::detail::sizes_to_offsets(offsets.begin(), offsets.end(), offsets.begin(), 0, stream);
+  auto const total_hashes = cudf::detail::sizes_to_offsets(offsets.begin(),
+                                                           offsets.end(),
+                                                           offsets.begin(),
+                                                           0,
+                                                           stream,
+                                                           cudf::get_current_device_resource_ref());
 
   // hash substrings
   rmm::device_uvector<uint32_t> hashes(total_hashes, stream);

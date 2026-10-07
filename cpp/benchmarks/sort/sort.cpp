@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -29,7 +29,7 @@ static void bench_sort(nvbench::state& state, nvbench::type_list<DataType>)
     create_random_table(cycle_dtypes({data_type}, num_cols), row_count{num_rows}, profile);
   cudf::table_view input{*input_table};
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   state.add_global_memory_reads<nvbench::int8_t>(input_table->alloc_size());
   state.add_global_memory_writes<nvbench::int32_t>(num_rows);
   auto const mem_stats_logger = cudf::memory_stats_logger();

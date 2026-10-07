@@ -17,7 +17,7 @@
 
 #include <rmm/exec_policy.hpp>
 
-#include <thrust/random.h>
+#include <cuda/std/random>
 #include <thrust/shuffle.h>
 
 #include <nvbench/nvbench.cuh>
@@ -124,7 +124,7 @@ std::unique_ptr<cudf::column> generate_int32_keys(cudf::size_type num_rows, cudf
   thrust::shuffle(rmm::exec_policy_nosync(stream),
                   result->mutable_view().begin<int32_t>(),
                   result->mutable_view().end<int32_t>(),
-                  thrust::default_random_engine{12345});
+                  cuda::std::philox4x32{12345});
 
   return result;
 }
@@ -172,7 +172,7 @@ void nvbench_join_on_int32(nvbench::state& state,
   state.add_element_count(input_size, "input_size");
   state.add_global_memory_reads<nvbench::int8_t>(input_size);
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
 
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
     if constexpr (Algo == join_algo::HASH) {

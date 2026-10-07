@@ -506,9 +506,9 @@ class GroupedWindow(Expr):
             # order_by expressions require us order each group
             lg = op.local_grouper
             assert isinstance(lg, plc.groupby.GroupBy)
-            _, rank_tables = lg.scan(rank_requests)
+            _, rank_tables = lg.scan(rank_requests, stream=df.stream)
         else:
-            _, rank_tables = grouper.scan(rank_requests)
+            _, rank_tables = grouper.scan(rank_requests, stream=df.stream)
         return rank_out_names, rank_out_dtypes, rank_tables
 
     @_apply_unary_op.register
@@ -538,6 +538,7 @@ class GroupedWindow(Expr):
         _, filled_tbl = local_grouper.replace_nulls(
             vals_tbl,
             [op.policy] * len(plc_cols),
+            stream=df.stream,
         )
 
         tables = [plc.Table([column]) for column in filled_tbl.columns()]
@@ -598,14 +599,14 @@ class GroupedWindow(Expr):
 
         local_grouper = op.local_grouper
         assert isinstance(local_grouper, plc.groupby.GroupBy)
-        _, tables = local_grouper.scan(requests)
+        _, tables = local_grouper.scan(requests, stream=df.stream)
 
         result_tables: list[plc.Table] = []
         for tbl, policy in zip(tables, fill_policies, strict=True):
             if policy is None:
                 result_tables.append(tbl)
             else:
-                _, filled = local_grouper.replace_nulls(tbl, [policy])
+                _, filled = local_grouper.replace_nulls(tbl, [policy], stream=df.stream)
                 result_tables.append(filled)
         return out_names, out_dtypes, result_tables
 
@@ -1275,7 +1276,7 @@ class GroupedWindow(Expr):
             other_scalars, df, by_cols=by_cols
         )
 
-        group_keys_tbl, value_tables = grouper.aggregate(gb_requests)
+        group_keys_tbl, value_tables = grouper.aggregate(gb_requests, stream=df.stream)
         broadcasted_cols = self._broadcast_agg_results(
             by_tbl,
             group_keys_tbl,
@@ -1308,7 +1309,9 @@ class GroupedWindow(Expr):
                 order_sensitive, df, order_index=order_index, by_cols=by_cols
             )
 
-            group_keys_tbl_local, value_tables_local = local.aggregate(gb_requests)
+            group_keys_tbl_local, value_tables_local = local.aggregate(
+                gb_requests, stream=df.stream
+            )
             broadcasted_cols.extend(
                 self._broadcast_agg_results(
                     by_tbl,

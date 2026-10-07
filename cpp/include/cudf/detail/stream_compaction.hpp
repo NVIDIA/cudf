@@ -48,6 +48,9 @@ enum class mask_type : bool {
 /**
  * @brief Filters @p input using @p boolean_mask.
  *
+ * @note An empty mask returns an empty table for @p mask_kind `RETENTION` and a copy of @p input
+ * for @p mask_kind `DELETION`.
+ *
  * @param input The input table to filter
  * @param boolean_mask A nullable BOOL8 column used to filter @p input
  * @param mask_kind Specifies how the boolean mask is treated (retentions or deletions)

@@ -16,6 +16,7 @@
 #include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/structs/structs_column_view.hpp>
 #include <cudf/table/table_view.hpp>
@@ -24,6 +25,8 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/bit>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/functional>
@@ -95,11 +98,12 @@ struct src_buf_info {
 
   cudf::type_id type;
   detail::input_offsetalator offsets{};
-  bool is_offsets{false};    // offsets if I am an offset buffer
-  int offset_stack_pos;      // position in the offset stack buffer
-  int parent_offsets_index;  // immediate parent that has offsets, or -1 if none
-  bool is_validity;          // if I am a validity buffer
-  size_type column_offset;   // offset in the case of a sliced column
+  bool is_offsets{false};             // offsets if I am an offset buffer
+  int offset_stack_pos;               // position in the offset stack buffer
+  int parent_offsets_index;           // immediate parent that has offsets, or -1 if none
+  bool is_validity;                   // if I am a validity buffer
+  size_type column_offset;            // offset in the case of a sliced column
+  size_type full_copy_row_count{-1};  // rows I copy in full, or -1 if I follow the splits
 };
 
 /**
@@ -274,7 +278,8 @@ __device__ void copy_buffer(uint8_t* __restrict__ dst,
         // considered during the copy step.
         std::size_t const max_row    = (num_bytes * 8);
         std::size_t const slack_bits = max_row > num_rows ? max_row - num_rows : 0;
-        auto const slack_mask        = set_most_significant_bits(slack_bits);
+        auto const slack_mask        = cuda::bitmask<bitmask_type>(
+          detail::size_in_bits<bitmask_type>() - slack_bits, slack_bits);
         if (slack_mask > 0) {
           uint32_t const last_word = reinterpret_cast<uint32_t*>(dst + (num_bytes - 4))[0];
           block_valid_count -= __popc(last_word & slack_mask);
@@ -493,6 +498,7 @@ struct buf_info_functor {
                                                  int parent_offset_index,
                                                  int offset_depth,
                                                  cuda::stream_ref)
+    requires(cudf::is_fixed_width<T>())
   {
     if (col.nullable()) {
       std::tie(current, offset_stack_pos) =
@@ -506,9 +512,11 @@ struct buf_info_functor {
     return {current + 1, offset_stack_pos + offset_depth};
   }
 
-  template <typename T, typename... Args>
-  std::pair<src_buf_info*, size_type> operator()(Args&&...)
-    requires(std::is_same_v<T, cudf::dictionary32>)
+  // loud fail on unsupported types
+  template <typename T>
+  std::pair<src_buf_info*, size_type> operator()(
+    column_view const&, src_buf_info*, int, int, int, cuda::stream_ref)
+    requires(not cudf::is_fixed_width<T>())
   {
     CUDF_FAIL("Unsupported type");
   }
@@ -677,6 +685,63 @@ std::pair<src_buf_info*, size_type> buf_info_functor::operator()<cudf::struct_vi
                                offset_stack_pos,
                                parent_offset_index,
                                offset_depth);
+}
+
+template <>
+std::pair<src_buf_info*, size_type> buf_info_functor::operator()<cudf::dictionary32>(
+  column_view const& col,
+  src_buf_info* current,
+  int offset_stack_pos,
+  int parent_offset_index,
+  int offset_depth,
+  cuda::stream_ref stream)
+{
+  if (col.nullable()) {
+    std::tie(current, offset_stack_pos) =
+      add_null_buffer(col, current, offset_stack_pos, parent_offset_index, offset_depth);
+  }
+
+  // like structs, dictionary columns hold no data of their own
+  *current =
+    src_buf_info(type_id::DICTIONARY32, offset_stack_pos, parent_offset_index, false, col.offset());
+  current++;
+  offset_stack_pos += offset_depth;
+
+  // an empty dictionary column may have no children at all
+  if (col.is_empty() && col.num_children() == 0) { return {current, offset_stack_pos}; }
+  CUDF_EXPECTS(col.num_children() == 2, "Encountered malformed dictionary column");
+
+  // the indices child carries the parent's row range, but not its validity
+  dictionary_column_view const dcv(col);
+  std::vector<column_view> const indices{column_view{dcv.indices().type(),
+                                                     col.size(),
+                                                     dcv.indices().head(),
+                                                     dcv.indices().null_mask(),
+                                                     dcv.indices().null_count(),
+                                                     col.offset()}};
+  std::tie(current, offset_stack_pos) = setup_source_buf_info(indices.begin(),
+                                                              indices.end(),
+                                                              head,
+                                                              current,
+                                                              stream,
+                                                              offset_stack_pos,
+                                                              parent_offset_index,
+                                                              offset_depth);
+
+  // the keys child is not indexed by the split's row range: every partition gets all of the keys,
+  // so it becomes the root of its own row range
+  std::vector<column_view> const keys{dcv.keys()};
+  auto const keys_begin               = current;
+  std::tie(current, offset_stack_pos) = setup_source_buf_info(
+    keys.begin(), keys.end(), head, current, stream, offset_stack_pos, -1, offset_depth);
+
+  // mark the whole keys subtree, including any offsets or chars buffers under it
+  std::for_each(keys_begin, current, [row_count = keys.front().size()](src_buf_info& info) {
+    // only unmarked buffers belong to this level; a nested dictionary marked its own keys
+    if (info.full_copy_row_count < 0) { info.full_copy_row_count = row_count; }
+  });
+
+  return {current, offset_stack_pos};
 }
 
 template <typename InputIter>
@@ -894,6 +959,13 @@ struct split_key_functor {
   int operator() __device__(int buf_index) const { return buf_index / num_src_bufs; }
 };
 
+#if CUDART_VERSION < 13000
+struct wide_split_key_functor {
+  int const num_src_bufs;
+  int operator() __device__(std::ptrdiff_t buf_index) const { return buf_index / num_src_bufs; }
+};
+#endif  // CUDART_VERSION < 13000
+
 /**
  * @brief Writes values to the dst_offset field of the dst_buf_info struct
  */
@@ -996,6 +1068,7 @@ struct packed_split_indices_and_src_buf_info {
       // host-side
       h_indices_and_source_info{
         detail::make_host_vector<uint8_t>(indices_size + src_buf_info_size, stream)},
+      d_indices_and_source_info{stream, temp_mr},
       h_indices{reinterpret_cast<int64_t*>(h_indices_and_source_info.data())},
       h_src_buf_info{
         reinterpret_cast<src_buf_info*>(h_indices_and_source_info.data() + indices_size)}
@@ -1013,8 +1086,8 @@ struct packed_split_indices_and_src_buf_info {
     offset_stack_size           = offset_stack_partition_size * num_partitions * sizeof(size_type);
     // device-side
     // gpu-only : stack space needed for nested list offset calculation
-    d_indices_and_source_info =
-      rmm::device_buffer(indices_size + src_buf_info_size + offset_stack_size, stream, temp_mr);
+    d_indices_and_source_info = cuda::device_buffer<std::byte>{
+      stream, temp_mr, indices_size + src_buf_info_size + offset_stack_size, cuda::no_init};
     d_indices      = reinterpret_cast<int64_t*>(d_indices_and_source_info.data());
     d_src_buf_info = reinterpret_cast<src_buf_info*>(
       reinterpret_cast<uint8_t*>(d_indices_and_source_info.data()) + indices_size);
@@ -1023,7 +1096,7 @@ struct packed_split_indices_and_src_buf_info {
                                    indices_size + src_buf_info_size);
 
     detail::cuda_memcpy_async<uint8_t>(
-      device_span<uint8_t>{static_cast<uint8_t*>(d_indices_and_source_info.data()),
+      device_span<uint8_t>{reinterpret_cast<uint8_t*>(d_indices_and_source_info.data()),
                            h_indices_and_source_info.size()},
       h_indices_and_source_info,
       stream);
@@ -1034,7 +1107,7 @@ struct packed_split_indices_and_src_buf_info {
   std::size_t offset_stack_size;
 
   detail::host_vector<uint8_t> h_indices_and_source_info;
-  rmm::device_buffer d_indices_and_source_info;
+  cuda::device_buffer<std::byte> d_indices_and_source_info;
 
   int64_t* const h_indices;
   src_buf_info* const h_src_buf_info;
@@ -1110,7 +1183,7 @@ struct packed_src_and_dst_pointers {
       h_src_bufs{reinterpret_cast<uint8_t const**>(h_src_and_dst_buffers.data())},
       h_dst_bufs{reinterpret_cast<uint8_t**>(h_src_and_dst_buffers.data() + src_bufs_size)},
       // device-side
-      d_src_and_dst_buffers{h_src_and_dst_buffers.size(), stream, temp_mr},
+      d_src_and_dst_buffers{stream, temp_mr, h_src_and_dst_buffers.size(), cuda::no_init},
       d_src_bufs{reinterpret_cast<uint8_t const**>(d_src_and_dst_buffers.data())},
       d_dst_bufs{reinterpret_cast<uint8_t**>(
         reinterpret_cast<uint8_t*>(d_src_and_dst_buffers.data()) + src_bufs_size)}
@@ -1122,7 +1195,7 @@ struct packed_src_and_dst_pointers {
   void copy_to_device()
   {
     detail::cuda_memcpy_async<uint8_t>(
-      device_span<uint8_t>{static_cast<uint8_t*>(d_src_and_dst_buffers.data()),
+      device_span<uint8_t>{reinterpret_cast<uint8_t*>(d_src_and_dst_buffers.data()),
                            d_src_and_dst_buffers.size()},
       h_src_and_dst_buffers,
       stream);
@@ -1136,7 +1209,7 @@ struct packed_src_and_dst_pointers {
   uint8_t const** const h_src_bufs;
   uint8_t** const h_dst_bufs;
 
-  rmm::device_buffer d_src_and_dst_buffers;
+  cuda::device_buffer<std::byte> d_src_and_dst_buffers;
   uint8_t const** const d_src_bufs;
   uint8_t** const d_dst_bufs;
 };
@@ -1250,8 +1323,11 @@ std::unique_ptr<packed_partition_buf_size_and_dst_buf_info> compute_splits(
         parent_offsets_index       = d_src_buf_info[parent_offsets_index].parent_offsets_index;
       }
       // make sure to include the -column- offset on the root column in our calculation.
-      int64_t row_start = d_indices[split_index] + root_column_offset;
-      int64_t row_end   = d_indices[split_index + 1] + root_column_offset;
+      // buffers under a dictionary's keys child are copied in full for every partition.
+      auto const full_copy = src_info.full_copy_row_count >= 0;
+      int64_t row_start    = (full_copy ? 0 : d_indices[split_index]) + root_column_offset;
+      int64_t row_end = (full_copy ? src_info.full_copy_row_count : d_indices[split_index + 1]) +
+                        root_column_offset;
       while (stack_size > 0) {
         stack_size--;
         auto& d_info = d_src_buf_info[offset_stack[stack_size]];
@@ -1314,8 +1390,17 @@ std::unique_ptr<packed_partition_buf_size_and_dst_buf_info> compute_splits(
 
   // compute start offset for each output buffer for each split
   {
+#if CUDART_VERSION < 13000
+    // Work around a CUDA 12.9 ptxas scan-by-key miscompilation on SM120. Both the counting iterator
+    // and the functor argument must use ptrdiff_t.
+    // https://github.com/NVIDIA/cccl/issues/11167
+    auto const keys =
+      cuda::transform_iterator(cuda::counting_iterator<std::ptrdiff_t>{0},
+                               wide_split_key_functor{static_cast<int>(num_src_bufs)});
+#else
     auto const keys = cudf::detail::make_counting_transform_iterator(
       0, split_key_functor{static_cast<int>(num_src_bufs)});
+#endif  // CUDART_VERSION < 13000
     auto values =
       cudf::detail::make_counting_transform_iterator(0, buf_size_functor{d_dst_buf_info});
 

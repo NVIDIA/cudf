@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -59,7 +59,7 @@ void groupby_max_helper(nvbench::state& state,
   }
 
   auto const mem_stats_logger = cudf::memory_stats_logger();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     auto gb_obj       = cudf::groupby::groupby(cudf::table_view({keys_view, keys_view, keys_view}));
     auto const result = gb_obj.aggregate(requests);
@@ -89,13 +89,11 @@ void bench_groupby_max_cardinality(nvbench::state& state, nvbench::type_list<Typ
   auto const num_aggregations = state.get_int64("num_aggregations");
   auto const is_streaming     = state.get_string("api") == "streaming";
 
-  // TODO: streaming groupby reuses the cudf hash element_aggregator, which has
-  // no decimal128 MIN/MAX/SUM specialization (no native 128-bit atomics).  The
-  // stateless `normal` path falls back to sort-based aggregation, but streaming
-  // has no fallback and rejects the request.  Re-enable once streaming has a
-  // non-atomic aggregator path or 128-bit atomics gain hardware support.
+  // TODO: streaming groupby has no decimal128 MIN/MAX atomic specialization.
+  // The stateless `normal` path falls back to sort-based aggregation, but streaming
+  // has no fallback and rejects the request. Re-enable once MIN/MAX are supported.
   if (is_streaming && std::is_same_v<Type, numeric::decimal128>) {
-    state.skip("streaming groupby does not support decimal128 MAX/MIN/SUM");
+    state.skip("streaming groupby does not support decimal128 MAX/MIN");
     return;
   }
 
@@ -123,7 +121,7 @@ void bench_groupby_max_cardinality(nvbench::state& state, nvbench::type_list<Typ
   auto keys_view = keys->view();
 
   auto const mem_stats_logger = cudf::memory_stats_logger();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
 
   if (is_streaming) {
     std::vector<cudf::column_view> all_columns = {keys_view, keys_view, keys_view};

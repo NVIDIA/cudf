@@ -19,6 +19,7 @@
 #include <thrust/transform_scan.h>
 
 #include <numeric>
+#include <unordered_map>
 
 namespace cudf::io::parquet::detail {
 
@@ -377,6 +378,13 @@ void reader_impl::setup_next_subpass(read_mode mode)
     allocate_level_decode_space();
   }
   subpass.pages.host_to_device_async(_stream);
+  // The pages carry device pointers into this array, so it has to be uploaded with them. It is
+  // empty unless the level prepass claimed at least one page. Nothing may copy it back to the
+  // host and re-upload it later in the subpass: the prepass producer kernels write counts into
+  // it that the decode kernels read in a subsequent launch.
+  if (!subpass.prepass_state_buf.empty()) {
+    subpass.prepass_state_buf.host_to_device_async(_stream);
+  }
 
   // preprocess pages (computes row counts for lists, computes output chunks and computes
   // the actual row counts we will be able load out of this subpass)
@@ -419,29 +427,32 @@ void reader_impl::create_global_chunk_info()
   auto const num_chunks        = row_groups_info.size() * num_input_columns;
 
   // Mapping of input column to page index column
-  std::vector<size_type> column_mapping;
+  auto column_mappings = std::unordered_map<size_type, std::vector<size_type>>{};
 
-  if (_has_offset_index and not row_groups_info.empty()) {
-    // use first row group to define mappings (assumes same schema for each file)
-    auto const& rg      = row_groups_info[0];
-    auto const& columns = _metadata->get_row_group(rg.index, rg.source_index).columns;
-    column_mapping.resize(num_input_columns);
-    std::transform(
-      _input_columns.begin(), _input_columns.end(), column_mapping.begin(), [&](auto const& col) {
-        // translate schema_idx into something we can use for the page indexes
-        if (auto it = std::find_if(columns.begin(),
-                                   columns.end(),
-                                   [&](auto const& col_chunk) {
-                                     return col_chunk.schema_idx ==
-                                            _metadata->map_schema_index(col.schema_idx,
-                                                                        rg.source_index);
-                                   });
-            it != columns.end()) {
-          return std::distance(columns.begin(), it);
-        }
-        CUDF_FAIL("cannot find column mapping");
-      });
-  }
+  auto const column_mapping_for_source = [&](auto const& rg) -> std::vector<size_type> const& {
+    auto const [iter, inserted] = column_mappings.try_emplace(rg.source_index);
+    if (inserted) {
+      auto const& columns = _metadata->get_row_group(rg.index, rg.source_index).columns;
+      auto& mapping       = iter->second;
+      mapping.resize(num_input_columns);
+      std::transform(
+        _input_columns.begin(), _input_columns.end(), mapping.begin(), [&](auto const& col) {
+          // translate schema_idx into something we can use for the page indexes
+          if (auto it = std::find_if(columns.begin(),
+                                     columns.end(),
+                                     [&](auto const& col_chunk) {
+                                       return col_chunk.schema_idx ==
+                                              _metadata->map_schema_index(col.schema_idx,
+                                                                          rg.source_index);
+                                     });
+              it != columns.end()) {
+            return static_cast<size_type>(std::distance(columns.begin(), it));
+          }
+          CUDF_FAIL("cannot find column mapping");
+        });
+    }
+    return iter->second;
+  };
 
   // Initialize column chunk information
   auto remaining_rows = num_rows;
@@ -453,6 +464,8 @@ void reader_impl::create_global_chunk_info()
     auto const adjusted_row_group_rows = skip_rows ? skip_rows - row_groups_info[0].start_row : 0;
     auto row_group_rows =
       std::min<size_t>(remaining_rows + adjusted_row_group_rows, row_group.num_rows);
+
+    auto const* const column_mapping = _has_offset_index ? &column_mapping_for_source(rg) : nullptr;
 
     // generate ColumnChunkDesc objects for everything to be decoded (all input columns)
     for (size_t i = 0; i < num_input_columns; ++i) {
@@ -479,7 +492,7 @@ void reader_impl::create_global_chunk_info()
 
       // grab the column_chunk_info for each chunk (if it exists)
       column_chunk_info const* const chunk_info =
-        _has_offset_index ? &rg.column_chunks.value()[column_mapping[i]] : nullptr;
+        _has_offset_index ? &rg.column_chunks.value()[(*column_mapping)[i]] : nullptr;
 
       chunks.emplace_back(col_meta.total_compressed_size,
                           nullptr,

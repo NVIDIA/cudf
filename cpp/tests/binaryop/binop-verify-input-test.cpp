@@ -1,7 +1,7 @@
 /*
  * SPDX-FileCopyrightText: Copyright 2018-2019 BlazingDB, Inc.
  * SPDX-FileCopyrightText: Copyright 2018 Christian Noboa Mardini <christian@blazingdb.com>
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /*
@@ -47,4 +47,54 @@ TEST_F(BinopVerifyInputTest, Vector_Vector_ErrorSecondOperandVectorZeroSize)
   EXPECT_THROW(cudf::binary_operation(
                  lhs, rhs, cudf::binary_operator::ADD, cudf::data_type(cudf::type_id::INT64)),
                std::invalid_argument);
+}
+
+TEST_F(BinopVerifyInputTest, Vector_Vector_ErrorDictionaryLhs)
+{
+  auto lhs = cudf::test::dictionary_column_wrapper<int64_t>{0, 1, 2, 3, 4};
+  auto rhs = cudf::test::fixed_width_column_wrapper<int64_t>{0, 1, 2, 3, 4};
+
+  EXPECT_THROW(cudf::binary_operation(
+                 lhs, rhs, cudf::binary_operator::ADD, cudf::data_type(cudf::type_id::INT64)),
+               cudf::data_type_error);
+}
+
+TEST_F(BinopVerifyInputTest, Vector_Vector_ErrorDictionaryRhs)
+{
+  auto lhs = cudf::test::fixed_width_column_wrapper<int64_t>{0, 1, 2, 3, 4};
+  auto rhs = cudf::test::dictionary_column_wrapper<int64_t>{0, 1, 2, 3, 4};
+
+  EXPECT_THROW(cudf::binary_operation(
+                 lhs, rhs, cudf::binary_operator::ADD, cudf::data_type(cudf::type_id::INT64)),
+               cudf::data_type_error);
+}
+
+TEST_F(BinopVerifyInputTest, Vector_Scalar_ErrorDictionaryLhs)
+{
+  auto lhs = cudf::test::dictionary_column_wrapper<int64_t>{0, 1, 2, 3, 4};
+  auto rhs = cudf::scalar_type_t<int64_t>(1);
+
+  EXPECT_THROW(cudf::binary_operation(
+                 lhs, rhs, cudf::binary_operator::ADD, cudf::data_type(cudf::type_id::INT64)),
+               cudf::data_type_error);
+}
+
+TEST_F(BinopVerifyInputTest, Scalar_Vector_ErrorDictionaryRhs)
+{
+  auto lhs = cudf::scalar_type_t<int64_t>(1);
+  auto rhs = cudf::test::dictionary_column_wrapper<int64_t>{0, 1, 2, 3, 4};
+
+  EXPECT_THROW(cudf::binary_operation(
+                 lhs, rhs, cudf::binary_operator::ADD, cudf::data_type(cudf::type_id::INT64)),
+               cudf::data_type_error);
+}
+
+TEST_F(BinopVerifyInputTest, Vector_Vector_ErrorDictionaryCompare)
+{
+  auto lhs = cudf::test::dictionary_column_wrapper<int64_t>{5, 4, 3, 2, 1};
+  auto rhs = cudf::test::dictionary_column_wrapper<int64_t>{5, 4, 3, 2, 1};
+
+  EXPECT_THROW(cudf::binary_operation(
+                 lhs, rhs, cudf::binary_operator::EQUAL, cudf::data_type(cudf::type_id::BOOL8)),
+               cudf::data_type_error);
 }

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -162,7 +162,11 @@ auto build_json_string_column(int desired_bytes, int num_rows)
     desired_bytes, num_rows, {*d_books, *d_bicycles}, *d_book_pct, *d_misc_order, *d_store_order};
   auto [offsets, chars] = cudf::strings::detail::make_strings_children(
     jb, num_rows, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
-  return cudf::make_strings_column(num_rows, std::move(offsets), chars.release(), 0, {});
+  return cudf::make_strings_column(num_rows,
+                                   std::move(offsets),
+                                   chars.release(),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }
 
 static std::string queries[] = {"$",
@@ -189,7 +193,7 @@ static void bench_query(nvbench::state& state)
   cudf::strings_column_view scv(input->view());
   size_t num_chars = scv.chars_size(stream);
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   // This isn't strictly 100% accurate. a given query isn't necessarily
   // going to visit every single incoming character but in spirit it does.
   state.add_global_memory_reads<nvbench::int8_t>(num_chars);

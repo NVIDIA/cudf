@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -188,7 +188,7 @@ public abstract class BatchedCompressor {
     final long sizesOffset = outputAddrsOffset + inputAddrs.length * 8L;
     try (NvtxRange range = new NvtxRange("putAddrsAndSizesOnDevice", NvtxColor.YELLOW)) {
       try (HostMemoryBuffer hostbuf = HostMemoryBuffer.allocate(totalSize);
-           DeviceMemoryBuffer result = DeviceMemoryBuffer.allocate(totalSize)) {
+           DeviceMemoryBuffer result = DeviceMemoryBuffer.allocate(totalSize, stream)) {
         hostbuf.setLongs(0, inputAddrs, 0, inputAddrs.length);
         hostbuf.setLongs(outputAddrsOffset, outputAddrs, 0, outputAddrs.length);
         for (int i = 0; i < inputSizes.length; i++) {
@@ -241,7 +241,7 @@ public abstract class BatchedCompressor {
         int chunkIdx = 0;
         for (int outputIdx = 0; outputIdx < numOutputs; outputIdx++) {
           DeviceMemoryBuffer outputBuffer =
-              DeviceMemoryBuffer.allocate(outputBufferSizes[outputIdx]);
+              DeviceMemoryBuffer.allocate(outputBufferSizes[outputIdx], stream);
           outputs.set(outputIdx, outputBuffer);
           final long outputBufferAddr = outputBuffer.getAddress();
           final long numChunks = chunksPerInput[outputIdx];

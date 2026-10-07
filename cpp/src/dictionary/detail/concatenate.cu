@@ -11,14 +11,17 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/row_operator/equality.cuh>
 #include <cudf/detail/row_operator/hashing.cuh>
+#include <cudf/detail/unary.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/dictionary/detail/concatenate.hpp>
+#include <cudf/dictionary/detail/encode.hpp>
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/dictionary/dictionary_factories.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
+#include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
 #include <rmm/device_uvector.hpp>
@@ -37,6 +40,7 @@
 #include <thrust/transform_scan.h>
 
 #include <algorithm>
+#include <numeric>
 #include <vector>
 
 namespace cudf {
@@ -133,11 +137,15 @@ struct compute_children_offsets_fn {
 /**
  * @brief Functor for mapping the old indices values to the new indices values
  *        based on the new keys arrangement after concatenation
+ *
+ * Indices are read through an indexalator, so any integral indices type is
+ * remapped without type dispatch.
  */
 struct map_indices_fn {
   cuda::std::span<offsets_pair const> d_offsets;
   cuda::std::span<size_type const> d_keys_remap;
-  column_device_view d_indices;
+  column_device_view d_indices;  // for null checks only
+  cudf::detail::input_indexalator d_input;
 
   __device__ size_type operator()(size_type idx) const
   {
@@ -148,7 +156,7 @@ struct map_indices_fn {
                     1;
     auto col_idx    = cuda::std::distance(d_offsets.begin(), col_iter);
     auto key_offset = d_offsets[col_idx].first;
-    return d_keys_remap[key_offset + d_indices.element<size_type>(idx)];
+    return d_keys_remap[key_offset + d_input[idx]];
   }
 };
 
@@ -231,26 +239,43 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns,
   thrust::gather(
     policy, d_indices.begin(), d_indices.end(), all_keys_remap.begin(), final_remap.begin());
 
-  // next, concatenate the indices
+  // next, concatenate the indices.
+  // The output indices type is the widest of the input indices types, widened further if the
+  // concatenated keys no longer fit in it (e.g. two INT8 dictionaries with 200 distinct keys).
+  auto indices_type = std::accumulate(
+    columns.begin(), columns.end(), data_type{type_id::INT8}, [](data_type widest, auto cv) {
+      // an empty dictionary column may carry no children at all, but a sliced-to-empty
+      // view still has an indices child whose type participates in the selection
+      if (cv.num_children() == 0) { return widest; }
+      auto const t = dictionary_column_view(cv).indices().type();
+      return cudf::size_of(t) > cudf::size_of(widest) ? t : widest;
+    });
+  auto const needed_type = get_indices_type_for_size(keys_column->size());
+  if (cudf::size_of(needed_type) > cudf::size_of(indices_type)) { indices_type = needed_type; }
+
+  std::vector<std::unique_ptr<column>> widened_indices;  // keeps casted indices alive
   std::vector<column_view> indices_views(columns.size());
-  std::transform(columns.begin(), columns.end(), indices_views.begin(), [](auto cv) {
-    auto dict_view = dictionary_column_view(cv);
-    if (dict_view.is_empty()) {
-      return column_view{data_type{type_id::INT32}, 0, nullptr, nullptr, 0};
-    }
-    return dict_view.get_indices_annotated();  // nicely includes validity mask and view offset
-  });
+  std::transform(
+    columns.begin(), columns.end(), indices_views.begin(), [&](auto cv) -> column_view {
+      auto dict_view = dictionary_column_view(cv);
+      if (dict_view.is_empty()) { return column_view{indices_type, 0, nullptr, nullptr, 0}; }
+      auto indices = dict_view.get_indices_annotated();  // includes validity mask and view offset
+      if (indices.type() == indices_type) { return indices; }
+      widened_indices.emplace_back(cudf::detail::cast(indices, indices_type, stream, temp_mr));
+      return widened_indices.back()->view();
+    });
   auto all_indices = cudf::detail::concatenate(indices_views, stream, mr);
 
   // remap the input indices values to the new indices for the new keys order
   auto indices_column = make_numeric_column(
     all_indices->type(), all_indices->size(), mask_state::UNALLOCATED, stream, mr);
-  auto output_view      = indices_column->mutable_view();
-  auto input_view       = column_device_view::create(all_indices->view(), stream, temp_mr);
+  auto input_view = column_device_view::create(all_indices->view(), stream, temp_mr);
+  auto d_input    = cudf::detail::indexalator_factory::make_input_iterator(all_indices->view());
+  auto d_output =
+    cudf::detail::indexalator_factory::make_output_iterator(indices_column->mutable_view());
   auto children_offsets = child_offsets_fn.create_children_offsets(stream, temp_mr);
-  auto map_fn           = map_indices_fn{children_offsets, final_remap, *input_view};
-  thrust::transform(
-    policy, iota, iota + all_indices->size(), output_view.begin<size_type>(), map_fn);
+  auto map_fn           = map_indices_fn{children_offsets, final_remap, *input_view, d_input};
+  thrust::transform(policy, iota, iota + all_indices->size(), d_output, map_fn);
 
   // remove the bitmask from the all_indices
   auto null_count = all_indices->null_count();  // get before release()

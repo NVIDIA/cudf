@@ -13,6 +13,7 @@
 #include <cuda/stream>
 #include <thrust/logical.h>
 
+#include <cstddef>
 #include <future>
 #include <span>
 #include <vector>
@@ -282,10 +283,15 @@ struct set_final_row_count {
     if (i < pages.size() - 1 && (pages[i + 1].chunk_idx == page.chunk_idx)) { return; }
     size_t const page_start_row = chunk.start_row + page.chunk_row;
     size_t const chunk_last_row = chunk.start_row + chunk.num_rows;
+    // Row estimates that overshoot can push this page's start past the end of the chunk, in which
+    // case it holds no rows at all. Subtracting unguarded would wrap around instead.
+    auto const rows_left = static_cast<int32_t>(
+      (chunk_last_row > page_start_row) ? (chunk_last_row - page_start_row) : 0);
     // Mark `is_num_rows_adjusted` to signal string decoders that the `num_rows` of this page has
-    // been adjusted.
-    page.is_num_rows_adjusted = page.num_rows != (chunk_last_row - page_start_row);
-    page.num_rows             = chunk_last_row - page_start_row;
+    // been adjusted. Adjusting an already adjusted count to the same value does not undo it, so
+    // this never clears: a later call sees the count it forced earlier and would compare equal.
+    page.is_num_rows_adjusted = page.is_num_rows_adjusted or (page.num_rows != rows_left);
+    page.num_rows             = rows_left;
   }
 };
 
@@ -471,7 +477,17 @@ struct page_to_string_size {
  */
 struct set_str_offset_fn {
   PageInfo* p;
-  __device__ constexpr void operator()(size_type i, size_t value) const { p[i].str_offset = value; }
+#if CUDART_VERSION < 13000
+  // Work around a CUDA 12.9 ptxas scan-by-key miscompilation on SM120 by using a pointer-width
+  // tabulate output index.
+  // https://github.com/NVIDIA/cccl/issues/11167
+  __device__ constexpr void operator()(std::ptrdiff_t i, size_t value) const
+#else
+  __device__ constexpr void operator()(size_type i, size_t value) const
+#endif  // CUDART_VERSION < 13000
+  {
+    p[i].str_offset = value;
+  }
 };
 
 /**

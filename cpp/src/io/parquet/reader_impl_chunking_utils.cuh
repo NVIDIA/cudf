@@ -186,13 +186,13 @@ std::vector<row_range> compute_page_splits_by_row(device_span<cumulative_page_in
  * @return A pair of device buffers containing the decompressed data for dictionary and
  * non-dictionary pages, respectively.
  */
-[[nodiscard]] std::pair<rmm::device_buffer, rmm::device_buffer> decompress_page_data(
-  host_span<ColumnChunkDesc const> chunks,
-  host_span<PageInfo> pass_pages,
-  host_span<PageInfo> subpass_pages,
-  host_span<bool const> subpass_page_mask,
-  cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+[[nodiscard]] std::pair<cuda::device_buffer<std::uint8_t>, cuda::device_buffer<std::uint8_t>>
+decompress_page_data(host_span<ColumnChunkDesc const> chunks,
+                     host_span<PageInfo> pass_pages,
+                     host_span<PageInfo> subpass_pages,
+                     host_span<bool const> subpass_page_mask,
+                     cuda::stream_ref stream,
+                     rmm::device_async_resource_ref mr);
 
 /**
  * @brief Detect malformed parquet input data
@@ -405,8 +405,10 @@ struct flat_column_num_rows {
 struct codec_stats {
   Compression compression_type  = Compression::UNCOMPRESSED;
   size_t num_pages              = 0;
+  size_t num_level_pages        = 0;
   int32_t max_decompressed_size = 0;
   size_t total_decomp_size      = 0;
+  size_t total_output_size      = 0;
 
   enum class page_selection { DICT_PAGES, NON_DICT_PAGES };
 
@@ -417,16 +419,56 @@ struct codec_stats {
 };
 
 /**
+ * @brief Describes the input and output for a page decompressed by the codec.
+ */
+struct decompression_input {
+  device_span<uint8_t const> values;
+  int32_t level_bytes;
+  int32_t uncompressed_values_size;
+  bool is_page_compressed;
+
+  /**
+   * @brief Whether this page contributes a V2 level-bytes copy alongside decompression.
+   */
+  [[nodiscard]] CUDF_HOST_DEVICE constexpr bool needs_level_copy() const { return level_bytes > 0; }
+};
+
+/**
+ * @brief Returns the compressed values passed to the decompressor, excluding V2 level bytes.
+ */
+CUDF_HOST_DEVICE inline decompression_input get_decompression_input(PageInfo const& page)
+{
+  // V2 data pages record compression per page so check the `is_compressed` field. Dictionary and V1
+  // pages are compressed whenever their column chunk uses a compression codec.
+  auto const is_page_compressed = (page.flags & PAGEINFO_FLAGS_V2) ? page.is_compressed : true;
+
+  auto const level_bytes =
+    page.lvl_bytes[level_type::DEFINITION] + page.lvl_bytes[level_type::REPETITION];
+  if (not is_page_compressed or page.compressed_page_size <= level_bytes or
+      page.uncompressed_page_size <= level_bytes) {
+    return {{}, level_bytes, 0, is_page_compressed};
+  }
+  return {
+    {page.page_data + level_bytes, static_cast<size_t>(page.compressed_page_size - level_bytes)},
+    level_bytes,
+    page.uncompressed_page_size - level_bytes,
+    true};
+}
+
+/**
  * @brief Functor which retrieves per-page decompression information.
  */
 struct get_decomp_info {
   device_span<ColumnChunkDesc const> chunks;
   __device__ inline decompression_info operator()(PageInfo const& p) const
   {
-    return {parquet_compression_support(chunks[p.chunk_idx].codec).first,
+    auto const codec = parquet_compression_support(chunks[p.chunk_idx].codec).first;
+    auto const input = get_decompression_input(p);
+    if (input.values.empty()) { return {codec, 0, 0, 0}; }
+    return {codec,
             1,
-            static_cast<size_t>(p.uncompressed_page_size),
-            static_cast<size_t>(p.uncompressed_page_size)};
+            static_cast<size_t>(input.uncompressed_values_size),
+            static_cast<size_t>(input.uncompressed_values_size)};
   }
 };
 
@@ -565,12 +607,14 @@ struct set_row_index {
 
   __device__ inline void operator()(size_t i)
   {
-    auto const& page          = pages[i];
-    auto const& chunk         = chunks[page.chunk_idx];
-    size_t const page_end_row = chunk.start_row + page.chunk_row + page.num_rows;
-    // this cap is necessary because in the chunked reader, we use estimations for the row
+    auto const& page            = pages[i];
+    auto const& chunk           = chunks[page.chunk_idx];
+    size_t const page_end_row   = chunk.start_row + page.chunk_row + page.num_rows;
+    size_t const chunk_last_row = chunk.start_row + chunk.num_rows;
+    // These caps are necessary because in the chunked reader, we use estimations for the row
     // counts for list columns, which can result in values > than the absolute number of rows.
-    c_info[i].end_row_index = cuda::std::min(max_row, page_end_row);
+    // Capping at the chunk's own last row keeps these indices sorted across a chunk boundary.
+    c_info[i].end_row_index = cuda::std::min(max_row, cuda::std::min(chunk_last_row, page_end_row));
   }
 };
 
@@ -605,6 +649,9 @@ struct page_total_size {
         0, cuda::proclaim_return_type<size_t>([&] __device__(size_type i) {
           return c_info[i].end_row_index;
         }));
+      // Trailing pages sharing the same end row go uncounted and the sum can fall short by their
+      // size. This is acceptable as it is a soft budget that is already deliberately
+      // over-estimated above.
       auto const page_index =
         thrust::lower_bound(thrust::seq, iter + start, iter + end, i.end_row_index) - iter;
       sum += c_info[page_index].size_bytes;
@@ -621,6 +668,7 @@ template <typename RowIndexIter>
 struct get_page_span {
   device_span<size_type const> page_offsets;
   device_span<ColumnChunkDesc const> chunks;
+  device_span<PageInfo const> pages;
   RowIndexIter page_row_index;
   size_t const start_row;
   size_t const end_row;
@@ -629,6 +677,7 @@ struct get_page_span {
 
   get_page_span(device_span<size_type const> _page_offsets,
                 device_span<ColumnChunkDesc const> _chunks,
+                device_span<PageInfo const> _pages,
                 RowIndexIter _page_row_index,
                 size_t _start_row,
                 size_t _end_row,
@@ -636,6 +685,7 @@ struct get_page_span {
                 bool _has_offset_index)
     : page_offsets(_page_offsets),
       chunks(_chunks),
+      pages(_pages),
       page_row_index(_page_row_index),
       start_row(_start_row),
       end_row(_end_row),
@@ -665,12 +715,29 @@ struct get_page_span {
       start_page++;
     }
 
-    auto end_page =
+    auto const first_page_with_end_row =
       cuda::std::distance(
         column_page_start,
         thrust::lower_bound(thrust::seq, column_page_start, column_page_end, end_row)) +
       first_page_index;
-    if (end_page < (first_page_index + num_pages)) { end_page++; }
+
+    // Following pages that hold no rows of their own only continue a row that began earlier, so
+    // they share the same end row index and a search by row cannot reach them. Read them here, as
+    // at the end of a pass no later subpass is left to do it and their values would be lost.
+    auto const column_end_page = first_page_index + num_pages;
+    auto last_page_to_read     = first_page_with_end_row;
+    while ((last_page_to_read + 1) < column_end_page) {
+      auto const& page      = pages[static_cast<size_t>(last_page_to_read)];
+      auto const& next_page = pages[static_cast<size_t>(last_page_to_read + 1)];
+      // Stop at the chunk boundary. It is also a row boundary, so the next chunk continues nothing,
+      // and it leads with a dictionary page, which holds no rows either.
+      if (next_page.num_rows != 0 or next_page.chunk_idx != page.chunk_idx) { break; }
+      last_page_to_read++;
+    }
+
+    // The returned span is exclusive, so it ends one past the last page to read.
+    auto const end_page =
+      (last_page_to_read < column_end_page) ? (last_page_to_read + 1) : last_page_to_read;
 
     return {static_cast<size_t>(start_page), static_cast<size_t>(end_page)};
   }

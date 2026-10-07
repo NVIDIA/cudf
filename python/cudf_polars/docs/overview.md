@@ -573,15 +573,22 @@ def test_whatever():
 Where translation of a query should fail due to the feature being
 unsupported we should test this. To assert that _translation_ raises
 an exception (usually `NotImplementedError`), use the utility function
-`assert_ir_translation_raises`:
+`assert_ir_translation_raises` with the `in_memory_engine` fixture. This fixture
+provides an in-memory GPU engine configuration, not the Polars CPU engine.
+For unsupported features rejected by the shared translator, testing every
+execution engine repeats the same check and unnecessarily initializes streaming
+engines. Use the parametrized `engine` fixture for execution tests and for
+failure modes that depend on the engine configuration.
 
 ```python
 from cudf_polars.testing.asserts import assert_ir_translation_raises
 
 
-def test_whatever(engine):
+def test_whatever(in_memory_engine):
     unsupported_query = ...
-    assert_ir_translation_raises(unsupported_query, engine, NotImplementedError)
+    assert_ir_translation_raises(
+        unsupported_query, in_memory_engine, NotImplementedError
+    )
 ```
 
 This test will fail if translation does not raise.
@@ -646,10 +653,6 @@ The majority of time should be spent in the `ExecuteIR` range. Within
 another `nvtx` range (e.g. `Scan.do_evaluate`, `GroupBy.do_evaluate`, etc.).
 These provide a higher-level grouping over the lower-level libcudf calls (e.g.
 `read_chunk`, `aggregate`).
-
-Finally, if using [rapidsmpf](https://docs.rapids.ai/api/rapidsmpf/nightly/)
-for shuffling, the methods inserting and extracting partitions to shuffle are
-annotated with nvtx ranges.
 
 # Query Plans
 

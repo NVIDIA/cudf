@@ -9,7 +9,6 @@
 # (JAVA_ENV_READY short-circuits after the first load).
 
 TOOLSET_VERSION="${TOOLSET_VERSION:-14}"
-NINJA_VERSION="${NINJA_VERSION:-v1.13.1}"
 BOOST_VERSION="${BOOST_VERSION:-1.79.0}"
 BOOST_PREFIX="${BOOST_PREFIX:-/usr/local}"
 
@@ -26,34 +25,14 @@ fi
 # JDK 8 for javac; JDK 17 for the -Pjavadoc-jdk17 Maven profile.
 dnf install -y maven java-1.8.0-openjdk-devel java-17-openjdk-devel
 
-# ci-wheel images do not ship ninja; CMake uses it as the preferred generator.
-if ! command -V ninja >/dev/null 2>&1; then
-  case "$(uname -m)" in
-    x86_64)
-      wget --no-hsts -q -O /tmp/ninja-linux.zip \
-        "https://github.com/ninja-build/ninja/releases/download/${NINJA_VERSION}/ninja-linux.zip"
-      ;;
-    aarch64)
-      wget --no-hsts -q -O /tmp/ninja-linux.zip \
-        "https://github.com/ninja-build/ninja/releases/download/${NINJA_VERSION}/ninja-linux-aarch64.zip"
-      ;;
-    *)
-      echo "Unrecognized platform '$(uname -m)'" >&2
-      exit 1
-      ;;
-  esac
-  unzip -d /usr/bin /tmp/ninja-linux.zip
-  chmod +x /usr/bin/ninja
-  rm -f /tmp/ninja-linux.zip
-fi
-
+# ci-wheel images do not ship ninja or a modern cmake. Install both from PyPI.
 if command -v rapids-pip-retry >/dev/null 2>&1; then
-  rapids-pip-retry install cmake
+  rapids-pip-retry install cmake ninja
 else
-  pip install cmake
+  pip install cmake ninja
 fi
 
-# Refresh pyenv shims so the cmake we just installed is on PATH.
+# Refresh pyenv shims so the cmake/ninja we just installed are on PATH.
 if command -v pyenv >/dev/null 2>&1; then
   pyenv rehash || true
 fi
@@ -109,6 +88,23 @@ GCC_TOOLSET_ROOT="/opt/rh/gcc-toolset-${TOOLSET_VERSION}/root"
 export CC="${CC:-${GCC_TOOLSET_ROOT}/usr/bin/gcc}"
 export CXX="${CXX:-${GCC_TOOLSET_ROOT}/usr/bin/g++}"
 export CMAKE_CUDA_HOST_COMPILER="${CMAKE_CUDA_HOST_COMPILER:-${CC}}"
+
+# Scope the Java build's object and preprocessor caches by host architecture
+# and CUDA major version. RAPIDS_CUDA_VERSION is optional for callers that
+# source this script only to provision the Java toolchain.
+if [[ -n ${RAPIDS_CUDA_VERSION:-} ]]; then
+  case "$(uname -m)" in
+    x86_64) SCCACHE_ARCH=amd64 ;;
+    aarch64|arm64) SCCACHE_ARCH=arm64 ;;
+    *)
+      echo "Error: unsupported host architecture '$(uname -m)'" >&2
+      exit 1
+      ;;
+  esac
+  export SCCACHE_S3_KEY_PREFIX="cudf-java-${SCCACHE_ARCH}-cuda${RAPIDS_CUDA_VERSION%%.*}-object-cache"
+  export SCCACHE_S3_PREPROCESSOR_CACHE_KEY_PREFIX="cudf-java-${SCCACHE_ARCH}-cuda${RAPIDS_CUDA_VERSION%%.*}-preprocessor-cache"
+  export SCCACHE_S3_USE_PREPROCESSOR_CACHE_MODE=true
+fi
 
 if command -v rapids-configure-sccache >/dev/null 2>&1; then
   # shellcheck disable=SC1091

@@ -77,7 +77,7 @@ generate_list_offsets_and_validities(table_view const& input,
 
   // Compute offsets from sizes.
   auto total_size = cudf::detail::sizes_to_offsets(
-    d_offsets, d_offsets + num_output_lists + 1, d_offsets, 0, stream);
+    d_offsets, d_offsets + num_output_lists + 1, d_offsets, 0, stream, mr);
   CUDF_EXPECTS(total_size <= static_cast<decltype(total_size)>(std::numeric_limits<int32_t>::max()),
                "Size of offsets exceeds maximum int32 limit",
                std::overflow_error);
@@ -363,17 +363,21 @@ std::unique_ptr<column> interleave_columns(table_view const& input,
                                                              mr);
 
   if (not has_null_mask) {
-    return make_lists_column(
-      num_output_lists, std::move(list_offsets), std::move(list_entries), 0, rmm::device_buffer{});
+    return make_lists_column(num_output_lists,
+                             std::move(list_offsets),
+                             std::move(list_entries),
+                             0,
+                             cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }
 
   auto [null_mask, null_count] = cudf::detail::valid_if(
     list_validities.begin(), list_validities.end(), cuda::std::identity{}, stream, mr);
-  return make_lists_column(num_output_lists,
-                           std::move(list_offsets),
-                           std::move(list_entries),
-                           null_count,
-                           null_count ? std::move(null_mask) : rmm::device_buffer{});
+  return make_lists_column(
+    num_output_lists,
+    std::move(list_offsets),
+    std::move(list_entries),
+    null_count,
+    null_count ? std::move(null_mask) : cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }
 
 }  // namespace detail

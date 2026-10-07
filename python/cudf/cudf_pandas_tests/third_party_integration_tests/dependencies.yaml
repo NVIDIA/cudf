@@ -259,7 +259,7 @@ dependencies:
     common:
       - output_types: conda
         packages:
-          - cudf==26.10.*,>=0.0.0a0
+          - cudf==26.12.*,>=0.0.0a0
           - pandas
           - pytest
           - pytest-xdist
@@ -316,12 +316,10 @@ dependencies:
     common:
       - output_types: conda
         packages:
-        # TODO: Remove hypothesis pinning once https://github.com/HypothesisWorks/hypothesis/issues/4365 is resolved
-          - hypothesis>=6.131.7
+          - hypothesis
           - numpy
           - scipy
           - scikit-learn
-          - pip
           - xgboost>=2.0.1
   test_catboost:
     common:
@@ -335,13 +333,13 @@ dependencies:
     common:
       - output_types: conda
         packages:
-          - cuml==26.10.*,>=0.0.0a0
+          - cuml==26.12.*,>=0.0.0a0
           - scikit-learn
   test_cugraph:
     common:
       - output_types: conda
         packages:
-          - cugraph==26.10.*,>=0.0.0a0
+          - cugraph==26.12.*,>=0.0.0a0
           - networkx
   test_ibis:
     common:

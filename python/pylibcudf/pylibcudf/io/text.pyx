@@ -230,7 +230,7 @@ cpdef Column multibyte_split(
     cdef unique_ptr[data_chunk_source] c_source = move(source.c_source)
     cdef string c_delimiter = delimiter.encode()
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     if options is None:

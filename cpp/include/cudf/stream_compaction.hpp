@@ -244,7 +244,8 @@ std::unique_ptr<table> apply_retention_mask(
  * if the corresponding element `i` in the mask is non-null and `false`.
  * This operation is stable: the input order is preserved.
  *
- * @note If @p deletion_mask is empty, or @p input has zero rows, an empty table is returned.
+ * @note If @p deletion_mask is empty, a copy of @p input is returned. If @p input has zero rows,
+ * an empty table is returned.
  *
  * @throws cudf::logic_error if non-empty @p input has different number of rows than @p
  * deletion_mask.
@@ -420,6 +421,8 @@ std::unique_ptr<table> stable_distinct(
  * Note that for every scalar in `columns` (columns of size 1), `columns[i] ==
  * input[0]`
  *
+ * @deprecated in release 26.12. Use `cudf::transform` to compute a boolean mask, then use
+ * `cudf::apply_retention_mask` or `cudf::apply_deletion_mask` to filter the input.
  *
  * @throws std::invalid_argument if any of the input columns have different sizes (except scalars of
  * size 1)
@@ -442,16 +445,18 @@ std::unique_ptr<table> stable_distinct(
  * @param mr Device memory resource used to allocate the returned column's device memory
  * @return The filtered target columns
  */
-[[deprecated("Use filter_extended instead")]] std::vector<std::unique_ptr<column>> filter(
-  std::vector<column_view> const& predicate_columns,
-  std::string const& predicate_udf,
-  std::vector<column_view> const& filter_columns,
-  bool is_ptx,
-  std::optional<void*> user_data           = std::nullopt,
-  null_aware is_null_aware                 = null_aware::NO,
-  output_nullability predicate_nullability = output_nullability::PRESERVE,
-  cuda::stream_ref stream                  = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr        = cudf::get_current_device_resource_ref());
+[[deprecated(
+  "Use cudf::transform() followed by cudf::apply_retention_mask() or "
+  "cudf::apply_deletion_mask() instead.")]] std::vector<std::unique_ptr<column>>
+filter(std::vector<column_view> const& predicate_columns,
+       std::string const& predicate_udf,
+       std::vector<column_view> const& filter_columns,
+       bool is_ptx,
+       std::optional<void*> user_data           = std::nullopt,
+       null_aware is_null_aware                 = null_aware::NO,
+       output_nullability predicate_nullability = output_nullability::PRESERVE,
+       cuda::stream_ref stream                  = cudf::get_default_stream(),
+       rmm::device_async_resource_ref mr        = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Typedef for inputs to the filter function. Each input can be either a column or a
@@ -471,6 +476,8 @@ using filter_input = std::variant<column_view, scalar_column_view>;
  * Note that for every scalar in `columns` (columns of size 1), `columns[i] ==
  * input[0]`
  *
+ * @deprecated in release 26.12. Use `cudf::transform` to compute a boolean mask, then use
+ * `cudf::apply_retention_mask` or `cudf::apply_deletion_mask` to filter the input.
  *
  * @throws std::invalid_argument if any of the input columns have different sizes (except scalars of
  * size 1)
@@ -493,16 +500,18 @@ using filter_input = std::variant<column_view, scalar_column_view>;
  * @param mr Device memory resource used to allocate the returned column's device memory
  * @return The filtered target columns
  */
-std::vector<std::unique_ptr<column>> filter_extended(
-  std::span<std::variant<column_view, scalar_column_view> const> predicate_inputs,
-  std::string const& predicate_udf,
-  std::vector<column_view> const& filter_columns,
-  cudf::udf_source_type source_type,
-  std::optional<void*> user_data           = std::nullopt,
-  null_aware is_null_aware                 = null_aware::NO,
-  output_nullability predicate_nullability = output_nullability::PRESERVE,
-  cuda::stream_ref stream                  = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr        = cudf::get_current_device_resource_ref());
+[[deprecated(
+  "Use cudf::transform() followed by cudf::apply_retention_mask() or "
+  "cudf::apply_deletion_mask() instead.")]] std::vector<std::unique_ptr<column>>
+filter_extended(std::span<std::variant<column_view, scalar_column_view> const> predicate_inputs,
+                std::string const& predicate_udf,
+                std::vector<column_view> const& filter_columns,
+                cudf::udf_source_type source_type,
+                std::optional<void*> user_data           = std::nullopt,
+                null_aware is_null_aware                 = null_aware::NO,
+                output_nullability predicate_nullability = output_nullability::PRESERVE,
+                cuda::stream_ref stream                  = cudf::get_default_stream(),
+                rmm::device_async_resource_ref mr        = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Creates new table by applying a filter function against every
@@ -512,6 +521,9 @@ std::vector<std::unique_ptr<column>> filter_extended(
  *
  * Computes:
  * `out[i]... = predicate(columns[i]... ) ? (columns[i]...): not-applied`.
+ *
+ * @deprecated in release 26.12. Use `cudf::compute_column` to compute a boolean mask, then use
+ * `cudf::apply_retention_mask` or `cudf::apply_deletion_mask` to filter the input.
  *
  * @throws std::invalid_argument if the output or any of the inputs are not fixed-width or string
  * types
@@ -524,12 +536,14 @@ std::vector<std::unique_ptr<column>> filter_extended(
  * @param mr Device memory resource used to allocate the returned column's device memory
  * @return The filtered table
  */
-std::unique_ptr<table> filter(
-  table_view const& predicate_table,
-  ast::expression const& predicate_expr,
-  table_view const& filter_table,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+[[deprecated(
+  "Use cudf::compute_column() followed by cudf::apply_retention_mask() or "
+  "cudf::apply_deletion_mask() instead.")]] std::unique_ptr<table>
+filter(table_view const& predicate_table,
+       ast::expression const& predicate_expr,
+       table_view const& filter_table,
+       cuda::stream_ref stream           = cudf::get_default_stream(),
+       rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */
 }  // namespace CUDF_EXPORT cudf

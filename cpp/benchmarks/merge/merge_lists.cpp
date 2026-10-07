@@ -14,7 +14,7 @@
 
 void nvbench_merge_list(nvbench::state& state)
 {
-  cuda::stream_ref stream;
+  cuda::stream_ref stream = cudf::get_default_stream();
 
   auto const input1 = create_lists_data(state);
   auto const sorted_input1 =

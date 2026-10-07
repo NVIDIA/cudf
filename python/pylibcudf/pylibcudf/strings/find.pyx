@@ -65,7 +65,7 @@ cpdef Column find(
     """
     cdef unique_ptr[column] result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
     cdef column_view c_input
     cdef column_view c_target
@@ -132,7 +132,7 @@ cpdef Column rfind(
     """
     cdef unique_ptr[column] result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
     cdef column_view c_input = input.view()
     with nogil:
@@ -184,7 +184,7 @@ cpdef Column contains(
     """
     cdef unique_ptr[column] result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
     cdef column_view c_input
     cdef column_view c_target
@@ -250,7 +250,7 @@ cpdef Column starts_with(
     """
     cdef unique_ptr[column] result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
     cdef column_view c_input
     cdef column_view c_target
@@ -315,7 +315,7 @@ cpdef Column ends_with(
     """
     cdef unique_ptr[column] result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
     cdef column_view c_input
     cdef column_view c_target

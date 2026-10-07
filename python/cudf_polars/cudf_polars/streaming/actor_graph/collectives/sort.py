@@ -32,7 +32,10 @@ from cudf_polars.dsl.ir import Empty, Sort
 from cudf_polars.dsl.utils.naming import names_to_indices, unique_names
 from cudf_polars.streaming.actor_graph.collectives.allgather import AllGatherManager
 from cudf_polars.streaming.actor_graph.collectives.shuffle import ShuffleManager
-from cudf_polars.streaming.actor_graph.dispatch import generate_ir_sub_network
+from cudf_polars.streaming.actor_graph.dispatch import (
+    generate_ir_sub_network,
+    ir_context_for_node,
+)
 from cudf_polars.streaming.actor_graph.nodes import (
     default_node_single,
     shutdown_on_error,
@@ -250,7 +253,7 @@ async def extract_orderscheme_partitioning(
         )
         allgather = AllGatherManager(context, comm, collective_id)
         with allgather.inserting() as inserter:
-            inserter.insert(comm.rank, local_chunk)
+            await inserter.insert(comm.rank, local_chunk)
         endpoint_table = await allgather.extract_concatenated(
             stream, ordered=True, ir_context=ir_context
         )
@@ -334,7 +337,7 @@ async def _simple_top_or_bottom_k(
     if comm.nranks > 1 and not metadata_in.duplicated:
         allgather = AllGatherManager(context, comm, collective_ids.pop())
         with allgather.inserting() as inserter:
-            inserter.insert(comm.rank, chunk)
+            await inserter.insert(comm.rank, chunk)
 
         stream = ir_context.get_cuda_stream()
         chunk = await evaluate_chunk(
@@ -415,7 +418,7 @@ async def _compute_sort_boundaries(
         )
         allgather = AllGatherManager(context, comm, allgather_id)
         with allgather.inserting() as inserter:
-            inserter.insert(comm.rank, chunk)
+            await inserter.insert(comm.rank, chunk)
         concat_table = await allgather.extract_concatenated(
             stream, ordered=True, ir_context=ir_context
         )
@@ -473,7 +476,7 @@ async def _sample_chunks_for_size_estimate(
         global_size = sample.total_size
 
     num_partitions = max(1, math.ceil(global_size / target_partition_size))
-    return sample.chunks, num_partitions
+    return sample.local_sample.chunks, num_partitions
 
 
 async def _receive_and_buffer_chunks(
@@ -583,9 +586,14 @@ async def _insert_chunks_into_shuffle(
             if skip_insert:
                 continue
             seq_num = msg.sequence_number
-            available_chunk = TableChunk.from_message(
-                msg, br=context.br()
-            ).make_available_and_spill(context.br(), allow_overbooking=True)
+            # The chunk's data moves into shuffler-owned packed buffers,
+            # nothing lasting is added.
+            available_chunk, _ = await make_table_chunks_available_or_wait(
+                context,
+                TableChunk.from_message(msg, br=context.br()),
+                reserve_extra=0,
+                net_memory_delta=0,
+            )
             tbl = available_chunk.table_view()
             sort_cols_tbl = plc.Table([tbl.columns()[i] for i in by_indices])
 
@@ -605,7 +613,7 @@ async def _insert_chunks_into_shuffle(
                 stream=stream,
                 chunk_relative=True,
             )
-            inserter.insert_split(available_chunk, splits)
+            await inserter.insert_split(available_chunk, splits)
 
     post_sort_ir = ir
     if ir.stable:
@@ -641,7 +649,7 @@ async def _extract_partitions_and_send(
     ncols_out = len(output_schema)
     for partition_id in shuffle.local_partitions():
         stream = ir_context.get_cuda_stream()
-        table = shuffle.extract_chunk(partition_id, stream)
+        table = await shuffle.extract_chunk(partition_id, stream)
         if table.num_rows() > 0:
             table = post_sort_ir.do_evaluate(
                 *post_sort_ir._non_child_args,
@@ -694,6 +702,18 @@ def _sort_to_order_keys(ir: Sort) -> list[OrderKey]:
             strict=False,
         )
     ]
+
+
+def _can_sort_chunkwise(
+    ordering: Ordering | None, order_keys: Sequence[OrderKey]
+) -> bool:
+    """Return true when ordering avoids a global sort."""
+    if ordering is None:
+        return False
+    keys = tuple(ordering.keys)
+    return keys == tuple(order_keys[: len(keys)]) and (
+        len(keys) == len(order_keys) or ordering.strict_boundaries
+    )
 
 
 def _build_order_scheme(
@@ -796,10 +816,9 @@ async def sort_actor(
     ch_chunk_store = context.create_channel()
     async with shutdown_on_error(
         context,
-        ch_in,
-        ch_out,
-        ch_sample_replay,
-        ch_chunk_store,
+        chs_in=(ch_in,),
+        chs_out=(ch_out,),
+        chs_aux=(ch_sample_replay, ch_chunk_store),
         trace_ir=ir,
         ir_context=ir_context,
     ) as tracer:
@@ -827,10 +846,10 @@ async def sort_actor(
         partitioning = NormalizedPartitioning.from_keys(
             metadata_in.partitioning, comm.nranks, keys=order_keys
         )
-        if partitioning.is_ordered(
-            order_keys,
-            level="local" if metadata_in.duplicated else "flat",
-        ):
+        ordering = partitioning.get_ordering(
+            level="local" if metadata_in.duplicated else "flat"
+        )
+        if _can_sort_chunkwise(ordering, order_keys):
             if tracer is not None:
                 tracer.decision = "already_sorted"
             await chunkwise_evaluate(
@@ -907,6 +926,7 @@ def _sort_rapidsmpf_network(ir: Sort, rec: SubNetGenerator) -> tuple[dict, dict]
     executor = rec.state["config_options"].executor
     partition_info = rec.state["partition_info"]
     dynamic = executor.dynamic_planning is not None
+    ir_context = ir_context_for_node(rec, ir)
 
     if partition_info[ir].count == 1 and (
         not dynamic or isinstance(ir.children[0], Repartition)
@@ -917,7 +937,7 @@ def _sort_rapidsmpf_network(ir: Sort, rec: SubNetGenerator) -> tuple[dict, dict]
             default_node_single(
                 rec.state["context"],
                 ir,
-                rec.state["ir_context"],
+                ir_context,
                 channels[ir].reserve_input_slot(),
                 channels[ir.children[0]].reserve_output_slot(),
             )
@@ -940,7 +960,7 @@ def _sort_rapidsmpf_network(ir: Sort, rec: SubNetGenerator) -> tuple[dict, dict]
             rec.state["context"],
             rec.state["comm"],
             ir,
-            rec.state["ir_context"],
+            ir_context,
             ch_in=channels[child].reserve_output_slot(),
             ch_out=channels[ir].reserve_input_slot(),
             by=by,

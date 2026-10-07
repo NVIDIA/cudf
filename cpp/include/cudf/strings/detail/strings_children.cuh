@@ -24,6 +24,7 @@
 #include <cub/device/device_memcpy.cuh>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/std/execution>
 #include <cuda/stream>
 #include <thrust/for_each.h>
 
@@ -104,17 +105,11 @@ rmm::device_uvector<char> make_chars_buffer(column_view const& offsets,
     cuda::proclaim_return_type<char*>(
       [output = chars_data.data()] __device__(auto offset) { return output + offset; }));
 
-  size_t temp_storage_bytes = 0;
-  CUDF_CUDA_TRY(cub::DeviceMemcpy::Batched(
-    nullptr, temp_storage_bytes, src_ptrs, dst_ptrs, src_sizes, strings_count, stream.get()));
-  rmm::device_buffer d_temp_storage(temp_storage_bytes, stream);
-  CUDF_CUDA_TRY(cub::DeviceMemcpy::Batched(d_temp_storage.data(),
-                                           temp_storage_bytes,
-                                           src_ptrs,
-                                           dst_ptrs,
-                                           src_sizes,
-                                           strings_count,
-                                           stream.get()));
+  auto env =
+    cuda::std::execution::env{cuda::std::execution::prop{cuda::get_stream_t{}, stream},
+                              cuda::std::execution::prop{cuda::mr::get_memory_resource_t{},
+                                                         cudf::get_current_device_resource_ref()}};
+  CUDF_CUDA_TRY(cub::DeviceMemcpy::Batched(src_ptrs, dst_ptrs, src_sizes, strings_count, env));
 
   return chars_data;
 }
@@ -132,23 +127,24 @@ rmm::device_uvector<char> make_chars_buffer(column_view const& offsets,
  * @param begin The beginning of the input sequence
  * @param end The end of the input sequence
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column's device memory
+ * @param mr Memory resources used for temporary allocations and the returned column
  * @return Offsets column and total elements
  */
 template <typename InputIterator>
-std::pair<std::unique_ptr<column>, int64_t> make_offsets_child_column(
-  InputIterator begin,
-  InputIterator end,
-  cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+std::pair<std::unique_ptr<column>, int64_t> make_offsets_child_column(InputIterator begin,
+                                                                      InputIterator end,
+                                                                      cuda::stream_ref stream,
+                                                                      cudf::memory_resources mr)
 {
+  auto const output_mr = mr.get_output_mr();
+
   auto constexpr size_type_max = static_cast<int64_t>(std::numeric_limits<size_type>::max());
   auto const lcount            = static_cast<int64_t>(std::distance(begin, end));
   CUDF_EXPECTS(
     lcount <= size_type_max, "Size of output exceeds the column size limit", std::overflow_error);
   auto const strings_count = static_cast<size_type>(lcount);
   auto offsets_column      = make_numeric_column(
-    data_type{type_id::INT32}, strings_count + 1, mask_state::UNALLOCATED, stream, mr);
+    data_type{type_id::INT32}, strings_count + 1, mask_state::UNALLOCATED, stream, output_mr);
   auto d_offsets = offsets_column->mutable_view().template data<int32_t>();
 
   // The number of offsets is strings_count+1 so to build the offsets from the sizes
@@ -158,8 +154,8 @@ std::pair<std::unique_ptr<column>, int64_t> make_offsets_child_column(
   auto input_itr =
     cudf::detail::make_counting_transform_iterator(0, string_offsets_fn{begin, strings_count});
   // Use the sizes-to-offsets iterator to compute the total number of elements
-  auto const total_bytes =
-    cudf::detail::sizes_to_offsets(input_itr, input_itr + strings_count + 1, d_offsets, 0, stream);
+  auto const total_bytes = cudf::detail::sizes_to_offsets(
+    input_itr, input_itr + strings_count + 1, d_offsets, 0, stream, mr);
 
   auto const threshold = cudf::strings::get_offset64_threshold();
   CUDF_EXPECTS(cudf::strings::is_large_strings_enabled() || (total_bytes < threshold),
@@ -168,10 +164,10 @@ std::pair<std::unique_ptr<column>, int64_t> make_offsets_child_column(
   if (total_bytes >= cudf::strings::get_offset64_threshold()) {
     // recompute as int64 offsets when above the threshold
     offsets_column = make_numeric_column(
-      data_type{type_id::INT64}, strings_count + 1, mask_state::UNALLOCATED, stream, mr);
+      data_type{type_id::INT64}, strings_count + 1, mask_state::UNALLOCATED, stream, output_mr);
     auto d_offsets64 = offsets_column->mutable_view().template data<int64_t>();
     cudf::detail::sizes_to_offsets(
-      input_itr, input_itr + strings_count + 1, d_offsets64, 0, stream);
+      input_itr, input_itr + strings_count + 1, d_offsets64, 0, stream, mr);
   }
 
   return std::pair(std::move(offsets_column), total_bytes);

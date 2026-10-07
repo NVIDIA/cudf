@@ -45,7 +45,7 @@ cpdef Table transpose(
     cdef pair[unique_ptr[column], table_view] c_result
     cdef Table owner_table
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef table_view c_input_table = input_table.view()

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import numpy as np
@@ -8,10 +8,40 @@ import pytest
 import cudf
 from cudf.testing import assert_eq
 
+_MELT_DTYPES = [
+    "int8",
+    "int16",
+    "int32",
+    "int64",
+    "uint8",
+    "uint16",
+    "uint32",
+    "uint64",
+    "float32",
+    "float64",
+    "bool",
+    "datetime64[ns]",
+    "datetime64[us]",
+    "datetime64[ms]",
+    "datetime64[s]",
+    "timedelta64[ns]",
+    "timedelta64[us]",
+    "timedelta64[ms]",
+    "timedelta64[s]",
+]
+
 
 @pytest.mark.parametrize("num_id_vars", [0, 2])
 @pytest.mark.parametrize("num_value_vars", [0, 2])
-@pytest.mark.parametrize("nulls", ["none", "some", "all"])
+@pytest.mark.parametrize(
+    "numeric_and_temporal_types_as_str,nulls",
+    [
+        (dtype, nulls)
+        for dtype in _MELT_DTYPES
+        for nulls in ["none", "some", "all"]
+        if dtype in {"float32", "float64"} or nulls == "none"
+    ],
+)
 def test_melt(
     nulls,
     num_id_vars,
@@ -19,14 +49,6 @@ def test_melt(
     numeric_and_temporal_types_as_str,
     ignore_index,
 ):
-    if numeric_and_temporal_types_as_str not in [
-        "float32",
-        "float64",
-    ] and nulls in ["some", "all"]:
-        pytest.skip(
-            reason=f"nulls not supported in {numeric_and_temporal_types_as_str}"
-        )
-
     num_rows = 10
     pdf = pd.DataFrame()
     id_vars = []

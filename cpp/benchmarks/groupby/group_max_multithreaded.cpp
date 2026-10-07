@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -71,7 +71,7 @@ void bench_groupby_max_multithreaded(nvbench::state& state, nvbench::type_list<T
       threads.detach_sequence(decltype(num_threads){0}, num_threads, perform_agg);
       threads.wait();
       cudf::detail::join_streams(streams, cudf::get_default_stream());
-      cudf::get_default_stream().synchronize();
+      cudf::get_default_stream().sync();
       timer.stop();
     });
 

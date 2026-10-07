@@ -4,8 +4,7 @@
  */
 
 #include <cudf/detail/utilities/stream_pool.hpp>
-
-#include <rmm/cuda_stream.hpp>
+#include <cudf/utilities/error.hpp>
 
 #include <cuda/stream>
 #include <cuda_runtime.h>
@@ -50,8 +49,12 @@ namespace test {
 
 cuda::stream_ref const get_default_stream()
 {
-  static rmm::cuda_stream stream{};
-  return stream;
+  static auto* stream = new cuda::stream{[] {
+    int device{};
+    CUDF_CUDA_TRY(cudaGetDevice(&device));
+    return cuda::device_ref{device};
+  }()};
+  return *stream;
 }
 
 #ifdef STREAM_MODE_TESTING
@@ -89,9 +92,9 @@ bool stream_is_invalid(cudaStream_t stream)
   return (stream != cudf::test::get_default_stream().get());
 #else
   // We explicitly list the possibilities rather than using
-  // `cudf::get_default_stream().value()` because there is no guarantee that
+  // `cudf::get_default_stream().get()` because there is no guarantee that
   // `thrust::device` and the default value of
-  // `cudf::get_default_stream().value()` are actually the same. At present, the
+  // `cudf::get_default_stream().get()` are actually the same. At present, the
   // former is `cudaStreamLegacy` while the latter is 0.
   return (stream == cudaStreamDefault) || (stream == cudaStreamLegacy) ||
          (stream == cudaStreamPerThread);

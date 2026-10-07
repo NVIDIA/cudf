@@ -23,6 +23,9 @@ EXPECTED_FAILURES: Mapping[str, str] = {
     "tests/expr_and_series/lit_test.py::test_nested_structures[polars[lazy]-value4-None]": "cudf-polars mishandles list/tuple literals without nested lists.",
     "tests/expr_and_series/lit_test.py::test_nested_structures[polars[lazy]-value6-None]": "cudf-polars mishandles list/tuple literals without nested lists.",
     "tests/expr_and_series/lit_test.py::test_nested_structures[polars[lazy]-value7-None]": "cudf-polars mishandles list/tuple literals without nested lists.",
+    "tests/expr_and_series/dt/replace_time_zone_test.py::test_replace_time_zone[polars[lazy]]": "https://github.com/NVIDIA/cudf/issues/23935",
+    "tests/expr_and_series/dt/convert_time_zone_test.py::test_convert_time_zone[polars[lazy]]": "https://github.com/NVIDIA/cudf/issues/23935",
+    "tests/expr_and_series/dt/convert_time_zone_test.py::test_convert_time_zone_from_none[polars[lazy]]": "https://github.com/NVIDIA/cudf/issues/23935",
 }
 
 

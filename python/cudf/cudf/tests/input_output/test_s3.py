@@ -1,8 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import subprocess
-import sys
 import uuid
 from io import BytesIO, StringIO
 
@@ -95,7 +93,7 @@ def kvikio_remote_io(request):
         yield request.param
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def pdf():
     return pd.DataFrame(
         {
@@ -108,7 +106,7 @@ def pdf():
     )
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def pdf_ext():
     size = 10
     return pd.DataFrame(

@@ -47,7 +47,7 @@ std::unique_ptr<hybrid_scan_reader> setup_reader(cudf::io::datasource& datasourc
 
 std::vector<cudf::size_type> apply_row_group_filters(
   cudf::io::datasource& datasource,
-  hybrid_scan_reader const& reader,
+  hybrid_scan_reader& reader,
   cudf::host_span<cudf::size_type> input_row_group_indices,
   std::unordered_set<hybrid_scan_filter_type> const& filters,
   cudf::io::parquet_reader_options const& options,
@@ -78,7 +78,11 @@ std::vector<cudf::size_type> apply_row_group_filters(
     if (not dict_page_byte_ranges.empty()) {
       auto [dictionary_page_buffers, dictionary_page_data, dict_read_tasks] =
         cudf::io::parquet::fetch_byte_ranges_to_device_async(
-          datasource, dict_page_byte_ranges, stream, mr);
+          datasource,
+          dict_page_byte_ranges,
+          cudf::io::parquet::io_submission_policy::SERIALIZE,
+          stream,
+          mr);
       dict_read_tasks.get();
 
       dict_page_filtered_row_groups = reader.filter_row_groups_with_dictionary_pages(
@@ -102,7 +106,11 @@ std::vector<cudf::size_type> apply_row_group_filters(
       auto aligned_mr = rmm::mr::aligned_resource_adaptor(mr, bloom_filter_alignment);
       auto [bloom_filter_buffers, bloom_filter_data, bloom_read_tasks] =
         cudf::io::parquet::fetch_byte_ranges_to_device_async(
-          datasource, bloom_filter_byte_ranges, stream, aligned_mr);
+          datasource,
+          bloom_filter_byte_ranges,
+          cudf::io::parquet::io_submission_policy::SERIALIZE,
+          stream,
+          aligned_mr);
       bloom_read_tasks.get();
 
       bloom_filtered_row_groups = reader.filter_row_groups_with_bloom_filters(
@@ -118,7 +126,7 @@ std::vector<cudf::size_type> apply_row_group_filters(
 
 std::unique_ptr<cudf::table> single_step_materialize(
   cudf::io::datasource& datasource,
-  hybrid_scan_reader const& reader,
+  hybrid_scan_reader& reader,
   cudf::host_span<cudf::size_type> current_row_group_indices,
   cudf::io::parquet_reader_options const& options,
   cuda::stream_ref stream,
@@ -128,7 +136,11 @@ std::unique_ptr<cudf::table> single_step_materialize(
     reader.all_column_chunks_byte_ranges(current_row_group_indices, options);
   auto [all_column_chunk_buffers, all_column_chunk_data, all_column_chunk_read_tasks] =
     cudf::io::parquet::fetch_byte_ranges_to_device_async(
-      datasource, all_column_chunk_byte_ranges, stream, mr);
+      datasource,
+      all_column_chunk_byte_ranges,
+      cudf::io::parquet::io_submission_policy::SERIALIZE,
+      stream,
+      mr);
   all_column_chunk_read_tasks.get();
 
   return reader
@@ -150,7 +162,7 @@ std::unique_ptr<cudf::table> hybrid_scan(cudf::io::parquet_reader_options const&
 
   // Setup reader and page index
   auto reader           = setup_reader(datasource_ref, options);
-  auto const reader_ref = std::cref(*reader);
+  auto const reader_ref = std::ref(*reader);
 
   // Start with all row groups
   auto row_group_indices         = reader->all_row_groups(options);

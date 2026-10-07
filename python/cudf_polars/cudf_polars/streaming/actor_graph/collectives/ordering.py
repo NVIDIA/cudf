@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Adjust streams between concrete Ordering boundary layouts without sorting."""
+"""Adjust streams between concrete Ordering boundary layouts."""
 
 from __future__ import annotations
 
@@ -10,14 +10,19 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 import pylibcudf as plc
-from cudf_streaming.channel_metadata import Ordering
 from cudf_streaming.partition_utils import (
     packed_data_from_cudf_packed_columns,
     unpack_and_concat,
+    unpack_and_concat_cost,
 )
-from cudf_streaming.table_chunk import TableChunk
+from cudf_streaming.table_chunk import (
+    TableChunk,
+    make_table_chunks_available_or_wait,
+)
 from pylibcudf.contiguous_split import pack
+from rapidsmpf.memory.memory_reservation import opaque_memory_usage
 from rapidsmpf.streaming.coll.sparse_alltoall import SparseAlltoall
+from rapidsmpf.streaming.core.memory_reserve_or_wait import reserve_memory
 from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.containers import DataFrame, DataType
@@ -27,9 +32,11 @@ from cudf_polars.streaming.actor_graph.utils import (
     empty_table_chunk,
     shutdown_channels_on_error,
 )
+from cudf_polars.streaming.utils import partition_owner, partition_range
 from cudf_polars.utils.cuda_stream import stream_ordered_after
 
 if TYPE_CHECKING:
+    from cudf_streaming.channel_metadata import Ordering
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.memory.buffer_resource import BufferResource
     from rapidsmpf.memory.packed_data import PackedData
@@ -38,19 +45,10 @@ if TYPE_CHECKING:
     from rmm.pylibrmm.stream import Stream
 
     from cudf_polars.dsl.ir import IR, IRExecutionContext
+    from cudf_polars.streaming.utils import PartitionRange
 
 
 _PID_DTYPE = DataType(pl.Int32())
-_PartitionRange = tuple[int, int]
-
-
-def get_strict_ordering(ordering: Ordering, br: BufferResource) -> Ordering:
-    """Return an equivalent Ordering with strict boundaries."""
-    return Ordering(
-        ordering.keys,
-        ordering.get_boundaries(br),
-        strict_boundaries=True,
-    )
 
 
 @dataclass(frozen=True)
@@ -59,9 +57,9 @@ class _RoutingPlan:
 
     npartitions: int
     """Number of output partitions implied by the target ordering."""
-    local_window: _PartitionRange
+    local_window: PartitionRange
     """Half-open output-partition range owned by this rank."""
-    source_ranges: list[_PartitionRange]
+    source_ranges: list[PartitionRange]
     """Half-open output-partition range each source rank may contribute to."""
     remote_sources: list[int]
     """Remote ranks that may contribute to this rank's local output window."""
@@ -69,7 +67,7 @@ class _RoutingPlan:
     """Remote-owned output partitions this rank may contribute to."""
     remote_destinations: list[int]
     """Remote ranks that may receive this rank's data."""
-    owed_remote_range: _PartitionRange
+    owed_remote_range: PartitionRange
     """Half-open range spanning owed remote pids, or empty when none are owed."""
 
     @classmethod
@@ -83,7 +81,7 @@ class _RoutingPlan:
     ) -> _RoutingPlan:
         """Compute local ownership and sparse-exchange obligations."""
         npartitions = output_ordering.num_boundaries + 1
-        local_window = _partition_range(comm.rank, comm.nranks, npartitions)
+        local_window = partition_range(comm.rank, comm.nranks, npartitions)
 
         if comm.nranks == 1:
             source_ranges = [(0, npartitions)]
@@ -119,13 +117,10 @@ class _RoutingPlan:
         owed_remote_pids = [
             pid
             for pid in range(*local_source_range)
-            if _contiguous_owner(pid, comm.nranks, npartitions) != comm.rank
+            if partition_owner(pid, comm.nranks, npartitions) != comm.rank
         ]
         remote_destinations = sorted(
-            {
-                _contiguous_owner(pid, comm.nranks, npartitions)
-                for pid in owed_remote_pids
-            }
+            {partition_owner(pid, comm.nranks, npartitions) for pid in owed_remote_pids}
         )
         owed_remote_range = (
             (owed_remote_pids[0], owed_remote_pids[-1] + 1)
@@ -141,19 +136,6 @@ class _RoutingPlan:
             remote_destinations=remote_destinations,
             owed_remote_range=owed_remote_range,
         )
-
-
-def _contiguous_owner(pid: int, nranks: int, npartitions: int) -> int:
-    """Return the rank owning *pid* under contiguous partition assignment."""
-    return pid * nranks // npartitions
-
-
-def _partition_range(rank: int, nranks: int, npartitions: int) -> _PartitionRange:
-    """Return the half-open partition ID range owned by *rank*."""
-    return (
-        (rank * npartitions + nranks - 1) // nranks,
-        ((rank + 1) * npartitions + nranks - 1) // nranks,
-    )
 
 
 def _validate_orderings(input_ordering: Ordering, output_ordering: Ordering) -> None:
@@ -199,6 +181,24 @@ def _split_points(
         )
         .to_polars()["split"]
         .to_list()
+    )
+
+
+def _locally_sort_table(
+    table: plc.Table,
+    ordering: Ordering,
+    stream: Stream,
+    br: BufferResource,
+) -> plc.Table:
+    """Return ``table`` sorted by ``ordering`` keys."""
+    key_table = plc.Table([table.columns()[key.column_index] for key in ordering.keys])
+    return plc.sorting.sort_by_key(
+        table,
+        key_table,
+        [key.order for key in ordering.keys],
+        [key.null_order for key in ordering.keys],
+        stream=stream,
+        mr=br.device_mr,
     )
 
 
@@ -251,14 +251,14 @@ def _source_output_range(
     output_ordering: Ordering,
     lower_positions: list[int],
     upper_positions: list[int],
-) -> _PartitionRange:
+) -> PartitionRange:
     """Return the half-open output partition range touched by a source rank."""
     input_npartitions = input_ordering.num_boundaries + 1
     output_npartitions = output_ordering.num_boundaries + 1
     output_prefix_only = len(output_ordering.keys) < len(input_ordering.keys)
     # Prefix/non-strict boundaries can overlap the equal-boundary run above them.
     include_upper_boundary = output_prefix_only or not input_ordering.strict_boundaries
-    input_start, input_stop = _partition_range(source_rank, nranks, input_npartitions)
+    input_start, input_stop = partition_range(source_rank, nranks, input_npartitions)
     if input_start == input_stop:
         return 0, 0
     output_start = 0 if input_start == 0 else upper_positions[input_start - 1]
@@ -274,13 +274,13 @@ def _source_output_range(
     return output_start, output_stop
 
 
-def _ranges_overlap(left: _PartitionRange, right: _PartitionRange) -> bool:
+def _ranges_overlap(left: PartitionRange, right: PartitionRange) -> bool:
     """Return whether two half-open integer ranges overlap."""
     return max(left[0], right[0]) < min(left[1], right[1])
 
 
 def _sources_for_pid(
-    source_ranges: list[_PartitionRange],
+    source_ranges: list[PartitionRange],
     pid: int,
 ) -> list[int]:
     """Return source ranks that may contribute to one output partition."""
@@ -300,19 +300,30 @@ def _remote_pids_from_source(
     return [
         pid
         for pid in range(*plan.source_ranges[source_rank])
-        if _contiguous_owner(pid, len(plan.source_ranges), plan.npartitions)
+        if partition_owner(pid, len(plan.source_ranges), plan.npartitions)
         == destination_rank
     ]
 
 
-def _unpack_remote_partition(
+async def _unpack_remote_partition(
+    context: Context,
     packed: PackedData,
     stream: Stream,
-    br: BufferResource,
 ) -> TableChunk:
     """Unpack one remote output-partition payload."""
+    br = context.br()
+    partitions = [packed]
+    # The cost covers the concatenated output plus moving any
+    # host-resident partitions to device. The packed inputs stay live
+    # until the concat finishes and are released after, so the net
+    # change is about zero.
+    reservation = await reserve_memory(
+        context,
+        unpack_and_concat_cost(partitions),
+        net_memory_delta=0,
+    )
     return TableChunk.from_pylibcudf_table(
-        unpack_and_concat([packed], stream=stream, br=br),
+        unpack_and_concat(partitions, stream=stream, br=br, reservation=reservation),
         stream,
         exclusive_view=True,
         br=br,
@@ -324,7 +335,12 @@ def _copy_to_owned_chunk(
     stream: Stream,
     br: BufferResource,
 ) -> TableChunk:
-    """Copy a table view into a uniquely-owned chunk."""
+    """
+    Copy a table view into a uniquely-owned chunk.
+
+    Makes no memory reservation of its own. The caller must reserve the
+    copy's device memory, see ``_OutputPartitionBuffer.collect_output_partition``.
+    """
     table = table.copy(stream=stream, mr=br.device_mr)
     return TableChunk.from_pylibcudf_table(
         table,
@@ -342,11 +358,13 @@ class _OutputPartitionBuffer:
         context: Context,
         ch_in: Channel[TableChunk],
         boundary_chunk: TableChunk,
+        input_ordering: Ordering,
         output_ordering: Ordering,
     ) -> None:
         self.context = context
         self.ch_in = ch_in
         self.boundary_chunk = boundary_chunk
+        self.input_ordering = input_ordering
         self.output_ordering = output_ordering
         self.pending: dict[int, ChunkStore] = {}
         self.input_done = False
@@ -357,10 +375,11 @@ class _OutputPartitionBuffer:
 
         Notes
         -----
-        This reads ordered input chunks until the requested output partition
-        is complete. All pieces produced by those chunks are held in a
-        spillable container, and pieces for later output partitions remain
-        cached for later calls.
+        This reads order-partitioned input chunks until the requested output
+        partition is complete. Locally unordered chunks are sorted before they
+        are split. All pieces produced by those chunks are held in a spillable
+        container, and pieces for later output partitions remain cached for
+        later calls.
         """
         stop = pid + 1
         while not self.input_done and not any(
@@ -370,16 +389,38 @@ class _OutputPartitionBuffer:
             if msg is None:
                 self.input_done = True
                 break
-            chunk = TableChunk.from_message(
-                msg, br=self.context.br()
-            ).make_available_and_spill(self.context.br(), allow_overbooking=True)
-            if chunk.table_view().num_rows() == 0:
+            chunk = TableChunk.from_message(msg, br=self.context.br())
+            if chunk.shape[0] == 0:
+                # Nothing to split, so skip the unspill and its reservation.
                 continue
-            with stream_ordered_after(
-                self.context.br().stream_pool.get_stream,
-                upstreams=(chunk.stream, self.boundary_chunk.stream),
-            ) as stream:
+            needs_sort = not self.input_ordering.locally_ordered
+            copy_bytes = chunk.data_alloc_size()
+            sort_bytes = copy_bytes if needs_sort else 0
+            # The pieces copied out below hold the same rows as the chunk, so
+            # they need room for roughly a second copy of it and leave the
+            # total unchanged. Locally unordered input also needs a temporary
+            # local sort before the split points are searched.
+            chunk, extra = await make_table_chunks_available_or_wait(
+                self.context,
+                chunk,
+                reserve_extra=copy_bytes + sort_bytes,
+                net_memory_delta=0,
+            )
+            with (
+                opaque_memory_usage(extra),
+                stream_ordered_after(
+                    self.context.br().stream_pool.get_stream,
+                    upstreams=(chunk.stream, self.boundary_chunk.stream),
+                ) as stream,
+            ):
                 table = chunk.table_view()
+                if needs_sort:
+                    table = _locally_sort_table(
+                        table,
+                        self.input_ordering,
+                        stream,
+                        self.context.br(),
+                    )
                 splits = _split_points(
                     table,
                     self.boundary_chunk.table_view(),
@@ -434,6 +475,51 @@ def _store_chunk(
     stores[pid].insert(Message(pid, chunk))
 
 
+async def _assemble_partition(
+    context: Context,
+    schema_ir: IR,
+    ir_context: IRExecutionContext,
+    chunks: list[TableChunk],
+    ordering: Ordering,
+) -> TableChunk:
+    """Assemble pieces for one output partition."""
+    if not chunks:
+        return empty_table_chunk(schema_ir, context, ir_context.get_cuda_stream())
+    if not ordering.locally_ordered:
+        return await concat_batch(chunks, context, schema_ir.schema, ir_context)
+
+    reserve_extra = (
+        0 if len(chunks) == 1 else sum(chunk.data_alloc_size() for chunk in chunks)
+    )
+    chunks, extra = await make_table_chunks_available_or_wait(
+        context,
+        chunks,
+        reserve_extra=reserve_extra,
+        net_memory_delta=0,
+    )
+    with opaque_memory_usage(extra):
+        if len(chunks) == 1:
+            return chunks[0]
+        with stream_ordered_after(
+            ir_context.get_cuda_stream,
+            upstreams=tuple(chunk.stream for chunk in chunks),
+        ) as stream:
+            table = plc.merge.merge(
+                [chunk.table_view() for chunk in chunks],
+                [key.column_index for key in ordering.keys],
+                [key.order for key in ordering.keys],
+                [key.null_order for key in ordering.keys],
+                stream=stream,
+                mr=context.br().device_mr,
+            )
+            return TableChunk.from_pylibcudf_table(
+                table,
+                stream,
+                exclusive_view=True,
+                br=context.br(),
+            )
+
+
 async def _send_remote_partition(
     context: Context,
     comm: Communicator,
@@ -443,6 +529,7 @@ async def _send_remote_partition(
     npartitions: int,
     pid: int,
     store: ChunkStore | None,
+    output_ordering: Ordering,
 ) -> None:
     """Send one packed payload for one remote-owned output partition."""
     chunks = (
@@ -450,14 +537,16 @@ async def _send_remote_partition(
         if store is not None
         else []
     )
-    chunk = (
-        await concat_batch(chunks, context, schema_ir.schema, ir_context)
-        if chunks
-        else empty_table_chunk(schema_ir, context, ir_context.get_cuda_stream())
+    chunk = await _assemble_partition(
+        context,
+        schema_ir,
+        ir_context,
+        chunks,
+        output_ordering,
     )
     stream = chunk.stream
     exchange.insert(
-        _contiguous_owner(pid, comm.nranks, npartitions),
+        partition_owner(pid, comm.nranks, npartitions),
         packed_data_from_cudf_packed_columns(
             pack(
                 chunk.table_view(),
@@ -477,6 +566,7 @@ async def _emit_partition(
     ch_out: Channel[TableChunk],
     pid: int,
     store: ChunkStore | None,
+    output_ordering: Ordering,
 ) -> None:
     """Emit one output partition, using an empty chunk when no data is present."""
     chunks = (
@@ -484,10 +574,12 @@ async def _emit_partition(
         if store is not None
         else []
     )
-    chunk = (
-        await concat_batch(chunks, context, schema_ir.schema, ir_context)
-        if chunks
-        else empty_table_chunk(schema_ir, context, ir_context.get_cuda_stream())
+    chunk = await _assemble_partition(
+        context,
+        schema_ir,
+        ir_context,
+        chunks,
+        output_ordering,
     )
     await ch_out.send(context, Message(pid, chunk))
 
@@ -508,7 +600,9 @@ async def _adjust_ordering_impl(
     plan = _RoutingPlan.from_orderings(
         context, comm, input_ordering, output_ordering, output_boundaries
     )
-    buffer = _OutputPartitionBuffer(context, ch_in, output_boundaries, output_ordering)
+    buffer = _OutputPartitionBuffer(
+        context, ch_in, output_boundaries, input_ordering, output_ordering
+    )
 
     exchange = None
     if plan.remote_sources or plan.remote_destinations:
@@ -544,7 +638,7 @@ async def _adjust_ordering_impl(
     owed_remote_pid_set = set(plan.owed_remote_pids)
     for pid in range(pre_start, pre_stop):
         piece = await buffer.collect_output_partition(pid)
-        owner = _contiguous_owner(pid, comm.nranks, plan.npartitions)
+        owner = partition_owner(pid, comm.nranks, plan.npartitions)
         if exchange is not None and pid in owed_remote_pid_set:
             await _send_remote_partition(
                 context,
@@ -555,6 +649,7 @@ async def _adjust_ordering_impl(
                 plan.npartitions,
                 pid,
                 piece,
+                output_ordering,
             )
         elif owner == comm.rank and piece is not None:
             local_pieces[pid] = piece
@@ -566,6 +661,7 @@ async def _adjust_ordering_impl(
                 ch_out,
                 pid,
                 local_pieces.pop(pid, None),
+                output_ordering,
             )
 
     if exchange is not None:
@@ -582,7 +678,7 @@ async def _adjust_ordering_impl(
                 exchange.extract(source_rank),
                 strict=True,
             ):
-                chunk = _unpack_remote_partition(packed, stream, context.br())
+                chunk = await _unpack_remote_partition(context, packed, stream)
                 if chunk.table_view().num_rows() > 0:
                     _store_chunk(context, remote_pieces, pid, chunk)
             pieces_by_source[source_rank] = remote_pieces
@@ -605,10 +701,12 @@ async def _adjust_ordering_impl(
             chunks.extend(
                 TableChunk.from_message(msg, br=context.br()) for msg in pid_store
             )
-        chunk = (
-            await concat_batch(chunks, context, schema_ir.schema, ir_context)
-            if chunks
-            else empty_table_chunk(schema_ir, context, ir_context.get_cuda_stream())
+        chunk = await _assemble_partition(
+            context,
+            schema_ir,
+            ir_context,
+            chunks,
+            output_ordering,
         )
         await ch_out.send(context, Message(pid, chunk))
     await buffer.assert_input_drained()
@@ -655,8 +753,10 @@ async def adjust_ordering(
     -----
     This utility is intentionally narrow and only adjusts data messages. The
     caller is responsible for receiving input metadata and sending output
-    metadata. Input rows are assumed to be globally ordered by ``input_ordering``;
-    sortedness is not checked here.
+    metadata. Input rows are assumed to be order-partitioned by
+    ``input_ordering``. Locally unordered chunks are sorted before splitting.
+    When ``output_ordering.locally_ordered`` is true, sorted pieces are merged
+    before emission so complete output partitions are locally ordered.
 
     The current implementation requires contiguous partition ownership, strict
     output boundaries, and output keys that are a prefix of the input keys.

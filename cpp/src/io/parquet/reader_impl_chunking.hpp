@@ -8,6 +8,9 @@
 #include "reader_impl_helpers.hpp"
 
 #include <cudf/types.hpp>
+#include <cudf/utilities/memory_resource.hpp>
+
+#include <cuda/buffer>
 
 namespace cudf::io::parquet::detail {
 
@@ -79,8 +82,10 @@ struct subpass_intermediate_data {
   subpass_intermediate_data(subpass_intermediate_data&&)                 = default;
   subpass_intermediate_data& operator=(subpass_intermediate_data&&)      = default;
   subpass_intermediate_data(cuda::stream_ref stream)
-    : decomp_page_data(0, stream),
-      level_decode_data(0, stream),
+    : decomp_page_data(stream, cudf::get_current_device_resource_ref()),
+      level_decode_data(stream, cudf::get_current_device_resource_ref()),
+      flat_prepass_data(stream, cudf::get_current_device_resource_ref()),
+      prepass_state_buf(0, stream),
       page_buf(0, stream),
       page_src_index{0, stream},
       page_string_offset_indices(0, stream),
@@ -91,9 +96,15 @@ struct subpass_intermediate_data {
   {
   }
 
-  rmm::device_buffer decomp_page_data;
+  cuda::device_buffer<std::uint8_t> decomp_page_data;
 
-  rmm::device_buffer level_decode_data;
+  cuda::device_buffer<std::byte> level_decode_data;
+  // Backing store for the flat level-prepass valid-rank maps. `allocate_level_decode_space`
+  // sub-allocates one slice of this per claimed page. Empty unless the prepass claimed a page.
+  cuda::device_buffer<std::byte> flat_prepass_data;
+  // Out-of-line prepass scratch, one entry per page. Empty unless the selector claimed at least
+  // one page of this subpass. See page_prepass_state.
+  cudf::detail::hostdevice_vector<page_prepass_state> prepass_state_buf;
   cudf::detail::hostdevice_span<PageInfo> pages{};
 
   cudf::detail::hostdevice_vector<PageInfo> page_buf;
@@ -154,7 +165,7 @@ struct pass_intermediate_data {
       chunks(0, stream),
       pages(0, stream),
       page_offsets{0, stream},
-      decomp_dict_data{0, stream},
+      decomp_dict_data{stream, cudf::get_current_device_resource_ref()},
       decomp_scratch_sizes{0, stream},
       string_offset_sizes{0, stream},
       level_decode_sizes{0, stream},
@@ -177,7 +188,7 @@ struct pass_intermediate_data {
   // page_offsets would be 0, 5, 8
   rmm::device_uvector<size_type> page_offsets;
 
-  rmm::device_buffer decomp_dict_data;
+  cuda::device_buffer<std::uint8_t> decomp_dict_data;
   rmm::device_uvector<size_t> decomp_scratch_sizes;
   rmm::device_uvector<size_t> string_offset_sizes;
   rmm::device_uvector<size_t> level_decode_sizes;

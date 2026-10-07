@@ -582,52 +582,6 @@ class lead_lag_aggregation final
 };
 
 /**
- * @brief Derived class for specifying a custom aggregation
- * specified in udf
- */
-class udf_aggregation final : public clonable<udf_aggregation>::derived_from<rolling_aggregation> {
- public:
-  udf_aggregation(aggregation::Kind type,
-                  std::string user_defined_aggregator,
-                  data_type output_type)
-    : aggregation{type},
-      _source{std::move(user_defined_aggregator)},
-      _operator_name{(type == aggregation::PTX) ? "rolling_udf_ptx" : "rolling_udf_cuda"},
-      _function_name{"GENERIC_ROLLING_OP"},
-      _output_type{output_type}
-  {
-    CUDF_EXPECTS(type == aggregation::PTX or type == aggregation::CUDA,
-                 "udf_aggregation can accept only PTX, CUDA");
-  }
-
-  [[nodiscard]] bool is_equal(aggregation const& _other) const override
-  {
-    if (!this->aggregation::is_equal(_other)) { return false; }
-    auto const& other = dynamic_cast<udf_aggregation const&>(_other);
-    return (_source == other._source and _operator_name == other._operator_name and
-            _function_name == other._function_name and _output_type == other._output_type);
-  }
-
-  [[nodiscard]] size_t do_hash() const override
-  {
-    return this->aggregation::do_hash() ^ hash_impl();
-  }
-
-  std::string const _source;
-  std::string const _operator_name;
-  std::string const _function_name;
-  data_type _output_type;
-
- protected:
-  [[nodiscard]] size_t hash_impl() const
-  {
-    return std::hash<std::string>{}(_source) ^ std::hash<std::string>{}(_operator_name) ^
-           std::hash<std::string>{}(_function_name) ^
-           std::hash<int>{}(static_cast<int32_t>(_output_type.id()));
-  }
-};
-
-/**
  * @brief Derived class for specifying host-based UDF aggregation.
  */
 class host_udf_aggregation final : public groupby_aggregation,

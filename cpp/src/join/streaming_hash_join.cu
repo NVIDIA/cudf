@@ -12,7 +12,8 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/row_operator/equality.cuh>
 #include <cudf/detail/row_operator/hashing.cuh>
-#include <cudf/detail/row_operator/primitive_row_operators.cuh>
+#include <cudf/detail/row_operator/primitive_equality.cuh>
+#include <cudf/detail/row_operator/primitive_hashing.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/join/streaming_hash_join.hpp>
 #include <cudf/table/table.hpp>
@@ -32,7 +33,7 @@
 #include <cuda/iterator>
 #include <cuda/std/functional>
 #include <cuda/std/tuple>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 #include <algorithm>
 #include <atomic>
@@ -357,7 +358,7 @@ class streaming_hash_join_impl {
 
     auto preprocessed = row::equality::preprocessed_table::create(keys, stream, mr.get_output_mr());
     auto const batch_rows = keys.num_rows();
-    auto row_bitmask      = [&]() -> std::optional<rmm::device_buffer> {
+    auto row_bitmask      = [&]() -> std::optional<cuda::device_buffer<std::byte>> {
       if (batch_rows > 0 && compare_nulls == null_equality::UNEQUAL && nullable(keys)) {
         return cudf::detail::bitmask_and(keys, stream, mr.get_temporary_mr()).first;
       }

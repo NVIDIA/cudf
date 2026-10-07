@@ -27,7 +27,7 @@
 #include <rmm/resource_ref.hpp>
 
 #include <cuda/memory_resource>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 #include <cuda_runtime_api.h>
 
 #include <sys/mman.h>
@@ -120,14 +120,14 @@ class tracking_resource_adaptor_impl {
 
   void* allocate_sync(std::size_t bytes, std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT)
   {
-    return allocate(cuda::stream_ref{cudaStream_t{nullptr}}, bytes, alignment);
+    return allocate(cuda::stream_ref{cudaStream_t{cudaStreamDefault}}, bytes, alignment);
   }
 
   void deallocate_sync(void* ptr,
                        std::size_t bytes,
                        std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT) noexcept
   {
-    deallocate(cuda::stream_ref{cudaStream_t{nullptr}}, ptr, bytes, alignment);
+    deallocate(cuda::stream_ref{cudaStream_t{cudaStreamDefault}}, ptr, bytes, alignment);
   }
 
   bool operator==(tracking_resource_adaptor_impl const& other) const noexcept
@@ -506,14 +506,14 @@ class java_event_handler_memory_resource {
 
   void* allocate_sync(std::size_t bytes, std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT)
   {
-    return allocate(cuda::stream_ref{cudaStream_t{nullptr}}, bytes, alignment);
+    return allocate(cuda::stream_ref{cudaStream_t{cudaStreamDefault}}, bytes, alignment);
   }
 
   void deallocate_sync(void* ptr,
                        std::size_t bytes,
                        std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT) noexcept
   {
-    deallocate(cuda::stream_ref{cudaStream_t{nullptr}}, ptr, bytes, alignment);
+    deallocate(cuda::stream_ref{cudaStream_t{cudaStreamDefault}}, ptr, bytes, alignment);
   }
 
   bool operator==(java_event_handler_memory_resource const& other) const noexcept
@@ -840,7 +840,7 @@ class pinned_fallback_host_memory_resource {
         // If the pool is exhausted, fall back to the upstream memory resource
       }
     }
-    return prior_cudf_pinned_mr().allocate(stream, bytes);
+    return prior_cudf_pinned_mr().allocate(stream, bytes, alignment);
   }
 
   void deallocate(cuda::stream_ref stream,
@@ -851,20 +851,20 @@ class pinned_fallback_host_memory_resource {
     if (bytes <= pool.pool_size() && ptr >= pool_begin && ptr < pool_end) {
       pool.deallocate(stream, ptr, bytes, alignment);
     } else {
-      prior_cudf_pinned_mr().deallocate(stream, ptr, bytes);
+      prior_cudf_pinned_mr().deallocate(stream, ptr, bytes, alignment);
     }
   }
 
   void* allocate_sync(std::size_t bytes, std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT)
   {
-    return allocate(cuda::stream_ref{cudaStream_t{nullptr}}, bytes, alignment);
+    return allocate(cuda::stream_ref{cudaStream_t{cudaStreamDefault}}, bytes, alignment);
   }
 
   void deallocate_sync(void* ptr,
                        std::size_t bytes,
                        std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT) noexcept
   {
-    deallocate(cuda::stream_ref{cudaStream_t{nullptr}}, ptr, bytes, alignment);
+    deallocate(cuda::stream_ref{cudaStream_t{cudaStreamDefault}}, ptr, bytes, alignment);
   }
 
   bool operator==(pinned_fallback_host_memory_resource const& other) const noexcept
@@ -938,7 +938,7 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_Rmm_allocInternal(JNIEnv* env,
     cudf::jni::auto_set_device(env);
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref();
     auto c_stream                     = cuda::stream_ref(reinterpret_cast<cudaStream_t>(stream));
-    void* ret                         = mr.allocate(c_stream, size);
+    void* ret                         = mr.allocate(c_stream, size, rmm::CUDA_ALLOCATION_ALIGNMENT);
     return reinterpret_cast<jlong>(ret);
   }
   JNI_CATCH(env, 0);
@@ -953,7 +953,7 @@ Java_ai_rapids_cudf_Rmm_free(JNIEnv* env, jclass clazz, jlong ptr, jlong size, j
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref();
     void* cptr                        = reinterpret_cast<void*>(ptr);
     auto c_stream                     = cuda::stream_ref(reinterpret_cast<cudaStream_t>(stream));
-    mr.deallocate(c_stream, cptr, size);
+    mr.deallocate(c_stream, cptr, size, rmm::CUDA_ALLOCATION_ALIGNMENT);
   }
   JNI_CATCH(env, );
 }
@@ -1449,7 +1449,8 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_Rmm_allocFromFallbackPinnedPool(JNIE
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    void* ret = cudf::get_pinned_memory_resource().allocate(cudf::get_default_stream(), size);
+    void* ret = cudf::get_pinned_memory_resource().allocate(
+      cudf::get_default_stream(), size, rmm::CUDA_ALLOCATION_ALIGNMENT);
     return reinterpret_cast<jlong>(ret);
   }
   JNI_CATCH(env, 0);
@@ -1465,7 +1466,8 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_Rmm_freeFromFallbackPinnedPool(JNIEnv
   {
     cudf::jni::auto_set_device(env);
     void* cptr = reinterpret_cast<void*>(ptr);
-    cudf::get_pinned_memory_resource().deallocate(cudf::get_default_stream(), cptr, size);
+    cudf::get_pinned_memory_resource().deallocate(
+      cudf::get_default_stream(), cptr, size, rmm::CUDA_ALLOCATION_ALIGNMENT);
   }
   JNI_CATCH(env, );
 }

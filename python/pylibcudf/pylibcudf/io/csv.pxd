@@ -95,6 +95,8 @@ cdef class CsvWriterOptionsBuilder:
     cpdef CsvWriterOptionsBuilder true_value(self, str val)
     cpdef CsvWriterOptionsBuilder false_value(self, str val)
     cpdef CsvWriterOptionsBuilder quoting(self, quote_style style)
+    cpdef CsvWriterOptionsBuilder compression(self, compression_type comp)
+    cpdef CsvWriterOptionsBuilder compression_block_size(self, size_t size)
     cpdef CsvWriterOptions build(self)
 
 

@@ -315,7 +315,7 @@ TEST_F(ApplyRetentionMask, ListOfStructsFiltering)
                             fixed_width_column_wrapper<int32_t>{0, 2, 4, 6, 8, 10}.release(),
                             struct_column.release(),
                             0,
-                            {});
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   auto filter_mask = fixed_width_column_wrapper<bool>{{1, 0, 1, 0, 1}};
 
@@ -337,7 +337,7 @@ TEST_F(ApplyRetentionMask, ListOfStructsFiltering)
                             fixed_width_column_wrapper<int32_t>{0, 2, 4, 6}.release(),
                             expected_struct_column.release(),
                             0,
-                            {});
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(filtered_list_column,
                                       expected_list_of_structs_column->view());
@@ -415,14 +415,10 @@ TEST_F(ApplyDeletionMask, EmptyMask)
   cudf::test::fixed_width_column_wrapper<double> col3{{10, 40, 70, 5, 2, 10}, {1, 1, 0, 1, 1, 0}};
   cudf::table_view input{{col1, col2, col3}};
   cudf::test::fixed_width_column_wrapper<bool> deletion_mask{};
-  cudf::test::fixed_width_column_wrapper<int16_t> col1_expected{};
-  cudf::test::fixed_width_column_wrapper<int32_t> col2_expected{};
-  cudf::test::fixed_width_column_wrapper<double> col3_expected{};
-  cudf::table_view expected{{col1_expected, col2_expected, col3_expected}};
 
   auto got = cudf::apply_deletion_mask(input, deletion_mask);
 
-  CUDF_TEST_EXPECT_TABLES_EQUAL(expected, got->view());
+  CUDF_TEST_EXPECT_TABLES_EQUAL(input, got->view());
 }
 
 TEST_F(ApplyDeletionMask, WrongMaskType)

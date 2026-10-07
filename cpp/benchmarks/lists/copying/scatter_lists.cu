@@ -12,7 +12,7 @@
 
 #include <rmm/exec_policy.hpp>
 
-#include <thrust/random.h>
+#include <cuda/std/random>
 #include <thrust/sequence.h>
 #include <thrust/shuffle.h>
 
@@ -90,14 +90,14 @@ static void bench_scatter_lists(nvbench::state& state, nvbench::type_list<TypePa
                    -1);
 
   if (not coalesce) {
-    thrust::default_random_engine g;
+    cuda::std::philox4x32 g;
     thrust::shuffle(rmm::exec_policy_nosync(stream),
                     m_scatter_map.begin<cudf::size_type>(),
                     m_scatter_map.end<cudf::size_type>(),
                     g);
   }
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   state.add_global_memory_reads<int8_t>(base_size * sizeof(TypeParam) * 2);  // source + scatter_map
   state.add_global_memory_writes<int8_t>(base_size * sizeof(TypeParam));     // target
 

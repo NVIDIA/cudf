@@ -17,11 +17,16 @@
 #include <cudf/contiguous_split.hpp>
 #include <cudf/copying.hpp>
 #include <cudf/detail/iterator.cuh>
+#include <cudf/dictionary/dictionary_column_view.hpp>
+#include <cudf/dictionary/dictionary_factories.hpp>
+#include <cudf/dictionary/encode.hpp>
 #include <cudf/filling.hpp>
+#include <cudf/null_mask.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/device_buffer.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 
 #include <array>
@@ -956,9 +961,11 @@ void split_structs_no_children(SplitFunc Split, CompareFunc Compare, bool split 
 {
   // no nulls
   {
-    auto struct_column = cudf::make_structs_column(4, {}, 0, rmm::device_buffer{});
+    auto struct_column =
+      cudf::make_structs_column(4, {}, 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
     if (split) {
-      auto expected = cudf::make_structs_column(2, {}, 0, rmm::device_buffer{});
+      auto expected = cudf::make_structs_column(
+        2, {}, 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
       // split
       std::vector<cudf::size_type> splits{2};
@@ -1003,10 +1010,13 @@ void split_structs_no_children(SplitFunc Split, CompareFunc Compare, bool split 
 
   // no nulls, empty output column
   {
-    auto struct_column = cudf::make_structs_column(4, {}, 0, rmm::device_buffer{});
+    auto struct_column =
+      cudf::make_structs_column(4, {}, 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
     if (split) {
-      auto expected0 = cudf::make_structs_column(4, {}, 0, rmm::device_buffer{});
-      auto expected1 = cudf::make_structs_column(0, {}, 0, rmm::device_buffer{});
+      auto expected0 = cudf::make_structs_column(
+        4, {}, 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+      auto expected1 = cudf::make_structs_column(
+        0, {}, 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
       // split
       std::vector<cudf::size_type> splits{4};
@@ -1035,7 +1045,8 @@ void split_structs_no_children(SplitFunc Split, CompareFunc Compare, bool split 
         cudf::test::detail::make_null_mask(expected_validity0.begin(), expected_validity0.end());
       auto expected0 = cudf::make_structs_column(4, {}, null_count, std::move(null_mask));
 
-      auto expected1 = cudf::make_structs_column(0, {}, 0, rmm::device_buffer{});
+      auto expected1 = cudf::make_structs_column(
+        0, {}, 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
       // split
       std::vector<cudf::size_type> splits{4};
@@ -1365,9 +1376,10 @@ std::vector<cudf::packed_table> do_chunked_pack(cudf::table_view const& input)
 {
   auto mr = cudf::get_current_device_resource_ref();
 
-  rmm::device_buffer bounce_buff(1 * 1024 * 1024, cudf::get_default_stream(), mr);
+  cuda::device_buffer<std::byte> bounce_buff(
+    cudf::get_default_stream(), mr, 1 * 1024 * 1024, cuda::no_init);
   auto bounce_buff_span =
-    cudf::device_span<uint8_t>(static_cast<uint8_t*>(bounce_buff.data()), bounce_buff.size());
+    cudf::device_span<uint8_t>(reinterpret_cast<uint8_t*>(bounce_buff.data()), bounce_buff.size());
 
   auto chunked_pack =
     cudf::chunked_pack::create(input, bounce_buff_span.size(), cudf::get_default_stream(), mr);
@@ -1383,7 +1395,7 @@ std::vector<cudf::packed_table> do_chunked_pack(cudf::table_view const& input)
                     bounce_buff.data(),
                     bytes_copied,
                     cudaMemcpyDefault,
-                    cudf::get_default_stream());
+                    cudf::get_default_stream().get());
     final_buff_offset += bytes_copied;
   }
 
@@ -1732,6 +1744,40 @@ TEST_F(ContiguousSplitUntypedTest, ValidityEdgeCase)
   }
 }
 
+TEST_F(ContiguousSplitUntypedTest, ManyBuffersPreserveValidity)
+{
+  // 172 nullable columns plus one non-nullable column produce 345 source buffers. Ten output
+  // partitions therefore produce a 3450-item scan that crosses the tile boundary implicated in
+  // https://github.com/NVIDIA/cccl/issues/11167. The value column is positioned after that boundary
+  // in the final partition so that corrupted offsets change its final validity bit.
+  constexpr cudf::size_type column_count = 173;
+  constexpr cudf::size_type value_column = 25;
+
+  std::vector<std::unique_ptr<cudf::column>> columns;
+  columns.reserve(column_count);
+  columns.push_back(
+    cudf::test::fixed_width_column_wrapper<int64_t>({0, 0, 0, 0}, {true, true, true, false})
+      .release());
+  columns.push_back(cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 0, 0}.release());
+  for (cudf::size_type column_index = 2; column_index < column_count; ++column_index) {
+    if (column_index == value_column) {
+      columns.push_back(
+        cudf::test::fixed_width_column_wrapper<int64_t>({0, 0, 0, -1}, {false, false, false, true})
+          .release());
+    } else {
+      columns.push_back(
+        cudf::test::fixed_width_column_wrapper<int64_t>({0, 0, 0, 0}, {false, false, false, false})
+          .release());
+    }
+  }
+
+  cudf::table const input{std::move(columns)};
+  auto const result = cudf::contiguous_split(input, std::vector<cudf::size_type>(9, 0));
+
+  ASSERT_EQ(result.size(), 10);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(input, result.back().table);
+}
+
 // This test requires about 25GB of device memory when used with the arena allocator
 TEST_F(ContiguousSplitUntypedTest, DISABLED_VeryLargeColumnTest)
 {
@@ -1777,9 +1823,10 @@ TEST_F(ContiguousSplitUntypedTest, DISABLED_ChunkedPackNextReturnValueOver2GB)
   EXPECT_EQ(chunked_packer->get_total_contiguous_size(), expected_total_size);
   EXPECT_TRUE(chunked_packer->has_next());
 
-  rmm::device_buffer bounce_buff(bounce_size, cudf::get_default_stream(), mr);
+  cuda::device_buffer<std::byte> bounce_buff(
+    cudf::get_default_stream(), mr, bounce_size, cuda::no_init);
   auto const bounce_span =
-    cudf::device_span<uint8_t>(static_cast<uint8_t*>(bounce_buff.data()), bounce_buff.size());
+    cudf::device_span<uint8_t>(reinterpret_cast<uint8_t*>(bounce_buff.data()), bounce_buff.size());
 
   auto const bytes_copied = chunked_packer->next(bounce_span);
   EXPECT_EQ(bytes_copied, expected_total_size);
@@ -1820,7 +1867,11 @@ TEST_F(ContiguousSplitUntypedTest, OffsetAlignment)
     cudf::test::fixed_width_column_wrapper<int64_t> long_offsets{
       0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48};
     auto long_str =
-      cudf::make_strings_column(12, long_offsets.release(), std::move(*contents.data), 0, {});
+      cudf::make_strings_column(12,
+                                long_offsets.release(),
+                                std::move(*contents.data),
+                                0,
+                                cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
     cudf::strings_column_view scv(*long_str);
     CUDF_EXPECTS(scv.offsets().type().id() == cudf::type_id::INT64, "Unexpected short offset type");
 
@@ -2153,8 +2204,10 @@ TEST_F(ContiguousSplitTableCornerCases, PreSplitTable)
   children.push_back(std::make_unique<cudf::column>(col2));
   children.push_back(std::make_unique<cudf::column>(col0));
   children.push_back(std::make_unique<cudf::column>(col1));
-  auto col3 = cudf::make_structs_column(
-    static_cast<cudf::column_view>(col0).size(), std::move(children), 0, rmm::device_buffer{});
+  auto col3 = cudf::make_structs_column(static_cast<cudf::column_view>(col0).size(),
+                                        std::move(children),
+                                        0,
+                                        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   cudf::table_view t({col0, col1, col2, *col3});
   auto pre_split = cudf::split(t, {1});
@@ -2263,8 +2316,11 @@ TEST_F(ContiguousSplitTableCornerCases, PreSplitList)
                                                          11, 12, 13, 14, 15, 16, 17, 18, 19, 20};
     cudf::test::structs_column_wrapper data({floats});
 
-    auto list =
-      cudf::make_lists_column(8, offsets.release(), data.release(), 0, rmm::device_buffer{});
+    auto list = cudf::make_lists_column(8,
+                                        offsets.release(),
+                                        data.release(),
+                                        0,
+                                        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     auto pre_split = cudf::split(*list, {2});
 
@@ -2323,8 +2379,11 @@ TEST_F(ContiguousSplitTableCornerCases, PreSplitStructs)
     cudf::test::fixed_width_column_wrapper<float> floats{1,  2,  3,  4,  5,  6,  7,  8,  9,  10,
                                                          11, 12, 13, 14, 15, 16, 17, 18, 19, 20};
     cudf::test::structs_column_wrapper data({floats});
-    auto list =
-      cudf::make_lists_column(8, offsets.release(), data.release(), 0, rmm::device_buffer{});
+    auto list = cudf::make_lists_column(8,
+                                        offsets.release(),
+                                        data.release(),
+                                        0,
+                                        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
     cudf::test::strings_column_wrapper strings{"a", "bb", "ccc", "dddd", "", "e", "ff", "ggg"};
 
     std::vector<std::unique_ptr<cudf::column>> struct_children;
@@ -2352,8 +2411,11 @@ TEST_F(ContiguousSplitTableCornerCases, NestedEmpty)
   {
     auto empty_string = cudf::make_empty_column(cudf::data_type{cudf::type_id::STRING});
     auto offsets      = cudf::test::fixed_width_column_wrapper<int>({0, 0});
-    auto list         = cudf::make_lists_column(
-      1, offsets.release(), std::move(empty_string), 0, rmm::device_buffer{});
+    auto list         = cudf::make_lists_column(1,
+                                        offsets.release(),
+                                        std::move(empty_string),
+                                        0,
+                                        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     cudf::table_view src_table({static_cast<cudf::column_view>(*list)});
 
@@ -2372,8 +2434,11 @@ TEST_F(ContiguousSplitTableCornerCases, NestedEmpty)
     cudf::test::strings_column_wrapper str{"abc"};
     auto empty_string = cudf::empty_like(str);
     auto offsets      = cudf::test::fixed_width_column_wrapper<int>({0, 0});
-    auto list         = cudf::make_lists_column(
-      1, offsets.release(), std::move(empty_string), 0, rmm::device_buffer{});
+    auto list         = cudf::make_lists_column(1,
+                                        offsets.release(),
+                                        std::move(empty_string),
+                                        0,
+                                        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     cudf::table_view src_table({static_cast<cudf::column_view>(*list)});
 
@@ -2392,8 +2457,11 @@ TEST_F(ContiguousSplitTableCornerCases, NestedEmpty)
     cudf::test::lists_column_wrapper<float> listw{{1.0f, 2.0f}, {3.0f, 4.0f}};
     auto empty_list = cudf::empty_like(listw);
     auto offsets    = cudf::test::fixed_width_column_wrapper<int>({0, 0});
-    auto list =
-      cudf::make_lists_column(1, offsets.release(), std::move(empty_list), 0, rmm::device_buffer{});
+    auto list       = cudf::make_lists_column(1,
+                                        offsets.release(),
+                                        std::move(empty_list),
+                                        0,
+                                        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     cudf::table_view src_table({static_cast<cudf::column_view>(*list)});
 
@@ -2412,8 +2480,11 @@ TEST_F(ContiguousSplitTableCornerCases, NestedEmpty)
     cudf::test::lists_column_wrapper<float> listw{{1.0f, 2.0f}, {3.0f, 4.0f}};
     auto empty_list = cudf::empty_like(listw);
     auto offsets    = cudf::test::fixed_width_column_wrapper<int>({0, 0});
-    auto list =
-      cudf::make_lists_column(1, offsets.release(), std::move(empty_list), 0, rmm::device_buffer{});
+    auto list       = cudf::make_lists_column(1,
+                                        offsets.release(),
+                                        std::move(empty_list),
+                                        0,
+                                        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     cudf::table_view src_table({static_cast<cudf::column_view>(*list)});
 
@@ -2434,8 +2505,11 @@ TEST_F(ContiguousSplitTableCornerCases, NestedEmpty)
     auto struct_column = cudf::test::structs_column_wrapper({ints, floats});
     auto empty_struct  = cudf::empty_like(struct_column);
     auto offsets       = cudf::test::fixed_width_column_wrapper<int>({0, 0});
-    auto list          = cudf::make_lists_column(
-      1, offsets.release(), std::move(empty_struct), 0, rmm::device_buffer{});
+    auto list          = cudf::make_lists_column(1,
+                                        offsets.release(),
+                                        std::move(empty_struct),
+                                        0,
+                                        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     cudf::table_view src_table({static_cast<cudf::column_view>(*list)});
 
@@ -2500,9 +2574,11 @@ TEST_F(ContiguousSplitTableCornerCases, OutBufferToSmall)
 TEST_F(ContiguousSplitTableCornerCases, ChunkSpanTooSmall)
 {
   auto chunked_pack = cudf::chunked_pack::create({}, 1 * 1024 * 1024);
-  rmm::device_buffer buff(
-    1 * 1024, cudf::test::get_default_stream(), cudf::get_current_device_resource_ref());
-  cudf::device_span<uint8_t> too_small(static_cast<uint8_t*>(buff.data()), buff.size());
+  cuda::device_buffer<std::byte> buff(cudf::test::get_default_stream(),
+                                      cudf::get_current_device_resource_ref(),
+                                      1 * 1024,
+                                      cuda::no_init);
+  cudf::device_span<uint8_t> too_small(reinterpret_cast<uint8_t*>(buff.data()), buff.size());
   std::size_t copied = 0;
   // throws because we created chunked_contig_split with 1MB, but we are giving
   // it a 1KB span here
@@ -2513,9 +2589,11 @@ TEST_F(ContiguousSplitTableCornerCases, ChunkSpanTooSmall)
 TEST_F(ContiguousSplitTableCornerCases, EmptyTableHasNextFalse)
 {
   auto chunked_pack = cudf::chunked_pack::create({}, 1 * 1024 * 1024);
-  rmm::device_buffer buff(
-    1 * 1024 * 1024, cudf::test::get_default_stream(), cudf::get_current_device_resource_ref());
-  cudf::device_span<uint8_t> bounce_buff(static_cast<uint8_t*>(buff.data()), buff.size());
+  cuda::device_buffer<std::byte> buff(cudf::test::get_default_stream(),
+                                      cudf::get_current_device_resource_ref(),
+                                      1 * 1024 * 1024,
+                                      cuda::no_init);
+  cudf::device_span<uint8_t> bounce_buff(reinterpret_cast<uint8_t*>(buff.data()), buff.size());
   EXPECT_EQ(chunked_pack->has_next(), false);  // empty input table
   std::size_t copied = 0;
   EXPECT_THROW(copied = chunked_pack->next(bounce_buff), cudf::logic_error);
@@ -2526,9 +2604,11 @@ TEST_F(ContiguousSplitTableCornerCases, ExhaustedHasNextFalse)
 {
   cudf::test::strings_column_wrapper a{"abc", "def", "ghi", "jkl", "mno", "", "st", "uvwx"};
   cudf::table_view t({a});
-  rmm::device_buffer buff(
-    1 * 1024 * 1024, cudf::test::get_default_stream(), cudf::get_current_device_resource_ref());
-  cudf::device_span<uint8_t> bounce_buff(static_cast<uint8_t*>(buff.data()), buff.size());
+  cuda::device_buffer<std::byte> buff(cudf::test::get_default_stream(),
+                                      cudf::get_current_device_resource_ref(),
+                                      1 * 1024 * 1024,
+                                      cuda::no_init);
+  cudf::device_span<uint8_t> bounce_buff(reinterpret_cast<uint8_t*>(buff.data()), buff.size());
   auto chunked_pack = cudf::chunked_pack::create(t, buff.size());
   EXPECT_EQ(chunked_pack->has_next(), true);
   std::size_t copied = chunked_pack->next(bounce_buff);
@@ -2720,6 +2800,128 @@ TEST_F(ContiguousSplitNestedTypesTest, ListOfStructChunked)
     /*split*/ false);
 }
 
+namespace {
+
+void verify_dictionaries(cudf::table_view const& expected, cudf::table_view const& result)
+{
+  for (auto i = 0; i < expected.num_columns(); ++i) {
+    cudf::dictionary_column_view const dict(result.column(i));
+    // every partition holds all of the keys, so those are compared against the source directly
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(cudf::dictionary_column_view(expected.column(i)).keys(),
+                                   dict.keys());
+    // decode does not accept a zero row dictionary
+    if (dict.size() == 0) { continue; }
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
+      *cudf::dictionary::decode(cudf::dictionary_column_view(expected.column(i))),
+      *cudf::dictionary::decode(dict));
+  }
+}
+
+// `Project` picks the dictionary columns out of a partition
+template <typename ProjectFunc>
+void split_and_verify_dictionaries(cudf::table_view const& input,
+                                   std::vector<cudf::size_type> const& splits,
+                                   ProjectFunc Project)
+{
+  auto const expected = cudf::split(input, splits);
+  auto const result   = cudf::contiguous_split(input, splits);
+  ASSERT_EQ(expected.size(), result.size());
+  for (std::size_t i = 0; i < result.size(); ++i) {
+    verify_dictionaries(Project(expected[i]), Project(result[i].table));
+  }
+}
+
+}  // namespace
+
+TEST_F(ContiguousSplitNestedTypesTest, Dictionaries)
+{
+  cudf::test::dictionary_column_wrapper<std::string> strs{
+    {"aa", "bb", "cc", "dd", "aa", "bb", "cc", "dd"}, {1, 1, 0, 1, 1, 1, 1, 1}};
+  cudf::test::dictionary_column_wrapper<int32_t> nums{{7, 6, 5, 4, 3, 2, 1, 0}};
+  cudf::test::fixed_width_column_wrapper<int32_t> plain{{5, 4, 3, 2, 1, 0, 5, 4}};
+  auto const narrow = cudf::dictionary::encode(plain, cudf::data_type{cudf::type_id::INT8});
+  cudf::table_view src({strs, nums, *narrow});
+
+  // the splits are not multiples of the validity or index size
+  split_and_verify_dictionaries(src, {0, 3, 6, 8}, [](cudf::table_view const& t) { return t; });
+
+  auto const packed = cudf::pack(src);
+  verify_dictionaries(src, cudf::unpack(packed));
+}
+
+TEST_F(ContiguousSplitNestedTypesTest, DictionariesChunked)
+{
+  // pre-sliced input, packed in one piece
+  {
+    cudf::test::dictionary_column_wrapper<std::string> strs{
+      {"aa", "bb", "cc", "dd", "aa", "bb", "cc", "dd"}, {1, 1, 0, 1, 1, 1, 1, 1}};
+    cudf::test::dictionary_column_wrapper<int32_t> nums{{7, 6, 5, 4, 3, 2, 1, 0}};
+    auto const sliced = cudf::slice(cudf::table_view({strs, nums}), {2, 7})[0];
+    auto const result = do_chunked_pack(sliced);
+    ASSERT_EQ(1, result.size());
+    verify_dictionaries(sliced, result[0].table);
+  }
+
+  // large enough to span more than one chunk
+  {
+    auto const iter = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i; });
+    cudf::test::fixed_width_column_wrapper<int32_t> plain(iter, iter + 400000);
+    auto const dict   = cudf::dictionary::encode(plain);
+    auto const input  = cudf::table_view({*dict});
+    auto const result = do_chunked_pack(input);
+    ASSERT_EQ(1, result.size());
+    verify_dictionaries(input, result[0].table);
+  }
+}
+
+TEST_F(ContiguousSplitNestedTypesTest, ListOfDictionary)
+{
+  // the indices follow the parent's row range while the keys do not, at a nonzero offset depth
+  cudf::test::dictionary_column_wrapper<std::string> keys{
+    {"aa", "bb", "cc", "dd", "aa", "bb", "cc", "dd", "aa"}, {1, 1, 0, 1, 1, 1, 1, 1, 1}};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> offsets{0, 2, 2, 5, 9};
+  auto const list =
+    cudf::make_lists_column(4,
+                            offsets.release(),
+                            keys.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+  split_and_verify_dictionaries(cudf::table_view({*list}), {2}, [](cudf::table_view const& t) {
+    return cudf::table_view(
+      {cudf::lists_column_view(t.column(0)).get_sliced_child(cudf::get_default_stream())});
+  });
+}
+
+TEST_F(ContiguousSplitNestedTypesTest, DictionaryOfDictionary)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> plain{{10, 20, 30, 10, 20, 30}};
+  auto const inner = cudf::dictionary::encode(plain);
+  cudf::test::fixed_width_column_wrapper<int32_t> indices{{0, 1, 2, 3, 4, 5, 0, 1}};
+  auto const outer = cudf::make_dictionary_column(*inner, indices);
+
+  // the comparators do not handle dictionary columns, so walk both levels by hand
+  auto const verify = [](cudf::column_view const& expected, cudf::column_view const& result) {
+    cudf::dictionary_column_view const expected_dict(expected);
+    cudf::dictionary_column_view const result_dict(result);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_dict.get_indices_annotated(),
+                                   result_dict.get_indices_annotated());
+
+    cudf::dictionary_column_view const expected_keys(expected_dict.keys());
+    cudf::dictionary_column_view const result_keys(result_dict.keys());
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_keys.get_indices_annotated(),
+                                   result_keys.get_indices_annotated());
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_keys.keys(), result_keys.keys());
+  };
+
+  cudf::table_view const src({*outer});
+  auto const expected = cudf::split(src, {3});
+  auto const result   = cudf::contiguous_split(src, {3});
+  ASSERT_EQ(expected.size(), result.size());
+  for (std::size_t i = 0; i < result.size(); ++i) {
+    verify(expected[i].column(0), result[i].table.column(0));
+  }
+}
+
 struct ContiguousSplitLongStrings : public cudf::test::BaseFixture {};
 
 TEST_F(ContiguousSplitLongStrings, LongOffsets)
@@ -2755,7 +2957,11 @@ TEST_F(ContiguousSplitLongStrings, LongOffsetsNested)
   cudf::test::structs_column_wrapper st(std::move(children));
 
   cudf::test::fixed_width_column_wrapper<int> offsets{0, 3, 5, 7, 9, 10};
-  auto list = make_lists_column(5, offsets.release(), st.release(), 0, {});
+  auto list = make_lists_column(5,
+                                offsets.release(),
+                                st.release(),
+                                0,
+                                cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   cudf::table_view tbl({*list});
   std::vector<int> splits{2, 3};
@@ -2784,8 +2990,11 @@ TEST_F(ContiguousSplitLongStrings, DISABLED_LongOffsetsAndChars)
 TEST_F(ContiguousSplitLongStrings, DISABLED_LongOffsetsAndCharsNested)
 {
   cudf::test::fixed_width_column_wrapper<int> offsets{0, 3, 5, 7, 9, 10};
-  auto list =
-    make_lists_column(5, offsets.release(), make_long_offsets_and_chars_string_column(), 0, {});
+  auto list = make_lists_column(5,
+                                offsets.release(),
+                                make_long_offsets_and_chars_string_column(),
+                                0,
+                                cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   cudf::table_view tbl({*list});
   std::vector<int> splits{2, 3};

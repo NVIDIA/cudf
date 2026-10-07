@@ -32,6 +32,7 @@ from typing import (
     Any,
     ClassVar,
     ParamSpec,
+    TypeAlias,
     TypeVar,
     assert_never,
     overload,
@@ -51,6 +52,7 @@ from cudf_polars.dsl.nodebase import Node
 from cudf_polars.dsl.to_ast import _DECIMAL_IDS, to_ast, to_parquet_filter
 from cudf_polars.dsl.tracing import log_do_evaluate, nvtx_annotate_cudf_polars
 from cudf_polars.dsl.utils.naming import unique_names
+from cudf_polars.dsl.utils.per_path import PerPathValues
 from cudf_polars.dsl.utils.reshape import broadcast
 from cudf_polars.dsl.utils.windows import (
     offsets_to_windows,
@@ -85,6 +87,8 @@ if TYPE_CHECKING:
 
     from cudf_polars.containers.dataframe import NamedColumn
     from cudf_polars.dsl.utils.io import CachedParquetInfo
+    from cudf_polars.quent._context import QuentIRExecutionContext
+    from cudf_polars.streaming.actor_graph.tracing import ActorTracer
     from cudf_polars.streaming.rank_aware_source import RankAwareSource
     from cudf_polars.typing import CSECache, ClosedInterval, Schema, Slice as Zlice
     from cudf_polars.utils.config import ParquetOptions
@@ -139,11 +143,17 @@ class IRExecutionContext:
         A zero-argument callable that returns a CUDA stream.
     query_id
         Identifier for the query being executed.
+    quent_ir_execution_context
+        Optional Quent tracing context bound to a physical operator.
+    tracer
+        The actor tracer. Used to propagate statistics.
     """
 
     py_executor: concurrent.futures.ThreadPoolExecutor | None = field(default=None)
     get_cuda_stream: Callable[[], Stream] = field(default=get_cuda_stream)
     query_id: uuid.UUID = field(default_factory=uuid.uuid4)
+    quent_ir_execution_context: QuentIRExecutionContext | None = None
+    tracer: ActorTracer | None = None
 
     async def to_thread(
         self, func: Callable[P, T], /, *args: P.args, **kwargs: P.kwargs
@@ -250,8 +260,24 @@ class IR(Node["IR"]):
     _non_child_args: tuple[Any, ...]
     # The number of non-child arguments to pass to do_evaluate.
     _n_non_child_args: ClassVar[int]
+    # Class-level opt-in for :attr:`preserves_output_order`.
+    _preserves_output_order: ClassVar[bool] = False
     schema: Schema
     """Mapping from column names to their data types."""
+
+    is_io_node: bool = False
+    """Whether the node is an IO node."""
+
+    @property
+    def preserves_output_order(self) -> bool:
+        """
+        Whether output rows appear in the same relative order as this node's input.
+
+        Only meaningful for nodes with a single input. Multi-input nodes
+        (``Join``, ``Union``) need per-child reasoning and are handled by
+        their streaming actors.
+        """
+        return self._preserves_output_order
 
     def get_hashable(self) -> Hashable:
         """
@@ -652,6 +678,7 @@ class Scan(IR):
     __slots__ = (
         "cached_parquet_info",
         "cloud_options",
+        "hive_parts",
         "include_file_paths",
         "n_rows",
         "parquet_options",
@@ -676,8 +703,9 @@ class Scan(IR):
         "include_file_paths",
         "predicate",
         "parquet_options",
+        "hive_parts",
     )
-    _n_non_child_args = 12
+    _n_non_child_args = 13
     typ: str
     """What type of file are we reading? Parquet, CSV, etc..."""
     reader_options: dict[str, Any]
@@ -700,11 +728,15 @@ class Scan(IR):
     """Mask to apply to the read dataframe."""
     parquet_options: ParquetOptions
     """Parquet-specific options."""
+    hive_parts: PerPathValues | None
+    """Hive partition values, one per path."""
     cached_parquet_info: list[CachedParquetInfo] | None
     """Cached parquet file metadata."""
 
     PARQUET_DEFAULT_CHUNK_SIZE: int = 0  # unlimited
     PARQUET_DEFAULT_PASS_LIMIT: int = 16 * 1024**3  # 16GiB
+
+    is_io_node: bool = True
 
     def __init__(
         self,
@@ -720,6 +752,7 @@ class Scan(IR):
         include_file_paths: str | None,
         predicate: expr.NamedExpr | None,
         parquet_options: ParquetOptions,
+        hive_parts: PerPathValues | None = None,
         cached_parquet_info: list[CachedParquetInfo] | None = None,
     ):
         self.schema = schema
@@ -745,13 +778,16 @@ class Scan(IR):
             include_file_paths,
             predicate,
             parquet_options,
+            hive_parts,
             cached_parquet_info,
         )
         self.children = ()
         self.parquet_options = parquet_options
+        self.hive_parts = hive_parts
         self.cached_parquet_info = cached_parquet_info
 
         Scan._validate_cached_parquet_info(self.paths, self.cached_parquet_info)
+        Scan._validate_hive_parts_info(self.paths, self.hive_parts)
 
         if self.typ not in ("csv", "parquet", "ndjson"):  # pragma: no cover
             # This line is unhittable ATM since IPC/Anonymous scan raise
@@ -804,11 +840,18 @@ class Scan(IR):
                 # column names, we would need to do file introspection to infer the number
                 # of columns so column projection works right.
                 reader_schema = self.reader_options.get("schema")
-                if not (
-                    reader_schema
-                    and isinstance(schema, dict)
-                    and "fields" in reader_schema
-                ):
+                has_new_columns = bool(
+                    (
+                        reader_schema
+                        and isinstance(schema, dict)
+                        and "fields" in reader_schema
+                    )
+                    # polars 1.43 added a separate "column_names_overwrite"
+                    # for headerless new_columns; "schema" still covers other
+                    # renaming mechanisms (e.g. with_column_names) unchanged.
+                    or self.reader_options.get("column_names_overwrite")
+                )
+                if not has_new_columns:
                     raise NotImplementedError(
                         "Reading CSV without header requires user-provided column names via new_columns"
                     )
@@ -847,6 +890,18 @@ class Scan(IR):
                 f"Paths do not match cached parquet info. Missing paths: {missing}"
             )
 
+    @staticmethod
+    def _validate_hive_parts_info(
+        paths: list[str],
+        hive_parts: PerPathValues | None,
+    ) -> None:
+        # Note: Polars constructs hive_parts.df from len(paths)
+        if hive_parts is not None and hive_parts.df.height != len(paths):
+            raise AssertionError(
+                f"Expected {len(paths)} rows of hive partition values, "
+                f"got {hive_parts.df.height}"
+            )
+
     def get_hashable(self) -> Hashable:
         """
         Hashable representation of the node.
@@ -869,36 +924,71 @@ class Scan(IR):
             self.include_file_paths,
             self.predicate,
             self.parquet_options,
+            self.hive_parts,
         )
+
+    def slice_hive_parts(self, start: int, stop: int) -> PerPathValues | None:
+        """
+        Hive partition values for ``self.paths[start:stop]``.
+
+        Parameters
+        ----------
+        start
+            Index of the first path in the range.
+        stop
+            Index one past the last path in the range.
+
+        Returns
+        -------
+        Values for that range of paths, or None if this is not a hive scan.
+        """
+        if self.hive_parts is None:
+            return None
+        return self.hive_parts.slice(start, stop)
 
     @staticmethod
     def add_file_paths(
-        name: str, paths: list[str], rows_per_path: list[int], df: DataFrame
+        name: str,
+        paths: list[str],
+        df: DataFrame,
+        *,
+        rows_per_path: Sequence[int] | None = None,
+        source_index: plc.Column | None = None,
     ) -> DataFrame:
         """
         Add a Column of file paths to the DataFrame.
 
-        Each path is repeated according to the number of rows read from it.
+        Parameters
+        ----------
+        name
+            Name of the column to add.
+        paths
+            The paths read, in source order.
+        df
+            Frame to add the column to.
+        rows_per_path
+            Number of rows read from each path.
+        source_index
+            Column giving the source each output row came from. Takes
+            precedence over ``rows_per_path`` when both are available. The
+            caller is responsible for ensuring that its data is valid on
+            ``df.stream``.
+
+        Returns
+        -------
+        ``df`` with the file path column appended.
         """
-        (filepaths,) = plc.filling.repeat(
-            plc.Table(
-                [
-                    plc.Column.from_arrow(
-                        pl.Series(values=map(str, paths)),
-                        stream=df.stream,
-                    )
-                ]
-            ),
-            plc.Column.from_arrow(
-                pl.Series(values=rows_per_path, dtype=pl.datatypes.Int32()),
-                stream=df.stream,
-            ),
-            stream=df.stream,
-        ).columns()
-        dtype = DataType(pl.String())
-        return df.with_columns(
-            [Column(filepaths, name=name, dtype=dtype)], stream=df.stream
+        per_path = PerPathValues(
+            pl.DataFrame(
+                {name: [str(path) for path in paths]}, schema={name: pl.String()}
+            )
         )
+        if source_index is not None:
+            columns = per_path.gather(source_index, stream=df.stream)
+        else:
+            assert rows_per_path is not None
+            columns = per_path.repeat(rows_per_path, stream=df.stream)
+        return df.with_columns(columns, stream=df.stream)
 
     @staticmethod
     @nvtx_annotate_cudf_polars(message="Scan._get_parquet_row_count_from_metadata")
@@ -931,6 +1021,83 @@ class Scan(IR):
         return max(num_rows, 0)
 
     @staticmethod
+    @nvtx_annotate_cudf_polars(message="Scan._parquet_rows_per_path")
+    def _parquet_rows_per_path(
+        paths: list[str],
+        skip_rows: int,
+        n_rows: int,
+        cached_parquet_info: list[CachedParquetInfo] | None,
+    ) -> list[int]:
+        """
+        Rows each path contributes, from file metadata.
+
+        Used when no filter is pushed down.
+
+        Parameters
+        ----------
+        paths
+            The paths to read, in source order.
+        skip_rows
+            Number of leading rows to skip, counted across the paths as a
+            whole rather than per path.
+        n_rows
+            Maximum number of rows to read once ``skip_rows`` have been
+            skipped, or ``-1`` for no limit.
+        cached_parquet_info
+            Prefetched file metadata.
+
+        Returns
+        -------
+        Rows contributed by each path, in source order.
+        """
+        if cached_parquet_info is not None:
+            totals = [info.file_metadata.num_rows for info in cached_parquet_info]
+        else:
+            totals = [
+                metadata.num_rows
+                for metadata in plc.io.parquet_metadata.read_parquet_footers(
+                    plc.io.SourceInfo(paths)
+                )
+            ]
+        available = max(sum(totals) - skip_rows, 0)
+        budget = available if n_rows == -1 else min(n_rows, available)
+        counts = [0] * len(totals)
+        for i, total in enumerate(totals):
+            if budget == 0:
+                break
+            skipped = min(skip_rows, total)
+            skip_rows -= skipped
+            counts[i] = min(total - skipped, budget)
+            budget -= counts[i]
+        return counts
+
+    @staticmethod
+    def _pop_source_index(
+        table: plc.Table, names: Sequence[str], *, prepended: bool
+    ) -> tuple[plc.Column | None, plc.Table, list[str]]:
+        """
+        Split off the source index column the parquet reader prepends.
+
+        Parameters
+        ----------
+        table
+            Table as returned by the reader.
+        names
+            Column names of ``table``.
+        prepended
+            Whether the reader was asked to prepend the source index.
+
+        Returns
+        -------
+        The source index column, or ``None`` if it was not requested, along
+        with the remaining table and its column names.
+        """
+        if not prepended:
+            return None, table, list(names)
+        columns = table.columns()
+        return columns[0], plc.Table(columns[1:]), list(names[1:])
+
+    @staticmethod
     def _apply_parquet_projection(
         table: plc.Table, names: Sequence[str], with_columns: Sequence[str] | None
     ) -> tuple[plc.Table, list[str]]:
@@ -959,6 +1126,7 @@ class Scan(IR):
         include_file_paths: str | None,
         predicate: expr.NamedExpr | None,
         parquet_options: ParquetOptions,
+        hive_parts: PerPathValues | None,
         cached_parquet_info: list[CachedParquetInfo] | None,
         *,
         context: IRExecutionContext,
@@ -985,6 +1153,18 @@ class Scan(IR):
             if reader_options["schema"] is not None:
                 # Reader schema provides names
                 column_names = list(reader_options["schema"]["fields"].keys())
+            elif reader_options.get("column_names_overwrite"):
+                # polars 1.43 added "column_names_overwrite" for headerless
+                # new_columns; "schema" (above) still covers other renaming
+                # mechanisms (e.g. with_column_names) unchanged.
+                # "column_names_overwrite" only lists the overridden names,
+                # not any trailing columns padded with polars' default
+                # "column_N" names. Read the full, resolved set of names from
+                # schema instead. Exclude the row index, which isn't a
+                # column the CSV reader produces.
+                column_names = [
+                    name for name in schema if row_index is None or name != row_index[0]
+                ]
             else:
                 # file provides column names
                 column_names = None
@@ -1072,8 +1252,8 @@ class Scan(IR):
                 df = Scan.add_file_paths(
                     include_file_paths,
                     seen_paths,
-                    [t.num_rows() for t in tables],
                     df,
+                    rows_per_path=[t.num_rows() for t in tables],
                 )
         elif typ == "parquet":
             if cached_parquet_info is not None:
@@ -1090,14 +1270,29 @@ class Scan(IR):
                 parquet_metadatas = None
                 source_info = plc.io.SourceInfo(paths)
 
+            hive_names = (
+                frozenset(hive_parts.names) if hive_parts is not None else frozenset()
+            )
+            file_columns = (
+                with_columns
+                if with_columns is None or not hive_names
+                else [name for name in with_columns if name not in hive_names]
+            )
+            rows_per_path: list[int] | None = None
+            if hive_parts is not None and file_columns == []:
+                rows_per_path = cls._parquet_rows_per_path(
+                    paths, skip_rows, n_rows, cached_parquet_info
+                )
+
             filters = None
             if predicate is not None and row_index is None:
                 # Can't apply filters during read if we have a row index.
                 filters, residual_expr = to_parquet_filter(
                     _prepare_parquet_predicate(
-                        predicate.value, paths, schema, with_columns
+                        predicate.value, paths, schema, file_columns
                     ),
                     stream=stream,
+                    unreadable_columns=hive_names,
                 )
                 if filters is not None:
                     effective_predicate = (
@@ -1105,6 +1300,14 @@ class Scan(IR):
                         if residual_expr is not None
                         else None
                     )
+            # The reader drops its per-source row counts once it applies a
+            # filter, so the source of each row has to be read instead. Hive
+            # columns need it too.
+            prepend_source_index = (
+                hive_parts is not None
+                and not hive_parts.is_uniform
+                and file_columns != []
+            ) or (include_file_paths is not None and filters is not None)
             builder = plc.io.parquet.ParquetReaderOptions.builder(source_info)
             if filters is not None and parquet_options.use_jit_filter:
                 builder.use_jit_filter(use_jit_filter=True)
@@ -1112,8 +1315,10 @@ class Scan(IR):
                 plc.TypeId.DECIMAL128
             ).build()
 
-            if with_columns is not None:
-                parquet_reader_options.set_column_names(with_columns)
+            if file_columns is not None:
+                parquet_reader_options.set_column_names(file_columns)
+            if prepend_source_index:
+                parquet_reader_options.enable_prepend_source_index_column(val=True)
             if filters is not None:
                 parquet_reader_options.set_filter(filters)
             if n_rows != -1:
@@ -1140,13 +1345,18 @@ class Scan(IR):
                         concatenated_columns[i] = plc.concatenate.concatenate(
                             [concatenated_columns[i], columns.pop()], stream=stream
                         )
-                table, names = cls._apply_parquet_projection(
-                    plc.Table(concatenated_columns), names, with_columns
+                source_index, table, names = cls._pop_source_index(
+                    plc.Table(concatenated_columns),
+                    names,
+                    prepended=prepend_source_index,
                 )
+                table, names = cls._apply_parquet_projection(table, names, file_columns)
                 if not names:
                     table = plc.Table(
                         table.columns(),
-                        num_rows=cls._get_parquet_row_count_from_metadata(
+                        num_rows=sum(rows_per_path)
+                        if rows_per_path is not None
+                        else cls._get_parquet_row_count_from_metadata(
                             paths,
                             skip_rows,
                             n_rows,
@@ -1162,7 +1372,11 @@ class Scan(IR):
                 )
                 if include_file_paths is not None:
                     df = Scan.add_file_paths(  # pragma: no cover
-                        include_file_paths, paths, chunk.num_rows_per_source, df
+                        include_file_paths,
+                        paths,
+                        df,
+                        rows_per_path=rows_per_path or chunk.num_rows_per_source,
+                        source_index=source_index,
                     )
             else:
                 tbl_w_meta = plc.io.parquet.read_parquet(
@@ -1172,13 +1386,18 @@ class Scan(IR):
                 )
                 # TODO: consider nested column names?
                 col_names = tbl_w_meta.column_names(include_children=False)
+                source_index, table, col_names = cls._pop_source_index(
+                    tbl_w_meta.tbl, col_names, prepended=prepend_source_index
+                )
                 table, col_names = cls._apply_parquet_projection(
-                    tbl_w_meta.tbl, col_names, with_columns
+                    table, col_names, file_columns
                 )
                 if not col_names:
                     table = plc.Table(
                         table.columns(),
-                        num_rows=cls._get_parquet_row_count_from_metadata(
+                        num_rows=sum(rows_per_path)
+                        if rows_per_path is not None
+                        else cls._get_parquet_row_count_from_metadata(
                             paths,
                             skip_rows,
                             n_rows,
@@ -1194,8 +1413,27 @@ class Scan(IR):
                 )
                 if include_file_paths is not None:
                     df = Scan.add_file_paths(
-                        include_file_paths, paths, tbl_w_meta.num_rows_per_source, df
+                        include_file_paths,
+                        paths,
+                        df,
+                        rows_per_path=rows_per_path or tbl_w_meta.num_rows_per_source,
+                        source_index=source_index,
                     )
+            if hive_parts is not None:
+                if source_index is not None:
+                    hive_columns = hive_parts.gather(source_index, stream=stream)
+                elif rows_per_path is not None:
+                    hive_columns = hive_parts.repeat(rows_per_path, stream=stream)
+                else:
+                    hive_columns = hive_parts.broadcast(df.num_rows, stream=stream)
+                df = df.with_columns(hive_columns, stream=stream)
+                df = df.select(
+                    [
+                        name
+                        for name in schema
+                        if row_index is None or name != row_index[0]
+                    ]
+                )
             if filters is not None and effective_predicate is None:
                 return df
         elif typ == "ndjson":
@@ -1560,6 +1798,7 @@ class Cache(IR):
     Used for CSE at the plan level.
     """
 
+    _preserves_output_order: ClassVar[bool] = True
     __slots__ = ("key", "refcount")
     _non_child = ("schema", "key", "refcount")
     _n_non_child_args = 2
@@ -1642,6 +1881,8 @@ class DataFrameScan(IR):
     """Polars internal PyDataFrame object."""
     projection: tuple[str, ...] | None
     """List of columns to project out."""
+
+    is_io_node: bool = True
 
     def __init__(
         self,
@@ -1784,6 +2025,11 @@ class Select(IR):
         ):  # pragma: no cover
             raise NotImplementedError(f"Unsupported scan type: {df.typ}")
 
+    @property
+    def preserves_output_order(self) -> bool:
+        """Whether the selected expressions keep input appearance order."""
+        return all(e.all_pointwise() for e in self.exprs)
+
     @staticmethod
     def _is_len_expr(exprs: tuple[expr.NamedExpr, ...]) -> bool:  # pragma: no cover
         if len(exprs) == 1:
@@ -1913,6 +2159,7 @@ class Reduce(IR):
 class Rolling(IR):
     """Perform a (possibly grouped) rolling aggregation."""
 
+    _preserves_output_order: ClassVar[bool] = True
     __slots__ = (
         "agg_requests",
         "closed_window",
@@ -2160,6 +2407,11 @@ class GroupBy(IR):
             maintain_order,
             self.zlice,
         )
+
+    @property
+    def preserves_output_order(self) -> bool:
+        """Whether grouped rows keep input appearance order."""
+        return self.maintain_order
 
     @classmethod
     @log_do_evaluate
@@ -2519,65 +2771,106 @@ def _strip_predicate_casts(node: expr.Expr) -> expr.Expr:
     return node.reconstruct([_strip_predicate_casts(child) for child in node.children])
 
 
-def _add_cast(
-    target: DataType,
-    side: expr.ColRef,
-    left_casts: dict[str, DataType],
-    right_casts: dict[str, DataType],
-) -> None:
-    (col,) = side.children
-    assert isinstance(col, expr.Col)
-    casts = (
-        left_casts if side.table_ref == plc_expr.TableReference.LEFT else right_casts
-    )
-    casts[col.name] = target
+_ColumnKey: TypeAlias = tuple[plc_expr.TableReference, str]
 
 
-def _align_decimal_binop_types(
-    left_expr: expr.ColRef,
-    right_expr: expr.ColRef,
-    left_casts: dict[str, DataType],
-    right_casts: dict[str, DataType],
-) -> None:
-    left_type, right_type = left_expr.dtype, right_expr.dtype
-    if not (
-        (
-            plc.traits.is_fixed_point(left_type.plc_type)
-            and plc.traits.is_floating_point(right_type.plc_type)
-        )
-        or (
-            plc.traits.is_fixed_point(right_type.plc_type)
-            and plc.traits.is_floating_point(left_type.plc_type)
-        )
-    ):
-        return
+def _colref_comparisons(
+    node: expr.Expr,
+) -> Iterator[tuple[expr.ColRef, expr.ColRef]]:
+    """
+    Yield the column-to-column comparisons in a predicate.
 
-    is_decimal_left = plc.traits.is_fixed_point(left_type.plc_type)
-    decimal_expr, float_expr = (
-        (left_expr, right_expr) if is_decimal_left else (right_expr, left_expr)
-    )
-    _add_cast(decimal_expr.dtype, float_expr, left_casts, right_casts)
+    Parameters
+    ----------
+    node
+        Predicate expression to traverse.
+
+    Yields
+    ------
+    tuple[expr.ColRef, expr.ColRef]
+        Left and right operands of each comparison whose operands are both
+        column references.
+    """
+    if isinstance(node, expr.BinOp) and node.op in _BINOPS:
+        left_expr, right_expr = node.children
+        if isinstance(left_expr, expr.ColRef) and isinstance(right_expr, expr.ColRef):
+            yield (left_expr, right_expr)
+    for child in node.children:
+        yield from _colref_comparisons(child)
 
 
 def _collect_decimal_binop_casts(
     predicate: expr.Expr,
 ) -> tuple[dict[str, DataType], dict[str, DataType]]:
+    """
+    Determine the casts that align decimal and float join operands.
+
+    libcudf's AST requires both operands of a comparison to share a type id,
+    and polars' supertype for a decimal and a float is Float64 (see
+    ``crates/polars-core/src/utils/supertype.rs``), so any column compared
+    against one of the other kind is cast to Float64.
+
+    Parameters
+    ----------
+    predicate
+        Predicate expression of the conditional join, with column references
+        already inserted.
+
+    Returns
+    -------
+    tuple[dict[str, DataType], dict[str, DataType]]
+        Column name to target dtype for the left and right join operands that
+        need casting.
+
+    Notes
+    -----
+    Decimal values beyond 2**53 cannot round-trip through Float64. Polars
+    accepts that loss by making Float64 the supertype.
+    """
+    comparisons: list[tuple[_ColumnKey, _ColumnKey]] = []
+    dtypes: dict[_ColumnKey, DataType] = {}
+    for left_expr, right_expr in _colref_comparisons(predicate):
+        if not all(
+            plc.traits.is_fixed_point(side.dtype.plc_type)
+            or plc.traits.is_floating_point(side.dtype.plc_type)
+            for side in (left_expr, right_expr)
+        ):
+            continue
+        (left_col,) = left_expr.children
+        (right_col,) = right_expr.children
+        assert isinstance(left_col, expr.Col)
+        assert isinstance(right_col, expr.Col)
+        left_key = (left_expr.table_ref, left_col.name)
+        right_key = (right_expr.table_ref, right_col.name)
+        dtypes[left_key] = left_expr.dtype
+        dtypes[right_key] = right_expr.dtype
+        comparisons.append((left_key, right_key))
+
+    parent: dict[_ColumnKey, _ColumnKey] = {key: key for key in dtypes}
+
+    def find(key: _ColumnKey) -> _ColumnKey:
+        while parent[key] != key:
+            parent[key] = parent[parent[key]]
+            key = parent[key]
+        return key
+
+    for left_key, right_key in comparisons:
+        parent[find(left_key)] = find(right_key)
+
+    type_ids: dict[_ColumnKey, set[plc.TypeId]] = {}
+    for key, dtype in dtypes.items():
+        type_ids.setdefault(find(key), set()).add(dtype.plc_type.id())
+
+    target = DataType(pl.Float64())
     left_casts: dict[str, DataType] = {}
     right_casts: dict[str, DataType] = {}
-
-    def _walk(node: expr.Expr) -> None:
-        if isinstance(node, expr.BinOp) and node.op in _BINOPS:
-            left_expr, right_expr = node.children
-            if isinstance(left_expr, expr.ColRef) and isinstance(
-                right_expr, expr.ColRef
-            ):
-                _align_decimal_binop_types(
-                    left_expr, right_expr, left_casts, right_casts
-                )
-        for child in node.children:
-            _walk(child)
-
-    _walk(predicate)
+    for key, dtype in dtypes.items():
+        if len(type_ids[find(key)]) > 1 and dtype != target:
+            table_ref, name = key
+            casts = (
+                left_casts if table_ref == plc_expr.TableReference.LEFT else right_casts
+            )
+            casts[name] = target
     return left_casts, right_casts
 
 
@@ -2585,14 +2878,13 @@ def _apply_casts(df: DataFrame, casts: dict[str, DataType]) -> DataFrame:
     if not casts:
         return df
 
-    columns = []
+    columns: list[Column] = []
     for col in df.columns:
         target = casts.get(col.name)
         if target is None:
-            columns.append(Column(col.obj, dtype=col.dtype, name=col.name))
+            columns.append(col.copy())
         else:
-            casted = col.astype(target, stream=df.stream)
-            columns.append(Column(casted.obj, dtype=casted.dtype, name=col.name))
+            columns.append(col.astype(target, stream=df.stream))
     return DataFrame(columns, stream=df.stream)
 
 
@@ -2731,7 +3023,12 @@ class Join(IR):
     """A join of two dataframes."""
 
     __slots__ = ("left_on", "options", "right_on")
-    _non_child = ("schema", "left_on", "right_on", "options")
+    _non_child: ClassVar[tuple[str, ...]] = (
+        "schema",
+        "left_on",
+        "right_on",
+        "options",
+    )
     _n_non_child_args = 3
     left_on: tuple[expr.NamedExpr, ...]
     """List of expressions used as keys in the left frame."""
@@ -3158,6 +3455,11 @@ class HStack(IR):
         self._non_child_args = (self.columns, self.should_broadcast)
         self.children = (df,)
 
+    @property
+    def preserves_output_order(self) -> bool:
+        """Whether the stacked expressions keep input appearance order."""
+        return all(e.all_pointwise() for e in self.columns)
+
     @classmethod
     @log_do_evaluate
     @nvtx_annotate_cudf_polars(message="HStack")
@@ -3221,6 +3523,11 @@ class Distinct(IR):
         self.stable = stable
         self._non_child_args = (keep, subset, zlice, stable)
         self.children = (df,)
+
+    @property
+    def preserves_output_order(self) -> bool:
+        """Whether distinct rows keep input appearance order."""
+        return self.stable
 
     _KEEP_MAP: ClassVar[dict[str, plc.stream_compaction.DuplicateKeepOption]] = {
         "first": plc.stream_compaction.DuplicateKeepOption.KEEP_FIRST,
@@ -3370,6 +3677,7 @@ class Sort(IR):
 class Slice(IR):
     """Slice a dataframe."""
 
+    _preserves_output_order: ClassVar[bool] = True
     __slots__ = ("length", "offset")
     _non_child = ("schema", "offset", "length")
     _n_non_child_args = 2
@@ -3398,6 +3706,7 @@ class Slice(IR):
 class Filter(IR):
     """Filter a dataframe with a boolean mask."""
 
+    _preserves_output_order: ClassVar[bool] = True
     __slots__ = ("mask",)
     _non_child = ("schema", "mask")
     _n_non_child_args = 1
@@ -3423,6 +3732,7 @@ class Filter(IR):
 class Projection(IR):
     """Select a subset of columns from a dataframe."""
 
+    _preserves_output_order: ClassVar[bool] = True
     __slots__ = ()
     _non_child = ("schema",)
     _n_non_child_args = 1
@@ -3551,6 +3861,10 @@ class MapFunction(IR):
                 # polars requires that all to-explode columns have the
                 # same sub-shapes
                 raise NotImplementedError("Explode with more than one column")
+            if any(
+                isinstance(df.schema[name].polars_type, pl.Array) for name in to_explode
+            ):
+                raise NotImplementedError("Explode on Array is not supported")
             self.options = (tuple(to_explode),)
         elif self.name == "unpivot":
             indices, pivotees, variable_name, value_name = self.options
@@ -3610,6 +3924,11 @@ class MapFunction(IR):
                     tuple(nulls_last),
                 )
         self._non_child_args = (schema, name, self.options)
+
+    @property
+    def preserves_output_order(self) -> bool:
+        """Whether this map keeps input appearance order."""
+        return self.name in {"rechunk", "rename", "row_index", "hint_sorted"}
 
     def get_hashable(self) -> Hashable:
         """

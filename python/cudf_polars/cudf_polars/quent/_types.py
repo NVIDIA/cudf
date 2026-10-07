@@ -9,12 +9,19 @@ from __future__ import annotations
 
 import dataclasses
 import enum
+import itertools
 import sys
 import time
 import uuid
-from typing import Any, TypeAlias
+from typing import TYPE_CHECKING, Any, Literal, Self, TypeAlias, cast
 
 from cudf_polars import __version__
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    from cudf_polars.dsl.ir import IR
+    from cudf_polars.quent._context import QuentIRExecutionContext
 
 QUENT_SCOPE = "QUENT"
 
@@ -30,6 +37,11 @@ class EventName(enum.Enum):
     OPERATOR = "Operator"
     PORT = "Port"
     TASK = "Task"
+    MEMORY = "Memory"
+    CHANNEL = "Channel"
+    THREAD_POOL = "ThreadPool"
+    PROCESSOR = "Processor"
+    NETWORK = "Network"
 
 
 if sys.version_info >= (3, 14):  # pragma: no cover; requires Python 3.14+
@@ -73,6 +85,50 @@ class Implementation:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class StatisticsAttribute:
+    """Typed key/value pair for Quent statistics custom attributes."""
+
+    key: str
+    value_type: Literal["U64", "F64", "String"]
+    value: int | float | str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"key": self.key, "value": {self.value_type: self.value}}
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class Statistics:
+    """Operator statistics payload."""
+
+    input_bytes: int
+    output_bytes: int
+    output_rows: int
+    custom_attributes: list[StatisticsAttribute] = dataclasses.field(
+        default_factory=list
+    )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to Quent's custom attributes format."""
+        base_attributes: list[StatisticsAttribute] = [
+            StatisticsAttribute(
+                key="input_bytes", value_type="U64", value=self.input_bytes
+            ),
+            StatisticsAttribute(
+                key="output_bytes", value_type="U64", value=self.output_bytes
+            ),
+            StatisticsAttribute(
+                key="output_rows", value_type="U64", value=self.output_rows
+            ),
+        ]
+        return {
+            "custom_attributes": [
+                *(attribute.to_dict() for attribute in base_attributes),
+                *(attribute.to_dict() for attribute in self.custom_attributes),
+            ]
+        }
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class Operator:
     """
     A Quent Operator.
@@ -87,13 +143,12 @@ class Operator:
 
     Examples
     --------
-    {"id":"019dd571-1062-77c2-9803-62c7c1941381","timestamp":1777402450018384340,"data":{"Operator":{"Declaration":{"plan_id":"019dd571-1062-77c2-9803-642b6c301d29","parent_operator_ids":[],"instance_name":"Scan-NodeIndex(0)","type_name":"Scan","custom_attributes":[]}}}}
+    {"id":"019dd571-1062-77c2-9803-62c7c1941381","timestamp":1777402450018384340,"data":{"Operator":{"Declaration":{"plan_id":"019dd571-1062-77c2-9803-642b6c301d29","parent_operator_ids":[],"instance_name":"Scan-019dd571","type_name":"Scan","custom_attributes":[]}}}}
     """
 
     id: uuid.UUID
     plan: Plan
     parent_operators: list[Operator]
-    instance_name: str
     type_name: str
     custom_attributes: list[Attribute] = dataclasses.field(default_factory=list)
 
@@ -110,7 +165,7 @@ class Operator:
             "parent_operator_ids": [
                 str(operator.id) for operator in self.parent_operators
             ],
-            "instance_name": self.instance_name,
+            "instance_name": f"{self.type_name}-{self.id.hex[:8]}",
             "type_name": self.type_name,
             "custom_attributes": [attr.serialize() for attr in self.custom_attributes],
         }
@@ -121,6 +176,14 @@ class Operator:
             id=self.id,
             timestamp=timestamp if timestamp is not None else time.time_ns(),
             data={EventName.OPERATOR.value: {"Declaration": self.to_dict()}},
+        )
+
+    def statistics(self, statistics: Statistics, timestamp: int | None = None) -> Event:
+        """Emit post-execution operator statistics."""
+        return Event(
+            id=self.id,
+            timestamp=timestamp if timestamp is not None else time.time_ns(),
+            data={EventName.OPERATOR.value: {"Statistics": statistics.to_dict()}},
         )
 
 
@@ -418,8 +481,22 @@ class QueryGroup:
 
 
 ScalarValue = int | float | str | bool
-HomogeneousListValue = list[int] | list[float] | list[str] | list[bool]
-Value: TypeAlias = ScalarValue | HomogeneousListValue | dict[str, "Value"]
+StructValue: TypeAlias = dict[str, "Value | None"]
+HomogeneousListValue = (
+    list[int] | list[float] | list[str] | list[bool] | list[StructValue]
+)
+Value: TypeAlias = ScalarValue | HomogeneousListValue | StructValue
+
+_INT_VARIANTS: tuple[tuple[str, int, int], ...] = (
+    ("U8", 0, 2**8 - 1),
+    ("U16", 0, 2**16 - 1),
+    ("U32", 0, 2**32 - 1),
+    ("U64", 0, 2**64 - 1),
+    ("I8", -(2**7), 2**7 - 1),
+    ("I16", -(2**15), 2**15 - 1),
+    ("I32", -(2**31), 2**31 - 1),
+    ("I64", -(2**63), 2**63 - 1),
+)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -432,9 +509,86 @@ class Attribute:
     def serialize(self) -> dict[str, Any]:
         return {"key": self.name, "value": _serialize_value(self.value)}
 
-    @classmethod
-    def deserialize(cls, payload: dict[str, Any]) -> Attribute:
-        return cls(name=payload["key"], value=_deserialize_value(payload["value"]))
+
+def _integer_variant(value: int) -> str:
+    # Handle the special case of exactly 0
+    if value == 0:
+        return "U8"
+
+    is_signed = value < 0
+    # For negative numbers, calculate bits required for 2's complement
+    bits = (value + 1).bit_length() + 1 if is_signed else value.bit_length()
+
+    prefix = "I" if is_signed else "U"
+
+    if bits <= 8:
+        return f"{prefix}8"
+    if bits <= 16:
+        return f"{prefix}16"
+    if bits <= 32:
+        return f"{prefix}32"
+    if bits <= 64:
+        return f"{prefix}64"
+
+    raise ValueError(f"Integer value {value} does not fit any Quent integer type.")
+
+
+def _common_integer_variant(values: list[int]) -> str:
+    """Return the narrowest Quent integer variant that can hold all ``values``."""
+    smallest = min(values)
+    largest = max(values)
+    for variant, lo, hi in _INT_VARIANTS:
+        if lo <= smallest and largest <= hi:
+            return variant
+    raise ValueError("Integer list values do not fit any Quent integer type.")
+
+
+def _serialize_struct(value: StructValue) -> list[dict[str, Any]]:
+    """Serialize a dict as a Quent ``Struct`` (list of attributes)."""
+    return [
+        {"key": key, "value": _serialize_value(item)} for key, item in value.items()
+    ]
+
+
+def _serialize_list(values: HomogeneousListValue) -> dict[str, Any]:
+    """
+    Serialize a homogeneous list as a Quent ``List`` payload.
+
+    :data:`HomogeneousListValue` admits only same-typed elements, so the
+    variant is chosen from the first element rather than by inspecting every
+    element. Empty lists default to ``String`` because the element type cannot
+    be inferred. Nested lists are not supported by Quent
+    (see https://github.com/rapidsai/quent/issues/79).
+    """
+    if not values:
+        return {"String": []}
+    match values[0]:
+        # bool is a subclass of int; check it before int.
+        case bool():
+            return {"U8": [int(item) for item in cast("list[bool]", values)]}
+        case int():
+            return {_common_integer_variant(cast("list[int]", values)): values}
+        case float():
+            return {"F64": values}
+        case str():
+            return {"String": values}
+        case dict():
+            return {
+                "Struct": [
+                    _serialize_struct(item)
+                    for item in cast("list[StructValue]", values)
+                ]
+            }
+        case list():
+            # Unreachable through ``Value``-typed callers, but plan properties
+            # reach this function through a cast.
+            raise NotImplementedError(
+                "Nested list attributes are not supported by Quent."
+            )
+        case _:  # pragma: no cover; should be exhaustive
+            raise TypeError(
+                f"Unsupported Quent list element type: {type(values[0]).__name__}"
+            )
 
 
 def _serialize_value(value: Value | None) -> dict[str, Any] | None:
@@ -445,51 +599,474 @@ def _serialize_value(value: Value | None) -> dict[str, Any] | None:
             # Bool is not a native Quent Value variant.
             return {"U8": int(value)}
         case int():
-            if value >= 0:
-                if value <= 2**8 - 1:
-                    return {"U8": value}
-                if value <= 2**16 - 1:
-                    return {"U16": value}
-                if value <= 2**32 - 1:
-                    return {"U32": value}
-                if value <= 2**64 - 1:
-                    return {"U64": value}
-            else:
-                if -(2**7) <= value <= 2**7 - 1:
-                    return {"I8": value}
-                if -(2**15) <= value <= 2**15 - 1:
-                    return {"I16": value}
-                if -(2**31) <= value <= 2**31 - 1:
-                    return {"I32": value}
-                if -(2**63) <= value <= 2**63 - 1:
-                    return {"I64": value}
-            raise ValueError(
-                f"Integer value {value} does not fit any Quent integer type."
-            )
+            return {_integer_variant(value): value}
         case float():
             return {"F64": value}
         case str():
             return {"String": value}
-        case list() | dict():
-            raise NotImplementedError("List and dict attributes are not supported yet.")
+        case list():
+            return {"List": _serialize_list(value)}
+        case dict():
+            return {"Struct": _serialize_struct(value)}
         case _:  # pragma: no cover; should be exhaustive
             raise TypeError(f"Unsupported Quent custom attribute type: {type(value)}")
 
 
-def _deserialize_value(value: dict[str, Any] | None) -> Value | None:
-    if value is None:
-        return None
-    n = len(value)
-    if n != 1:
-        raise ValueError(
-            f"Expected Quent attribute value envelope with exactly one variant, got '{n}' instead."
+# Resource capacity helpers
+#
+# Quent distinguishes unit resources (Processor/thread), occupancy capacities
+# (Memory), and rate capacities (Channel). See quent/docs/modeling/resource.md.
+
+
+def occupancy_usage_capacity_bytes(capacity_bytes: int) -> dict[str, int]:
+    """Usage capacity for a Memory resource (occupancy over the usage span)."""
+    return {"capacity_bytes": capacity_bytes}
+
+
+def rate_usage_capacity_bytes(capacity_bytes: int) -> dict[str, int]:
+    """
+    Usage capacity for a Channel resource (total bytes over the usage span).
+
+    Rate capacity values represent the total quantity transferred during the
+    span, not bytes per second.
+    """
+    return {"capacity_bytes": capacity_bytes}
+
+
+# Resource types
+
+
+@dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
+class Memory:
+    """A Quent Memory resource."""
+
+    id: uuid.UUID = dataclasses.field(default_factory=new_quent_id)
+    instance_name: str
+    resource_type_name: str
+    parent_group_id: uuid.UUID
+
+    def initializing(self, timestamp: int | None = None) -> Event:
+        """Build a Quent Memory Initializing event."""
+        return Event(
+            id=self.id,
+            timestamp=timestamp if timestamp is not None else time.time_ns(),
+            data={
+                EventName.MEMORY.value: {
+                    "seq": 0,
+                    "state": {
+                        "MemoryInitializing": {
+                            "instance_name": self.instance_name,
+                            "parent_group_id": str(self.parent_group_id),
+                            "resource_type_name": self.resource_type_name,
+                        }
+                    },
+                }
+            },
         )
 
-    variant, deserialized = next(iter(value.items()))
-    if variant in {"U8", "U16", "U32", "U64", "I8", "I16", "I32", "I64"}:
-        return int(deserialized)
-    if variant == "F64":
-        return float(deserialized)
-    if variant == "String":
-        return str(deserialized)
-    raise ValueError(f"Unsupported Quent custom attribute variant: '{variant}'")
+    def operating(
+        self, capacity_bytes: int | None = None, timestamp: int | None = None
+    ) -> Event:
+        """Build a Quent Memory Operating event."""
+        return Event(
+            id=self.id,
+            timestamp=timestamp if timestamp is not None else time.time_ns(),
+            data={
+                EventName.MEMORY.value: {
+                    "seq": 1,
+                    "state": {"MemoryOperating": {"capacity_bytes": capacity_bytes}},
+                }
+            },
+        )
+
+    def finalizing(self, timestamp: int | None = None) -> Event:
+        """Build a Quent Memory Finalizing event."""
+        return Event(
+            id=self.id,
+            timestamp=timestamp if timestamp is not None else time.time_ns(),
+            data={
+                EventName.MEMORY.value: {"seq": 2, "state": {"MemoryFinalizing": None}}
+            },
+        )
+
+    def exit(self, timestamp: int | None = None) -> Event:
+        """Build a Quent Memory Exit event."""
+        return Event(
+            id=self.id,
+            timestamp=timestamp if timestamp is not None else time.time_ns(),
+            data={EventName.MEMORY.value: {"seq": 3, "state": "Exit"}},
+        )
+
+
+@dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
+class Channel:
+    """
+    A Quent Channel resource.
+
+    A Channel is a unidirectional data-transfer resource between two entities.
+    Examples include disk-to-device I/O channels and inter-rank network links.
+    """
+
+    id: uuid.UUID = dataclasses.field(default_factory=new_quent_id)
+    instance_name: str
+    resource_type_name: str
+    parent_group_id: uuid.UUID
+    source: Memory
+    target: Memory
+
+    def initializing(self, timestamp: int | None = None) -> Event:
+        """Build a Quent Channel Initializing event."""
+        return Event(
+            id=self.id,
+            timestamp=timestamp if timestamp is not None else time.time_ns(),
+            data={
+                EventName.CHANNEL.value: {
+                    "seq": 0,
+                    "state": {
+                        "ChannelInitializing": {
+                            "instance_name": self.instance_name,
+                            "parent_group_id": str(self.parent_group_id),
+                            "resource_type_name": self.resource_type_name,
+                            "source_id": str(self.source.id),
+                            "target_id": str(self.target.id),
+                        }
+                    },
+                }
+            },
+        )
+
+    def operating(
+        self, capacity_bytes: int | None = None, timestamp: int | None = None
+    ) -> Event:
+        """Build a Quent Channel Operating event."""
+        return Event(
+            id=self.id,
+            timestamp=timestamp if timestamp is not None else time.time_ns(),
+            data={
+                EventName.CHANNEL.value: {
+                    "seq": 1,
+                    "state": {"ChannelOperating": {"capacity_bytes": capacity_bytes}},
+                }
+            },
+        )
+
+    def finalizing(self, timestamp: int | None = None) -> Event:
+        """Build a Quent Channel Finalizing event."""
+        return Event(
+            id=self.id,
+            timestamp=timestamp if timestamp is not None else time.time_ns(),
+            data={
+                EventName.CHANNEL.value: {
+                    "seq": 2,
+                    "state": {"ChannelFinalizing": None},
+                }
+            },
+        )
+
+    def exit(self, timestamp: int | None = None) -> Event:
+        """Build a Quent Channel Exit event."""
+        return Event(
+            id=self.id,
+            timestamp=timestamp if timestamp is not None else time.time_ns(),
+            data={EventName.CHANNEL.value: {"seq": 3, "state": "Exit"}},
+        )
+
+
+@dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
+class Network:
+    """A Quent Network resource group."""
+
+    id: uuid.UUID = dataclasses.field(default_factory=new_quent_id)
+    engine_id: uuid.UUID
+
+    def declare(self, timestamp: int | None = None) -> Event:
+        """Build a Network declaration event."""
+        return Event(
+            id=self.id,
+            timestamp=timestamp if timestamp is not None else time.time_ns(),
+            data={
+                EventName.NETWORK.value: {
+                    "Declaration": {
+                        "instance_name": "Network",
+                        "parent_group_id": str(self.engine_id),
+                    }
+                }
+            },
+        )
+
+
+@dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
+class ThreadPool:
+    """A Quent ThreadPool resource group."""
+
+    id: uuid.UUID = dataclasses.field(default_factory=new_quent_id)
+    worker_id: uuid.UUID
+
+    def declare(self, timestamp: int | None = None) -> Event:
+        """Build a ThreadPool declaration event."""
+        instance_name = f"Thread Pool {self.id.hex[:8]}"
+        return Event(
+            id=self.id,
+            timestamp=timestamp if timestamp is not None else time.time_ns(),
+            data={
+                EventName.THREAD_POOL.value: {
+                    "Declaration": {
+                        "instance_name": instance_name,
+                        "parent_group_id": str(self.worker_id),
+                    }
+                },
+            },
+        )
+
+
+@dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
+class Processor:
+    """A Quent Processor resource representing a CPU thread."""
+
+    id: uuid.UUID = dataclasses.field(default_factory=new_quent_id)
+    pool_id: uuid.UUID
+
+    def initializing(self, timestamp: int | None = None) -> Event:
+        """Build a Quent Processor Initializing event."""
+        instance_name = f"Thread {self.id.hex[:8]}"
+        return Event(
+            id=self.id,
+            timestamp=timestamp if timestamp is not None else time.time_ns(),
+            data={
+                EventName.PROCESSOR.value: {
+                    "seq": 0,
+                    "state": {
+                        "ProcessorInitializing": {
+                            "instance_name": instance_name,
+                            "parent_group_id": str(self.pool_id),
+                            "resource_type_name": "processor",
+                        }
+                    },
+                }
+            },
+        )
+
+    def operating(self, timestamp: int | None = None) -> Event:
+        """Build a Quent Processor Operating event."""
+        return Event(
+            id=self.id,
+            timestamp=timestamp if timestamp is not None else time.time_ns(),
+            data={
+                EventName.PROCESSOR.value: {
+                    "seq": 1,
+                    "state": {"ProcessorOperating": None},
+                }
+            },
+        )
+
+    def finalizing(self, timestamp: int | None = None) -> Event:
+        """Build a Quent Processor Finalizing event."""
+        return Event(
+            id=self.id,
+            timestamp=timestamp if timestamp is not None else time.time_ns(),
+            data={
+                EventName.PROCESSOR.value: {
+                    "seq": 2,
+                    "state": {"ProcessorFinalizing": None},
+                }
+            },
+        )
+
+    def exit(self, timestamp: int | None = None) -> Event:
+        """Build a Quent Processor Exit event."""
+        return Event(
+            id=self.id,
+            timestamp=timestamp if timestamp is not None else time.time_ns(),
+            data={EventName.PROCESSOR.value: {"seq": 3, "state": "Exit"}},
+        )
+
+
+@dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
+class Task:
+    """A Quent Task representing a unit of work on an operator."""
+
+    id: uuid.UUID = dataclasses.field(default_factory=new_quent_id)
+    operator_id: uuid.UUID
+    instance_name: str | None = None
+    _seq: Iterator[int] = dataclasses.field(
+        default_factory=itertools.count, compare=False, repr=False
+    )
+
+    @classmethod
+    def from_ir(
+        cls, ir_type: type[IR], quent_ir_execution_context: QuentIRExecutionContext
+    ) -> Self:
+        """
+        Build an operator-scoped Quent Task from an IR execution context.
+
+        Parameters
+        ----------
+        ir_type
+            The IR type of the operator.
+        quent_ir_execution_context
+            The Quent IR execution context, which is used to get the operator ID.
+
+        Returns
+        -------
+        Task | None
+            The operator-scoped Quent Task, or ``None`` if the IR execution context
+            is not bound to a Quent operator.
+        """
+        token = uuid.uuid4()
+        return cls(
+            instance_name=(
+                f"{ir_type.__name__}-{quent_ir_execution_context.quent_operator.id.hex[:8]}-"
+                f"{token.hex[:8]}"
+            ),
+            operator_id=quent_ir_execution_context.quent_operator.id,
+        )
+
+    def queueing(self, timestamp: int | None = None) -> Event:
+        """Build a Quent Task Queueing event."""
+        return Event(
+            id=self.id,
+            timestamp=timestamp if timestamp is not None else time.time_ns(),
+            data={
+                EventName.TASK.value: {
+                    "seq": next(self._seq),
+                    "state": {
+                        "Queueing": {
+                            "instance_name": self.instance_name or self.id.hex[:8],
+                            "operator_id": str(self.operator_id),
+                        }
+                    },
+                }
+            },
+        )
+
+    def allocating(
+        self,
+        resource_id: uuid.UUID,
+        timestamp: int | None = None,
+    ) -> Event:
+        """Build a Quent Task Allocating event."""
+        return Event(
+            id=self.id,
+            timestamp=timestamp if timestamp is not None else time.time_ns(),
+            data={
+                EventName.TASK.value: {
+                    "seq": next(self._seq),
+                    "state": {
+                        "Allocating": {
+                            "use_thread": {
+                                "resource_id": str(resource_id),
+                                "capacity": None,
+                            }
+                        }
+                    },
+                }
+            },
+        )
+
+    def loading(
+        self,
+        use_thread: Processor | None = None,
+        use_channel: Channel | None = None,
+        channel_capacity_bytes: int = 0,
+        use_memory: Memory | None = None,
+        memory_capacity_bytes: int = 0,
+        timestamp: int | None = None,
+    ) -> Event:
+        """Build a Quent Task Loading event."""
+        loading_data: dict[str, dict[str, Any]] = {}
+        if use_thread is not None:
+            loading_data["use_thread"] = {
+                "resource_id": str(use_thread.id),
+                "capacity": None,
+            }
+        if use_channel is not None:
+            loading_data["use_fs_to_mem"] = {
+                "resource_id": str(use_channel.id),
+                "capacity": rate_usage_capacity_bytes(channel_capacity_bytes),
+            }
+        if use_memory is not None:
+            loading_data["use_memory"] = {
+                "resource_id": str(use_memory.id),
+                "capacity": occupancy_usage_capacity_bytes(memory_capacity_bytes),
+            }
+        return Event(
+            id=self.id,
+            timestamp=timestamp if timestamp is not None else time.time_ns(),
+            data={
+                EventName.TASK.value: {
+                    "seq": next(self._seq),
+                    "state": {"Loading": loading_data},
+                }
+            },
+        )
+
+    def computing(
+        self,
+        use_thread: Processor | None = None,
+        use_memory: Memory | None = None,
+        input_bytes: int = 0,
+        memory_capacity_bytes: int = 0,
+        timestamp: int | None = None,
+    ) -> Event:
+        """Build a Quent Task Computing event."""
+        computing_data: dict[str, Any] = {}
+        computing_data["instance_name"] = ""
+        computing_data["input_bytes"] = input_bytes
+        if use_thread is not None:
+            computing_data["use_thread"] = {
+                "resource_id": str(use_thread.id),
+                "capacity": None,
+            }
+        if use_memory is not None:
+            computing_data["use_memory"] = {
+                "resource_id": str(use_memory.id),
+                "capacity": occupancy_usage_capacity_bytes(memory_capacity_bytes),
+            }
+        return Event(
+            id=self.id,
+            timestamp=timestamp if timestamp is not None else time.time_ns(),
+            data={
+                EventName.TASK.value: {
+                    "seq": next(self._seq),
+                    "state": {"Computing": computing_data},
+                }
+            },
+        )
+
+    def sending(
+        self,
+        use_thread: Processor | None = None,
+        use_link: Channel | None = None,
+        link_capacity_bytes: int = 0,
+        timestamp: int | None = None,
+    ) -> Event:
+        """Build a Quent Task Sending event."""
+        sending_data: dict[str, dict[str, Any]] = {}
+        if use_thread is not None:
+            sending_data["use_thread"] = {
+                "resource_id": str(use_thread.id),
+                "capacity": None,
+            }
+        if use_link is not None:
+            sending_data["use_link"] = {
+                "resource_id": str(use_link.id),
+                "capacity": rate_usage_capacity_bytes(link_capacity_bytes),
+            }
+        return Event(
+            id=self.id,
+            timestamp=timestamp if timestamp is not None else time.time_ns(),
+            data={
+                EventName.TASK.value: {
+                    "seq": next(self._seq),
+                    "state": {"Sending": sending_data},
+                }
+            },
+        )
+
+    def exit(self, timestamp: int | None = None) -> Event:
+        """Build a Quent Task Exit event."""
+        return Event(
+            id=self.id,
+            timestamp=timestamp if timestamp is not None else time.time_ns(),
+            data={EventName.TASK.value: {"seq": next(self._seq), "state": "Exit"}},
+        )

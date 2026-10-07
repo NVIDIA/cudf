@@ -15,6 +15,7 @@
 #include <cudf/detail/utilities/batched_memcpy.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/fixed_point/fixed_point.hpp>
 #include <cudf/io/experimental/variant.hpp>
 #include <cudf/io/experimental/variant_spec.hpp>
 #include <cudf/lists/lists_column_device_view.cuh>
@@ -525,11 +526,12 @@ constexpr bool is_variant_int =
 template <typename T>
 constexpr bool is_variant_numerical = is_variant_int<T> || cudf::is_floating_point<T>();
 
-// The output types a VARIANT value can be cast to: the fixed-width signed integers, floats, bool,
-// and strings.
+// The output types a VARIANT value can be cast to: the fixed-width signed integers, floats,
+// decimals, bool, and strings.
 template <typename T>
-constexpr bool is_variant_castable = is_variant_numerical<T> || cuda::std::is_same_v<T, bool> ||
-                                     cuda::std::is_same_v<T, cudf::string_view>;
+constexpr bool is_variant_castable =
+  is_variant_numerical<T> || cudf::is_fixed_point<T>() || cuda::std::is_same_v<T, bool> ||
+  cuda::std::is_same_v<T, cudf::string_view>;
 
 // Maps a fixed-width output type to the VARIANT primitive type header id that encodes it.
 template <typename T>
@@ -798,6 +800,147 @@ __device__ op_status cast_status_for_primitive(device_span<uint8_t const> val)
                                              : op_status::MALFORMED_VARIANT;
 }
 
+// The spec allows a scale in [0, 38] for every decimal width.
+constexpr int variant_decimal_max_scale = 38;
+
+// The largest power of ten each representation holds; no value fits past it.
+constexpr int max_int128_pow10 = cuda::std::numeric_limits<__int128_t>::digits10;
+constexpr int max_int64_pow10  = cuda::std::numeric_limits<int64_t>::digits10;
+
+// Multiply `value` by 10^exp, or return nullopt if the result does not fit in `__int128_t`.
+__device__ cuda::std::optional<__int128_t> constexpr multiply_pow10(__int128_t value, int64_t exp)
+{
+  // Zero is representable at every scale, while any other value overflows past 10^38.
+  if (value == 0) { return 0; }
+  if (exp > max_int128_pow10) { return cuda::std::nullopt; }
+
+  constexpr __int128_t max_over_10 = cuda::std::numeric_limits<__int128_t>::max() / 10;
+  constexpr __int128_t min_over_10 = cuda::std::numeric_limits<__int128_t>::min() / 10;
+  for (int64_t i = 0; i < exp; ++i) {
+    if (value > max_over_10 || value < min_over_10) { return cuda::std::nullopt; }
+    value *= 10;
+  }
+  return value;
+}
+
+// Divide `value` by 10^exp, truncating toward zero.
+__device__ __int128_t constexpr divide_pow10(__int128_t value, int64_t exp)
+{
+  using numeric::detail::ipow;
+
+  // Any `__int128_t` is smaller than 10^39, so a larger divisor truncates it away
+  if (exp > max_int128_pow10) { return 0; }
+  auto const exponent = static_cast<int32_t>(exp);
+
+  // 128-bit division is a slow software sequence; use the 64-bit one when both operands fit.
+  constexpr __int128_t i64_max = cuda::std::numeric_limits<int64_t>::max();
+  constexpr __int128_t i64_min = cuda::std::numeric_limits<int64_t>::min();
+  if (exponent <= max_int64_pow10 && value <= i64_max && value >= i64_min) {
+    return static_cast<int64_t>(value) / ipow<int64_t, numeric::Radix::BASE_10>(exponent);
+  }
+  return value / ipow<__int128_t, numeric::Radix::BASE_10>(exponent);
+}
+
+__device__ int constexpr variant_decimal_unscaled_width(primitive_type ptype)
+{
+  switch (ptype) {
+    case primitive_type::DECIMAL4: return 4;
+    case primitive_type::DECIMAL8: return 8;
+    case primitive_type::DECIMAL16: return 16;
+    default: return 0;
+  }
+}
+
+/**
+ * @brief Decode a single VARIANT decimal value blob into the representation of a cuDF fixed-point
+ * type, rescaled to `desired_scale`.
+ *
+ * Encoded as the value metadata byte, a one-byte scale (fractional digit count), then the
+ * little-endian two's-complement unscaled integer. Any of the three widths decodes into any `Rep`
+ * whose range fits the rescaled value; digits below `desired_scale` truncate toward zero.
+ *
+ * @return The rescaled representation, valid only when the returned status is `SUCCESS`
+ */
+template <typename Rep>
+__device__ cuda::std::pair<Rep, op_status> decode_decimal(device_span<uint8_t const> enc,
+                                                          int desired_scale)
+{
+  auto const fail = [](op_status status) { return cuda::std::pair<Rep, op_status>{Rep{}, status}; };
+
+  if (enc.empty()) { return fail(op_status::MALFORMED_VARIANT); }
+  if (is_variant_null(enc)) { return fail(op_status::VARIANT_NULL); }
+  if (decode_basic_type(enc[0]) != basic_type::PRIMITIVE) { return fail(op_status::TYPE_MISMATCH); }
+
+  auto const ptype = static_cast<primitive_type>(variant_value_header(enc[0]));
+  auto const width = variant_decimal_unscaled_width(ptype);
+  if (width == 0) {
+    return fail(is_recognized_primitive_type(ptype) ? op_status::TYPE_MISMATCH
+                                                    : op_status::MALFORMED_VARIANT);
+  }
+
+  constexpr size_type scale_bytes = 1;
+  if (cuda::std::cmp_less(enc.size(), variant_header_bytes + scale_bytes + width)) {
+    return fail(op_status::MALFORMED_VARIANT);
+  }
+  int const encoded_scale = enc[variant_header_bytes];
+  if (encoded_scale > variant_decimal_max_scale) { return fail(op_status::MALFORMED_VARIANT); }
+
+  auto const* unscaled_data = enc.data() + variant_header_bytes + scale_bytes;
+  auto const unscaled       = [&]() -> __int128_t {
+    switch (width) {
+      case 4: return cudf::io::unaligned_load<int32_t>(unscaled_data);
+      case 8: return cudf::io::unaligned_load<int64_t>(unscaled_data);
+      case 16: return cudf::io::unaligned_load<__int128_t>(unscaled_data);
+      default: return 0;  // should be unreachable
+    }
+  }();
+
+  // The encoded value is `unscaled * 10^-encoded_scale`; the output is `rep * 10^desired_scale`.
+  auto const shift = -static_cast<int64_t>(encoded_scale) - desired_scale;
+  __int128_t rescaled{};
+  if (shift >= 0) {
+    auto const scaled = multiply_pow10(unscaled, shift);
+    if (!scaled.has_value()) { return fail(op_status::OVERFLOW); }
+    rescaled = scaled.value();
+  } else {
+    rescaled = divide_pow10(unscaled, -shift);
+  }
+
+  if constexpr (!cuda::std::is_same_v<Rep, __int128_t>) {
+    if (rescaled < static_cast<__int128_t>(cuda::std::numeric_limits<Rep>::min()) ||
+        rescaled > static_cast<__int128_t>(cuda::std::numeric_limits<Rep>::max())) {
+      return fail(op_status::OVERFLOW);
+    }
+  }
+  return {static_cast<Rep>(rescaled), op_status::SUCCESS};
+}
+
+/**
+ * @brief Decides whether a row should be decoded, shared by every cast path.
+ *
+ * A skipped row has its null bit cleared and its status recorded here. Zeroing its output element
+ * is left to the caller, since the element type is not known here.
+ *
+ * @return True when the row's value blob should be decoded
+ */
+__device__ bool should_decode_row(size_type row, bitmask_type* d_null_mask, op_status* d_status)
+{
+  auto const is_valid = cudf::bit_is_set(d_null_mask, row);
+
+  if (d_status == nullptr) { return is_valid; }
+
+  if (d_status[row] != op_status::SUCCESS) {
+    if (is_valid) { cudf::clear_bit(d_null_mask, row); }
+    return false;
+  }
+  // Status column is always non-nullable, so ROW_NULL is what reports the cleared null bit.
+  if (!is_valid) {
+    d_status[row] = op_status::ROW_NULL;
+    return false;
+  }
+  return true;
+}
+
 /**
  * @brief Per-row kernel: decode each VARIANT value blob into a fixed-width primitive of type `T`.
  *
@@ -823,24 +966,9 @@ CUDF_KERNEL __launch_bounds__(block_size) void cast_variant_primitive_kernel(
   auto const stride   = cudf::detail::grid_1d::grid_stride<block_size>();
 
   for (auto row = tid; row < num_rows; row += stride) {
-    if (d_status != nullptr) {
-      // Status column is always non-nullable; row_null replaces the null bit.
-      auto const s = d_status[row];
-      if (s != op_status::SUCCESS) {
-        d_output[row] = T{};
-        if (cudf::bit_is_set(d_null_mask, row)) { cudf::clear_bit(d_null_mask, row); }
-        continue;
-      }
-      if (!cudf::bit_is_set(d_null_mask, row)) {
-        d_output[row] = T{};
-        d_status[row] = op_status::ROW_NULL;
-        continue;
-      }
-    } else {
-      if (!cudf::bit_is_set(d_null_mask, row)) {
-        d_output[row] = T{};
-        continue;
-      }
+    if (!should_decode_row(row, d_null_mask, d_status)) {
+      d_output[row] = T{};
+      continue;
     }
 
     auto const val     = list_row_span(values, row);
@@ -853,6 +981,40 @@ CUDF_KERNEL __launch_bounds__(block_size) void cast_variant_primitive_kernel(
       cudf::clear_bit(d_null_mask, row);
       if (d_status != nullptr) { d_status[row] = cast_status_for_primitive<T>(val); }
     }
+  }
+}
+
+/**
+ * @brief Per-row kernel: decode each VARIANT decimal value blob into a fixed-point representation
+ * of type `Rep`, rescaled to `desired_scale`. Same null and status protocol as
+ * `cast_variant_primitive_kernel`.
+ */
+template <typename Rep>
+CUDF_KERNEL __launch_bounds__(block_size) void cast_variant_decimal_kernel(
+  cudf::lists_column_device_view values,
+  device_span<Rep> d_output,
+  int desired_scale,
+  bitmask_type* d_null_mask,
+  op_status* d_status)  // nullptr when no status was requested
+{
+  auto const num_rows = static_cast<size_type>(d_output.size());
+  auto const tid      = cudf::detail::grid_1d::global_thread_id<block_size>();
+  auto const stride   = cudf::detail::grid_1d::grid_stride<block_size>();
+
+  for (auto row = tid; row < num_rows; row += stride) {
+    if (!should_decode_row(row, d_null_mask, d_status)) {
+      d_output[row] = Rep{};
+      continue;
+    }
+
+    auto const [value, status] = decode_decimal<Rep>(list_row_span(values, row), desired_scale);
+    if (status == op_status::SUCCESS) {
+      d_output[row] = value;
+    } else {
+      d_output[row] = Rep{};
+      cudf::clear_bit(d_null_mask, row);
+    }
+    if (d_status != nullptr) { d_status[row] = status; }
   }
 }
 
@@ -970,7 +1132,8 @@ struct cast_variant_fn {
   size_type num_rows;
   data_type desired_type;
   bitmask_type* d_null_mask;
-  rmm::device_buffer null_mask;
+  cuda::device_buffer<std::byte> null_mask{
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED)};
   cuda::stream_ref stream;
   rmm::device_async_resource_ref mr;
   // In-out status tracking; null when no status was requested.
@@ -993,7 +1156,33 @@ struct cast_variant_fn {
     return std::make_unique<column>(desired_type,
                                     num_rows,
                                     std::move(data),
-                                    null_count > 0 ? std::move(null_mask) : rmm::device_buffer{},
+                                    null_count > 0
+                                      ? std::move(null_mask)
+                                      : cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                    null_count);
+  }
+
+  template <typename T>
+  std::unique_ptr<column> operator()()
+    requires(cudf::is_fixed_point<T>())
+  {
+    using Rep = typename T::rep;
+    rmm::device_buffer data{num_rows * sizeof(Rep), stream, mr};
+    auto const grid = cudf::detail::grid_1d{num_rows, block_size};
+    auto const d_out =
+      device_span<Rep>{static_cast<Rep*>(data.data()), static_cast<std::size_t>(num_rows)};
+    cast_variant_decimal_kernel<Rep><<<grid.num_blocks, block_size, 0, stream.get()>>>(
+      values, d_out, desired_type.scale(), d_null_mask, d_status);
+    CUDF_CUDA_TRY(cudaGetLastError());
+
+    auto const null_count =
+      num_rows - cudf::detail::count_set_bits(d_null_mask, 0, num_rows, stream);
+    return std::make_unique<column>(desired_type,
+                                    num_rows,
+                                    std::move(data),
+                                    null_count > 0
+                                      ? std::move(null_mask)
+                                      : cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
                                     null_count);
   }
 
@@ -1012,14 +1201,16 @@ struct cast_variant_fn {
                       d_out = static_cast<bool*>(data.data()),
                       dnm   = this->d_null_mask,
                       dp_s] __device__(size_type row) {
+                       if (!should_decode_row(row, dnm, dp_s)) {
+                         d_out[row] = false;
+                         return;
+                       }
+                       // The row's null bit is still set here, so a failure can clear it unguarded.
                        auto const fail = [&](op_status s) {
                          d_out[row] = false;
-                         if (cudf::bit_is_set(dnm, row)) { cudf::clear_bit(dnm, row); }
+                         cudf::clear_bit(dnm, row);
                          if (dp_s) { dp_s[row] = s; }
                        };
-                       if (dp_s and dp_s[row] != op_status::SUCCESS) { return fail(dp_s[row]); }
-                       // Status column is always non-nullable; ROW_NULL replaces the null bit.
-                       if (!cudf::bit_is_set(dnm, row)) { return fail(op_status::ROW_NULL); }
                        auto const val     = list_row_span(vals, row);
                        auto const decoded = decode_bool(val);
                        if (!decoded) { return fail(cast_status_for_bool(val)); }
@@ -1032,7 +1223,9 @@ struct cast_variant_fn {
     return std::make_unique<column>(desired_type,
                                     num_rows,
                                     std::move(data),
-                                    null_count > 0 ? std::move(null_mask) : rmm::device_buffer{},
+                                    null_count > 0
+                                      ? std::move(null_mask)
+                                      : cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
                                     null_count);
   }
 
@@ -1050,7 +1243,9 @@ struct cast_variant_fn {
                                std::move(offsets_column),
                                chars.release(),
                                null_count,
-                               null_count > 0 ? std::move(null_mask) : rmm::device_buffer{});
+                               null_count > 0
+                                 ? std::move(null_mask)
+                                 : cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }
 
   template <typename T>
@@ -1116,17 +1311,21 @@ std::unique_ptr<column> build_path_column(cudf::host_span<std::string const> ste
   }
   host_offsets[depth] = host_chars.size();
 
-  auto d_offsets   = cudf::detail::make_device_uvector_async(host_offsets, stream, mr);
-  auto offsets_col = std::make_unique<column>(data_type{type_id::INT32},
-                                              static_cast<size_type>(host_offsets.size()),
-                                              d_offsets.release(),
-                                              rmm::device_buffer{},
-                                              0);
+  auto d_offsets = cudf::detail::make_device_uvector_async(host_offsets, stream, mr);
+  auto offsets_col =
+    std::make_unique<column>(data_type{type_id::INT32},
+                             static_cast<size_type>(host_offsets.size()),
+                             d_offsets.release(),
+                             cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                             0);
 
   auto d_chars = cudf::detail::make_device_uvector(
     host_span<char const>{host_chars.data(), host_chars.size()}, stream, mr);
-  return cudf::make_strings_column(
-    depth, std::move(offsets_col), d_chars.release(), 0, rmm::device_buffer{});
+  return cudf::make_strings_column(depth,
+                                   std::move(offsets_col),
+                                   d_chars.release(),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }
 
 }  // namespace
@@ -1165,8 +1364,11 @@ std::unique_ptr<column> get_variant_field(column_view const& variant_column,
   }
 
   if (num_rows == 0) {
-    return cudf::make_lists_column(
-      0, make_empty_column(type_id::INT32), make_empty_column(type_id::UINT8), 0, {});
+    return cudf::make_lists_column(0,
+                                   make_empty_column(type_id::INT32),
+                                   make_empty_column(type_id::UINT8),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }
 
   auto const temp_mr = cudf::get_current_device_resource_ref();
@@ -1191,7 +1393,7 @@ std::unique_ptr<column> get_variant_field(column_view const& variant_column,
     variant_column.nullable()
       ? cudf::detail::copy_bitmask(variant_column, stream, mr)
       : cudf::create_null_mask(variant_column.size(), mask_state::ALL_VALID, stream, mr);
-  auto* d_null_mask = static_cast<bitmask_type*>(null_mask.data());
+  auto* d_null_mask = reinterpret_cast<bitmask_type*>(null_mask.data());
 
   auto grid = cudf::detail::grid_1d{num_rows, block_size};
 
@@ -1243,7 +1445,9 @@ std::unique_ptr<column> get_variant_field(column_view const& variant_column,
                            std::move(offsets_column),
                            std::move(val_child),
                            null_count,
-                           null_count > 0 ? std::move(null_mask) : rmm::device_buffer{});
+                           null_count > 0
+                             ? std::move(null_mask)
+                             : cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }
 
 std::unique_ptr<column> cast_variant(column_view const& values,
@@ -1262,7 +1466,10 @@ std::unique_ptr<column> cast_variant(column_view const& values,
     case type_id::FLOAT32:
     case type_id::FLOAT64:
     case type_id::BOOL8:
-    case type_id::STRING: break;
+    case type_id::STRING:
+    case type_id::DECIMAL32:
+    case type_id::DECIMAL64:
+    case type_id::DECIMAL128: break;
     default: CUDF_FAIL("unsupported type for variant cast", std::invalid_argument);
   }
 
@@ -1289,7 +1496,7 @@ std::unique_ptr<column> cast_variant(column_view const& values,
   auto null_mask    = values.nullable()
                         ? cudf::detail::copy_bitmask(values, stream, mr)
                         : cudf::create_null_mask(num_rows, mask_state::ALL_VALID, stream, mr);
-  auto* d_null_mask = static_cast<bitmask_type*>(null_mask.data());
+  auto* d_null_mask = reinterpret_cast<bitmask_type*>(null_mask.data());
 
   return cudf::type_dispatcher(
     desired_type,
@@ -1318,7 +1525,7 @@ std::unique_ptr<column> get_variant_type_id(column_view const& values,
   auto null_mask    = values.nullable()
                         ? cudf::detail::copy_bitmask(values, stream, mr)
                         : cudf::create_null_mask(num_rows, mask_state::ALL_VALID, stream, mr);
-  auto* d_null_mask = static_cast<bitmask_type*>(null_mask.data());
+  auto* d_null_mask = reinterpret_cast<bitmask_type*>(null_mask.data());
 
   rmm::device_buffer data{static_cast<std::size_t>(num_rows) * sizeof(uint8_t), stream, mr};
 
@@ -1339,7 +1546,9 @@ std::unique_ptr<column> get_variant_type_id(column_view const& values,
   return std::make_unique<column>(data_type{type_id::UINT8},
                                   num_rows,
                                   std::move(data),
-                                  null_count > 0 ? std::move(null_mask) : rmm::device_buffer{},
+                                  null_count > 0
+                                    ? std::move(null_mask)
+                                    : cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
                                   null_count);
 }
 

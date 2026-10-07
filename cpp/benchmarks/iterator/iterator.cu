@@ -14,6 +14,7 @@
 #include <rmm/device_uvector.hpp>
 
 #include <cub/device/device_reduce.cuh>
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <thrust/execution_policy.h>
 #include <thrust/reduce.h>
@@ -30,7 +31,10 @@ inline auto reduce_by_cub(OutputIterator result, InputIterator d_in, int num_ite
     nullptr, temp_storage_bytes, d_in, result, num_items, cudf::DeviceSum{}, init);
 
   // Allocate temporary storage
-  rmm::device_buffer d_temp_storage(temp_storage_bytes, cudf::get_default_stream());
+  cuda::device_buffer<std::byte> d_temp_storage(cudf::get_default_stream(),
+                                                cudf::get_current_device_resource_ref(),
+                                                temp_storage_bytes,
+                                                cuda::no_init);
 
   // Run reduction
   cub::DeviceReduce::Reduce(
@@ -115,7 +119,7 @@ void bench_iterator_cub_raw(nvbench::state& state)
     1, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
 
   auto const data_size = column_size * sizeof(T);
   state.add_global_memory_reads<nvbench::int8_t>(data_size);
@@ -139,7 +143,7 @@ void bench_iterator_cub_iter(nvbench::state& state)
     1, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
 
   auto const data_size = column_size * sizeof(T);
   state.add_global_memory_reads<nvbench::int8_t>(data_size);
@@ -163,7 +167,7 @@ void bench_iterator_thrust_raw(nvbench::state& state)
     1, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
 
   auto const data_size = column_size * sizeof(T);
   state.add_global_memory_reads<nvbench::int8_t>(data_size);
@@ -187,7 +191,7 @@ void bench_iterator_thrust_iter(nvbench::state& state)
     1, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
 
   auto const data_size = column_size * sizeof(T);
   state.add_global_memory_reads<nvbench::int8_t>(data_size);

@@ -5,22 +5,48 @@
 #pragma once
 
 #include <cudf/hashing.hpp>
-#include <cudf/utilities/default_stream.hpp>
-#include <cudf/utilities/memory_resource.hpp>
+#include <cudf/types.hpp>
 
-#include <cuda/stream>
+#include <rmm/resource_ref.hpp>
+
+#include <cuda/stream_ref>
 
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 
 namespace cudf {
 namespace hashing::detail {
+
+/**
+ * @brief The default hash seed for algorithms exposing no seed parameter.
+ *
+ * This must be kept distinct from @p cudf::DEFAULT_HASH_SEED. The aim is to avoid situations
+ * where hash-partitioning with the default hash seed correlates with the hash function
+ * used internally. If that occurs, one can get catastrophic performance slowdowns because
+ * only some small fraction of the available hashing buckets are used.
+ *
+ * Briefly, suppose that we have a hash key `h`, a partition count `P = 2^k (2 n + 1)` for
+ * some `k` and `n`, and the hashing algorithm has a capacity `C`. There are two styles of
+ * hashing in libcudf. The hashcsr algorithm ends up, if it also uses `h` as its hash key,
+ * only filling at best `C / 2^k` of the available `C` buckets. The grouped aggregation
+ * algorithms from cuco fill at best `C / gcd(P, C)` of the available `C` buckets. Both
+ * scenarios lead to long linear probing chains.
+ */
+static constexpr uint32_t DEFAULT_ALGORITHM_HASH_SEED{0x68617368};  // 'hash'
+static_assert(DEFAULT_ALGORITHM_HASH_SEED != cudf::DEFAULT_HASH_SEED,
+              "Internal algorithm hash seed must be different from public default");
 
 std::unique_ptr<column> murmurhash3_x86_32(table_view const& input,
                                            uint32_t seed,
                                            cuda::stream_ref,
                                            rmm::device_async_resource_ref mr);
+
+std::unique_ptr<column> spark_murmurhash3_x86_32(table_view const& input,
+                                                 uint32_t seed,
+                                                 cuda::stream_ref,
+                                                 rmm::device_async_resource_ref mr);
 
 std::unique_ptr<table> murmurhash3_x64_128(table_view const& input,
                                            uint64_t seed,

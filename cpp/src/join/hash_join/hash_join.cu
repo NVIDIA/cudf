@@ -4,14 +4,13 @@
  */
 
 #include "common.cuh"
-#include "join/join_common_utils.cuh"
+#include "dispatch.cuh"
+#include "hash_csr_kernels.cuh"
 
 #include <cudf/detail/cuco_helpers.hpp>
-#include <cudf/detail/iterator.cuh>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/row_operator/hashing.cuh>
-#include <cudf/detail/row_operator/primitive_row_operators.cuh>
 #include <cudf/hashing/detail/murmurhash3_x86_32.cuh>
 #include <cudf/join/hash_join.hpp>
 #include <cudf/table/table_view.hpp>
@@ -19,12 +18,18 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
-#include <rmm/mr/polymorphic_allocator.hpp>
+#include <rmm/device_buffer.hpp>
+#include <rmm/device_uvector.hpp>
 
-#include <cuda/iterator>
+#include <cuda/buffer>
+#include <cuda/std/cstdint>
 
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
 #include <limits>
 #include <memory>
+#include <stdexcept>
 #include <utility>
 
 namespace cudf::detail {
@@ -45,43 +50,23 @@ bool is_trivial_join(table_view const& left, table_view const& right, join_kind 
 }
 
 namespace {
-void build_hash_join(
-  cudf::table_view const& right,
-  std::shared_ptr<detail::row::equality::preprocessed_table> const& preprocessed_right,
-  cudf::detail::hash_table_t& hash_table,
-  bool has_nested_nulls,
-  null_equality nulls_equal,
-  [[maybe_unused]] bitmask_type const* bitmask,
-  cuda::stream_ref stream)
+bool has_list_or_string(column_view const& column)
 {
-  CUDF_EXPECTS(0 != right.num_columns(), "Selected right dataset is empty", std::invalid_argument);
-  CUDF_EXPECTS(0 != right.num_rows(), "Right side table has no rows", std::invalid_argument);
+  return column.type().id() == type_id::LIST || column.type().id() == type_id::STRING ||
+         std::any_of(column.child_begin(), column.child_end(), has_list_or_string);
+}
 
-  auto insert_rows = [&](auto const& right, auto const& d_hasher) {
-    auto const iter = cudf::detail::make_counting_transform_iterator(0, pair_fn{d_hasher});
-
-    if (nulls_equal == cudf::null_equality::EQUAL or not nullable(right)) {
-      hash_table.insert(iter, iter + right.num_rows(), stream.get());
-    } else {
-      auto const stencil = cuda::counting_iterator<size_type>{0};
-      auto const pred    = row_is_valid{bitmask};
-
-      hash_table.insert_if(iter, iter + right.num_rows(), stencil, pred, stream.get());
-    }
-  };
-
-  auto const nulls = nullate::DYNAMIC{has_nested_nulls};
-
-  if (cudf::detail::is_primitive_row_op_compatible(right)) {
-    auto const d_hasher = cudf::detail::row::primitive::row_hasher{nulls, preprocessed_right};
-
-    insert_rows(right, d_hasher);
-  } else {
-    auto const row_hash = detail::row::hash::row_hasher{preprocessed_right};
-    auto const d_hasher = row_hash.device_hasher(nulls);
-
-    insert_rows(right, d_hasher);
-  }
+cuda::std::uint32_t hash_csr_capacity(size_type rows, double load_factor)
+{
+  auto const checked   = checked_load_factor(load_factor);
+  auto const requested = std::max(static_cast<long double>(rows) + 1,
+                                  std::ceil(static_cast<long double>(rows) / checked));
+  CUDF_EXPECTS(requested <= std::numeric_limits<cuda::std::uint32_t>::max(),
+               "HashCSR table capacity is not representable",
+               std::overflow_error);
+  // Hash reduction uses multiply-high, and linear probing wraps with a conditional increment.
+  // Neither requires a power-of-two capacity. Keep one empty slot even at load_factor == 1.
+  return static_cast<cuda::std::uint32_t>(requested);
 }
 }  // namespace
 
@@ -105,33 +90,86 @@ hash_join<Hasher>::hash_join(cudf::table_view const& right,
   : _has_nulls(has_nulls),
     _is_empty{right.num_rows() == 0},
     _nulls_equal{compare_nulls},
-    _impl{std::make_unique<impl>(impl{typename impl::hash_table_t{
-      cuco::extent{static_cast<size_t>(right.num_rows())},
-      checked_load_factor(load_factor),
-      cuco::empty_key{cuco::pair{std::numeric_limits<hash_value_type>::max(), cudf::JoinNoMatch}},
-      {},
-      {},
-      {},
-      {},
-      rmm::mr::polymorphic_allocator<char>{std::move(mr)},
-      stream.get()}})},
     _right{right},
     _preprocessed_right{cudf::detail::row::equality::preprocessed_table::create(
-      _right, stream, cudf::get_current_device_resource_ref())}
+      _right, stream, cudf::get_current_device_resource_ref())},
+    _impl{std::make_unique<impl>(
+      hash_csr_capacity(right.num_rows(), load_factor), right.num_rows(), stream, std::move(mr))}
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(0 != right.num_columns(), "Hash join right table is empty", std::invalid_argument);
   if (_is_empty) { return; }
 
+  CUDF_CUDA_TRY(cudaMemsetAsync(
+    _impl->_slots.data(), 0xff, _impl->_slots.size() * sizeof(hash_table_slot_type), stream.get()));
+  CUDF_CUDA_TRY(cudaMemsetAsync(
+    _impl->_offsets.data(), 0, _impl->_offsets.size() * sizeof(size_type), stream.get()));
+
+  auto const temp_mr = cudf::get_current_device_resource_ref();
   auto const row_bitmask =
-    cudf::detail::bitmask_and(right, stream, cudf::get_current_device_resource_ref()).first;
-  cudf::detail::build_hash_join(_right,
-                                _preprocessed_right,
-                                _impl->_hash_table,
-                                _has_nulls,
-                                _nulls_equal,
-                                reinterpret_cast<bitmask_type const*>(row_bitmask.data()),
-                                stream);
+    _nulls_equal == null_equality::UNEQUAL
+      ? cudf::detail::bitmask_and(right, stream, temp_mr).first
+      : cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, temp_mr);
+  auto const valid_rows = _nulls_equal == null_equality::UNEQUAL
+                            ? reinterpret_cast<bitmask_type const*>(row_bitmask.data())
+                            : nullptr;
+  // Hashing and comparing variable-width rows again can dominate construction. Cache one
+  // representative index per row for keys containing lists or strings, including within structs.
+  auto const cache_representatives = std::any_of(right.begin(), right.end(), has_list_or_string);
+  auto representatives             = rmm::device_uvector<size_type>{
+    cache_representatives ? static_cast<std::size_t>(right.num_rows()) : 0, stream, temp_mr};
+  auto build = [&](auto equality, auto hasher) {
+    launch_hash_csr_build_count_kernel(right.num_rows(),
+                                       valid_rows,
+                                       _impl->_offsets.data(),
+                                       representatives.data(),
+                                       _impl->hash_table(),
+                                       equality,
+                                       hasher,
+                                       stream);
+  };
+  dispatch_join_comparator(
+    right, right, _preprocessed_right, _preprocessed_right, _has_nulls, _nulls_equal, build);
+  {
+    std::size_t temp_storage_bytes{};
+    CUDF_CUDA_TRY(cub::DeviceScan::InclusiveSum(nullptr,
+                                                temp_storage_bytes,
+                                                _impl->_offsets.data(),
+                                                _impl->_offsets.data(),
+                                                _impl->_offsets.size(),
+                                                stream.get()));
+    cuda::device_buffer<std::byte> temp_storage(stream, temp_mr, temp_storage_bytes, cuda::no_init);
+    CUDF_CUDA_TRY(cub::DeviceScan::InclusiveSum(temp_storage.data(),
+                                                temp_storage_bytes,
+                                                _impl->_offsets.data(),
+                                                _impl->_offsets.data(),
+                                                _impl->_offsets.size(),
+                                                stream.get()));
+  }
+  // The output array is not needed until the scan workspace has been released.
+  _impl->_values.resize(right.num_rows(), stream);
+  // Reuse each cumulative end as a scatter cursor. Once all rows in a group have been
+  // scattered, its cursor is the group's exclusive begin. No per-row positions are retained.
+  if (cache_representatives) {
+    launch_hash_csr_build_fill_cached_kernel(right.num_rows(),
+                                             representatives.data(),
+                                             _impl->_offsets.data(),
+                                             _impl->_values.data(),
+                                             stream);
+    return;
+  }
+  auto fill = [&](auto equality, auto hasher) {
+    launch_hash_csr_build_fill_kernel(right.num_rows(),
+                                      valid_rows,
+                                      _impl->_offsets.data(),
+                                      _impl->_values.data(),
+                                      _impl->hash_table(),
+                                      equality,
+                                      hasher,
+                                      stream);
+  };
+  dispatch_join_comparator(
+    right, right, _preprocessed_right, _preprocessed_right, _has_nulls, _nulls_equal, fill);
 }
 
 template hash_join<hash_join_hasher>::hash_join(

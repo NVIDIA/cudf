@@ -42,15 +42,24 @@ void validate_ordering(ordering const& ordering)
 
 ordering::ordering(std::vector<order_key> keys,
                    std::shared_ptr<table_chunk> boundaries,
-                   bool strict_boundaries)
-  : keys{std::move(keys)}, boundaries{std::move(boundaries)}, strict_boundaries{strict_boundaries}
+                   bool strict_boundaries,
+                   bool locally_ordered)
+  : keys{std::move(keys)},
+    boundaries{std::move(boundaries)},
+    strict_boundaries{strict_boundaries},
+    locally_ordered{locally_ordered}
 {
   validate_ordering(*this);
 }
 
 ordering ordering::with_keys(std::vector<order_key> new_keys) const
 {
-  return ordering{std::move(new_keys), boundaries, strict_boundaries};
+  return ordering{std::move(new_keys), boundaries, strict_boundaries, locally_ordered};
+}
+
+ordering ordering::with_locally_ordered(bool locally_ordered) const
+{
+  return ordering{keys, boundaries, strict_boundaries, locally_ordered};
 }
 
 bool ordering::boundaries_aligned_with(ordering const& other, rapidsmpf::BufferResource& br) const
@@ -90,9 +99,10 @@ bool ordering::boundaries_aligned_with(ordering const& other, rapidsmpf::BufferR
 
 order_scheme::order_scheme(std::vector<order_key> keys,
                            std::shared_ptr<table_chunk> boundaries,
-                           bool strict_boundaries)
-  : order_scheme(
-      std::vector<ordering>{ordering{std::move(keys), std::move(boundaries), strict_boundaries}})
+                           bool strict_boundaries,
+                           bool locally_ordered)
+  : order_scheme(std::vector<ordering>{
+      ordering{std::move(keys), std::move(boundaries), strict_boundaries, locally_ordered}})
 {
 }
 
@@ -118,12 +128,15 @@ rapidsmpf::streaming::Message to_message(std::uint64_t sequence_number,
   return rapidsmpf::streaming::Message{
     sequence_number,
     std::move(m),
-    {},
-    [](rapidsmpf::streaming::Message const& msg,
-       rapidsmpf::MemoryReservation& /* reservation */) -> rapidsmpf::streaming::Message {
-      auto copy = std::make_unique<channel_metadata>(msg.get<channel_metadata>());
-      return rapidsmpf::streaming::Message{
-        msg.sequence_number(), std::move(copy), {}, msg.copy_cb()};
+    rapidsmpf::ContentDescription{},
+    rapidsmpf::streaming::Message::Callbacks{
+      .copy = [](rapidsmpf::streaming::Message const& msg,
+                 rapidsmpf::MemoryReservation& /* reservation */) -> rapidsmpf::streaming::Message {
+        auto copy = std::make_unique<channel_metadata>(msg.get<channel_metadata>());
+        return rapidsmpf::streaming::Message{
+          msg.sequence_number(), std::move(copy), rapidsmpf::ContentDescription{}, msg.callbacks()};
+      },
+      .move = nullptr  // Metadata is not spillable, so it is only copied.
     }};
 }
 

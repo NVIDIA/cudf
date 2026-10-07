@@ -67,7 +67,7 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_join_semi(
       // Anti and semi return all the row indices from left
       // with a corresponding NULL from the right.
       case join_kind::LEFT_ANTI_JOIN:
-        return get_trivial_left_join_indices(left_conditional, stream, mr).first;
+        return get_trivial_left_join_indices(left_conditional, 0, stream, mr).first;
       // Inner and left semi joins return empty output because no matches can exist.
       case join_kind::LEFT_SEMI_JOIN:
         return std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr);
@@ -163,7 +163,7 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_join_semi(
   } else {
     cuda::counting_iterator<cudf::size_type> stencil(0);
     auto const [row_bitmask, _] = cudf::detail::bitmask_and(right, stream, temp_mr);
-    row_is_valid pred{static_cast<bitmask_type const*>(row_bitmask.data())};
+    row_is_valid pred{reinterpret_cast<cudf::bitmask_type const*>(row_bitmask.data())};
 
     // insert valid rows
     row_set.insert_if_async(iter, iter + right_num_rows, stencil, pred, stream.get());

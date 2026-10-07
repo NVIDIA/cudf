@@ -1,0 +1,123 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+from collections.abc import Sequence
+
+from rmm.pylibrmm.memory_resource import DeviceMemoryResource
+
+from pylibcudf.column import Column
+from pylibcudf.io.experimental.hybrid_scan import ReadColumnsMode
+from pylibcudf.io.parquet import ParquetReaderOptions
+from pylibcudf.io.parquet_metadata import FileMetaData
+from pylibcudf.io.text import ByteRangeInfo
+from pylibcudf.io.types import TableWithMetadata
+from pylibcudf.span import Span
+from pylibcudf.utils import CudaStreamLike
+
+try:
+    from collections.abc import Buffer
+except ImportError:
+    from typing_extensions import Buffer
+
+class RowGroupIndices:
+    @staticmethod
+    def from_lists(
+        row_group_indices: Sequence[Sequence[int]],
+    ) -> RowGroupIndices: ...
+    def tolist(self) -> list[list[int]]: ...
+
+class HybridScanMultiFile:
+    @staticmethod
+    def from_parquet_metadatas(
+        parquet_metadatas: Sequence[FileMetaData],
+        options: ParquetReaderOptions,
+    ) -> HybridScanMultiFile: ...
+    def parquet_metadatas(self) -> list[FileMetaData]: ...
+    def page_index_byte_ranges(self) -> list[ByteRangeInfo]: ...
+    def setup_page_indexes(
+        self, page_index_bytes: Sequence[Buffer]
+    ) -> None: ...
+    def all_row_groups(
+        self, options: ParquetReaderOptions
+    ) -> RowGroupIndices: ...
+    def total_rows_in_row_groups(
+        self, row_group_indices: RowGroupIndices
+    ) -> int: ...
+    def reset_column_selection(self) -> None: ...
+    def filter_row_groups_with_byte_range(
+        self,
+        row_group_indices: RowGroupIndices,
+        options: ParquetReaderOptions,
+    ) -> RowGroupIndices: ...
+    def filter_row_groups_with_stats(
+        self,
+        row_group_indices: RowGroupIndices,
+        options: ParquetReaderOptions,
+        stream: CudaStreamLike | None = None,
+    ) -> RowGroupIndices: ...
+    def bloom_filters_byte_ranges(
+        self,
+        row_group_indices: RowGroupIndices,
+        options: ParquetReaderOptions,
+    ) -> tuple[list[ByteRangeInfo], list[int]]: ...
+    def dictionary_pages_byte_ranges(
+        self,
+        row_group_indices: RowGroupIndices,
+        options: ParquetReaderOptions,
+    ) -> tuple[list[ByteRangeInfo], list[int]]: ...
+    def build_all_true_row_mask(
+        self,
+        row_group_indices: RowGroupIndices,
+        stream: CudaStreamLike | None = None,
+        mr: DeviceMemoryResource | None = None,
+    ) -> Column: ...
+    def build_row_mask_with_page_index_stats(
+        self,
+        row_group_indices: RowGroupIndices,
+        options: ParquetReaderOptions,
+        stream: CudaStreamLike | None = None,
+        mr: DeviceMemoryResource | None = None,
+    ) -> Column: ...
+    def all_column_chunks_byte_ranges(
+        self,
+        row_group_indices: RowGroupIndices,
+        options: ParquetReaderOptions,
+    ) -> tuple[list[ByteRangeInfo], list[int]]: ...
+    def materialize_all_columns(
+        self,
+        row_group_indices: RowGroupIndices,
+        column_chunk_data: list[Span],
+        options: ParquetReaderOptions,
+        stream: CudaStreamLike | None = None,
+        mr: DeviceMemoryResource | None = None,
+    ) -> TableWithMetadata: ...
+    def payload_pages_byte_ranges(
+        self,
+        row_group_indices: RowGroupIndices,
+        row_mask: Column,
+        options: ParquetReaderOptions,
+        stream: CudaStreamLike | None = None,
+    ) -> tuple[list[ByteRangeInfo], list[int]]: ...
+    def setup_chunking_for_payload_columns(
+        self,
+        chunk_read_limit: int,
+        pass_read_limit: int,
+        row_group_indices: RowGroupIndices,
+        row_mask: Column,
+        page_data: Sequence[Span | None],
+        options: ParquetReaderOptions,
+        stream: CudaStreamLike | None = None,
+        mr: DeviceMemoryResource | None = None,
+    ) -> None: ...
+    def materialize_payload_columns_chunk(
+        self,
+        row_mask: Column,
+    ) -> TableWithMetadata: ...
+    def construct_row_group_passes(
+        self,
+        columns_mode: ReadColumnsMode,
+        row_group_indices: RowGroupIndices,
+        pass_read_limit: int,
+        options: ParquetReaderOptions,
+    ) -> list[RowGroupIndices]: ...
+    def has_next_table_chunk(self) -> bool: ...

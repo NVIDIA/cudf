@@ -15,6 +15,7 @@
 
 #include <cuda/iterator>
 
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <numeric>
@@ -28,29 +29,12 @@ using aggregate_reader_metadata_base = parquet::detail::aggregate_reader_metadat
 using metadata_base                  = parquet::detail::metadata;
 
 using io::detail::inline_column_buffer;
-using parquet::detail::CompactProtocolReader;
 using parquet::detail::equality_literals_collector;
 using parquet::detail::input_column_info;
 using parquet::detail::row_group_info;
 using text::byte_range_info;
 
 namespace {
-
-// Construct a vector of FileMetaData from the input footer bytes
-[[nodiscard]] std::vector<FileMetaData> parquet_metadatas_from_footer_bytes(
-  cudf::host_span<cudf::host_span<uint8_t const> const> footer_bytes)
-{
-  std::vector<FileMetaData> parquet_metadatas;
-  parquet_metadatas.reserve(footer_bytes.size());
-  std::transform(footer_bytes.begin(),
-                 footer_bytes.end(),
-                 std::back_inserter(parquet_metadatas),
-                 [](auto const& footer_bytes) {
-                   metadata parsed_metadata{footer_bytes};
-                   return FileMetaData{std::move(parsed_metadata)};
-                 });
-  return parquet_metadatas;
-}
 
 // Construct a vector of all row group indices from the input vectors
 [[nodiscard]] auto all_row_group_indices(
@@ -77,8 +61,10 @@ namespace {
 }
 
 // Compute the page index (column index and/or offset index) byte range
-[[nodiscard]] byte_range_info page_index_byte_range(FileMetaData const& file_metadata)
+[[nodiscard]] byte_range_info page_index_byte_range(parquet::detail::metadata const& file_metadata)
 {
+  if (file_metadata.is_page_index_setup()) { return {}; }
+
   auto const& row_groups = file_metadata.row_groups;
   if (row_groups.empty() or row_groups.front().columns.empty()) { return {}; }
 
@@ -121,10 +107,7 @@ metadata::metadata(cudf::host_span<uint8_t const> footer_bytes)
 {
   CUDF_FUNC_RANGE();
 
-  CompactProtocolReader cp(footer_bytes.data(), footer_bytes.size());
-  cp.read(this);
-  auto const is_schema_initialized = cp.InitSchema(this);
-  CUDF_EXPECTS(is_schema_initialized, "Cannot initialize schema");
+  parquet::detail::decode_footer_and_init_schema(footer_bytes, this);
   sanitize_schema();
 }
 
@@ -132,36 +115,41 @@ aggregate_reader_metadata::aggregate_reader_metadata(
   cudf::host_span<cudf::host_span<uint8_t const> const> footer_bytes,
   bool use_arrow_schema,
   bool has_cols_from_mismatched_srcs)
-  : aggregate_reader_metadata_base(parquet_metadatas_from_footer_bytes(footer_bytes),
-                                   use_arrow_schema,
-                                   has_cols_from_mismatched_srcs)
+  : aggregate_reader_metadata(
+      parquet::detail::parallel_construct_metadatas(
+        footer_bytes, [](auto const& bytes) { return FileMetaData{metadata{bytes}}; }),
+      use_arrow_schema,
+      has_cols_from_mismatched_srcs)
 {
-  CUDF_EXPECTS(
-    not footer_bytes.empty(), "At least one source must be provided", std::invalid_argument);
 }
 
 aggregate_reader_metadata::aggregate_reader_metadata(
   cudf::host_span<FileMetaData const> parquet_metadatas,
   bool use_arrow_schema,
   bool has_cols_from_mismatched_srcs)
-  : aggregate_reader_metadata_base(
+  : aggregate_reader_metadata(
       std::vector<FileMetaData>{parquet_metadatas.begin(), parquet_metadatas.end()},
       use_arrow_schema,
       has_cols_from_mismatched_srcs)
 {
-  CUDF_EXPECTS(
-    not parquet_metadatas.empty(), "At least one source must be provided", std::invalid_argument);
+}
+
+aggregate_reader_metadata::aggregate_reader_metadata(std::vector<FileMetaData>&& parquet_metadatas,
+                                                     bool use_arrow_schema,
+                                                     bool has_cols_from_mismatched_srcs)
+  : aggregate_reader_metadata_base(
+      std::move(parquet_metadatas), use_arrow_schema, has_cols_from_mismatched_srcs)
+{
 }
 
 std::vector<text::byte_range_info> aggregate_reader_metadata::page_index_byte_ranges() const
 {
   std::vector<text::byte_range_info> page_index_byte_ranges;
-  std::transform(per_file_metadata.begin(),
-                 per_file_metadata.end(),
-                 std::back_inserter(page_index_byte_ranges),
-                 [](auto const& file_metadata) -> text::byte_range_info {
-                   return page_index_byte_range(file_metadata);
-                 });
+  std::ranges::transform(per_file_metadata,
+                         std::back_inserter(page_index_byte_ranges),
+                         [](auto const& file_metadata) -> text::byte_range_info {
+                           return page_index_byte_range(file_metadata);
+                         });
 
   return page_index_byte_ranges;
 }
@@ -260,14 +248,11 @@ std::vector<std::vector<size_type>> aggregate_reader_metadata::all_row_groups(
 
   std::vector<std::vector<size_type>> row_groups;
   row_groups.reserve(per_file_metadata.size());
-  std::transform(per_file_metadata.begin(),
-                 per_file_metadata.end(),
-                 std::back_inserter(row_groups),
-                 [](auto const& pfm) {
-                   std::vector<size_type> indices(pfm.row_groups.size());
-                   std::iota(indices.begin(), indices.end(), size_type{0});
-                   return indices;
-                 });
+  std::ranges::transform(per_file_metadata, std::back_inserter(row_groups), [](auto const& pfm) {
+    std::vector<size_type> indices(pfm.row_groups.size());
+    std::iota(indices.begin(), indices.end(), size_type{0});
+    return indices;
+  });
   return row_groups;
 }
 
@@ -308,7 +293,7 @@ std::unique_ptr<cudf::column> aggregate_reader_metadata::build_all_true_row_mask
 {
   CUDF_FUNC_RANGE();
   auto const num_rows = total_rows_in_row_groups(row_group_indices);
-  CUDF_EXPECTS(num_rows < std::numeric_limits<cudf::size_type>::max(),
+  CUDF_EXPECTS(std::cmp_less_equal(num_rows, std::numeric_limits<cudf::size_type>::max()),
                "Total rows in row groups exceed the cudf's column size limit. Retry with a smaller "
                "set of row groups",
                std::invalid_argument);
@@ -349,11 +334,9 @@ aggregate_reader_metadata::select_payload_columns(
       auto const filter_columns_set =
         construct_filter_columns_set(*filter_column_names, selection_options.case_sensitive_names);
       // Remove a payload column name if it is also present in the hash set
-      valid_payload_columns.erase(
-        std::remove_if(valid_payload_columns.begin(),
-                       valid_payload_columns.end(),
-                       [&](auto const& col) { return filter_columns_set.count(col) > 0; }),
-        valid_payload_columns.end());
+      auto const filtered = std::ranges::remove_if(
+        valid_payload_columns, [&](auto const& col) { return filter_columns_set.count(col) > 0; });
+      valid_payload_columns.erase(filtered.begin(), filtered.end());
     }
     // Call the base `select_columns()` method with valid payload columns
     return select_columns(valid_payload_columns, {}, selection_options);
@@ -425,13 +408,13 @@ aggregate_reader_metadata::bloom_filters_byte_ranges(
   std::reference_wrapper<ast::expression const> filter)
 {
   // Collect equality literals for each input table column
-  auto const literals =
-    equality_literals_collector{
-      filter.get(),
-      host_span<data_type const>{output_dtypes.data(), output_dtypes.size()},
-      host_span<cudf::size_type const>{output_column_schemas.data(), output_column_schemas.size()},
-      per_file_metadata[0].schema}
-      .get_literals();
+  auto literals_collector = equality_literals_collector{
+    filter.get(), output_dtypes, output_column_schemas, per_file_metadata[0].schema};
+
+  // Return early if bloom filters cannot prune any row groups with this filter
+  if (not literals_collector.can_filter()) { return {}; }
+
+  auto const literals = std::move(literals_collector).get_literals();
 
   // Collect schema indices of columns with equality predicate(s)
   std::vector<cudf::size_type> bloom_filter_col_schemas;
@@ -441,9 +424,6 @@ aggregate_reader_metadata::bloom_filters_byte_ranges(
                   literals.begin(),
                   std::back_inserter(bloom_filter_col_schemas),
                   [](auto& bloom_filter_literals) { return not bloom_filter_literals.empty(); });
-
-  // No equality literals found, return empty pair
-  if (bloom_filter_col_schemas.empty()) { return {}; }
 
   // Compute total number of input row groups
   auto const total_row_groups = compute_total_row_groups(row_group_indices);
@@ -501,7 +481,12 @@ aggregate_reader_metadata::dictionary_pages_byte_ranges(
   std::reference_wrapper<ast::expression const> filter)
 {
   // Collect (in)equality literals for each input table column
-  auto const literals = dictionary_literals_collector{filter.get(), output_dtypes}.get_literals();
+  auto literals_collector = dictionary_literals_collector{filter.get(), output_dtypes};
+
+  // Return early if dictionary pages cannot prune any row groups with this filter
+  if (not literals_collector.can_filter()) { return {}; }
+
+  auto const literals = std::move(literals_collector).get_literals();
 
   // Collect schema indices of columns with equality predicate(s)
   std::vector<cudf::size_type> dictionary_col_schemas;
@@ -511,9 +496,6 @@ aggregate_reader_metadata::dictionary_pages_byte_ranges(
                   literals.begin(),
                   std::back_inserter(dictionary_col_schemas),
                   [](auto& dict_literals) { return not dict_literals.empty(); });
-
-  // No (in)equality literals found, return empty vectors
-  if (dictionary_col_schemas.empty()) { return {}; }
 
   // Compute total number of input row groups
   auto const total_row_groups = compute_total_row_groups(row_group_indices);
@@ -661,13 +643,13 @@ aggregate_reader_metadata::filter_row_groups_with_bloom_filters(
   cuda::stream_ref stream) const
 {
   // Collect equality literals for each input table column
-  auto const literals =
-    equality_literals_collector{
-      filter.get(),
-      host_span<data_type const>{output_dtypes.data(), output_dtypes.size()},
-      host_span<cudf::size_type const>{output_column_schemas.data(), output_column_schemas.size()},
-      per_file_metadata[0].schema}
-      .get_literals();
+  auto literals_collector = equality_literals_collector{
+    filter.get(), output_dtypes, output_column_schemas, per_file_metadata[0].schema};
+
+  // Return early if bloom filters cannot prune any row groups with this filter
+  if (not literals_collector.can_filter()) { return all_row_group_indices(row_group_indices); }
+
+  auto const literals = std::move(literals_collector).get_literals();
 
   // Collect schema indices of columns with equality predicate(s)
   std::vector<cudf::size_type> bloom_filter_col_schemas;
@@ -677,9 +659,6 @@ aggregate_reader_metadata::filter_row_groups_with_bloom_filters(
                   literals.begin(),
                   std::back_inserter(bloom_filter_col_schemas),
                   [](auto& eq_literals) { return not eq_literals.empty(); });
-
-  // Return all row groups if no column with equality predicate(s)
-  if (bloom_filter_col_schemas.empty()) { return all_row_group_indices(row_group_indices); }
 
   // Compute total number of input row groups
   auto const total_row_groups = compute_total_row_groups(row_group_indices);
@@ -694,13 +673,11 @@ aggregate_reader_metadata::filter_row_groups_with_bloom_filters(
   // Transform bloom filter data to cuda::std::byte type for apply_bloom_filters
   std::vector<cudf::device_span<cuda::std::byte const>> transformed_bloom_filter_data;
   transformed_bloom_filter_data.reserve(bloom_filter_data.size());
-  std::transform(bloom_filter_data.begin(),
-                 bloom_filter_data.end(),
-                 std::back_inserter(transformed_bloom_filter_data),
-                 [](auto const& data) {
-                   return cudf::device_span<cuda::std::byte const>{
-                     reinterpret_cast<cuda::std::byte const*>(data.data()), data.size()};
-                 });
+  std::ranges::transform(
+    bloom_filter_data, std::back_inserter(transformed_bloom_filter_data), [](auto const& data) {
+      return cudf::device_span<cuda::std::byte const>{
+        reinterpret_cast<cuda::std::byte const*>(data.data()), data.size()};
+    });
 
   auto const bloom_filtered_row_groups =
     apply_bloom_filters(transformed_bloom_filter_data,

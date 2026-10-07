@@ -585,7 +585,9 @@ bool are_all_rows_retained(cudf::column_view const& row_mask, cuda::stream_ref s
   return cudf::detail::all_of(cuda::counting_iterator<cudf::size_type>{0},
                               cuda::counting_iterator{row_mask.size()},
                               row_mask_accessor{row_mask},
-                              stream);
+                              stream,
+                              cudf::memory_resources{cudf::get_current_device_resource_ref(),
+                                                     cudf::get_current_device_resource_ref()});
 }
 
 thrust::host_vector<bool> compute_row_range_selection_mask(

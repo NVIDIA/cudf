@@ -61,8 +61,9 @@ VectorPair full_to_left_join_indices(device_span<size_type const> left_indices,
   auto const keep = [left = left_indices.data()] __device__(std::size_t i) -> bool {
     return left[i] != JoinNoMatch;
   };
-  auto const begin  = cuda::counting_iterator<std::size_t>{0};
-  auto const size   = cudf::detail::count_if(begin, begin + left_indices.size(), keep, stream);
+  auto const begin = cuda::counting_iterator<std::size_t>{0};
+  auto const size  = cudf::detail::count_if(
+    begin, begin + left_indices.size(), keep, stream, cudf::memory_resources{mr, mr});
   auto left_result  = std::make_unique<rmm::device_uvector<size_type>>(size, stream, mr);
   auto right_result = std::make_unique<rmm::device_uvector<size_type>>(size, stream, mr);
   if (size > 0) {
@@ -70,7 +71,13 @@ VectorPair full_to_left_join_indices(device_span<size_type const> left_indices,
       cuda::make_zip_iterator(cuda::std::tuple{left_indices.begin(), right_indices.begin()});
     auto const output =
       cuda::make_zip_iterator(cuda::std::tuple{left_result->begin(), right_result->begin()});
-    cudf::detail::copy_if_async(input, input + left_indices.size(), begin, output, keep, stream);
+    cudf::detail::copy_if_async(input,
+                                input + left_indices.size(),
+                                begin,
+                                output,
+                                keep,
+                                stream,
+                                cudf::memory_resources{mr, mr});
   }
   return {std::move(left_result), std::move(right_result)};
 }

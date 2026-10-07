@@ -52,7 +52,9 @@ rmm::device_uvector<int64_t> find_string_delimiter_positions(strings_column_view
                               cuda::counting_iterator<int64_t>{chars_bytes},
                               positions.begin(),
                               delimiter_fn,
-                              stream);
+                              stream,
+                              cudf::memory_resources{cudf::get_current_device_resource_ref(),
+                                                     cudf::get_current_device_resource_ref()});
   return positions;
 }
 
@@ -80,7 +82,9 @@ rmm::device_uvector<int64_t> find_whitespace_delimiter_positions(strings_column_
                               cuda::counting_iterator<int64_t>{chars_bytes},
                               positions.begin(),
                               delimiter_fn,
-                              stream);
+                              stream,
+                              cudf::memory_resources{cudf::get_current_device_resource_ref(),
+                                                     cudf::get_current_device_resource_ref()});
   return positions;
 }
 

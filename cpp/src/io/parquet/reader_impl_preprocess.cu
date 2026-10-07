@@ -670,9 +670,11 @@ void reader_impl::read_compressed_data()
 
   read_chunks_tasks.get();
 
+  auto header_scratch = make_page_header_scratch(chunks.size(), _has_offset_index, _stream);
+
   // Process dataset chunk pages into output columns
   auto const total_pages = _has_offset_index ? count_page_headers_with_pgidx(chunks, _stream)
-                                             : count_page_headers(chunks, _stream);
+                                             : count_page_headers(chunks, header_scratch, _stream);
   if (total_pages <= 0) { return; }
 
   // Zero out the vector before `decode_page_headers` as it may not write every byte of the buffer,
@@ -681,7 +683,7 @@ void reader_impl::read_compressed_data()
     total_pages, _stream, cudf::get_current_device_resource_ref());
 
   // decoding of column/page information
-  decode_page_headers(pass, unsorted_pages, _has_offset_index, _stream);
+  decode_page_headers(pass, unsorted_pages, _has_offset_index, header_scratch, _stream);
   CUDF_EXPECTS(pass.page_offsets.size() - 1 == static_cast<size_t>(_input_columns.size()),
                "Encountered page_offsets / num_columns mismatch");
 }

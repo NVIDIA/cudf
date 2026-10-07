@@ -55,6 +55,66 @@ auto page_boundary_slices(cudf::size_type const num_rows)
 
 }  // namespace
 
+TEST_F(ParquetReaderTest, FusedPageHeadersOverflow)
+{
+  // One source fits in scratch; the other has more pages than the per-chunk capacity.
+  // Verify the actual page counts so writer page coalescing cannot hide the fallback path.
+  constexpr cudf::size_type num_rows   = 16'385;
+  constexpr cudf::size_type small_rows = 17;
+  std::vector<std::string> values;
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    values.push_back("value-" + std::to_string(i % 3));
+  }
+  auto validity =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 7 != 0; });
+  cudf::test::strings_column_wrapper strings(values.begin(), values.end(), validity);
+  cudf::table_view const large{{strings}};
+  auto const small    = cudf::slice(large, {0, small_rows}).front();
+  auto const expected = cudf::concatenate(std::vector<cudf::table_view>{small, large});
+  std::vector<std::string> const paths{
+    temp_env->get_temp_filepath("fused_headers_small.parquet"),
+    temp_env->get_temp_filepath("fused_headers_overflow.parquet")};
+
+  for (bool const v2 : {false, true}) {
+    for (auto const dictionary :
+         {cudf::io::dictionary_policy::NEVER, cudf::io::dictionary_policy::ALWAYS}) {
+      SCOPED_TRACE(v2);
+      SCOPED_TRACE(static_cast<int>(dictionary));
+      for (size_t i = 0; i < paths.size(); ++i) {
+        cudf::io::write_parquet(cudf::io::parquet_writer_options::builder(
+                                  cudf::io::sink_info{paths[i]}, i == 0 ? small : large)
+                                  .compression(cudf::io::compression_type::NONE)
+                                  .dictionary_policy(dictionary)
+                                  .stats_level(cudf::io::statistics_freq::STATISTICS_ROWGROUP)
+                                  .max_page_size_rows(1)
+                                  .max_page_fragment_size(1)
+                                  .write_v2_headers(v2));
+        auto const source = cudf::io::datasource::create(paths[i]);
+        cudf::io::parquet::FileMetaData metadata;
+        read_footer(source, &metadata);
+        ASSERT_EQ(metadata.row_groups.size(), 1);
+        auto const& chunk = metadata.row_groups.front().columns.front();
+        EXPECT_EQ(chunk.offset_index_length, 0);
+        ASSERT_TRUE(chunk.meta_data.encoding_stats.has_value());
+        int data_pages       = 0;
+        int dictionary_pages = 0;
+        for (auto const& stat : chunk.meta_data.encoding_stats.value()) {
+          if (stat.page_type == cudf::io::parquet::PageType::DICTIONARY_PAGE) {
+            dictionary_pages += stat.count;
+          } else {
+            data_pages += stat.count;
+          }
+        }
+        EXPECT_EQ(data_pages, i == 0 ? small_rows : num_rows);
+        EXPECT_EQ(dictionary_pages, dictionary == cudf::io::dictionary_policy::ALWAYS ? 1 : 0);
+      }
+      auto const options = cudf::io::parquet_reader_options::builder(cudf::io::source_info{paths}).build();
+      auto const result  = cudf::io::read_parquet(options);
+      CUDF_TEST_EXPECT_TABLES_EQUAL(expected->view(), result.tbl->view());
+    }
+  }
+}
+
 TEST_F(ParquetReaderTest, ManyTinyStringPages)
 {
   // This creates enough pages to cross the scan-by-key tile boundary implicated in

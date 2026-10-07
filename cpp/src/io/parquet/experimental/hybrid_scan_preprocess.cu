@@ -198,15 +198,19 @@ void hybrid_scan_reader_impl::setup_compressed_data(
 
   pass.has_compressed_data = setup_column_chunks(column_chunk_data);
 
+  auto header_scratch =
+    parquet::detail::make_page_header_scratch(chunks.size(), _has_offset_index, _stream);
+
   // Process dataset chunk pages into output columns
   auto const total_pages = _has_offset_index ? count_page_headers_with_pgidx(chunks, _stream)
-                                             : count_page_headers(chunks, _stream);
+                                             : count_page_headers(chunks, header_scratch, _stream);
   if (total_pages <= 0) { return; }
   auto unsorted_pages = cudf::detail::make_zeroed_device_uvector_async<PageInfo>(
     total_pages, _stream, cudf::get_current_device_resource_ref());
 
   // decoding of column/page information
-  parquet::detail::decode_page_headers(pass, unsorted_pages, _has_offset_index, _stream);
+  parquet::detail::decode_page_headers(
+    pass, unsorted_pages, _has_offset_index, header_scratch, _stream);
   CUDF_EXPECTS(pass.page_offsets.size() - 1 == static_cast<size_t>(_input_columns.size()),
                "Encountered page_offsets / num_columns mismatch");
 }

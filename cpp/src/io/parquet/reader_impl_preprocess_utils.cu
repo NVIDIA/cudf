@@ -222,14 +222,37 @@ void generate_depth_remappings(
   return std::move(read_task);
 }
 
+rmm::device_uvector<PageInfo> make_page_header_scratch(size_t num_chunks,
+                                                       bool has_offset_index,
+                                                       cuda::stream_ref stream)
+{
+  // Bound speculative storage independently of file size. Count/parse continues on overflow;
+  // finish reparses those chunks after exact output allocation. Indexed reads need no scratch.
+  constexpr size_t max_pages_per_chunk = 16'384;
+  constexpr size_t scratch_byte_limit  = 64 * 1024 * 1024;
+  auto const capacity =
+    has_offset_index || num_chunks == 0
+      ? size_t{0}
+      : std::min(max_pages_per_chunk, scratch_byte_limit / sizeof(PageInfo) / num_chunks);
+  return rmm::device_uvector<PageInfo>(num_chunks * capacity, stream);
+}
+
 [[nodiscard]] size_t count_page_headers(cudf::detail::hostdevice_span<ColumnChunkDesc> chunks,
+                                        device_span<PageInfo> scratch,
                                         cuda::stream_ref stream)
 {
   size_t total_pages = 0;
 
   kernel_error error_code(stream);
   chunks.host_to_device_async(stream);
-  count_page_headers(chunks, error_code.data(), stream);
+  if (scratch.empty()) {
+    count_page_headers(chunks, error_code.data(), stream);
+  } else {
+    count_and_decode_page_headers(device_span<ColumnChunkDesc>{chunks.device_ptr(), chunks.size()},
+                                  scratch,
+                                  error_code.data(),
+                                  stream);
+  }
   chunks.device_to_host(stream);
 
   // It's required to ignore unsupported encodings in this function
@@ -430,12 +453,14 @@ enum class page_data_source_type : uint8_t {
  * @param pass Struct containing pass information
  * @param unsorted_pages Device span of page information to decode
  * @param page_data Span of page data spans (only used for PAGE_SPANS source)
+ * @param scratch Descriptors retained by counting; unused for indexed page sources
  * @param stream Stream to use
  */
 template <page_data_source_type data_source_type>
 void decode_page_headers_impl(pass_intermediate_data& pass,
                               device_span<PageInfo> unsorted_pages,
                               std::span<cudf::device_span<uint8_t const> const> page_data,
+                              device_span<PageInfo const> scratch,
                               cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
@@ -545,18 +570,27 @@ void decode_page_headers_impl(pass_intermediate_data& pass,
       error_code.data(),
       stream);
   } else {
-    // (Slow) decode page headers, one warp (lane) per pages of a column chunk
-    decode_page_headers(
-      device_span<ColumnChunkDesc const>(pass.chunks.device_ptr(), pass.chunks.size()),
-      device_span<chunk_page_info>(d_chunk_page_info.data(), d_chunk_page_info.size()),
-      error_code.data(),
-      stream);
+    if (scratch.empty()) {
+      // (Slow) decode page headers, one warp (lane) per pages of a column chunk
+      decode_page_headers(
+        device_span<ColumnChunkDesc const>(pass.chunks.device_ptr(), pass.chunks.size()),
+        device_span<chunk_page_info>(d_chunk_page_info.data(), d_chunk_page_info.size()),
+        error_code.data(),
+        stream);
+    } else {
+      finish_page_headers(
+        device_span<ColumnChunkDesc const>{pass.chunks.device_ptr(), pass.chunks.size()},
+        scratch,
+        d_chunk_page_info,
+        error_code.data(),
+        stream);
+    }
   }
 
   if (auto const error = error_code.value_sync(stream); error != 0) {
     if (BitAnd(error, decode_error::UNSUPPORTED_ENCODING) != 0) {
       auto const unsupported_str =
-        ". With unsupported encodings found: " + list_unsupported_encodings(pass.pages, stream);
+        ". With unsupported encodings found: " + list_unsupported_encodings(unsorted_pages, stream);
       CUDF_FAIL("Parquet header parsing failed with code(s) " + kernel_error::to_string(error) +
                 unsupported_str);
     } else {
@@ -629,13 +663,15 @@ void decode_page_headers_impl(pass_intermediate_data& pass,
 void decode_page_headers(pass_intermediate_data& pass,
                          device_span<PageInfo> unsorted_pages,
                          bool has_offset_index,
+                         device_span<PageInfo const> scratch,
                          cuda::stream_ref stream)
 {
   if (has_offset_index) {
-    decode_page_headers_impl<page_data_source_type::OFFSET_INDEX>(pass, unsorted_pages, {}, stream);
+    decode_page_headers_impl<page_data_source_type::OFFSET_INDEX>(
+      pass, unsorted_pages, {}, {}, stream);
   } else {
     decode_page_headers_impl<page_data_source_type::COLUMN_CHUNKS>(
-      pass, unsorted_pages, {}, stream);
+      pass, unsorted_pages, {}, scratch, stream);
   }
 }
 
@@ -645,7 +681,7 @@ void decode_page_headers(pass_intermediate_data& pass,
                          cuda::stream_ref stream)
 {
   decode_page_headers_impl<page_data_source_type::PAGE_SPANS>(
-    pass, unsorted_pages, page_data, stream);
+    pass, unsorted_pages, page_data, {}, stream);
 }
 
 }  // namespace cudf::io::parquet::detail

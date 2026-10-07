@@ -73,14 +73,32 @@ void generate_depth_remappings(
   rmm::device_async_resource_ref mr);
 
 /**
- * @brief Return the number of total pages from the given column chunks.
+ * @brief Allocate bounded temporary descriptors for fused header counting and parsing.
+ *
+ * At most 16,384 descriptors per chunk and 64 MiB total. Indexed reads return empty storage;
+ * if the budget cannot hold one descriptor per chunk, empty storage selects separate parsing.
+ * Keep the returned buffer alive through count_page_headers and decode_page_headers.
+ *
+ * @param num_chunks Number of column chunks in the pass
+ * @param has_offset_index Whether counts and page locations are already known from indexes
+ * @param stream CUDA stream to use
+ * @return Per-chunk scratch descriptors
+ */
+rmm::device_uvector<PageInfo> make_page_header_scratch(size_t num_chunks,
+                                                       bool has_offset_index,
+                                                       cuda::stream_ref stream);
+
+/**
+ * @brief Return the number of total pages, retaining descriptors when scratch is supplied.
  *
  * @param chunks Host-device span of column chunk descriptors
+ * @param scratch Equal per-chunk scratch slices; empty selects count-only parsing
  * @param stream CUDA stream used for device memory operations and kernel launches
  *
  * @return The total number of pages
  */
 [[nodiscard]] size_t count_page_headers(cudf::detail::hostdevice_span<ColumnChunkDesc> chunks,
+                                        device_span<PageInfo> scratch,
                                         cuda::stream_ref stream);
 
 /**
@@ -130,11 +148,13 @@ std::string encoding_to_string(Encoding encoding);
  * @param pass The struct containing pass information
  * @param unsorted_pages Device span of page information to decode
  * @param has_offset_index Boolean indicating if the offset index is available
+ * @param scratch Descriptors retained by counting; empty selects separate header decoding
  * @param stream CUDA stream used for device memory operations and kernel launches
  */
 void decode_page_headers(pass_intermediate_data& pass,
                          device_span<PageInfo> unsorted_pages,
                          bool has_offset_index,
+                         device_span<PageInfo const> scratch,
                          cuda::stream_ref stream);
 
 /**

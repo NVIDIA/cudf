@@ -15,13 +15,13 @@
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/traits.hpp>
 
 #include <rmm/exec_policy.hpp>
 
 #include <cub/warp/warp_reduce.cuh>
 #include <cuda/iterator>
 #include <cuda/std/limits>
-#include <cuda/std/type_traits>
 #include <cuda/stream>
 #include <thrust/for_each.h>
 
@@ -46,26 +46,18 @@ constexpr int warp_reduce_storage_size = 64;
  * update per element through `compute_single_pass_aggs_dense_output_fn`.
  */
 template <typename Source, aggregation::Kind k>
-CUDF_HOST_DEVICE constexpr bool has_warp_reduce_path()
-{
-  constexpr bool is_decimal = cuda::std::is_same_v<Source, numeric::decimal32> ||
-                              cuda::std::is_same_v<Source, numeric::decimal64> ||
-                              cuda::std::is_same_v<Source, numeric::decimal128>;
-  constexpr bool is_numeric =
-    (cuda::std::is_integral_v<Source> && !cuda::std::is_same_v<Source, bool>) ||
-    cuda::std::is_floating_point_v<Source> || is_decimal;
-  constexpr bool is_count  = k == aggregation::COUNT_VALID || k == aggregation::COUNT_ALL;
-  constexpr bool is_sum    = k == aggregation::SUM || k == aggregation::SUM_OF_SQUARES;
-  constexpr bool is_minmax = k == aggregation::MIN || k == aggregation::MAX;
-  return cudf::detail::is_valid_aggregation<Source, k>() &&
-         (is_count || (is_sum && is_numeric) || (is_minmax && is_numeric && !is_decimal));
-}
+inline constexpr bool has_warp_reduce_path =
+  cudf::detail::is_valid_aggregation<Source, k>() &&
+  (k == aggregation::COUNT_VALID || k == aggregation::COUNT_ALL ||
+   ((k == aggregation::SUM || k == aggregation::SUM_OF_SQUARES) &&
+    (cudf::is_numeric_not_bool<Source>() || cudf::is_fixed_point<Source>())) ||
+   ((k == aggregation::MIN || k == aggregation::MAX) && cudf::is_numeric_not_bool<Source>()));
 
 struct has_warp_reduce_path_fn {
   template <typename Source, aggregation::Kind k>
   constexpr bool operator()() const noexcept
   {
-    return has_warp_reduce_path<Source, k>();
+    return has_warp_reduce_path<Source, k>;
   }
 };
 
@@ -93,7 +85,7 @@ struct warp_reduce_aggregator {
     constexpr bool is_minmax = k == aggregation::MIN || k == aggregation::MAX;
 
     // Only columns with a warp path are launched through this aggregator.
-    if constexpr (!has_warp_reduce_path<Source, k>()) {
+    if constexpr (!has_warp_reduce_path<Source, k>) {
       return;
     } else {
       using Target      = cudf::detail::target_type_t<Source, k>;
@@ -110,7 +102,7 @@ struct warp_reduce_aggregator {
         if constexpr (is_count) {
           return static_cast<T>(valid ? 1 : 0);
         } else if constexpr (is_minmax) {
-          constexpr bool is_float = cuda::std::is_floating_point_v<T>;
+          constexpr bool is_float = cudf::is_floating_point<T>();
           constexpr T identity    = k == aggregation::MIN
                                       ? (is_float ? cuda::std::numeric_limits<T>::infinity()
                                                   : cuda::std::numeric_limits<T>::max())
@@ -186,9 +178,8 @@ struct aggs_fn {
 };
 
 /// Each warp processes 32 consecutive rows of one column per step.
-template <typename Fn>
 CUDF_KERNEL void __launch_bounds__(aggs_block_size)
-  aggs_kernel(size_type num_rows, size_type num_cols, Fn fn)
+  aggs_kernel(size_type num_rows, size_type num_cols, aggs_fn fn)
 {
   __shared__ alignas(16) char storage[aggs_warps_per_block][warp_reduce_storage_size];
   auto const warp          = threadIdx.x / cudf::detail::warp_size;
@@ -211,7 +202,7 @@ int max_active_blocks_aggs_kernel()
 {
   int max_active_blocks{-1};
   CUDF_CUDA_TRY(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
-    &max_active_blocks, aggs_kernel<aggs_fn>, aggs_block_size, 0));
+    &max_active_blocks, aggs_kernel, aggs_block_size, 0));
   return max_active_blocks;
 }
 

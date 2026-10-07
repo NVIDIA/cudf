@@ -93,6 +93,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, MutableMapping
 
     from cudf_polars.engine.options import StreamingOptions
+    from cudf_polars.quent import QuentConfig
     from cudf_polars.streaming.explain import SerializablePlan
 
 POLARS_VALIDATION_OPTIONS = {
@@ -1215,12 +1216,17 @@ def run_polars_query(
         if _HAS_STRUCTLOG and run_config.collect_traces:
             setup_logging(q_id, i)
             if isinstance(engine, StreamingEngine):
-                quent_context = engine.config["executor_options"].get("quent_context")
+                quent_context: QuentConfig | None = engine.config[
+                    "executor_options"
+                ].get("quent_context")
                 if quent_context is not None:
                     engine.config["executor_options"]["quent_context"] = (
                         dataclasses.replace(
                             quent_context,
-                            query_name=f"Iteration {i + 1}",
+                            query=dataclasses.replace(
+                                quent_context.query,
+                                query_name=f"Iteration {i + 1}",
+                            ),
                         )
                     )
                     engine._run(setup_logging, q_id, i)
@@ -1298,15 +1304,18 @@ def _run_query_loop(
 
     for q_id in run_config.queries:
         if engine is not None:
-            quent_context = engine.config.get("executor_options", {}).get(
-                "quent_context"
-            )
+            quent_context: QuentConfig | None = engine.config.get(
+                "executor_options", {}
+            ).get("quent_context")
             if quent_context is not None:
                 engine.config["executor_options"]["quent_context"] = (
                     dataclasses.replace(
                         quent_context,
-                        query_group_id=uuid.uuid4(),
-                        query_group_name=f"PDSH Query {q_id}",
+                        query=dataclasses.replace(
+                            quent_context.query,
+                            query_group_id=uuid.uuid4(),
+                            query_group_name=f"PDSH Query {q_id}",
+                        ),
                     )
                 )
 

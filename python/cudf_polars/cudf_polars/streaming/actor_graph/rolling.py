@@ -541,7 +541,7 @@ async def rolling_actor(
     """
     async with shutdown_on_error(
         context, chs_in=(ch_in,), chs_out=(ch_out,), trace_ir=ir, ir_context=ir_context
-    ) as tracer:
+    ) as actor_scope:
         metadata_in = await recv_metadata(ch_in, context)
         if comm.nranks != 1 and not metadata_in.duplicated:
             _fallback_inform(
@@ -553,7 +553,7 @@ async def rolling_actor(
                 local_count=1, partitioning=None, duplicated=True
             )
             await send_metadata(ch_out, context, metadata)
-            if tracer is not None:
+            if (tracer := actor_scope.tracer) is not None:
                 tracer.set_duplicated()
 
             stream = ir_context.get_cuda_stream()
@@ -577,7 +577,7 @@ async def rolling_actor(
                 ir,
                 ir_context=ir_context,
             )
-            if tracer is not None:
+            if (tracer := actor_scope.tracer) is not None:
                 tracer.add_chunk(chunk=result)
             await ch_out.send(context, Message(0, result))
             await ch_out.drain(context)
@@ -592,7 +592,7 @@ async def rolling_actor(
                 duplicated=metadata_in.duplicated,
             ),
         )
-        if tracer is not None and metadata_in.duplicated:
+        if (tracer := actor_scope.tracer) is not None and metadata_in.duplicated:
             tracer.set_duplicated()
 
         window = make_window(ir, ir_context.get_cuda_stream())
@@ -648,8 +648,8 @@ async def rolling_actor(
                         window=window,
                     )
                     history.append(cursor)
-                if tracer is not None:
-                    tracer.add_chunk(chunk=result)
+                if (tracer := actor_scope.tracer) is not None:
+                    actor_scope.tracer.add_chunk(chunk=result)
                 await ch_out.send(context, Message(cursor.sequence_number, result))
 
                 if future:

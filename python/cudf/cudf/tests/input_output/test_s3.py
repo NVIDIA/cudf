@@ -55,10 +55,7 @@ def s3so(moto_server):
 
 @pytest.fixture(params=["storage_options", "filesystem"])
 def fs_kwargs(request, s3so):
-    """
-    Yield the two equivalent ways of pointing an I/O call at the mock S3:
-    ``storage_options=<dict>`` and ``filesystem=<fsspec object>``.
-    """
+    """Run once with ``storage_options`` and once with ``filesystem``."""
     if request.param == "storage_options":
         return {"storage_options": s3so}
     return {"filesystem": get_fs_token_paths("s3://", storage_options=s3so)[0]}

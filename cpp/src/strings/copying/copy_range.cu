@@ -77,7 +77,7 @@ std::unique_ptr<column> copy_range(strings_column_view const& source,
                  : d_target.is_valid(idx);
       },
       stream,
-      cudf::memory_resources{mr, mr});
+      mr);
   }();
 
   // create offsets

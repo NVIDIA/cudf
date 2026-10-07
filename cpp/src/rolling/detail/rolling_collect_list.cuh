@@ -198,7 +198,7 @@ std::unique_ptr<column> rolling_collect_list(column_view const& input,
       return (preceding_begin[i] + following_begin[i]) >= min_periods;
     },
     stream,
-    cudf::memory_resources{mr, mr});
+    mr);
 
   return make_lists_column(input.size(),
                            std::move(offsets),

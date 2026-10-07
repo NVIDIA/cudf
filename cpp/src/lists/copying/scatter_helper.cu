@@ -64,7 +64,7 @@ std::pair<cuda::device_buffer<std::byte>, size_type> construct_child_nullmask(
                                 cuda::counting_iterator<size_type>{num_child_rows},
                                 is_valid_predicate,
                                 stream,
-                                cudf::memory_resources{mr, mr});
+                                mr);
 }
 
 /**

@@ -153,8 +153,7 @@ std::unique_ptr<column> label_bins(column_view const& input,
                         left_begin, left_end, right_begin));
   });
 
-  auto mask_and_count = valid_if(
-    output_begin, output_end, filter_null_sentinel(), stream, cudf::memory_resources{mr, mr});
+  auto mask_and_count = valid_if(output_begin, output_end, filter_null_sentinel(), stream, mr);
 
   output->set_null_mask(std::move(mask_and_count.first), mask_and_count.second);
   return output;

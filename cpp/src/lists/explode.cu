@@ -84,7 +84,7 @@ std::unique_ptr<table> build_table(
             explode_col_gather_map->end(),
             [] __device__(auto i) { return i != InvalidIndex; },
             stream,
-            cudf::memory_resources{mr, mr})
+            mr)
         : std::pair<cuda::device_buffer<std::byte>, size_type>{
             cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream), size_type{0}};
 

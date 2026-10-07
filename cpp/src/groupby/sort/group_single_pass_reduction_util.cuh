@@ -162,11 +162,8 @@ struct group_reduction_functor<
                    validity.begin(),
                    cuda::std::logical_or{});
 
-      auto [null_mask, null_count] = cudf::detail::valid_if(validity.begin(),
-                                                            validity.end(),
-                                                            cuda::std::identity{},
-                                                            stream,
-                                                            cudf::memory_resources{mr, mr});
+      auto [null_mask, null_count] =
+        cudf::detail::valid_if(validity.begin(), validity.end(), cuda::std::identity{}, stream, mr);
       result->set_null_mask(std::move(null_mask), null_count);
     }
     return result;
@@ -219,11 +216,8 @@ struct group_reduction_functor<
                    validity.begin(),
                    cuda::std::logical_or{});
 
-      auto [null_mask, null_count] = cudf::detail::valid_if(validity.begin(),
-                                                            validity.end(),
-                                                            cuda::std::identity{},
-                                                            stream,
-                                                            cudf::memory_resources{mr, mr});
+      auto [null_mask, null_count] =
+        cudf::detail::valid_if(validity.begin(), validity.end(), cuda::std::identity{}, stream, mr);
       result->set_null_mask(std::move(null_mask), null_count);
     }
 

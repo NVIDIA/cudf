@@ -95,11 +95,8 @@ struct group_sum_overflow_fn {
         group_valid.begin(),
         cuda::std::equal_to<size_type>{},
         cuda::std::logical_or<bool>{});
-      return cudf::detail::valid_if(group_valid.begin(),
-                                    group_valid.end(),
-                                    cuda::std::identity{},
-                                    stream,
-                                    cudf::memory_resources{mr, mr});
+      return cudf::detail::valid_if(
+        group_valid.begin(), group_valid.end(), cuda::std::identity{}, stream, mr);
     }();
 
     std::vector<std::unique_ptr<column>> children;

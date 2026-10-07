@@ -137,7 +137,7 @@ std::unique_ptr<column> remove_keys_fn(dictionary_column_view const& dictionary_
       return (indices_itr[idx] < max_size);  // new nulls have max values
     },
     stream,
-    cudf::memory_resources{mr, mr});
+    mr);
   cuda::device_buffer<std::byte> new_null_mask =
     (new_nulls.second > 0) ? std::move(new_nulls.first)
                            : cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr);

@@ -226,7 +226,7 @@ std::unique_ptr<column> compute_approx_percentiles(tdigest_column_view const& in
                    return percentiles.is_valid(i % percentiles.size());
                  },
                  stream,
-                 cudf::memory_resources{mr, mr})
+                 mr)
              : std::pair<cuda::device_buffer<std::byte>, size_type>{
                  cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0};
   }();
@@ -388,11 +388,8 @@ std::unique_ptr<column> percentile_approx(tdigest_column_view const& input,
       return std::pair<cuda::device_buffer<std::byte>, size_type>{
         cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), null_count};
     }
-    return cudf::detail::valid_if(tdigest_is_empty,
-                                  tdigest_is_empty + tdv.size(),
-                                  cuda::std::logical_not{},
-                                  stream,
-                                  cudf::memory_resources{mr, mr});
+    return cudf::detail::valid_if(
+      tdigest_is_empty, tdigest_is_empty + tdv.size(), cuda::std::logical_not{}, stream, mr);
   }();
 
   auto const compact_child_size =

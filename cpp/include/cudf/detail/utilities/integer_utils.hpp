@@ -173,13 +173,6 @@ CUDF_HOST_DEVICE constexpr I div_rounding_up_safe(I dividend, I divisor) noexcep
   return detail::div_rounding_up_safe(i_is_a_signed_type{}, dividend, divisor);
 }
 
-template <typename I>
-constexpr bool is_a_power_of_two(I val) noexcept
-{
-  static_assert(cuda::std::is_integral_v<I>, "This function only applies to integral types");
-  return ((val - 1) & val) == 0;
-}
-
 /**
  * @brief Return the absolute value of a number.
  *

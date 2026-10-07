@@ -83,6 +83,8 @@ jobs:
         continue-on-error: true
         with:
           enable-apt: true
+          enable-pip: true
+          enable-pypi-anaconda: true
       - name: Telemetry setup
         uses: rapidsai/shared-actions/telemetry-dispatch-setup@main
         continue-on-error: true

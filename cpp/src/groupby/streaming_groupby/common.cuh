@@ -30,6 +30,7 @@
 #include <atomic>
 #include <memory>
 #include <mutex>
+#include <utility>
 #include <vector>
 
 namespace cudf::groupby {
@@ -347,6 +348,14 @@ struct streaming_groupby::impl {
   std::vector<size_type> _value_col_indices;
   std::unique_ptr<rmm::device_uvector<aggregation::Kind>> _d_agg_kinds;
 
+  struct agg_column_subset {
+    std::vector<size_type> columns;
+    std::unique_ptr<rmm::device_uvector<aggregation::Kind>> d_agg_kinds;
+    decltype(mutable_table_device_view::create(std::declval<mutable_table_view>())) d_results;
+  };
+  agg_column_subset _warp_reduced_aggs;
+  agg_column_subset _elementwise_aggs;
+
   std::unique_ptr<streaming_set_t> _key_set;
 
   [[nodiscard]] size_type num_keys() const { return static_cast<size_type>(_key_indices.size()); }
@@ -364,6 +373,8 @@ struct streaming_groupby::impl {
        cuda::mr::any_resource<cuda::mr::device_accessible> mr);
 
   void initialize(table_view const& data, cuda::stream_ref stream);
+  /// Splits the value columns of `values` into `_warp_reduced_aggs` and `_elementwise_aggs`.
+  void split_agg_columns(table_view const& values, cuda::stream_ref stream);
   void create_key_set(cuda::stream_ref stream);
   void update_nullable_state(table_view const& batch_keys);
 

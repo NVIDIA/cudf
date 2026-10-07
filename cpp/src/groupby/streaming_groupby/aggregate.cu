@@ -4,27 +4,33 @@
  */
 
 #include "common.cuh"
+#include "groupby/hash/single_pass_functors.cuh"
 
-#include <cudf/detail/aggregation/device_aggregators.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/detail/utilities/device_atomics.cuh>
 #include <cudf/detail/utilities/device_operators.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
+#include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/error.hpp>
 
+#include <rmm/exec_policy.hpp>
+
 #include <cub/warp/warp_reduce.cuh>
+#include <cuda/iterator>
 #include <cuda/std/limits>
 #include <cuda/std/type_traits>
 #include <cuda/stream>
+#include <thrust/for_each.h>
 
 #include <algorithm>
 #include <cstdint>
 #include <limits>
 #include <mutex>
 #include <string>
+#include <vector>
 
 namespace cudf::groupby {
 
@@ -36,13 +42,40 @@ constexpr int aggs_warps_per_block = aggs_block_size / cudf::detail::warp_size;
 constexpr int warp_reduce_storage_size = 64;
 
 /*
+ * Whether aggregation `k` of `Source` values reduces runs of equal keys within a warp.  The rest
+ * update per element through `compute_single_pass_aggs_dense_output_fn`.
+ */
+template <typename Source, aggregation::Kind k>
+CUDF_HOST_DEVICE constexpr bool has_warp_reduce_path()
+{
+  constexpr bool is_decimal = cuda::std::is_same_v<Source, numeric::decimal32> ||
+                              cuda::std::is_same_v<Source, numeric::decimal64> ||
+                              cuda::std::is_same_v<Source, numeric::decimal128>;
+  constexpr bool is_numeric =
+    (cuda::std::is_integral_v<Source> && !cuda::std::is_same_v<Source, bool>) ||
+    cuda::std::is_floating_point_v<Source> || is_decimal;
+  constexpr bool is_count  = k == aggregation::COUNT_VALID || k == aggregation::COUNT_ALL;
+  constexpr bool is_sum    = k == aggregation::SUM || k == aggregation::SUM_OF_SQUARES;
+  constexpr bool is_minmax = k == aggregation::MIN || k == aggregation::MAX;
+  return cudf::detail::is_valid_aggregation<Source, k>() &&
+         (is_count || (is_sum && is_numeric) || (is_minmax && is_numeric && !is_decimal));
+}
+
+struct has_warp_reduce_path_fn {
+  template <typename Source, aggregation::Kind k>
+  constexpr bool operator()() const noexcept
+  {
+    return has_warp_reduce_path<Source, k>();
+  }
+};
+
+/*
  * Element aggregator that first reduces runs of consecutive lanes updating the same target.
  *
  * Every lane of the warp holds a row of the same column, so the whole warp takes the same
- * dispatch branch and the warp collectives see converged lanes.  For the kinds and types with a
- * warp path, each run of equal `key`s is reduced with `cub::WarpReduce::HeadSegmentedReduce`
- * and only the head of the run updates the target, which removes most of the atomic contention
- * for sorted keys or long runs of equal keys.  Other kinds and types update per lane.
+ * dispatch branch and the warp collectives see converged lanes.  Each run of equal `key`s is
+ * reduced with `cub::WarpReduce::HeadSegmentedReduce` and only the head of the run updates the
+ * target, which removes most of the atomic contention for sorted keys or long runs of equal keys.
  */
 struct warp_reduce_aggregator {
   bool active;
@@ -56,24 +89,12 @@ struct warp_reduce_aggregator {
                              column_device_view source,
                              size_type source_index) const noexcept
   {
-    constexpr bool is_decimal = cuda::std::is_same_v<Source, numeric::decimal32> ||
-                                cuda::std::is_same_v<Source, numeric::decimal64> ||
-                                cuda::std::is_same_v<Source, numeric::decimal128>;
-    constexpr bool is_numeric =
-      (cuda::std::is_integral_v<Source> && !cuda::std::is_same_v<Source, bool>) ||
-      cuda::std::is_floating_point_v<Source> || is_decimal;
     constexpr bool is_count  = k == aggregation::COUNT_VALID || k == aggregation::COUNT_ALL;
-    constexpr bool is_sum    = k == aggregation::SUM || k == aggregation::SUM_OF_SQUARES;
     constexpr bool is_minmax = k == aggregation::MIN || k == aggregation::MAX;
-    constexpr bool has_warp_path =
-      cudf::detail::is_valid_aggregation<Source, k>() &&
-      (is_count || (is_sum && is_numeric) || (is_minmax && is_numeric && !is_decimal));
 
-    if constexpr (!has_warp_path) {
-      if (active) {
-        cudf::detail::element_aggregator{}.template operator()<Source, k>(
-          target, target_row, source, source_index);
-      }
+    // Only columns with a warp path are launched through this aggregator.
+    if constexpr (!has_warp_reduce_path<Source, k>()) {
+      return;
     } else {
       using Target      = cudf::detail::target_type_t<Source, k>;
       using T           = cudf::device_storage_type_t<Target>;
@@ -196,6 +217,28 @@ int max_active_blocks_aggs_kernel()
 
 }  // namespace
 
+void streaming_groupby::impl::split_agg_columns(table_view const& values, cuda::stream_ref stream)
+{
+  auto const mr = cudf::get_current_device_resource_ref();
+  for (size_type i = 0; i < values.num_columns(); ++i) {
+    auto const warp_reduced = cudf::detail::dispatch_type_and_aggregation(
+      values.column(i).type(), _agg_kinds[i], has_warp_reduce_path_fn{});
+    (warp_reduced ? _warp_reduced_aggs : _elementwise_aggs).columns.push_back(i);
+  }
+  for (auto* subset : {&_warp_reduced_aggs, &_elementwise_aggs}) {
+    if (subset->columns.empty()) { continue; }
+    std::vector<aggregation::Kind> kinds;
+    std::vector<mutable_column_view> results;
+    for (auto const i : subset->columns) {
+      kinds.push_back(_agg_kinds[i]);
+      results.push_back(_agg_results->get_column(i).mutable_view());
+    }
+    subset->d_agg_kinds = std::make_unique<rmm::device_uvector<aggregation::Kind>>(
+      cudf::detail::make_device_uvector_async(kinds, stream, mr));
+    subset->d_results = mutable_table_device_view::create(mutable_table_view{results}, stream);
+  }
+}
+
 void streaming_groupby::impl::do_aggregate(table_view const& data, cuda::stream_ref stream)
 {
   ensure_not_invalidated();
@@ -238,20 +281,41 @@ void streaming_groupby::impl::do_aggregate(table_view const& data, cuda::stream_
   }();
 
   auto const values_view = data.select(_value_col_indices);
-  auto const d_values    = table_device_view::create(values_view, stream);
 
-  auto const num_cols  = static_cast<size_type>(_agg_kinds.size());
-  auto const num_steps = static_cast<int64_t>(cudf::util::div_rounding_up_safe(
-                           batch_size, static_cast<size_type>(cudf::detail::warp_size))) *
-                         num_cols;
-  auto const num_blocks = static_cast<int>(std::min<int64_t>(
-    cudf::util::div_rounding_up_safe<int64_t>(num_steps, aggs_warps_per_block),
-    static_cast<int64_t>(max_active_blocks_aggs_kernel()) * cudf::detail::num_multiprocessors()));
-  aggs_kernel<<<num_blocks, aggs_block_size, 0, stream.get()>>>(
-    batch_size,
-    num_cols,
-    aggs_fn{result.target_indices.begin(), _d_agg_kinds->data(), *d_values, *_d_agg_results});
-  CUDF_CUDA_TRY(cudaGetLastError());
+  if (!_warp_reduced_aggs.columns.empty()) {
+    auto const d_values =
+      table_device_view::create(values_view.select(_warp_reduced_aggs.columns), stream);
+    auto const num_cols  = static_cast<size_type>(_warp_reduced_aggs.columns.size());
+    auto const num_steps = static_cast<int64_t>(cudf::util::div_rounding_up_safe(
+                             batch_size, static_cast<size_type>(cudf::detail::warp_size))) *
+                           num_cols;
+    auto const num_blocks = static_cast<int>(std::min<int64_t>(
+      cudf::util::div_rounding_up_safe<int64_t>(num_steps, aggs_warps_per_block),
+      static_cast<int64_t>(max_active_blocks_aggs_kernel()) * cudf::detail::num_multiprocessors()));
+    aggs_kernel<<<num_blocks, aggs_block_size, 0, stream.get()>>>(
+      batch_size,
+      num_cols,
+      aggs_fn{result.target_indices.begin(),
+              _warp_reduced_aggs.d_agg_kinds->data(),
+              *d_values,
+              *_warp_reduced_aggs.d_results});
+    CUDF_CUDA_TRY(cudaGetLastError());
+  }
+
+  if (!_elementwise_aggs.columns.empty()) {
+    auto const d_values =
+      table_device_view::create(values_view.select(_elementwise_aggs.columns), stream);
+    auto const num_items =
+      static_cast<int64_t>(batch_size) * static_cast<int64_t>(_elementwise_aggs.columns.size());
+    thrust::for_each_n(
+      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      cuda::counting_iterator<int64_t>(0),
+      num_items,
+      detail::hash::compute_single_pass_aggs_dense_output_fn{result.target_indices.begin(),
+                                                             _elementwise_aggs.d_agg_kinds->data(),
+                                                             *d_values,
+                                                             *_elementwise_aggs.d_results});
+  }
 }
 
 }  // namespace cudf::groupby

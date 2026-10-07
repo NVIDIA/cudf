@@ -77,11 +77,20 @@ def test_parallel_dataframescan(
         assert count == 1
 
 
-def test_nullable_array_dataframescan(streaming_engine_factory):
+def test_nullable_array_dataframescan(
+    streaming_engine_factory,
+    parquet_stats_executor: concurrent.futures.ThreadPoolExecutor,
+):
+    """Check Array outer null predicates across streaming partitions."""
     streaming_engine = streaming_engine_factory(
-        StreamingOptions(max_rows_per_partition=2, fallback_mode="raise"),
+        StreamingOptions(
+            max_rows_per_partition=2,
+            fallback_mode="raise",
+            dynamic_planning=None,
+            raise_on_fail=True,
+        ),
     )
-    q = pl.LazyFrame(
+    df = pl.LazyFrame(
         {
             "embedding": pl.Series(
                 # The outer null is in the nonzero-offset second partition.
@@ -89,14 +98,47 @@ def test_nullable_array_dataframescan(streaming_engine_factory):
                     [0.0, 1.0],
                     [2.0, None],
                     None,
+                    [None, None],
                     [3.0, 4.0],
+                    None,
                 ],
                 dtype=pl.Array(pl.Float32, 2),
-            )
+            ),
+            "row": range(6),
         }
     )
+    queries = [
+        df.select(
+            "embedding",
+            pl.col("embedding").is_null().alias("is_null"),
+            pl.col("embedding").is_not_null().alias("is_not_null"),
+        ),
+        df.filter(pl.col("embedding").is_not_null()),
+    ]
 
-    assert_gpu_result_equal(q, engine=streaming_engine)
+    for q in queries:
+        assert_gpu_result_equal(q, engine=streaming_engine)
+
+        # Prove that the pointwise expression stays partitioned rather than
+        # succeeding through single-partition GPU fallback.
+        planning_engine = pl.GPUEngine(
+            raise_on_fail=True,
+            executor="streaming",
+            executor_options={
+                "max_rows_per_partition": 2,
+                "fallback_mode": "raise",
+                "dynamic_planning": None,
+            },
+        )
+        qir = Translator(q._ldf.visit(), planning_engine).translate_ir()
+        config_options = ConfigOptions.from_polars_engine(planning_engine)
+        lowering = lower_ir_graph(
+            qir,
+            config_options,
+            collect_statistics(qir, config_options, parquet_stats_executor),
+        )
+
+        assert lowering.partition_info[lowering.lowered].count > 1
 
 
 def test_dataframescan_concat(request, df, streaming_engine_factory):

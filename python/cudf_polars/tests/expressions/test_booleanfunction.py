@@ -99,6 +99,188 @@ def test_boolean_function_unary(
     assert_gpu_result_equal(q, engine=engine)
 
 
+def test_array_outer_null_check(engine: pl.GPUEngine) -> None:
+    """Check Array outer validity across representative element dtypes."""
+    df = pl.LazyFrame(
+        {
+            "float": pl.Series(
+                [[1.0, 2.0], None, [None, None], [float("nan"), None]],
+                dtype=pl.Array(pl.Float32, 2),
+            ),
+            "zero_width": pl.Series([[], None, [], []], dtype=pl.Array(pl.Float32, 0)),
+            "boolean": pl.Series(
+                [[True], None, [None], [False]], dtype=pl.Array(pl.Boolean, 1)
+            ),
+            "date": pl.Series(
+                [
+                    [date(2026, 1, 1), None],
+                    None,
+                    [None, date(2026, 1, 2)],
+                    [date(2026, 1, 3), date(2026, 1, 4)],
+                ],
+                dtype=pl.Array(pl.Date, 2),
+            ),
+            "all_null": pl.Series([None] * 4, dtype=pl.Array(pl.Float32, 2)),
+        }
+    )
+    q = df.select(
+        *(
+            check(pl.col(name)).alias(f"{name}_{suffix}")
+            for name in ("float", "zero_width", "boolean", "date", "all_null")
+            for suffix, check in (
+                ("is_null", pl.Expr.is_null),
+                ("is_not_null", pl.Expr.is_not_null),
+            )
+        )
+    )
+
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_empty_array_outer_null_check(engine: pl.GPUEngine) -> None:
+    """Check Array outer validity for an empty input."""
+    q = pl.LazyFrame({"a": pl.Series([], dtype=pl.Array(pl.Float32, 2))}).select(
+        pl.col("a").is_null().alias("is_null"),
+        pl.col("a").is_not_null().alias("is_not_null"),
+    )
+
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("layout", ["sliced", "multi_chunk", "all_valid"])
+def test_array_outer_null_check_layout(
+    engine: pl.GPUEngine,
+    layout: str,
+) -> None:
+    """Check Array outer validity for sliced and chunked layouts."""
+    if layout == "sliced":
+        series = pl.Series(
+            "a",
+            [[0, 0], [1, None], None, [None, None], [4, 5]],
+            dtype=pl.Array(pl.Int8, 2),
+        ).slice(1, 3)
+    elif layout == "multi_chunk":
+        series = pl.concat(
+            [
+                pl.Series("a", [[1, None], None], dtype=pl.Array(pl.Int8, 2)),
+                pl.Series("a", [[None, None], [4, 5]], dtype=pl.Array(pl.Int8, 2)),
+            ],
+            rechunk=False,
+        )
+        assert series.n_chunks() == 2
+    else:
+        series = pl.Series(
+            "a",
+            [[1, None], [None, None], [4, 5]],
+            dtype=pl.Array(pl.Int8, 2),
+        )
+        with pytest.deprecated_call(match="has_validity"):
+            assert not series.has_validity()
+
+    q = (
+        series.to_frame()
+        .lazy()
+        .select(
+            "a",
+            pl.col("a").is_null().alias("is_null"),
+            pl.col("a").is_not_null().alias("is_not_null"),
+        )
+    )
+
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_array_outer_null_check_composition(engine: pl.GPUEngine) -> None:
+    """Check that Array null predicates compose with supported expressions."""
+    q = (
+        pl.LazyFrame(
+            {
+                "a": pl.Series(
+                    [[1, None], None, [None, None], [4, 5]],
+                    dtype=pl.Array(pl.Int8, 2),
+                ),
+                "flag": [True, None, False, True],
+            }
+        )
+        .rename({"a": "renamed"})
+        .with_columns(
+            is_null=pl.col("renamed").is_null(),
+            is_valid=pl.col("renamed").is_not_null().cast(pl.Int8),
+        )
+        .select(
+            "is_null",
+            "is_valid",
+            (pl.col("renamed").is_null() | pl.col("flag").fill_null(value=False)).alias(
+                "combined"
+            ),
+        )
+    )
+
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "predicate",
+    [pl.Expr.is_null, pl.Expr.is_not_null],
+    ids=lambda f: f"{f.__name__}()",
+)
+def test_array_outer_null_check_filter(
+    engine: pl.GPUEngine,
+    predicate: Callable[[pl.Expr], pl.Expr],
+) -> None:
+    """Check filtering by each Array outer-null predicate."""
+    q = pl.LazyFrame(
+        {
+            "row": range(5),
+            "a": pl.Series(
+                [[1, 2], None, [None, None], [3, None], None],
+                dtype=pl.Array(pl.Int8, 2),
+            ),
+        }
+    ).filter(predicate(pl.col("a")))
+
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "predicate,values",
+    [
+        (pl.Expr.is_null, [[1, 2], [None, None]]),
+        (pl.Expr.is_not_null, [None, None]),
+    ],
+    ids=["is_null", "is_not_null"],
+)
+def test_array_outer_null_check_filter_empty(
+    engine: pl.GPUEngine,
+    predicate: Callable[[pl.Expr], pl.Expr],
+    values: list[list[int | None] | None],
+) -> None:
+    """Check Array null filters that retain no rows."""
+    q = pl.LazyFrame(
+        {
+            "row": range(2),
+            "a": pl.Series(values, dtype=pl.Array(pl.Int8, 2)),
+        }
+    ).filter(predicate(pl.col("a")))
+
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_array_drop_nulls(engine: pl.GPUEngine) -> None:
+    """Check drop_nulls after Polars rewrites it to an Array null check."""
+    q = pl.LazyFrame(
+        {
+            "row": range(4),
+            "a": pl.Series(
+                [[1, 2], None, [None, None], [3, None]],
+                dtype=pl.Array(pl.Int8, 2),
+            ),
+        }
+    ).drop_nulls(subset=["a"])
+
+    assert_gpu_result_equal(q, engine=engine)
+
+
 @pytest.mark.parametrize(
     "expr",
     [

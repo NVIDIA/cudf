@@ -327,6 +327,8 @@ storage_options : dict, optional, default None
 filesystem : fsspec.AbstractFileSystem, default None
     Filesystem object to use when writing the data. This argument
     should not be used at the same time as ``storage_options``.
+    With ``engine='pyarrow'``, a ``pyarrow.fs.FileSystem`` is also
+    accepted and the object is passed through to pyarrow.
 return_metadata : bool, default False
     Return parquet metadata for written data. Returned metadata will
     include the file path metadata (relative to `root_path`).
@@ -1995,6 +1997,7 @@ def get_writer_filepath_or_buffer(
     if storage_options is None:
         storage_options = {}
 
+    path_or_data = stringify_pathlike(path_or_data)
     if isinstance(path_or_data, str):
         import fsspec
 

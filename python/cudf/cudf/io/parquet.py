@@ -1683,8 +1683,8 @@ def to_parquet(
             )
         # Type ignore: mypy complains about potential duplicate arguments from *args
         # but our API design allows passing additional args/kwargs to pyarrow
+        # pyarrow accepts both native pyarrow and fsspec filesystems.
         if filesystem is not None:
-            ioutils._validate_filesystem(filesystem, storage_options)
             kwargs["filesystem"] = filesystem
         return pq.write_to_dataset(  # type: ignore[misc]
             pa_table,
@@ -2329,7 +2329,8 @@ class ParquetDatasetWriter:
             fs = ioutils._ensure_filesystem(
                 self.filesystem, remote_path, self.storage_options
             )
-            fs.put(local_path, remote_path, recursive=True)
+            # Trailing slash: upload the dir's contents, not the dir itself
+            fs.put(local_path.rstrip("/") + "/", remote_path, recursive=True)
             shutil.rmtree(self.path)
 
         if self.dir_ is not None:

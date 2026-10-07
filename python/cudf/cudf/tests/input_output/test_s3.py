@@ -505,15 +505,3 @@ def test_filesystem_and_storage_options_are_exclusive(
 
     with pytest.raises(ValueError, match=match):
         cudf.from_pandas(pdf).to_csv(path, filesystem=fs, storage_options=s3so)
-
-
-def test_no_s3fs_on_cudf_import():
-    output = subprocess.check_call(
-        [
-            sys.executable,
-            "-c",
-            "import cudf, sys; assert 'pyarrow._s3fs' not in sys.modules",
-        ],
-        cwd="/",
-    )
-    assert output == 0

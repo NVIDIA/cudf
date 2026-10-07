@@ -4092,7 +4092,6 @@ class Union(IR):
         self.maintain_order = maintain_order
         self._non_child_args = (zlice,)
         self.children = children
-        schema = self.children[0].schema
 
     @classmethod
     @log_do_evaluate

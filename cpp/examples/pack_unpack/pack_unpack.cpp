@@ -145,6 +145,8 @@ void host_pack_copy_unpack(cudf::table_view input)
 
   auto copied_buffer =
     std::make_unique<rmm::device_buffer>(copied_data.data(), copied_data.size(), stream, phmr);
+  // Ensure the async H2H copy out of `copied_data` completes before it goes out of scope.
+  stream.sync();
   cudf::packed_columns copied_packed(std::move(copied_metadata), std::move(copied_buffer));
 
   auto const unpacked = cudf::unpack(copied_packed);

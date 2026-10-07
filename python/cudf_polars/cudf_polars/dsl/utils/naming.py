@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Name generation utilities."""
@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 from cudf_polars.dsl.expr import Col, NamedExpr
 
 if TYPE_CHECKING:
-    from collections.abc import Generator, Iterable, Sequence
+    from collections.abc import Generator, Iterable
 
     from cudf_polars.typing import Schema
 
@@ -38,7 +38,7 @@ def unique_names(names: Iterable[str]) -> Generator[str, None, None]:
         i += 1
 
 
-def _concrete_prefix(names: Sequence[str | NamedExpr]) -> tuple[str, ...]:
+def _concrete_prefix(names: Iterable[str | NamedExpr]) -> tuple[str, ...]:
     # Exclude NamedExprs that are not concrete Col references.
     # We don't throw out the entire NamedExpr tuple if a prefix
     # of the tuple is concrete.
@@ -54,7 +54,7 @@ def _concrete_prefix(names: Sequence[str | NamedExpr]) -> tuple[str, ...]:
 
 
 def names_to_indices(
-    names: tuple[str | NamedExpr, ...],
+    names: Iterable[str | NamedExpr],
     schema: Schema,
     *,
     concrete_prefix: bool = False,
@@ -80,8 +80,28 @@ def names_to_indices(
     -------
     The column indices for each name in schema order.
     """
-    keys = list(schema.keys())
+    keys = {name: i for i, name in enumerate(schema.keys())}
     if concrete_prefix:
         names = _concrete_prefix(names)
-    str_names = [n.name if isinstance(n, NamedExpr) else n for n in names]
-    return tuple(keys.index(n) for n in str_names)
+    return tuple(
+        keys[n] for n in (n.name if isinstance(n, NamedExpr) else n for n in names)
+    )
+
+
+def indices_to_names(indices: Iterable[int], schema: Schema) -> tuple[str, ...]:
+    """
+    Return column names for the given column indices in schema order.
+
+    Parameters
+    ----------
+    indices
+        The indices to get names for.
+    schema
+        The schema to get names from.
+
+    Returns
+    -------
+    The column names for each index in schema order.
+    """
+    keys = list(schema.keys())
+    return tuple(keys[i] for i in indices)

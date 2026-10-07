@@ -21,6 +21,7 @@ namespace cudf::detail {
  */
 inline __device__ duration_s get_ut_offset(table_device_view tz_table, timestamp_s ts)
 {
+  if (tz_table.num_rows() == 0) { return duration_s{0}; }
   return get_ut_offset(tz_table.column(0).data<timestamp_s>(),
                        tz_table.column(1).data<duration_s>(),
                        tz_table.num_rows(),

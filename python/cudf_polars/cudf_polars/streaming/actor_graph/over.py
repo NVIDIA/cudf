@@ -688,7 +688,12 @@ async def _shuffle_and_reassemble(
             skip_insert,
         ),
         replay_buffered_channel(
-            context, ch_replay, ch_in, sample.chunks, metadata_in, trace_ir=ir
+            context,
+            ch_replay,
+            ch_in,
+            sample.local_sample.chunks,
+            metadata_in,
+            trace_ir=ir,
         ),
     )
 

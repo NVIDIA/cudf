@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,6 +12,9 @@
 #include <cuda/std/optional>
 
 namespace cudf::io::parquet::detail {
+
+/// Julian day number of the Unix epoch (1970-01-01), as used by INT96 timestamps
+constexpr int32_t julian_day_unix_epoch = 2'440'588;
 
 /**
  * @brief Computes the timestamp scale between a Parquet timestamp logical type's

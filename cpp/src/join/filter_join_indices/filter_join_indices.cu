@@ -36,6 +36,7 @@
 #include <cub/device/device_reduce.cuh>
 #include <cub/device/device_transform.cuh>
 #include <cuco/static_set.cuh>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/functional>
@@ -57,7 +58,7 @@ VectorPair full_to_left_join_indices(device_span<size_type const> left_indices,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
 {
-  auto const keep = [left = left_indices.data()] __device__(std::size_t i) {
+  auto const keep = [left = left_indices.data()] __device__(std::size_t i) -> bool {
     return left[i] != JoinNoMatch;
   };
   auto const begin  = cuda::counting_iterator<std::size_t>{0};
@@ -306,7 +307,8 @@ filter_join_indices(cudf::table_view const& left,
                              d_num_valid.data(),
                              left_indices.size(),
                              stream.get());
-      rmm::device_buffer temp_storage(temp_storage_bytes, stream);
+      cuda::device_buffer<std::byte> temp_storage(
+        stream, cudf::get_current_device_resource_ref(), temp_storage_bytes, cuda::no_init);
       cub::DeviceReduce::Sum(temp_storage.data(),
                              temp_storage_bytes,
                              predicate_it,

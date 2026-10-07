@@ -22,8 +22,11 @@
 #include <cub/block/block_reduce.cuh>
 #include <cub/device/device_segmented_reduce.cuh>
 #include <cuda/atomic>
+#include <cuda/bit>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/std/execution>
 #include <cuda/std/tuple>
 #include <cuda/stream>
 #include <thrust/for_each.h>
@@ -99,7 +102,7 @@ CUDF_KERNEL void offset_bitmask_binop(Binop op,
       auto const num_bits_in_last_word = intra_word_index(last_bit_index);
       if (num_bits_in_last_word <
           static_cast<size_type>(detail::size_in_bits<bitmask_type>() - 1)) {
-        destination_word &= set_least_significant_bits(num_bits_in_last_word + 1);
+        destination_word &= cuda::bitmask<bitmask_type>(0, num_bits_in_last_word + 1);
       }
     }
 
@@ -198,7 +201,7 @@ CUDF_KERNEL void segmented_offset_bitmask_binop(Binop op,
     if (destination_word_index == last_word_index) {
       auto const num_bits_in_last_word = intra_word_index(last_bit_index) + 1;
       if (num_bits_in_last_word < static_cast<size_type>(detail::size_in_bits<bitmask_type>())) {
-        destination_word &= set_least_significant_bits(num_bits_in_last_word);
+        destination_word &= cuda::bitmask<bitmask_type>(0, num_bits_in_last_word);
       }
 
       // Count nulls in the partial last word
@@ -502,7 +505,7 @@ CUDF_KERNEL void subtract_set_bits_range_boundaries_kernel(bitmask_type const* b
     size_type const first_num_slack_bits = intra_word_index(first_bit_index);
     if (first_num_slack_bits > 0) {
       bitmask_type const word       = bitmask[word_index(first_bit_index)];
-      bitmask_type const slack_mask = set_least_significant_bits(first_num_slack_bits);
+      bitmask_type const slack_mask = cuda::bitmask<bitmask_type>(0, first_num_slack_bits);
       delta -= __popc(word & slack_mask);
     }
 
@@ -511,8 +514,9 @@ CUDF_KERNEL void subtract_set_bits_range_boundaries_kernel(bitmask_type const* b
                                             ? 0
                                             : word_size_in_bits - intra_word_index(last_bit_index);
     if (last_num_slack_bits > 0) {
-      bitmask_type const word       = bitmask[word_index(last_bit_index)];
-      bitmask_type const slack_mask = set_most_significant_bits(last_num_slack_bits);
+      bitmask_type const word = bitmask[word_index(last_bit_index)];
+      bitmask_type const slack_mask =
+        cuda::bitmask<bitmask_type>(word_size_in_bits - last_num_slack_bits, last_num_slack_bits);
       delta -= __popc(word & slack_mask);
     }
 
@@ -567,27 +571,16 @@ rmm::device_uvector<size_type> segmented_count_bits(bitmask_type const* bitmask,
   auto last_word_indices =
     cuda::transform_iterator(last_bit_indices_begin, bit_to_word_index{false});
 
-  // Allocate temporary memory.
-  size_t temp_storage_bytes{0};
-  CUDF_CUDA_TRY(cub::DeviceSegmentedReduce::Sum(nullptr,
-                                                temp_storage_bytes,
-                                                num_set_bits_in_word,
+  auto env =
+    cuda::std::execution::env{cuda::std::execution::prop{cuda::get_stream_t{}, stream},
+                              cuda::std::execution::prop{cuda::mr::get_memory_resource_t{},
+                                                         cudf::get_current_device_resource_ref()}};
+  CUDF_CUDA_TRY(cub::DeviceSegmentedReduce::Sum(num_set_bits_in_word,
                                                 d_bit_counts.begin(),
                                                 num_ranges,
                                                 first_word_indices,
                                                 last_word_indices,
-                                                stream.get()));
-  rmm::device_buffer d_temp_storage(temp_storage_bytes, stream);
-
-  // Perform segmented reduction.
-  CUDF_CUDA_TRY(cub::DeviceSegmentedReduce::Sum(d_temp_storage.data(),
-                                                temp_storage_bytes,
-                                                num_set_bits_in_word,
-                                                d_bit_counts.begin(),
-                                                num_ranges,
-                                                first_word_indices,
-                                                last_word_indices,
-                                                stream.get()));
+                                                env));
 
   // Adjust counts in segment boundaries (if segments are not word-aligned).
   constexpr size_type block_size{256};

@@ -877,7 +877,10 @@ void decode_page_headers(cudf::device_span<ColumnChunkDesc const> chunks,
                          cuda::stream_ref stream);
 
 /**
- * @brief Struct to carry info from the page indexes to the device
+ * @brief Row and optional value metadata transferred from page indexes to the device.
+ *
+ * When supplied to header parsing, num_rows and chunk_row are always applied, including to
+ * empty/pruned page spans. has_value_info gates only num_nulls, num_valids, and str_bytes.
  */
 struct page_index_info {
   int32_t num_rows;
@@ -897,8 +900,8 @@ struct page_index_info {
  * @param[out] pages Device span of pages
  * @param[in] page_data Device span of page data
  * @param[in] chunk_page_offsets List of running count of page locations per column chunk
- * @param[in] page_indexes Optional row and value metadata for every logical page, including empty
- * spans
+ * @param[in] page_indexes Row and value metadata for every logical page, including empty spans.
+ * Pass an empty span when no metadata is available, such as dictionary-only parsing.
  * @param[out] error_code Error code for kernel failures
  * @param[in] stream CUDA stream to use
  */
@@ -907,9 +910,9 @@ void decode_page_headers_from_page_data(
   cudf::device_span<PageInfo> pages,
   cudf::device_span<cudf::device_span<uint8_t const> const> page_data,
   cudf::device_span<size_type const> chunk_page_offsets,
+  cudf::device_span<page_index_info const> page_indexes,
   kernel_error::pointer error_code,
-  cuda::stream_ref stream,
-  cudf::device_span<page_index_info const> page_indexes = {});
+  cuda::stream_ref stream);
 
 /**
  * @brief Launches kernel for building the dictionary index for the column

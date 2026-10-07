@@ -267,43 +267,6 @@ void generate_depth_remappings(
   return total_pages;
 }
 
-namespace {
-
-// Build index metadata before parsing so each parser thread can finish its own descriptor.
-auto make_page_index_info(host_span<ColumnChunkDesc> chunks,
-                          size_t num_pages,
-                          cuda::stream_ref stream)
-{
-  auto page_indexes = cudf::detail::make_pinned_vector_async<page_index_info>(num_pages, stream);
-  std::fill(page_indexes.begin(), page_indexes.end(), page_index_info{});
-
-  for (size_t c = 0, page_count = 0; c < chunks.size(); c++) {
-    auto const& chunk = chunks[c];
-    CUDF_EXPECTS(chunk.h_chunk_info != nullptr, "Expected non-null column info struct");
-    auto const& chunk_info = *chunk.h_chunk_info;
-    size_t start_row       = 0;
-    page_count += chunk.num_dict_pages;
-    for (size_t p = 0; p < chunk_info.pages.size(); p++, page_count++) {
-      auto& page      = page_indexes[page_count];
-      page.num_rows   = chunk_info.pages[p].num_rows;
-      page.chunk_row  = start_row;
-      page.num_nulls  = chunk_info.pages[p].num_nulls.value_or(0);
-      page.num_valids = chunk_info.pages[p].num_valid.value_or(0);
-      page.str_bytes  = chunk_info.pages[p].var_bytes_size.value_or(0);
-      page.has_value_info =
-        (chunk_info.pages[p].num_nulls.has_value() and chunk_info.pages[p].num_valid.has_value() and
-         (chunk.physical_type != Type::BYTE_ARRAY or
-          chunk_info.pages[p].var_bytes_size.has_value()));
-
-      start_row += page.num_rows;
-    }
-  }
-
-  return page_indexes;
-}
-
-}  // namespace
-
 std::string encoding_to_string(Encoding encoding)
 {
   switch (encoding) {
@@ -409,6 +372,39 @@ cudf::detail::hostdevice_vector<PageInfo> sort_pages(device_span<PageInfo const>
 
 namespace {
 
+// Build index metadata before parsing so each parser thread can finish its own descriptor.
+auto make_page_index_info(host_span<ColumnChunkDesc> chunks,
+                          size_t num_pages,
+                          cuda::stream_ref stream)
+{
+  auto page_indexes = cudf::detail::make_pinned_vector_async<page_index_info>(num_pages, stream);
+  std::fill(page_indexes.begin(), page_indexes.end(), page_index_info{});
+
+  for (size_t c = 0, page_count = 0; c < chunks.size(); c++) {
+    auto const& chunk = chunks[c];
+    CUDF_EXPECTS(chunk.h_chunk_info != nullptr, "Expected non-null column info struct");
+    auto const& chunk_info = *chunk.h_chunk_info;
+    size_t start_row       = 0;
+    page_count += chunk.num_dict_pages;
+    for (size_t p = 0; p < chunk_info.pages.size(); p++, page_count++) {
+      auto& page      = page_indexes[page_count];
+      page.num_rows   = chunk_info.pages[p].num_rows;
+      page.chunk_row  = start_row;
+      page.num_nulls  = chunk_info.pages[p].num_nulls.value_or(0);
+      page.num_valids = chunk_info.pages[p].num_valid.value_or(0);
+      page.str_bytes  = chunk_info.pages[p].var_bytes_size.value_or(0);
+      page.has_value_info =
+        (chunk_info.pages[p].num_nulls.has_value() and chunk_info.pages[p].num_valid.has_value() and
+         (chunk.physical_type != Type::BYTE_ARRAY or
+          chunk_info.pages[p].var_bytes_size.has_value()));
+
+      start_row += page.num_rows;
+    }
+  }
+
+  return page_indexes;
+}
+
 /**
  * @brief Page data source type
  */
@@ -460,7 +456,7 @@ void decode_page_headers_impl(pass_intermediate_data& pass,
                      cpi[i].pages = &unsorted_pages[chunk_page_offsets[i]];
                    });
 
-  // Keep pinned metadata alive through the existing header-error synchronization below.
+  // Keep pinned metadata alive until the header-error synchronization.
   auto const page_indexes = [&] {
     if constexpr (data_source_type != page_data_source_type::COLUMN_CHUNKS) {
       return make_page_index_info(pass.chunks, unsorted_pages.size(), stream);
@@ -483,9 +479,9 @@ void decode_page_headers_impl(pass_intermediate_data& pass,
       unsorted_pages,
       device_page_data,
       device_span<size_type const>(chunk_page_offsets.data(), chunk_page_offsets.size()),
+      d_page_indexes,
       error_code.data(),
-      stream,
-      d_page_indexes);
+      stream);
   }
   // If offset index is present, collect data spans for all pages and launch the accelerated decode
   // page headers kernel
@@ -550,9 +546,9 @@ void decode_page_headers_impl(pass_intermediate_data& pass,
       unsorted_pages,
       page_data,
       device_span<size_type const>(chunk_page_offsets.data(), chunk_page_offsets.size()),
+      d_page_indexes,
       error_code.data(),
-      stream,
-      d_page_indexes);
+      stream);
   } else {
     // (Slow) decode page headers, one warp (lane) per pages of a column chunk
     decode_page_headers(

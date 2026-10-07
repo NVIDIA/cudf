@@ -335,6 +335,7 @@ class merge {
   device_span<size_type const> unique_smaller_rows;
   device_span<size_type const> smaller_run_offsets;
   std::unique_ptr<detail::row::lexicographic::two_table_comparator> tt_comparator;
+  rmm::device_async_resource_ref temp_mr{cudf::get_current_device_resource_ref()};
 
  public:
   struct match_ranges {
@@ -357,12 +358,7 @@ class merge {
     std::vector<cudf::order> column_order(smaller.num_columns(), cudf::order::ASCENDING);
     std::vector<cudf::null_order> null_precedence(smaller.num_columns(), cudf::null_order::BEFORE);
     tt_comparator = std::make_unique<detail::row::lexicographic::two_table_comparator>(
-      smaller,
-      larger,
-      column_order,
-      null_precedence,
-      stream,
-      cudf::get_current_device_resource_ref());
+      smaller, larger, column_order, null_precedence, stream, temp_mr);
   }
 
   std::unique_ptr<rmm::device_uvector<size_type>> matches_per_row(
@@ -412,7 +408,7 @@ typename merge<SmallerIterator>::match_ranges merge<SmallerIterator>::find_match
     // These comparisons are data-dependent binary-search probes. Materializing them ahead of
     // time would require a pass per search level (or a quadratic comparison table), so keep them
     // in one bulk search and emit the scalar start/count ranges directly.
-    thrust::lower_bound(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::lower_bound(rmm::exec_policy_nosync(stream, temp_mr),
                         unique_smaller_it,
                         unique_smaller_it + num_smaller_runs,
                         cudf::detail::row::rhs_iterator(0),
@@ -443,7 +439,6 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
 merge<SmallerIterator>::inner(cuda::stream_ref stream, rmm::device_async_resource_ref mr)
 {
-  auto temp_mr              = cudf::get_current_device_resource_ref();
   auto const larger_numrows = larger.num_rows();
 
   auto [match_starts, match_counts] = find_match_ranges(compute_match_starts::YES, stream, temp_mr);
@@ -453,11 +448,10 @@ merge<SmallerIterator>::inner(cuda::stream_ref stream, rmm::device_async_resourc
   auto match_offsets =
     cudf::detail::make_zeroed_device_uvector_async<int64_t>(match_counts->size(), stream, temp_mr);
   // Use pinned memory as bounce buffer for efficient device-to-host transfer of the last element
-  auto last_element =
-    cudf::detail::device_scalar<int64_t>(0, stream, cudf::get_current_device_resource_ref());
-  auto output_itr = cudf::detail::make_sizes_to_offsets_iterator(
+  auto last_element = cudf::detail::device_scalar<int64_t>(0, stream, temp_mr);
+  auto output_itr   = cudf::detail::make_sizes_to_offsets_iterator(
     match_offsets.begin(), match_offsets.end(), last_element.data());
-  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, temp_mr),
                          match_counts->begin(),
                          match_counts->end(),
                          output_itr,
@@ -496,7 +490,6 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
 merge<SmallerIterator>::left(cuda::stream_ref stream, rmm::device_async_resource_ref mr)
 {
-  auto temp_mr              = cudf::get_current_device_resource_ref();
   auto const larger_numrows = larger.num_rows();
 
   auto [match_starts, match_counts] = find_match_ranges(compute_match_starts::YES, stream, temp_mr);
@@ -512,7 +505,7 @@ merge<SmallerIterator>::left(cuda::stream_ref stream, rmm::device_async_resource
     });
   auto output_itr = cudf::detail::make_sizes_to_offsets_iterator(
     match_offsets.begin(), match_offsets.end(), total_matches.data());
-  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, temp_mr),
                          output_sizes,
                          output_sizes + match_counts->size(),
                          output_itr,

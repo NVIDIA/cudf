@@ -74,6 +74,7 @@ class arg_minmax_binop_generator {
   bool const has_nulls;
   bool const is_min_op;
   cuda::stream_ref stream;
+  rmm::device_async_resource_ref temp_mr{cudf::get_current_device_resource_ref()};
 
   // Contains data used in `row_comparator` below, thus needs to be kept alive as a member variable.
   std::unique_ptr<cudf::structs::detail::flattened_table> const flattened_input;
@@ -92,10 +93,11 @@ class arg_minmax_binop_generator {
         std::vector<null_order>{DEFAULT_NULL_ORDER},
         cudf::structs::detail::column_nullability::MATCH_INCOMING,
         stream,
-        cudf::get_current_device_resource_ref())},
+        temp_mr)},
       row_comparator{[&input_,
                       &input_tview     = input_tview,
                       &flattened_input = flattened_input,
+                      temp_mr          = temp_mr,
                       is_min_op_,
                       stream_]() {
         if (is_min_op_ && input_.has_nulls()) {
@@ -111,11 +113,7 @@ class arg_minmax_binop_generator {
             auto null_orders    = flattened_input->null_orders();
             null_orders.front() = cudf::null_order::AFTER;
             return cudf::detail::row::lexicographic::self_comparator{
-              flattened_input->flattened_columns(),
-              {},
-              null_orders,
-              stream_,
-              cudf::get_current_device_resource_ref()};
+              flattened_input->flattened_columns(), {}, null_orders, stream_, temp_mr};
           } else {
             // For list type, we cannot set a separate null order for the top level column.
             // Thus, we have to workaround this by creating a dummy (empty) struct column view
@@ -131,19 +129,11 @@ class arg_minmax_binop_generator {
                                                   0,
                                                   {}};
             return cudf::detail::row::lexicographic::self_comparator{
-              cudf::table_view{{dummy_struct, input_}},
-              {},
-              null_orders,
-              stream_,
-              cudf::get_current_device_resource_ref()};
+              cudf::table_view{{dummy_struct, input_}}, {}, null_orders, stream_, temp_mr};
           }
         } else {
           return cudf::detail::row::lexicographic::self_comparator{
-            input_tview,
-            {},
-            std::vector<null_order>{DEFAULT_NULL_ORDER},
-            stream_,
-            cudf::get_current_device_resource_ref()};
+            input_tview, {}, std::vector<null_order>{DEFAULT_NULL_ORDER}, stream_, temp_mr};
         }
       }()}
   {

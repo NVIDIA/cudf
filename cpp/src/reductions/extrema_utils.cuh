@@ -52,6 +52,8 @@ class arg_minmax_dispatcher {
   static_assert(K == aggregation::ARGMIN or K == aggregation::ARGMAX,
                 "Aggregation kind must be either ARGMIN or ARGMAX");
 
+  rmm::device_async_resource_ref temp_mr{cudf::get_current_device_resource_ref()};
+
   template <typename ElementType>
   static constexpr bool is_supported()
   {
@@ -67,16 +69,10 @@ class arg_minmax_dispatcher {
     auto const pos = [&] {
       if constexpr (K == aggregation::ARGMIN) {
         return thrust::min_element(
-          rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-          it,
-          it + size,
-          std::forward<Args>(args)...);
+          rmm::exec_policy_nosync(stream, temp_mr), it, it + size, std::forward<Args>(args)...);
       } else {
         return thrust::max_element(
-          rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-          it,
-          it + size,
-          std::forward<Args>(args)...);
+          rmm::exec_policy_nosync(stream, temp_mr), it, it + size, std::forward<Args>(args)...);
       }
     }();
     return static_cast<size_type>(cuda::std::distance(it, pos));
@@ -109,7 +105,7 @@ class arg_minmax_dispatcher {
     auto const null_orders =
       std::vector<null_order>{K == aggregation::ARGMIN ? null_order::AFTER : null_order::BEFORE};
     auto const comparator = cudf::detail::row::lexicographic::self_comparator{
-      table_view{{input}}, {}, null_orders, stream, cudf::get_current_device_resource_ref()};
+      table_view{{input}}, {}, null_orders, stream, temp_mr};
     auto d_comp =
       comparator.less<false /* has_nested_columns */>(nullate::DYNAMIC{input.has_nulls()});
     return find_extremum_idx(cuda::counting_iterator<cudf::size_type>{0},
@@ -130,7 +126,7 @@ class arg_minmax_dispatcher {
     // not identify the min/max key. Read `keys[indices[i]]` directly per row via a lazy
     // iterator instead of decoding (and copying) the whole column.
     if (is_dictionary(input.type())) {
-      auto const d_dict = column_device_view::create(input, stream);
+      auto const d_dict = column_device_view::create(input, stream, temp_mr);
       if (input.has_nulls()) {
         auto const transformer =
           Op{}.template get_null_replacing_element_transformer<ElementType>();
@@ -143,7 +139,7 @@ class arg_minmax_dispatcher {
       return find_extremum_idx(it, input.size(), stream);
     }
     if (input.has_nulls()) {
-      auto const d_input     = column_device_view::create(input, stream);
+      auto const d_input     = column_device_view::create(input, stream, temp_mr);
       auto const transformer = Op{}.template get_null_replacing_element_transformer<ElementType>();
       auto const it =
         cuda::transform_iterator(d_input->pair_begin<ElementType, true>(), transformer);

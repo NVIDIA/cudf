@@ -32,7 +32,9 @@ rapids-logger "Prepending channel ${CPP_CHANNEL} to RATTLER_CHANNELS"
 RATTLER_CHANNELS=("--channel" "${CPP_CHANNEL}" "${RATTLER_CHANNELS[@]}")
 
 # Package-specific servers retain cache prefixes and statistics during concurrent builds.
-SCCACHE_SERVER_PORT=4226 build_conda_package pylibcudf "${RAPIDS_CONDA_BLD_OUTPUT_DIR}"
+SCCACHE_SERVER_PORT=4226 run_logged_build pylibcudf-serial-build.log \
+  build_conda_package pylibcudf "${RAPIDS_CONDA_BLD_OUTPUT_DIR}" &
+wait_for_builds "$!" pylibcudf-serial-build.log
 RATTLER_CHANNELS=("--channel" "${RAPIDS_CONDA_BLD_OUTPUT_DIR}" "${RATTLER_CHANNELS[@]}")
 
 # Stable build prefixes preserve sccache hits across CI runs.

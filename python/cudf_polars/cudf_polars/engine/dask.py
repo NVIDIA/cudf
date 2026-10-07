@@ -182,6 +182,12 @@ def _worker_evaluate_persisted(
         raise RuntimeError(
             "_setup_worker must be called before _worker_evaluate_persisted"
         )
+    quent_query_worker_state = None
+    if config_options.executor.quent_context is not None:
+        assert mp_ctx.quent_worker_runtime is not None
+        quent_query_worker_state = mp_ctx.quent_worker_runtime.query_worker_state(
+            query_id
+        )
     return persisted_result.evaluate_and_persist(
         uid,
         mp_ctx.ctx,
@@ -193,6 +199,7 @@ def _worker_evaluate_persisted(
         # Partitions are gathered to the client and concatenated, so a duplicated
         # output is deduplicated to a single copy.
         deduplicate_replicated=True,
+        quent_query_worker_state=quent_query_worker_state,
     )
 
 

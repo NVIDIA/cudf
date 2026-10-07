@@ -673,6 +673,12 @@ class RankActor:
         """
         if self._ctx is None or self._comm is None:
             raise RuntimeError("setup_worker must be called before execute_persisted")
+        quent_query_worker_state = None
+        if config_options.executor.quent_context is not None:
+            assert self._quent_worker_runtime is not None
+            quent_query_worker_state = self._quent_worker_runtime.query_worker_state(
+                query_id
+            )
         return persisted_result.evaluate_and_persist(
             uid,
             self._ctx,
@@ -684,6 +690,7 @@ class RankActor:
             # Partitions are gathered to the client and concatenated, so a
             # duplicated output is deduplicated to a single copy.
             deduplicate_replicated=True,
+            quent_query_worker_state=quent_query_worker_state,
         )
 
     def drop_persisted(self, uid: str, query_id: uuid.UUID) -> None:

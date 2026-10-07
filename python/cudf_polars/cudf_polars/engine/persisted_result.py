@@ -64,6 +64,7 @@ if TYPE_CHECKING:
     from cudf_polars.containers import DataFrame
     from cudf_polars.dsl.ir import IR
     from cudf_polars.engine.core import StreamingEngine
+    from cudf_polars.quent._context import QuentQueryWorkerState
     from cudf_polars.streaming.parallel import ConfigOptions
     from cudf_polars.utils.config import StreamingExecutor
 
@@ -81,6 +82,7 @@ def evaluate_and_persist(
     query_id: uuid.UUID,
     *,
     deduplicate_replicated: bool,
+    quent_query_worker_state: QuentQueryWorkerState | None = None,
 ) -> int:
     """
     Evaluate ``ir`` on this rank and store the GPU-persisted result.
@@ -109,13 +111,22 @@ def evaluate_and_persist(
     deduplicate_replicated
         Whether to empty a duplicated output on non-root ranks so the partitions
         can be concatenated into a single copy on collect.
+    quent_query_worker_state
+        Worker-local Quent state for this query, or ``None`` when tracing is
+        disabled.
 
     Returns
     -------
     This rank's index within the cluster (``comm.rank``).
     """
     gpu_df, metadata = evaluate_on_rank(
-        ctx, comm, py_executor, ir, config_options, query_id=query_id
+        ctx,
+        comm,
+        py_executor,
+        ir,
+        config_options,
+        quent_query_worker_state=quent_query_worker_state,
+        query_id=query_id,
     )
     if deduplicate_replicated:
         gpu_df = drop_if_replicated(gpu_df, comm.rank, metadata)

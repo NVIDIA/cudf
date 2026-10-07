@@ -991,7 +991,11 @@ class SPMDEngine(StreamingEngine):
         ...     df = result.lazy().filter(pl.col("x") > 0).collect(engine=engine)
         """
         backend = SpmdPersistedBackend(
-            self._store_uid, self.context, self.comm, self.py_executor
+            self._store_uid,
+            self.context,
+            self.comm,
+            self.py_executor,
+            self._quent_worker_runtime,
         )
         return execute_persisted_query(self, lf, backend, self._store_uid)
 
@@ -1005,11 +1009,13 @@ class SpmdPersistedBackend(PersistedBackend):
         ctx: Context,
         comm: Communicator,
         py_executor: ThreadPoolExecutor,
+        quent_worker_runtime: QuentWorkerRuntime | None,
     ) -> None:
         self._uid = uid
         self._ctx = ctx
         self._comm = comm
         self._py_executor = py_executor
+        self._quent_worker_runtime = quent_worker_runtime
 
     def execute_persisted(
         self,
@@ -1018,6 +1024,12 @@ class SpmdPersistedBackend(PersistedBackend):
         query_id: uuid.UUID,
     ) -> list[int]:
         """Evaluate and store this rank's partition (see :class:`PersistedBackend`)."""
+        quent_query_worker_state = None
+        if config_options.executor.quent_context is not None:
+            assert self._quent_worker_runtime is not None
+            quent_query_worker_state = self._quent_worker_runtime.query_worker_state(
+                query_id
+            )
         rank = persisted_result.evaluate_and_persist(
             self._uid,
             self._ctx,
@@ -1029,6 +1041,7 @@ class SpmdPersistedBackend(PersistedBackend):
             # SPMD collects rank-locally: each rank reads its own partition, so a
             # duplicated output must stay whole on every rank (not deduplicated).
             deduplicate_replicated=False,
+            quent_query_worker_state=quent_query_worker_state,
         )
         return [rank]
 

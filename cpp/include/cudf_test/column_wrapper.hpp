@@ -35,6 +35,7 @@
 #include <thrust/host_vector.h>
 
 #include <algorithm>
+#include <concepts>
 #include <iterator>
 #include <memory>
 #include <numeric>
@@ -90,15 +91,11 @@ struct fixed_width_type_converter {
   /**
    * @brief No conversion necessary: Same type, simply copy element to output.
    *
-   * @tparam FromT Source type
-   * @tparam ToT Target type
    * @param element Source value
    * @return The converted target value, same as source value
    */
-  template <typename FromT                                      = From,
-            typename ToT                                        = To,
-            std::enable_if_t<std::is_same_v<FromT, ToT>, void>* = nullptr>
-  constexpr ToT operator()(FromT element) const
+  constexpr To operator()(From element) const
+    requires(std::same_as<From, To>)
   {
     return element;
   }
@@ -106,36 +103,26 @@ struct fixed_width_type_converter {
   /**
    * @brief Convert types if possible, otherwise construct target from source.
    *
-   * @tparam FromT Source type
-   * @tparam ToT Target type
    * @param element Source value
    * @return The converted target value
    */
-  template <typename FromT          = From,
-            typename ToT            = To,
-            std::enable_if_t<!std::is_same_v<FromT, ToT> && (std::is_convertible_v<FromT, ToT> ||
-                                                             std::is_constructible_v<ToT, FromT>),
-                             void>* = nullptr>
-  constexpr ToT operator()(FromT element) const
+  constexpr To operator()(From element) const
+    requires(!std::same_as<From, To> &&
+             (std::convertible_to<From, To> || std::constructible_from<To, From>))
   {
-    return static_cast<ToT>(element);
+    return static_cast<To>(element);
   }
 
   /**
    * @brief Convert integral values to timestamps
    *
-   * @tparam FromT Source type
-   * @tparam ToT Target type
    * @param element Source value
    * @return The converted target `timestamp` value
    */
-  template <
-    typename FromT                                                                  = From,
-    typename ToT                                                                    = To,
-    std::enable_if_t<std::is_integral_v<FromT> && cudf::is_timestamp<ToT>(), void>* = nullptr>
-  constexpr ToT operator()(FromT element) const
+  constexpr To operator()(From element) const
+    requires(std::integral<From> && cudf::is_timestamp<To>())
   {
-    return ToT{typename ToT::duration{element}};
+    return To{typename To::duration{element}};
   }
 };
 

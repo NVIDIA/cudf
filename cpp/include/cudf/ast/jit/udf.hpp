@@ -48,8 +48,14 @@ namespace ast::jit {
  * Rules for the function and its fragment:
  * - The signature is not type-checked: a fragment whose function differs from the declaration
  *   cuDF derives from the call has undefined behavior.
- * - Only a function declared pure, whose result depends on its arguments alone, has equal calls
- *   evaluated once. Calls of any other function are evaluated as written.
+ * - cuDF assumes the function is pure: calls with equal arguments return equal results, and no
+ *   side effect has to happen on every call. Reading constant data, such as a table compiled into
+ *   the fragment, is allowed. Equal calls may then share one evaluation. The caller must set
+ *   `is_pure` to `false` for a function that does not meet this, for example one that reads a
+ *   clock, a random state, or memory that changes while the kernel runs. cuDF cannot check this
+ *   setting, and a wrong one changes results.
+ * - A call of a function that is not pure is evaluated at most once per row, however many
+ *   expressions refer to it, and is never merged with another call.
  * - The function must be row-local: no warp-collective operations, `__syncthreads` or shared
  *   memory.
  * - The fragment must target an architecture no newer than the device's, such as the one libcudf
@@ -63,7 +69,7 @@ struct device_binary {
   std::span<uint8_t const> fragment;                      ///< The function's LTO-IR or fatbin
   lto_binary_type binary_type = lto_binary_type::LTO_IR;  ///< What `fragment` holds
   std::string symbol;                                     ///< The function's unmangled name
-  bool is_pure = false;  ///< Whether equal calls may share one evaluation
+  bool is_pure = true;  ///< Whether equal calls may share one evaluation
 };
 
 /**

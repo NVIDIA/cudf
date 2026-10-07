@@ -482,6 +482,11 @@ int32_t instance_context::add_input(input in)
 
 node const* instance_context::find_equivalent(node const& candidate) const
 {
+  // An AST call referred to more than once is converted once per reference. Its conversions are
+  // matched by the call they came from, since their literal arguments are separate inputs.
+  if (auto const* call_site = candidate.get_call_site(); call_site != nullptr) {
+    if (auto call = udf_calls_.find(call_site); call != udf_calls_.end()) { return call->second; }
+  }
   auto [first, last] = cse_nodes_.equal_range(candidate.hash());
   auto found =
     std::find_if(first, last, [&](auto& entry) { return candidate.is_equivalent(*entry.second); });
@@ -491,6 +496,9 @@ node const* instance_context::find_equivalent(node const& candidate) const
 void instance_context::add_cse_node(node const& candidate)
 {
   cse_nodes_.emplace(candidate.hash(), &candidate);
+  if (auto const* call_site = candidate.get_call_site(); call_site != nullptr) {
+    udf_calls_.emplace(call_site, &candidate);
+  }
 }
 
 std::string instance_context::make_tmp_id()
@@ -588,11 +596,15 @@ node::node(input_reference input)
   hash_ = compute_hash();
 }
 
-node::node(udf_info udf, error_policy error_policy, std::vector<std::unique_ptr<node>> args)
+node::node(udf_info udf,
+           ast::jit::detail::udf_call const& call_site,
+           error_policy error_policy,
+           std::vector<std::unique_ptr<node>> args)
   : op_{opcode::UDF_CALL},
     error_policy_{error_policy},
     args_{std::move(args)},
-    udf_{std::make_shared<udf_info const>(std::move(udf))}
+    udf_{std::make_shared<udf_info const>(std::move(udf))},
+    call_site_{&call_site}
 {
   CUDF_EXPECTS(!args_.empty(),
                std::format("UDF call `{}` needs at least one argument.", udf_->symbol),
@@ -617,7 +629,8 @@ size_t node::hash() const { return hash_; }
 
 bool node::is_equivalent(node const& other) const
 {
-  // Calls of a function that isn't declared pure are evaluated as written, so they never merge.
+  // Separate calls of a function that isn't pure never merge. A call referred to more than once is
+  // still evaluated once, see instance_context::find_equivalent.
   auto const same_udf =
     (udf_ == nullptr && other.udf_ == nullptr) ||
     (udf_ != nullptr && other.udf_ != nullptr && udf_->is_pure && *udf_ == *other.udf_);
@@ -641,6 +654,8 @@ opcode node::get_opcode() const { return op_; }
 std::span<std::unique_ptr<node> const> node::get_args() const { return args_; }
 
 udf_info const* node::get_udf() const { return udf_.get(); }
+
+ast::jit::detail::udf_call const* node::get_call_site() const { return call_site_; }
 
 bool node::is_null_aware() const
 {
@@ -971,7 +986,8 @@ std::unique_ptr<row_ir::node> ast_converter::add_ir_node(ast::jit::detail::udf_c
                                   .fragment_type = function.binary_type,
                                   .output_type   = expr.get_output_type(),
                                   .is_pure       = function.is_pure};
-  return std::make_unique<row_ir::node>(std::move(info), expr.get_error_policy(), std::move(args));
+  return std::make_unique<row_ir::node>(
+    std::move(info), expr, expr.get_error_policy(), std::move(args));
 }
 
 namespace {

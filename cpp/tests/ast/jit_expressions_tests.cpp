@@ -29,6 +29,7 @@
 
 #include <cudf_test_fragments.hpp>
 
+#include <algorithm>
 #include <array>
 #include <functional>
 #include <initializer_list>
@@ -134,7 +135,7 @@ TEST_F(JITExpressionTest, UdfCallNestsCallees)
 TEST_F(JITExpressionTest, UdfCallCommonSubexpressions)
 {
   // Equal pure calls across outputs share one evaluation, calls of different functions over the
-  // same argument stay apart, and impure calls are evaluated as written. The generated code is
+  // same argument stay apart, and separate impure calls are never merged. The generated code is
   // checked in ROW_IR_TEST; this checks the results.
   auto a        = column_wrapper<int32_t>{{1, 2, 3}};
   auto table    = cudf::table_view{{a}};
@@ -161,6 +162,29 @@ TEST_F(JITExpressionTest, UdfCallCommonSubexpressions)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(column_wrapper<int32_t>{{4, 8, 12}},
                                  cudf::compute_column_jit(table, impure)->view(),
                                  VERBOSITY);
+}
+
+TEST_F(JITExpressionTest, UdfCallImpureCalls)
+{
+  // lto_next_id returns a new number on every call. One call referred to twice is evaluated once
+  // per row, so subtracting it from itself gives zero. Two separate calls are never merged, so
+  // their difference is never zero.
+  auto a         = column_wrapper<int32_t>{{1, 2, 3}};
+  auto table     = cudf::table_view{{a}};
+  auto tree      = cudf::ast::tree{};
+  auto a_ref     = cudf::ast::column_reference(0);
+  auto int64     = cudf::data_type{cudf::type_id::INT64};
+  auto& id       = cudf::ast::jit::call(tree, callee("lto_next_id", false), int64, {a_ref});
+  auto& other_id = cudf::ast::jit::call(tree, callee("lto_next_id", false), int64, {a_ref});
+  auto& same     = cudf::ast::jit::operation(tree, cudf::ast::jit::op::SUB, {id, id});
+  auto& apart    = cudf::ast::jit::operation(tree, cudf::ast::jit::op::SUB, {id, other_id});
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+    column_wrapper<int64_t>{{0, 0, 0}}, cudf::compute_column_jit(table, same)->view(), VERBOSITY);
+  auto const differences =
+    cudf::test::to_host<int64_t>(cudf::compute_column_jit(table, apart)->view()).first;
+  EXPECT_TRUE(std::none_of(
+    differences.begin(), differences.end(), [](int64_t difference) { return difference == 0; }));
 }
 
 TEST_F(JITExpressionTest, UdfCallPropagatesNulls)

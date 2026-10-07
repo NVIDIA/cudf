@@ -484,7 +484,7 @@ return cudf::errc::SUCCESS;
 TEST_F(RowIRCudaCodeGenTest, UdfCallCSE)
 {
   // An LTO callee is declared before the generated function, which keeps its own name. Equal calls
-  // of a pure callee share one evaluation; calls of an impure one are evaluated as written.
+  // of a pure callee share one evaluation; separate calls of an impure one are never merged.
   auto const fragment = std::array<uint8_t, 1>{};
   auto ref            = cudf::ast::column_reference{3};
   auto code_for       = [&](bool is_pure) {

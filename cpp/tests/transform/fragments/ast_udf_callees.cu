@@ -45,6 +45,15 @@ extern "C" __device__ cudf::errc lto_xor_popcount(int32_t* out, int32_t a, int32
   return cudf::errc::SUCCESS;
 }
 
+__device__ unsigned long long issued_ids = 0;
+
+// Returns a new number on every call and ignores its argument, so it is not pure.
+extern "C" __device__ cudf::errc lto_next_id(int64_t* out, int32_t)
+{
+  *out = static_cast<int64_t>(atomicAdd(&issued_ids, 1ULL));
+  return cudf::errc::SUCCESS;
+}
+
 // The Monday on or before a day; 1970-01-01 was a Thursday.
 extern "C" __device__ cudf::errc lto_week_start_ns(cudf::timestamp_ns* out, cudf::timestamp_ns in)
 {

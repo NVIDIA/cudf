@@ -345,7 +345,7 @@ async def shutdown_on_error(
 
     # We might have nested calls to `shutdown_on_error` for a given actor.
     # We always want to trace the outermost call, so record a little state here
-    # to know whether we're the outermost call and so created the quent actor..
+    # to know whether we're the outermost call and so created the quent actor.
     created_quent_actor = False
     if (
         ir_context is not None

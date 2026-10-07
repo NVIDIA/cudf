@@ -31,7 +31,7 @@ namespace CUDF_EXPORT cudf {
 /**
  * @brief Concatenates `views[i]`'s bitmask from the bits
  * `[views[i].offset(), views[i].offset() + views[i].size())` for all elements
- * `views` into an `rmm::device_buffer`
+ * `views` into a `cuda::device_buffer<std::byte>`
  *
  * Returns an empty buffer if the column is not nullable.
  *

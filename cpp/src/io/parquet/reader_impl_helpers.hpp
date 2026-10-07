@@ -14,6 +14,8 @@
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/types.hpp>
 
+#include <cuda/buffer>
+
 #include <algorithm>
 #include <exception>
 #include <functional>
@@ -364,7 +366,7 @@ class aggregate_reader_metadata {
    * @return A pair of the device buffers backing the bloom filter bitsets and a flattened,
    * per-chunk list of bitset device spans (empty spans for chunks without a bloom filter)
    */
-  [[nodiscard]] std::pair<std::vector<rmm::device_buffer>,
+  [[nodiscard]] std::pair<std::vector<cuda::device_buffer<uint8_t>>,
                           std::vector<cudf::device_span<cuda::std::byte const>>>
   read_bloom_filters(host_span<std::unique_ptr<datasource> const> sources,
                      host_span<std::vector<size_type> const> row_group_indices,

@@ -47,7 +47,10 @@ from cudf_polars.engine.persisted_result import (
     PersistedBackend,
     execute_persisted_query,
 )
-from cudf_polars.quent._runtime import QuentRuntime
+from cudf_polars.quent._runtime import (
+    QuentControllerRuntime,
+    QuentWorkerRuntime,
+)
 from cudf_polars.unstable import unstable
 from cudf_polars.utils.config import (
     MemoryResourceConfig,
@@ -72,7 +75,7 @@ if TYPE_CHECKING:
     from cudf_polars.engine.core import T
     from cudf_polars.engine.options import StreamingOptions
     from cudf_polars.engine.persisted_result import PersistedQueryResult
-    from cudf_polars.quent._context import LocalQuentContext
+    from cudf_polars.quent._context import QuentQueryWorkerState
     from cudf_polars.streaming.parallel import ConfigOptions
     from cudf_polars.utils.config import StreamingExecutor
 
@@ -169,11 +172,11 @@ def evaluate_pipeline_ray_mode(
     rank_actors = config_options.executor.ray_context.rank_actors
     actor_config_options = config_options.drop_unserializable()
     quent_context = config_options.executor.quent_context
-    quent_runtime = config_options.executor.ray_context.quent_runtime
+    quent_runtime = config_options.executor.ray_context.quent_controller_runtime
     if quent_context is not None:
         assert quent_runtime is not None
         query_scope: contextlib.AbstractContextManager = quent_runtime.query(
-            query_id, context=quent_context
+            query_id, query_config=quent_context.query
         )
     else:
         query_scope = contextlib.nullcontext()
@@ -297,7 +300,7 @@ class RankActor:
         self._comm: Communicator | None = None
         self._ctx: Context | None = None
         self._quent_enabled = quent_enabled
-        self._quent_runtime: QuentRuntime | None = None
+        self._quent_worker_runtime: QuentWorkerRuntime | None = None
         self._quent_engine_id = engine_id
         self._worker_id = worker_id
 
@@ -326,7 +329,7 @@ class RankActor:
         self,
         root_ucxx_address_as_bytes: bytes,
         collector_address: str | None,
-        quent_context: cudf_polars.quent.QuentContext | None,
+        quent_context: cudf_polars.quent.QuentConfig | None,
     ) -> None:
         """
         Complete communicator bootstrap and create the streaming context.
@@ -376,7 +379,7 @@ class RankActor:
             if not self._quent_enabled:
                 return
             assert quent_context is not None
-            self._quent_runtime = QuentRuntime.create(
+            self._quent_worker_runtime = QuentWorkerRuntime.create(
                 quent_context,
                 collector_address,
                 worker_id=self._worker_id,
@@ -387,9 +390,9 @@ class RankActor:
 
     def close_quent(self) -> None:
         """Close this rank's collector client after its Worker exit."""
-        if self._quent_runtime is None:
+        if self._quent_worker_runtime is None:
             return
-        self._quent_runtime.close()
+        self._quent_worker_runtime.close()
 
     def reset(
         self,
@@ -561,7 +564,7 @@ class RankActor:
         config_options: ConfigOptions[StreamingExecutor],
         *,
         collect_metadata: bool,
-        quent_context: cudf_polars.quent.QuentContext | None,
+        quent_context: cudf_polars.quent.QuentConfig | None,
         query_id: uuid.UUID,
     ) -> tuple[int, pl.DataFrame, list[ChannelMetadata] | None]:
         """
@@ -607,11 +610,11 @@ class RankActor:
         # object store (pickle / Arrow IPC). The DataFrame is already on CPU at
         # this point (to_polars() copies the result off-GPU), so no GPU memory
         # crosses process boundaries.
-        local_quent_context: LocalQuentContext | None = None
+        quent_query_worker_state: QuentQueryWorkerState | None = None
         if quent_context is not None:
-            assert self._quent_runtime is not None
-            local_quent_context = self._quent_runtime.local_context(
-                query_id, context=quent_context
+            assert self._quent_worker_runtime is not None
+            quent_query_worker_state = self._quent_worker_runtime.query_worker_state(
+                query_id
             )
         # evaluate_on_rank always collects metadata internally so we can read
         # metadata[-1].duplicated to decide whether to suppress this rank's
@@ -627,7 +630,7 @@ class RankActor:
             self._py_executor,
             ir,
             config_options,
-            local_quent_context=local_quent_context,
+            quent_query_worker_state=quent_query_worker_state,
             query_id=query_id,
         )
         gpu_df = drop_if_replicated(gpu_df, self._comm.rank, metadata)
@@ -938,7 +941,7 @@ class RayEngine(StreamingEngine):
             )
             if quent_context is not None:
                 assert collector_address is not None
-                self._quent_runtime = QuentRuntime.create(
+                self._quent_runtime = QuentControllerRuntime.create(
                     quent_context,
                     collector_address,
                     backend="ray",

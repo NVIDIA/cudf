@@ -94,7 +94,8 @@ def evaluate_logical_plan(
                     py_executor=engine.py_executor,
                     engine_id=engine_id,
                     worker_id=engine._quent_worker_id,
-                    quent_runtime=engine._quent_runtime,
+                    quent_controller_runtime=engine._quent_runtime,
+                    quent_worker_runtime=engine._quent_worker_runtime,
                 ),
             ),
         )
@@ -222,7 +223,8 @@ def generate_network(
     collective_id_map: dict[IR, list[int]],
     metadata_collector: list[ChannelMetadata] | None,
     quent_operator_map: dict[IR, uuid.UUID] | None = None,
-    local_quent_context: cudf_polars.quent._context.LocalQuentContext | None = None,
+    quent_query_worker_state: cudf_polars.quent._context.QuentQueryWorkerState
+    | None = None,
 ) -> tuple[list[Any], DeferredMessages]:
     """
     Translate the IR graph to a RapidsMPF streaming network.
@@ -252,8 +254,8 @@ def generate_network(
     quent_operator_map
         Mapping from IR nodes to their Quent operators, or ``None`` when tracing
         is disabled.
-    local_quent_context
-        The local Quent context for this rank, or ``None`` when tracing is
+    quent_query_worker_state
+        The Quent query-worker state for this rank, or ``None`` when tracing is
         disabled.
 
     Returns
@@ -287,7 +289,7 @@ def generate_network(
         "collective_id_map": collective_id_map,
         "partitioning_requests": partitioning_requests,
         "quent_operator_map": quent_operator_map,
-        "quent_execution_context": local_quent_context,
+        "quent_query_worker_state": quent_query_worker_state,
     }
     mapper: SubNetGenerator = CachingVisitor(
         generate_ir_sub_network_wrapper, state=state

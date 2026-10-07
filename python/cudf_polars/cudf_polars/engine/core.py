@@ -62,7 +62,7 @@ if TYPE_CHECKING:
     import cudf_polars.quent._runtime
     from cudf_polars.dsl.ir import IR
     from cudf_polars.dsl.translate import Translator
-    from cudf_polars.quent._context import LocalQuentContext, QuentContext
+    from cudf_polars.quent._context import QuentConfig, QuentQueryWorkerState
     from cudf_polars.streaming.base import PartitionInfo
     from cudf_polars.streaming.parallel import ConfigOptions
     from cudf_polars.utils.config import StreamingExecutor
@@ -334,7 +334,7 @@ class StreamingEngine(pl.GPUEngine):
         when :meth:`shutdown` is called. If ``None``, an empty stack is created.
     """
 
-    _quent_runtime: cudf_polars.quent._runtime.QuentRuntime | None
+    _quent_runtime: cudf_polars.quent._runtime.QuentControllerRuntime | None
     rapidsmpf_options: rapidsmpf.config.Options
     # Process-wide registry of every live :class:`StreamingEngine`. Used by
     # :class:`DefaultSingletonEngine` to enforce that no other engine is
@@ -358,7 +358,7 @@ class StreamingEngine(pl.GPUEngine):
 
         check_no_live_default_singleton(self)
         self._nranks = nranks
-        quent_context: QuentContext | None = executor_options.get("quent_context")
+        quent_context: QuentConfig | None = executor_options.get("quent_context")
         self._quent_output_root: Path | None = (
             quent_context.run_root if quent_context is not None else None
         )
@@ -629,7 +629,7 @@ def execute_ir_on_rank(
     collective_id_map: dict[IR, list[int]],
     *,
     quent_operator_map: dict[IR, uuid.UUID] | None = None,
-    local_quent_context: LocalQuentContext | None = None,
+    quent_query_worker_state: QuentQueryWorkerState | None = None,
 ) -> tuple[DataFrame, list[ChannelMetadata]]:
     """
     Execute a Polars IR query on a single rank's GPU.
@@ -659,8 +659,8 @@ def execute_ir_on_rank(
     quent_operator_map
         Mapping from IR nodes to their Quent operators, or ``None`` when tracing
         is disabled.
-    local_quent_context
-        The local Quent context for this rank, or ``None`` when tracing is
+    quent_query_worker_state
+        The Quent query-worker state for this rank, or ``None`` when tracing is
         disabled.
 
     Returns
@@ -683,7 +683,7 @@ def execute_ir_on_rank(
         collective_id_map=collective_id_map,
         metadata_collector=metadata_collector,
         quent_operator_map=quent_operator_map,
-        local_quent_context=local_quent_context,
+        quent_query_worker_state=quent_query_worker_state,
     )
 
     try:
@@ -868,7 +868,7 @@ def evaluate_on_rank(
     config_options: ConfigOptions[StreamingExecutor],
     *,
     collect_metadata: bool = False,
-    local_quent_context: LocalQuentContext | None = None,
+    quent_query_worker_state: QuentQueryWorkerState | None = None,
     query_id: uuid.UUID,
 ) -> tuple[DataFrame, list[ChannelMetadata]]:
     """
@@ -896,8 +896,8 @@ def evaluate_on_rank(
         Executor configuration forwarded from the client.
     collect_metadata
         Whether to collect channel metadata during execution.
-    local_quent_context
-        The local Quent context for this rank, or ``None`` when tracing is
+    quent_query_worker_state
+        The Quent query-worker state for this rank, or ``None`` when tracing is
         disabled.
     query_id
         A unique identifier for the query.
@@ -932,14 +932,14 @@ def evaluate_on_rank(
     partition_info = lowering.partition_info
     # TODO: figure out if we emit anything about optimized.
     if config_options.executor.quent_context is not None:
-        assert local_quent_context is not None
+        assert quent_query_worker_state is not None
         logical_op_by_id = emit_plan(
-            local_quent_context.session,
+            quent_query_worker_state.runtime.session,
             optimized,
             config_options,
-            query_id=local_quent_context.query_id,
+            query_id=quent_query_worker_state.query_id,
             plan_id=logical_plan_id,
-            worker_id=local_quent_context.worker_id,
+            worker_id=quent_query_worker_state.runtime.worker_resources.worker_id,
             instance_name="logical",
             parent_plan_id=None,
             parent_operators_by_node_id=None,
@@ -950,15 +950,13 @@ def evaluate_on_rank(
         log_query_plan(ir, config_options)
 
     if config_options.executor.quent_context is not None:
-        assert local_quent_context is not None
+        assert quent_query_worker_state is not None
         physical_plan_id = uuid.uuid4()
-        physical_op_by_id = local_quent_context.context._emit_physical_plan_events(
-            local_quent_context.session,
+        physical_op_by_id = quent_query_worker_state.runtime.emit_physical_plan(
+            quent_query_worker_state,
             ir,
             config_options,
             plan_id=physical_plan_id,
-            query_id=local_quent_context.query_id,
-            worker_id=local_quent_context.worker_id,
             parent_plan_id=logical_plan_id,
             node_map=node_map,
             logical_op_by_id=logical_op_by_id,
@@ -989,7 +987,7 @@ def evaluate_on_rank(
             stats,
             collective_id_map,
             quent_operator_map=quent_operator_map,
-            local_quent_context=local_quent_context,
+            quent_query_worker_state=quent_query_worker_state,
         )
 
 

@@ -351,7 +351,7 @@ async def shutdown_on_error(
     created_quent_actor = False
     if (
         ir_context is not None
-        and (quent_execution := ir_context.quent_ir_execution_context) is not None
+        and (quent_execution := ir_context.quent_ir_execution_state) is not None
         and quent_execution.actor_id is None
     ):
         import cudf_polars_quent as _quent
@@ -361,17 +361,18 @@ async def shutdown_on_error(
         quent_execution = replace(quent_execution, actor_id=actor_id)
         ir_context = replace(
             ir_context,
-            quent_ir_execution_context=quent_execution,
+            quent_ir_execution_state=quent_execution,
         )
+        runtime = quent_execution.query_worker_state.runtime
         started = (
-            quent_execution.session.context.actor_observer()
+            runtime.session.binding_context.actor_observer()
             .handle(actor_id)
             .started(
                 operator=quent_execution.operator_id,
-                worker=quent_execution.worker_id,
+                worker=runtime.worker_resources.worker_id,
             )
         )
-        quent_execution.session._actors[actor_id] = started.running()
+        runtime.session._actors[actor_id] = started.running()
 
     actor_error: BaseException | None = None
     with cudf_polars.dsl.tracing.bound_contextvars(**contextvars):
@@ -407,9 +408,7 @@ async def shutdown_on_error(
             if (
                 created_quent_actor
                 and ir_context is not None
-                and (
-                    quent_ir_execution_context := ir_context.quent_ir_execution_context
-                )
+                and (quent_ir_execution_state := ir_context.quent_ir_execution_state)
                 is not None
             ):
                 values: _quent.OperatorStatisticsDict = {
@@ -420,22 +419,23 @@ async def shutdown_on_error(
                     "duplicated": tracer.duplicated,
                     "decision": tracer.decision,
                 }
-                assert quent_ir_execution_context.actor_id is not None
+                assert quent_ir_execution_state.actor_id is not None
+                runtime = quent_ir_execution_state.query_worker_state.runtime
                 if actor_error is None:
-                    quent_ir_execution_context.session._actors.pop(
-                        quent_ir_execution_context.actor_id
+                    runtime.session._actors.pop(
+                        quent_ir_execution_state.actor_id
                     ).completed(
                         values=values,
                     )
                 else:
-                    quent_ir_execution_context.session._actors.pop(
-                        quent_ir_execution_context.actor_id
+                    runtime.session._actors.pop(
+                        quent_ir_execution_state.actor_id
                     ).failed(
                         error=str(actor_error),
                         values=values,
                     )
-                quent_ir_execution_context.session.context.operator_observer().handle(
-                    quent_ir_execution_context.operator_id
+                runtime.session.binding_context.operator_observer().handle(
+                    quent_ir_execution_state.operator_id
                 ).statistics(values=values)
 
 

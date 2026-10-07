@@ -5,6 +5,6 @@
 
 from __future__ import annotations
 
-from cudf_polars.quent._context import QuentContext
+from cudf_polars.quent._context import QuentConfig, QuentQueryConfig
 
-__all__ = ["QuentContext"]
+__all__ = ["QuentConfig", "QuentQueryConfig"]

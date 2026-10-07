@@ -55,7 +55,10 @@ from cudf_polars.engine.persisted_result import (
     PersistedBackend,
     execute_persisted_query,
 )
-from cudf_polars.quent._runtime import QuentRuntime
+from cudf_polars.quent._runtime import (
+    QuentControllerRuntime,
+    QuentWorkerRuntime,
+)
 from cudf_polars.streaming.actor_graph.collectives.common import reserve_op_id
 from cudf_polars.streaming.actor_graph.utils import set_memory_resource
 from cudf_polars.unstable import unstable
@@ -82,7 +85,7 @@ if TYPE_CHECKING:
     from cudf_polars.engine.core import T
     from cudf_polars.engine.options import StreamingOptions
     from cudf_polars.engine.persisted_result import PersistedQueryResult
-    from cudf_polars.quent._context import LocalQuentContext
+    from cudf_polars.quent._context import QuentQueryWorkerState
     from cudf_polars.streaming.parallel import ConfigOptions
     from cudf_polars.utils.config import StreamingExecutor
 
@@ -134,26 +137,24 @@ def evaluate_pipeline_spmd_mode(
     spmd_context = config_options.executor.spmd_context
 
     quent_context = config_options.executor.quent_context
-    local_quent_context: LocalQuentContext | None = None
-    quent_runtime = spmd_context.quent_runtime
+    quent_query_worker_state: QuentQueryWorkerState | None = None
+    quent_worker_runtime = spmd_context.quent_worker_runtime
+    quent_controller_runtime = spmd_context.quent_controller_runtime
+    query_scope: contextlib.AbstractContextManager = contextlib.nullcontext()
     if quent_context is not None:
-        assert quent_runtime is not None
+        assert quent_worker_runtime is not None
         query_id = synchronize_quent_query_id(
             comm=comm,
             context=context,
             query_id=query_id,
         )
-        local_quent_context = quent_runtime.local_context(
-            query_id, context=quent_context
-        )
-
-        query_scope: contextlib.AbstractContextManager = quent_runtime.query(
-            query_id,
-            context=quent_context,
-            emit=comm.rank == 0,
-        )
-    else:
-        query_scope = contextlib.nullcontext()
+        quent_query_worker_state = quent_worker_runtime.query_worker_state(query_id)
+        if comm.rank == 0:
+            assert quent_controller_runtime is not None
+            query_scope = quent_controller_runtime.query(
+                query_id,
+                query_config=quent_context.query,
+            )
     with query_scope:
         df, metadata = evaluate_on_rank(
             context,
@@ -161,7 +162,7 @@ def evaluate_pipeline_spmd_mode(
             py_executor,
             ir,
             config_options,
-            local_quent_context=local_quent_context,
+            quent_query_worker_state=quent_query_worker_state,
             query_id=query_id,
         )
     return df, metadata if collect_metadata else None
@@ -239,9 +240,9 @@ def synchronize_quent_configuration(
     *,
     comm: Communicator,
     context: Context,
-    quent_config: cudf_polars.quent.QuentContext,
+    quent_config: cudf_polars.quent.QuentConfig,
     collector_address: str,
-) -> tuple[cudf_polars.quent.QuentContext, str]:
+) -> tuple[cudf_polars.quent.QuentConfig, str]:
     """
     Broadcast rank 0's Quent configuration in one collective.
 
@@ -263,7 +264,7 @@ def synchronize_quent_configuration(
         all_data = all_gather_host_data(comm, context.br(), op_id, data)
     synchronized = json.loads(all_data[0])
     return (
-        cudf_polars.quent.QuentContext._deserialize(synchronized["context"].encode()),
+        cudf_polars.quent.QuentConfig._deserialize(synchronized["context"].encode()),
         synchronized["collector_address"],
     )
 
@@ -443,6 +444,7 @@ class SPMDEngine(StreamingEngine):
         quent_context = resolve_quent_context(executor_options)
         executor_options["quent_context"] = quent_context
         self._quent_runtime = None
+        self._quent_worker_runtime = None
 
         check_reserved_keys(executor_options, engine_options)
         hw_binding = cast(
@@ -534,17 +536,23 @@ class SPMDEngine(StreamingEngine):
                 )
                 executor_options["quent_context"] = quent_context
                 self._quent_worker_id = uuid.uuid4()
-                self._quent_runtime = QuentRuntime.create(
+                if comm.rank == 0:
+                    self._quent_runtime = QuentControllerRuntime.create(
+                        quent_context,
+                        collector_address,
+                        backend="spmd",
+                        collector=quent_collector,
+                    )
+                    exit_stack.callback(self._quent_runtime.close)
+                self._quent_worker_runtime = QuentWorkerRuntime.create(
                     quent_context,
                     collector_address,
-                    backend="spmd" if comm.rank == 0 else None,
-                    collector=quent_collector,
                     worker_id=self._quent_worker_id,
                     rank=comm.rank,
                     nranks=comm.nranks,
                     instance_name=f"rank-{comm.rank}",
                 )
-                exit_stack.callback(self._quent_runtime.close)
+                exit_stack.callback(self._quent_worker_runtime.close)
                 if collector_cleanup is not None:
                     # The runtime now owns the collector.
                     collector_cleanup.pop_all()
@@ -575,7 +583,8 @@ class SPMDEngine(StreamingEngine):
                         comm=comm,
                         engine_id=engine_id,
                         worker_id=self._quent_worker_id,
-                        quent_runtime=self._quent_runtime,
+                        quent_controller_runtime=self._quent_runtime,
+                        quent_worker_runtime=self._quent_worker_runtime,
                         context=self._ctx,
                         py_executor=self._py_executor,
                     ),
@@ -686,7 +695,7 @@ class SPMDEngine(StreamingEngine):
             request_ceiling=executor_options["kvikio_request_ceiling"],
         )
         engine_options = engine_options or {}
-        quent_context: cudf_polars.quent.QuentContext | None = executor_options.get(
+        quent_context: cudf_polars.quent.QuentConfig | None = executor_options.get(
             "quent_context"
         )
         rapidsmpf_options = resolve_rapidsmpf_options(rapidsmpf_options)
@@ -741,7 +750,8 @@ class SPMDEngine(StreamingEngine):
                     py_executor=self.py_executor,
                     engine_id=engine_id,
                     worker_id=self._quent_worker_id,
-                    quent_runtime=self._quent_runtime,
+                    quent_controller_runtime=self._quent_runtime,
+                    quent_worker_runtime=self._quent_worker_runtime,
                 ),
             },
             engine_options={
@@ -917,17 +927,15 @@ class SPMDEngine(StreamingEngine):
                 exceptions.append(e)
 
         try:
-            if self._quent_runtime is not None:
+            if self._quent_worker_runtime is not None:
                 assert self._comm is not None
                 comm = self._comm
-                runtime = self._quent_runtime
-                close_quent(runtime.close_worker)
-                if comm.rank == 0:
-                    close_quent(runtime.close_engine)
-                close_quent(runtime.close_session)
+                close_quent(self._quent_worker_runtime.close)
                 if comm.nranks > 1:
                     close_quent(lambda: barrier(comm))
-                close_quent(runtime.close_collector)
+                if comm.rank == 0:
+                    assert self._quent_runtime is not None
+                    close_quent(self._quent_runtime.close)
                 if comm.nranks > 1:
                     close_quent(lambda: barrier(comm))
 

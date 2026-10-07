@@ -189,18 +189,18 @@ def log_do_evaluate(
             # And the kwonly 'context' argument has the IR execution context.
             ir_execution_context: IRExecutionContext = kwargs["context"]  # type: ignore[assignment]
 
-            if ir_execution_context.quent_ir_execution_context is not None:
-                quent_context = ir_execution_context.quent_ir_execution_context
+            if ir_execution_context.quent_ir_execution_state is not None:
+                quent_state = ir_execution_context.quent_ir_execution_state
                 quent_evaluate_id = _quent.now_v7()
                 instance_name = (
-                    f"{cls.__name__}-{quent_context.operator_id.hex[:8]}-"
+                    f"{cls.__name__}-{quent_state.operator_id.hex[:8]}-"
                     f"{quent_evaluate_id.hex[:8]}"
                 )
-                quent_context.context._emit_evaluate_begin_events(
+                quent_state.query_worker_state.runtime.emit_evaluate_begin(
                     cls,
                     quent_evaluate_id,
                     instance_name,
-                    quent_context,
+                    quent_state,
                     input_frames_bytes=sum(frame._size_bytes for frame in frames),
                 )
 
@@ -228,11 +228,10 @@ def log_do_evaluate(
             finally:
                 if (
                     quent_evaluate_id is not None
-                    and ir_execution_context.quent_ir_execution_context is not None
+                    and ir_execution_context.quent_ir_execution_state is not None
                 ):
-                    ir_execution_context.quent_ir_execution_context.context._emit_evaluate_end_event(
+                    ir_execution_context.quent_ir_execution_state.query_worker_state.runtime.emit_evaluate_end(
                         quent_evaluate_id,
-                        ir_execution_context.quent_ir_execution_context,
                         result,
                         error,
                     )

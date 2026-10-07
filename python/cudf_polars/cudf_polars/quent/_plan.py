@@ -214,7 +214,7 @@ def emit_plan(
                 }
             )
 
-    context = session.context
+    context = session.binding_context
     context.plan_observer().handle(plan_id).declared(
         instance_name=instance_name,
         query=query_id,

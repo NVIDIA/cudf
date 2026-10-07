@@ -16,9 +16,11 @@ if TYPE_CHECKING:
 
 
 @pytest.fixture
-def quent_context(tmp_path: Path) -> cudf_polars.quent.QuentContext:
-    return cudf_polars.quent.QuentContext(
-        query_group_name="test_query_group",
-        query_name="test_query",
+def quent_context(tmp_path: Path) -> cudf_polars.quent.QuentConfig:
+    return cudf_polars.quent.QuentConfig(
         output_root=str(tmp_path / "quent"),
+        query=cudf_polars.quent.QuentQueryConfig(
+            query_group_name="test_query_group",
+            query_name="test_query",
+        ),
     )

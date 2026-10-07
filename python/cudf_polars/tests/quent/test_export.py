@@ -29,8 +29,8 @@ def _collect_engine_events(root: Path) -> Path:
     collector = start_collector(root)
     session = QuentSession(collector.address)
     identifier = uuid.uuid4()
-    session._engines[identifier] = (
-        session.context.engine_observer()
+    engine_handle = (
+        session.binding_context.engine_observer()
         .handle(identifier)
         .init(
             instance_name="test",
@@ -42,7 +42,7 @@ def _collect_engine_events(root: Path) -> Path:
             },
         )
     )
-    session._engines.pop(identifier).exit()
+    engine_handle.exit()
     session.close()
     session.close()  # idempotence
     collector.close()

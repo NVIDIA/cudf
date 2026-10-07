@@ -749,7 +749,7 @@ events to it. The Collector writes all contexts under a common run directory,
 which our benchmark scripts package into a ZIP archive after the clients and
 Collector have closed.
 
-`QuentContext.output_root`, which may also be configured with
+`QuentConfig.output_root`, which may also be configured with
 `CUDF_POLARS__EXECUTOR__QUENT_OUTPUT_ROOT`, is local to the process hosting the
 Collector. Workers do not need access to that path or to a shared filesystem.
 
@@ -758,10 +758,11 @@ by `quent-open` to visualize cudf-polars instrumentation in the Quent UI.
 
 Ranks need to coordinate on the creation of some entities. For example, each
 actor in a `RayEngine` needs to use the same `engine_id` so that plans can be
-associated with the engine correctly. `QuentContext` carries these shared UUIDs
-and display names and is provided through `StreamingExecutor.quent_context`.
-`LocalQuentContext` combines them with rank-local generated handles and resource
-UUIDs.
+associated with the engine correctly. `QuentConfig` carries the shared
+engine-level values and is provided through `StreamingExecutor.quent_context`;
+its `QuentQueryConfig` carries display metadata that may change per query.
+`QuentQueryWorkerState` binds a query ID to the worker runtime that owns the
+rank-local generated handles and resource UUIDs.
 
 ### Concepts
 

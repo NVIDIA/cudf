@@ -14,19 +14,26 @@ from __future__ import annotations
 import uuid
 from unittest.mock import MagicMock, call
 
-from cudf_polars.quent._context import QuentContext, WorkerResources
+from cudf_polars.quent._context import (
+    QuentConfig,
+    QuentQueryConfig,
+    WorkerResources,
+)
+from cudf_polars.quent._runtime import QuentWorkerRuntime
 
 
 def test_context_serialization_roundtrip(tmp_path) -> None:
-    context = QuentContext(
+    context = QuentConfig(
         engine_id=uuid.uuid4(),
-        query_group_id=uuid.uuid4(),
-        query_group_name="group",
-        query_name="query",
         output_root=str(tmp_path),
+        query=QuentQueryConfig(
+            query_group_id=uuid.uuid4(),
+            query_group_name="group",
+            query_name="query",
+        ),
     )
 
-    assert QuentContext._deserialize(context._serialize()) == context
+    assert QuentConfig._deserialize(context._serialize()) == context
 
 
 def test_worker_resources_declares_inter_rank_channel() -> None:
@@ -43,7 +50,7 @@ def test_worker_resources_declares_inter_rank_channel() -> None:
     session = MagicMock()
     resources.declare(session)
 
-    data_channel_observer = session.context.data_channel_observer.return_value
+    data_channel_observer = session.binding_context.data_channel_observer.return_value
     link_channel_id = resources.link_channel_ids[1]
     assert data_channel_observer.handle.call_args_list == [
         call(resources.disk_to_device_channel_id),
@@ -73,21 +80,24 @@ def test_worker_resources_declares_inter_rank_channel() -> None:
 
 
 def test_emit_evaluate_failure() -> None:
-    context = QuentContext()
     evaluate_id = uuid.uuid4()
     running_evaluation = MagicMock()
-    execution_context = MagicMock()
-    execution_context.session._evaluations = {
+    runtime = QuentWorkerRuntime(
+        config=QuentConfig(),
+        session=MagicMock(),
+        worker_resources=MagicMock(),
+        _worker_handle=MagicMock(),
+    )
+    runtime.session._evaluations = {
         evaluate_id: running_evaluation,
     }
     error = RuntimeError("evaluation failed")
 
-    context._emit_evaluate_end_event(
+    runtime.emit_evaluate_end(
         evaluate_id,
-        execution_context,
         result=None,
         error=error,
     )
 
     running_evaluation.failed.assert_called_once_with(error=str(error))
-    assert evaluate_id not in execution_context.session._evaluations
+    assert evaluate_id not in runtime.session._evaluations

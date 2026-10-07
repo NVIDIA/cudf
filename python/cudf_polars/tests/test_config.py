@@ -658,7 +658,7 @@ def test_hash_streaming_executor() -> None:
     config = ConfigOptions.from_polars_engine(
         pl.GPUEngine(
             executor="streaming",
-            executor_options={"quent_context": cudf_polars.quent.QuentContext()},
+            executor_options={"quent_context": cudf_polars.quent.QuentConfig()},
         )
     )
     assert hash(config.executor) == hash(config.executor)

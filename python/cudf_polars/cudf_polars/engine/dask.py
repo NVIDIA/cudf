@@ -52,7 +52,10 @@ from cudf_polars.engine.persisted_result import (
     PersistedBackend,
     execute_persisted_query,
 )
-from cudf_polars.quent._runtime import QuentRuntime
+from cudf_polars.quent._runtime import (
+    QuentControllerRuntime,
+    QuentWorkerRuntime,
+)
 from cudf_polars.unstable import unstable
 from cudf_polars.utils.config import (
     DaskContext,
@@ -75,7 +78,7 @@ if TYPE_CHECKING:
     from cudf_polars.engine.core import T
     from cudf_polars.engine.options import StreamingOptions
     from cudf_polars.engine.persisted_result import PersistedQueryResult
-    from cudf_polars.quent._context import LocalQuentContext
+    from cudf_polars.quent._context import QuentQueryWorkerState
     from cudf_polars.streaming.parallel import ConfigOptions
     from cudf_polars.utils.config import StreamingExecutor
 
@@ -139,7 +142,7 @@ class _WorkerContext:
     ctx: Context | None
     py_executor: ThreadPoolExecutor | None
     base_mr: rmm.mr.DeviceMemoryResource | None
-    quent_runtime: QuentRuntime | None
+    quent_worker_runtime: QuentWorkerRuntime | None
     statistics: Statistics
     mr: RmmResourceAdaptor | None = None  # set after `Context` is built (below).
     kvikio_monitor: kvikio.SummaryMonitor | None = None
@@ -299,7 +302,7 @@ def _setup_root(
             ctx=None,
             py_executor=None,
             base_mr=base_mr,
-            quent_runtime=None,
+            quent_worker_runtime=None,
             statistics=statistics,
         ),
     )
@@ -315,7 +318,7 @@ def _setup_worker(
     hardware_binding: HardwareBindingPolicy,
     memory_resource_config: MemoryResourceConfig | None,
     worker_ids: list[uuid.UUID],
-    quent_context: cudf_polars.quent.QuentContext | None,
+    quent_context: cudf_polars.quent.QuentConfig | None,
     num_py_executors: int,
     kvikio_nthreads: int | None,
     kvikio_statistics: bool,
@@ -440,7 +443,7 @@ def _setup_worker(
 
     if quent_collector_address is not None:
         assert quent_context is not None
-        quent_runtime = QuentRuntime.create(
+        quent_worker_runtime = QuentWorkerRuntime.create(
             quent_context,
             quent_collector_address,
             worker_id=worker_id,
@@ -449,7 +452,7 @@ def _setup_worker(
             instance_name=f"rank-{comm.rank}",
         )
     else:
-        quent_runtime = None
+        quent_worker_runtime = None
 
     mp_ctx = _WorkerContext(
         comm=comm,
@@ -457,7 +460,7 @@ def _setup_worker(
         py_executor=py_executor,
         base_mr=base_mr,
         mr=mr,
-        quent_runtime=quent_runtime,
+        quent_worker_runtime=quent_worker_runtime,
         statistics=statistics,
         kvikio_monitor=make_kvikio_monitor(enabled=kvikio_statistics),
     )
@@ -470,9 +473,9 @@ def _close_quent_worker(
     """Close one worker's Quent collector client."""
     assert dask_worker is not None
     mp_ctx: _WorkerContext = getattr(dask_worker, f"_cudf_polars_mp_context_{uid}")
-    if mp_ctx.quent_runtime is not None:
-        mp_ctx.quent_runtime.close()
-        mp_ctx.quent_runtime = None
+    if mp_ctx.quent_worker_runtime is not None:
+        mp_ctx.quent_worker_runtime.close()
+        mp_ctx.quent_worker_runtime = None
 
 
 def _teardown_worker(
@@ -730,7 +733,7 @@ def _worker_evaluate(
     uid: str,
     collect_metadata: bool = False,
     query_id: uuid.UUID,
-    quent_context: cudf_polars.quent.QuentContext | None = None,
+    quent_context: cudf_polars.quent.QuentConfig | None = None,
     dask_worker: distributed.Worker | None = None,
 ) -> tuple[int, pl.DataFrame, list[ChannelMetadata] | None]:
     """
@@ -772,11 +775,11 @@ def _worker_evaluate(
     mp_ctx: _WorkerContext = getattr(dask_worker, f"_cudf_polars_mp_context_{uid}")
     if mp_ctx.ctx is None or mp_ctx.comm is None or mp_ctx.py_executor is None:
         raise RuntimeError("_setup_worker must be called before _worker_evaluate")
-    local_quent_context: LocalQuentContext | None = None
+    quent_query_worker_state: QuentQueryWorkerState | None = None
     if quent_context is not None:
-        assert mp_ctx.quent_runtime is not None
-        local_quent_context = mp_ctx.quent_runtime.local_context(
-            query_id, context=quent_context
+        assert mp_ctx.quent_worker_runtime is not None
+        quent_query_worker_state = mp_ctx.quent_worker_runtime.query_worker_state(
+            query_id
         )
     # evaluate_on_rank always collects metadata internally so we can read
     # metadata[-1].duplicated to decide whether to suppress this rank's output.
@@ -791,7 +794,7 @@ def _worker_evaluate(
         mp_ctx.py_executor,
         ir,
         config_options,
-        local_quent_context=local_quent_context,
+        quent_query_worker_state=quent_query_worker_state,
         query_id=query_id,
     )
     gpu_df = drop_if_replicated(gpu_df, mp_ctx.comm.rank, metadata)
@@ -844,13 +847,13 @@ def evaluate_pipeline_dask_mode(
     dask_context = config_options.executor.dask_context
 
     quent_context = config_options.executor.quent_context
-    quent_runtime = dask_context.quent_runtime
+    quent_runtime = dask_context.quent_controller_runtime
     worker_config = config_options.drop_unserializable()
 
     if quent_context is not None:
         assert quent_runtime is not None
         query_scope: contextlib.AbstractContextManager = quent_runtime.query(
-            query_id, context=quent_context
+            query_id, query_config=quent_context.query
         )
     else:
         query_scope = contextlib.nullcontext()
@@ -1100,7 +1103,7 @@ class DaskEngine(StreamingEngine):
             )
             if quent_context is not None:
                 assert quent_collector_address is not None
-                self._quent_runtime = QuentRuntime.create(
+                self._quent_runtime = QuentControllerRuntime.create(
                     quent_context,
                     quent_collector_address,
                     backend="dask",
@@ -1115,7 +1118,7 @@ class DaskEngine(StreamingEngine):
         dask_ctx = DaskContext(
             client=dask_client,
             rapidsmpf_id=rapidsmpf_id,
-            quent_runtime=self._quent_runtime,
+            quent_controller_runtime=self._quent_runtime,
             owned_client=owned_client,
             owned_cluster=owned_cluster,
         )

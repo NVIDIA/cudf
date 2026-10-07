@@ -19,11 +19,16 @@ if TYPE_CHECKING:
 
     import cudf_polars_quent as quent_bindings
 
+    from cudf_polars.containers import DataFrame
+    from cudf_polars.dsl.ir import IR
     from cudf_polars.quent._context import (
-        LocalQuentContext,
-        QuentContext,
+        QuentConfig,
+        QuentIRExecutionState,
+        QuentQueryConfig,
+        QuentQueryWorkerState,
         WorkerResources,
     )
+    from cudf_polars.utils.config import ConfigOptions, StreamingExecutor
 
 try:
     import cudf_polars_quent as _quent
@@ -59,20 +64,18 @@ class QuentSession:
             )
         self._declarations_lock = threading.Lock()
         self._declared: set[tuple[str, uuid.UUID]] = set()
-        self._engines: dict[uuid.UUID, quent_bindings.EngineInitHandle] = {}
-        self._workers: dict[uuid.UUID, quent_bindings.WorkerInitHandle] = {}
         self._queries: dict[uuid.UUID, quent_bindings.QueryExecutingHandle] = {}
         self._evaluations: dict[uuid.UUID, quent_bindings.EvaluateRunningHandle] = {}
         self._actors: dict[uuid.UUID, quent_bindings.ActorRunningHandle] = {}
-        self._context = _quent.Context(
+        self._binding_context = _quent.Context(
             _quent.ExporterOptions.collector(collector_address)
         )
         self._closed = False
 
     @property
-    def context(self) -> quent_bindings.Context:
+    def binding_context(self) -> quent_bindings.Context:
         """Return the generated instrumentation context."""
-        return self._context
+        return self._binding_context
 
     def declare_once(self, entity_name: str, identifier: uuid.UUID) -> bool:
         """Claim one declaration for an entity in this session."""
@@ -87,187 +90,231 @@ class QuentSession:
         """Close active handles and flush generated events to the collector."""
         if self._closed:
             return
-        self._engines.clear()
-        self._workers.clear()
         self._queries.clear()
         self._evaluations.clear()
         self._actors.clear()
-        self._context.close()
+        self._binding_context.close()
         self._closed = True
 
 
 @dataclasses.dataclass
-class QuentRuntime:
-    """
-    Own the Quent resources used by one process.
+class QuentControllerRuntime:
+    """Own controller-side Engine, Query, session, and Collector state."""
 
-    A runtime may represent a controller, a worker, or both. Controllers emit
-    Engine and Query lifecycle events. Workers emit Worker, Plan, Operator,
-    Actor, and Evaluate events.
-    """
-
-    context: QuentContext
+    config: QuentConfig
     session: QuentSession
     collector: quent_bindings.Collector | None = None
-    worker_id: uuid.UUID | None = None
-    worker_resources: WorkerResources | None = None
-    _engine_active: bool = False
-    _worker_active: bool = False
-    _session_closed: bool = False
-    _collector_closed: bool = False
+    _engine_handle: quent_bindings.EngineInitHandle | None = None
 
     @classmethod
     def create(
         cls,
-        context: QuentContext,
+        config: QuentConfig,
         collector_address: str,
         *,
-        backend: str | None = None,
+        backend: str,
         collector: quent_bindings.Collector | None = None,
-        worker_id: uuid.UUID | None = None,
-        rank: int | None = None,
-        nranks: int | None = None,
-        instance_name: str | None = None,
-    ) -> QuentRuntime:
-        """Create and register the requested process-local Quent roles."""
+    ) -> QuentControllerRuntime:
+        """Create a controller runtime and emit its Engine init event."""
         runtime = cls(
-            context=context,
+            config=config,
             session=QuentSession(collector_address),
             collector=collector,
         )
-        if backend is not None:
-            runtime.start_engine(backend)
-        if worker_id is not None:
-            if rank is None or nranks is None or instance_name is None:
-                # TODO: refactor QuentRuntime / its types to avoid this possibility.
-                raise ValueError(  # pragma: no cover
-                    "rank, nranks, and instance_name are required for a worker runtime"
-                )
-            runtime.start_worker(
-                worker_id=worker_id,
-                rank=rank,
-                nranks=nranks,
-                instance_name=instance_name,
+        runtime._engine_handle = (
+            runtime.session.binding_context.engine_observer()
+            .handle(config.engine_id)
+            .init(
+                instance_name=f"cudf-polars-{str(config.engine_id)[:8]}",
+                implementation={
+                    "name": config.implementation_name,
+                    "version": config.implementation_version,
+                    "backend": backend,
+                    "custom_attributes": {"backend": backend},
+                },
             )
+        )
         return runtime
-
-    def start_engine(self, backend: str) -> None:
-        """Register the engine role for this process."""
-        if self._engine_active:  # pragma: no cover
-            return
-        self.context._emit_engine_init_events(self.session, backend=backend)
-        self._engine_active = True
-
-    def start_worker(
-        self,
-        *,
-        worker_id: uuid.UUID,
-        rank: int,
-        nranks: int,
-        instance_name: str,
-    ) -> None:
-        """Register a worker and declare its engine-scoped resources."""
-        if self._worker_active:  # pragma: no cover
-            return
-        from cudf_polars.quent._context import WorkerResources
-
-        self.session._workers[worker_id] = (
-            self.session.context.worker_observer()
-            .handle(worker_id)
-            .init(instance_name=instance_name, engine=self.context.engine_id)
-        )
-        resources = WorkerResources.build(
-            instance_suffix=instance_name,
-            engine_id=self.context.engine_id,
-            worker_id=worker_id,
-            rank=rank,
-            nranks=nranks,
-        )
-        resources.declare(self.session)
-        self.worker_id = worker_id
-        self.worker_resources = resources
-        self._worker_active = True
-
-    def local_context(
-        self, query_id: uuid.UUID, *, context: QuentContext | None = None
-    ) -> LocalQuentContext:
-        """Build the per-query context for rank-local execution."""
-        from cudf_polars.quent._context import LocalQuentContext
-
-        if (
-            not self._worker_active
-            or self.worker_id is None
-            or self.worker_resources is None
-        ):  # pragma: no cover
-            raise RuntimeError("Quent worker runtime is not initialized")
-        context = context or self.context
-        return LocalQuentContext(
-            context=context,
-            query_id=query_id,
-            worker_id=self.worker_id,
-            session=self.session,
-            worker_resources=self.worker_resources,
-        )
 
     @contextlib.contextmanager
     def query(
         self,
         query_id: uuid.UUID,
         *,
-        context: QuentContext,
+        query_config: QuentQueryConfig,
         emit: bool = True,
     ) -> Iterator[None]:
-        """Emit one controller-side Query lifecycle using the current context."""
+        """Emit one controller-side Query lifecycle."""
         if not emit:  # pragma: no cover
             yield
             return
-        if not self._engine_active:  # pragma: no cover
+        if self._engine_handle is None:  # pragma: no cover
             raise RuntimeError("Quent controller runtime is not initialized")
-        context._emit_query_group_events(self.session)
-        context._emit_query_events(self.session, query_id)
+        if self.session.declare_once("QueryGroup", query_config.query_group_id):
+            self.session.binding_context.query_group_observer().handle(
+                query_config.query_group_id
+            ).declared(
+                instance_name=query_config.query_group_name,
+                engine=self.config.engine_id,
+            )
+        initialized = (
+            self.session.binding_context.query_observer()
+            .handle(query_id)
+            .initialized(
+                instance_name=query_config.query_name or query_id.hex[:8],
+                query_group=query_config.query_group_id,
+            )
+        )
+        self.session._queries[query_id] = initialized.planning().executing()
         try:
             yield
         except BaseException as error:
-            context._emit_query_failed_event(self.session, query_id, error)
+            self.session._queries.pop(query_id).failed(error=str(error))
             raise
         else:
-            context._emit_query_completed_event(self.session, query_id)
-
-    def close_worker(self) -> None:
-        """Emit Worker exit, if this runtime owns an active worker."""
-        if not self._worker_active:
-            return
-        assert self.worker_id is not None
-        self.session._workers.pop(self.worker_id).exit()
-        self._worker_active = False
-
-    def close_engine(self) -> None:
-        """Emit Engine exit, if this runtime owns an active engine."""
-        if not self._engine_active:
-            return
-        self.context._emit_engine_exit_events(self.session)
-        self._engine_active = False
-
-    def close_session(self) -> None:
-        """Close the process-local collector client."""
-        if self._session_closed:
-            return
-        self.close_worker()
-        self.close_engine()
-        self.session.close()
-        self._session_closed = True
-
-    def close_collector(self) -> None:
-        """Close the controller-local Collector, if present."""
-        if self.collector is None or self._collector_closed:
-            return
-        self.collector.close()
-        self._collector_closed = True
+            self.session._queries.pop(query_id).completed()
 
     def close(self) -> None:
-        """Close worker, engine, session, and Collector state in order."""
-        self.close_session()
-        self.close_collector()
+        """Close the Engine, session, and Collector in dependency order."""
+        if self._engine_handle is not None:
+            self._engine_handle.exit()
+            self._engine_handle = None
+        self.session.close()
+        if self.collector is not None:
+            self.collector.close()
+            self.collector = None
+
+
+@dataclasses.dataclass
+class QuentWorkerRuntime:
+    """Own worker-side Worker, resource, plan, Actor, and Evaluate state."""
+
+    config: QuentConfig
+    session: QuentSession
+    worker_resources: WorkerResources
+    _worker_handle: quent_bindings.WorkerInitHandle | None
+
+    @classmethod
+    def create(
+        cls,
+        config: QuentConfig,
+        collector_address: str,
+        *,
+        worker_id: uuid.UUID,
+        rank: int,
+        nranks: int,
+        instance_name: str,
+    ) -> QuentWorkerRuntime:
+        """Create a worker runtime and declare its resources."""
+        from cudf_polars.quent._context import WorkerResources
+
+        session = QuentSession(collector_address)
+        worker_handle = (
+            session.binding_context.worker_observer()
+            .handle(worker_id)
+            .init(instance_name=instance_name, engine=config.engine_id)
+        )
+        resources = WorkerResources.build(
+            instance_suffix=instance_name,
+            engine_id=config.engine_id,
+            worker_id=worker_id,
+            rank=rank,
+            nranks=nranks,
+        )
+        resources.declare(session)
+        return cls(
+            config=config,
+            session=session,
+            worker_resources=resources,
+            _worker_handle=worker_handle,
+        )
+
+    def query_worker_state(self, query_id: uuid.UUID) -> QuentQueryWorkerState:
+        """Build state for one query executing on this worker."""
+        from cudf_polars.quent._context import QuentQueryWorkerState
+
+        return QuentQueryWorkerState(runtime=self, query_id=query_id)
+
+    def emit_physical_plan(
+        self,
+        state: QuentQueryWorkerState,
+        ir: IR,
+        config_options: ConfigOptions[StreamingExecutor],
+        plan_id: uuid.UUID,
+        *,
+        parent_plan_id: uuid.UUID,
+        node_map: dict[str, list[str]],
+        logical_op_by_id: dict[str, uuid.UUID],
+    ) -> dict[str, uuid.UUID]:
+        """Emit a physical plan and return stable-node to operator IDs."""
+        from cudf_polars.quent._plan import build_parent_operators_map, emit_plan
+
+        parent_operators = build_parent_operators_map(node_map, logical_op_by_id)
+        return emit_plan(
+            self.session,
+            ir,
+            config_options,
+            query_id=state.query_id,
+            plan_id=plan_id,
+            worker_id=self.worker_resources.worker_id,
+            instance_name="physical",
+            parent_plan_id=parent_plan_id,
+            parent_operators_by_node_id=parent_operators,
+        )
+
+    def emit_evaluate_begin(
+        self,
+        ir_type: type[IR],
+        evaluate_id: uuid.UUID,
+        instance_name: str,
+        state: QuentIRExecutionState,
+        input_frames_bytes: int,
+    ) -> None:
+        """Emit Evaluate queued/running events."""
+        processor_id = state.query_worker_state.get_or_declare_processor(
+            threading.get_ident()
+        )
+        assert state.actor_id is not None, (
+            "Evaluate events must be emitted from an Actor scope"
+        )
+        queued = (
+            self.session.binding_context.evaluate_observer()
+            .handle(evaluate_id)
+            .queued(instance_name=instance_name, actor=state.actor_id)
+        )
+        self.session._evaluations[evaluate_id] = queued.running(
+            io=ir_type.is_io_node,
+            input_bytes=input_frames_bytes,
+            processor={"target": processor_id, "data": {}},
+            channel={
+                "target": self.worker_resources.disk_to_device_channel_id,
+                "data": {"bytes": input_frames_bytes},
+            }
+            if ir_type.is_io_node
+            else None,
+        )
+
+    def emit_evaluate_end(
+        self,
+        evaluate_id: uuid.UUID,
+        result: DataFrame | None,
+        error: BaseException | None,
+    ) -> None:
+        """Emit an Evaluate terminal event."""
+        if error is not None:
+            self.session._evaluations.pop(evaluate_id).failed(error=str(error))
+        else:
+            assert result is not None
+            self.session._evaluations.pop(evaluate_id).completed(
+                output_bytes=result._size_bytes,
+            )
+
+    def close(self) -> None:
+        """Close the Worker and its process-local Collector client."""
+        if self._worker_handle is not None:
+            self._worker_handle.exit()
+            self._worker_handle = None
+        self.session.close()
 
 
 def start_collector(
@@ -289,4 +336,9 @@ def start_collector(
     )
 
 
-__all__ = ["QuentRuntime", "QuentSession", "start_collector"]
+__all__ = [
+    "QuentControllerRuntime",
+    "QuentSession",
+    "QuentWorkerRuntime",
+    "start_collector",
+]

@@ -91,5 +91,6 @@ used to profile your queries.
 ```{eval-rst}
 .. automodule:: cudf_polars.quent
    :members:
-      QuentContext,
+      QuentConfig,
+      QuentQueryConfig,
 ```

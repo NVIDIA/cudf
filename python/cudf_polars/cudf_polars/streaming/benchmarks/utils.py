@@ -847,7 +847,7 @@ def get_executor_options(
     executor_options: dict[str, Any] = (
         run_config.streaming_options.to_executor_options()
     )
-    executor_options["quent_context"] = cudf_polars.quent.QuentContext(
+    executor_options["quent_context"] = cudf_polars.quent.QuentConfig(
         engine_id=run_config.run_id
     )
 

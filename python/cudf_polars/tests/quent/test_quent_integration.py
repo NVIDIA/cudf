@@ -5,8 +5,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import json
+import logging
 import uuid
 from typing import TYPE_CHECKING, Any
 
@@ -20,17 +22,17 @@ import cudf_polars.quent
 from cudf_polars.dsl.tracing import LOG_TRACES
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator, Iterator
     from pathlib import Path
 
     from cudf_polars.engine.core import StreamingEngine
-    from cudf_polars.quent import QuentContext
+    from cudf_polars.quent import QuentConfig
 
 
 @pytest.fixture(params=["ray", "dask", "spmd"])
 def engine_with_quent_context(
     request: pytest.FixtureRequest,
-    quent_context: QuentContext,
+    quent_context: QuentConfig,
     ray_num_ranks: int,
     ray_init_options: dict[str, Any],
 ) -> Iterator[StreamingEngine]:
@@ -92,8 +94,54 @@ def _of_type(events: list[dict[str, Any]], entity: str) -> list[dict[str, Any]]:
     return [event for event in events if entity in event["data"]]
 
 
+def _disable_logging(level: int) -> None:
+    """Set the process-wide logging threshold in a Dask worker."""
+    logging.disable(level)
+
+
+@contextlib.contextmanager
+def suppress_worker_exceptions(
+    engine: StreamingEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Generator[None, None, None]:
+    """Suppress backend logging for a deliberately failed remote query."""
+    dask_client = None
+    try:
+        from cudf_polars.engine.ray import RayEngine
+    except ImportError:
+        pass
+    else:
+        if isinstance(engine, RayEngine):
+            # Ray otherwise reports intentionally unhandled remote errors.
+            monkeypatch.setenv("RAY_IGNORE_UNHANDLED_ERRORS", "1")
+
+    try:
+        from cudf_polars.engine.dask import DaskEngine
+    except ImportError:
+        pass
+    else:
+        if isinstance(engine, DaskEngine):
+            dask_context = engine._dask_context
+            assert dask_context is not None
+            dask_client = dask_context.client
+
+    previous_logging_disable = logging.root.manager.disable
+    logging.disable(logging.CRITICAL)
+    if dask_client is not None:
+        # Dask emits task-failure logs in its worker processes.
+        dask_client.run(_disable_logging, logging.CRITICAL)
+    try:
+        yield
+    finally:
+        logging.disable(previous_logging_disable)
+        if dask_client is not None:
+            dask_client.run(_disable_logging, logging.NOTSET)
+
+
 def test_quent_lifecycle(
-    engine_with_quent_context: StreamingEngine, quent_context: QuentContext
+    engine_with_quent_context: StreamingEngine,
+    quent_context: QuentConfig,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     query = pl.LazyFrame({"x": [1, 2, 3]}).filter(pl.col("x") > 1)
     with engine_with_quent_context:
@@ -103,9 +151,12 @@ def test_quent_lifecycle(
         )
         current_context = dataclasses.replace(
             quent_context,
-            query_group_id=uuid.uuid4(),
-            query_group_name="Updated Query Group",
-            query_name="Iteration 1",
+            query=dataclasses.replace(
+                quent_context.query,
+                query_group_id=uuid.uuid4(),
+                query_group_name="Updated Query Group",
+                query_name="Iteration 1",
+            ),
         )
         engine_with_quent_context.config["executor_options"]["quent_context"] = (
             current_context
@@ -113,7 +164,10 @@ def test_quent_lifecycle(
         query.collect(engine=engine_with_quent_context)
         current_context = dataclasses.replace(
             current_context,
-            query_name="Iteration 2",
+            query=dataclasses.replace(
+                current_context.query,
+                query_name="Iteration 2",
+            ),
         )
         engine_with_quent_context.config["executor_options"]["quent_context"] = (
             current_context
@@ -121,7 +175,10 @@ def test_quent_lifecycle(
         query.collect(engine=engine_with_quent_context)
         current_context = dataclasses.replace(
             current_context,
-            query_name="Failed iteration",
+            query=dataclasses.replace(
+                current_context.query,
+                query_name="Failed iteration",
+            ),
         )
         engine_with_quent_context.config["executor_options"]["quent_context"] = (
             current_context
@@ -131,11 +188,14 @@ def test_quent_lifecycle(
             .rolling("orderby", period="2i")
             .agg(pl.sum("value"))
         )
-        with pytest.raises(Exception):  # noqa: B017 - backend-specific wrapper
+        with (
+            suppress_worker_exceptions(engine_with_quent_context, monkeypatch),
+            pytest.raises(Exception),  # noqa: B017 - backend-specific wrapper
+        ):
             failed_query.collect(engine=engine_with_quent_context)
         with pytest.raises(ValueError, match="quent_context cannot be changed"):
             engine_with_quent_context._reset(
-                executor_options={"quent_context": cudf_polars.quent.QuentContext()}
+                executor_options={"quent_context": cudf_polars.quent.QuentConfig()}
             )
 
     assert engine_with_quent_context._quent_output_root is not None
@@ -155,7 +215,7 @@ def test_quent_lifecycle(
 
     query_group_events = _of_type(events, "QueryGroup")
     assert len(query_group_events) == 1
-    assert query_group_events[0]["id"] == str(current_context.query_group_id)
+    assert query_group_events[0]["id"] == str(current_context.query.query_group_id)
     assert (
         query_group_events[0]["data"]["QueryGroup"]["Declared"]["instance_name"]
         == "Updated Query Group"

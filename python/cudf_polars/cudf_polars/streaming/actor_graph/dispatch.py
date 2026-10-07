@@ -69,8 +69,8 @@ class GenState(TypedDict):
         Downstream partitioning requests for each IR node.
     quent_operator_map
         Mapping from IR nodes to physical-plan Quent operators.
-    quent_execution_context
-        Rank-local Quent execution context.
+    quent_query_worker_state
+        State for the query executing on this worker.
     """
 
     context: Context
@@ -84,7 +84,7 @@ class GenState(TypedDict):
     collective_id_map: dict[IR, list[int]]
     partitioning_requests: dict[IR, tuple[PartitioningRequest, ...]]
     quent_operator_map: dict[IR, uuid.UUID] | None
-    quent_execution_context: cudf_polars.quent._context.LocalQuentContext | None
+    quent_query_worker_state: cudf_polars.quent._context.QuentQueryWorkerState | None
 
 
 def ir_context_for_node(rec: SubNetGenerator, ir: IR) -> IRExecutionContext:
@@ -101,20 +101,20 @@ def ir_context_for_node(rec: SubNetGenerator, ir: IR) -> IRExecutionContext:
     Returns
     -------
     ir_context
-        A clone of rec.state["ir_context"] with ``quent_ir_execution_context``
+        A clone of rec.state["ir_context"] with ``quent_ir_execution_state``
         bound to the physical Quent operator for the given IR node.
     """
     import cudf_polars.quent._context
 
     ir_context = rec.state["ir_context"]
     quent_operator_map = rec.state["quent_operator_map"]
-    quent_execution_context = rec.state["quent_execution_context"]
-    if quent_operator_map is not None and quent_execution_context is not None:
+    quent_query_worker_state = rec.state["quent_query_worker_state"]
+    if quent_operator_map is not None and quent_query_worker_state is not None:
         operator_id = quent_operator_map[ir]
         return dataclasses.replace(
             ir_context,
-            quent_ir_execution_context=cudf_polars.quent._context.QuentIRExecutionContext.from_execution_context(
-                execution_context=quent_execution_context,
+            quent_ir_execution_state=cudf_polars.quent._context.QuentIRExecutionState.from_query_worker_state(
+                query_worker_state=quent_query_worker_state,
                 operator_id=operator_id,
             ),
         )

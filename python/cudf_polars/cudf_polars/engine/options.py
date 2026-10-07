@@ -31,7 +31,7 @@ from cudf_polars.utils.config import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from cudf_polars.quent import QuentContext
+    from cudf_polars.quent import QuentConfig
     from cudf_polars.utils.config import (
         JoinFilterPushdownOptions,
         ParquetOptions,
@@ -441,7 +441,7 @@ class StreamingOptions:
     sink_to_directory: bool | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__SINK_TO_DIRECTORY", parse_boolean
     )
-    quent_context: QuentContext | None | Unspecified = _opt(
+    quent_context: QuentConfig | None | Unspecified = _opt(
         "executor",
     )
 

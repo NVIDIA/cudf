@@ -13,8 +13,8 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/std/type_traits>
 #include <thrust/transform_scan.h>
-
 
 namespace cudf::io::parquet::detail {
 
@@ -23,6 +23,7 @@ namespace {
 namespace cg = cooperative_groups;
 namespace delta_fastpath {
 
+// Returns whether the fast-path kernel supports the given page.
 CUDF_HOST_DEVICE __forceinline__ bool supported(PageInfo const& page, ColumnChunkDesc const& chunk)
 {
   return BitAnd(static_cast<uint32_t>(decode_kernel_mask::DELTA_BINARY), page.kernel_mask) != 0 &&
@@ -39,6 +40,7 @@ constexpr int block_size                  = 128;
 constexpr int word_alignment              = 4;
 constexpr int max_fast_bit_width          = 27;
 
+// Perform arithmetic through uint64_t to preserve wrapping semantics without signed-overflow UB.
 __device__ __forceinline__ int64_t wrapping_i64_add(int64_t a, int64_t b)
 {
   return static_cast<int64_t>(static_cast<uint64_t>(a) + static_cast<uint64_t>(b));
@@ -51,47 +53,45 @@ __device__ __forceinline__ int64_t wrapping_i64_multiply(int64_t a, int64_t b)
 
 __device__ __forceinline__ int64_t decode_zigzag(uint64_t encoded)
 {
-  int64_t magnitude = encoded >> 1;
-  int sign_bit      = (encoded & 1);
-  // if sign_bit == 0, return magnitude
-  // if sign_bit == 1, return ~magnitude
-  // this can be done by XOR with 000..0 or 11...1, e.g. 0 or -1.
+  int64_t const magnitude = encoded >> 1;
+  int const sign_bit      = (encoded & 1);
+  // XOR with 0 or -1 returns magnitude or ~magnitude, respectively.
   return magnitude ^ (-sign_bit);
 }
 
-template <bool FAST>
-struct decode_result_type;
-template <>
-struct decode_result_type<true> {
-  using type = uint32_t;
-};
-template <>
-struct decode_result_type<false> {
-  using type = int64_t;
-};
+template <bool fast>
+using decode_result_t = cuda::std::conditional_t<fast, uint32_t, int64_t>;
 
+// Parquet stores header integers as variable-length ULEB128 values. Each byte contains a
+// continuation bit (MSB) and 7 data bits.
+//
+// The slow path reads one byte at a time, replicated across all lanes. The fast path handles values
+// that fit in four bytes. ASSUME_FAST uses format guarantees to omit the slow-path branch.
+//
 template <bool ASSUME_FAST>
-__device__ __forceinline__ static int read_uleb128(
-  uint8_t const* input, int lane_id, typename decode_result_type<ASSUME_FAST>::type& decoded)
+__device__ __forceinline__ static int read_uleb128(uint8_t const* input,
+                                                   int lane_id,
+                                                   decode_result_t<ASSUME_FAST>& decoded)
 {
-  // One approach is replicated mapping, by loading a packed aligned 4B word,
-  // and using dp2a trick to add up the bytes. Instead, use warp-coop approach.
-  int reversed_byte_lane = (~lane_id & 3);
-  uint8_t lane_byte      = __ldg(&input[reversed_byte_lane]);
-  uint32_t lane_bits     = (lane_byte & 0x7f) << (7 * reversed_byte_lane);
+  // Each group of four lanes collectively loads the first four bytes and shifts them into position.
+  // __clz then determines the encoded length from the first cleared continuation bit. Values longer
+  // than four bytes fall through to the slow path.
+  int const reversed_byte_lane = (~lane_id & 3);
+  uint8_t const lane_byte      = __ldg(&input[reversed_byte_lane]);
+  uint32_t const lane_bits     = (lane_byte & 0x7f) << (7 * reversed_byte_lane);
 
-  // the ~lane_id gives us reversal, such that __clz gives #bytes.
-  uint32_t terminator_mask = __ballot_sync(full_mask, static_cast<int8_t>(lane_byte) >= 0);
-  int byte_count           = __clz(terminator_mask) + 1;
-  uint32_t result          = __reduce_or_sync(full_mask, lane_bits);
-  uint32_t mask            = (1u << (7 * byte_count)) - 1;
+  // Reversing the lane order makes __clz return the encoded byte count.
+  uint32_t const terminator_mask = __ballot_sync(full_mask, static_cast<int8_t>(lane_byte) >= 0);
+  int const byte_count           = __clz(terminator_mask) + 1;
+  uint32_t const result          = __reduce_or_sync(full_mask, lane_bits);
+  uint32_t const mask            = (1u << (7 * byte_count)) - 1;
 
   if constexpr (ASSUME_FAST) {
     decoded = result & mask;
     return byte_count;
   }
   if (__builtin_expect(byte_count <= 4, true)) {
-    decoded = static_cast<uint64_t>(result & mask);
+    decoded = uint64_t{result & mask};
     return byte_count;
   }
 
@@ -100,52 +100,62 @@ __device__ __forceinline__ static int read_uleb128(
   uint8_t byte;
   do {
     byte = input[i];
-    decoded |= static_cast<uint64_t>(byte & 0x7f) << (7 * i);
+    // Mask off the continuation bit and shift the payload into position.
+    decoded |= (uint64_t{byte} & 0x7f) << (7 * i);
     i += 1;
+    // Test the continuation bit.
   } while (byte & 0x80);
   return i;
 }
 
+// Extracts one bit-packed value. word_input is word-aligned, and bit_alignment specifies the
+// initial bit offset.
 template <bool FAST>
-__device__ __forceinline__ static void extract_bitpack(
-  uint32_t const* word_input,
-  int bit_width,
-  int value_index,
-  int bit_alignment,
-  typename decode_result_type<FAST>::type& decoded_value)
+__device__ __forceinline__ static void extract_bitpack(uint32_t const* word_input,
+                                                       int bit_width,
+                                                       int value_index,
+                                                       int bit_alignment,
+                                                       decode_result_t<FAST>& decoded_value)
 {
   if (bit_width < 0 || value_index < 0) { __builtin_unreachable(); }
 
-  // 32 values, which are at least 1bit in size, are guaranteed to jump in
-  // multiples of 4B.
-  int bit_idx  = bit_width * value_index + bit_alignment;
-  int word_idx = bit_idx / bits_per_word;
+  // Only the initial misalignment is needed because each warp advances by 32 values, making
+  // value_index * bit_width advance in four-byte multiples.
+  int const bit_idx  = bit_width * value_index + bit_alignment;
+  int const word_idx = bit_idx / bits_per_word;
 
+  // Buffer padding makes the __ldg calls safe unconditionally. A misaligned value of at most 32
+  // bits spans no more than two words; a value of at most 64 bits spans no more than three.
+  // funnelshift_r implicitly applies bit_idx % 32.
   if constexpr (FAST) {
     if (bit_width > max_fast_bit_width) { __builtin_unreachable(); }
-    int first_word_index  = word_idx;
-    int second_word_index = word_idx + 1;
-    // safe to read unconditionally?
-    uint32_t first_word  = __ldg(&word_input[first_word_index]);
-    uint32_t second_word = __ldg(&word_input[second_word_index]);
-    uint32_t mask        = (1u << bit_width) - 1;
-    decoded_value        = __funnelshift_r(first_word, second_word, bit_idx) & mask;
+    int const first_word_index  = word_idx;
+    int const second_word_index = word_idx + 1;
+    uint32_t const first_word   = __ldg(&word_input[first_word_index]);
+    uint32_t const second_word  = __ldg(&word_input[second_word_index]);
+    uint32_t const mask         = (1u << bit_width) - 1;
+    decoded_value               = __funnelshift_r(first_word, second_word, bit_idx) & mask;
   } else {
-    int first_word_index  = word_idx;
-    int second_word_index = word_idx + 1;
-    int third_word_index  = word_idx + 2;
-    uint32_t first_word   = __ldg(&word_input[first_word_index]);
-    uint32_t second_word  = __ldg(&word_input[second_word_index]);
-    uint32_t third_word   = __ldg(&word_input[third_word_index]);
+    int const first_word_index  = word_idx;
+    int const second_word_index = word_idx + 1;
+    int const third_word_index  = word_idx + 2;
+    uint32_t const first_word   = __ldg(&word_input[first_word_index]);
+    uint32_t const second_word  = __ldg(&word_input[second_word_index]);
+    uint32_t const third_word   = __ldg(&word_input[third_word_index]);
 
-    uint64_t lower_bits = __funnelshift_r(first_word, second_word, bit_idx);
-    uint64_t upper_bits = __funnelshift_r(second_word, third_word, bit_idx);
-    uint64_t mask       = bit_width == 64 ? ((uint64_t)-1) : ((1ull << bit_width) - 1);
+    uint64_t const lower_bits = __funnelshift_r(first_word, second_word, bit_idx);
+    uint64_t const upper_bits = __funnelshift_r(second_word, third_word, bit_idx);
+    uint64_t const mask       = bit_width == 64 ? ~uint64_t{0} : ((1ull << bit_width) - 1);
 
     decoded_value = (lower_bits | (upper_bits << 32)) & mask;
   }
 }
 
+// Decodes 32 values and writes them to output_ptr. word_input is aligned, bit_alignment specifies
+// its initial bit offset, min_delta is the Parquet block's delta offset, and offset_value is the
+// running value. decoded_count, skip_count, and decode_end control the output range.
+//
+// Returns the number of input words consumed.
 template <bool FAST>
 __device__ __forceinline__ static int handle_32_elements(uint32_t const* word_input,
                                                          int bit_width,
@@ -158,10 +168,13 @@ __device__ __forceinline__ static int handle_32_elements(uint32_t const* word_in
                                                          int decode_end,
                                                          int64_t* __restrict__ output_ptr)
 {
-  using value_type = typename decode_result_type<FAST>::type;
+  using value_type = decode_result_t<FAST>;
   value_type decoded;
   extract_bitpack<FAST>(word_input, bit_width, lane_id, bit_alignment, decoded);
 
+  // The decoded values are int64_t, but shuffle instructions operate on 32-bit words. When
+  // bit_width is at most max_fast_bit_width, the sum of 32 elements fits in 32 bits, requiring one
+  // shuffle per scan stage.
   value_type prefix_sum = decoded;
 #pragma unroll
   for (int jump = 1; jump < warp_size; jump *= 2) {
@@ -177,32 +190,40 @@ __device__ __forceinline__ static int handle_32_elements(uint32_t const* word_in
         : "+r"(prefix_sum)
         : "r"(jump));
     } else {
-      int64_t partial = __shfl_up_sync(full_mask, prefix_sum, jump);
+      int64_t const partial = __shfl_up_sync(full_mask, prefix_sum, jump);
       if (lane_id >= jump) { prefix_sum = wrapping_i64_add(prefix_sum, partial); }
     }
   }
+
+  // A separate warp-wide reduction avoids the dependency on lane 31's final prefix sum, keeping the
+  // offset adjustment off the prefix-scan critical path.
   value_type full_sum;
   if constexpr (FAST) {
-    // can be interleaved with above.
     full_sum = __reduce_add_sync(full_mask, decoded);
   } else {
     full_sum = __shfl_sync(full_mask, prefix_sum, warp_size - 1);
   }
 
-  int64_t min_delta_lane = wrapping_i64_multiply(static_cast<int64_t>(1 + lane_id), min_delta);
-  int64_t delta          = wrapping_i64_add(static_cast<int64_t>(prefix_sum), min_delta_lane);
-  int64_t value          = wrapping_i64_add(delta, offset_value);
+  // Applying the int64_t minimum delta and offset after the scan preserves the 32-bit shuffle
+  // optimization.
+  int64_t const min_delta_lane =
+    wrapping_i64_multiply(static_cast<int64_t>(1 + lane_id), min_delta);
+  int64_t const delta = wrapping_i64_add(static_cast<int64_t>(prefix_sum), min_delta_lane);
+  int64_t const value = wrapping_i64_add(delta, offset_value);
 
-  int64_t min_delta_total  = wrapping_i64_multiply(static_cast<int64_t>(warp_size), min_delta);
-  int64_t new_offset_value = wrapping_i64_add(static_cast<int64_t>(full_sum), min_delta_total);
-  offset_value             = wrapping_i64_add(offset_value, new_offset_value);
+  int64_t const min_delta_total = wrapping_i64_multiply(static_cast<int64_t>(warp_size), min_delta);
+  int64_t const new_offset_value =
+    wrapping_i64_add(static_cast<int64_t>(full_sum), min_delta_total);
+  offset_value = wrapping_i64_add(offset_value, new_offset_value);
 
+  // Bounds are checked once per fast-path 128-element chunk, to avoid unnecessary checks here.
   if (FAST || (decoded_count + lane_id >= skip_count && decoded_count + lane_id < decode_end)) {
     __stcs(&output_ptr[decoded_count - skip_count + lane_id], value);
   }
   return vals_per_miniblock_multiple * bit_width / bits_per_word;
 }
 
+// Decodes supported pages using one warp per page.
 CUDF_KERNEL void __launch_bounds__(block_size) decode(PageInfo const* __restrict pages,
                                                       int n_pages,
                                                       ColumnChunkDesc const* __restrict chunks,
@@ -210,69 +231,77 @@ CUDF_KERNEL void __launch_bounds__(block_size) decode(PageInfo const* __restrict
                                                       size_t num_rows,
                                                       bool const* __restrict page_mask)
 {
-  int warp_id = __shfl_sync(full_mask, threadIdx.x / warp_size, 0);
-  int lane_id = threadIdx.x % warp_size;
+  // The shuffle is semantically unnecessary but proves to the compiler that warp_id is
+  // warp-uniform.
+  int const warp_id = __shfl_sync(full_mask, threadIdx.x / warp_size, 0);
+  int const lane_id = threadIdx.x % warp_size;
 
-  int page_idx = blockIdx.x * (block_size / warp_size) + warp_id;
+  int const page_idx = blockIdx.x * (block_size / warp_size) + warp_id;
   if (page_idx >= n_pages) { return; }
 
-  PageInfo page_info         = pages[page_idx];
-  bool const page_selected   = page_mask == nullptr || page_mask[page_idx];
-  ColumnChunkDesc chunk_info = chunks[page_info.chunk_idx];
+  PageInfo const page_info         = pages[page_idx];
+  bool const page_selected         = page_mask == nullptr || page_mask[page_idx];
+  ColumnChunkDesc const chunk_info = chunks[page_info.chunk_idx];
   if (!supported(page_info, chunk_info)) { return; }
 
-  int64_t abs_page_base_row = chunk_info.start_row + page_info.chunk_row;
+  // Skip pages outside [min_row, min_row + num_rows). Because each CTA contains multiple warps,
+  // interleaving selected and unselected pages may increase the number of active CTAs.
+  int64_t const abs_page_base_row = chunk_info.start_row + page_info.chunk_row;
   if (!page_selected || abs_page_base_row + page_info.num_input_values <= min_row ||
       abs_page_base_row >= min_row + num_rows) {
     return;
   }
 
-  int64_t* __restrict__ output_ptr = static_cast<int64_t*>(chunk_info.column_data_base[0]) +
-                                     max((int64_t)0, (int64_t)(abs_page_base_row - min_row));
+  int64_t* __restrict__ const output_ptr =
+    static_cast<int64_t*>(chunk_info.column_data_base[0]) +
+    max(int64_t{0}, static_cast<int64_t>(abs_page_base_row - min_row));
   uint8_t const* __restrict__ input_ptr =
     page_info.page_data +
     ((page_info.flags & PAGEINFO_FLAGS_V2)
        ? page_info.lvl_bytes[level_type::REPETITION] + page_info.lvl_bytes[level_type::DEFINITION]
        : 0);
-  int skip_count = max((int64_t)0, (int64_t)(min_row - abs_page_base_row));
-  int valid_count =
-    min((int64_t)page_info.num_input_values, (int64_t)(min_row + num_rows - abs_page_base_row));
+  int const skip_count  = max(int64_t{0}, static_cast<int64_t>(min_row - abs_page_base_row));
+  int const valid_count = min(static_cast<int64_t>(page_info.num_input_values),
+                              static_cast<int64_t>(min_row + num_rows - abs_page_base_row));
 
-  int values_per_block;
-  int miniblocks_per_block;
+  // Parse the page header.
   int64_t offset_value;
   uint32_t encoded_values_per_block, encoded_miniblocks_per_block, total_value_count;
   int64_t encoded_first_value;
 
   input_ptr += read_uleb128<true>(input_ptr, lane_id, encoded_values_per_block);
-  values_per_block = static_cast<int>(encoded_values_per_block);
+  int const values_per_block = static_cast<int>(encoded_values_per_block);
   __builtin_assume(values_per_block % vals_per_block_multiple == 0);
   input_ptr += read_uleb128<true>(input_ptr, lane_id, encoded_miniblocks_per_block);
-  miniblocks_per_block = static_cast<int>(encoded_miniblocks_per_block);
+  int const miniblocks_per_block = static_cast<int>(encoded_miniblocks_per_block);
   input_ptr += read_uleb128<true>(input_ptr, lane_id, total_value_count);
   input_ptr += read_uleb128<false>(input_ptr, lane_id, encoded_first_value);
   offset_value = decode_zigzag(encoded_first_value);
 
-  int values_per_miniblock = values_per_block / miniblocks_per_block;
+  int const values_per_miniblock = values_per_block / miniblocks_per_block;
   __builtin_assume(values_per_miniblock % vals_per_miniblock_multiple == 0);
 
+  // The first value requires no delta decoding; it is the initial offset value.
   int decoded_count = 0;
   if (skip_count == 0 && lane_id == 0) { __stcs(&output_ptr[0], offset_value); }
   decoded_count += 1;
 
-  int decode_end = valid_count;
-  // main block decoding loop.
+  int const decode_end = valid_count;
+  // Main block decoding loop.
   while (decoded_count < decode_end) {
     int64_t encoded_min_delta = 0;
     input_ptr += read_uleb128<false>(input_ptr, lane_id, encoded_min_delta);
 
-    int64_t min_delta         = decode_zigzag(encoded_min_delta);
-    uint8_t const* bit_widths = input_ptr;
-    uint8_t const* data       = input_ptr + miniblocks_per_block;
+    int64_t const min_delta         = decode_zigzag(encoded_min_delta);
+    uint8_t const* const bit_widths = input_ptr;
+    uint8_t const* const data       = input_ptr + miniblocks_per_block;
 
-    int align_bytes           = reinterpret_cast<uintptr_t>(data) & (word_alignment - 1);
+    int const align_bytes     = reinterpret_cast<uintptr_t>(data) & (word_alignment - 1);
     uint32_t const* word_data = reinterpret_cast<uint32_t const*>(data - align_bytes);
 
+    // Collect the bit width for each 32-value group and determine whether the fast path applies:
+    // (1) all 128 values are within the output range;
+    // (2) all corresponding bit widths are at most max_fast_bit_width.
     int miniblock_group_count = 0;
     int miniblock_index       = 0;
     for (int block_value_offset = 0; block_value_offset < values_per_block;
@@ -281,22 +310,26 @@ CUDF_KERNEL void __launch_bounds__(block_size) decode(PageInfo const* __restrict
       bool fast_path =
         decoded_count >= skip_count && decoded_count + vals_per_block_multiple <= decode_end;
 
+      // A 128-value group may cross miniblock boundaries, for example when values_per_miniblock is
+      // 96 and values_per_block is 384. Track the miniblock with counters to avoid division and
+      // modulo.
 #pragma unroll
       for (int group_index = 0; group_index < vals_per_block_multiple / vals_per_miniblock_multiple;
            ++group_index) {
-        int current_miniblock = miniblock_index;
+        int const current_miniblock = miniblock_index;
         if (++miniblock_group_count == values_per_miniblock / vals_per_miniblock_multiple) {
           ++miniblock_index;
           miniblock_group_count = 0;
         }
 
-        // Keep in mind, bitwidths are 1B each- so a lot will fit in a single
-        // sector.
-        //
+        // Many one-byte bit widths fit in one cache sector, so these loads should frequently hit
+        // cache.
         group_bit_widths[group_index] = __ldg(&bit_widths[current_miniblock]);
+
         fast_path &= group_bit_widths[group_index] <= max_fast_bit_width;
       }
 
+      // Dispatch at coarse granularity to reduce branching.
       if (__builtin_expect(fast_path, true)) {
 #pragma unroll
         for (int group_index = 0;
@@ -1309,6 +1342,8 @@ void decode_delta_binary(cudf::detail::hostdevice_span<PageInfo> pages,
   dim3 const v3_grid((pages.size() + (delta_fastpath::block_size / delta_fastpath::warp_size) - 1) /
                        (delta_fastpath::block_size / delta_fastpath::warp_size),
                      1);
+  // Dispatch the fast path kernel first, which only processes pages it can handle. The regular kernel
+  // runs on the remaining pages.
   delta_fastpath::decode<<<v3_grid, v3_block, 0, stream.get()>>>(
     pages.device_ptr(), static_cast<int>(pages.size()), chunks.device_ptr(), min_row, num_rows,
     page_mask.empty() ? nullptr : page_mask.data());

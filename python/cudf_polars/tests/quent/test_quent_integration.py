@@ -87,11 +87,12 @@ def _stored_events(root: Path) -> list[dict[str, Any]]:
     events = []
     for path in root.glob("*/*/*.ndjson"):
         entity_name = path.parent.name
-        for line in path.read_text().splitlines():
+        for seq, line in enumerate(path.read_text().splitlines()):
             event = json.loads(line)
             event["data"] = {entity_name: event["data"]}
+            event["sequence"] = seq
             events.append(event)
-    return sorted(events, key=lambda event: event["timestamp"])
+    return sorted(events, key=lambda event: (event["timestamp"], event["sequence"]))
 
 
 def _of_type(events: list[dict[str, Any]], entity: str) -> list[dict[str, Any]]:

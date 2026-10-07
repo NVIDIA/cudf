@@ -86,17 +86,14 @@ struct warp_reduce_aggregator {
     if constexpr (!has_warp_reduce_path<Source, k>) {
       return;
     } else {
-      using Target      = cudf::detail::target_type_t<Source, k>;
-      using T           = cudf::device_storage_type_t<Target>;
-      using S           = cudf::device_storage_type_t<Source>;
-      using WarpReduce  = cub::WarpReduce<T>;
-      using ValidReduce = cub::WarpReduce<int>;
+      using Target     = cudf::detail::target_type_t<Source, k>;
+      using T          = cudf::device_storage_type_t<Target>;
+      using S          = cudf::device_storage_type_t<Source>;
+      using WarpReduce = cub::WarpReduce<T>;
       // A full warp reduces with shuffles only, so the temporary storage is empty and need not be
       // shared.
       static_assert(cuda::std::is_empty_v<typename WarpReduce::InternalWarpReduce::TempStorage>);
-      static_assert(cuda::std::is_empty_v<typename ValidReduce::InternalWarpReduce::TempStorage>);
       typename WarpReduce::TempStorage warp_storage;
-      typename ValidReduce::TempStorage valid_storage;
 
       // Lanes without a valid input contribute the identity of the aggregation.
       auto const valid = active && (k == aggregation::COUNT_ALL || source.is_valid(source_index));
@@ -118,10 +115,13 @@ struct warp_reduce_aggregator {
         }
       }();
 
-      auto const lane     = threadIdx.x % cudf::detail::warp_size;
-      auto const prev_key = __shfl_up_sync(0xffff'ffffu, key, 1);
-      int const is_head   = lane == 0 || prev_key != key;
-      auto const reduced  = [&] {
+      constexpr auto full_mask = 0xffff'ffffu;
+      auto const lane          = threadIdx.x % cudf::detail::warp_size;
+      auto const prev_key      = __shfl_up_sync(full_mask, key, 1);
+      int const is_head        = lane == 0 || prev_key != key;
+      auto const head_mask     = __ballot_sync(full_mask, is_head);
+      auto const valid_mask    = __ballot_sync(full_mask, valid);
+      auto const reduced       = [&] {
         if constexpr (k == aggregation::MIN) {
           return WarpReduce(warp_storage).HeadSegmentedReduce(value, is_head, cudf::DeviceMin{});
         } else if constexpr (k == aggregation::MAX) {
@@ -130,9 +130,13 @@ struct warp_reduce_aggregator {
           return WarpReduce(warp_storage).HeadSegmentedSum(value, is_head);
         }
       }();
-      auto const num_valid = ValidReduce(valid_storage).HeadSegmentedSum(valid ? 1 : 0, is_head);
 
-      if (!active || !is_head || num_valid == 0) { return; }
+      if (!active || !is_head) { return; }
+      auto const later_heads = lane == cudf::detail::warp_size - 1 ? 0u : head_mask >> (lane + 1);
+      auto const run_size = later_heads == 0 ? cudf::detail::warp_size - lane : __ffs(later_heads);
+      auto const run_mask =
+        (run_size == cudf::detail::warp_size ? full_mask : (1u << run_size) - 1u) << lane;
+      if ((valid_mask & run_mask) == 0) { return; }
       auto* const element = &target.element<T>(target_row);
       if constexpr (k == aggregation::MIN) {
         cudf::detail::atomic_min(element, reduced);

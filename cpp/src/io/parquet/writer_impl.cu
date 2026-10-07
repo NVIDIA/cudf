@@ -1079,11 +1079,11 @@ parquet_column_view::parquet_column_view(schema_tree_node const& schema_node,
     }
     curr_schema_node = schema_tree[curr_schema_node.parent_idx];
   }
-  _nullability = std::vector<uint8_t>(r_nullability.crbegin(), r_nullability.crend());
+  _nullability  = std::vector<uint8_t>(r_nullability.crbegin(), r_nullability.crend());
+  auto const mr = cudf::get_current_device_resource_ref();
   // TODO(cp): Explore doing this for all columns in a single go outside this ctor. Maybe using
   // hostdevice_vector. Currently this involves a separate async H2D copy for each column.
-  _d_nullability = cudf::detail::make_device_uvector_async(
-    _nullability, stream, cudf::get_current_device_resource_ref());
+  _d_nullability = cudf::detail::make_device_uvector_async(_nullability, stream, mr);
 
   _is_list = (_max_rep_level > 0);
 
@@ -1095,7 +1095,7 @@ parquet_column_view::parquet_column_view(schema_tree_node const& schema_node,
     // Calculate row offset into dremel data (repetition/definition values) and the respective
     // definition and repetition levels
     cudf::detail::dremel_data dremel =
-      get_dremel_data(cudf_col, _nullability, schema_node.output_as_byte_array, stream);
+      get_dremel_data(cudf_col, _nullability, schema_node.output_as_byte_array, stream, mr);
     _dremel_offsets = std::move(dremel.dremel_offsets);
     _rep_level      = std::move(dremel.rep_level);
     _def_level      = std::move(dremel.def_level);

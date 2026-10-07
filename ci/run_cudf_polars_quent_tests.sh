@@ -36,3 +36,9 @@ cp "${generated_stub}" "${TRACKED_STUB}"
 popd
 
 git diff --exit-code -- "${TRACKED_STUB}"
+
+pushd python/cudf_polars/quent/analyzer
+cargo fmt --all -- --check
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked --all-targets
+popd

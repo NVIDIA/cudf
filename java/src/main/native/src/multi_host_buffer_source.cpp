@@ -5,6 +5,10 @@
 
 #include "multi_host_buffer_source.hpp"
 
+#include <cudf/utilities/memory_resource.hpp>
+
+#include <cuda/buffer>
+
 #include <algorithm>
 #include <cstring>
 #include <sstream>
@@ -87,15 +91,16 @@ size_t multi_host_buffer_source::host_read(size_t offset, size_t size, uint8_t* 
 std::unique_ptr<cudf::io::datasource::buffer> multi_host_buffer_source::device_read(
   size_t offset, size_t size, cuda::stream_ref stream)
 {
-  rmm::device_buffer buf(size, stream);
-  auto dst        = static_cast<uint8_t*>(buf.data());
+  cuda::device_buffer<uint8_t> buf(
+    stream, cudf::get_current_device_resource_ref(), size, cuda::no_init);
+  auto dst        = buf.data();
   auto bytes_read = device_read(offset, size, dst, stream);
   if (bytes_read != size) {
     std::stringstream ss;
     ss << "Expected device read of " << size << " found " << bytes_read;
     throw std::logic_error(ss.str());
   }
-  return std::make_unique<owning_buffer<rmm::device_buffer>>(std::move(buf));
+  return std::make_unique<owning_buffer<cuda::device_buffer<uint8_t>>>(std::move(buf));
 }
 
 size_t multi_host_buffer_source::device_read(size_t offset,

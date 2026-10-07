@@ -1142,7 +1142,7 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_Table_deleteCudfTable(JNIEnv* env,
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    delete reinterpret_cast<cudf::table_view*>(j_cudf_table_view);
+    cudf::jni::safe_delete<cudf::table_view>(j_cudf_table_view);
   }
   JNI_CATCH(env, );
 }
@@ -1762,7 +1762,7 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_TableWithMeta_close(JNIEnv* env, jcla
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    delete reinterpret_cast<cudf::io::table_with_metadata*>(handle);
+    cudf::jni::safe_delete<cudf::io::table_with_metadata>(handle);
   }
   JNI_CATCH(env, );
 }
@@ -2980,7 +2980,7 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_Table_closeArrowTable(JNIEnv* env,
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    delete handle;
+    cudf::jni::safe_delete<std::shared_ptr<arrow::Table>>(handle);
   }
   JNI_CATCH(env, );
 }

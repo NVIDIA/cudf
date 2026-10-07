@@ -1597,7 +1597,8 @@ void encode_pages(hostdevice_2dvector<EncColumnChunk>& chunks,
                codec_exec_result{0, codec_status::FAILURE});
 
   EncodePages(pages, write_v2_headers, comp_in, comp_out, comp_res, stream);
-  compress(compression, comp_in, comp_out, comp_res, stream);
+  compress(
+    compression, comp_in, comp_out, comp_res, stream, cudf::get_current_device_resource_ref());
 
   // TBD: Not clear if the official spec actually allows dynamically turning off compression at the
   // chunk-level

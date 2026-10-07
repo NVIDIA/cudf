@@ -39,6 +39,13 @@ extern "C" __device__ cudf::errc lto_checked_hundred_over(int32_t* out, int32_t 
   return cudf::errc::SUCCESS;
 }
 
+// Fails a row with the error code it is given; zero succeeds.
+extern "C" __device__ cudf::errc lto_fail_with(int32_t* out, int32_t code)
+{
+  *out = code;
+  return static_cast<cudf::errc>(code);
+}
+
 extern "C" __device__ cudf::errc lto_xor_popcount(int32_t* out, int32_t a, int32_t b)
 {
   *out = __popc(a ^ b);

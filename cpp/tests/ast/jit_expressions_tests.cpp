@@ -258,6 +258,37 @@ TEST_F(JITExpressionTest, UdfCallHighestErrorCodeWins)
   }
 }
 
+TEST_F(JITExpressionTest, UdfCallUserErrorCodes)
+{
+  // lto_fail_with fails each row with the code it holds. The codes libcudf reserves for
+  // user-defined functions reach the caller unchanged, and as the highest codes they are reported
+  // over libcudf's own.
+  auto const code     = [](cudf::errc error) { return static_cast<int32_t>(error); };
+  auto const error_of = [](std::initializer_list<int32_t> codes) {
+    auto column = column_wrapper<int32_t>(codes.begin(), codes.end());
+    auto tree   = cudf::ast::tree{};
+    auto ref    = cudf::ast::column_reference(0);
+    auto& call  = cudf::ast::jit::call(tree, callee("lto_fail_with"), int32_type, {ref});
+    try {
+      std::ignore = cudf::compute_column_jit(cudf::table_view{{column}}, call);
+    } catch (cudf::evaluation_error const& e) {
+      EXPECT_NE(std::string_view{e.what()}.find(cudf::to_string(e.error_code())),
+                std::string_view::npos);
+      return e.error_code();
+    }
+    return cudf::errc::SUCCESS;
+  };
+
+  EXPECT_EQ(error_of({0, code(cudf::errc::USER_ERROR_0), 0}), cudf::errc::USER_ERROR_0);
+  EXPECT_EQ(error_of({code(cudf::errc::USER_ERROR_31), 0, code(cudf::errc::USER_ERROR_5)}),
+            cudf::errc::USER_ERROR_31);
+  EXPECT_EQ(error_of({code(cudf::errc::DIVISION_BY_ZERO),
+                      code(cudf::errc::USER_ERROR_0),
+                      code(cudf::errc::ARITHMETIC_OVERFLOW)}),
+            cudf::errc::USER_ERROR_0);
+  EXPECT_STREQ(cudf::to_string(cudf::errc::USER_ERROR_17), "USER_ERROR_17");
+}
+
 TEST_F(JITExpressionTest, UdfCallOverTimestamps)
 {
   using cudf::timestamp_ns;

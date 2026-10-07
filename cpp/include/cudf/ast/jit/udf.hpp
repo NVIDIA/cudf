@@ -42,8 +42,9 @@ namespace ast::jit {
  *
  * where `R` is the device type of the call's output type and `A...` are the device types of its
  * arguments, passed by value (`int32_t`, `double`, `cudf::timestamp_D`, ...). It returns
- * `cudf::errc::SUCCESS`, or an error code that fails the row. The signature is provisional: it
- * will follow the row ABI that libcudf's JIT is moving to.
+ * `cudf::errc::SUCCESS`, or an error code that fails the row, such as one of the codes
+ * `cudf::errc::USER_ERROR_0` to `USER_ERROR_31` that libcudf reserves for user-defined functions.
+ * The signature is provisional: it will follow the row ABI that libcudf's JIT is moving to.
  *
  * Rules for the function and its fragment:
  * - The signature is not type-checked: a fragment whose function differs from the declaration

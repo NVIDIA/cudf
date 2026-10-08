@@ -2410,8 +2410,7 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_ColumnView_deleteColumnView(JNIEnv* e
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    cudf::column_view* view = reinterpret_cast<cudf::column_view*>(handle);
-    delete view;
+    cudf::jni::safe_delete<cudf::column_view>(handle);
   }
   JNI_CATCH(env, );
 }

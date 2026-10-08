@@ -51,8 +51,6 @@ extern "C" __device__ transform_type transform;
 
 }  // namespace lto
 
-// Expanding the argument packs directly avoids instantiating concatenated tuple types and
-// cuda::std::apply machinery, which is expensive in NVRTC's C++ frontend.
 template <typename... Args>
   requires requires(Args... args) { GENERIC_TRANSFORM_OP(args...); }
 __device__ errc invoke_transform(Args... args)

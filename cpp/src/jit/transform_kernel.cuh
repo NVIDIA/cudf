@@ -47,6 +47,8 @@ __device__ void transform_kernel(size_type row_size,
   // Keep row_index wide: the final stride increment and warp padding can exceed size_type's range.
   // Only narrow to row after checking bounds, so column accessors and UDFs receive a safe
   // size_type.
+  // Both branches expand argument packs directly to avoid concatenated tuple types and
+  // cuda::std::apply machinery, reducing frontend work, especially for JIT compilation.
   if constexpr (!IsNullAware) {
     for (auto row_index = start; row_index < row_size; row_index += stride) {
       auto const row = static_cast<size_type>(row_index);
@@ -55,7 +57,6 @@ __device__ void transform_kernel(size_type row_size,
       auto outs = OutputAccessors::map(
         [&]<typename... A>() { return cuda::std::tuple{A::output_arg(output_cols, row)...}; });
 
-      // Direct expansion avoids concatenated tuple types and apply machinery in NVRTC's frontend.
       auto const row_error = OutputAccessors::map([&]<typename... Out>() {
         return InputAccessors::map([&]<typename... In>() {
           return operation(

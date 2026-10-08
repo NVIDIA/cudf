@@ -907,6 +907,10 @@ def test_file_metadata_wrappers_not_directly_constructible() -> None:
         ValueError, match="SchemaElement cannot be constructed directly"
     ):
         plc.io.parquet_metadata.SchemaElement()
+    with pytest.raises(
+        ValueError, match="LogicalType cannot be constructed directly"
+    ):
+        plc.io.parquet_metadata.LogicalType()
 
 
 def test_file_metadata_schema_elements() -> None:
@@ -986,6 +990,90 @@ def test_file_metadata_schema_elements() -> None:
         ("dec", 30, 0, PhysicalType.FIXED_LEN_BYTE_ARRAY, 6),
         ("fixed", 40, 0, PhysicalType.FIXED_LEN_BYTE_ARRAY, 4),
     ]
+
+
+def test_file_metadata_schema_logical_types() -> None:
+    table = pa.table(
+        {
+            "plain": pa.array([1], type=pa.int64()),
+            "i8": pa.array([1], type=pa.int8()),
+            "u16": pa.array([1], type=pa.uint16()),
+            "s": pa.array(["a"], type=pa.string()),
+            "dec": pa.array(
+                [decimal.Decimal("1.25")], type=pa.decimal128(12, 2)
+            ),
+            "date": pa.array([datetime.date(2020, 1, 1)], type=pa.date32()),
+            "time": pa.array([datetime.time(1)], type=pa.time32("ms")),
+            "ts_utc": pa.array(
+                [datetime.datetime(2020, 1, 1)],
+                type=pa.timestamp("ms", tz="UTC"),
+            ),
+            "ts_naive": pa.array(
+                [datetime.datetime(2020, 1, 1)], type=pa.timestamp("ns")
+            ),
+        }
+    )
+    sink = io.BytesIO()
+    write_table(table, sink)
+    sink.seek(0)
+
+    file_metadata = plc.io.parquet_metadata.read_parquet_footers(
+        plc.io.SourceInfo([sink])
+    )[0]
+
+    LogicalTypeId = plc.io.parquet_metadata.LogicalTypeId
+    TimeUnit = plc.io.parquet_metadata.TimeUnit
+    result = {}
+    for element in file_metadata.schema[1:]:
+        logical_type = element.logical_type
+        result[element.name] = (
+            None
+            if logical_type is None
+            else (
+                logical_type.type,
+                logical_type.decimal_scale,
+                logical_type.decimal_precision,
+                logical_type.time_unit,
+                logical_type.is_adjusted_to_utc,
+                logical_type.bit_width,
+                logical_type.is_signed,
+            )
+        )
+    assert result == {
+        "plain": None,
+        "i8": (LogicalTypeId.INTEGER, None, None, None, None, 8, True),
+        "u16": (LogicalTypeId.INTEGER, None, None, None, None, 16, False),
+        "s": (LogicalTypeId.STRING, None, None, None, None, None, None),
+        "dec": (LogicalTypeId.DECIMAL, 2, 12, None, None, None, None),
+        "date": (LogicalTypeId.DATE, None, None, None, None, None, None),
+        "time": (
+            LogicalTypeId.TIME,
+            None,
+            None,
+            TimeUnit.MILLIS,
+            False,
+            None,
+            None,
+        ),
+        "ts_utc": (
+            LogicalTypeId.TIMESTAMP,
+            None,
+            None,
+            TimeUnit.MILLIS,
+            True,
+            None,
+            None,
+        ),
+        "ts_naive": (
+            LogicalTypeId.TIMESTAMP,
+            None,
+            None,
+            TimeUnit.NANOS,
+            False,
+            None,
+            None,
+        ),
+    }
 
 
 def test_file_metadata_schema_without_field_ids() -> None:

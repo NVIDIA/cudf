@@ -8,6 +8,7 @@ from pylibcudf.libcudf.io.parquet_schema cimport (
     ColumnChunk as cpp_ColumnChunk,
     ColumnChunkMetaData as cpp_ColumnChunkMetaData,
     FileMetaData as cpp_FileMetaData,
+    LogicalType as cpp_LogicalType,
     RowGroup as cpp_RowGroup,
     SchemaElement as cpp_SchemaElement,
     SortingColumn as cpp_SortingColumn,
@@ -75,6 +76,12 @@ cdef class FileMetaData:
 
     @staticmethod
     cdef FileMetaData from_libcudf(unique_ptr[cpp_FileMetaData] metadata)
+
+cdef class LogicalType:
+    cdef cpp_LogicalType c_obj
+
+    @staticmethod
+    cdef LogicalType from_cpp(cpp_LogicalType logical_type)
 
 cdef class SchemaElement:
     cdef cpp_SchemaElement c_obj

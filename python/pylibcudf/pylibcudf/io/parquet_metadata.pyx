@@ -24,6 +24,7 @@ from pylibcudf.libcudf.io.parquet_schema cimport (
     ColumnChunk as cpp_ColumnChunk,
     ColumnChunkMetaData as cpp_ColumnChunkMetaData,
     FileMetaData as cpp_FileMetaData,
+    LogicalType as cpp_LogicalType,
     RowGroup as cpp_RowGroup,
     SchemaElement as cpp_SchemaElement,
     SortingColumn as cpp_SortingColumn,
@@ -40,6 +41,8 @@ from rmm.pylibrmm.stream cimport Stream
 from typing import TYPE_CHECKING
 
 from pylibcudf.libcudf.io.parquet_schema import (
+    LogicalTypeId,  # no-cython-lint
+    TimeUnit,  # no-cython-lint
     Type as PhysicalType,  # no-cython-lint
 )
 
@@ -57,6 +60,8 @@ __all__ = [
     "ColumnChunkMetaData",
     "ColumnChunkStatistics",
     "FileMetaData",
+    "LogicalType",
+    "LogicalTypeId",
     "ParquetColumnSchema",
     "ParquetMetadata",
     "ParquetSchema",
@@ -64,6 +69,7 @@ __all__ = [
     "RowGroup",
     "SchemaElement",
     "SortingColumn",
+    "TimeUnit",
     "read_parquet_column_chunk_bounds",
     "read_parquet_footers",
     "read_parquet_metadata",
@@ -306,6 +312,73 @@ cdef class ParquetMetadata:
         }
 
 
+cdef class LogicalType:
+    """Logical type annotation of a Parquet schema element."""
+
+    def __init__(self):
+        raise ValueError("LogicalType cannot be constructed directly")
+
+    @staticmethod
+    cdef LogicalType from_cpp(cpp_LogicalType logical_type):
+        cdef LogicalType result = LogicalType.__new__(LogicalType)
+        result.c_obj = logical_type
+        return result
+
+    @property
+    def type(self) -> LogicalTypeId:
+        """Kind of logical type."""
+        return LogicalTypeId(<int>self.c_obj.type)
+
+    @property
+    def decimal_scale(self) -> int | None:
+        """Scale of a ``DECIMAL`` type, otherwise ``None``."""
+        if not self.c_obj.decimal_type.has_value():
+            return None
+        return self.c_obj.decimal_type.value().scale
+
+    @property
+    def decimal_precision(self) -> int | None:
+        """Precision of a ``DECIMAL`` type, otherwise ``None``."""
+        if not self.c_obj.decimal_type.has_value():
+            return None
+        return self.c_obj.decimal_type.value().precision
+
+    @property
+    def time_unit(self) -> TimeUnit | None:
+        """Unit of a ``TIME`` or ``TIMESTAMP`` type, otherwise ``None``."""
+        if self.c_obj.time_type.has_value():
+            return TimeUnit(<int>self.c_obj.time_type.value().unit.type)
+        if self.c_obj.timestamp_type.has_value():
+            return TimeUnit(<int>self.c_obj.timestamp_type.value().unit.type)
+        return None
+
+    @property
+    def is_adjusted_to_utc(self) -> bool | None:
+        """
+        Whether a ``TIME`` or ``TIMESTAMP`` type is adjusted to UTC,
+        otherwise ``None``.
+        """
+        if self.c_obj.time_type.has_value():
+            return self.c_obj.time_type.value().isAdjustedToUTC
+        if self.c_obj.timestamp_type.has_value():
+            return self.c_obj.timestamp_type.value().isAdjustedToUTC
+        return None
+
+    @property
+    def bit_width(self) -> int | None:
+        """Bit width of an ``INTEGER`` type, otherwise ``None``."""
+        if not self.c_obj.int_type.has_value():
+            return None
+        return self.c_obj.int_type.value().bitWidth
+
+    @property
+    def is_signed(self) -> bool | None:
+        """Whether an ``INTEGER`` type is signed, otherwise ``None``."""
+        if not self.c_obj.int_type.has_value():
+            return None
+        return self.c_obj.int_type.value().isSigned
+
+
 cdef class SchemaElement:
     """An element of a Parquet file's schema tree."""
 
@@ -344,6 +417,13 @@ cdef class SchemaElement:
     def type_length(self) -> int:
         """Byte length of ``FIXED_LEN_BYTE_ARRAY`` values, or the bit length."""
         return self.c_obj.type_length
+
+    @property
+    def logical_type(self) -> LogicalType | None:
+        """Logical type annotation, if the writer recorded one."""
+        if not self.c_obj.logical_type.has_value():
+            return None
+        return LogicalType.from_cpp(self.c_obj.logical_type.value())
 
 
 cdef class SortingColumn:

@@ -872,6 +872,10 @@ template <>
 std::unique_ptr<cudf::column> create_distinct_rows_column<cudf::string_view>(
   data_profile const& profile, cuda::std::philox4x32& engine, cudf::size_type num_rows)
 {
+  // uniqueness comes from appending the row index as decimal digits
+  auto const string_params = profile.get_distribution_params<cudf::string_view>();
+  CUDF_EXPECTS(string_params.char_lower <= '0' && string_params.char_upper >= '9',
+               "Character range must include the digits 0-9 to generate distinct strings");
   auto col        = create_random_column<cudf::string_view>(profile, engine, num_rows);
   auto int_col    = cudf::sequence(num_rows, *cudf::make_fixed_width_scalar<int32_t>(0));
   auto int2strcol = cudf::strings::from_integers(int_col->view());

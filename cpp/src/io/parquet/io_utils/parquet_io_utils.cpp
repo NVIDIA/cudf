@@ -22,6 +22,7 @@
 
 #include <rmm/resource_ref.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/tuple>
 #include <cuda/stream>
@@ -474,7 +475,7 @@ fetch_byte_ranges_to_device_async_impl(
           std::async(std::launch::deferred, sync_function, std::move(device_read_tasks))};
 }
 
-std::pair<std::vector<rmm::device_buffer>, std::vector<device_spans_per_source_type>>
+std::pair<std::vector<cuda::device_buffer<uint8_t>>, std::vector<device_spans_per_source_type>>
 fetch_bloom_filters_to_device_impl(
   cudf::host_span<std::reference_wrapper<cudf::io::datasource> const> datasources,
   cudf::host_span<cudf::host_span<cudf::io::text::byte_range_info const> const>
@@ -618,9 +619,14 @@ fetch_bloom_filters_to_device_impl(
   }
 
   // Add the buffer base to every output span and copy destination.
-  rmm::device_buffer bitset_buffer(total_device_size, bloom_filter_block_bytes, stream, mr);
+  cuda::device_buffer<uint8_t> bitset_buffer(
+    stream,
+    mr,
+    total_device_size,
+    cuda::no_init,
+    cuda::std::execution::prop{cuda::allocation_alignment, bloom_filter_block_bytes});
   std::vector<void*> copy_dsts(total_filters);
-  auto* const device_base   = static_cast<uint8_t*>(bitset_buffer.data());
+  auto* const device_base   = bitset_buffer.data();
   std::size_t device_offset = 0;
   if (device_base != nullptr) {
     std::for_each(cuda::counting_iterator<std::size_t>(0),
@@ -650,7 +656,7 @@ fetch_bloom_filters_to_device_impl(
     stream.sync();
   }
 
-  std::vector<rmm::device_buffer> bitset_buffers;
+  std::vector<cuda::device_buffer<uint8_t>> bitset_buffers;
   bitset_buffers.push_back(std::move(bitset_buffer));
   return {std::move(bitset_buffers), std::move(bitset_spans_per_source)};
 }
@@ -754,7 +760,7 @@ fetch_byte_ranges_to_device_async(
     mr.get_output_mr());
 }
 
-std::pair<std::vector<rmm::device_buffer>, std::vector<cudf::device_span<uint8_t const>>>
+std::pair<std::vector<cuda::device_buffer<uint8_t>>, std::vector<cudf::device_span<uint8_t const>>>
 fetch_bloom_filters_to_device(
   cudf::io::datasource& datasource,
   cudf::host_span<cudf::io::text::byte_range_info const> bloom_filter_byte_ranges,
@@ -779,7 +785,7 @@ fetch_bloom_filters_to_device(
   return {std::move(buffers), std::move(fetched_byte_ranges.front())};
 }
 
-std::pair<std::vector<rmm::device_buffer>,
+std::pair<std::vector<cuda::device_buffer<uint8_t>>,
           std::vector<std::vector<cudf::device_span<uint8_t const>>>>
 fetch_bloom_filters_to_device(
   cudf::host_span<std::reference_wrapper<cudf::io::datasource> const> datasources,
@@ -831,7 +837,7 @@ fetch_byte_ranges_to_device_async(
     datasources, byte_ranges_per_source, io_submission_policy::SERIALIZE, stream, mr);
 }
 
-std::pair<std::vector<rmm::device_buffer>, std::vector<cudf::device_span<uint8_t const>>>
+std::pair<std::vector<cuda::device_buffer<uint8_t>>, std::vector<cudf::device_span<uint8_t const>>>
 fetch_bloom_filters_to_device(
   cudf::io::datasource& datasource,
   cudf::host_span<cudf::io::text::byte_range_info const> bloom_filter_byte_ranges,
@@ -842,7 +848,7 @@ fetch_bloom_filters_to_device(
     datasource, bloom_filter_byte_ranges, io_submission_policy::SERIALIZE, stream, mr);
 }
 
-std::pair<std::vector<rmm::device_buffer>,
+std::pair<std::vector<cuda::device_buffer<uint8_t>>,
           std::vector<std::vector<cudf::device_span<uint8_t const>>>>
 fetch_bloom_filters_to_device(
   cudf::host_span<std::reference_wrapper<cudf::io::datasource> const> datasources,

@@ -6,6 +6,7 @@
 #pragma once
 
 #include <cudf/aggregation.hpp>
+#include <cudf/reduction/jit.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>

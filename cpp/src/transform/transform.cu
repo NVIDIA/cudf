@@ -30,6 +30,7 @@
 #include <jit/helpers.hpp>
 #include <jit/parser.hpp>
 #include <jit/row_ir.hpp>
+#include <jit/udf_reflection.hpp>
 #include <jit/util.hpp>
 
 #include <algorithm>
@@ -211,82 +212,13 @@ void launch(cudf::kernel const& kernel,
   kernel.launch({cfg.min_grid_size}, {cfg.block_size}, 0, stream, args);
 }
 
-std::string get_element_type_name(transform_input_spec const& spec, bool use_physical_type);
-
-struct element_type_name_fn {
-  template <typename T>
-  std::string operator()(transform_input_spec const& spec, bool use_physical_type) const
-    requires(is_fixed_width<T>() || std::same_as<T, cudf::string_view>)
-  {
-    auto type = data_type{spec.type};
-    return type_to_name(use_physical_type ? jit::physical_type_of(type) : type);
-  }
-
-  template <typename T>
-  std::string operator()(transform_input_spec const& spec, bool use_physical_type) const
-    requires(std::same_as<T, cudf::dictionary32>)
-  {
-    return std::format(
-      "cudf::dictionary_element<{}, {}>",
-      get_element_type_name(spec.children.at(dictionary_indices_column_index), use_physical_type),
-      get_element_type_name(spec.children.at(dictionary_keys_column_index), use_physical_type));
-  }
-
-  template <typename T>
-  std::string operator()(transform_input_spec const& spec, bool) const
-    requires(!is_fixed_width<T>() && !std::same_as<T, cudf::string_view> &&
-             !std::same_as<T, cudf::dictionary32>)
-  {
-    CUDF_FAIL("Unsupported type for JIT compilation: " + type_to_name(data_type{spec.type}));
-  }
-};
-
-std::string get_element_type_name(transform_input_spec const& spec, bool use_physical_type)
-{
-  return cudf::type_dispatcher(
-    data_type{spec.type}, element_type_name_fn{}, spec, use_physical_type);
-}
-
-std::string reflect_input_element(transform_input_spec const& spec, bool use_physical_type)
-{
-  return get_element_type_name(spec, use_physical_type);
-}
-
-std::string reflect_output_element(transform_output_spec const& spec, bool use_physical_type)
-{
-  if (spec.type == type_id::STRING) {
-    return spec.has_string_offsets ? "cuda::std::span<char>" : "cudf::string_view";
-  }
-  return get_element_type_name(transform_input_spec{.type = spec.type}, use_physical_type);
-}
-
-std::string reflect_input_value_type(transform_input_spec const& spec, bool use_physical_type)
-{
-  if (spec.type == type_id::DICTIONARY32) {
-    return reflect_input_value_type(spec.children.at(dictionary_keys_column_index),
-                                    use_physical_type);
-  }
-  return reflect_input_element(spec, use_physical_type);
-}
-
-std::string reflect_output_value_type(transform_output_spec const& spec, bool use_physical_type)
-{
-  return reflect_output_element(spec, use_physical_type);
-}
-
-std::string reflect_input_column(transform_input_spec const&)
-{
-  return "cudf::column_device_view_core";
-}
-
-std::string reflect_output_column(transform_output_spec const& spec)
-{
-  if (spec.type == type_id::STRING) {
-    return spec.has_string_offsets ? "cudf::jit::mutable_strings_column_device_view"
-                                   : "cudf::jit::mutable_vector_device_view";
-  }
-  return "cudf::mutable_column_device_view_core";
-}
+using jit::as_rtcx_binary_type;
+using jit::reflect_input_column;
+using jit::reflect_input_element;
+using jit::reflect_input_value_type;
+using jit::reflect_output_column;
+using jit::reflect_output_element;
+using jit::reflect_output_value_type;
 
 auto reflect(std::variant<udf_source_type, lto_binary_type> source_type,
              std::span<transform_input_spec const> inputs,
@@ -620,18 +552,6 @@ void run(kernel const& kernel,
     reinterpret_cast<mutable_column_device_view_core const*>(input_cols + inputs.size());
   return launch(
     kernel, row_size, d_stencil, user_data, input_cols, output_cols, d_max_error, stream);
-}
-
-rtcx::binary_type as_rtcx_binary_type(lto_binary_type type)
-{
-  switch (type) {
-    case lto_binary_type::LTO_IR: return rtcx::binary_type::LTO_IR;
-    case lto_binary_type::FATBIN: return rtcx::binary_type::FATBIN;
-    default:
-      CUDF_FAIL(
-        std::format("Unrecognized LTO binary type {} for LTO transform", static_cast<int>(type)),
-        std::invalid_argument);
-  }
 }
 
 void run_lto(std::optional<std::tuple<std::span<uint8_t const>, lto_binary_type, char const*>>

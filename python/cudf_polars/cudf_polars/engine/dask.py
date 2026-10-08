@@ -35,6 +35,7 @@ from cudf_polars.engine import persisted_result, rank_local_store
 from cudf_polars.engine.core import (
     ClusterInfo,
     StreamingEngine,
+    _run_cleanup_steps,
     check_reserved_keys,
     drop_if_replicated,
     evaluate_on_rank,
@@ -68,6 +69,7 @@ from cudf_polars.utils.config import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    import cudf_polars_quent as quent_bindings
     import kvikio
 
     from cudf_streaming.channel_metadata import ChannelMetadata
@@ -98,6 +100,14 @@ def _get_visible_gpu_ids() -> list[str]:
 
 
 _nanny_preload_counter = 0
+
+
+def _get_worker_addresses(client: distributed.Client) -> list[str]:
+    """Return current worker addresses, requiring at least one worker."""
+    workers = client.scheduler_info(n_workers=-1)["workers"]
+    if not workers:
+        raise RuntimeError("No workers found in the Dask cluster.")
+    return list(workers)
 
 
 def dask_setup(nanny: distributed.Nanny) -> None:
@@ -479,8 +489,10 @@ def _close_quent_worker(
 ) -> None:
     """Close one worker's Quent collector client."""
     assert dask_worker is not None
-    mp_ctx: _WorkerContext = getattr(dask_worker, f"_cudf_polars_mp_context_{uid}")
-    if mp_ctx.quent_worker_runtime is not None:
+    mp_ctx: _WorkerContext | None = getattr(
+        dask_worker, f"_cudf_polars_mp_context_{uid}", None
+    )
+    if mp_ctx is not None and mp_ctx.quent_worker_runtime is not None:
         mp_ctx.quent_worker_runtime.close()
         mp_ctx.quent_worker_runtime = None
 
@@ -526,6 +538,37 @@ def _teardown_worker(
             mp_ctx.base_mr = None
             mp_ctx.mr = None
             delattr(dask_worker, attr)
+
+
+def _shutdown_dask(
+    client: distributed.Client | None,
+    uid: str,
+    quent_runtime: QuentControllerRuntime | None,
+    quent_collector: quent_bindings.Collector | None,
+    owned_client: distributed.Client | None,
+    owned_cluster: distributed.SpecCluster | None,
+) -> None:
+    """Release Dask resources in dependency order."""
+    steps: list[Callable[[], object]] = []
+    if client is not None and (
+        quent_runtime is not None or quent_collector is not None
+    ):
+        steps.append(
+            lambda: client.run(functools.partial(_close_quent_worker, uid=uid))
+        )
+    if quent_runtime is not None:
+        steps.append(quent_runtime.close)
+    elif (
+        quent_collector is not None
+    ):  # pragma: no-cover; runs on the worker, not client
+        steps.append(quent_collector.close)
+    if client is not None:
+        steps.append(lambda: client.run(functools.partial(_teardown_worker, uid=uid)))
+    if owned_client is not None:
+        steps.append(owned_client.close)
+    if owned_cluster is not None:
+        steps.append(owned_cluster.close)
+    _run_cleanup_steps("Dask engine shutdown failed", *steps)
 
 
 def _reset_worker(
@@ -1014,75 +1057,80 @@ class DaskEngine(StreamingEngine):
         else:
             rapidsmpf_id = str(uuid.uuid4())
 
-        owned_cluster: Any = None
+        exit_stack = contextlib.ExitStack()
+        owned_cluster: distributed.SpecCluster | None = None
         owned_client: distributed.Client | None = None
-        if dask_client is None:
-            gpu_ids = _get_visible_gpu_ids()
-
-            worker_spec: dict[str, Any] = {}
-            for i, gpu_id in enumerate(gpu_ids):
-                worker_spec[str(gpu_id)] = {
-                    "cls": distributed.Nanny,
-                    "options": {
-                        "nthreads": 1,
-                        # Set worker subprocess log level to WARNING
-                        # (is INFO by default).
-                        "silence_logs": logging.WARNING,
-                        # We oversubscribe the system memory limit on multi-gpu systems.
-                        # In general, Dask won't be aware of what we're doing with we're
-                        # doing with host memory, so just giving each worker access to
-                        # all of it seems like the option with the fewest downsides.
-                        "memory_limit": distributed.system.MEMORY_LIMIT,
-                        "env": {
-                            "CUDA_VISIBLE_DEVICES": gpu_ids[i],
-                        },
-                    },
-                }
-            # Set scheduler/client log level to WARNING in the main
-            # process (is INFO by default).
-            owned_cluster = distributed.SpecCluster(
-                workers=worker_spec, silence_logs=logging.WARNING
+        quent_collector: quent_bindings.Collector | None = None
+        quent_runtime: QuentControllerRuntime | None = None
+        exit_stack.callback(
+            lambda: _shutdown_dask(
+                dask_client,
+                rapidsmpf_id,
+                quent_runtime,
+                quent_collector,
+                owned_client,
+                owned_cluster,
             )
-            owned_client = distributed.Client(owned_cluster)
-            dask_client = owned_client
-
-        workers_info = dask_client.scheduler_info(n_workers=-1)["workers"]
-        nranks = len(workers_info)
-        if nranks == 0:
-            raise RuntimeError("No workers found in the Dask cluster.")
-        worker_addresses = list(workers_info.keys())
-        root_worker = worker_addresses[0]
-
-        worker_ids = [uuid.uuid4() for _ in range(nranks)]
-
-        # Phase 1: initialize root communicator on one worker.
-        root_result = dask_client.run(
-            functools.partial(
-                _setup_root,
-                uid=rapidsmpf_id,
-                hardware_binding=hw_binding,
-                memory_resource_config=mr_config,
-                worker_id=worker_ids[0],
-            ),
-            nranks,
-            rapidsmpf_options_as_bytes,
-            workers=[root_worker],
         )
-        root_ucxx_address_as_bytes = root_result[root_worker]
-
-        if quent_context is not None:
-            quent_collector = cudf_polars.quent._runtime.start_collector(
-                quent_context.run_root
-            )
-            quent_collector_address = quent_collector.address
-        else:
-            quent_collector = None
-            quent_collector_address = None
-
-        # Phase 2: complete bootstrap on all workers concurrently.
-        # All workers call barrier() so they must all run simultaneously.
-        # Each worker picks its own worker_id from the list using comm.rank.
         try:
+            if dask_client is None:
+                gpu_ids = _get_visible_gpu_ids()
+
+                worker_spec: dict[str, Any] = {}
+                for i, gpu_id in enumerate(gpu_ids):
+                    worker_spec[str(gpu_id)] = {
+                        "cls": distributed.Nanny,
+                        "options": {
+                            "nthreads": 1,
+                            # Set worker subprocess log level to WARNING
+                            # (is INFO by default).
+                            "silence_logs": logging.WARNING,
+                            # Dask does not account for our host-memory use, so let
+                            # each worker use the full process limit.
+                            "memory_limit": distributed.system.MEMORY_LIMIT,
+                            "env": {
+                                "CUDA_VISIBLE_DEVICES": gpu_ids[i],
+                            },
+                        },
+                    }
+                # Set scheduler/client log level to WARNING in the main process.
+                owned_cluster = distributed.SpecCluster(
+                    workers=worker_spec, silence_logs=logging.WARNING
+                )
+                owned_client = distributed.Client(owned_cluster)
+                dask_client = owned_client
+
+            worker_addresses = _get_worker_addresses(dask_client)
+            nranks = len(worker_addresses)
+            root_worker = worker_addresses[0]
+
+            worker_ids = [uuid.uuid4() for _ in range(nranks)]
+
+            # Phase 1: initialize root communicator on one worker.
+            root_result = dask_client.run(
+                functools.partial(
+                    _setup_root,
+                    uid=rapidsmpf_id,
+                    hardware_binding=hw_binding,
+                    memory_resource_config=mr_config,
+                    worker_id=worker_ids[0],
+                ),
+                nranks,
+                rapidsmpf_options_as_bytes,
+                workers=[root_worker],
+            )
+            root_ucxx_address_as_bytes = root_result[root_worker]
+
+            if quent_context is not None:
+                quent_collector = cudf_polars.quent._runtime.start_collector(
+                    quent_context.run_root
+                )
+                quent_collector_address = quent_collector.address
+            else:
+                quent_collector_address = None
+
+            # Phase 2: complete bootstrap on all workers concurrently.
+            # All workers call barrier() so they must all run simultaneously.
             dask_client.run(
                 functools.partial(
                     _setup_worker,
@@ -1110,35 +1158,35 @@ class DaskEngine(StreamingEngine):
             )
             if quent_context is not None:
                 assert quent_collector_address is not None
-                self._quent_runtime = QuentControllerRuntime.create(
+                quent_runtime = QuentControllerRuntime.create(
                     quent_context,
                     quent_collector_address,
                     backend="dask",
                     collector=quent_collector,
                 )
-        except Exception:
-            if quent_collector is not None:
-                with contextlib.suppress(Exception):
-                    quent_collector.close()
-            raise
+                self._quent_runtime = quent_runtime
 
-        dask_ctx = DaskContext(
-            client=dask_client,
-            rapidsmpf_id=rapidsmpf_id,
-            quent_controller_runtime=self._quent_runtime,
-            owned_client=owned_client,
-            owned_cluster=owned_cluster,
-        )
-        self._dask_context: DaskContext | None = dask_ctx
-        super().__init__(
-            nranks=nranks,
-            executor_options={
-                **executor_options,
-                "cluster": "dask",
-                "dask_context": dask_ctx,
-            },
-            engine_options={**engine_options, "memory_resource": None},
-        )
+            dask_ctx = DaskContext(
+                client=dask_client,
+                rapidsmpf_id=rapidsmpf_id,
+                quent_controller_runtime=quent_runtime,
+                owned_client=owned_client,
+                owned_cluster=owned_cluster,
+            )
+            self._dask_context: DaskContext | None = dask_ctx
+            super().__init__(
+                nranks=nranks,
+                executor_options={
+                    **executor_options,
+                    "cluster": "dask",
+                    "dask_context": dask_ctx,
+                },
+                engine_options={**engine_options, "memory_resource": None},
+                exit_stack=exit_stack,
+            )
+        except Exception:
+            exit_stack.close()
+            raise
 
     def _reset(
         self,
@@ -1321,38 +1369,9 @@ class DaskEngine(StreamingEngine):
         """
         if self._dask_context is None:
             return  # already shut down
-        ctx = self._dask_context
         self._dask_context = None
-        exceptions: list[Exception] = []
-        try:
-            if self._quent_runtime is not None:
-                try:
-                    ctx.client.run(
-                        functools.partial(_close_quent_worker, uid=ctx.rapidsmpf_id)
-                    )
-                except Exception as e:
-                    exceptions.append(e)
-                finally:
-                    try:
-                        self._quent_runtime.close()
-                    except Exception as e:
-                        exceptions.append(e)
-
-            try:
-                ctx.client.run(
-                    functools.partial(_teardown_worker, uid=ctx.rapidsmpf_id)
-                )
-            except Exception as e:
-                exceptions.append(e)
-        finally:
-            if ctx.owned_client is not None:
-                ctx.owned_client.close()
-            if ctx.owned_cluster is not None:
-                ctx.owned_cluster.close()
-            super().shutdown()
-
-        if exceptions:
-            raise ExceptionGroup("Worker teardown failed", exceptions)
+        self._quent_runtime = None
+        super().shutdown()
 
     def _run(self, func: Callable[..., T], *args: Any, **kwargs: Any) -> list[T]:
         return list(self._run_by_rank(_run_with_rank, func, *args, **kwargs).values())

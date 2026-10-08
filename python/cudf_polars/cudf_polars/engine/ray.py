@@ -30,6 +30,7 @@ from cudf_polars.engine import persisted_result, rank_local_store
 from cudf_polars.engine.core import (
     ClusterInfo,
     StreamingEngine,
+    _run_cleanup_steps,
     check_reserved_keys,
     drop_if_replicated,
     evaluate_on_rank,
@@ -63,6 +64,7 @@ from cudf_polars.utils.config import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    import cudf_polars_quent as quent_bindings
     import kvikio
     from ray import ObjectRef
     from ray.actor import ActorHandle
@@ -733,6 +735,46 @@ def get_num_gpus_in_ray_cluster() -> int:
     return free_gpus
 
 
+def _wait_for_actor_shutdown(ref: ObjectRef[Any]) -> None:
+    """Wait for actor exit, ignoring Ray's expected termination error."""
+    with contextlib.suppress(ray.exceptions.RayActorError):
+        ray.get(ref)
+
+
+def _shutdown_ray(
+    rank_actors: list[ActorHandle[RankActor]],
+    quent_runtime: QuentControllerRuntime | None,
+    quent_collector: quent_bindings.Collector | None,
+    *,
+    shutdown_ray: bool,
+) -> None:
+    """Release Ray resources in dependency order."""
+    ray_running = ray.is_initialized()
+    steps: list[Callable[[], object]] = []
+    if ray_running and quent_collector is not None:
+        steps.append(
+            lambda: ray.get([actor.close_quent.remote() for actor in rank_actors])
+        )
+    if quent_runtime is not None:
+        steps.append(quent_runtime.close)
+    elif quent_collector is not None:
+        steps.append(quent_collector.close)
+
+    if ray_running:
+
+        def shutdown_actors() -> None:
+            refs = [actor.shutdown.remote() for actor in rank_actors]
+            _run_cleanup_steps(
+                "Ray actor shutdown failed",
+                *(lambda ref=ref: _wait_for_actor_shutdown(ref) for ref in refs),
+            )
+
+        steps.append(shutdown_actors)
+    if shutdown_ray:
+        steps.append(ray.shutdown)
+    _run_cleanup_steps("Ray engine shutdown failed", *steps)
+
+
 class RayEngine(StreamingEngine):
     """
     Multi-GPU Polars engine for Ray cluster execution.
@@ -872,16 +914,26 @@ class RayEngine(StreamingEngine):
         rapidsmpf_options_as_bytes = self.rapidsmpf_options.serialize()
 
         exit_stack = contextlib.ExitStack()
-        if not ray.is_initialized():
-            # Prevent Ray from overriding CUDA_VISIBLE_DEVICES to "" when a worker
-            # process starts with zero visible GPUs (e.g., the driver process itself).
-            # In the future, this behavior will become the default in Ray.
-            os.environ.setdefault("RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO", "0")
-            ray.init(**ray_init_options)
-            # Ensure Ray is shut down when RayEngine shuts down.
-            exit_stack.callback(ray.shutdown)
-
+        owns_ray = not ray.is_initialized()
+        rank_actors: list[ActorHandle[RankActor]] = []
+        quent_collector: quent_bindings.Collector | None = None
+        quent_runtime: QuentControllerRuntime | None = None
+        exit_stack.callback(
+            lambda: _shutdown_ray(
+                rank_actors,
+                quent_runtime,
+                quent_collector,
+                shutdown_ray=owns_ray,
+            )
+        )
         try:
+            if owns_ray:
+                # Prevent Ray from overriding CUDA_VISIBLE_DEVICES to "" when a worker
+                # process starts with zero visible GPUs (e.g., the driver process itself).
+                # In the future, this behavior will become the default in Ray.
+                os.environ.setdefault("RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO", "0")
+                ray.init(**ray_init_options)
+
             # Override num_gpus=0 when num_ranks is set so Ray doesn't gate
             # actor scheduling on GPU resources; .options() with no overrides
             # is a no-op for the default path.
@@ -893,34 +945,40 @@ class RayEngine(StreamingEngine):
             )
             worker_ids = [uuid.uuid4() for _ in range(nranks)]
 
-            rank_actors: list[ActorHandle[RankActor]] = [
-                RankActor.options(**actor_options).remote(  # type: ignore[attr-defined]
-                    nranks=nranks,
-                    rapidsmpf_options_as_bytes=rapidsmpf_options_as_bytes,
-                    num_py_executors=cast(
-                        "int",
-                        executor_options.get("num_py_executors", 8),
-                    ),
-                    kvikio_nthreads=executor_options["kvikio_nthreads"],
-                    kvikio_statistics=executor_options["kvikio_statistics"],
-                    kvikio_remote_io_backend=executor_options[
-                        "kvikio_remote_io_backend"
-                    ],
-                    kvikio_task_size=executor_options["kvikio_task_size"],
-                    kvikio_bounce_buffer_bytes=executor_options[
-                        "kvikio_bounce_buffer_bytes"
-                    ],
-                    kvikio_reactor_count=executor_options["kvikio_reactor_count"],
-                    kvikio_reactor_dispatch=executor_options["kvikio_reactor_dispatch"],
-                    kvikio_request_ceiling=executor_options["kvikio_request_ceiling"],
-                    hardware_binding=hw_binding,
-                    memory_resource_config=mr_config,
-                    worker_id=worker_id,
-                    engine_id=engine_id,
-                    quent_enabled=quent_context is not None,
+            # Append incrementally so cleanup owns every actor even if a later
+            # actor construction fails.
+            for worker_id in worker_ids:
+                rank_actors.append(  # noqa: PERF401
+                    RankActor.options(**actor_options).remote(  # type: ignore[attr-defined]
+                        nranks=nranks,
+                        rapidsmpf_options_as_bytes=rapidsmpf_options_as_bytes,
+                        num_py_executors=cast(
+                            "int",
+                            executor_options.get("num_py_executors", 8),
+                        ),
+                        kvikio_nthreads=executor_options["kvikio_nthreads"],
+                        kvikio_statistics=executor_options["kvikio_statistics"],
+                        kvikio_remote_io_backend=executor_options[
+                            "kvikio_remote_io_backend"
+                        ],
+                        kvikio_task_size=executor_options["kvikio_task_size"],
+                        kvikio_bounce_buffer_bytes=executor_options[
+                            "kvikio_bounce_buffer_bytes"
+                        ],
+                        kvikio_reactor_count=executor_options["kvikio_reactor_count"],
+                        kvikio_reactor_dispatch=executor_options[
+                            "kvikio_reactor_dispatch"
+                        ],
+                        kvikio_request_ceiling=executor_options[
+                            "kvikio_request_ceiling"
+                        ],
+                        hardware_binding=hw_binding,
+                        memory_resource_config=mr_config,
+                        worker_id=worker_id,
+                        engine_id=engine_id,
+                        quent_enabled=quent_context is not None,
+                    )
                 )
-                for worker_id in worker_ids
-            ]
 
             root_ucxx_address_as_bytes = cast(
                 "bytes", ray.get(rank_actors[0].setup_root.remote())
@@ -948,12 +1006,13 @@ class RayEngine(StreamingEngine):
             )
             if quent_context is not None:
                 assert collector_address is not None
-                self._quent_runtime = QuentControllerRuntime.create(
+                quent_runtime = QuentControllerRuntime.create(
                     quent_context,
                     collector_address,
                     backend="ray",
                     collector=quent_collector,
                 )
+                self._quent_runtime = quent_runtime
 
             self._rank_actors: list[ActorHandle[RankActor]] | None = rank_actors
             super().__init__(
@@ -961,7 +1020,7 @@ class RayEngine(StreamingEngine):
                 executor_options={
                     **executor_options,
                     "cluster": "ray",
-                    "ray_context": RayContext(rank_actors, self._quent_runtime),
+                    "ray_context": RayContext(rank_actors, quent_runtime),
                 },
                 engine_options=engine_options,
                 exit_stack=exit_stack,
@@ -1184,42 +1243,9 @@ class RayEngine(StreamingEngine):
         """
         if self._rank_actors is None:
             return  # already shut down; idempotent
-        exceptions: list[Exception] = []
-        try:
-            # If Ray is no longer initialized (for example, if ``ray.shutdown()`` was
-            # called before ``RayEngine.shutdown()``), the actors are gone as well.
-            # Calling ``.remote()`` in this state would trigger Ray's ``auto_init_hook``
-            # and start a new cluster.
-            if not ray.is_initialized():
-                return
-
-            if self._quent_runtime is not None:
-                try:
-                    ray.get([a.close_quent.remote() for a in self._rank_actors])
-                except Exception as e:
-                    exceptions.append(e)
-                finally:
-                    try:
-                        self._quent_runtime.close()
-                    except Exception as e:
-                        exceptions.append(e)
-
-            refs: list[ObjectRef[Any]] = [
-                a.shutdown.remote() for a in self._rank_actors
-            ]
-            for ref in refs:
-                try:
-                    ray.get(ref)
-                except ray.exceptions.RayActorError:
-                    pass  # expected: exit_actor() terminates the process immediately
-                except Exception as e:
-                    exceptions.append(e)
-
-            if exceptions:
-                raise ExceptionGroup("Actor shutdown failed", exceptions)
-        finally:
-            self._rank_actors = None
-            super().shutdown()
+        self._rank_actors = None
+        self._quent_runtime = None
+        super().shutdown()
 
     def _run(self, func: Callable[..., T], *args: Any, **kwargs: Any) -> list[T]:
         return list(

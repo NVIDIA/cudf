@@ -71,6 +71,18 @@ if TYPE_CHECKING:
 T = TypeVar("T")
 
 
+def _run_cleanup_steps(message: str, *steps: Callable[[], object]) -> None:
+    """Run every cleanup step and group any failures."""
+    exceptions: list[Exception] = []
+    for step in steps:
+        try:
+            step()
+        except Exception as error:
+            exceptions.append(error)
+    if exceptions:
+        raise ExceptionGroup(message, exceptions)
+
+
 def reset_statistics_from_options(
     statistics: Statistics, options: Options
 ) -> Statistics:

@@ -38,6 +38,7 @@ from cudf_polars.engine import persisted_result, rank_local_store
 from cudf_polars.engine.core import (
     ClusterInfo,
     StreamingEngine,
+    _run_cleanup_steps,
     all_gather_host_data,
     check_reserved_keys,
     evaluate_on_rank,
@@ -543,7 +544,7 @@ class SPMDEngine(StreamingEngine):
                         backend="spmd",
                         collector=quent_collector,
                     )
-                    exit_stack.callback(self._quent_runtime.close)
+                    exit_stack.callback(self._close_quent_controller)
                 self._quent_worker_runtime = QuentWorkerRuntime.create(
                     quent_context,
                     collector_address,
@@ -552,7 +553,7 @@ class SPMDEngine(StreamingEngine):
                     nranks=comm.nranks,
                     instance_name=f"rank-{comm.rank}",
                 )
-                exit_stack.callback(self._quent_worker_runtime.close)
+                exit_stack.callback(self._close_quent_worker)
                 if collector_cleanup is not None:
                     # The runtime now owns the collector.
                     collector_cleanup.pop_all()
@@ -595,6 +596,7 @@ class SPMDEngine(StreamingEngine):
                 },
                 exit_stack=exit_stack,
             )
+            exit_stack.callback(self._shutdown_spmd)
         except Exception:
             exit_stack.close()
             raise
@@ -615,6 +617,37 @@ class SPMDEngine(StreamingEngine):
         if self._ctx is not None:
             self._ctx.shutdown()
             self._ctx = None
+
+    def _close_quent_worker(self) -> None:
+        """Close and clear this rank's Quent worker runtime."""
+        if self._quent_worker_runtime is not None:
+            try:
+                self._quent_worker_runtime.close()
+            finally:
+                self._quent_worker_runtime = None
+
+    def _close_quent_controller(self) -> None:
+        """Close and clear the rank-zero Quent controller runtime."""
+        if self._quent_runtime is not None:
+            try:
+                self._quent_runtime.close()
+            finally:
+                self._quent_runtime = None
+
+    def _shutdown_spmd(self) -> None:
+        """Run collective cleanup before local resources unwind."""
+        steps: list[Callable[[], object]] = [self._drop_persisted]
+        if self._quent_worker_runtime is not None:
+            assert self._comm is not None
+            comm = self._comm
+            steps.append(self._close_quent_worker)
+            if comm.nranks > 1:
+                steps.append(lambda: barrier(comm))
+            if comm.rank == 0:
+                steps.append(self._close_quent_controller)
+            if comm.nranks > 1:
+                steps.append(lambda: barrier(comm))
+        _run_cleanup_steps("SPMD engine shutdown failed", *steps)
 
     @classmethod
     def from_options(cls, options: StreamingOptions) -> SPMDEngine:
@@ -908,46 +941,14 @@ class SPMDEngine(StreamingEngine):
         if self._ctx is None:
             return  # already shut down
 
-        # Free persisted partitions before _cleanup_ctx tears down the Context.
-        self._drop_persisted()
-
-        # Order matters: ``super().shutdown()`` closes ``self._exit_stack``,
-        # which invokes ``self._cleanup_ctx``. That requires ``self._ctx`` to
-        # still be set so the rapidsmpf Context can be shut down correctly.
-        # But, super().shutdown() clears self.config, so we need to emit the
-        # quent traces before that.
-        # Clear the references only after shutdown completes.
-
-        exceptions: list[Exception] = []
-
-        def close_quent(operation: Callable[[], None]) -> None:
-            try:
-                operation()
-            except Exception as e:
-                exceptions.append(e)
-
+        # The exit stack runs collective/persisted cleanup first, then the
+        # executor, Context, memory resource, and monitor callbacks.
         try:
-            if self._quent_worker_runtime is not None:
-                assert self._comm is not None
-                comm = self._comm
-                close_quent(self._quent_worker_runtime.close)
-                if comm.nranks > 1:
-                    close_quent(lambda: barrier(comm))
-                if comm.rank == 0:
-                    assert self._quent_runtime is not None
-                    close_quent(self._quent_runtime.close)
-                if comm.nranks > 1:
-                    close_quent(lambda: barrier(comm))
-
-            if exceptions:
-                raise ExceptionGroup("Quent shutdown failed", exceptions)
+            super().shutdown()
         finally:
-            try:
-                super().shutdown()
-            finally:
-                self._comm = None
-                self._ctx = None
-                self._py_executor = None
+            self._comm = None
+            self._ctx = None
+            self._py_executor = None
 
     def _run(self, func: Callable[..., T], *args: Any, **kwargs: Any) -> list[T]:
         data = json.dumps(func(*args, **kwargs)).encode()

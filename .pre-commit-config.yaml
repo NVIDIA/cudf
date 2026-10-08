@@ -12,10 +12,8 @@ ci:
   # CI via `pre-commit run --all-files` in ci/check_style.sh.
   skip: ["mypy", "verify-alpha-spec", "lychee"]
   submodules: false
-
 # Agent skill artifacts are validated and signed by the NVIDIA skills pipeline.
 exclude: ^skills/
-
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
@@ -42,24 +40,9 @@ repos:
     rev: 'v2.3.0'
     hooks:
       - id: mypy
-        additional_dependencies: [
-          "polars>=1.35,<1.45",
-          "numpy>=1.26",
-          "pyarrow-stubs>=19.0",
-          "pyarrow>=19.0.0,<24.0.0",  # https://github.com/NVIDIA/cudf/issues/22229
-          "pytest>=8.0.0,<9.1.0",
-          "types-cachetools>=5.5.0",
-          "rmm-cu12==26.10.*,>=0.0.0a0; sys_platform=='linux'",
-          "--extra-index-url=https://pypi.anaconda.org/rapidsai-wheels-nightly/simple/"
-        ]
-        args: ["--config-file=pyproject.toml",
-               "python/cudf/cudf",
-               "python/pylibcudf/pylibcudf",
-               "python/custreamz/custreamz",
-               "python/cudf_kafka/cudf_kafka",
-               "python/cudf_polars/cudf_polars",
-               "python/cudf_polars/tests",
-               "python/dask_cudf/dask_cudf"]
+        additional_dependencies: ["polars>=1.35,<1.45", "numpy>=1.26", "pyarrow-stubs>=19.0", "pyarrow>=19.0.0,<24.0.0", # https://github.com/NVIDIA/cudf/issues/22229
+          "pytest>=8.0.0,<9.1.0", "types-cachetools>=5.5.0", "rmm-cu12==26.10.*,>=0.0.0a0; sys_platform=='linux'", "--extra-index-url=https://pypi.anaconda.org/rapidsai-wheels-nightly/simple/"]
+        args: ["--config-file=pyproject.toml", "python/cudf/cudf", "python/pylibcudf/pylibcudf", "python/custreamz/custreamz", "python/cudf_kafka/cudf_kafka", "python/cudf_polars/cudf_polars", "python/cudf_polars/tests", "python/dask_cudf/dask_cudf"]
         pass_filenames: false
   - repo: https://github.com/pre-commit/mirrors-clang-format
     rev: v20.1.8
@@ -318,6 +301,10 @@ repos:
             cpp/include/cudf_test/cxxopts[.]hpp$
           )
       - id: verify-alpha-spec
+        args:
+          - --fix
+          - --mode
+          - release
       - id: verify-codeowners
         args: [--fix, --org=NVIDIA, --project-prefix=cudf]
       - id: verify-hardcoded-version
@@ -385,27 +372,13 @@ repos:
           (?x)
             ^docs/cudf/source/|
             ^python/(cudf|cudf_kafka|cudf_polars|libcudf|pylibcudf)/README[.]md$
-        args:
-          [
-            "--offline",
-            "--no-progress",
-            "--root-dir", ".",
-            "--fallback-extensions", "md,rst,ipynb",
-          ]
+        args: ["--offline", "--no-progress", "--root-dir", ".", "--fallback-extensions", "md,rst,ipynb"]
       - id: lychee
         alias: lychee-sphinx
         name: lychee (sphinx docs)
         files: ^docs/cudf/source/.*[.]md$
-        args:
-          [
-            "--offline",
-            "--no-progress",
-            "--root-dir", "docs/cudf/source",
-            "--fallback-extensions", "md,rst,ipynb",
-            # These are MyST cross-reference labels, not files. Add new lychee hits here.
-            "--exclude", "(^|/)cudf-pandas-profiling$",
-            "--exclude", "(^|/)api[.]options$",
-          ]
-
+        args: ["--offline", "--no-progress", "--root-dir", "docs/cudf/source", "--fallback-extensions", "md,rst,ipynb",
+          # These are MyST cross-reference labels, not files. Add new lychee hits here.
+          "--exclude", "(^|/)cudf-pandas-profiling$", "--exclude", "(^|/)api[.]options$"]
 default_language_version:
   python: python3

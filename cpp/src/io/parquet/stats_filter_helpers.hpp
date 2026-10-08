@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "decimal_decode_utils.cuh"
 #include "expression_transform_helpers.hpp"
 #include "timestamp_utils.cuh"
 
@@ -57,25 +58,7 @@ class stats_caster_base {
     CUDF_EXPECTS(stats_size <= sizeof(T),
                  "Parquet reader encountered a statistics vector larger than the type's size");
 
-    // Use std::type_identity to defer and avoid instantiating std::make_unsigned<__int128_t>::type
-    // which is not a standard integer type
-    // NOLINTNEXTLINE(modernize-type-traits)
-    using UnsignedT    = std::conditional_t<std::is_same_v<T, __int128_t>,
-                                            std::type_identity<unsigned __int128>,
-                                            std::make_unsigned<T>>::type;
-    auto const payload = std::span{stats_val, stats_size};
-    auto value         = std::accumulate(
-      payload.begin(), payload.end(), UnsignedT{0}, [](UnsignedT acc, uint8_t byte) {
-        return static_cast<UnsignedT>((acc << CHAR_BIT) | static_cast<UnsignedT>(byte));
-      });
-
-    // Check the sign of the first byte to determine if the value is negative
-    auto const is_negative_value = std::bit_cast<int8_t>(stats_val[0]) < 0;
-    // Sign-extension if negative value and the payload is smaller than the storage type
-    if (stats_size < sizeof(T) and is_negative_value) {
-      value = static_cast<UnsignedT>(value | (~UnsignedT{0} << (stats_size * CHAR_BIT)));
-    }
-    return std::bit_cast<T>(value);
+    return decode_big_endian_decimal<T>(stats_val, static_cast<int32_t>(stats_size));
   }
 
   template <typename T>
@@ -358,6 +341,13 @@ class stats_columns_collector final : public parquet_expression_simplifier {
     ast::literal const& literal) override;
 
  private:
+  /**
+   * @brief Collects the columns referenced by the simplified expression
+   *
+   * @param simplified_expr Simplified expression whose leaves are column references
+   */
+  void collect_surviving_predicates(ast::expression const& simplified_expr);
+
   thrust::host_vector<bool> _columns_mask;
 };
 

@@ -381,17 +381,6 @@ class dictionary_literals_collector final : public equality_literals_collector {
   dictionary_literals_collector(ast::expression const& expr,
                                 std::span<cudf::data_type const> output_dtypes);
 
-  /**
-   * @brief Returns vectors of collected literals and (in)equality operators in the AST expression,
-   * one per input table column
-   *
-   * @return A pair of vectors of collected literals and (in)equality operators, one per input table
-   * column
-   */
-  [[nodiscard]] std::pair<std::vector<std::vector<ast::literal*>>,
-                          std::vector<std::vector<ast::ast_operator>>>
-  get_literals_and_operators() &&;
-
  protected:
   /**
    * @copydoc parquet_expression_simplifier::simplify_comparison
@@ -403,9 +392,6 @@ class dictionary_literals_collector final : public equality_literals_collector {
   [[nodiscard]] simplified_expression_opt simplify_comparison(ast::ast_operator op,
                                                               ast::column_reference const& col_ref,
                                                               ast::literal const& literal) override;
-
- private:
-  std::vector<std::vector<ast::ast_operator>> _operators;
 };
 
 /**

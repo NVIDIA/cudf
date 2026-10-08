@@ -301,16 +301,16 @@ __device__ inline void decode_fixed_width_split_values(
         case Type::INT64: gpuOutputByteStreamSplit<int64_t>(dst, src, num_values); break;
         case Type::FIXED_LEN_BYTE_ARRAY:
           if (s->output_cvt.dtype_len_in <= sizeof(int32_t)) {
-            gpuOutputSplitFixedLenByteArrayAsInt(
-              reinterpret_cast<int32_t*>(dst), src, num_values, s->output_cvt.dtype_len_in);
+            *reinterpret_cast<int32_t*>(dst) =
+              decode_big_endian_decimal<int32_t>(src, s->output_cvt.dtype_len_in, num_values);
             break;
           } else if (s->output_cvt.dtype_len_in <= sizeof(int64_t)) {
-            gpuOutputSplitFixedLenByteArrayAsInt(
-              reinterpret_cast<int64_t*>(dst), src, num_values, s->output_cvt.dtype_len_in);
+            *reinterpret_cast<int64_t*>(dst) =
+              decode_big_endian_decimal<int64_t>(src, s->output_cvt.dtype_len_in, num_values);
             break;
           } else if (s->output_cvt.dtype_len_in <= sizeof(__int128_t)) {
-            gpuOutputSplitFixedLenByteArrayAsInt(
-              reinterpret_cast<__int128_t*>(dst), src, num_values, s->output_cvt.dtype_len_in);
+            *reinterpret_cast<__int128_t*>(dst) =
+              decode_big_endian_decimal<__int128_t>(src, s->output_cvt.dtype_len_in, num_values);
             break;
           }
           // unsupported decimal precision

@@ -577,3 +577,11 @@ COMPRESSION_TYPE_TO_PANDAS = {
     CompressionType.BROTLI: "brotli",
 }
 ALL_PA_TYPES = DEFAULT_PA_TYPES
+
+requires_pyarrow_bloom_filters = pytest.mark.skipif(
+    int(pa.__version__.split(".", 1)[0]) < 24,
+    reason="pyarrow writes Parquet bloom filters from 24.0",
+)
+
+# Sized so that absent values are practically never false positives
+BLOOM_FILTER_OPTIONS = {"ndv": 1000, "fpp": 0.0001}

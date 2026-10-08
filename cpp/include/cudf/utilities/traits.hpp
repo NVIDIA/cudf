@@ -685,6 +685,15 @@ bool is_nested(data_type type);
  */
 bool is_bit_castable(data_type from, data_type to);
 
+/**
+ * @brief Indicates whether `From` is implicitly convertible to `To`.
+ *
+ * @deprecated Use `cuda::std::is_convertible` instead.
+ */
+template <typename From, typename To>
+struct [[deprecated("Use cuda::std::is_convertible instead.")]] is_convertible
+  : cuda::std::is_convertible<From, To> {};
+
 /** @} */
 
 }  // namespace CUDF_EXPORT cudf

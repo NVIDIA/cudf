@@ -71,7 +71,9 @@ public final class Table implements AutoCloseable {
    * @param cudfColumns - Array of nativeHandles
    */
   public Table(long[] cudfColumns) {
-    assert cudfColumns != null && cudfColumns.length > 0 : "CudfColumns can't be null or empty";
+    if (cudfColumns == null || cudfColumns.length == 0) {
+      throw new IllegalArgumentException("cudfColumns can't be null or empty");
+    }
     this.columns = ColumnVector.getColumnVectorsFromPointers(cudfColumns);
     try {
       long[] views = new long[columns.length];

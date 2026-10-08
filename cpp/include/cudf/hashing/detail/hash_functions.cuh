@@ -7,7 +7,6 @@
 
 #include <cudf/utilities/traits.hpp>
 
-#include <cuda/std/bit>
 #include <cuda/std/cmath>
 #include <cuda/std/limits>
 
@@ -36,11 +35,6 @@ T __device__ inline normalize_nans_and_zeros(T const& key)
   }
   return normalize_nans(key);
 }
-
-// Retain these overloads for downstream users such as cudf-spark-jni.
-__device__ inline uint32_t swap_endian(uint32_t x) { return cuda::std::byteswap(x); }
-
-__device__ inline uint64_t swap_endian(uint64_t x) { return cuda::std::byteswap(x); }
 
 /**
  * SPDX-SnippetBegin

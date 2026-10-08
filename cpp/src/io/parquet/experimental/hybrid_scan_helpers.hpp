@@ -153,6 +153,8 @@ class aggregate_reader_metadata : public aggregate_reader_metadata_base {
   /**
    * @brief Setup and populate the page index structs in every source's `FileMetaData`
    *
+   * @throws std::invalid_argument if any page index buffer or byte range in the metadata is invalid
+   *
    * @param page_index_bytes Host span of Parquet page index buffer bytes, one per source
    */
   void setup_page_indexes(cudf::host_span<cudf::host_span<uint8_t const> const> page_index_bytes);

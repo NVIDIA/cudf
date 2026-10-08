@@ -20,6 +20,7 @@
 #include <functional>
 #include <numeric>
 #include <optional>
+#include <stdexcept>
 #include <unordered_set>
 #include <utility>
 
@@ -175,11 +176,19 @@ void aggregate_reader_metadata::setup_page_indexes(
     CUDF_EXPECTS(not row_groups.empty() and not row_groups.front().columns.empty(),
                  "No column chunks in Parquet schema to read page index for");
 
-    auto const expected_byte_range = file_metadata.page_index_byte_range();
+    // Treat an exception as an invalid byte range
+    auto const expected_byte_range = [&]() -> text::byte_range_info {
+      try {
+        return file_metadata.page_index_byte_range();
+      } catch (std::overflow_error const&) {
+        return {};
+      }
+    }();
 
     CUDF_EXPECTS(not expected_byte_range.is_empty() and
                    std::cmp_equal(pgidx_bytes.size(), expected_byte_range.size()),
-                 "Encountered an invalid page index buffer");
+                 "Encountered an invalid page index buffer",
+                 std::invalid_argument);
 
     file_metadata.setup_page_index(pgidx_bytes, expected_byte_range.offset());
   });

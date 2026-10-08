@@ -11,6 +11,7 @@
 #include <cudf/wrappers/durations.hpp>
 #include <cudf/wrappers/timestamps.hpp>
 
+#include <cuda/std/concepts>
 #include <cuda/std/type_traits>
 
 /**
@@ -46,29 +47,34 @@ using void_t [[deprecated("Use cuda::std::void_t instead.")]] = void;
  */
 #define CUDF_ENABLE_IF(...) cuda::std::enable_if_t<(__VA_ARGS__)>* = nullptr
 
-/// Checks if two types are comparable using less operator (i.e. <).
+/**
+ * @brief Checks if two types are comparable using less operator (i.e. <).
+ *
+ * @deprecated Use `cuda::std::totally_ordered_with` instead.
+ */
 template <typename L, typename R>
-using less_comparable = decltype(cuda::std::declval<L>() < cuda::std::declval<R>());
+using less_comparable [[deprecated("Use cuda::std::totally_ordered_with instead.")]] =
+  decltype(cuda::std::declval<L>() < cuda::std::declval<R>());
 
-/// Checks if two types are comparable using greater operator (i.e. >).
+/**
+ * @brief Checks if two types are comparable using greater operator (i.e. >).
+ *
+ * @deprecated Use `cuda::std::totally_ordered_with` instead.
+ */
 template <typename L, typename R>
-using greater_comparable = decltype(cuda::std::declval<L>() > cuda::std::declval<R>());
+using greater_comparable [[deprecated("Use cuda::std::totally_ordered_with instead.")]] =
+  decltype(cuda::std::declval<L>() > cuda::std::declval<R>());
 
-/// Checks if two types are comparable using equality operator (i.e. ==).
+/**
+ * @brief Checks if two types are comparable using equality operator (i.e. ==).
+ *
+ * @deprecated Use `cuda::std::equality_comparable_with` instead.
+ */
 template <typename L, typename R>
-using equality_comparable = decltype(cuda::std::declval<L>() == cuda::std::declval<R>());
+using equality_comparable [[deprecated("Use cuda::std::equality_comparable_with instead.")]] =
+  decltype(cuda::std::declval<L>() == cuda::std::declval<R>());
 
 namespace detail {
-template <typename L, typename R>
-constexpr inline bool is_relationally_comparable_impl = requires {
-  typename less_comparable<L, R>;
-  typename greater_comparable<L, R>;
-};
-
-template <typename L, typename R>
-constexpr inline bool is_equality_comparable_impl =
-  requires { typename equality_comparable<L, R>; };
-
 template <typename... Ts>
 constexpr inline bool has_common_type_impl = requires { typename cuda::std::common_type_t<Ts...>; };
 }  // namespace detail
@@ -107,8 +113,9 @@ using is_duration_t =
  * @brief Indicates whether objects of types `L` and `R` can be relationally
  *compared.
  *
- * Given two objects `L l`, and `R r`, returns true if `l < r` and `l > r` are
- * well-formed expressions.
+ * Equivalent to `cuda::std::totally_ordered_with<L, R>`: given two objects `L l`, and `R r`,
+ * `l < r`, `l > r`, `l <= r`, `l >= r`, `l == r` and `l != r` must all be well-formed in both
+ * argument orders, and `L` and `R` must share a common reference type.
  *
  * @tparam L Type of the first object
  * @tparam R Type of the second object
@@ -118,7 +125,7 @@ using is_duration_t =
 template <typename L, typename R>
 constexpr inline bool is_relationally_comparable()
 {
-  return detail::is_relationally_comparable_impl<L, R>;
+  return cuda::std::totally_ordered_with<L, R>;
 }
 
 /**
@@ -134,8 +141,9 @@ bool is_relationally_comparable(data_type type);
  * @brief Indicates whether objects of types `L` and `R` can be compared
  * for equality.
  *
- * Given two objects `L l`, and `R r`, returns true if `l == r` is a
- * well-formed expression.
+ * Equivalent to `cuda::std::equality_comparable_with<L, R>`: given two objects `L l`, and `R r`,
+ * `l == r` and `l != r` must be well-formed in both argument orders, and `L` and `R` must share a
+ * common reference type.
  *
  * @tparam L Type of the first object
  * @tparam R Type of the second object
@@ -145,7 +153,7 @@ bool is_relationally_comparable(data_type type);
 template <typename L, typename R>
 constexpr inline bool is_equality_comparable()
 {
-  return detail::is_equality_comparable_impl<L, R>;
+  return cuda::std::equality_comparable_with<L, R>;
 }
 
 /**
@@ -678,15 +686,14 @@ bool is_nested(data_type type);
  */
 bool is_bit_castable(data_type from, data_type to);
 
+/**
+ * @brief Indicates whether `From` is implicitly convertible to `To`.
+ *
+ * @deprecated Use `cuda::std::is_convertible` instead.
+ */
 template <typename From, typename To>
-struct is_convertible : cuda::std::is_convertible<From, To> {};
-
-// This will ensure that timestamps can be promoted to a higher precision. Presently, they can't
-// do that due to nvcc/gcc compiler issues
-template <typename Duration1, typename Duration2>
-struct is_convertible<cudf::detail::timestamp<Duration1>, cudf::detail::timestamp<Duration2>>
-  : cuda::std::is_convertible<typename cudf::detail::time_point<Duration1>::duration,
-                              typename cudf::detail::time_point<Duration2>::duration> {};
+struct [[deprecated("Use cuda::std::is_convertible instead.")]] is_convertible
+  : cuda::std::is_convertible<From, To> {};
 
 /** @} */
 

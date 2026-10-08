@@ -45,7 +45,6 @@
 #include <cuda/iterator>
 #include <cuda/stream>
 #include <thrust/count.h>
-#include <thrust/host_vector.h>
 
 #include <algorithm>
 #include <future>

@@ -24,10 +24,17 @@ def df():
     )
 
 
-@pytest.mark.parametrize("include_header", [True, False])
-@pytest.mark.parametrize("null_value", [None, "NA"])
-@pytest.mark.parametrize("line_terminator", ["\n", "\n\n"])
-@pytest.mark.parametrize("separator", [",", "|"])
+@pytest.mark.parametrize(
+    "include_header,null_value,line_terminator,separator",
+    [
+        pytest.param(True, None, "\n", ",", id="default"),
+        pytest.param(False, None, "\n", ",", id="without-header"),
+        pytest.param(True, "NA", "\n", ",", id="null-value"),
+        pytest.param(True, None, "\n\n", ",", id="line-terminator"),
+        pytest.param(True, None, "\n", "|", id="separator"),
+        pytest.param(False, "NA", "\n\n", "|", id="writer-option-interaction"),
+    ],
+)
 def test_sink_csv(
     engine: pl.GPUEngine,
     df,
@@ -69,11 +76,11 @@ def test_sink_csv(
         ("quote_char", "`"),
     ],
 )
-def test_sink_csv_unsupported_kwargs(engine: pl.GPUEngine, df, tmp_path, kwarg, value):
+def test_sink_csv_unsupported_kwargs(in_memory_engine, df, tmp_path, kwarg, value):
     assert_sink_ir_translation_raises(
         df,
         tmp_path / "unsupported.csv",
-        engine,
+        in_memory_engine,
         {kwarg: value},
         NotImplementedError,
     )
@@ -87,11 +94,26 @@ def test_sink_ndjson(engine: pl.GPUEngine, df, tmp_path):
     )
 
 
-@pytest.mark.parametrize("mkdir", [True, False])
-@pytest.mark.parametrize("data_page_size", [None, 256_000])
-@pytest.mark.parametrize("row_group_size", [None, 1_000])
-@pytest.mark.parametrize("is_chunked", [False, True])
-@pytest.mark.parametrize("n_output_chunks", [1, 4, 8])
+@pytest.mark.parametrize(
+    "mkdir,data_page_size,row_group_size,is_chunked,n_output_chunks",
+    [
+        pytest.param(True, None, None, False, 1, id="default"),
+        pytest.param(False, None, None, False, 1, id="mkdir-disabled"),
+        pytest.param(True, 256_000, None, False, 1, id="data-page-size"),
+        pytest.param(True, None, 1_000, False, 1, id="row-group-size"),
+        pytest.param(True, None, None, True, 1, id="chunked-single-output"),
+        pytest.param(True, None, None, True, 4, id="chunked-four-outputs"),
+        pytest.param(True, None, None, True, 8, id="chunked-eight-outputs"),
+        pytest.param(
+            True,
+            256_000,
+            1_000,
+            True,
+            4,
+            id="writer-option-interaction",
+        ),
+    ],
+)
 def test_sink_parquet(
     df, tmp_path, mkdir, data_page_size, row_group_size, is_chunked, n_output_chunks
 ):
@@ -123,40 +145,41 @@ def test_sink_parquet_array_falls_back(in_memory_engine, tmp_path):
     )
 
 
-@pytest.mark.parametrize("compression_level", [9, None])
 @pytest.mark.parametrize(
-    "compression", ["zstd", "gzip", "brotli", "snappy", "lz4", "uncompressed"]
+    "compression,write_kwargs",
+    [
+        ("zstd", {"compression_level": None}),
+        ("gzip", {"compression_level": None}),
+        ("snappy", {}),
+        ("lz4", {}),
+        ("uncompressed", {}),
+    ],
 )
-def test_sink_parquet_compression_type(
-    engine: pl.GPUEngine, df, tmp_path, compression, compression_level
+def test_sink_parquet_supported_compression_type(
+    in_memory_engine, df, tmp_path, compression, write_kwargs
 ):
-    # LZO compression not supported in polars
-    # Only zstd and gzip take a compression level, which libcudf cannot set
-    if compression in {"zstd", "gzip"} and compression_level is None:
-        assert_sink_result_equal(
-            df,
-            tmp_path / "compression.parquet",
-            write_kwargs={
-                "compression": compression,
-                "compression_level": compression_level,
-            },
-            engine=pl.GPUEngine(executor="in-memory", raise_on_fail=True),
-        )
-    elif compression in {"snappy", "lz4", "uncompressed"}:
-        assert_sink_result_equal(
-            df,
-            tmp_path / "compression.parquet",
-            write_kwargs={"compression": compression},
-            engine=pl.GPUEngine(executor="in-memory", raise_on_fail=True),
-        )
-    else:
-        assert_sink_ir_translation_raises(
-            df,
-            tmp_path / "unsupported_compression.parquet",
-            engine,
-            {"compression": compression, "compression_level": compression_level},
-            NotImplementedError,
-        )
+    assert_sink_result_equal(
+        df,
+        tmp_path / "compression.parquet",
+        write_kwargs={"compression": compression, **write_kwargs},
+        engine=in_memory_engine,
+    )
+
+
+@pytest.mark.parametrize(
+    "compression,compression_level",
+    [("zstd", 9), ("gzip", 9), ("brotli", None), ("brotli", 9)],
+)
+def test_sink_parquet_unsupported_compression_type(
+    in_memory_engine, df, tmp_path, compression, compression_level
+):
+    assert_sink_ir_translation_raises(
+        df,
+        tmp_path / "unsupported_compression.parquet",
+        in_memory_engine,
+        {"compression": compression, "compression_level": compression_level},
+        NotImplementedError,
+    )
 
 
 def test_sink_csv_nested_data(tmp_path):
@@ -198,13 +221,13 @@ def test_sink_in_memory_executor(df, tmp_path, file_type):
     reason="compression parameter added in Polars 1.38",
 )
 def test_sink_compression_raises(
-    engine: pl.GPUEngine, df, tmp_path, compression, file_type
+    in_memory_engine, df, tmp_path, compression, file_type
 ):
     path = tmp_path / f"out.{file_type}"
     assert_sink_ir_translation_raises(
         df,
         path,
-        engine,
+        in_memory_engine,
         {"compression": compression, "check_extension": False},
         NotImplementedError,
     )

@@ -26,9 +26,13 @@ namespace CUDF_EXPORT cudf {
  * @{
  */
 
-/// Utility metafunction that maps a sequence of any types to the type void.
+/**
+ * @brief Utility metafunction that maps a sequence of any types to the type void.
+ *
+ * @deprecated Use `cuda::std::void_t` instead.
+ */
 template <typename...>
-using void_t = void;
+using void_t [[deprecated("Use cuda::std::void_t instead.")]] = void;
 
 /**
  * @brief Convenience macro for SFINAE as an unnamed template parameter.
@@ -71,22 +75,17 @@ using equality_comparable [[deprecated("Use cuda::std::equality_comparable_with 
   decltype(cuda::std::declval<L>() == cuda::std::declval<R>());
 
 namespace detail {
-// has common type
-template <typename AlwaysVoid, typename... Ts>
-struct has_common_type_impl : cuda::std::false_type {};
-
 template <typename... Ts>
-struct has_common_type_impl<void_t<cuda::std::common_type_t<Ts...>>, Ts...> : cuda::std::true_type {
-};
+constexpr inline bool has_common_type_impl = requires { typename cuda::std::common_type_t<Ts...>; };
 }  // namespace detail
 
 /// Checks if types have a common type
 template <typename... Ts>
-using has_common_type = typename detail::has_common_type_impl<void, Ts...>::type;
+using has_common_type = cuda::std::bool_constant<detail::has_common_type_impl<Ts...>>;
 
 /// Helper variable template for has_common_type<>::value
 template <typename... Ts>
-constexpr inline bool has_common_type_v = detail::has_common_type_impl<void, Ts...>::value;
+constexpr inline bool has_common_type_v = detail::has_common_type_impl<Ts...>;
 
 /// Checks if a type is a timestamp type.
 template <typename T>

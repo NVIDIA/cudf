@@ -23,6 +23,7 @@ from cudf_polars.testing.asserts import (
 )
 from cudf_polars.utils.config import Cluster
 from cudf_polars.utils.cuda_stream import get_cuda_stream
+from cudf_polars.utils.versions import POLARS_VERSION_LT_136, POLARS_VERSION_LT_140
 
 if TYPE_CHECKING:
     from typing import Any
@@ -383,6 +384,10 @@ def test_nested_categorical_raises(nested, in_memory_engine):
 
 @pytest.mark.parametrize(
     "categorical_frame", [pl.Enum(["a", "b", "c"])], ids=["enum"], indirect=True
+)
+@pytest.mark.skipif(
+    POLARS_VERSION_LT_140 and not POLARS_VERSION_LT_136,
+    reason="Fails for 1.36-1.39 (inclusive)",
 )
 def test_hint_sorted_raises(categorical_frame, in_memory_engine):
     q = categorical_frame.set_sorted("cat")

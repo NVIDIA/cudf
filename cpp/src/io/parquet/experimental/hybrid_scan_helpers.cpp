@@ -112,7 +112,7 @@ metadata::metadata(cudf::host_span<uint8_t const> footer_bytes)
 }
 
 aggregate_reader_metadata::aggregate_reader_metadata(
-  cudf::host_span<cudf::host_span<uint8_t const> const> footer_bytes,
+  std::span<cudf::host_span<uint8_t const> const> footer_bytes,
   bool use_arrow_schema,
   bool has_cols_from_mismatched_srcs)
   : aggregate_reader_metadata(
@@ -124,7 +124,7 @@ aggregate_reader_metadata::aggregate_reader_metadata(
 }
 
 aggregate_reader_metadata::aggregate_reader_metadata(
-  cudf::host_span<FileMetaData const> parquet_metadatas,
+  std::span<FileMetaData const> parquet_metadatas,
   bool use_arrow_schema,
   bool has_cols_from_mismatched_srcs)
   : aggregate_reader_metadata(

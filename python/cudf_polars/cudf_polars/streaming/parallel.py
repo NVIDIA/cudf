@@ -19,6 +19,7 @@ import cudf_polars.streaming.filter_hint
 import cudf_polars.streaming.groupby
 import cudf_polars.streaming.io
 import cudf_polars.streaming.join
+import cudf_polars.streaming.rolling
 import cudf_polars.streaming.select
 import cudf_polars.streaming.shuffle
 import cudf_polars.streaming.sort  # noqa: F401

@@ -20,7 +20,6 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/stream>
-#include <thrust/sequence.h>
 #include <thrust/tabulate.h>
 
 namespace cudf {

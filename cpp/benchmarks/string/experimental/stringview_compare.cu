@@ -23,6 +23,7 @@
 #include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/std/bit>
 #include <thrust/count.h>
 #include <thrust/for_each.h>
 #include <thrust/gather.h>
@@ -150,10 +151,7 @@ struct compare_arrow_sv {
     // shortcut to check preview bytes
     auto pv_lhs = reinterpret_cast<uint32_t const*>(item_lhs.inlined.data)[0];
     auto pv_rhs = reinterpret_cast<uint32_t const*>(item_rhs.inlined.data)[0];
-    if (pv_lhs != pv_rhs) {
-      return cudf::hashing::detail::swap_endian(pv_lhs) <
-             cudf::hashing::detail::swap_endian(pv_rhs);
-    }
+    if (pv_lhs != pv_rhs) { return cuda::std::byteswap(pv_lhs) < cuda::std::byteswap(pv_rhs); }
 
     // prefix matches so check how many bytes are left to compare
     constexpr auto prefix_size = static_cast<cudf::size_type>(sizeof(uint32_t));

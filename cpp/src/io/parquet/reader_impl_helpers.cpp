@@ -652,7 +652,7 @@ metadata::~metadata()
 }
 
 std::vector<metadata> aggregate_reader_metadata::metadatas_from_sources(
-  host_span<std::unique_ptr<datasource> const> sources, bool read_page_indexes)
+  std::span<std::unique_ptr<datasource> const> sources, bool read_page_indexes)
 {
   return parallel_construct_metadatas(sources, [read_page_indexes](auto const& source) {
     return metadata{source.get(), read_page_indexes};

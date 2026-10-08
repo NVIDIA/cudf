@@ -42,8 +42,6 @@
 #include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/for_each.h>
-#include <thrust/sort.h>
-#include <thrust/transform.h>
 #include <thrust/unique.h>
 
 #include <memory>
@@ -107,7 +105,7 @@ struct list_nonnull_filter {
 struct is_row_valid {
   bitmask_type const* _validity_mask;  ///< Validity mask for the table
 
-  __device__ auto operator()(size_type idx) const noexcept
+  __device__ bool operator()(size_type idx) const noexcept
   {
     return bit_is_set(_validity_mask, idx);
   }
@@ -121,7 +119,7 @@ struct is_row_valid {
 struct is_row_null {
   bitmask_type const* const _validity_mask;  ///< Validity mask for the table
 
-  __device__ auto operator()(size_type idx) const noexcept
+  __device__ bool operator()(size_type idx) const noexcept
   {
     return !cudf::bit_is_set(_validity_mask, idx);
   }

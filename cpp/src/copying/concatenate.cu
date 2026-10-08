@@ -34,9 +34,7 @@
 #include <cuda/std/iterator>
 #include <cuda/stream>
 #include <thrust/binary_search.h>
-#include <thrust/copy.h>
 #include <thrust/execution_policy.h>
-#include <thrust/host_vector.h>
 #include <thrust/transform_scan.h>
 
 #include <algorithm>

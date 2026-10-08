@@ -6,6 +6,7 @@
 #pragma once
 
 #include <cudf/io/types.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
 namespace CUDF_EXPORT cudf {
@@ -53,7 +54,8 @@ struct decompression_info {
   device_span<device_span<uint8_t const> const> inputs,
   size_t max_uncomp_chunk_size,
   size_t max_total_uncomp_size,
-  cuda::stream_ref stream);
+  cuda::stream_ref stream,
+  cudf::memory_resources mr);
 
 /**
  * @brief Checks if the decompression scratch size can be computed using the extended API of the

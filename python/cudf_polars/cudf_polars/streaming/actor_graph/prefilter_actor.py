@@ -123,14 +123,14 @@ async def pushdown_filter_actor(
                 tracer.set_extra("prefilter", trace)
 
             if decision.method == "skip":
-                domain_sample.chunks.clear()
+                domain_sample.local_sample.chunks.clear()
                 await gather_in_task_group(
                     ch_domain.shutdown(context),
                     replay_buffered_channel(
                         context,
                         ch_out,
                         ch_target,
-                        target_sample.chunks,
+                        target_sample.local_sample.chunks,
                         target_metadata,
                         trace_ir=ir,
                     ),
@@ -151,7 +151,7 @@ async def pushdown_filter_actor(
                         context,
                         ch_target_replay,
                         ch_target,
-                        target_sample.chunks,
+                        target_sample.local_sample.chunks,
                         target_metadata,
                         trace_ir=ir,
                     )
@@ -161,7 +161,7 @@ async def pushdown_filter_actor(
                         context,
                         ch_domain_replay,
                         ch_domain,
-                        domain_sample.chunks,
+                        domain_sample.local_sample.chunks,
                         domain_metadata,
                         trace_ir=ir,
                     )
@@ -189,7 +189,7 @@ async def pushdown_filter_actor(
                     await gather_in_task_group(*execution.tasks)
         finally:
             for sample in collected_samples:
-                sample.chunks.clear()
+                sample.local_sample.chunks.clear()
 
 
 @generate_ir_sub_network.register(PushdownFilterHint)

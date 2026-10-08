@@ -201,6 +201,7 @@ jobs:
           - '!python/cudf_polars/quent/**'
           - 'ci/test_python_cudf_polars.sh'
         test_cudf_polars_quent:
+          - 'python/cudf_polars/quent/analyzer/**'
           - 'python/cudf_polars/quent/bridge/**'
           - 'python/cudf_polars/quent/model.yaml'
           - 'ci/test_cudf_polars_quent.sh'
@@ -214,6 +215,8 @@ jobs:
           - 'ci/build_cpp.sh'
           - 'ci/build_python.sh'
           - 'ci/build_python_noarch.sh'
+          - 'ci/build_python_common.sh'
+          - 'ci/build_parallel.sh'
         test_python_conda_common:
           - 'ci/test_python_common.sh'
         test_python_conda_cudf:
@@ -234,6 +237,7 @@ jobs:
           - 'ci/build_wheel_noarch.sh'
           - 'ci/build_wheel.sh'
           - 'ci/build_wheel_common.sh'
+          - 'ci/build_parallel.sh'
           - 'ci/validate_wheel.sh'
           - '.github/workflows/build.yaml'
           - '.github/workflows/wheels-build-stage.yaml'
@@ -635,6 +639,7 @@ jobs:
       target-aws-access-key-id: ${{ secrets.NVIDIA_DOCS_AWS_ACCESS_KEY_ID }}
       target-aws-region: ${{ secrets.NVIDIA_DOCS_AWS_REGION }}
       target-aws-secret-access-key: ${{ secrets.NVIDIA_DOCS_AWS_SECRET_ACCESS_KEY }}
+      target-archive-s3-bucket: ${{ secrets.NVIDIA_DOCS_ARCHIVE_S3_BUCKET }}
       target-s3-bucket: ${{ secrets.NVIDIA_DOCS_S3_BUCKET }}
     uses: rapidsai/shared-workflows/.github/workflows/publish-api-docs.yaml@main
     with:

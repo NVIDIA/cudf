@@ -1074,9 +1074,10 @@ def test_page_index_byte_range_optional_indexes(
         data[page_index.offset : page_index.offset + page_index.size]
     )
 
-    # The main parquet reader uses the same page index byte range
+    # Keep the source alive for the main parquet reader
+    source = io.BytesIO(data)
     options = plc.io.parquet.ParquetReaderOptions.builder(
-        plc.io.SourceInfo([io.BytesIO(data)])
+        plc.io.SourceInfo([source])
     ).build()
     assert_table_and_meta_eq(
         simple_parquet_table, plc.io.parquet.read_parquet(options)

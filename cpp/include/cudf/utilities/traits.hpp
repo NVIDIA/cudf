@@ -43,6 +43,33 @@ using void_t = void;
  */
 #define CUDF_ENABLE_IF(...) cuda::std::enable_if_t<(__VA_ARGS__)>* = nullptr
 
+/**
+ * @brief Checks if two types are comparable using less operator (i.e. <).
+ *
+ * @deprecated Use `cuda::std::totally_ordered_with` instead.
+ */
+template <typename L, typename R>
+using less_comparable [[deprecated("Use cuda::std::totally_ordered_with instead.")]] =
+  decltype(cuda::std::declval<L>() < cuda::std::declval<R>());
+
+/**
+ * @brief Checks if two types are comparable using greater operator (i.e. >).
+ *
+ * @deprecated Use `cuda::std::totally_ordered_with` instead.
+ */
+template <typename L, typename R>
+using greater_comparable [[deprecated("Use cuda::std::totally_ordered_with instead.")]] =
+  decltype(cuda::std::declval<L>() > cuda::std::declval<R>());
+
+/**
+ * @brief Checks if two types are comparable using equality operator (i.e. ==).
+ *
+ * @deprecated Use `cuda::std::equality_comparable_with` instead.
+ */
+template <typename L, typename R>
+using equality_comparable [[deprecated("Use cuda::std::equality_comparable_with instead.")]] =
+  decltype(cuda::std::declval<L>() == cuda::std::declval<R>());
+
 namespace detail {
 // has common type
 template <typename AlwaysVoid, typename... Ts>

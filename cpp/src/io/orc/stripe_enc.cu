@@ -1394,7 +1394,8 @@ std::optional<writer_compression_statistics> compress_orc_data_streams(
                                                                        comp_block_align);
   CUDF_CUDA_TRY(cudaGetLastError());
 
-  cudf::io::detail::compress(compression, comp_in, comp_out, comp_res, stream);
+  cudf::io::detail::compress(
+    compression, comp_in, comp_out, comp_res, stream, cudf::get_current_device_resource_ref());
 
   compact_compressed_blocks_kernel<<<num_blocks, 1024, 0, stream.get()>>>(
     strm_desc, comp_in, comp_out, comp_res, compressed_data, comp_blk_size, max_comp_blk_size);

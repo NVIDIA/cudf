@@ -11,6 +11,7 @@
 #pragma once
 
 #include <cudf/io/types.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
 #include <cuda/stream>
@@ -109,12 +110,14 @@ std::vector<uint8_t> compress(compression_type compression, host_span<uint8_t co
  * @param outputs Device memory buffers to store the compressed output
  * @param results Compression results
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources; only the temporary resource is used
  */
 void compress(compression_type compression,
               device_span<device_span<uint8_t const> const> inputs,
               device_span<device_span<uint8_t> const> outputs,
               device_span<codec_exec_result> results,
-              cuda::stream_ref stream);
+              cuda::stream_ref stream,
+              cudf::memory_resources mr);
 
 /**
  * @brief Decompresses a host memory buffer.
@@ -148,6 +151,7 @@ size_t decompress(compression_type compression,
  * @param max_uncomp_chunk_size Maximum size of any single uncompressed chunk
  * @param max_total_uncomp_size Maximum size of the total uncompressed data
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources; only the temporary resource is used
  */
 void decompress(compression_type compression,
                 device_span<device_span<uint8_t const> const> inputs,
@@ -155,7 +159,8 @@ void decompress(compression_type compression,
                 device_span<codec_exec_result> results,
                 size_t max_uncomp_chunk_size,
                 size_t max_total_uncomp_size,
-                cuda::stream_ref stream);
+                cuda::stream_ref stream,
+                cudf::memory_resources mr);
 
 /** @} */  // end of group
 }  // namespace io::detail

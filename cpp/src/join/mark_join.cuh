@@ -8,7 +8,8 @@
 #include <cudf/detail/join/join.hpp>
 #include <cudf/detail/row_operator/equality.cuh>
 #include <cudf/detail/row_operator/hashing.cuh>
-#include <cudf/detail/row_operator/primitive_row_operators.cuh>
+#include <cudf/detail/row_operator/primitive_equality.cuh>
+#include <cudf/detail/row_operator/primitive_hashing.cuh>
 #include <cudf/join/join.hpp>
 #include <cudf/reduction/bloom_filter.cuh>
 #include <cudf/table/table_view.hpp>

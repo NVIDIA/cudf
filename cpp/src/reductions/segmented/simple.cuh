@@ -120,6 +120,14 @@ struct reduce_argminmax_fn {
   }
 };
 
+// Both operations use the same comparator type; one CUDA owner avoids duplicate device kernels.
+std::unique_ptr<column> string_segmented_minmax(column_view const& col,
+                                                device_span<size_type const> offsets,
+                                                bool is_argmin,
+                                                null_policy null_handling,
+                                                cuda::stream_ref stream,
+                                                rmm::device_async_resource_ref mr);
+
 /**
  * @brief String segmented reduction for 'min', 'max'.
  *
@@ -146,38 +154,8 @@ std::unique_ptr<column> string_segmented_reduction(column_view const& col,
                                                    cuda::stream_ref stream,
                                                    rmm::device_async_resource_ref mr)
 {
-  // Pass to simple_segmented_reduction, get indices to gather, perform gather here.
-  auto device_col = cudf::column_device_view::create(col, stream);
-
-  auto it                 = cuda::counting_iterator<cudf::size_type>{0};
-  auto const num_segments = static_cast<size_type>(offsets.size()) - 1;
-
   bool constexpr is_argmin = std::is_same_v<Op, cudf::reduction::detail::op::min>;
-  auto string_comparator   = reduce_argminmax_fn<InputType>{*device_col, is_argmin, null_handling};
-  auto constexpr identity =
-    is_argmin ? cudf::detail::ARGMIN_SENTINEL : cudf::detail::ARGMAX_SENTINEL;
-
-  auto gather_map = make_fixed_width_column(
-    data_type{type_to_id<size_type>()}, num_segments, mask_state::UNALLOCATED, stream, mr);
-
-  auto gather_map_it = gather_map->mutable_view().begin<size_type>();
-
-  cudf::reduction::detail::segmented_reduce(
-    it, offsets.begin(), offsets.end(), gather_map_it, string_comparator, identity, stream);
-
-  auto result = std::move(cudf::detail::gather(table_view{{col}},
-                                               *gather_map,
-                                               cudf::out_of_bounds_policy::NULLIFY,
-                                               cudf::negative_index_policy::NOT_ALLOWED,
-                                               stream,
-                                               mr)
-                            ->release()[0]);
-
-  // Compute the output null mask
-  cudf::reduction::detail::segmented_update_validity(
-    *result, col, offsets, null_handling, std::nullopt, stream, mr);
-
-  return result;
+  return string_segmented_minmax(col, offsets, is_argmin, null_handling, stream, mr);
 }
 
 template <typename InputType,

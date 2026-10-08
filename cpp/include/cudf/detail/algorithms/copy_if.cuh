@@ -8,11 +8,11 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_buffer.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_select.cuh>
 #include <cuda/iterator>
+#include <cuda/std/execution>
 #include <cuda/std/functional>
 #include <cuda/stream>
 #include <thrust/copy.h>
@@ -55,29 +55,12 @@ OutputIterator copy_if(InputIterator begin,
   auto num_selected =
     cudf::detail::device_scalar<cuda::std::size_t>(stream, cudf::get_current_device_resource_ref());
 
-  auto temp_storage_bytes = std::size_t{0};
-  CUDF_CUDA_TRY(cub::DeviceSelect::FlaggedIf(nullptr,
-                                             temp_storage_bytes,
-                                             begin,
-                                             stencil,
-                                             result,
-                                             num_selected.data(),
-                                             num_items,
-                                             predicate,
-                                             stream.get()));
-
-  auto d_temp_storage =
-    rmm::device_buffer(temp_storage_bytes, stream, cudf::get_current_device_resource_ref());
-
-  CUDF_CUDA_TRY(cub::DeviceSelect::FlaggedIf(d_temp_storage.data(),
-                                             temp_storage_bytes,
-                                             begin,
-                                             stencil,
-                                             result,
-                                             num_selected.data(),
-                                             num_items,
-                                             predicate,
-                                             stream.get()));
+  auto env =
+    cuda::std::execution::env{cuda::std::execution::prop{cuda::get_stream_t{}, stream},
+                              cuda::std::execution::prop{cuda::mr::get_memory_resource_t{},
+                                                         cudf::get_current_device_resource_ref()}};
+  CUDF_CUDA_TRY(cub::DeviceSelect::FlaggedIf(
+    begin, stencil, result, num_selected.data(), num_items, predicate, env));
 
   return result + num_selected.value(stream);
 }
@@ -113,30 +96,12 @@ OutputIterator copy_if(InputIterator begin,
   auto num_selected =
     cudf::detail::device_scalar<cuda::std::size_t>(stream, cudf::get_current_device_resource_ref());
 
-  // First call to get temporary storage size
-  size_t temp_storage_bytes = 0;
-  CUDF_CUDA_TRY(cub::DeviceSelect::If(nullptr,
-                                      temp_storage_bytes,
-                                      begin,
-                                      output,
-                                      num_selected.data(),
-                                      num_items,
-                                      predicate,
-                                      stream.get()));
-
-  // Allocate temporary storage
-  rmm::device_buffer d_temp_storage(
-    temp_storage_bytes, stream, cudf::get_current_device_resource_ref());
-
-  // Run copy_if
-  CUDF_CUDA_TRY(cub::DeviceSelect::If(d_temp_storage.data(),
-                                      temp_storage_bytes,
-                                      begin,
-                                      output,
-                                      num_selected.data(),
-                                      num_items,
-                                      predicate,
-                                      stream.get()));
+  auto env =
+    cuda::std::execution::env{cuda::std::execution::prop{cuda::get_stream_t{}, stream},
+                              cuda::std::execution::prop{cuda::mr::get_memory_resource_t{},
+                                                         cudf::get_current_device_resource_ref()}};
+  CUDF_CUDA_TRY(
+    cub::DeviceSelect::If(begin, output, num_selected.data(), num_items, predicate, env));
 
   // Copy number of selected elements back to host via pinned memory
   return output + num_selected.value(stream);
@@ -158,14 +123,12 @@ void copy_if_async(InputIterator begin,
 {
   auto const num_items = cuda::std::distance(begin, end);
 
-  auto tmp_bytes = std::size_t{0};
-  auto no_out    = cuda::make_discard_iterator<int>();
-  CUDF_CUDA_TRY(cub::DeviceSelect::If(
-    nullptr, tmp_bytes, begin, output, no_out, num_items, predicate, stream.get()));
-
-  auto tmp_stg = rmm::device_buffer(tmp_bytes, stream, cudf::get_current_device_resource_ref());
-  CUDF_CUDA_TRY(cub::DeviceSelect::If(
-    tmp_stg.data(), tmp_bytes, begin, output, no_out, num_items, predicate, stream.get()));
+  auto no_out = cuda::make_discard_iterator<int>();
+  auto env =
+    cuda::std::execution::env{cuda::std::execution::prop{cuda::get_stream_t{}, stream},
+                              cuda::std::execution::prop{cuda::mr::get_memory_resource_t{},
+                                                         cudf::get_current_device_resource_ref()}};
+  CUDF_CUDA_TRY(cub::DeviceSelect::If(begin, output, no_out, num_items, predicate, env));
 }
 
 /**
@@ -188,14 +151,13 @@ void copy_if_async(InputIterator begin,
 {
   auto const num_items = cuda::std::distance(begin, end);
 
-  auto tmp_bytes = std::size_t{0};
-  auto no_out    = cuda::make_discard_iterator<int>();
-  CUDF_CUDA_TRY(cub::DeviceSelect::FlaggedIf(
-    nullptr, tmp_bytes, begin, stencil, result, no_out, num_items, predicate, stream.get()));
-
-  auto tmp = rmm::device_buffer(tmp_bytes, stream, cudf::get_current_device_resource_ref());
-  CUDF_CUDA_TRY(cub::DeviceSelect::FlaggedIf(
-    tmp.data(), tmp_bytes, begin, stencil, result, no_out, num_items, predicate, stream.get()));
+  auto no_out = cuda::make_discard_iterator<int>();
+  auto env =
+    cuda::std::execution::env{cuda::std::execution::prop{cuda::get_stream_t{}, stream},
+                              cuda::std::execution::prop{cuda::mr::get_memory_resource_t{},
+                                                         cudf::get_current_device_resource_ref()}};
+  CUDF_CUDA_TRY(
+    cub::DeviceSelect::FlaggedIf(begin, stencil, result, no_out, num_items, predicate, env));
 }
 
 }  // namespace cudf::detail

@@ -512,9 +512,6 @@ jobs:
       # https://github.com/NVIDIA/cudf/pull/22381/changes#r3196736965
       container-options: "--cap-add CAP_SYS_PTRACE --shm-size=8g --ulimit=nofile=1000000:1000000"
       script: "ci/test_python_cudf_polars_integrations.sh"
-      # https://github.com/NVIDIA/cudf/issues/23498
-      # The CUDA build of PyTorch is only installed for CUDA 13.
-      matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200" and (.CUDA_VER | startswith("13"))))
   conda-python-other-tests:
     # Tests for dask_cudf, cudf_kafka, custreamz, and cudf_streaming run separately from cudf_polars.
     needs: [conda-python-build, conda-python-build-noarch, changed-files]

@@ -29,6 +29,11 @@ from cudf_polars.engine.torch_interop import (  # noqa: E402
     polars_to_tensor,
 )
 
+# A CPU-only PyTorch build cannot hold the GPU-resident handoff.
+requires_torch_cuda = pytest.mark.skipif(
+    not torch.cuda.is_available(), reason="needs a CUDA build of PyTorch"
+)
+
 
 def test_polars_to_tensor() -> None:
     """Every column by default, or a subset in the given order with dtype overrides."""
@@ -87,6 +92,7 @@ def test_from_torch_distributed_checks_gpu_before_bootstrap() -> None:
     new_communicator.assert_not_called()
 
 
+@requires_torch_cuda
 @pytest.mark.parametrize("ensure_sharded", [False, True])
 def test_persisted_to_torch_roundtrip(
     spmd_engine: SPMDEngine, *, ensure_sharded: bool
@@ -105,6 +111,7 @@ def test_persisted_to_torch_roundtrip(
     assert sorted(tensors["b"].tolist()) == [4, 5, 6]
 
 
+@requires_torch_cuda
 def test_persisted_to_torch_synchronizes_producing_stream(
     spmd_engine: SPMDEngine,
 ) -> None:
@@ -116,6 +123,7 @@ def test_persisted_to_torch_synchronizes_producing_stream(
     df.stream.synchronize.assert_called_once_with()
 
 
+@requires_torch_cuda
 def test_persisted_to_torch_column_subset(spmd_engine: SPMDEngine) -> None:
     """`columns` selects a subset, and an unknown name raises."""
     lf = pl.LazyFrame({"a": [1.0], "b": [2.0]})
@@ -154,6 +162,7 @@ def test_chunk_bounds_match_torch_chunk(nrows: int, nranks: int) -> None:
         assert list(range(start, start + length)) == chunks[rank]
 
 
+@requires_torch_cuda
 def test_ensure_sharded_slices_replicated_result(spmd_engine: SPMDEngine) -> None:
     """A replicated result is cut down to this rank's `torch.chunk` share."""
     lf = pl.LazyFrame({"a": [1.0, 2.0, 3.0, 4.0, 5.0]})
@@ -166,6 +175,7 @@ def test_ensure_sharded_slices_replicated_result(spmd_engine: SPMDEngine) -> Non
     assert tensor.tolist() == [1.0, 2.0, 3.0]
 
 
+@requires_torch_cuda
 def test_sliced_partition_converts_at_its_offset(spmd_engine: SPMDEngine) -> None:
     """A later rank's share is a view into the column at its offset, not a copy."""
     result = spmd_engine.execute(

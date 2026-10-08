@@ -11,7 +11,7 @@ cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")"/../
 read -r -a POLARS_COMPAT_VERSIONS <<< "$(python ci/utils/get_matrix_values.py dependencies.yaml test_cudf_polars_compat polars_compat_version)"
 export CUDF_EXTRA_DEPENDENCY_MATRIX="polars_compat_version=${POLARS_COMPAT_VERSIONS[-1]}"
 
-source ./ci/test_python_common.sh test_python_other test_cudf_polars_compat test_python_pytorch_cuda
+source ./ci/test_python_common.sh test_python_other test_cudf_polars_compat test_python_pytorch
 
 rapids-logger "Check GPU usage"
 nvidia-smi

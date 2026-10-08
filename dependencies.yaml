@@ -133,10 +133,10 @@ files:
       - depends_on_cudf_polars
       - depends_on_ray
       - depends_on_cudf_streaming
-  test_python_pytorch_cuda:
+  test_python_pytorch:
     output: none
     includes:
-      - depends_on_pytorch_cuda
+      - depends_on_pytorch
   build_cudf_polars_quent:
     output: none
     includes:
@@ -1800,16 +1800,6 @@ dependencies:
               cuda: "13.*"
             packages:
               - pytorch>=2.10.0
-          - matrix:
-            packages:
-  depends_on_pytorch_cuda:
-    specific:
-      - output_types: conda
-        matrices:
-          - matrix:
-              cuda: "13.*"
-            packages:
-              - pytorch>=2.10.0=cuda*
           - matrix:
             packages:
   depends_on_rapids_logger:

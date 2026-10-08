@@ -492,6 +492,37 @@ foreach(INC_DIR IN LISTS LIBCUDACXX_RAW_INCLUDE_DIRS)
   )
 endforeach()
 
+rtcx_embed_includes(
+  cudf_cuda_embed
+  SOURCE_DIRECTORY
+  ${CMAKE_CURRENT_SOURCE_DIR}/experimental/libregex_ir
+  DEST_DIRECTORY
+  cudf/cpp/experimental/libregex_ir
+  INCLUDE_DIRECTORIES
+  cudf/cpp/experimental/libregex_ir
+  FILES
+  executor.cuh
+  executor.cu
+)
+rtcx_embed_includes(
+  cudf_cuda_embed
+  SOURCE_DIRECTORY
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/strings/experimental/regex_jit/device
+  DEST_DIRECTORY
+  cudf/cpp/src/strings/experimental/regex_jit/device
+  INCLUDE_DIRECTORIES
+  cudf/cpp/src
+)
+rtcx_embed_includes(
+  cudf_cuda_embed
+  SOURCE_DIRECTORY
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/strings/experimental/regex_jit/jit
+  DEST_DIRECTORY
+  cudf/cpp/src/strings/experimental/regex_jit/jit
+  INCLUDE_DIRECTORIES
+  cudf/cpp/src
+)
+
 rtcx_embed(cudf_cuda_embed COMPRESSION zstd OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/embed")
 
 rtcx_add_embed(cudf_fragments)
@@ -1136,6 +1167,11 @@ add_library(
   src/strings/merge/merge.cu
   src/strings/padding.cu
   src/strings/positions.cu
+  experimental/libregex_ir/cuda_codegen.cpp
+  experimental/libregex_ir/execution_plan.cpp
+  experimental/libregex_ir/regex_ir.cpp
+  src/strings/experimental/regex_jit/kernel_ir.cpp
+  src/strings/experimental/regex_jit/regex.cu
   src/strings/regex/gkexec.cpp
   src/strings/regex/glushkov_regcomp.cpp
   src/strings/regex/regcomp.cpp
@@ -1300,12 +1336,19 @@ target_include_directories(
   PUBLIC "$<BUILD_INTERFACE:${DLPACK_INCLUDE_DIR}>" "$<BUILD_INTERFACE:${CUDF_SOURCE_DIR}/include>"
          "$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>"
   PRIVATE "$<BUILD_INTERFACE:${CUDF_SOURCE_DIR}/src>"
+          "$<BUILD_INTERFACE:${CUDF_SOURCE_DIR}/experimental/libregex_ir>"
           "$<BUILD_INTERFACE:${nanoarrow_SOURCE_DIR}/src>"
           "$<BUILD_INTERFACE:${FlatBuffers_SOURCE_DIR}/include>"
           "$<BUILD_INTERFACE:${ZSTD_INCLUDE_DIR}>"
           "$<BUILD_INTERFACE:${cudf_cuda_embed_INCLUDE_DIRS}>"
           "$<BUILD_INTERFACE:${cudf_fragments_INCLUDE_DIRS}>"
   INTERFACE "$<INSTALL_INTERFACE:include>"
+)
+
+# The host ABI checks share the header-free device integer aliases.
+set_source_files_properties(
+  src/strings/experimental/regex_jit/regex.cu
+  PROPERTIES INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/experimental/libregex_ir
 )
 
 target_compile_definitions(

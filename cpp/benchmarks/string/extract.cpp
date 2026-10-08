@@ -8,7 +8,9 @@
 
 #include <cudf_test/column_wrapper.hpp>
 
+#include <cudf/strings/experimental/regex.hpp>
 #include <cudf/strings/extract.hpp>
+#include <cudf/strings/findall.hpp>
 #include <cudf/strings/regex/regex_program.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
@@ -21,6 +23,7 @@ static void bench_extract(nvbench::state& state)
 {
   auto const num_rows  = static_cast<cudf::size_type>(state.get_int64("num_rows"));
   auto const row_width = static_cast<cudf::size_type>(state.get_int64("row_width"));
+  auto backend         = state.get_string("backend");
 
   auto groups = static_cast<cudf::size_type>(state.get_int64("groups"));
 
@@ -48,8 +51,10 @@ static void bench_extract(nvbench::state& state)
   auto input = cudf::gather(
     cudf::table_view{{samples_column}}, map->view(), cudf::out_of_bounds_policy::DONT_CHECK);
   cudf::strings_column_view strings_view(input->get_column(0).view());
-  auto prog = cudf::strings::regex_program::create(pattern);
-
+  auto prog = backend == "interpreter" ? cudf::strings::regex_program::create(pattern) : nullptr;
+  auto jit_program = backend == "jit" ? cudf::experimental::regex_jit_program::create(
+                                          pattern, cudf::experimental::regex_operation::EXTRACT)
+                                      : nullptr;
   state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   // gather some throughput statistics as well
   auto data_size = input->alloc_size();
@@ -58,7 +63,11 @@ static void bench_extract(nvbench::state& state)
 
   auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
-    auto result = cudf::strings::extract(strings_view, *prog);
+    if (backend == "jit") {
+      static_cast<void>(cudf::experimental::extract(strings_view, *jit_program));
+    } else {
+      static_cast<void>(cudf::strings::extract(strings_view, *prog));
+    }
   });
   state.add_buffer_size(
     mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
@@ -68,4 +77,5 @@ NVBENCH_BENCH(bench_extract)
   .set_name("extract")
   .add_int64_axis("row_width", {32, 64, 128, 256})
   .add_int64_axis("num_rows", {32768, 262144, 2097152})
-  .add_int64_axis("groups", {1, 2, 4});
+  .add_int64_axis("groups", {1, 2, 4})
+  .add_string_axis("backend", {"interpreter", "jit"});

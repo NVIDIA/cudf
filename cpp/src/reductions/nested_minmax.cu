@@ -21,8 +21,8 @@ std::unique_ptr<scalar> nested_minmax(column_view const& input,
                                       rmm::device_async_resource_ref mr)
 {
   // Reduce to the ARGMIN/ARGMAX index, then return the nested element. The
-  // boolean is carried by row_arg_minmax_fn, so this one instantiation serves
-  // both public operations without changing comparator specialization.
+  // generated operation carries the MIN/MAX choice in its state, so one instantiation
+  // serves both public operations without changing comparator specialization.
   auto const binop_generator = arg_minmax_binop_generator::create(input, is_min_op, stream);
   auto const binary_op       = cudf::detail::cast_functor<size_type>(binop_generator.binop());
   auto const minmax_idx =

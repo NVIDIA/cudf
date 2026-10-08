@@ -160,21 +160,21 @@ class arg_minmax_binop_generator {
                      cuda::stream_ref stream,
                      cudf::memory_resources mr = cudf::get_current_device_resource_ref())
   {
-    CUDF_EXPECTS(cudf::is_nested(input.type()),
-                 "This utility class is designed exclusively for nested input types.");
-    return arg_minmax_binop_generator(input,
-                                      std::is_same_v<BinOp, cudf::reduction::detail::op::min> ||
-                                        std::is_same_v<BinOp, cudf::DeviceMin>,
-                                      stream,
-                                      mr);
+    return create(input,
+                  std::is_same_v<BinOp, cudf::reduction::detail::op::min> ||
+                    std::is_same_v<BinOp, cudf::DeviceMin>,
+                  stream,
+                  mr);
   }
 
-  static auto create(column_view const& input, bool is_min_op, cuda::stream_ref stream)
+  static auto create(column_view const& input,
+                     bool is_min_op,
+                     cuda::stream_ref stream,
+                     cudf::memory_resources mr = cudf::get_current_device_resource_ref())
   {
     CUDF_EXPECTS(cudf::is_nested(input.type()),
                  "This utility class is designed exclusively for nested input types.");
-    return arg_minmax_binop_generator(
-      input, is_min_op, stream, cudf::get_current_device_resource_ref());
+    return arg_minmax_binop_generator(input, is_min_op, stream, mr);
   }
 
   template <cudf::aggregation::Kind K>
@@ -182,10 +182,7 @@ class arg_minmax_binop_generator {
                      cuda::stream_ref stream,
                      cudf::memory_resources mr = cudf::get_current_device_resource_ref())
   {
-    CUDF_EXPECTS(cudf::is_nested(input.type()),
-                 "This utility class is designed exclusively for nested input types.");
-    return arg_minmax_binop_generator(
-      input, K == cudf::aggregation::MIN || K == cudf::aggregation::ARGMIN, stream, mr);
+    return create(input, K == cudf::aggregation::MIN || K == cudf::aggregation::ARGMIN, stream, mr);
   }
 };
 

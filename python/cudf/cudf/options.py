@@ -383,9 +383,7 @@ class option_context(ContextDecorator):
         undo = tuple((pat, get_option(pat)) for pat, _ in self.ops)
         applied = []
         try:
-            for (pat, val), (_, old_val) in zip(
-                self.ops, undo, strict=True
-            ):
+            for (pat, val), (_, old_val) in zip(self.ops, undo, strict=True):
                 set_option(pat, val)
                 applied.append((pat, old_val))
         except BaseException:

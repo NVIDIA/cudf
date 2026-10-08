@@ -23,6 +23,7 @@
 
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
+#include <cub/device/device_transform.cuh>
 #include <cuco/detail/open_addressing/kernels.cuh>
 #include <cuco/static_multiset_ref.cuh>
 #include <cuda/atomic>

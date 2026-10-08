@@ -15,6 +15,7 @@
 #include <cudf/utilities/type_checks.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
+#include <cub/device/device_find.cuh>
 #include <cuda/buffer>
 #include <cuda/stream>
 

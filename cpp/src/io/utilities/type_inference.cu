@@ -12,6 +12,7 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cub/block/block_reduce.cuh>
 #include <cuda/iterator>
 #include <cuda/std/tuple>
 

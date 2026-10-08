@@ -23,6 +23,7 @@
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cub/block/block_scan.cuh>
 #include <cub/device/device_histogram.cuh>
 #include <cuda/atomic>
 #include <cuda/buffer>

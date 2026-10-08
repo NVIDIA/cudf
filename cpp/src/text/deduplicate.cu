@@ -19,6 +19,7 @@
 
 #include <rmm/device_uvector.hpp>
 
+#include <cub/device/device_merge_sort.cuh>
 #include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/functional>

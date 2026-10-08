@@ -20,6 +20,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cub/device/device_transform.cuh>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/stream>

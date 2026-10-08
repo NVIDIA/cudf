@@ -14,6 +14,8 @@
 
 #include <rmm/device_uvector.hpp>
 
+#include <cub/device/device_for.cuh>
+#include <cub/device/device_transform.cuh>
 #include <cuda/iterator>
 #include <cuda/std/iterator>
 #include <cuda/stream>

@@ -9,6 +9,7 @@
 #include <cudf/hashing/detail/xxhash_32.cuh>
 #include <cudf/utilities/error.hpp>
 
+#include <cub/device/device_for.cuh>
 #include <cuda/stream>
 
 namespace cudf {

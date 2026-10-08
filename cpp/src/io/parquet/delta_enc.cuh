@@ -10,6 +10,9 @@
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 
+#include <cub/block/block_reduce.cuh>
+#include <cub/block/block_scan.cuh>
+#include <cub/warp/warp_reduce.cuh>
 #include <cuda/functional>
 #include <cuda/std/limits>
 #include <cuda/std/type_traits>

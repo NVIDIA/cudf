@@ -22,6 +22,7 @@
 
 #include <rmm/resource_ref.hpp>
 
+#include <cub/device/device_for.cuh>
 #include <cuda/stream_ref>
 
 #include <cstdint>

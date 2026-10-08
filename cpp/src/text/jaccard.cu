@@ -25,6 +25,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_segmented_sort.cuh>
+#include <cub/warp/warp_reduce.cuh>
 #include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/functional>

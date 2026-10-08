@@ -379,12 +379,13 @@ cdef class Table:
         Table
             A new Table with deep copies of all columns.
         """
+        cdef unique_ptr[table] c_result
         cdef Stream _stream = _get_stream(stream)
+        cdef table_view c_self = self.view()
         mr = _get_memory_resource(mr)
-        return Table(
-            [col.copy(_stream, mr) for col in self._columns],
-            num_rows=self.num_rows(),
-        )
+        with nogil:
+            c_result = make_unique[table](c_self, _stream.view(), mr.get_mr())
+        return Table.from_libcudf(move(c_result), _stream, mr)
 
     def _to_schema(self, metadata=None):
         """Create an Arrow schema from this table."""

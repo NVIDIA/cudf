@@ -12,10 +12,19 @@ import polars as pl
 
 from cudf_polars.dsl import expr
 from cudf_polars.dsl.expr import Col, Len
-from cudf_polars.dsl.ir import Empty, HConcat, HStack, Projection, Scan, Select, Union
+from cudf_polars.dsl.ir import (
+    DataFrameScan,
+    Empty,
+    HConcat,
+    HStack,
+    Projection,
+    Scan,
+    Select,
+    Union,
+)
 from cudf_polars.dsl.traversal import traversal
 from cudf_polars.dsl.utils.naming import unique_names
-from cudf_polars.streaming.base import PartitionInfo
+from cudf_polars.streaming.base import CUDF_ROW_LIMIT, PartitionInfo
 from cudf_polars.streaming.dispatch import lower_ir_node
 from cudf_polars.streaming.expressions import (
     decompose_expr_graph,
@@ -413,8 +422,11 @@ def _(
             ),
         )
 
-    # Fast count optimization - reads parquet metadata only, works regardless of partitioning
+    # Fast count optimization - reads parquet metadata only, or the height of
+    # an in-memory frame too large to be materialized. Works regardless of
+    # partitioning
     scan_child: Scan | None = None
+    dataframe_scan_child: DataFrameScan | None = None
     if Select._is_len_expr(ir.exprs):
         if (
             isinstance(child, Union)
@@ -429,7 +441,10 @@ def _(
         elif isinstance(child, Scan):  # pragma: no cover; Requires rapidsmpf runtime
             # Legacy task-engine case
             scan_child = child
+        elif isinstance(child, DataFrameScan):
+            dataframe_scan_child = child
 
+    count: int | None = None
     if scan_child and scan_child.predicate is None and scan_child.typ == "parquet":
         # Special Case: Fast count.
         # We can't use prefetched file metadata here, because we're in lowering,
@@ -447,6 +462,16 @@ def _(
             ),
             None,
         )
+    elif dataframe_scan_child is not None:
+        # A frame that fits is counted by evaluating it as usual: sharing the
+        # Empty input below between unioned branches with different counts
+        # fails when the empty chunk is fanned out, as it already does for
+        # parquet scans. One that does not fit could never be evaluated.
+        height = pl.DataFrame._from_pydf(dataframe_scan_child.df).height
+        if height > CUDF_ROW_LIMIT:
+            count = height
+
+    if count is not None:
         dtype = ir.exprs[0].value.dtype
 
         lit_expr = expr.LiteralColumn(

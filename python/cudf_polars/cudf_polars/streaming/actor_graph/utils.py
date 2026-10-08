@@ -59,6 +59,7 @@ from cudf_polars.streaming.actor_graph.tracing import (
     record_channel_metrics,
     send_chunk,
 )
+from cudf_polars.streaming.base import CUDF_ROW_LIMIT
 from cudf_polars.streaming.utils import _concat
 from cudf_polars.utils.dtypes import make_empty_column
 
@@ -96,8 +97,6 @@ OrderingMetadata: TypeAlias = dict[int, OrderKey]
 # - "local": explicit local scheme only.
 PartitioningLevel: TypeAlias = Literal["flat", "inter_rank", "local"]
 
-# cuDF column/concatenate row limit (int32)
-CUDF_ROW_LIMIT = 2**31 - 1
 # Stay well below the cuDF row limit when forming a single table/partition.
 MAX_ROWS_PER_PARTITION = CUDF_ROW_LIMIT // 4
 

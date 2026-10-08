@@ -24,14 +24,12 @@
 #include <rmm/resource_ref.hpp>
 
 #include <cooperative_groups.h>
-#include <cub/block/block_scan.cuh>
 #include <cuco/static_set.cuh>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/tuple>
 #include <cuda/stream>
 #include <thrust/fill.h>
-#include <thrust/sequence.h>
 
 #include <limits>
 #include <memory>

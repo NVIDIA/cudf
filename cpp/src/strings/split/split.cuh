@@ -30,7 +30,6 @@
 #include <cuda/iterator>
 #include <cuda/std/functional>
 #include <cuda/stream>
-#include <thrust/copy.h>
 #include <thrust/for_each.h>
 #include <thrust/transform.h>
 

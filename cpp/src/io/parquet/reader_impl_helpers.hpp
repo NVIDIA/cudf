@@ -48,7 +48,7 @@ namespace cudf::io::parquet::detail {
  * @return Constructed metadata objects, in input order
  */
 template <typename T, typename UnaryOp>
-[[nodiscard]] auto parallel_construct_metadatas(cudf::host_span<T const> inputs, UnaryOp op)
+[[nodiscard]] auto parallel_construct_metadatas(std::span<T const> inputs, UnaryOp op)
 {
   using result_type = std::invoke_result_t<UnaryOp, T const&>;
 
@@ -285,7 +285,7 @@ class aggregate_reader_metadata {
    * @brief Create a metadata object from each element in the source vector
    */
   static std::vector<metadata> metadatas_from_sources(
-    host_span<std::unique_ptr<datasource> const> sources, bool read_page_indexes = true);
+    std::span<std::unique_ptr<datasource> const> sources, bool read_page_indexes = true);
 
   /**
    * @brief Collect the keyvalue maps from each per-file metadata object into a vector of maps.

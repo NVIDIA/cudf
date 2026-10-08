@@ -909,7 +909,7 @@ def test_file_metadata_wrappers_not_directly_constructible() -> None:
         plc.io.parquet_metadata.SchemaElement()
 
 
-def test_file_metadata_schema_field_ids() -> None:
+def test_file_metadata_schema_elements() -> None:
     schema = pa.schema(
         [
             pa.field("a", pa.int64(), metadata={b"PARQUET:field_id": b"10"}),
@@ -931,6 +931,16 @@ def test_file_metadata_schema_field_ids() -> None:
                 ),
                 metadata={b"PARQUET:field_id": b"20"},
             ),
+            pa.field(
+                "dec",
+                pa.decimal128(12, 2),
+                metadata={b"PARQUET:field_id": b"30"},
+            ),
+            pa.field(
+                "fixed",
+                pa.binary(4),
+                metadata={b"PARQUET:field_id": b"40"},
+            ),
         ]
     )
     table = pa.table(
@@ -940,6 +950,10 @@ def test_file_metadata_schema_field_ids() -> None:
                 [{"x": 1, "y": "a"}, {"x": 2, "y": "b"}, {"x": 3, "y": "c"}],
                 type=schema.field("s").type,
             ),
+            pa.array(
+                [decimal.Decimal("1.25")] * 3, type=schema.field("dec").type
+            ),
+            pa.array([b"abcd"] * 3, type=schema.field("fixed").type),
         ],
         schema=schema,
     )
@@ -951,36 +965,52 @@ def test_file_metadata_schema_field_ids() -> None:
         plc.io.SourceInfo([sink])
     )[0]
 
+    PhysicalType = plc.io.parquet_metadata.PhysicalType
     result = [
-        (element.name, element.field_id, element.num_children)
+        (
+            element.name,
+            element.field_id,
+            element.num_children,
+            element.type,
+            element.type_length,
+        )
         for element in file_metadata.schema
     ]
     # Depth-first, root first.
     assert result == [
-        ("schema", None, 2),
-        ("a", 10, 0),
-        ("s", 20, 2),
-        ("x", 21, 0),
-        ("y", 22, 0),
+        ("schema", None, 4, PhysicalType.UNDEFINED, 0),
+        ("a", 10, 0, PhysicalType.INT64, 0),
+        ("s", 20, 2, PhysicalType.UNDEFINED, 0),
+        ("x", 21, 0, PhysicalType.INT32, 0),
+        ("y", 22, 0, PhysicalType.BYTE_ARRAY, 0),
+        ("dec", 30, 0, PhysicalType.FIXED_LEN_BYTE_ARRAY, 6),
+        ("fixed", 40, 0, PhysicalType.FIXED_LEN_BYTE_ARRAY, 4),
     ]
 
 
 def test_file_metadata_schema_without_field_ids() -> None:
-    table = pa.table({"a": [1, 2, 3], "b": ["x", "y", "z"]})
-    sink = io.BytesIO()
-    write_table(table, sink)
-    sink.seek(0)
-
-    file_metadata = plc.io.parquet_metadata.read_parquet_footers(
-        plc.io.SourceInfo([sink])
-    )[0]
-
-    assert [element.name for element in file_metadata.schema] == [
-        "schema",
-        "a",
-        "b",
+    tables = [
+        pa.table({"a": [1, 2, 3], "b": ["x", "y", "z"]}),
+        pa.table({"c": [4, 5]}),
     ]
-    assert all(element.field_id is None for element in file_metadata.schema)
+    sinks = []
+    for table in tables:
+        sink = io.BytesIO()
+        write_table(table, sink)
+        sink.seek(0)
+        sinks.append(sink)
+
+    file_metadatas = plc.io.parquet_metadata.read_parquet_footers(
+        plc.io.SourceInfo(sinks)
+    )
+
+    for metadata, table in zip(file_metadatas, tables, strict=True):
+        assert metadata.num_rows == table.num_rows
+        assert [element.name for element in metadata.schema] == [
+            "schema",
+            *table.column_names,
+        ]
+        assert all(element.field_id is None for element in metadata.schema)
 
 
 def test_file_metadata_row_group_sorting_columns(tmp_path) -> None:

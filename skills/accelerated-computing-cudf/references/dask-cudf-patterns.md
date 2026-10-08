@@ -1,8 +1,10 @@
 # dask-cuDF Patterns
 
-## Preferred API: dask.dataframe Backend (release 24.06+)
+## Preferred API: dask.dataframe Backend
 
-The recommended way to use dask-cuDF is via the `dask.dataframe` backend config, **not** `import dask_cudf` directly. The backend API enables the query planning optimizer (predicate pushdown, projection pushdown) introduced in release 24.06+.
+Prefer the `dask.dataframe` backend configuration for new code. Current
+dask-cuDF uses Dask expression query planning for predicate and projection
+pushdown. Direct `dask_cudf.read_*` calls also delegate to that backend.
 
 ```python
 import dask
@@ -14,19 +16,21 @@ import dask.dataframe as dd
 ddf = dd.read_parquet("data/*.parquet")
 ddf = dd.read_csv("data/*.csv")
 
-# All standard dask.dataframe operations work
+# Check operation support against the cuDF backend before migration.
 result = ddf.groupby("key")["value"].sum()
 ```
 
-**Explicit `dask_cudf` import is still valid** but bypasses query planning:
+**Explicit `dask_cudf` reads also use query planning:**
 ```python
-import dask_cudf   # works, but no optimizer — use for legacy code only
+import dask_cudf
 ddf = dask_cudf.read_parquet("data/*.parquet")
 ```
 
 ## Cluster Setup
 
-Always use `LocalCUDACluster`, even for a single GPU — it pins GPU affinity, enables the dashboard, and is required for proper spill configuration:
+Use `LocalCUDACluster` for local GPU workers and `enable_cudf_spill=True`
+for worker-side cuDF spilling. Multi-node deployments need their own scheduler
+and GPU worker setup:
 
 ```python
 from dask_cuda import LocalCUDACluster
@@ -41,7 +45,7 @@ cluster = LocalCUDACluster(
 )
 client = Client(cluster)
 
-# With UCX automatic transport selection for communication-heavy workloads
+# Use GPU-aware transport for communication-heavy workloads.
 cluster = LocalCUDACluster(
     enable_cudf_spill=True,
     rmm_pool_size=0.8,
@@ -128,13 +132,11 @@ merged = large_ddf.merge(
 ## Sort vs. Shuffle
 
 ```python
-# sort_values is expensive — triggers full shuffle + materialization
-# AVOID unless you actually need a globally ordered output:
+# Global ordering requires an expensive shuffle; use it only when needed.
 sorted_ddf = ddf.sort_values("timestamp")   # use sparingly
 
 # If you need rows grouped by key (not sorted), use shuffle instead:
-from dask_cudf import shuffle
-shuffled = shuffle(ddf, on="customer_id")   # redistributes by key, much cheaper
+shuffled = ddf.shuffle(on="customer_id")
 ```
 
 ## Building Distributed Collections
@@ -156,32 +158,38 @@ ddf = from_map(
 
 # from_delayed works but loses projection pushdown
 from dask import delayed
+from dask.dataframe import from_delayed
 parts = [delayed(cudf.read_parquet)(f) for f in files]
-ddf = dask_cudf.from_delayed(parts)   # fallback if from_map doesn't apply
+ddf = from_delayed(parts)
 ```
 
-## Eager Execution Traps
+## Execution and Materialization Costs
 
-These calls trigger immediate computation — avoid mid-pipeline:
+Distinguish calls that execute immediately from lazy operations that require
+expensive shuffles when computed:
 
 | Call | Why it's expensive |
 |---|---|
 | `.compute()` on large collection | Pulls all data to one GPU |
-| `.persist()` without `client.wait()` | Silent if client not set up |
+| `.persist()` | Starts computation asynchronously with a distributed client; retains partitions on workers |
 | `len(ddf)` | Full scan |
 | `ddf.head()` / `ddf.tail()` | Materializes first/last partition |
-| `ddf.sort_values(...)` | Full shuffle |
-| `ddf.set_index(col)` | Full shuffle + sort |
+| `ddf.sort_values(...)` | Lazy graph with a full shuffle when executed |
+| `ddf.set_index(col)` | May compute divisions eagerly; shuffle and sort when executed |
 
 **Persist pattern** (when you query the same data multiple times):
 ```python
-ddf = ddf.persist()
-client.wait(ddf)           # block until all partitions are in GPU memory
+from dask.distributed import wait
+
+ddf = client.persist(ddf)
+wait(ddf)   # Wait before timing reuse; partitions may spill under memory pressure.
 result1 = ddf[ddf["a"] > 0].compute()
 result2 = ddf[ddf["b"] > 0].compute()  # fast — data already in memory
 ```
 
-**Never call `.compute()` on a collection larger than single-GPU memory** — it will OOM. Instead write to Parquet and read back in pieces.
+Calling `.compute()` collects the result onto one GPU. Keep large outputs
+partitioned with `to_parquet()` rather than relying on spilling to make a
+single-GPU result fit.
 
 ## Writing Results
 
@@ -193,7 +201,7 @@ ddf.to_parquet("output/", write_index=False)
 result_cudf = ddf.compute()
 
 # To pandas — only at the very end for CPU or non-GPU handoff
-result_pd = ddf.to_pandas()
+result_pd = result_cudf.to_pandas()
 ```
 
 ## OOM Diagnosis
@@ -222,14 +230,14 @@ mistakes after the backend has been selected.
 
 ```python
 # AVOID: calling .compute() mid-pipeline
-intermediate = ddf.groupby("a")["b"].sum().compute()   # breaks lazy graph
-result = intermediate.groupby("c")["b"].mean()         # now CPU pandas!
+intermediate = ddf.groupby("a")["b"].sum().compute()
+# The intermediate is a single cuDF Series; distributed execution has ended.
+result = intermediate.mean()
 
 # CORRECT: chain lazily, compute once
 result = (
     ddf.groupby("a")["b"].sum()
-       .reset_index()
-       .groupby("c")["b"].mean()
+       .mean()
        .compute()
 )
 

@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "group_argminmax.hpp"
 #include "groupby/common/value_accessor.cuh"
 #include "reductions/nested_types_extrema_utils.cuh"
 
@@ -13,7 +14,6 @@
 #include <cudf/column/column_view.hpp>
 #include <cudf/detail/aggregation/aggregation.cuh>
 #include <cudf/detail/iterator.cuh>
-#include <cudf/detail/utilities/element_argminmax.cuh>
 #include <cudf/detail/valid_if.cuh>
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/types.hpp>
@@ -142,10 +142,13 @@ struct group_reduction_functor<
     auto const result_begin = result->mutable_view().template begin<ResultDType>();
 
     if constexpr (K == aggregation::ARGMAX || K == aggregation::ARGMIN) {
-      auto const count_iter = cuda::counting_iterator<ResultType>{0};
-      auto const binop      = cudf::detail::element_argminmax_fn<T>{
-        *d_values_ptr, values.has_nulls(), K == aggregation::ARGMIN};
-      do_reduction(count_iter, result_begin, binop);
+      launch_argminmax_reduction(group_labels,
+                                 data_type{type_to_id<T>()},
+                                 *d_values_ptr,
+                                 values.has_nulls(),
+                                 K == aggregation::ARGMIN,
+                                 result_begin,
+                                 stream);
     } else {
       using OpType    = cudf::detail::corresponding_operator_t<K>;
       auto init       = OpType::template identity<ResultDType>();
@@ -202,11 +205,10 @@ struct group_reduction_functor<
         binop);
     };
 
-    auto const count_iter   = cuda::counting_iterator<ResultType>{0};
     auto const result_begin = result->mutable_view().template begin<ResultType>();
     auto const binop_generator =
       cudf::reduction::detail::arg_minmax_binop_generator::create<K>(values, stream);
-    do_reduction(count_iter, result_begin, binop_generator.binop());
+    launch_argminmax_reduction(group_labels, binop_generator.binop(), result_begin, stream);
 
     if (values.has_nulls()) {
       // Generate bitmask for the output by segmented reduction of the input bitmask.

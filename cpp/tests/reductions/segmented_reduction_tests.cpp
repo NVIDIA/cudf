@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,6 +8,7 @@
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/aggregation.hpp>
+#include <cudf/copying.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/reduction.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
@@ -1503,6 +1504,84 @@ TEST_F(SegmentedReductionStringTest, EmptyInputWithOffsets)
                                   cudf::data_type{cudf::type_id::STRING},
                                   cudf::null_policy::INCLUDE);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, expect);
+}
+
+TEST_F(SegmentedReductionStringTest, MinMaxUtf8RepeatedExtrema)
+{
+  // Exercise repeated multibyte extrema; existing cases cover empty and all-null segments.
+  cudf::test::strings_column_wrapper input{{"é", "apple", "é", "é", "é", ""},
+                                           {true, true, true, true, true, false}};
+  auto const offsets   = std::vector<cudf::size_type>{0, 3, 6};
+  auto const d_offsets = cudf::detail::make_device_uvector_async(
+    offsets, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
+
+  for (auto const policy : {cudf::null_policy::INCLUDE, cudf::null_policy::EXCLUDE}) {
+    SCOPED_TRACE(policy == cudf::null_policy::INCLUDE ? "include nulls" : "exclude nulls");
+    auto const valid = std::vector<bool>{true, policy == cudf::null_policy::EXCLUDE};
+    cudf::test::strings_column_wrapper expected_min{{"apple", "é"}, valid.begin()};
+    cudf::test::strings_column_wrapper expected_max{{"é", "é"}, valid.begin()};
+    auto const minimum =
+      cudf::segmented_reduce(input,
+                             d_offsets,
+                             *cudf::make_min_aggregation<cudf::segmented_reduce_aggregation>(),
+                             cudf::data_type{cudf::type_id::STRING},
+                             policy);
+    auto const maximum =
+      cudf::segmented_reduce(input,
+                             d_offsets,
+                             *cudf::make_max_aggregation<cudf::segmented_reduce_aggregation>(),
+                             cudf::data_type{cudf::type_id::STRING},
+                             policy);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*minimum, expected_min);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*maximum, expected_max);
+  }
+}
+
+TEST_F(SegmentedReductionStringTest, MinMaxSlicedInput)
+{
+  // The prefix contains both extrema so ignoring the slice offset changes MIN and MAX.
+  cudf::test::strings_column_wrapper input{"", "ÿ", "é", "apple", "é", "", "z", "z", "ÿ"};
+  cudf::test::strings_column_wrapper nullable_input{
+    {"", "ÿ", "é", "apple", "é", "", "z", "z", "ÿ"},
+    {false, true, true, true, false, true, false, true, false}};
+  auto const sliced_input          = cudf::slice(input, {2, 8}).front();
+  auto const sliced_nullable_input = cudf::slice(nullable_input, {2, 8}).front();
+  auto const offsets               = std::vector<cudf::size_type>{0, 3, 3, 4, 6, 6};
+  auto const d_offsets             = cudf::detail::make_device_uvector_async(
+    offsets, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
+
+  struct {
+    char const* name;
+    cudf::column_view values;
+    cudf::null_policy policy;
+  } const cases[] = {
+    {"nonnullable", sliced_input, cudf::null_policy::EXCLUDE},
+    {"nullable, include nulls", sliced_nullable_input, cudf::null_policy::INCLUDE},
+    {"nullable, exclude nulls", sliced_nullable_input, cudf::null_policy::EXCLUDE},
+  };
+
+  for (auto const& [name, values, policy] : cases) {
+    SCOPED_TRACE(name);
+    auto const valid = !values.has_nulls() || policy == cudf::null_policy::EXCLUDE;
+    cudf::test::strings_column_wrapper expected_min{{"apple", "", "", "z", ""},
+                                                    {valid, false, true, valid, false}};
+    cudf::test::strings_column_wrapper expected_max{{"é", "", "", "z", ""},
+                                                    {valid, false, true, valid, false}};
+    auto const minimum =
+      cudf::segmented_reduce(values,
+                             d_offsets,
+                             *cudf::make_min_aggregation<cudf::segmented_reduce_aggregation>(),
+                             cudf::data_type{cudf::type_id::STRING},
+                             policy);
+    auto const maximum =
+      cudf::segmented_reduce(values,
+                             d_offsets,
+                             *cudf::make_max_aggregation<cudf::segmented_reduce_aggregation>(),
+                             cudf::data_type{cudf::type_id::STRING},
+                             policy);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*minimum, expected_min);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*maximum, expected_max);
+  }
 }
 
 #undef XXX

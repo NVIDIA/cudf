@@ -20,6 +20,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/std/bit>
 #include <cuda/std/utility>
 #include <cuda/stream>
 #include <thrust/for_each.h>
@@ -200,7 +201,7 @@ struct MD5Hasher {
         A = D;
         D = C;
         C = B;
-        B = B + rotate_bits_left(F, md5_shift_constants[((j / 16) * 4) + (j % 4)]);
+        B = B + cuda::std::rotl(F, md5_shift_constants[((j / 16) * 4) + (j % 4)]);
       }
 
       hash_values[0] += A;

@@ -26,6 +26,14 @@ namespace CUDF_EXPORT cudf {
  */
 
 /**
+ * @brief Utility metafunction that maps a sequence of any types to the type void.
+ *
+ * @deprecated Use `cuda::std::void_t` instead.
+ */
+template <typename...>
+using void_t [[deprecated("Use cuda::std::void_t instead.")]] = void;
+
+/**
  * @brief Convenience macro for SFINAE as an unnamed template parameter.
  *
  * Example:

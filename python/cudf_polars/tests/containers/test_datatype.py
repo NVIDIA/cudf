@@ -57,3 +57,52 @@ def test_array_dtype_uses_physical_list():
 
     assert result.polars_type == dtype
     assert result.id() == plc.TypeId.LIST
+
+
+@pytest.mark.parametrize(
+    "dtype, expected",
+    [
+        (pl.Categorical(), plc.TypeId.UINT32),
+        (pl.Categorical("fruit"), plc.TypeId.UINT32),
+        (pl.Categorical(pl.Categories("x", physical=pl.UInt8)), plc.TypeId.UINT8),
+        (pl.Categorical(pl.Categories("y", "ns", pl.UInt16)), plc.TypeId.UINT16),
+        (pl.Enum([]), plc.TypeId.UINT8),
+        (pl.Enum([str(i) for i in range(3)]), plc.TypeId.UINT8),
+    ],
+    ids=[
+        "global",
+        "named",
+        "uint8",
+        "uint16",
+        "enum0",
+        "enum3",
+    ],
+)
+def test_categorical_dtype_uses_physical_codes(dtype, expected):
+    result = DataType(dtype)
+
+    assert result.polars_type == dtype
+    assert result.id() == expected
+    assert result.is_categorical
+    assert result.children == []
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    [
+        pl.List(pl.Categorical()),
+        pl.List(pl.List(pl.Enum(["x"]))),
+        pl.Struct({"a": pl.Enum(["x"])}),
+        pl.Array(pl.Enum(["x"]), 2),
+    ],
+    ids=repr,
+)
+def test_nested_categorical_raises(dtype):
+    with pytest.raises(NotImplementedError, match="Categorical nested"):
+        DataType(dtype)
+
+
+def test_categorical_dtype_keeps_mapping_alive():
+    dtype = DataType(pl.Categorical(pl.Categories("keepalive")))
+
+    assert dtype._categorical_reference.dtype == dtype.polars_type

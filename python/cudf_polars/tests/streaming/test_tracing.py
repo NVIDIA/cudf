@@ -307,7 +307,7 @@ def test_parquet_scan_ordering_trace_from_set_sorted(
     result = (
         pl.scan_parquet({str(source)!r})
         .set_sorted("x")
-        .sort("x")
+        .select("x")
         .collect(engine=engine)
     )
     print("RESULT_ROWS=" + str(result.height))
@@ -337,7 +337,9 @@ def test_parquet_scan_ordering_trace_from_set_sorted(
         if event.get("event") == "Streaming Actor":
             decisions.add((event.get("actor_ir_type"), event.get("decision")))
 
-    assert ("StreamingScan", "parquet_ordering") in decisions
+    assert ("StreamingScan", "parquet_ordering") in decisions, result.decode(
+        errors="replace"
+    )
 
 
 def test_local_join_prefilter_trace_records_decision_and_effect(

@@ -201,6 +201,7 @@ jobs:
           - '!python/cudf_polars/quent/**'
           - 'ci/test_python_cudf_polars.sh'
         test_cudf_polars_quent:
+          - 'python/cudf_polars/quent/analyzer/**'
           - 'python/cudf_polars/quent/bridge/**'
           - 'python/cudf_polars/quent/model.yaml'
           - 'ci/test_cudf_polars_quent.sh'
@@ -214,6 +215,8 @@ jobs:
           - 'ci/build_cpp.sh'
           - 'ci/build_python.sh'
           - 'ci/build_python_noarch.sh'
+          - 'ci/build_python_common.sh'
+          - 'ci/build_parallel.sh'
         test_python_conda_common:
           - 'ci/test_python_common.sh'
         test_python_conda_cudf:
@@ -234,6 +237,7 @@ jobs:
           - 'ci/build_wheel_noarch.sh'
           - 'ci/build_wheel.sh'
           - 'ci/build_wheel_common.sh'
+          - 'ci/build_parallel.sh'
           - 'ci/validate_wheel.sh'
           - '.github/workflows/build.yaml'
           - '.github/workflows/wheels-build-stage.yaml'

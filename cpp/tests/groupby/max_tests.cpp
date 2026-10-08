@@ -569,6 +569,27 @@ TEST_F(groupby_max_hash_based_shmem_kernel_test, all_unique_keys)
   auto agg = cudf::make_max_aggregation<cudf::groupby_aggregation>();
   // Keys are the same as values.
   test_single_agg(keys, keys, expect_keys, expect_keys, std::move(agg));
+
+  cudf::test::fixed_width_column_wrapper<int> nullable_keys(
+    h_keys.begin(), h_keys.end(), null_at(0));
+  cudf::test::fixed_width_column_wrapper<int> nullable_values(
+    h_keys.begin(), h_keys.end(), null_at(1));
+  cudf::test::fixed_width_column_wrapper<int> excluded_keys(
+    h_keys.begin() + 1, h_keys.end(), no_nulls());
+  cudf::test::fixed_width_column_wrapper<int> excluded_values(
+    h_keys.begin() + 1, h_keys.end(), null_at(0));
+
+  // Including the null key keeps every row as a group; excluding it must omit that row.
+  for (auto null_handling : {cudf::null_policy::INCLUDE, cudf::null_policy::EXCLUDE}) {
+    auto const include_null = null_handling == cudf::null_policy::INCLUDE;
+    test_single_agg(nullable_keys,
+                    nullable_values,
+                    include_null ? nullable_keys : excluded_keys,
+                    include_null ? nullable_values : excluded_values,
+                    cudf::make_max_aggregation<cudf::groupby_aggregation>(),
+                    force_use_sort_impl::NO,
+                    null_handling);
+  }
 }
 
 TEST_F(groupby_max_hash_based_shmem_kernel_test, repeated_keys)

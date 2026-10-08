@@ -220,6 +220,18 @@ class _StructDataTypeHeader(TypedDict):
     fields: list[_StructFieldHeader]
 
 
+class _CategoricalDataTypeHeader(TypedDict):
+    kind: Literal["categorical"]
+    name: str
+    namespace: str
+    physical: str
+
+
+class _EnumDataTypeHeader(TypedDict):
+    kind: Literal["enum"]
+    categories: list[str]
+
+
 DataTypeHeader = (
     _ScalarDataTypeHeader
     | _DecimalDataTypeHeader
@@ -228,6 +240,8 @@ DataTypeHeader = (
     | _ListDataTypeHeader
     | _ArrayDataTypeHeader
     | _StructDataTypeHeader
+    | _CategoricalDataTypeHeader
+    | _EnumDataTypeHeader
 )
 
 

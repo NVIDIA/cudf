@@ -1,26 +1,40 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <cudf/utilities/error.hpp>
+/**
+ * Standalone utility to regenerate the special case mapping tables used by libcudf for
+ * non-trivial unicode character case conversions.
+ *
+ * Build:
+ *   g++ -std=c++17 -O2 char_cases.cpp -o char_cases
+ *
+ * Usage:
+ *   ./char_cases > special_cases.txt
+ *
+ * The output contains:
+ * - the g_special_case_mappings array which should replace the existing array in
+ *   cpp/src/strings/char_types/char_cases.h
+ * - the special_case_prime value which should replace the value in get_special_case_hash_index()
+ *   in cpp/include/cudf/strings/detail/char_tables.hpp
+ */
 
 #include <algorithm>
 #include <array>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <unordered_set>
 #include <vector>
 
-//
-namespace cudf {
-namespace strings {
-namespace detail {
-namespace {
 struct special_case_mapping_in {
   uint16_t num_upper_chars;
   uint16_t upper[3];
   uint16_t num_lower_chars;
   uint16_t lower[3];
 };
+
 constexpr special_case_mapping_in codepoint_mapping_in[] = {
   {2, {83, 83, 0}, 0, {0, 0, 0}},       {0, {0, 0, 0}, 2, {105, 775, 0}},
   {2, {700, 78, 0}, 0, {0, 0, 0}},      {1, {452, 0, 0}, 1, {454, 0, 0}},
@@ -122,15 +136,24 @@ uint16_t find_collision_proof_prime()
   return 0;
 }
 
-}  // anonymous namespace
-
 /**
- * @copydoc cudf::strings::detail::generate_special_mapping_hash_table
+ * @brief Regenerates the special case mapping tables used to handle non-trivial unicode
+ * character case conversions.
+ *
+ * 'special' cased characters are those defined as not having trivial single->single character
+ * mappings when having upper(), lower() or titlecase() operations applied.  Typically this is
+ * for cases where a single character maps to multiple, but there are also cases of
+ * non-reversible mappings, where:  codepoint != lower(upper(code_point)).
+ *
+ * @return true if the tables were generated successfully
  */
-void generate_special_mapping_hash_table()
+bool generate_special_mapping_hash_table()
 {
   uint16_t hash_prime = find_collision_proof_prime();
-  CUDF_EXPECTS(hash_prime != 0, "Could not find a usable prime number for hash table");
+  if (hash_prime == 0) {
+    fprintf(stderr, "Could not find a usable prime number for hash table\n");
+    return false;
+  }
 
   // generate hash index table
   // size of the table is the prime #, since we're just doing (key % hash_prime)
@@ -145,12 +168,6 @@ void generate_special_mapping_hash_table()
   // print out the code
 
   // the mappings
-  printf("struct special_case_mapping {\n");
-  printf("   uint16_t num_upper_chars;\n");
-  printf("   uint16_t upper[3];\n");
-  printf("   uint16_t num_lower_chars;\n");
-  printf("   uint16_t lower[3];\n");
-  printf("};\n");
   printf("constexpr special_case_mapping g_special_case_mappings[] = {\n");
   bool prev_empty = false;
   std::for_each(
@@ -174,17 +191,9 @@ void generate_special_mapping_hash_table()
     });
   printf("};\n");
 
-  printf(
-    "// the special case mapping table is a perfect hash table with no collisions, allowing us\n"
-    "// to 'hash' by simply modding by the incoming codepoint\n"
-    "constexpr uint16_t get_special_case_hash_index(uint32_t code_point){\n"
-    "   constexpr uint16_t special_case_prime = %d;\n"
-    "   return static_cast<uint16_t>(code_point %% special_case_prime);"
-    "\n}\n",
-    hash_prime);
+  // the prime used by get_special_case_hash_index()
+  printf("\nconstexpr uint16_t special_case_prime = %d;\n", hash_prime);
+  return true;
 }
 
-}  // namespace detail
-
-}  // namespace strings
-}  // namespace cudf
+int main() { return generate_special_mapping_hash_table() ? EXIT_SUCCESS : EXIT_FAILURE; }

@@ -19,7 +19,6 @@
 
 #include <cuda/std/expected>
 #include <cuda/std/optional>
-#include <cuda/std/tuple>
 
 #include <jit/column_accessor.cuh>
 #include <jit/transform_kernel.cuh>
@@ -49,13 +48,12 @@ struct checked_binary_row_operation {
     return errc::SUCCESS;
   }
 
-  template <typename Args>
-  __device__ errc operator()(size_type, Args args) const
+  template <typename T>
+  __device__ errc operator()(size_type,
+                             cuda::std::optional<T>* out,
+                             cuda::std::optional<T> lhs,
+                             cuda::std::optional<T> rhs) const
   {
-    auto* out      = cuda::std::get<0>(args);
-    auto const lhs = cuda::std::get<1>(args);
-    auto const rhs = cuda::std::get<2>(args);
-
     if (!lhs.has_value() || !rhs.has_value()) {
       *out = cuda::std::nullopt;
       return errc::SUCCESS;
@@ -91,12 +89,11 @@ struct checked_unary_row_operation {
     return errc::SUCCESS;
   }
 
-  template <typename Args>
-  __device__ errc operator()(size_type, Args args) const
+  template <typename T>
+  __device__ errc operator()(size_type,
+                             cuda::std::optional<T>* out,
+                             cuda::std::optional<T> input) const
   {
-    auto* out        = cuda::std::get<0>(args);
-    auto const input = cuda::std::get<1>(args);
-
     if (!input.has_value()) {
       *out = cuda::std::nullopt;
       return errc::SUCCESS;

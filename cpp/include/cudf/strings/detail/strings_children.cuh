@@ -26,7 +26,6 @@
 #include <cuda/iterator>
 #include <cuda/std/execution>
 #include <cuda/stream>
-#include <thrust/for_each.h>
 
 #include <stdexcept>
 

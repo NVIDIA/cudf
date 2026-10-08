@@ -1244,22 +1244,16 @@ parquet_metadata read_parquet_metadata(host_span<std::unique_ptr<datasource> con
 std::vector<parquet::FileMetaData> read_parquet_footers(
   std::span<std::unique_ptr<datasource> const> sources)
 {
-  // Do not use arrow schema when only reading the parquet metadata.
-  constexpr auto use_arrow_schema = false;
-
-  // Do not select any columns when only reading the parquet metadata.
-  constexpr auto has_column_projection = false;
+  // Empty sources
+  if (sources.empty()) { return {}; }
 
   // Read page indexes if available here since we will want to reuse the raw metadata for later use.
   constexpr auto read_page_indexes = true;
 
-  // Parse the source dataset metadata
-  return aggregate_reader_metadata(
-           host_span<std::unique_ptr<datasource> const>{sources.data(), sources.size()},
-           use_arrow_schema,
-           has_column_projection,
-           read_page_indexes)
-    .get_parquet_metadatas();
+  // Parse sources into FileMetaData objects
+  return parallel_construct_metadatas(sources, [](auto const& source) {
+    return FileMetaData{metadata{source.get(), read_page_indexes}};
+  });
 }
 
 }  // namespace cudf::io::parquet::detail

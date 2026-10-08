@@ -966,21 +966,28 @@ def test_file_metadata_schema_field_ids() -> None:
 
 
 def test_file_metadata_schema_without_field_ids() -> None:
-    table = pa.table({"a": [1, 2, 3], "b": ["x", "y", "z"]})
-    sink = io.BytesIO()
-    write_table(table, sink)
-    sink.seek(0)
-
-    file_metadata = plc.io.parquet_metadata.read_parquet_footers(
-        plc.io.SourceInfo([sink])
-    )[0]
-
-    assert [element.name for element in file_metadata.schema] == [
-        "schema",
-        "a",
-        "b",
+    tables = [
+        pa.table({"a": [1, 2, 3], "b": ["x", "y", "z"]}),
+        pa.table({"c": [4, 5]}),
     ]
-    assert all(element.field_id is None for element in file_metadata.schema)
+    sinks = []
+    for table in tables:
+        sink = io.BytesIO()
+        write_table(table, sink)
+        sink.seek(0)
+        sinks.append(sink)
+
+    file_metadatas = plc.io.parquet_metadata.read_parquet_footers(
+        plc.io.SourceInfo(sinks)
+    )
+
+    for metadata, table in zip(file_metadatas, tables, strict=True):
+        assert metadata.num_rows == table.num_rows
+        assert [element.name for element in metadata.schema] == [
+            "schema",
+            *table.column_names,
+        ]
+        assert all(element.field_id is None for element in metadata.schema)
 
 
 def test_file_metadata_row_group_sorting_columns(tmp_path) -> None:

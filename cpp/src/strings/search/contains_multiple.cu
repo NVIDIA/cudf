@@ -29,7 +29,6 @@
 #include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/equal.h>
-#include <thrust/fill.h>
 #include <thrust/logical.h>
 #include <thrust/sequence.h>
 #include <thrust/unique.h>

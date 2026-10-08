@@ -246,7 +246,7 @@ CUDF_KERNEL void token_counts_fn(cudf::column_device_view const d_strings,
   cudf::size_type count = 0;
   if (lane_idx == 0) {
     cudf::char_utf8 chr = 0;
-    auto ch_size        = cudf::strings::detail::to_char_utf8(begin, chr);
+    auto const ch_size  = cudf::strings::detail::to_char_utf8(begin, chr);
     auto output         = 1;
     if (begin > chars_begin) {
       auto ptr = begin - 1;
@@ -256,10 +256,11 @@ CUDF_KERNEL void token_counts_fn(cudf::column_device_view const d_strings,
       cudf::strings::detail::to_char_utf8(ptr, chr);
       output = !is_delimiter(d_delimiter, chr);
     }
-    auto ptr = d_output;
-    while (ch_size > 0) {
+    auto ptr       = d_output;
+    auto remaining = ch_size;
+    while (remaining > 0) {
       *ptr++ = output;
-      --ch_size;
+      --remaining;
     }
     count = ((begin + ch_size) == end);
   }

@@ -42,21 +42,25 @@ enum class endian : bool { BIG, LITTLE };
  * @code{.pseudo}
  * Example:
  * s = ['a', 'b', '', 'c', 'd', 'ab']
- * b = cast_to_integer(s)
- * b is [97, 98, 0, 99, 100, 25185]
+ * b = cast_to_integer(s, INT16)
+ * b is [24832, 25088, 0, 25344, 25600, 24930]
  *
- * in hex b is [0x61, 0x62, 0x0, 0x63, 0x64, 0x6261]
- * Note that 'ab' with a=0x61 and b=0x62 is 0x6162
- * but byte-swapped by default (endian::LITTLE) to 0x6261
+ * in hex b is [0x6100, 0x6200, 0x0, 0x6300, 0x6400, 0x6162]
+ * Note that with endian::LITTLE (default) the first byte of the string is
+ * stored in the most significant byte of the integer and shorter strings
+ * are padded with zero bytes on the right.
  * @endcode
  *
  * Multi-byte UTF-8 characters are encoded as multiple bytes in the integer result.
  *
  * If the input column contains strings greater than the number of bytes supported
- * by the output type, the result is undefined.
+ * by the output type, only the leading bytes that fit are encoded.
  *
  * If only equals logic is needed, `swap==BIG` is sufficient. Otherwise
  * use `swap==LITTLE` to ensure comparison operations work correctly.
+ * With `swap==LITTLE`, the integers order the same as the strings' leading
+ * bytes when the output type is unsigned or when no string starts with a byte
+ * greater than 0x7F. Strings with embedded null bytes result in undefined behavior.
  *
  * @throw cudf::logic_error if output_type is not integral type.
  *
@@ -83,13 +87,15 @@ std::unique_ptr<column> cast_to_integer(
  *
  * @code{.pseudo}
  * Example:
- * b is [97, 98, 0, 99, 100, 25185]
+ * b is INT16 [24832, 25088, 0, 25344, 25600, 24930]
  * s = cast_from_integer(b)
  * s is ['a', 'b', '', 'c', 'd', 'ab']
  *
- * in hex b is [0x61, 0x62, 0x0, 0x63, 0x64, 0x6261]
- * and 0x6261 is byte-swapped (endian::LITTLE) to 0x6162 to give 'ab'
- * @endcode *
+ * in hex b is [0x6100, 0x6200, 0x0, 0x6300, 0x6400, 0x6162]
+ * @endcode
+ *
+ * Trailing zero bytes (endian::LITTLE) or leading zero bytes (endian::BIG)
+ * are not included in the output strings.
  *
  * Any null entries will result in corresponding null entries in the output column.
  *
@@ -112,7 +118,9 @@ std::unique_ptr<column> cast_from_integer(
 /**
  * @brief Returns the minimum integer type required to encode the input column.
  *
- * Use this type to with `cast_to_integer` to encode the input column.
+ * Use this type with `cast_to_integer` to encode the input column.
+ * An unsigned type is returned if any string starts with a byte greater than 0x7F
+ * so that the encoded integers maintain the sort order of the strings.
  *
  * @param input Strings instance for this operation
  * @param stream CUDA stream used for device memory operations and kernel launches

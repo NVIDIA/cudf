@@ -293,7 +293,9 @@ ConfigureNVBench(
 
 # ##################################################################################################
 # * bitmask benchmark ---------------------------------------------------------------------------
-ConfigureNVBench(BITMASK_NVBENCH bitmask/bitmask_and.cpp bitmask/set_null_mask.cpp)
+ConfigureNVBench(
+  BITMASK_NVBENCH bitmask/bitmask_and.cpp bitmask/mask_to_bools.cpp bitmask/set_null_mask.cpp
+)
 
 # ##################################################################################################
 # * parquet writer benchmark ----------------------------------------------------------------------
@@ -430,6 +432,8 @@ add_dependencies(BINARYOP_NVBENCH cudf_benchmark_fragments)
 ConfigureNVBench(
   TRANSFORM_NVBENCH
   transform/encode.cpp
+  transform/is_null.cpp
+  transform/one_hot_encode.cpp
   transform/polynomials.cpp
   transform/polynomials_concurrent.cpp
   transform/transform.cpp

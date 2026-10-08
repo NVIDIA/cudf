@@ -53,9 +53,48 @@ def _contains_array(dtype: PolarsDataType) -> bool:
     return False
 
 
+def _contains_categorical(dtype: PolarsDataType) -> bool:
+    """Return whether ``dtype`` is or contains a Polars Categorical or Enum dtype."""
+    if isinstance(dtype, type):
+        dtype = dtype()
+    if isinstance(dtype, (pl.Categorical, pl.Enum)):
+        return True
+    if isinstance(dtype, (pl.List, pl.Array)):
+        return _contains_categorical(dtype.inner)
+    if isinstance(dtype, pl.Struct):
+        return any(_contains_categorical(field.dtype) for field in dtype.fields)
+    return False
+
+
+_CATEGORICAL_PHYSICAL_TO_TYPE_ID: dict[PolarsDataType, plc.TypeId] = {
+    pl.UInt8: plc.TypeId.UINT8,
+    pl.UInt16: plc.TypeId.UINT16,
+    pl.UInt32: plc.TypeId.UINT32,
+}
+
+
+def _categorical_physical_type_id(physical: PolarsDataType) -> plc.TypeId:
+    try:
+        return _CATEGORICAL_PHYSICAL_TO_TYPE_ID[physical]
+    except KeyError as err:  # pragma: no cover
+        raise NotImplementedError(
+            f"Unsupported categorical physical type {physical!r}"
+        ) from err
+
+
 def _dtype_to_header(dtype: PolarsDataType) -> DataTypeHeader:
     if isinstance(dtype, type):
         dtype = dtype()
+    if isinstance(dtype, pl.Enum):
+        return {"kind": "enum", "categories": dtype.categories.to_list()}
+    if isinstance(dtype, pl.Categorical):
+        cats = dtype.categories
+        return {
+            "kind": "categorical",
+            "name": cats.name(),
+            "namespace": cats.namespace(),
+            "physical": str(cats.physical()),
+        }
     name = type(dtype).__name__
     if name in SCALAR_NAME_TO_POLARS_TYPE_MAP:
         return {"kind": "scalar", "name": name}
@@ -130,6 +169,16 @@ def _dtype_from_header(header: DataTypeHeader) -> pl.DataType:
                 for f in header["fields"]
             ]
         )
+    if header["kind"] == "categorical":
+        return pl.Categorical(
+            pl.Categories(
+                header["name"],
+                header["namespace"],
+                SCALAR_NAME_TO_POLARS_TYPE_MAP[header["physical"]],
+            )
+        )
+    if header["kind"] == "enum":
+        return pl.Enum(header["categories"])
     raise NotImplementedError(f"Unsupported kind {header['kind']!r}")
 
 
@@ -203,7 +252,20 @@ def _from_polars(dtype: pl.DataType) -> plc.DataType:
     elif isinstance(dtype, pl.Null):
         # TODO: Hopefully
         return plc.DataType(plc.TypeId.EMPTY)
+    elif isinstance(dtype, pl.Enum):
+        # pl.Series(...).to_physical().dtype so we get Polars' codes type
+        return plc.DataType(
+            _categorical_physical_type_id(
+                pl.Series([], dtype=dtype).to_physical().dtype
+            )
+        )
+    elif isinstance(dtype, pl.Categorical):
+        return plc.DataType(_categorical_physical_type_id(dtype.categories.physical()))
     elif isinstance(dtype, pl.List):
+        if _contains_categorical(dtype.inner):
+            raise NotImplementedError(
+                "Categorical nested inside another dtype is not supported"
+            )
         if _contains_array(dtype.inner):
             raise NotImplementedError(
                 "Array nested inside another dtype is not supported"
@@ -212,6 +274,10 @@ def _from_polars(dtype: pl.DataType) -> plc.DataType:
         _ = DataType(dtype.inner)
         return plc.DataType(plc.TypeId.LIST)
     elif isinstance(dtype, pl.Array):
+        if _contains_categorical(dtype.inner):
+            raise NotImplementedError(
+                "Categorical nested inside another dtype is not supported"
+            )
         inner = DataType(dtype.inner).plc_type
         if not plc.traits.is_fixed_width(inner):
             raise NotImplementedError(
@@ -221,6 +287,10 @@ def _from_polars(dtype: pl.DataType) -> plc.DataType:
     elif isinstance(dtype, pl.Struct):
         # Recurse to catch unsupported field types
         for field in dtype.fields:
+            if _contains_categorical(field.dtype):
+                raise NotImplementedError(
+                    "Categorical nested inside another dtype is not supported"
+                )
             if _contains_array(field.dtype):
                 raise NotImplementedError(
                     "Array nested inside another dtype is not supported"
@@ -245,6 +315,14 @@ class DataType:
         # After conversion, it's guaranteed to be a DataType instance
         self.polars_type = cast("pl.DataType", polars_dtype)
         self.plc_type = _from_polars(self.polars_type)
+        if isinstance(self.polars_type, pl.Categorical):
+            # Polars frees a Categorical mapping once no data references it, invalidating codes.
+            self._categorical_reference = pl.Series([], dtype=self.polars_type)
+
+    @property
+    def is_categorical(self) -> bool:
+        """Whether this is a Polars Categorical or Enum dtype."""
+        return isinstance(self.polars_type, (pl.Categorical, pl.Enum))
 
     def id(self) -> plc.TypeId:
         """The pylibcudf.TypeId of this DataType."""

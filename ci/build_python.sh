@@ -7,6 +7,9 @@ set -euo pipefail
 source rapids-configure-sccache
 source rapids-datetime-string
 
+# shellcheck source=ci/build_python_common.sh
+source ./ci/build_python_common.sh
+
 export CMAKE_GENERATOR=Ninja
 
 rapids-print-env
@@ -28,67 +31,24 @@ rapids-logger "Prepending channel ${CPP_CHANNEL} to RATTLER_CHANNELS"
 
 RATTLER_CHANNELS=("--channel" "${CPP_CHANNEL}" "${RATTLER_CHANNELS[@]}")
 
-sccache --stop-server 2>/dev/null || true
+# Package-specific servers retain cache prefixes and statistics during concurrent builds.
+SCCACHE_SERVER_PORT=4226 run_logged_build pylibcudf-serial-build.log \
+  build_conda_package pylibcudf "${RAPIDS_CONDA_BLD_OUTPUT_DIR}" &
+wait_for_builds "$!" pylibcudf-serial-build.log
+RATTLER_CHANNELS=("--channel" "${RAPIDS_CONDA_BLD_OUTPUT_DIR}" "${RATTLER_CHANNELS[@]}")
 
-rapids-logger "Building pylibcudf"
-
-# --no-build-id allows for caching with `sccache`
-# more info is available at
-# https://rattler-build.prefix.dev/latest/tips_and_tricks/
-rapids-telemetry-record build-pylibcudf.log \
-  rattler-build build --recipe conda/recipes/pylibcudf \
-                    "${RATTLER_ARGS[@]}" \
-                    "${RATTLER_CHANNELS[@]}" 2>&1 | tee pylibcudf-build-output.log
-
-rapids-logger "Checking for Cython performance warnings in pylibcudf"
-if grep -Fq "performance hint:" pylibcudf-build-output.log; then
-  echo "Cython performance hints found in pylibcudf build:"
-  grep -F "performance hint:" pylibcudf-build-output.log
-  exit 1
-fi
-
-rapids-telemetry-record sccache-stats-pylibcudf.txt sccache --show-adv-stats
-sccache --stop-server >/dev/null 2>&1 || true
-
-rapids-logger "Building cudf"
-
-rapids-telemetry-record build-cudf.log \
-   rattler-build build --recipe conda/recipes/cudf \
-                    "${RATTLER_ARGS[@]}" \
-                    "${RATTLER_CHANNELS[@]}"
-
-rapids-telemetry-record sccache-stats-cudf.txt sccache --show-adv-stats
-sccache --stop-server >/dev/null 2>&1 || true
-
-rapids-logger "Building cudf_kafka"
-
-rapids-telemetry-record build-cudf_kafka.log \
-    rattler-build build --recipe conda/recipes/cudf_kafka \
-                    "${RATTLER_ARGS[@]}" \
-                    "${RATTLER_CHANNELS[@]}"
-
-rapids-telemetry-record sccache-stats-cudf_kafka.txt sccache --show-adv-stats
-sccache --stop-server >/dev/null 2>&1 || true
-
-rapids-logger "Building cudf_streaming"
-
-rapids-telemetry-record build-cudf_streaming.log \
-    rattler-build build --recipe conda/recipes/cudf_streaming \
-                    "${RATTLER_ARGS[@]}" \
-                    "${RATTLER_CHANNELS[@]}" 2>&1 | tee cudf_streaming-build-output.log
-
-rapids-logger "Checking for Cython performance warnings in cudf_streaming"
-if grep -Fq "performance hint:" cudf_streaming-build-output.log; then
-  echo "Cython performance hints found in cudf_streaming build:"
-  grep -F "performance hint:" cudf_streaming-build-output.log
-  exit 1
-fi
-
-rapids-telemetry-record sccache-stats-cudf_streaming.txt sccache --show-adv-stats
-sccache --stop-server >/dev/null 2>&1 || true
-
-# remove build_cache directory
-rm -rf "$RAPIDS_CONDA_BLD_OUTPUT_DIR"/build_cache
+# Stable build prefixes preserve sccache hits across CI runs.
+PARALLEL_OUTPUT_DIR="${RAPIDS_CONDA_BLD_OUTPUT_DIR}-parallel"
+builds=()
+packages=(cudf cudf_kafka cudf_streaming)
+for index in "${!packages[@]}"; do
+  SCCACHE_SERVER_PORT=$((4227 + index)) \
+    run_logged_build "${packages[index]}-parallel-build.log" \
+      build_conda_package "${packages[index]}" "${PARALLEL_OUTPUT_DIR}/${packages[index]}" &
+  builds+=("$!" "${packages[index]}-parallel-build.log")
+done
+wait_for_builds "${builds[@]}"
+collect_conda_packages "${PARALLEL_OUTPUT_DIR}"/*
 
 RAPIDS_PACKAGE_NAME="$(rapids-artifact-name conda_python cudf cudf --stable --cuda "$RAPIDS_CUDA_VERSION")"
 export RAPIDS_PACKAGE_NAME

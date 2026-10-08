@@ -16,8 +16,6 @@
 #include <cuda/std/cstddef>
 #include <cuda/std/type_traits>
 
-#include <vector_types.h>
-
 #include <cstddef>
 #include <cstdint>
 
@@ -62,10 +60,10 @@ struct Spark_MurmurHash3_x86_32 {
   [[nodiscard]] __device__ static inline uint32_t mix_block(uint32_t k1, uint32_t h)
   {
     k1 *= c1;
-    k1 = rotate_bits_left(k1, rot_c1);
+    k1 = cuda::std::rotl(k1, rot_c1);
     k1 *= c2;
     h ^= k1;
-    h = rotate_bits_left(h, rot_c2);
+    h = cuda::std::rotl(h, rot_c2);
     h = h * 5 + c3;
     return h;
   }
@@ -255,15 +253,8 @@ __device__ inline auto Spark_MurmurHash3_x86_32<numeric::decimal128>::operator()
 
   // Spark hashes the big-endian representation, so reverse the bytes and shift the significant
   // ones down. Doing this in registers avoids staging a byte buffer in local memory.
-  auto const swap128 = [](__int128_t v) {
-    auto const words    = cuda::std::bit_cast<uint4>(v);
-    auto const permuted = uint4{.x = __byte_perm(words.w, 0, 0x0123),
-                                .y = __byte_perm(words.z, 0, 0x0123),
-                                .z = __byte_perm(words.y, 0, 0x0123),
-                                .w = __byte_perm(words.x, 0, 0x0123)};
-    return cuda::std::bit_cast<__uint128_t>(permuted);
-  };
-  auto const big_endian = swap128(val) >> (8 * (key_size - length));
+  auto const big_endian =
+    cuda::std::byteswap(static_cast<__uint128_t>(val)) >> (8 * (key_size - length));
 
   // Hash the low `length` bytes of `big_endian`, matching what `compute_bytes` would do over the
   // equivalent byte buffer.

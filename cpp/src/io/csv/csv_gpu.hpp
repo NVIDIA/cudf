@@ -205,11 +205,13 @@ cudf::detail::host_vector<column_type_histogram> detect_column_types(
  * @param[in] column_flags Flags that control individual column parsing
  * @param[in] row_offsets List of row data start positions (offsets)
  * @param[in] dtypes List of dtype corresponding to each column
- * @param[out] columns Device memory output of column data
+ * @param[out] columns Device memory output of column data; string columns receive
+ *                     `compact_string_offset_pair` or `wide_string_offset_pair` arrays
  * @param[out] valids Device memory output of column valids bitmap data
  * @param[out] valid_counts Device memory output of the number of valid fields in each column
  * @param[out] is_quoted Per-column boolean arrays indicating which rows were quoted fields
- *                          (nullptr entries mean the column doesn't need quote tracking)
+ *                          (an empty span disables quote tracking)
+ * @param[in] compact_strings Whether string columns use `compact_string_offset_pair` entries
  * @param[in] stream CUDA stream to use
  */
 void decode_row_column_data(cudf::io::parse_options_view const& options,
@@ -221,6 +223,7 @@ void decode_row_column_data(cudf::io::parse_options_view const& options,
                             device_span<cudf::bitmask_type* const> valids,
                             device_span<size_type> valid_counts,
                             device_span<bool* const> is_quoted,
+                            bool compact_strings,
                             cuda::stream_ref stream);
 
 }  // namespace gpu

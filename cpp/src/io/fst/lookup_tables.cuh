@@ -11,6 +11,7 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cub/util_arch.cuh>
 #include <cub/util_type.cuh>
 #include <cuda/buffer>
 #include <cuda/std/iterator>

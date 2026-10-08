@@ -58,7 +58,7 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_HybridScanReader_destroy(JNIEnv* env,
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    delete reinterpret_cast<hybrid_scan_reader_wrapper*>(handle);
+    cudf::jni::safe_delete<hybrid_scan_reader_wrapper>(handle);
   }
   JNI_CATCH(env, );
 }

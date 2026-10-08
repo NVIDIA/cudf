@@ -7,7 +7,7 @@ set -euo pipefail
 # shellcheck source=ci/build_wheel_common.sh
 source ./ci/build_wheel_common.sh
 
-# Build all non-noarch wheels in one local dependency chain.
+# Complete the shared prerequisites before building independent Python wheels.
 
 RAPIDS_CUDA_MAJOR="${RAPIDS_CUDA_VERSION%%.*}"
 RAPIDS_PY_CUDA_SUFFIX="$(rapids-wheel-ctk-name-gen "${RAPIDS_CUDA_VERSION}")"
@@ -48,88 +48,107 @@ add_wheel_constraint() {
   echo "${package_name}-${RAPIDS_PY_CUDA_SUFFIX} @ file://${wheel_paths[0]}" >> "${PIP_CONSTRAINT}"
 }
 
-# libcudf
-SKBUILD_CMAKE_ARGS="-DUSE_NVCOMP_RUNTIME_WHEEL=ON" \
-  build_package_wheel libcudf libcudf python/libcudf
+(
+  setup_build_log libcudf-serial-build.log
+  SKBUILD_CMAKE_ARGS="-DUSE_NVCOMP_RUNTIME_WHEEL=ON" \
+    build_package_wheel libcudf libcudf python/libcudf
 
-repair_wheel python/libcudf/dist/*
+  repair_wheel python/libcudf/dist/*
 
-WHEEL_EXPORT_DIR="$(mktemp -d)"
-unzip -d "${WHEEL_EXPORT_DIR}" "${RAPIDS_WHEEL_BLD_OUTPUT_DIR}"/*
-LIBCUDF_LIBRARY="$(find "${WHEEL_EXPORT_DIR}" -type f -name libcudf.so)"
-./ci/check_symbols.sh "${LIBCUDF_LIBRARY}"
+  WHEEL_EXPORT_DIR="$(mktemp -d)"
+  unzip -d "${WHEEL_EXPORT_DIR}" "${RAPIDS_WHEEL_BLD_OUTPUT_DIR}"/*
+  LIBCUDF_LIBRARY="$(find "${WHEEL_EXPORT_DIR}" -type f -name libcudf.so)"
+  ./ci/check_symbols.sh "${LIBCUDF_LIBRARY}"
 
-if [[ "${RAPIDS_CUDA_MAJOR}" == "12" ]]; then
-  libcudf_max_wheel_size=700M
-else
-  libcudf_max_wheel_size=350M
-fi
-finalize_package_wheel \
-  libcudf \
-  python/libcudf \
-  "${libcudf_max_wheel_size}" \
-  "$(rapids-artifact-name wheel_cpp libcudf cudf --cuda "${RAPIDS_CUDA_VERSION}")"
+  if [[ "${RAPIDS_CUDA_MAJOR}" == "12" ]]; then
+    libcudf_max_wheel_size=700M
+  else
+    libcudf_max_wheel_size=350M
+  fi
+  finalize_package_wheel \
+    libcudf \
+    python/libcudf \
+    "${libcudf_max_wheel_size}" \
+    "$(rapids-artifact-name wheel_cpp libcudf cudf --cuda "${RAPIDS_CUDA_VERSION}")"
 
-# libcudf-streaming uses the libcudf wheel built above.
-add_wheel_constraint libcudf "${RAPIDS_WHEEL_BLD_OUTPUT_DIR}/libcudf_*.whl"
+  # Dependent builds consume the constraint file, not this subshell's wheel-directory variable.
+  add_wheel_constraint libcudf "${RAPIDS_WHEEL_BLD_OUTPUT_DIR}/libcudf_*.whl"
+) &
+wait_for_builds "$!" libcudf-serial-build.log
 
-build_package_wheel libcudf_streaming libcudf_streaming python/libcudf_streaming
+(
+  setup_build_log libcudf-streaming-serial-build.log
+  build_package_wheel libcudf_streaming libcudf_streaming python/libcudf_streaming
 
-repair_wheel python/libcudf_streaming/dist/*
+  repair_wheel python/libcudf_streaming/dist/*
 
-finalize_package_wheel \
-  libcudf_streaming \
-  python/libcudf_streaming \
-  100M \
-  "$(rapids-artifact-name wheel_cpp libcudf-streaming cudf --cuda "${RAPIDS_CUDA_VERSION}")"
+  finalize_package_wheel \
+    libcudf_streaming \
+    python/libcudf_streaming \
+    100M \
+    "$(rapids-artifact-name wheel_cpp libcudf-streaming cudf --cuda "${RAPIDS_CUDA_VERSION}")"
 
-add_wheel_constraint libcudf-streaming "${RAPIDS_WHEEL_BLD_OUTPUT_DIR}/libcudf_streaming_*.whl"
+  add_wheel_constraint libcudf-streaming "${RAPIDS_WHEEL_BLD_OUTPUT_DIR}/libcudf_streaming_*.whl"
+) &
+wait_for_builds "$!" libcudf-streaming-serial-build.log
 
 # All wheels in this stage use the stable Python ABI.
 export RAPIDS_PY_API="cp${RAPIDS_PY_VERSION//./}"
 
-# pylibcudf
-build_package_wheel \
-  pylibcudf \
-  pylibcudf \
-  python/pylibcudf \
-  --log pylibcudf-wheel-build-output.log \
-  --stable
-check_cython_performance_hints pylibcudf pylibcudf-wheel-build-output.log
+(
+  setup_build_log pylibcudf-serial-build.log
+  build_package_wheel \
+    pylibcudf \
+    pylibcudf \
+    python/pylibcudf \
+    --log pylibcudf-wheel-build-output.log \
+    --stable
+  check_cython_performance_hints pylibcudf pylibcudf-wheel-build-output.log
 
-repair_wheel python/pylibcudf/dist/*
+  repair_wheel python/pylibcudf/dist/*
 
-finalize_package_wheel \
-  pylibcudf \
-  python/pylibcudf \
-  20M \
-  "$(rapids-artifact-name wheel_python pylibcudf cudf --stable --cuda "${RAPIDS_CUDA_VERSION}")"
+  finalize_package_wheel \
+    pylibcudf \
+    python/pylibcudf \
+    20M \
+    "$(rapids-artifact-name wheel_python pylibcudf cudf --stable --cuda "${RAPIDS_CUDA_VERSION}")"
 
-# cudf
-add_wheel_constraint pylibcudf "${RAPIDS_WHEEL_BLD_OUTPUT_DIR}/pylibcudf_*.whl"
-build_package_wheel cudf cudf python/cudf --stable
+  add_wheel_constraint pylibcudf "${RAPIDS_WHEEL_BLD_OUTPUT_DIR}/pylibcudf_*.whl"
+) &
+wait_for_builds "$!" pylibcudf-serial-build.log
+(
+  setup_build_log cudf-parallel-build.log
+  export SCCACHE_SERVER_PORT=4227
+  build_package_wheel cudf cudf python/cudf --stable
 
-repair_wheel python/cudf/dist/*
+  repair_wheel python/cudf/dist/*
 
-finalize_package_wheel \
-  cudf \
-  python/cudf \
-  15M \
-  "$(rapids-artifact-name wheel_python cudf cudf --stable --cuda "${RAPIDS_CUDA_VERSION}")"
+  finalize_package_wheel \
+    cudf \
+    python/cudf \
+    15M \
+    "$(rapids-artifact-name wheel_python cudf cudf --stable --cuda "${RAPIDS_CUDA_VERSION}")"
+) &
+cudf_pid=$!
 
-# cudf-streaming
-build_package_wheel \
-  cudf_streaming \
-  cudf-streaming \
-  python/cudf_streaming \
-  --log cudf-streaming-wheel-build-output.log \
-  --stable
-check_cython_performance_hints cudf-streaming cudf-streaming-wheel-build-output.log
+(
+  setup_build_log cudf-streaming-parallel-build.log
+  export SCCACHE_SERVER_PORT=4228
+  build_package_wheel \
+    cudf_streaming \
+    cudf-streaming \
+    python/cudf_streaming \
+    --log cudf-streaming-wheel-build-output.log \
+    --stable
+  check_cython_performance_hints cudf-streaming cudf-streaming-wheel-build-output.log
 
-repair_wheel python/cudf_streaming/dist/*
+  repair_wheel python/cudf_streaming/dist/*
 
-finalize_package_wheel \
-  cudf_streaming \
-  python/cudf_streaming \
-  75M \
-  "$(rapids-artifact-name wheel_python cudf-streaming cudf --stable --cuda "${RAPIDS_CUDA_VERSION}")"
+  finalize_package_wheel \
+    cudf_streaming \
+    python/cudf_streaming \
+    75M \
+    "$(rapids-artifact-name wheel_python cudf-streaming cudf --stable --cuda "${RAPIDS_CUDA_VERSION}")"
+) &
+streaming_pid=$!
+wait_for_builds "${cudf_pid}" cudf-parallel-build.log "${streaming_pid}" cudf-streaming-parallel-build.log

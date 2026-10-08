@@ -653,10 +653,13 @@ def test_hybrid_scan_multifile_materialize_all_columns(
         )
     )
 
+    # Fetch all column chunks into device memory. Use memoryview into fixture-owned bytes so that asynchronous copies may complete successfully.
     all_columns_data = [
         plc.gpumemoryview(
             rmm.DeviceBuffer.to_device(
-                multifile_parquet_bytes[src_idx][r.offset : r.offset + r.size],
+                memoryview(multifile_parquet_bytes[src_idx])[
+                    r.offset : r.offset + r.size
+                ],
                 plc.utils._get_stream(stream),
             )
         )

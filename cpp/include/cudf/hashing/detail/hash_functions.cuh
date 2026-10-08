@@ -36,46 +36,6 @@ T __device__ inline normalize_nans_and_zeros(T const& key)
   return normalize_nans(key);
 }
 
-__device__ inline uint32_t rotate_bits_left(uint32_t x, uint32_t r)
-{
-  // This function is equivalent to (x << r) | (x >> (32 - r))
-  return __funnelshift_l(x, x, r);
-}
-
-__device__ inline uint64_t rotate_bits_left(uint64_t x, uint32_t r)
-{
-  return (x << r) | (x >> (64 - r));
-}
-
-__device__ inline uint32_t rotate_bits_right(uint32_t x, uint32_t r)
-{
-  // This function is equivalent to (x >> r) | (x << (32 - r))
-  return __funnelshift_r(x, x, r);
-}
-
-__device__ inline uint64_t rotate_bits_right(uint64_t x, uint32_t r)
-{
-  return (x >> r) | (x << (64 - r));
-}
-
-// Swap the endianness of a 32 bit value
-__device__ inline uint32_t swap_endian(uint32_t x)
-{
-  // The selector 0x0123 reverses the byte order
-  return __byte_perm(x, 0, 0x0123);
-}
-
-// Swap the endianness of a 64 bit value
-// There is no CUDA intrinsic for permuting bytes in 64 bit integers
-__device__ inline uint64_t swap_endian(uint64_t x)
-{
-  // Reverse the endianness of each 32 bit section
-  uint32_t low_bits  = swap_endian(static_cast<uint32_t>(x));
-  uint32_t high_bits = swap_endian(static_cast<uint32_t>(x >> 32));
-  // Reassemble a 64 bit result, swapping the low bits and high bits
-  return (static_cast<uint64_t>(low_bits) << 32) | (static_cast<uint64_t>(high_bits));
-};
-
 /**
  * SPDX-SnippetBegin
  * SPDX-SnippetCopyrightText: Copyright (c) 2015 Barry Clark

@@ -1107,7 +1107,6 @@ add_library(
   src/strings/attributes.cu
   src/strings/capitalize.cu
   src/strings/case.cu
-  src/strings/char_types/char_cases.cu
   src/strings/char_types/char_types.cu
   src/strings/combine/concatenate.cu
   src/strings/combine/join.cu

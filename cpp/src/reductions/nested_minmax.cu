@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "nested_minmax.hpp"
 #include "nested_types_extrema_utils.cuh"
 
 #include <cudf/detail/copy.hpp>

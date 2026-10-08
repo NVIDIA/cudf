@@ -5,7 +5,7 @@
 
 #pragma once
 
-#include "nested_types_extrema_utils.cuh"
+#include "nested_minmax.hpp"
 
 #include <cudf/detail/copy.hpp>
 #include <cudf/detail/utilities/cuda.cuh>

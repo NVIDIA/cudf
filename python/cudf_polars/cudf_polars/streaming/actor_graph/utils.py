@@ -52,7 +52,7 @@ from cudf_polars.dsl.ir import (
 )
 from cudf_polars.dsl.tracing import Scope
 from cudf_polars.dsl.utils.column_domain import column_domain_bindings
-from cudf_polars.dsl.utils.naming import names_to_indices
+from cudf_polars.dsl.utils.naming import indices_to_names, names_to_indices
 from cudf_polars.streaming.actor_graph.collectives.allgather import AllGatherManager
 from cudf_polars.streaming.actor_graph.tracing import (
     ActorTracer,
@@ -321,8 +321,6 @@ async def shutdown_on_error(
     """
     channels = (*chs_in, *chs_out, *chs_aux)
     # Create tracer only if LOG_TRACES is enabled and IR is provided
-    contextvars: dict[str, Any] = {}
-
     ir_id = trace_ir.get_stable_id()
     ir_type = type(trace_ir).__name__
     tracer = ActorTracer(ir_id, ir_type)
@@ -667,19 +665,19 @@ def _remap_scheme_simple(
     ir: IR, scheme: PartitioningScheme, child: IR
 ) -> PartitioningScheme:
     if isinstance(scheme, HashScheme):
-        old_key_names = indices_to_names(scheme.column_indices, child.schema)
         try:
+            old_key_names = indices_to_names(scheme.column_indices, child.schema)
             new_indices = names_to_indices(old_key_names, ir.schema)
-        except (ValueError, IndexError):
+        except (ValueError, KeyError, IndexError):
             return None
         return HashScheme(new_indices, scheme.modulus)
     if isinstance(scheme, OrderScheme):
         new_orderings: list[Ordering] = []
         for ordering in scheme.orderings:
-            old_key_names = indices_to_names(ordering.column_indices, child.schema)
             try:
+                old_key_names = indices_to_names(ordering.column_indices, child.schema)
                 new_indices = names_to_indices(old_key_names, ir.schema)
-            except (ValueError, IndexError):
+            except (ValueError, KeyError, IndexError):
                 continue
             new_orderings.append(_update_ordering_indices(ordering, new_indices))
         if new_orderings:
@@ -1164,25 +1162,6 @@ async def chunkwise_evaluate(
         await send_chunk(context, ch_out, result, 0, tracer=tracer)
 
     await ch_out.drain(context)
-
-
-def indices_to_names(indices: tuple[int, ...], schema: Schema) -> tuple[str, ...]:
-    """
-    Return column names for the given column indices in schema order.
-
-    Parameters
-    ----------
-    indices
-        The indices to get names for.
-    schema
-        The schema to get names from.
-
-    Returns
-    -------
-    The column names for each index in schema order.
-    """
-    keys = list(schema.keys())
-    return tuple(keys[i] for i in indices)
 
 
 @dataclass(frozen=True)

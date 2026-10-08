@@ -27,10 +27,6 @@
 #include <cuda/iterator>
 #include <cuda/std/functional>
 #include <cuda/stream>
-#include <thrust/execution_policy.h>
-#include <thrust/fill.h>
-#include <thrust/for_each.h>
-#include <thrust/sequence.h>
 #include <thrust/transform.h>
 
 namespace nvtext {

@@ -262,6 +262,24 @@ TEST_F(TextTokenizeTest, VocabularyLongStrings)
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(results->view(), sliced_expected);
 }
 
+TEST_F(TextTokenizeTest, VocabularyLongStringsSingleCharacter)
+{
+  std::string const long_token(300, 'b');
+  std::vector<std::string> vocabulary_strings{"a", "é", long_token};
+  cudf::test::strings_column_wrapper vocabulary(vocabulary_strings.begin(),
+                                                vocabulary_strings.end());
+  auto vocab = nvtext::load_vocabulary(cudf::strings_column_view(vocabulary));
+
+  std::vector<std::string> input_strings{"a", "é", long_token};
+  cudf::test::strings_column_wrapper input(input_strings.begin(), input_strings.end());
+  auto results = nvtext::tokenize_with_vocabulary(
+    cudf::strings_column_view(input), *vocab, cudf::string_scalar(" "));
+
+  using LCW = cudf::test::lists_column_wrapper<cudf::size_type>;
+  LCW expected({LCW{0}, LCW{1}, LCW{2}});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
+}
+
 TEST_F(TextTokenizeTest, TokenizeErrors)
 {
   cudf::test::strings_column_wrapper empty{};

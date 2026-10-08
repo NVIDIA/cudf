@@ -25,6 +25,7 @@ from pylibcudf.libcudf.io.parquet_schema cimport (
     ColumnChunkMetaData as cpp_ColumnChunkMetaData,
     FileMetaData as cpp_FileMetaData,
     RowGroup as cpp_RowGroup,
+    SchemaElement as cpp_SchemaElement,
     SortingColumn as cpp_SortingColumn,
     Statistics as cpp_Statistics,
 )
@@ -56,6 +57,7 @@ __all__ = [
     "ParquetMetadata",
     "ParquetSchema",
     "RowGroup",
+    "SchemaElement",
     "SortingColumn",
     "read_parquet_column_chunk_bounds",
     "read_parquet_footers",
@@ -297,6 +299,36 @@ cdef class ParquetMetadata:
             col_name.decode(): uncompressed_sizes
             for col_name, uncompressed_sizes in self.meta.columnchunk_metadata()
         }
+
+
+cdef class SchemaElement:
+    """An element of a Parquet file's schema tree."""
+
+    def __init__(self):
+        raise ValueError("SchemaElement cannot be constructed directly")
+
+    @staticmethod
+    cdef SchemaElement from_cpp(cpp_SchemaElement schema_element):
+        cdef SchemaElement result = SchemaElement.__new__(SchemaElement)
+        result.c_obj = schema_element
+        return result
+
+    @property
+    def name(self) -> str:
+        """Name of the field; empty for the root element."""
+        return self.c_obj.name.decode("utf-8")
+
+    @property
+    def num_children(self) -> int:
+        """Number of child elements; zero for leaf columns."""
+        return self.c_obj.num_children
+
+    @property
+    def field_id(self) -> int | None:
+        """Field ID from the original schema, if the writer recorded one."""
+        if not self.c_obj.field_id.has_value():
+            return None
+        return self.c_obj.field_id.value()
 
 
 cdef class SortingColumn:
@@ -606,6 +638,27 @@ cdef class FileMetaData:
     def created_by(self) -> str:
         """Get the application that created the file."""
         return dereference(self.c_obj).created_by.decode("utf-8")
+
+    @property
+    def schema(self) -> list[SchemaElement]:
+        """
+        Get the file's schema tree, flattened by a depth-first traversal.
+
+        The first element is the root. Each element's ``num_children``
+        gives the number of elements that follow it at the next level,
+        which is what allows the tree to be reconstructed from the flat
+        list.
+
+        Returns
+        -------
+        list[SchemaElement]
+            One entry per schema element, in depth-first order.
+        """
+        cdef cpp_SchemaElement schema_element
+        return [
+            SchemaElement.from_cpp(schema_element)
+            for schema_element in dereference(self.c_obj).schema
+        ]
 
     @property
     def row_groups(self) -> list[RowGroup]:

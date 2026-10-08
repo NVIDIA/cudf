@@ -315,7 +315,11 @@ TYPED_TEST(ListGetFixedWidthValueTest, NestedGetNull)
   auto typed_s = static_cast<cudf::list_scalar const*>(s.get());
 
   auto expected_data =
-    cudf::make_lists_column(0, offset_t{}.release(), FCW{}.release(), 0, rmm::device_buffer{});
+    cudf::make_lists_column(0,
+                            offset_t{}.release(),
+                            FCW{}.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   EXPECT_FALSE(s->is_valid());
   // Test preserve column hierarchy
@@ -468,7 +472,11 @@ TEST_F(ListGetStringValueTest, NestedGetNull)
   auto typed_s = static_cast<cudf::list_scalar const*>(s.get());
 
   auto expected_data =
-    cudf::make_lists_column(0, offset_t{}.release(), StringCW{}.release(), 0, rmm::device_buffer{});
+    cudf::make_lists_column(0,
+                            offset_t{}.release(),
+                            StringCW{}.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   EXPECT_FALSE(s->is_valid());
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*expected_data, typed_s->view());
@@ -499,14 +507,15 @@ struct ListGetStructValueTest : public cudf::test::BaseFixture {
     auto d_null_mask           = cudf::create_null_mask(
       num_lists, null_count == 0 ? cudf::mask_state::UNALLOCATED : cudf::mask_state::ALL_NULL);
     if (null_count > 0) {
-      std::for_each(cuda::counting_iterator<cudf::size_type>{0},
-                    cuda::counting_iterator{num_lists},
-                    [&](auto i) {
-                      if (*(null_mask.begin() + i)) {
-                        cudf::set_null_mask(
-                          static_cast<cudf::bitmask_type*>(d_null_mask.data()), i, i + 1, true);
-                      }
-                    });
+      std::for_each(
+        cuda::counting_iterator<cudf::size_type>{0},
+        cuda::counting_iterator{num_lists},
+        [&](auto i) {
+          if (*(null_mask.begin() + i)) {
+            cudf::set_null_mask(
+              reinterpret_cast<cudf::bitmask_type*>(d_null_mask.data()), i, i + 1, true);
+          }
+        });
     }
     return cudf::make_lists_column(
       num_lists, offsets.release(), std::move(child), null_count, std::move(d_null_mask));
@@ -767,7 +776,11 @@ TYPED_TEST(ListGetStructValueTest, NestedGetNull)
 
   auto nested = this->make_test_structs_column({}, {}, {}, valid_t{}.begin());
   auto expected_data =
-    cudf::make_lists_column(0, offset_t{}.release(), nested.release(), 0, rmm::device_buffer{});
+    cudf::make_lists_column(0,
+                            offset_t{}.release(),
+                            nested.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   EXPECT_FALSE(s->is_valid());
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*expected_data, typed_s->view());

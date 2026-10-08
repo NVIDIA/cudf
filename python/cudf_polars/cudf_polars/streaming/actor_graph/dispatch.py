@@ -24,6 +24,7 @@ if TYPE_CHECKING:
         PartitionInfo,
         StatsCollector,
     )
+    from cudf_polars.streaming.partitioning_requests import PartitioningRequest
     from cudf_polars.utils.config import (
         ConfigOptions,
         MaxConcurrentIOTasks,
@@ -64,6 +65,8 @@ class GenState(TypedDict):
         Statistics collector.
     collective_id_map
         The mapping of IR nodes to lists of collective IDs.
+    partitioning_requests
+        Downstream partitioning requests for each IR node.
     quent_operator_map
         Mapping from IR nodes to physical-plan Quent operators.
     quent_execution_context
@@ -79,6 +82,7 @@ class GenState(TypedDict):
     max_concurrent_io_tasks: MaxConcurrentIOTasks
     stats: StatsCollector
     collective_id_map: dict[IR, list[int]]
+    partitioning_requests: dict[IR, tuple[PartitioningRequest, ...]]
     quent_operator_map: dict[IR, cudf_polars.quent._types.Operator] | None
     quent_execution_context: cudf_polars.quent._context.LocalQuentContext | None
 

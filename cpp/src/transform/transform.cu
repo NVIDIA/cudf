@@ -21,6 +21,7 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/stream>
 
@@ -29,7 +30,6 @@
 #include <jit/helpers.hpp>
 #include <jit/parser.hpp>
 #include <jit/row_ir.hpp>
-#include <jit/span.cuh>
 #include <jit/util.hpp>
 
 #include <algorithm>
@@ -59,7 +59,7 @@ struct fixed_width_column {
 
   static auto make(data_type type,
                    size_type size,
-                   rmm::device_buffer null_mask,
+                   cuda::device_buffer<std::byte> null_mask,
                    size_type null_count,
                    cuda::stream_ref stream,
                    rmm::device_async_resource_ref mr)
@@ -95,36 +95,37 @@ struct mutable_string_views_column_view {
 };
 
 struct string_views_column {
-  rmm::device_buffer _data;
+  cuda::device_buffer<string_view> _data;
   size_type _size{0};
-  rmm::device_buffer _null_mask{};
+  cuda::device_buffer<std::byte> _null_mask =
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED);
   size_type _null_count{0};
 
   static auto make(size_type size,
-                   rmm::device_buffer null_mask,
+                   cuda::device_buffer<std::byte> null_mask,
                    size_type null_count,
                    cuda::stream_ref stream,
                    rmm::device_async_resource_ref mr)
   {
-    rmm::device_buffer data{static_cast<size_t>(size) * sizeof(string_view), stream, mr};
+    cuda::device_buffer<string_view> data{stream, mr, static_cast<size_t>(size), cuda::no_init};
     return string_views_column{std::move(data), size, std::move(null_mask), null_count};
   }
 
-  auto mutable_view() const
+  auto mutable_view()
   {
     return mutable_string_views_column_view{
-      const_cast<void*>(_data.data()),
+      _data.data(),
       _size,
-      static_cast<bitmask_type*>(const_cast<void*>(_null_mask.data())),
+      reinterpret_cast<bitmask_type const*>(_null_mask.data()),
       0,
       _null_count};
   }
 
   void set_null_count(size_type count) { _null_count = count; }
 
-  bool nullable() const { return !_null_mask.is_empty(); }
+  bool nullable() const { return _null_mask.size() != 0; }
 
-  bitmask_type* null_mask() { return static_cast<bitmask_type*>(_null_mask.data()); }
+  bitmask_type* null_mask() { return reinterpret_cast<bitmask_type*>(_null_mask.data()); }
 };
 
 struct mutable_strings_column_view {
@@ -142,7 +143,7 @@ struct mutable_strings_column {
   static auto make(size_type size,
                    rmm::device_buffer chars,
                    std::unique_ptr<column> offsets,
-                   rmm::device_buffer null_mask,
+                   cuda::device_buffer<std::byte> null_mask,
                    size_type null_count)
   {
     return mutable_strings_column{make_strings_column(
@@ -508,7 +509,7 @@ std::tuple<rtcx::blob, lto_binary_type, std::string> instantiate_fragment(
 }
 
 auto to_args(std::span<input_column_view const> inputs,
-             std::span<output_column const> outputs,
+             std::span<output_column> outputs,
              cuda::stream_ref stream,
              rmm::device_async_resource_ref mr)
 {
@@ -587,7 +588,7 @@ void run(bool is_null_aware,
          bitmask_type const* d_stencil,
          void* user_data,
          std::span<input_column_view const> inputs,
-         std::span<output_column const> outputs,
+         std::span<output_column> outputs,
          int32_t* d_max_error,
          std::string const& udf,
          udf_source_type source_type,
@@ -608,7 +609,7 @@ void run(kernel const& kernel,
          bitmask_type const* d_stencil,
          void* user_data,
          std::span<input_column_view const> inputs,
-         std::span<output_column const> outputs,
+         std::span<output_column> outputs,
          int32_t* d_max_error,
          cuda::stream_ref stream,
          rmm::device_async_resource_ref mr)
@@ -641,7 +642,7 @@ void run_lto(std::optional<std::tuple<std::span<uint8_t const>, lto_binary_type,
              bitmask_type const* d_stencil,
              void* user_data,
              std::span<input_column_view const> inputs,
-             std::span<output_column const> outputs,
+             std::span<output_column> outputs,
              int32_t* d_max_error,
              std::span<uint8_t const> udf_binary,
              lto_binary_type source_type,
@@ -990,7 +991,8 @@ rmm::device_uvector<char> make_chars_buffer(column_view const& offsets_view,
   size_t temp_storage_bytes = 0;
   CUDF_CUDA_TRY(cub::DeviceMemcpy::Batched(
     nullptr, temp_storage_bytes, srcs, dsts, src_sizes, size, stream.get()));
-  rmm::device_buffer d_temp_storage(temp_storage_bytes, stream);
+  cuda::device_buffer<std::byte> d_temp_storage(
+    stream, cudf::get_current_device_resource_ref(), temp_storage_bytes, cuda::no_init);
   CUDF_CUDA_TRY(cub::DeviceMemcpy::Batched(
     d_temp_storage.data(), temp_storage_bytes, srcs, dsts, src_sizes, size, stream.get()));
 
@@ -998,7 +1000,7 @@ rmm::device_uvector<char> make_chars_buffer(column_view const& offsets_view,
 }
 
 std::unique_ptr<column> make_strings_column(device_span<string_view const> strings,
-                                            rmm::device_buffer null_mask,
+                                            cuda::device_buffer<std::byte> null_mask,
                                             size_type null_count,
                                             cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr)
@@ -1007,7 +1009,7 @@ std::unique_ptr<column> make_strings_column(device_span<string_view const> strin
   auto size = static_cast<size_type>(strings.size());
   if (size == 0) return make_empty_column(type_id::STRING);
 
-  auto stencil = static_cast<bitmask_type const*>(null_mask.data());
+  auto stencil = reinterpret_cast<bitmask_type const*>(null_mask.data());
 
   // build offsets column from the strings sizes
   auto sizes = detail::make_counting_transform_iterator(
@@ -1115,8 +1117,7 @@ auto finalize_output(string_views_column&& c,
                      rmm::device_async_resource_ref mr)
 {
   return make_strings_column(
-    device_span<string_view const>{static_cast<string_view const*>(c._data.data()),
-                                   static_cast<size_t>(c._size)},
+    device_span<string_view const>{c._data.data(), static_cast<size_t>(c._size)},
     std::move(c._null_mask),
     c._null_count,
     stream,

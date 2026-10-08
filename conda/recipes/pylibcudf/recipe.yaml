@@ -26,6 +26,9 @@ build:
   string: cuda${{ cuda_major }}_cp${{ py_buildstring }}_abi3_${{ datetime_string }}_${{ head_rev }}
   script:
     content: |
+      # Versioned debug-prefix maps change sccache keys even when build paths are stable.
+      export CFLAGS=$(echo "$CFLAGS" | sed -E 's@\-fdebug\-prefix\-map[^ ]*@@g')
+      export CXXFLAGS=$(echo "$CXXFLAGS" | sed -E 's@\-fdebug\-prefix\-map[^ ]*@@g')
       ./build.sh pylibcudf
     secrets:
       - AWS_ACCESS_KEY_ID

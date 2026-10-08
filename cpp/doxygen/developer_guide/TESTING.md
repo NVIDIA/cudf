@@ -486,7 +486,8 @@ Stream validity is determined by overloading the definition of libcudf's default
 libcudf `cudf::get_default_stream` returns one of `rmm`'s default stream values (depending on
 whether or not libcudf is compiled with per thread default stream enabled). In the preload library,
 this function is redefined to instead return a new user-created stream managed using a
-function-local static `rmm::cuda_stream`. An invalid stream in this situation is defined as any of
+function-local static pointer to an intentionally leaked `cuda::stream`. An invalid stream in this
+situation is defined as any of
 CUDA's default stream values (cudaStreamLegacy, cudaStreamDefault, or cudaStreamPerThread), since
 any kernel that properly uses `cudf::get_default_stream` will now instead be using the custom stream
 created by the preload library.

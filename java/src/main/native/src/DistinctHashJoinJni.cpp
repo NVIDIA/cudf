@@ -35,13 +35,10 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_DistinctHashJoin_destroy(JNIEnv* env,
                                                                     jclass,
                                                                     jlong j_handle)
 {
-  JNI_NULL_CHECK(env, j_handle, "distinct hash join handle is null", );
-
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    auto handle = reinterpret_cast<cudf::distinct_hash_join*>(j_handle);
-    delete handle;
+    cudf::jni::safe_delete<cudf::distinct_hash_join>(j_handle);
   }
   JNI_CATCH(env, );
 }

@@ -260,6 +260,15 @@ ConfigureNVBench(HASHING_NVBENCH hashing/hash.cpp hashing/partition.cpp)
 # ----------------------------------------------------------------------
 ConfigureNVBench(
   HYBRID_SCAN_FILTERS_NVBENCH io/parquet/experimental/hybrid_scan/dict_page_filter.cpp
+  io/parquet/experimental/hybrid_scan/page_stats_row_mask.cpp
+)
+
+# ##################################################################################################
+# * hybrid scan metadata benchmark
+# ----------------------------------------------------------------------
+ConfigureNVBench(
+  HYBRID_SCAN_METADATA_NVBENCH io/parquet/experimental/hybrid_scan/hybrid_scan_metadata.cpp
+  io/parquet/parquet_common.cpp
 )
 
 # ##################################################################################################
@@ -284,7 +293,9 @@ ConfigureNVBench(
 
 # ##################################################################################################
 # * bitmask benchmark ---------------------------------------------------------------------------
-ConfigureNVBench(BITMASK_NVBENCH bitmask/bitmask_and.cpp bitmask/set_null_mask.cpp)
+ConfigureNVBench(
+  BITMASK_NVBENCH bitmask/bitmask_and.cpp bitmask/mask_to_bools.cpp bitmask/set_null_mask.cpp
+)
 
 # ##################################################################################################
 # * parquet writer benchmark ----------------------------------------------------------------------
@@ -297,34 +308,35 @@ ConfigureNVBench(
 # * parquet reader benchmark ----------------------------------------------------------------------
 ConfigureNVBench(
   PARQUET_READER_NVBENCH io/parquet/parquet_reader_input.cpp io/parquet/parquet_reader_encoding.cpp
-  io/parquet/parquet_reader_options.cpp io/parquet/reader_common.cpp
+  io/parquet/parquet_reader_options.cpp io/parquet/parquet_common.cpp
 )
 
 # ##################################################################################################
 # * parquet reader chunks benchmark
 # ------------------------------------------------------------------
 ConfigureNVBench(
-  PARQUET_READER_CHUNKS_NVBENCH io/parquet/parquet_reader_chunks.cpp io/parquet/reader_common.cpp
+  PARQUET_READER_CHUNKS_NVBENCH io/parquet/parquet_reader_chunks.cpp io/parquet/parquet_common.cpp
 )
 
 # ##################################################################################################
 # * parquet reader compressed benchmark ------------------------------------------------------------
 ConfigureNVBench(
   PARQUET_READER_COMPRESSED_NVBENCH io/parquet/parquet_reader_compressed.cpp
-  io/parquet/reader_common.cpp
+  io/parquet/parquet_common.cpp
 )
 
 # ##################################################################################################
 # * parquet reader strings benchmark
 # ------------------------------------------------------------------
 ConfigureNVBench(
-  PARQUET_READER_STRINGS_NVBENCH io/parquet/parquet_reader_strings.cpp io/parquet/reader_common.cpp
+  PARQUET_READER_STRINGS_NVBENCH io/parquet/parquet_reader_strings.cpp
+  io/parquet/parquet_common.cpp
 )
 
 # ##################################################################################################
 # * parquet reader wide benchmark ------------------------------------------------------------------
 ConfigureNVBench(
-  PARQUET_READER_WIDE_NVBENCH io/parquet/parquet_reader_wide.cpp io/parquet/reader_common.cpp
+  PARQUET_READER_WIDE_NVBENCH io/parquet/parquet_reader_wide.cpp io/parquet/parquet_common.cpp
 )
 
 # ##################################################################################################
@@ -420,6 +432,8 @@ add_dependencies(BINARYOP_NVBENCH cudf_benchmark_fragments)
 ConfigureNVBench(
   TRANSFORM_NVBENCH
   transform/encode.cpp
+  transform/is_null.cpp
+  transform/one_hot_encode.cpp
   transform/polynomials.cpp
   transform/polynomials_concurrent.cpp
   transform/transform.cpp

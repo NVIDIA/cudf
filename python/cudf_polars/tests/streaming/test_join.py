@@ -68,6 +68,7 @@ def right():
     )
 
 
+@pytest.mark.engine_params(["spmd", "spmd-small"])
 @pytest.mark.parametrize("how", ["inner", "left", "right", "full"])
 @pytest.mark.parametrize(
     "options",
@@ -83,6 +84,18 @@ def test_dynamic_join_how(left, right, streaming_engine_factory, options, how):
     assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=False)
 
 
+@pytest.mark.engine_params(["dask", "ray"])
+@pytest.mark.parametrize("how", ["inner", "left", "right", "full"])
+def test_dynamic_join_distributed_backends(left, right, streaming_engine_factory, how):
+    """Exercise dynamic join planning on the task-based executor adapters."""
+    engine = streaming_engine_factory(
+        StreamingOptions(max_rows_per_partition=3, broadcast_limit=48)
+    )
+    q = left.join(right, on="y", how=how)
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
+@pytest.mark.engine_params(["spmd", "spmd-small"])
 @pytest.mark.parametrize("how", ["right", "full"])
 def test_dynamic_join_right_full_reverse(left, right, streaming_engine_factory, how):
     """Dynamic join path: Right/Full with reversed left/right (stress ordering)."""
@@ -92,6 +105,46 @@ def test_dynamic_join_right_full_reverse(left, right, streaming_engine_factory, 
     # Reverse so "right" frame is larger; exercises right-side preservation
     q = right.join(left, on="y", how=how)
     assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=False)
+
+
+def test_join_with_underestimated_broadcast_input(tmp_path, streaming_engine_factory):
+    """Joining remains correct when sampling underestimates an input."""
+    large_row_count = 1_000
+    right_row_count = 10 * large_row_count + 1
+
+    left_path = tmp_path / "left"
+    left_path.mkdir()
+    # Sampling one chunk sees the small file first and underestimates the table.
+    pl.DataFrame({"key": [0], "left": [0]}).write_parquet(
+        left_path / "00-small.parquet"
+    )
+    pl.DataFrame(
+        {
+            "key": range(1, large_row_count + 1),
+            "left": range(1, large_row_count + 1),
+        }
+    ).write_parquet(left_path / "01-large.parquet")
+
+    engine = streaming_engine_factory(
+        StreamingOptions(
+            broadcast_limit=1_024,
+            target_partition_size=1 << 20,
+            max_rows_per_partition=2 * right_row_count,
+            dynamic_planning={"sample_chunk_count": 1},
+        )
+    )
+    left = pl.scan_parquet(left_path / "*.parquet")
+    right = pl.LazyFrame(
+        {
+            "key": range(right_row_count),
+            "right": range(right_row_count),
+        }
+    )
+    assert_gpu_result_equal(
+        left.join(right, on="key"),
+        engine=engine,
+        check_row_order=False,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -274,9 +327,7 @@ def test_ordered_join_strategy_rejects_ambiguous_output_key_metadata(spmd_engine
     assert _make_ordered_strategy(join_ir, partitioning, partitioning) is None
 
 
-@pytest.mark.parametrize("reverse", [True, False])
-@pytest.mark.parametrize("max_rows_per_partition", [3, 9])
-def test_join_conditional(reverse, max_rows_per_partition, streaming_engine_factory):
+def assert_conditional_join(reverse, max_rows_per_partition, streaming_engine_factory):
     streaming_engine = streaming_engine_factory(
         StreamingOptions(
             max_rows_per_partition=max_rows_per_partition,
@@ -297,11 +348,25 @@ def test_join_conditional(reverse, max_rows_per_partition, streaming_engine_fact
         assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=False)
 
 
+@pytest.mark.engine_params(["spmd", "spmd-small"])
+@pytest.mark.parametrize("reverse", [True, False])
+@pytest.mark.parametrize("max_rows_per_partition", [3, 9])
+def test_join_conditional(reverse, max_rows_per_partition, streaming_engine_factory):
+    assert_conditional_join(reverse, max_rows_per_partition, streaming_engine_factory)
+
+
+@pytest.mark.engine_params(["dask", "ray"])
+@pytest.mark.parametrize("reverse", [True, False])
+def test_join_conditional_distributed_backends(reverse, streaming_engine_factory):
+    assert_conditional_join(reverse, 3, streaming_engine_factory)
+
+
 # ---------------------------------------------------------------------------
 # Tests migrated from tests/streaming/test_join.py
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.engine_params(["spmd", "spmd-small"])
 @pytest.mark.parametrize("how", ["inner", "left", "right", "full", "semi", "anti"])
 @pytest.mark.parametrize("reverse", [True, False])
 @pytest.mark.parametrize(
@@ -342,18 +407,42 @@ def test_join(left, right, how, reverse, streaming_engine_factory, options):
 
     assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=False)
 
-    # Join again on the same key.
-    # (covers code path that avoids redundant shuffles)
-    if how in ("inner", "left", "right"):
-        right2 = pl.LazyFrame(
-            {
-                "xxx": range(6),
-                "yyy": [2, 4, 3] * 2,
-                "zzz": [3, 4] * 3,
-            }
+
+@pytest.mark.engine_params(["dask", "ray"])
+@pytest.mark.parametrize("how", ["inner", "left", "right", "full", "semi", "anti"])
+@pytest.mark.parametrize("reverse", [True, False])
+def test_join_distributed_backends(left, right, how, reverse, streaming_engine_factory):
+    """Exercise backend-specific execution with a representative shuffle join."""
+    engine = streaming_engine_factory(
+        StreamingOptions(
+            max_rows_per_partition=5, target_partition_size=24, broadcast_limit=24
         )
-        q2 = q.join(right2, left_on="y", right_on="yyy", how=how)
-        assert_gpu_result_equal(q2, engine=streaming_engine, check_row_order=False)
+    )
+    if reverse:
+        left, right = right, left
+    q = left.join(right, on="y", how=how)
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
+@pytest.mark.engine_params(["spmd", "spmd-small", "dask", "ray"])
+@pytest.mark.parametrize("how", ["inner", "left", "right"])
+def test_join_reuses_shuffles(left, right, how, streaming_engine_factory):
+    """A second join on the same key must reuse the first join's shuffle."""
+    engine = streaming_engine_factory(
+        StreamingOptions(
+            max_rows_per_partition=5, target_partition_size=24, broadcast_limit=24
+        )
+    )
+    q = left.join(right, on="y", how=how)
+    right2 = pl.LazyFrame(
+        {
+            "xxx": range(6),
+            "yyy": [2, 4, 3] * 2,
+            "zzz": [3, 4] * 3,
+        }
+    )
+    q2 = q.join(right2, left_on="y", right_on="yyy", how=how)
+    assert_gpu_result_equal(q2, engine=engine, check_row_order=False)
 
 
 @pytest.mark.parametrize("zlice", [(0, 2), (2, 2), (-2, None)])

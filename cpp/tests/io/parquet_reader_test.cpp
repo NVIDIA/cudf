@@ -1514,9 +1514,13 @@ void delta_large_mini_block_list_read_test(std::vector<uint8_t> const& file_byte
     cudf::test::fixed_width_column_wrapper<int32_t>(offsets.begin(), offsets.end());
   auto child =
     cudf::test::fixed_width_column_wrapper<int64_t>(leaf_values.begin(), leaf_values.end());
-  auto const num_lists    = static_cast<cudf::size_type>(expected.size());
-  auto const expected_col = cudf::make_lists_column(
-    num_lists, offsets_col.release(), child.release(), 0, rmm::device_buffer{});
+  auto const num_lists = static_cast<cudf::size_type>(expected.size());
+  auto const expected_col =
+    cudf::make_lists_column(num_lists,
+                            offsets_col.release(),
+                            child.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   auto const start           = static_cast<cudf::size_type>(skip_rows);
   auto const end             = num_rows.has_value() ? start + *num_rows : num_lists;
@@ -1542,10 +1546,14 @@ void delta_large_mini_block_string_list_read_test(
   }
   auto offsets_col =
     cudf::test::fixed_width_column_wrapper<int32_t>(offsets.begin(), offsets.end());
-  auto child              = cudf::test::strings_column_wrapper(leaf.begin(), leaf.end());
-  auto const num_lists    = static_cast<cudf::size_type>(expected.size());
-  auto const expected_col = cudf::make_lists_column(
-    num_lists, offsets_col.release(), child.release(), 0, rmm::device_buffer{});
+  auto child           = cudf::test::strings_column_wrapper(leaf.begin(), leaf.end());
+  auto const num_lists = static_cast<cudf::size_type>(expected.size());
+  auto const expected_col =
+    cudf::make_lists_column(num_lists,
+                            offsets_col.release(),
+                            child.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   auto const start           = static_cast<cudf::size_type>(skip_rows);
   auto const end             = num_rows.has_value() ? start + *num_rows : num_lists;
@@ -1701,6 +1709,56 @@ TEST_F(ParquetReaderTest, DeltaLengthByteArrayLargeMiniBlockSkipRows)
     build_delta_length_byte_array_parquet(s96, 384, 4), s96, 40, 60);
 }
 
+TEST_F(ParquetReaderTest, DeltaLengthByteArrayBlockBoundary)
+{
+  // This test validates that delta binary decoding properly finds the end of the block in the edge
+  // cases where the end is located from either 1) a full block or 2) a block holding exactly one
+  // delta. The stream holds n-1 deltas, so with a block size of 128 a stream of size 129 has
+  // exactly one full block, a stream of size 130 has the one final delta with empty trailing mini
+  // blocks, and a stream of size 257 has two full blocks.
+  for (auto const n : {129, 130, 257}) {
+    SCOPED_TRACE("n = " + std::to_string(n));
+    auto const strings = delta_test_strings(n, false);
+    auto const file    = build_delta_length_byte_array_parquet(strings, 128, 4);
+    delta_large_mini_block_string_read_test(file, strings);
+    // A trimmed read makes this a bounds page, where the string output is sized from the
+    // delta-decoded lengths rather than read straight through.
+    delta_large_mini_block_string_read_test(file, strings, 40, 50);
+  }
+}
+
+TEST_F(ParquetReaderTest, DeltaLengthByteArrayTwoMiniBlocks)
+{
+  // Validates a mini_block_count of 2, which libcudf itself never produces and therefore goes
+  // largely untested without this explicit construction in the test.
+  auto const strings = delta_test_strings(333, false);
+  auto const file    = build_delta_length_byte_array_parquet(strings, 256, 2);
+  delta_large_mini_block_string_read_test(file, strings);
+  delta_large_mini_block_string_read_test(file, strings, 100, 150);
+}
+
+TEST_F(ParquetReaderTest, DeltaLengthByteArrayLargeBlockSize)
+{
+  // Validate the behavior for a combination of large mini block sizes _and_ a filled block followed
+  // by a subsequent partial subblock. This test should suss out if our miniblock to miniblock
+  // transition handling is correct and plays nicely with our block to block transition handling.
+  auto const strings = delta_test_strings(600, false);
+  auto const file    = build_delta_length_byte_array_parquet(strings, 512, 4);
+  delta_large_mini_block_string_read_test(file, strings);
+  delta_large_mini_block_string_read_test(file, strings, 200, 300);
+}
+
+TEST_F(ParquetReaderTest, DeltaLengthByteArrayOddPassCountFullBlock)
+{
+  // A block whose mini-blocks each take an odd number of warp-size passes (96 values -> 3 passes),
+  // filled exactly to capacity to test the sequence running to the end of the block, where the last
+  // mini-block's final pass coincides with the end of the delta stream.
+  auto const strings = delta_test_strings(385, false);
+  auto const file    = build_delta_length_byte_array_parquet(strings, 384, 4);
+  delta_large_mini_block_string_read_test(file, strings);
+  delta_large_mini_block_string_read_test(file, strings, 130, 200);
+}
+
 TEST_F(ParquetReaderTest, DeltaBinaryListMiniBlock64)
 {
   // LIST<INT64> with 64 values/mini-block. The leading-skip read resumes the delta decoder
@@ -1809,11 +1867,12 @@ TEST_F(ParquetReaderTest, DeltaBinaryListLargeMiniBlockLeafNulls)
     leaf_values.begin(), leaf_values.end(), valid_it);
   auto offsets_col =
     cudf::test::fixed_width_column_wrapper<int32_t>(offsets.begin(), offsets.end());
-  auto const expected = cudf::make_lists_column(static_cast<cudf::size_type>(lists.size()),
-                                                offsets_col.release(),
-                                                child.release(),
-                                                0,
-                                                rmm::device_buffer{});
+  auto const expected =
+    cudf::make_lists_column(static_cast<cudf::size_type>(lists.size()),
+                            offsets_col.release(),
+                            child.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   for (auto const& [block_size, mini_block_count] :
        {std::pair{128, 1}, std::pair{384, 4}, std::pair{256, 1}}) {
@@ -2127,7 +2186,11 @@ TEST_F(ParquetReaderTest, NestingOptimizationTest)
 
     cudf::test::fixed_width_column_wrapper<cudf::size_type> offsets(offsets_iter,
                                                                     offsets_iter + num_rows + 1);
-    auto c   = cudf::make_lists_column(num_rows, offsets.release(), std::move(prev_col), 0, {});
+    auto c   = cudf::make_lists_column(num_rows,
+                                     offsets.release(),
+                                     std::move(prev_col),
+                                     0,
+                                     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
     prev_col = std::move(c);
   }
   auto const& expect = prev_col;
@@ -3194,7 +3257,7 @@ TEST_F(ParquetReaderTest, FilterErrors)
     auto expr        = cudf::ast::operation(cudf::ast::ast_operator::LESS, filter_col1, low_lot);
 
     auto builder = cudf::io::parquet_reader_options::builder(si).filter(expr);
-    EXPECT_THROW(cudf::io::read_parquet(builder), cudf::logic_error);
+    EXPECT_THROW(cudf::io::read_parquet(builder), std::out_of_range);
   }
 
   // Filtering AST - invalid column name
@@ -3534,7 +3597,7 @@ TEST_F(ParquetReaderTest, RepeatedNoAnnotations)
   auto num_list_rows = list_offsets_column->size() - 1;
 
   auto mask = cudf::create_null_mask(6, cudf::mask_state::ALL_VALID);
-  cudf::set_null_mask(static_cast<cudf::bitmask_type*>(mask.data()), 0, 2, false);
+  cudf::set_null_mask(reinterpret_cast<cudf::bitmask_type*>(mask.data()), 0, 2, false);
 
   auto list_col = cudf::make_lists_column(
     num_list_rows, std::move(list_offsets_column), struct_col.release(), 2, std::move(mask));
@@ -3646,8 +3709,12 @@ TEST_F(ParquetReaderTest, RepeatedNoAnnotationsSingleFieldNested)
   column_wrapper<int32_t> inner_someid{3, 6, 9};
   auto inner_struct       = cudf::test::structs_column_wrapper{{inner_someid}};
   auto inner_list_offsets = cudf::test::fixed_width_column_wrapper<int32_t>{0, 1, 2, 3}.release();
-  auto inner_list         = cudf::make_lists_column(
-    3, std::move(inner_list_offsets), inner_struct.release(), 0, rmm::device_buffer{});
+  auto inner_list =
+    cudf::make_lists_column(3,
+                            std::move(inner_list_offsets),
+                            inner_struct.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   column_wrapper<int32_t> outer_id{1, 4, 7};
   std::vector<std::unique_ptr<cudf::column>> outer_struct_children;
@@ -3656,8 +3723,12 @@ TEST_F(ParquetReaderTest, RepeatedNoAnnotationsSingleFieldNested)
   auto outer_struct_col = cudf::test::structs_column_wrapper{{std::move(outer_struct_children)}};
 
   auto outer_list_offsets = cudf::test::fixed_width_column_wrapper<int32_t>{0, 1, 2, 3}.release();
-  auto outer_list_col     = cudf::make_lists_column(
-    3, std::move(outer_list_offsets), outer_struct_col.release(), 0, rmm::device_buffer{});
+  auto outer_list_col =
+    cudf::make_lists_column(3,
+                            std::move(outer_list_offsets),
+                            outer_struct_col.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   // Testing for equivalence here because we only care about the outermost validity buffers.
   table_view expected{{col0, *outer_list_col}};
@@ -3859,6 +3930,60 @@ TEST_F(ParquetReaderTest, DeltaByteArraySkipAllValid)
                                 result.tbl->view());
 }
 
+TEST_F(ParquetReaderTest, DeltaByteArrayAllNull)
+{
+  // An all-null DELTA_BYTE_ARRAY column: the delta stream is empty while the page still carries a
+  // full run of definition levels, so every output position is a null the decoder has to fill
+  // without consuming a value. Nothing else covers this -- DeltaSkipRowsWithNulls and
+  // DeltaByteArraySkipAllValid both keep some values valid. 50% is included as an ordinary case to
+  // check the all-null result is not an artefact of the fixture.
+  //
+  // Each is read twice: in full, and as a row range, the latter putting the pages on the
+  // bounds-page path where skip_rows interacts with delta's prefix/suffix reconstruction (skipped
+  // values still have to be decoded to carry the prefix seed forward).
+  constexpr int num_rows = 40000;
+
+  for (int null_percent : {50, 100}) {
+    SCOPED_TRACE("null_percent = " + std::to_string(null_percent));
+    auto const strings = cudf::detail::make_counting_transform_iterator(
+      0, [](auto i) { return "string_value_" + std::to_string(i); });
+    // Deterministic, and spread evenly so every page sees the same null density.
+    auto const valids = cudf::detail::make_counting_transform_iterator(
+      0, [null_percent](auto i) { return (i % 100) >= null_percent; });
+
+    auto const col      = cudf::test::strings_column_wrapper{strings, strings + num_rows, valids};
+    auto const expected = table_view({col});
+
+    auto input_metadata = cudf::io::table_input_metadata{expected};
+    input_metadata.column_metadata[0].set_encoding(cudf::io::column_encoding::DELTA_BYTE_ARRAY);
+
+    std::vector<char> buffer;
+    cudf::io::write_parquet(
+      cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, expected)
+        .write_v2_headers(true)
+        .metadata(input_metadata)
+        .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+        .build());
+
+    auto const result =
+      cudf::io::read_parquet(cudf::io::parquet_reader_options::builder(
+                               cudf::io::source_info{cudf::host_span<std::byte const>{
+                                 reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
+                               .build());
+    CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
+
+    auto const trimmed =
+      cudf::io::read_parquet(cudf::io::parquet_reader_options::builder(
+                               cudf::io::source_info{cudf::host_span<std::byte const>{
+                                 reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
+                               .skip_rows(1234)
+                               .num_rows(5678)
+                               .build());
+    SCOPED_TRACE("row-range read");
+    CUDF_TEST_EXPECT_TABLES_EQUAL(cudf::slice(expected, {1234, 1234 + 5678}), trimmed.tbl->view());
+  }
+}
+
 namespace {
 // read `buffer` trimmed to [skip, skip + n) and compare column 0 with the matching slice of
 // `expected`
@@ -3893,8 +4018,9 @@ TEST_F(ParquetReaderTest, DeltaByteArrayStructSkipRows)
   std::vector<std::unique_ptr<cudf::column>> children;
   children.push_back(cudf::purge_nonempty_nulls(
     cudf::test::strings_column_wrapper(strings.begin(), strings.end(), str_valids)));
-  auto const struct_col = cudf::make_structs_column(num_rows, std::move(children), 0, {});
-  auto const expected   = cudf::table_view({struct_col->view()});
+  auto const struct_col = cudf::make_structs_column(
+    num_rows, std::move(children), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+  auto const expected = cudf::table_view({struct_col->view()});
 
   cudf::io::table_input_metadata md(expected);
   md.column_metadata[0].set_name("s");
@@ -3940,8 +4066,12 @@ TEST_F(ParquetReaderTest, DeltaByteArrayMapSkipRows)
   auto struct_col = cudf::test::structs_column_wrapper({keys_col, vals_col}).release();
   auto offsets_col =
     cudf::test::fixed_width_column_wrapper<int32_t>(offsets.begin(), offsets.end());
-  auto const map_col = cudf::make_lists_column(
-    num_rows, offsets_col.release(), std::move(struct_col), 0, rmm::device_buffer{});
+  auto const map_col =
+    cudf::make_lists_column(num_rows,
+                            offsets_col.release(),
+                            std::move(struct_col),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   auto const expected = cudf::table_view({map_col->view()});
 
   cudf::io::table_input_metadata md(expected);
@@ -4461,8 +4591,11 @@ TEST_F(ParquetMetadataReaderTest, Nested)
   }
   column_wrapper<int> offsets(row_offsets.begin(), row_offsets.end());
 
-  auto list_col =
-    cudf::make_lists_column(num_rows, offsets.release(), std::move(s_col), 0, rmm::device_buffer{});
+  auto list_col = cudf::make_lists_column(num_rows,
+                                          offsets.release(),
+                                          std::move(s_col),
+                                          0,
+                                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   table_view expected({*list_col, *list_col});
 
@@ -7020,7 +7153,10 @@ TEST_F(ParquetReaderTest, RequiredStringLeafWithSeparatedNullableAncestor)
   std::vector<std::unique_ptr<cudf::column>> inner_children;
   inner_children.push_back(child_col.release());
   auto inner_struct =
-    cudf::create_structs_hierarchy(num_rows, std::move(inner_children), 0, rmm::device_buffer{});
+    cudf::create_structs_hierarchy(num_rows,
+                                   std::move(inner_children),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   std::vector<std::unique_ptr<cudf::column>> outer_children;
   outer_children.push_back(std::move(inner_struct));
@@ -7082,8 +7218,11 @@ TEST_F(ParquetReaderTest, RequiredStringLeafWithNullableAncestorUnderList)
     0, [](auto i) { return static_cast<cudf::size_type>(i * list_size); });
   column_wrapper<cudf::size_type> offsets_col(offsets, offsets + num_lists + 1);
 
-  auto list_col = cudf::make_lists_column(
-    num_lists, offsets_col.release(), std::move(struct_col), 0, rmm::device_buffer{});
+  auto list_col = cudf::make_lists_column(num_lists,
+                                          offsets_col.release(),
+                                          std::move(struct_col),
+                                          0,
+                                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   auto const filepath =
     temp_env->get_temp_filepath("RequiredStringLeafWithNullableAncestorUnderList.parquet");
@@ -7123,8 +7262,12 @@ TEST_F(ParquetReaderTest, RequiredStringLeafWithNullableAncestorUnderList)
   exp_children.push_back(std::move(exp_leaf));
   auto exp_struct = make_optional_struct(std::move(exp_children), num_elements, false);
 
-  auto const expected = cudf::make_lists_column(
-    num_lists, std::move(exp_offsets), std::move(exp_struct), 0, rmm::device_buffer{});
+  auto const expected =
+    cudf::make_lists_column(num_lists,
+                            std::move(exp_offsets),
+                            std::move(exp_struct),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   // Read the table from Parquet
   auto const result = cudf::io::read_parquet(

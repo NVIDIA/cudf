@@ -19,11 +19,19 @@ from cudf_polars.testing.asserts import (
 from cudf_polars.testing.engine_utils import warns_on_spmd
 from cudf_polars.utils.versions import POLARS_VERSION_LT_136, POLARS_VERSION_LT_139
 
+POLARS_LT_136_EMPTY_SUM_XFAIL = pytest.mark.xfail(
+    POLARS_VERSION_LT_136,
+    reason=(
+        "Polars 1.35 returns null for sum over these empty rolling windows; "
+        "newer Polars returns 0."
+    ),
+)
+
 
 @pytest.fixture
 def engine(streaming_engine_factory):
     return streaming_engine_factory(
-        StreamingOptions(max_rows_per_partition=3, fallback_mode="warn"),
+        StreamingOptions(max_rows_per_partition=2, fallback_mode="warn"),
     )
 
 
@@ -51,6 +59,204 @@ def test_rolling_datetime(engine):
         engine,
         UserWarning,
         match=r"This (HStack|selection) is not supported for multiple partitions\.",
+    ):
+        assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("closed", ["left", "right", "both", "none"])
+def test_rolling_integer_period(engine, closed) -> None:
+    df = pl.LazyFrame(
+        {
+            "orderby": [1, 4, 8, 10, 12, 13, 14, 22],
+            "values": [1, 2, 3, 4, 5, 6, 7, 8],
+        }
+    )
+    q = df.rolling("orderby", period="4i", closed=closed).agg(
+        sum_values=pl.col("values").sum(),
+        min_values=pl.col("values").min(),
+        max_values=pl.col("values").max(),
+        count=pl.len(),
+    )
+
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "df",
+    [
+        pl.LazyFrame(
+            {
+                "orderby": pl.Series([1, 4, 8, 10], dtype=pl.Int32),
+                "values": [1, 2, 3, 4],
+            }
+        ),
+        pl.LazyFrame(
+            {
+                "orderby": [1, 2, 3, 4, 5, 6],
+                "values": [1, 2, 3, 4, 5, 6],
+            }
+        ).filter(pl.col("orderby") > 4),
+        pl.LazyFrame(
+            {
+                "orderby": [1, 2, 2, 3],
+                "values": [1, 2, 3, 4],
+            }
+        ),
+    ],
+    ids=["int32-index", "empty-input-partitions", "duplicate-boundary-index"],
+)
+def test_rolling_integer_edge_cases(engine, df) -> None:
+    q = df.rolling("orderby", period="2i").agg(
+        sum_values=pl.col("values").sum(),
+        count=pl.len(),
+    )
+
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "orderby, period",
+    [
+        ([1, 10, 2, 3], "1i"),
+        (
+            pl.Series(
+                [
+                    dt.datetime(2020, 1, 1, 0, 0, 1),
+                    dt.datetime(2020, 1, 1, 0, 0, 10),
+                    dt.datetime(2020, 1, 1, 0, 0, 2),
+                    dt.datetime(2020, 1, 1, 0, 0, 3),
+                ],
+                dtype=pl.Datetime("us"),
+            ),
+            "1s",
+        ),
+    ],
+    ids=["integer", "datetime"],
+)
+def test_rolling_unsorted_across_chunks_raises(
+    spmd_engine_factory, orderby, period
+) -> None:
+    engine = spmd_engine_factory(
+        StreamingOptions(max_rows_per_partition=2, fallback_mode="raise"),
+    )
+    df = pl.LazyFrame({"orderby": orderby, "values": [1, 2, 3, 4]})
+    q = df.rolling("orderby", period=period).agg(
+        sum_values=pl.col("values").sum(),
+    )
+
+    with pytest.RaisesGroup(
+        pytest.RaisesExc(
+            RuntimeError,
+            match=r"Index column.*in rolling is not sorted, please sort first",
+        )
+    ):
+        q.collect(engine=engine)
+
+
+@pytest.mark.parametrize(
+    "closed, period, offset",
+    [
+        ("left", "10i", "-5i"),
+        pytest.param(
+            "left",
+            "10i",
+            "20i",
+            marks=POLARS_LT_136_EMPTY_SUM_XFAIL,
+        ),
+        ("left", "10i", "-30i"),
+        ("right", "10i", "-5i"),
+        pytest.param(
+            "right",
+            "10i",
+            "20i",
+            marks=POLARS_LT_136_EMPTY_SUM_XFAIL,
+        ),
+        ("right", "10i", "-30i"),
+        ("both", "10i", "-5i"),
+        pytest.param(
+            "both",
+            "10i",
+            "20i",
+            marks=POLARS_LT_136_EMPTY_SUM_XFAIL,
+        ),
+        ("both", "10i", "-30i"),
+        ("none", "10i", "-5i"),
+        ("none", "10i", "20i"),
+        ("none", "10i", "-30i"),
+    ],
+    ids=[
+        "left-nonzero-overlap",
+        "left-fully-leading",
+        "left-fully-trailing",
+        "right-nonzero-overlap",
+        "right-fully-leading",
+        "right-fully-trailing",
+        "both-nonzero-overlap",
+        "both-fully-leading",
+        "both-fully-trailing",
+        "none-nonzero-overlap",
+        "none-fully-leading",
+        "none-fully-trailing",
+    ],
+)
+def test_rolling_integer_offset(engine, period, offset, closed) -> None:
+    df = pl.LazyFrame(
+        {
+            "orderby": [0, 5, 10, 15, 20, 25, 30, 35],
+            "values": [1, 2, 3, 4, 5, 6, 7, 8],
+        }
+    )
+    q = df.rolling("orderby", period=period, offset=offset, closed=closed).agg(
+        sum_values=pl.col("values").sum(),
+        count=pl.len(),
+    )
+
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("closed", ["left", "right", "both", "none"])
+def test_rolling_datetime_period(engine, closed) -> None:
+    df = pl.LazyFrame(
+        {
+            "dt": pl.Series(
+                [
+                    dt.datetime(2020, 1, 1, 13, 45, 48),
+                    dt.datetime(2020, 1, 1, 16, 42, 13),
+                    dt.datetime(2020, 1, 1, 16, 45, 9),
+                    dt.datetime(2020, 1, 2, 18, 12, 48),
+                    dt.datetime(2020, 1, 3, 19, 45, 32),
+                    dt.datetime(2020, 1, 8, 23, 16, 43),
+                ],
+                dtype=pl.Datetime("us"),
+            ),
+            "values": [3, 7, 5, 9, 2, 1],
+        }
+    )
+    q = df.rolling("dt", period="2d", closed=closed).agg(
+        sum_values=pl.col("values").sum()
+    )
+
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("closed", ["left", "right", "both", "none"])
+def test_grouped_rolling_warns(engine, closed) -> None:
+    df = pl.LazyFrame(
+        {
+            "key": ["a", "a", "a", "a", "b", "b", "b", "b"],
+            "orderby": [1, 4, 8, 10, 1, 3, 6, 10],
+            "values": [1, 2, 3, 4, 10, 20, 30, 40],
+        }
+    )
+    q = df.rolling("orderby", period="4i", closed=closed, group_by="key").agg(
+        sum_values=pl.col("values").sum(),
+        count=pl.len(),
+    )
+
+    with warns_on_spmd(
+        engine,
+        UserWarning,
+        match="Grouped or sliced rolling does not support multiple partitions",
     ):
         assert_gpu_result_equal(q, engine=engine)
 
@@ -437,6 +643,12 @@ def test_over_in_filter_unsupported(request, streaming_engine_factory) -> None:
     engine = streaming_engine_factory(
         StreamingOptions(max_rows_per_partition=1, fallback_mode="warn"),
     )
+    q = pl.concat(
+        [
+            pl.LazyFrame({"k": ["x", "y"], "v": [3, 2]}),
+            pl.LazyFrame({"k": ["x", "y"], "v": [5, 7]}),
+        ]
+    ).filter(pl.len().over("k") == 2)
     if not isinstance(engine, SPMDEngine):
         # On Dask/Ray the fallback warning fires on worker processes and is
         # invisible to ``pytest.warns``; the multi-rank fallback also
@@ -447,12 +659,6 @@ def test_over_in_filter_unsupported(request, streaming_engine_factory) -> None:
                 strict=False,
             )
         )
-    q = pl.concat(
-        [
-            pl.LazyFrame({"k": ["x", "y"], "v": [3, 2]}),
-            pl.LazyFrame({"k": ["x", "y"], "v": [5, 7]}),
-        ]
-    ).filter(pl.len().over("k") == 2)
 
     with pytest.warns(
         UserWarning,

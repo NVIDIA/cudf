@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "sort_impl.cuh"
+#include "sort.hpp"
 #include "sort_radix.hpp"
 
 #include <cudf/column/column.hpp>
@@ -13,6 +13,7 @@
 #include <cudf/sorting.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/stream>
@@ -25,7 +26,7 @@ std::unique_ptr<column> stable_sorted_order(table_view const& input,
                                             cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr)
 {
-  return sorted_order<sort_method::STABLE>(input, column_order, null_precedence, stream, mr);
+  return sorted_order_impl(input, column_order, null_precedence, sort_method::STABLE, stream, mr);
 }
 
 std::unique_ptr<table> stable_sort(table_view const& input,

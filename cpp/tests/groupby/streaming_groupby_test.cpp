@@ -1762,6 +1762,50 @@ TEST_F(StreamingGroupbyTest, WarpReducedRuns)
   }
 }
 
+namespace {
+
+template <typename T>
+void nan_with_nulls_min_max()
+{
+  auto constexpr nan = std::numeric_limits<T>::quiet_NaN();
+  std::vector<int32_t> keys{1, 1, 2, 2, 3, 3, 3, 4, 4, 6};
+  std::vector<T> vals{nan, 0, 0, nan, 0, nan, 0, 0, 0, 1};
+  std::vector<bool> valid{true, false, false, true, false, true, false, false, false, true};
+  for (int i = 0; i < 40; ++i) {
+    keys.push_back(5);
+    vals.push_back(i == 30 ? nan : 0);
+    valid.push_back(i == 30);
+  }
+  keys.push_back(7);
+  vals.push_back(2);
+  valid.push_back(true);
+  cudf::test::fixed_width_column_wrapper<int32_t> key_col(keys.begin(), keys.end());
+  cudf::test::fixed_width_column_wrapper<T> val_col(vals.begin(), vals.end(), valid.begin());
+  cudf::table_view batch{{key_col, val_col}};
+
+  std::vector<cudf::groupby::streaming_aggregation_request> reqs;
+  reqs.push_back(make_req(1, cudf::make_min_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(1, cudf::make_max_aggregation<cudf::groupby_aggregation>()));
+
+  cudf::groupby::streaming_groupby streaming_agg(KEY_COL, reqs, DEFAULT_MAX_DISTINCT_KEYS);
+  streaming_agg.aggregate(batch);
+  streaming_agg.aggregate(batch);
+  auto [out_keys, results] = streaming_agg.finalize();
+
+  cudf::test::fixed_width_column_wrapper<int32_t> expect_keys{1, 2, 3, 4, 5, 6, 7};
+  cudf::test::fixed_width_column_wrapper<T> expect_vals{{nan, nan, nan, T{0}, nan, T{1}, T{2}},
+                                                        {true, true, true, false, true, true, true}};
+  check(out_keys, results, cudf::table_view{{expect_keys}}, {expect_vals, expect_vals});
+}
+
+}  // namespace
+
+TEST_F(StreamingGroupbyTest, MinMaxNaNWithNulls)
+{
+  nan_with_nulls_min_max<float>();
+  nan_with_nulls_min_max<double>();
+}
+
 // Without requests no aggregation kernel is launched, and only the distinct keys are returned.
 TEST_F(StreamingGroupbyTest, NoRequests)
 {

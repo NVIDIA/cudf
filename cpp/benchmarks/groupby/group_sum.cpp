@@ -156,25 +156,30 @@ NVBENCH_BENCH(bench_streaming_groupby_decimal128_sum)
   .add_int64_axis("cardinality", {128, 4'096});
 
 // Streaming groupby over batches whose keys are uniformly random, cyclic (`key[i] = i %
-// cardinality`) or sorted runs within each batch.  The patterns differ in how many updates to the
-// same group meet in a warp, which drives the atomic contention of the aggregation.
-static void bench_streaming_groupby_key_patterns(nvbench::state& state)
+// cardinality`) or sorted runs within each batch.  The key orders differ in how many updates to
+// the same group meet in a warp, which drives the atomic contention of the aggregation.
+static void bench_streaming_groupby(nvbench::state& state)
 {
   auto const num_rows    = static_cast<cudf::size_type>(state.get_int64("num_rows"));
   auto const batch_size  = static_cast<cudf::size_type>(state.get_int64("batch_size"));
   auto const cardinality = static_cast<cudf::size_type>(state.get_int64("cardinality"));
-  auto const pattern     = state.get_string("pattern");
+  auto const key_order   = state.get_string("key_order");
   auto const aggs        = state.get_string("aggs");
+  // Sorted runs of a single row are the same keys as the cyclic order.
+  if (key_order == "sorted" && batch_size / cardinality <= 1) {
+    state.skip("sorted keys equal cyclic keys without runs of equal keys");
+    return;
+  }
 
   auto const keys = [&] {
-    if (pattern == "random") {
+    if (key_order == "random") {
       data_profile const profile = data_profile_builder().cardinality(0).no_validity().distribution(
         cudf::type_id::INT32, distribution_id::UNIFORM, 0, cardinality - 1);
       return create_random_column(cudf::type_id::INT32, row_count{num_rows}, profile);
     }
     auto const int32_type = cudf::data_type{cudf::type_id::INT32};
     auto const sequence   = cudf::sequence(num_rows, cudf::numeric_scalar<int32_t>(0));
-    if (pattern == "cyclic") {
+    if (key_order == "cyclic") {
       return cudf::binary_operation(sequence->view(),
                                     cudf::numeric_scalar<int32_t>(cardinality),
                                     cudf::binary_operator::PYMOD,
@@ -237,10 +242,10 @@ static void bench_streaming_groupby_key_patterns(nvbench::state& state)
     mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
-NVBENCH_BENCH(bench_streaming_groupby_key_patterns)
-  .set_name("streaming_key_patterns")
+NVBENCH_BENCH(bench_streaming_groupby)
+  .set_name("streaming_groupby")
   .add_int64_power_of_two_axis("num_rows", {24})
   .add_int64_power_of_two_axis("batch_size", {10, 14, 20})
-  .add_int64_axis("cardinality", {32, 256, 512})
-  .add_string_axis("pattern", {"random", "cyclic", "sorted"})
+  .add_int64_axis("cardinality", {32, 256, 512, 65'536, 1'048'576})
+  .add_string_axis("key_order", {"random", "cyclic", "sorted"})
   .add_string_axis("aggs", {"sum", "mixed"});

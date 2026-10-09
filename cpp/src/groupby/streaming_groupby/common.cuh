@@ -374,7 +374,9 @@ struct streaming_groupby::impl {
 
   void initialize(table_view const& data, cuda::stream_ref stream);
   /// Splits the value columns of `values` into `_warp_reduced_aggs` and `_elementwise_aggs`.
-  void split_agg_columns(table_view const& values, cuda::stream_ref stream);
+  void split_agg_columns(table_view const& values,
+                         cuda::stream_ref stream,
+                         cudf::memory_resources mr);
   void create_key_set(cuda::stream_ref stream);
   void update_nullable_state(table_view const& batch_keys);
 

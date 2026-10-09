@@ -53,7 +53,7 @@ class GroupedRollingTest : public cudf::test::BaseFixture {
                         cudf::size_type following_window,
                         cudf::size_type min_periods)
   {
-    // Skip grouping-tests on bool8 keys. sort_helper does not support this.
+    // Skip grouping-tests on bool8 keys.
     if (keys.num_columns() > 0 && cudf::is_boolean(keys.column(0).type())) { return; }
 
     // test all supported aggregators
@@ -653,7 +653,7 @@ class GroupedTimeRangeRollingTest : public cudf::test::BaseFixture {
                         cudf::size_type following_window_in_days,
                         cudf::size_type min_periods)
   {
-    // Skip grouping-tests on bool8 keys. sort_helper does not support this.
+    // Skip grouping-tests on bool8 keys.
     if (keys.num_columns() > 0 && cudf::is_boolean(keys.column(0).type())) { return; }
 
     // test all supported aggregators

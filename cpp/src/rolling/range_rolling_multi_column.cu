@@ -10,7 +10,7 @@
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/column/column_view.hpp>
-#include <cudf/detail/groupby/sort_helper.hpp>
+#include <cudf/detail/groupby/groupby_helper.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/rolling.hpp>
@@ -96,14 +96,15 @@ void select_and_write_offsets(range_window_type const& preceding,
                               mutable_column_view preceding_view,
                               mutable_column_view following_view,
                               size_type num_rows,
-                              cuda::stream_ref stream)
+                              cuda::stream_ref stream,
+                              cudf::memory_resources mr)
 {
   // Write the offsets to the output columns
   auto const write_offsets = [&](auto offset_fn) {
     auto const src_iter = cudf::detail::make_counting_transform_iterator(
       size_type{0}, cuda::proclaim_return_type<cuda::std::tuple<size_type, size_type>>(offset_fn));
     thrust::copy_n(
-      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
       src_iter,
       num_rows,
       cuda::zip_iterator(preceding_view.begin<size_type>(), following_view.begin<size_type>()));
@@ -117,8 +118,9 @@ void select_and_write_offsets(range_window_type const& preceding,
   } else if (std::holds_alternative<unbounded>(preceding) &&
              std::holds_alternative<unbounded>(following)) {
     if (group_helper.has_value()) {
-      write_offsets(unbounded_distance_fn<rolling::grouped>{
-        {group_helper->group_labels(stream).data(), group_helper->group_offsets(stream).data()}});
+      write_offsets(
+        unbounded_distance_fn<rolling::grouped>{{group_helper->group_labels(stream, mr).data(),
+                                                 group_helper->group_offsets(stream, mr).data()}});
     } else {
       write_offsets(unbounded_distance_fn<rolling::ungrouped>{{num_rows}});
     }
@@ -129,8 +131,8 @@ void select_and_write_offsets(range_window_type const& preceding,
       if (std::holds_alternative<current_row>(window)) {
         return peers.value();
       } else if (group_helper.has_value()) {
-        return rolling::grouped{group_helper->group_labels(stream).data(),
-                                group_helper->group_offsets(stream).data()};
+        return rolling::grouped{group_helper->group_labels(stream, mr).data(),
+                                group_helper->group_offsets(stream, mr).data()};
       } else {
         return rolling::ungrouped{num_rows};
       }
@@ -188,24 +190,23 @@ std::pair<std::unique_ptr<column>, std::unique_ptr<column>> make_range_windows(
   CUDF_EXPECTS(is_peer_bound(preceding) && is_peer_bound(following),
                "Multi-column RANGE windows support only UNBOUNDED and CURRENT ROW bounds");
 
-  using sort_helper = cudf::groupby::detail::sort::sort_groupby_helper;
+  using grouping_helper = cudf::groupby::detail::groupby_helper;
 
-  std::optional<sort_helper> peer_helper;
+  std::optional<grouping_helper> peer_helper;
   std::optional<rolling::grouped> peers;
   if (std::holds_alternative<current_row>(preceding) ||
       std::holds_alternative<current_row>(following)) {
     std::vector<column_view> peer_keys(group_keys.begin(), group_keys.end());
     peer_keys.insert(peer_keys.end(), orderby.begin(), orderby.end());
-    peer_helper.emplace(
-      table_view{peer_keys}, null_policy::INCLUDE, sorted::YES, std::vector<null_order>{});
-    peers = rolling::grouped{peer_helper->group_labels(stream).data(),
-                             peer_helper->group_offsets(stream).data()};
+    peer_helper.emplace(table_view{peer_keys}, null_policy::INCLUDE, sorted::YES, mr);
+    peers = rolling::grouped{peer_helper->group_labels(stream, mr).data(),
+                             peer_helper->group_offsets(stream, mr).data()};
   }
 
-  std::optional<sort_helper> group_helper;
+  std::optional<grouping_helper> group_helper;
   if (group_keys.num_columns() > 0 && (std::holds_alternative<unbounded>(preceding) ||
                                        std::holds_alternative<unbounded>(following))) {
-    group_helper.emplace(group_keys, null_policy::INCLUDE, sorted::YES, std::vector<null_order>{});
+    group_helper.emplace(group_keys, null_policy::INCLUDE, sorted::YES, mr);
   }
 
   auto const num_rows   = orderby.num_rows();
@@ -221,7 +222,8 @@ std::pair<std::unique_ptr<column>, std::unique_ptr<column>> make_range_windows(
                            preceding_result->mutable_view(),
                            following_result->mutable_view(),
                            num_rows,
-                           stream);
+                           stream,
+                           mr);
 
   return std::pair{std::move(preceding_result), std::move(following_result)};
 }

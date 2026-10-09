@@ -40,9 +40,6 @@ TYPED_TEST(groupby_max_test, basic)
 
   auto agg = cudf::make_max_aggregation<cudf::groupby_aggregation>();
   test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg));
-
-  auto agg2 = cudf::make_max_aggregation<cudf::groupby_aggregation>();
-  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg2), force_use_sort_impl::YES);
 }
 
 TYPED_TEST(groupby_max_test, empty_cols)
@@ -58,9 +55,6 @@ TYPED_TEST(groupby_max_test, empty_cols)
 
   auto agg = cudf::make_max_aggregation<cudf::groupby_aggregation>();
   test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg));
-
-  auto agg2 = cudf::make_max_aggregation<cudf::groupby_aggregation>();
-  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg2), force_use_sort_impl::YES);
 }
 
 TYPED_TEST(groupby_max_test, zero_valid_keys)
@@ -76,9 +70,6 @@ TYPED_TEST(groupby_max_test, zero_valid_keys)
 
   auto agg = cudf::make_max_aggregation<cudf::groupby_aggregation>();
   test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg));
-
-  auto agg2 = cudf::make_max_aggregation<cudf::groupby_aggregation>();
-  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg2), force_use_sort_impl::YES);
 }
 
 TYPED_TEST(groupby_max_test, zero_valid_values)
@@ -94,9 +85,6 @@ TYPED_TEST(groupby_max_test, zero_valid_values)
 
   auto agg = cudf::make_max_aggregation<cudf::groupby_aggregation>();
   test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg));
-
-  auto agg2 = cudf::make_max_aggregation<cudf::groupby_aggregation>();
-  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg2), force_use_sort_impl::YES);
 }
 
 TYPED_TEST(groupby_max_test, null_keys_and_values)
@@ -117,9 +105,6 @@ TYPED_TEST(groupby_max_test, null_keys_and_values)
 
   auto agg = cudf::make_max_aggregation<cudf::groupby_aggregation>();
   test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg));
-
-  auto agg2 = cudf::make_max_aggregation<cudf::groupby_aggregation>();
-  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg2), force_use_sort_impl::YES);
 }
 
 struct groupby_max_string_test : public cudf::test::BaseFixture {};
@@ -135,9 +120,6 @@ TEST_F(groupby_max_string_test, basic)
 
   auto agg = cudf::make_max_aggregation<cudf::groupby_aggregation>();
   test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg));
-
-  auto agg2 = cudf::make_max_aggregation<cudf::groupby_aggregation>();
-  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg2), force_use_sort_impl::YES);
 }
 
 TEST_F(groupby_max_string_test, zero_valid_values)
@@ -150,9 +132,6 @@ TEST_F(groupby_max_string_test, zero_valid_values)
 
   auto agg = cudf::make_max_aggregation<cudf::groupby_aggregation>();
   test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg));
-
-  auto agg2 = cudf::make_max_aggregation<cudf::groupby_aggregation>();
-  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg2), force_use_sort_impl::YES);
 }
 
 TEST_F(groupby_max_string_test, max_sorted_strings)
@@ -190,7 +169,6 @@ TEST_F(groupby_max_string_test, max_sorted_strings)
                   expect_keys,
                   expect_vals,
                   std::move(agg),
-                  force_use_sort_impl::NO,
                   cudf::null_policy::INCLUDE,
                   cudf::sorted::YES);
 }
@@ -215,12 +193,6 @@ TEST_F(groupby_dictionary_max_test, basic)
                   expect_keys,
                   expect_vals->view(),
                   cudf::make_max_aggregation<cudf::groupby_aggregation>());
-  test_single_agg(keys,
-                  vals,
-                  expect_keys,
-                  expect_vals->view(),
-                  cudf::make_max_aggregation<cudf::groupby_aggregation>(),
-                  force_use_sort_impl::YES);
 }
 
 TEST_F(groupby_dictionary_max_test, fixed_width)
@@ -239,12 +211,6 @@ TEST_F(groupby_dictionary_max_test, fixed_width)
                   expect_keys,
                   expect_vals_w,
                   cudf::make_max_aggregation<cudf::groupby_aggregation>());
-  test_single_agg(keys,
-                  vals,
-                  expect_keys,
-                  expect_vals_w,
-                  cudf::make_max_aggregation<cudf::groupby_aggregation>(),
-                  force_use_sort_impl::YES);
 }
 
 template <typename T>
@@ -252,7 +218,7 @@ struct GroupByMaxFixedPointTest : public cudf::test::BaseFixture {};
 
 TYPED_TEST_SUITE(GroupByMaxFixedPointTest, cudf::test::FixedPointTypes);
 
-TYPED_TEST(GroupByMaxFixedPointTest, GroupBySortMaxDecimalAsValue)
+TYPED_TEST(GroupByMaxFixedPointTest, MaxDecimalAsValue)
 {
   using namespace numeric;
   using decimalXX  = TypeParam;
@@ -271,31 +237,7 @@ TYPED_TEST(GroupByMaxFixedPointTest, GroupBySortMaxDecimalAsValue)
     auto const expect_vals_max = fp_wrapper{{6, 9, 8}, scale};
 
     auto agg3 = cudf::make_max_aggregation<cudf::groupby_aggregation>();
-    test_single_agg(
-      keys, vals, expect_keys, expect_vals_max, std::move(agg3), force_use_sort_impl::YES);
-  }
-}
-
-TYPED_TEST(GroupByMaxFixedPointTest, GroupByHashMaxDecimalAsValue)
-{
-  using namespace numeric;
-  using decimalXX  = TypeParam;
-  using RepType    = cudf::device_storage_type_t<decimalXX>;
-  using fp_wrapper = cudf::test::fixed_point_column_wrapper<RepType>;
-  using K          = int32_t;
-
-  for (auto const i : {2, 1, 0, -1, -2}) {
-    auto const scale = scale_type{i};
-    // clang-format off
-    auto const keys  = cudf::test::fixed_width_column_wrapper<K>{1, 2, 3, 1, 2, 2, 1, 3, 3, 2};
-    auto const vals  = fp_wrapper{                              {0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, scale};
-    // clang-format on
-
-    auto const expect_keys     = cudf::test::fixed_width_column_wrapper<K>{1, 2, 3};
-    auto const expect_vals_max = fp_wrapper{{6, 9, 8}, scale};
-
-    auto agg7 = cudf::make_max_aggregation<cudf::groupby_aggregation>();
-    test_single_agg(keys, vals, expect_keys, expect_vals_max, std::move(agg7));
+    test_single_agg(keys, vals, expect_keys, expect_vals_max, std::move(agg3));
   }
 }
 
@@ -512,10 +454,9 @@ TYPED_TEST(groupby_max_floating_point_test, values_with_infinity)
   auto const expected_vals = floats_col{inf, static_cast<T>(2)};
 
   // Related issue: https://github.com/NVIDIA/cudf/issues/11352
-  // The issue only occurs in sort-based cudf::aggregation.
+  // Exercise the segmented reduction affected by this issue.
   auto agg = cudf::make_max_aggregation<cudf::groupby_aggregation>();
-  test_single_agg(
-    keys, vals, expected_keys, expected_vals, std::move(agg), force_use_sort_impl::YES);
+  test_single_agg(keys, vals, expected_keys, expected_vals, std::move(agg));
 }
 
 TYPED_TEST(groupby_max_floating_point_test, values_with_nan)
@@ -582,7 +523,6 @@ TEST_F(groupby_max_hash_based_shmem_kernel_test, all_unique_keys)
                     include_null ? nullable_keys : excluded_keys,
                     include_null ? nullable_values : excluded_values,
                     cudf::make_max_aggregation<cudf::groupby_aggregation>(),
-                    force_use_sort_impl::NO,
                     null_handling);
   }
 }

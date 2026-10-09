@@ -9,7 +9,7 @@
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_view.hpp>
-#include <cudf/detail/groupby/sort_helper.hpp>
+#include <cudf/detail/groupby/groupby_helper.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/rolling.hpp>
@@ -114,10 +114,10 @@ std::pair<std::unique_ptr<column>, std::unique_ptr<column>> make_range_windows(
   rmm::device_async_resource_ref mr)
 {
   if (group_keys.num_columns() > 0) {
-    using sort_helper = cudf::groupby::detail::sort::sort_groupby_helper;
-    sort_helper helper{group_keys, null_policy::INCLUDE, sorted::YES, {}};
-    auto const& labels   = helper.group_labels(stream);
-    auto const& offsets  = helper.group_offsets(stream);
+    using grouping_helper = cudf::groupby::detail::groupby_helper;
+    grouping_helper helper{group_keys, null_policy::INCLUDE, sorted::YES, mr};
+    auto const& labels   = helper.group_labels(stream, mr);
+    auto const& offsets  = helper.group_offsets(stream, mr);
     auto per_group_nulls = orderby.has_nulls() ? nulls_per_group(orderby, offsets, stream)
                                                : rmm::device_uvector<size_type>{0, stream};
     auto grouping = detail::rolling::preprocessed_group_info{labels, offsets, per_group_nulls};

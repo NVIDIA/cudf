@@ -17,6 +17,7 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/traits.hpp>
 
 #include <cuda/buffer>
 #include <cuda/stream>
@@ -61,18 +62,17 @@ std::unique_ptr<column> gather_argminmax(hash_compound_agg_finalizer const& fina
   return std::move(result->release()[0]);
 }
 
-// Helper for MIN/MAX finalization - shared logic for compound types (e.g., strings)
+// Helper for MIN/MAX finalization - shared logic for strings and nested types.
 template <typename MakeArgAggFn>
 void finalize_minmax_for_compound_types(hash_compound_agg_finalizer const& finalizer,
                                         aggregation const& agg,
                                         MakeArgAggFn make_arg_agg)
 {
   if (finalizer.cache->has_result(finalizer.col, agg)) { return; }
-  if (finalizer.input_type.id() == type_id::STRING) {
+  if (finalizer.input_type.id() == type_id::STRING || cudf::is_nested(finalizer.input_type)) {
     auto transformed_agg = make_arg_agg();
     finalizer.cache->add_result(finalizer.col, agg, gather_argminmax(finalizer, *transformed_agg));
   }  // else: no-op, since this is only relevant for compound aggregations
-  // TODO: support other nested types.
 }
 
 // Specialization for MIN aggregation

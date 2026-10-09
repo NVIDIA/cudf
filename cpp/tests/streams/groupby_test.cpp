@@ -3,8 +3,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <tests/groupby/groupby_test_util.hpp>
-
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/testing_main.hpp>
@@ -24,7 +22,6 @@ struct groupby_stream_test : public cudf::test::BaseFixture {
   cudf::test::fixed_width_column_wrapper<V> vals{0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
 
   void test_groupby(std::unique_ptr<cudf::groupby_aggregation>&& agg,
-                    force_use_sort_impl use_sort        = force_use_sort_impl::NO,
                     cudf::null_policy include_null_keys = cudf::null_policy::INCLUDE,
                     cudf::sorted keys_are_sorted        = cudf::sorted::NO)
   {
@@ -32,10 +29,6 @@ struct groupby_stream_test : public cudf::test::BaseFixture {
       auto requests = std::vector<cudf::groupby::aggregation_request>{};
       requests.push_back(cudf::groupby::aggregation_request{});
       requests.front().values = vals;
-      if (use_sort == force_use_sort_impl::YES) {
-        requests.front().aggregations.push_back(
-          cudf::make_nth_element_aggregation<cudf::groupby_aggregation>(0));
-      }
       requests.front().aggregations.push_back(std::move(agg));
       return requests;
     }();
@@ -49,15 +42,21 @@ struct groupby_stream_test : public cudf::test::BaseFixture {
 
 TYPED_TEST_SUITE(groupby_stream_test, cudf::test::AllTypes);
 
-TYPED_TEST(groupby_stream_test, test_count)
+using groupby_count_stream_test = groupby_stream_test<int32_t>;
+
+TEST_F(groupby_count_stream_test, test_count)
 {
   auto const make_count_agg = [&](cudf::null_policy include_nulls = cudf::null_policy::EXCLUDE) {
     return cudf::make_count_aggregation<cudf::groupby_aggregation>(include_nulls);
   };
 
   this->test_groupby(make_count_agg());
-  this->test_groupby(make_count_agg(), force_use_sort_impl::YES);
   this->test_groupby(make_count_agg(cudf::null_policy::INCLUDE));
+}
+
+TYPED_TEST(groupby_stream_test, test_nth_element)
+{
+  this->test_groupby(cudf::make_nth_element_aggregation<cudf::groupby_aggregation>(0));
 }
 
 struct GroupbyTest : public cudf::test::BaseFixture {};
@@ -90,7 +89,6 @@ TEST_F(GroupbyTest, Scan)
   requests[0].aggregations.push_back(std::move(agg));
 
   cudf::groupby::groupby gb_obj(cudf::table_view({keys}));
-  // cudf::groupby scan uses sort implementation
   auto result = gb_obj.scan(requests, cudf::test::get_default_stream());
 }
 

@@ -1,0 +1,369 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+#pragma once
+
+#include <cudf/aggregation.hpp>
+#include <cudf/column/column.hpp>
+#include <cudf/utilities/memory_resource.hpp>
+#include <cudf/utilities/span.hpp>
+
+#include <cuda/stream>
+
+#include <memory>
+
+/** @internal @file Internal API in this file are mostly segmented reduction operations on column,
+ * which are used after grouping keys with HashCSR.
+ *
+ */
+namespace cudf {
+namespace groupby {
+namespace detail {
+namespace hash {
+struct group_reduction_plan;
+}  // namespace hash
+/**
+ * @brief Internal API to compute histogram for each group in @p values.
+ *
+ * The returned column is a lists column, each list corresponds to one input group and stores the
+ * histogram of the distinct elements in that group in the form of `STRUCT<value, count>`.
+ *
+ * Note that the order of distinct elements in each output list is not specified.
+ *
+ * @code{.pseudo}
+ * values       = [2, 1, 1, 3, 5, 2, 2, 3, 1, 4]
+ * group_labels = [0, 0, 0, 1, 1, 1, 1, 1, 2, 2]
+ * num_groups   = 3
+ *
+ * output = [[<1, 2>, <2, 1>], [<2, 2>, <3, 2>, <5, 1>], [<1, 1>, <4, 1>]]
+ * @endcode
+ *
+ * @param values Grouped values to compute histogram
+ * @param group_labels ID of group that the corresponding value belongs to
+ * @param num_groups Number of groups
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource used to allocate the returned column's device memory
+ */
+std::unique_ptr<column> group_histogram(column_view const& values,
+                                        cudf::device_span<size_type const> group_labels,
+                                        size_type num_groups,
+                                        cuda::stream_ref stream,
+                                        rmm::device_async_resource_ref mr);
+
+/**
+ * @brief Build one-entry histograms when each grouped value is its own group.
+ *
+ * Takes ownership of the values as the histogram value child. Null values remain entries with
+ * count one; the returned lists and their struct elements are non-nullable.
+ *
+ * @throws std::invalid_argument if the values have a nested type
+ *
+ * @param values Owned grouped values, one per group
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources for output and temporary allocations
+ * @return A lists column containing one `STRUCT<value, count>` entry per group
+ */
+std::unique_ptr<column> make_singleton_histograms(std::unique_ptr<column> values,
+                                                  cuda::stream_ref stream,
+                                                  cudf::memory_resources mr);
+
+/**
+ * @brief Internal API to calculate groupwise quantiles
+ *
+ * @code{.pseudo}
+ * values       = [1, 2, 4, -2, -1, <NA>, 4, <NA>]
+ * group_labels = [0, 0, 0,  1,  1,    2, 2,    3]
+ * group_sizes  = [3, 2, 2, 1]
+ * num_groups   = 4
+ * quantiles    = [0.25, 0.5]
+ *
+ * group_quantiles = [1.5, 2, -1.75, -1.5,  4,  4, <NA>, <NA>]
+ * @endcode
+ *
+ * @param values Grouped and sorted (within group) values to get quantiles from
+ * @param group_sizes Number of valid elements per group
+ * @param group_offsets Offsets of groups' starting points within @p values
+ * @param num_groups Number of groups
+ * @param quantiles List of quantiles q where q lies in [0,1]
+ * @param interp Method to use when desired value lies between data points
+ * @param stream CUDA stream used for device memory operations and kernel launches.
+ * @param mr Device memory resource used to allocate the returned column's device memory
+ */
+std::unique_ptr<column> group_quantiles(column_view const& values,
+                                        column_view const& group_sizes,
+                                        cudf::device_span<size_type const> group_offsets,
+                                        size_type const num_groups,
+                                        std::vector<double> const& quantiles,
+                                        interpolation interp,
+                                        cuda::stream_ref stream,
+                                        rmm::device_async_resource_ref mr);
+
+/**
+ * @brief Internal API to calculate number of unique values in each group of
+ *  @p values
+ *
+ * @code{.pseudo}
+ * values        = [2, 4, 4, -1, -2, <NA>, 4, <NA>]
+ * group_labels  = [0, 0, 0,  1,  1,    2, 2,    3]
+ * group_offsets = [0,        3,        5,       7, 8]
+ * num_groups    = 4
+ *
+ * group_nunique(null_policy::EXCLUDE) = [2, 2, 1, 0]
+ * group_nunique(null_policy::INCLUDE) = [2, 2, 2, 1]
+ * @endcode
+ *
+ * @param values Grouped and sorted (within group) values to get unique count of
+ * @param group_labels ID of group that the corresponding value belongs to
+ * @param num_groups Number of groups ( unique values in @p group_labels )
+ * @param group_offsets Offsets of groups' starting points within @p values
+ * @param null_handling Exclude nulls while counting if null_policy::EXCLUDE,
+ *  Include nulls if null_policy::INCLUDE.
+ *  Nulls are treated equal.
+ * @param stream CUDA stream used for device memory operations and kernel launches.
+ * @param mr Device memory resource used to allocate the returned column's device memory
+ */
+std::unique_ptr<column> group_nunique(column_view const& values,
+                                      cudf::device_span<size_type const> group_labels,
+                                      size_type const num_groups,
+                                      cudf::device_span<size_type const> group_offsets,
+                                      null_policy null_handling,
+                                      cuda::stream_ref stream,
+                                      rmm::device_async_resource_ref mr);
+
+/**
+ * @brief Internal API to calculate nth values in each group of  @p values
+ *
+ * @code{.pseudo}
+ * values        = [2, 1, 4, -1, -2, <NA>, 4, <NA>]
+ * group_sizes   = [3,        2,        2,       1]
+ * group_labels  = [0, 0, 0,  1,  1,    2, 2,    3]
+ * group_offsets = [0,        3,        5,       7, 8]
+ * num_groups    = 4
+ *
+ * group_nth_element(n=0, null_policy::EXCLUDE) = [2, -1, 4, <NA>]
+ * group_nth_element(n=0, null_policy::INCLUDE) = [2, -1, <NA>, <NA>]
+ * @endcode
+ *
+ * @param values Grouped values to get nth value of
+ * @param group_sizes Number of elements per group
+ * @param group_labels ID of group that the corresponding value belongs to
+ * @param group_offsets Offsets of groups' starting points within @p values
+ * @param num_groups Number of groups ( unique values in @p group_labels )
+ * @param n nth element to choose from each group of @p values
+ * @param null_handling Exclude nulls while counting if null_policy::EXCLUDE,
+ *  Include nulls if null_policy::INCLUDE.
+ * @param stream CUDA stream used for device memory operations and kernel launches.
+ * @param mr Device memory resource used to allocate the returned column's device memory
+ */
+std::unique_ptr<column> group_nth_element(column_view const& values,
+                                          column_view const& group_sizes,
+                                          cudf::device_span<size_type const> group_labels,
+                                          cudf::device_span<size_type const> group_offsets,
+                                          size_type num_groups,
+                                          size_type n,
+                                          null_policy null_handling,
+                                          cuda::stream_ref stream,
+                                          rmm::device_async_resource_ref mr);
+/**
+ * @brief Internal API to collect grouped values into a lists column
+ *
+ * @code{.pseudo}
+ * values        = [2, 1, 4, -1, -2, <NA>, 4, <NA>]
+ * group_offsets = [0,        3,        5,       7, 8]
+ * num_groups    = 4
+ *
+ * group_collect(...) = [[2, 1, 4], [-1, -2], [<NA>, 4], [<NA>]]
+ * @endcode
+ *
+ * @param values Grouped values to collect.
+ * @param group_offsets Offsets of groups' starting points within @p values.
+ * @param num_groups Number of groups.
+ * @param null_handling Exclude nulls while counting if null_policy::EXCLUDE,
+ *        include nulls if null_policy::INCLUDE.
+ * @param stream CUDA stream used for device memory operations and kernel launches.
+ * @param mr Memory resources used for temporary allocations and the returned column.
+ */
+std::unique_ptr<column> group_collect(column_view const& values,
+                                      cudf::device_span<size_type const> group_offsets,
+                                      size_type num_groups,
+                                      null_policy null_handling,
+                                      cuda::stream_ref stream,
+                                      cudf::memory_resources mr);
+
+/**
+ * @brief Internal API to collect grouped values that the caller no longer needs into lists.
+ *
+ * Unless nulls have to be purged, @p values becomes the child of the returned lists column
+ * instead of being copied, so it must already use the output resource in @p mr.
+ *
+ * @copydetails group_collect(column_view const&, cudf::device_span<size_type const>, size_type,
+ * null_policy, cuda::stream_ref, cudf::memory_resources)
+ */
+std::unique_ptr<column> group_collect(std::unique_ptr<column> values,
+                                      cudf::device_span<size_type const> group_offsets,
+                                      size_type num_groups,
+                                      null_policy null_handling,
+                                      cuda::stream_ref stream,
+                                      cudf::memory_resources mr);
+
+/**
+ * @brief Internal API to merge grouped lists into one list.
+ *
+ * @code{.pseudo}
+ * values        = [[2, 1], [], [4, -1, -2], [], [<NA>, 4, <NA>]]
+ * group_offsets = [0,                        3,                  5]
+ * num_groups    = 2
+ *
+ * group_merge_lists(...) = [[2, 1, 4, -1, -2], [<NA>, 4, <NA>]]
+ * @endcode
+ *
+ * @param values Grouped values (lists column) to collect.
+ * @param group_offsets Offsets of groups' starting points within @p values.
+ * @param num_groups Number of groups.
+ * @param stream CUDA stream used for device memory operations and kernel launches.
+ * @param mr Device memory resource used to allocate the returned column's device memory.
+ */
+std::unique_ptr<column> group_merge_lists(column_view const& values,
+                                          cudf::device_span<size_type const> group_offsets,
+                                          size_type num_groups,
+                                          cuda::stream_ref stream,
+                                          rmm::device_async_resource_ref mr);
+
+/**
+ * @brief Internal API to merge grouped M2 values corresponding to the same key.
+ *
+ * The values of M2 are merged following the parallel algorithm described here:
+ * `https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Parallel_algorithm`
+ *
+ * Merging M2 values require accessing to partial M2 values, means, and valid counts. Thus, the
+ * input to this aggregation need to be a structs column containing tuples of 3 values
+ * `(valid_count, mean, M2)`.
+ *
+ * This aggregation not only merges the partial results of `M2` but also merged all the partial
+ * results of input aggregations (`COUNT_VALID`, `MEAN`, and `M2`). As such, the output will be a
+ * structs column containing children columns of merged `COUNT_VALID`, `MEAN`, and `M2` values.
+ *
+ * @param values Grouped values (tuples of values `(valid_count, mean, M2)`) to merge.
+ * @param group_offsets Offsets of groups' starting points within @p values.
+ * @param num_groups Number of groups.
+ * @param stream CUDA stream used for device memory operations and kernel launches.
+ * @param mr Device memory resource used to allocate the returned column's device memory
+ */
+std::unique_ptr<column> group_merge_m2(column_view const& values,
+                                       cudf::device_span<size_type const> group_offsets,
+                                       size_type num_groups,
+                                       cuda::stream_ref stream,
+                                       rmm::device_async_resource_ref mr);
+
+/**
+ * @brief Internal API to merge multiple output of HISTOGRAM aggregation.
+ *
+ * The input values column should be given as a lists column in the form of
+ * `LIST<STRUCT<value, count>>`.
+ * After merging, the order of distinct elements in each output list is not specified.
+ *
+ * @code{.pseudo}
+ * values        = [ [<1, 2>, <2, 1>], [<2, 2>], [<3, 2>, <2, 1>], [<1, 1>, <2, 1>] ]
+ * group_offsets = [ 0,                          2,                                 4]
+ * num_groups    = 2
+ *
+ * output = [[<1, 2>, <2, 3>], [<1, 1>, <2, 2>, <3, 2>]]]
+ * @endcode
+ *
+ * @param values Grouped values to get valid count of
+ * @param group_offsets Offsets of groups' starting points within @p values
+ * @param num_groups Number of groups
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource used to allocate the returned column's device memory
+ */
+std::unique_ptr<column> group_merge_histogram(column_view const& values,
+                                              cudf::device_span<size_type const> group_offsets,
+                                              size_type num_groups,
+                                              cuda::stream_ref stream,
+                                              rmm::device_async_resource_ref mr);
+
+/**
+ * @brief Internal API to find covariance of child columns of a non-nullable struct column.
+ *
+ * The children are read in their input order through the grouped rows, so no grouped copy of the
+ * values is needed.
+ *
+ * @param values_0 The first ungrouped values column to compute covariance
+ * @param values_1 The second ungrouped values column to compute covariance
+ * @param grouped The input rows grouped by key with their reduction schedule
+ * @param group_labels ID of the group of each grouped row
+ * @param num_groups Number of groups.
+ * @param count The count of rows valid in both columns of each group
+ * @param mean_0 The mean of the first values column in each group
+ * @param mean_1 The mean of the second values column in each group
+ * @param min_periods The minimum number of non-null rows required to consider the covariance
+ * @param ddof The delta degrees of freedom used in the calculation of the variance
+ * @param stream CUDA stream used for device memory operations and kernel launches.
+ * @param mr Device memory resource used to allocate the returned column's device memory
+ */
+std::unique_ptr<column> group_covariance(column_view const& values_0,
+                                         column_view const& values_1,
+                                         hash::group_reduction_plan const& grouped,
+                                         cudf::device_span<size_type const> group_labels,
+                                         size_type num_groups,
+                                         column_view const& count,
+                                         column_view const& mean_0,
+                                         column_view const& mean_1,
+                                         size_type min_periods,
+                                         size_type ddof,
+                                         cuda::stream_ref stream,
+                                         rmm::device_async_resource_ref mr);
+
+/**
+ * @brief Internal API to find correlation from covariance and standard deviation.
+ *
+ * @param covariance The covariance of two grouped values columns
+ * @param stddev_0 The standard deviation of the first grouped values column
+ * @param stddev_1 The standard deviation of the second grouped values column
+ * @param stream CUDA stream used for device memory operations and kernel launches.
+ * @param mr Device memory resource used to allocate the returned column's device memory
+ */
+std::unique_ptr<column> group_correlation(column_view const& covariance,
+                                          column_view const& stddev_0,
+                                          column_view const& stddev_1,
+                                          cuda::stream_ref stream,
+                                          rmm::device_async_resource_ref mr);
+
+/**
+ * @brief Internal API to calculate bitwise operation on grouped values ignoring nulls.
+ *
+ * @param bit_op Bitwise operation to perform on the input
+ * @param grouped_values Grouped values to perform bitwise operation on
+ * @param group_labels ID of group that the corresponding value belongs to
+ * @param num_groups Number of groups
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource used to allocate the returned column's device memory
+ */
+std::unique_ptr<column> group_bitwise(bitwise_op bit_op,
+                                      column_view const& grouped_values,
+                                      device_span<size_type const> group_labels,
+                                      size_type num_groups,
+                                      cuda::stream_ref stream,
+                                      rmm::device_async_resource_ref mr);
+
+/**
+ * @brief Internal API to find top k elements in each group of grouped values
+ *
+ * @param k Number of top elements to find in each group
+ * @param topk_order Identifies ascending or descending for selecting the values
+ * @param values Grouped values to find top k elements within
+ * @param group_offsets Offsets to identify each group in values
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource used to allocate the returned column's device memory
+ */
+std::unique_ptr<column> group_top_k(size_type k,
+                                    order topk_order,
+                                    column_view const& values,
+                                    device_span<size_type const> group_offsets,
+                                    cuda::stream_ref stream,
+                                    rmm::device_async_resource_ref mr);
+}  // namespace detail
+}  // namespace groupby
+}  // namespace cudf

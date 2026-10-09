@@ -99,15 +99,15 @@ std::unique_ptr<column> count_groups(reduction_context const& ctx,
   return result;
 }
 
-grouped_rows make_grouped_rows(device_span<size_type const> rows,
-                               device_span<size_type const> offsets,
-                               cuda::stream_ref stream,
-                               cudf::memory_resources mr)
+group_reduction_plan make_group_reduction_plan(device_span<size_type const> rows,
+                                               device_span<size_type const> offsets,
+                                               cuda::stream_ref stream,
+                                               cudf::memory_resources mr)
 {
   auto const temp_mr    = mr.get_temporary_mr();
   auto const num_rows   = static_cast<size_type>(rows.size());
   auto const num_groups = static_cast<size_type>(offsets.size() - 1);
-  grouped_rows grouped{
+  group_reduction_plan grouped{
     rows,
     offsets,
     cuda::device_buffer<size_type>{stream, mr.get_output_mr()},

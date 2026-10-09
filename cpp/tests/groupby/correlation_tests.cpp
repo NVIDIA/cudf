@@ -1,19 +1,23 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <tests/groupby/groupby_test_util.hpp>
 
 #include <cudf_test/base_fixture.hpp>
+#include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/type_list_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/aggregation.hpp>
+#include <cudf/copying.hpp>
+#include <cudf/sorting.hpp>
 
 #include <limits>
+#include <vector>
 
 using namespace cudf::test::iterators;
 
@@ -25,6 +29,44 @@ using supported_types =
 
 TYPED_TEST_SUITE(groupby_correlation_test, supported_types);
 using K = int32_t;
+
+using groupby_correlation_mixed_test = groupby_correlation_test<int32_t>;
+
+TEST_F(groupby_correlation_mixed_test, CovarianceCorrelationAndFirstValue)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> keys{2, 1, 2, 1, 2, 1, 2};
+  cudf::test::fixed_width_column_wrapper<int32_t> first{{1, 0, 2, 2, 3, 4, 99}, null_at(6)};
+  cudf::test::fixed_width_column_wrapper<int32_t> second{2, 0, 4, 4, 6, 8, 99};
+  cudf::test::structs_column_wrapper values{{first, second}};
+  std::vector<cudf::groupby::aggregation_request> requests(1);
+  requests[0].values = values;
+  requests[0].aggregations.push_back(
+    cudf::make_covariance_aggregation<cudf::groupby_aggregation>());
+  requests[0].aggregations.push_back(
+    cudf::make_correlation_aggregation<cudf::groupby_aggregation>(cudf::correlation_type::PEARSON));
+  requests[0].aggregations.push_back(
+    cudf::make_nth_element_aggregation<cudf::groupby_aggregation>(0));
+  cudf::groupby::groupby gb(cudf::table_view{{keys}});
+  auto const [result_keys, results] = gb.aggregate(requests);
+  ASSERT_EQ(results.size(), 1);
+  ASSERT_EQ(results[0].results.size(), 3);
+  auto const order  = cudf::sorted_order(result_keys->view());
+  auto const output = cudf::gather(cudf::table_view{{result_keys->view().column(0),
+                                                     *results[0].results[0],
+                                                     *results[0].results[1],
+                                                     *results[0].results[2]}},
+                                   *order);
+  cudf::test::fixed_width_column_wrapper<int32_t> expected_keys{1, 2};
+  cudf::test::fixed_width_column_wrapper<double> expected_covariance{8.0, 2.0};
+  cudf::test::fixed_width_column_wrapper<double> expected_correlation{1.0, 1.0};
+  cudf::test::fixed_width_column_wrapper<int32_t> first_values{0, 1};
+  cudf::test::fixed_width_column_wrapper<int32_t> second_values{0, 2};
+  cudf::test::structs_column_wrapper expected_first{{first_values, second_values}};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_keys, output->get_column(0));
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_covariance, output->get_column(1));
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_correlation, output->get_column(2));
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_first, output->get_column(3));
+}
 
 TYPED_TEST(groupby_correlation_test, basic)
 {
@@ -43,7 +85,7 @@ TYPED_TEST(groupby_correlation_test, basic)
 
   auto agg =
     cudf::make_correlation_aggregation<cudf::groupby_aggregation>(cudf::correlation_type::PEARSON);
-  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg), force_use_sort_impl::YES);
+  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg));
 }
 
 TYPED_TEST(groupby_correlation_test, empty_cols)
@@ -60,7 +102,7 @@ TYPED_TEST(groupby_correlation_test, empty_cols)
 
   auto agg =
     cudf::make_correlation_aggregation<cudf::groupby_aggregation>(cudf::correlation_type::PEARSON);
-  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg), force_use_sort_impl::YES);
+  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg));
 }
 
 TYPED_TEST(groupby_correlation_test, zero_valid_keys)
@@ -77,7 +119,7 @@ TYPED_TEST(groupby_correlation_test, zero_valid_keys)
 
   auto agg =
     cudf::make_correlation_aggregation<cudf::groupby_aggregation>(cudf::correlation_type::PEARSON);
-  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg), force_use_sort_impl::YES);
+  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg));
 }
 
 TYPED_TEST(groupby_correlation_test, zero_valid_values)
@@ -95,7 +137,7 @@ TYPED_TEST(groupby_correlation_test, zero_valid_values)
 
   auto agg =
     cudf::make_correlation_aggregation<cudf::groupby_aggregation>(cudf::correlation_type::PEARSON);
-  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg), force_use_sort_impl::YES);
+  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg));
 }
 
 TYPED_TEST(groupby_correlation_test, null_keys_and_values)
@@ -119,7 +161,7 @@ TYPED_TEST(groupby_correlation_test, null_keys_and_values)
 
   auto agg =
     cudf::make_correlation_aggregation<cudf::groupby_aggregation>(cudf::correlation_type::PEARSON);
-  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg), force_use_sort_impl::YES);
+  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg));
 }
 
 TYPED_TEST(groupby_correlation_test, null_values_same)
@@ -144,7 +186,7 @@ TYPED_TEST(groupby_correlation_test, null_values_same)
 
   auto agg =
     cudf::make_correlation_aggregation<cudf::groupby_aggregation>(cudf::correlation_type::PEARSON);
-  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg), force_use_sort_impl::YES);
+  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg));
 }
 
 // keys=[1, 1, 1, 2, 2, 2, 2,   3, N, 3, 4]
@@ -173,7 +215,7 @@ TYPED_TEST(groupby_correlation_test, null_values_different)
 
   auto agg =
     cudf::make_correlation_aggregation<cudf::groupby_aggregation>(cudf::correlation_type::PEARSON);
-  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg), force_use_sort_impl::YES);
+  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg));
 }
 
 TYPED_TEST(groupby_correlation_test, min_periods)
@@ -193,17 +235,17 @@ TYPED_TEST(groupby_correlation_test, min_periods)
   cudf::test::fixed_width_column_wrapper<R, double> expect_vals1{{1.0, 0.6, nan}};
   auto agg1 = cudf::make_correlation_aggregation<cudf::groupby_aggregation>(
     cudf::correlation_type::PEARSON, 3);
-  test_single_agg(keys, vals, expect_keys, expect_vals1, std::move(agg1), force_use_sort_impl::YES);
+  test_single_agg(keys, vals, expect_keys, expect_vals1, std::move(agg1));
 
   cudf::test::fixed_width_column_wrapper<R, double> expect_vals2{{1.0, 0.6, nan}, {0, 1, 0}};
   auto agg2 = cudf::make_correlation_aggregation<cudf::groupby_aggregation>(
     cudf::correlation_type::PEARSON, 4);
-  test_single_agg(keys, vals, expect_keys, expect_vals2, std::move(agg2), force_use_sort_impl::YES);
+  test_single_agg(keys, vals, expect_keys, expect_vals2, std::move(agg2));
 
   cudf::test::fixed_width_column_wrapper<R, double> expect_vals3{{1.0, 0.6, nan}, {0, 0, 0}};
   auto agg3 = cudf::make_correlation_aggregation<cudf::groupby_aggregation>(
     cudf::correlation_type::PEARSON, 5);
-  test_single_agg(keys, vals, expect_keys, expect_vals3, std::move(agg3), force_use_sort_impl::YES);
+  test_single_agg(keys, vals, expect_keys, expect_vals3, std::move(agg3));
 }
 
 struct groupby_dictionary_correlation_test : public cudf::test::BaseFixture {};
@@ -225,5 +267,5 @@ TEST_F(groupby_dictionary_correlation_test, basic)
 
   auto agg =
     cudf::make_correlation_aggregation<cudf::groupby_aggregation>(cudf::correlation_type::PEARSON);
-  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg), force_use_sort_impl::YES);
+  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg));
 }

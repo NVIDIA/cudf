@@ -43,7 +43,7 @@ struct reduction_context {
   column_view const& values;
   column_device_view const& d_values;
   data_type values_type;  ///< Type of the values, or of the keys for dictionary values
-  grouped_rows const& grouped;
+  group_reduction_plan const& grouped;
   size_type num_groups;
   bool nullable;  ///< Whether the result carries a null mask
 
@@ -61,7 +61,8 @@ std::unique_ptr<column> count_groups(reduction_context const& ctx,
                                      cuda::stream_ref stream,
                                      cudf::memory_resources mr);
 
-// Kind-specific TUs explicitly instantiate this bridge; the frontend needs no reducer definition.
+// Kind-specific TUs explicitly instantiate this bridge; the frontend needs no
+// reducer definition.
 template <aggregation::Kind K>
 std::unique_ptr<column> compute_reduction(reduction_context const& ctx,
                                           cuda::stream_ref stream,

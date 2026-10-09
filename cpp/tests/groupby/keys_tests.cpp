@@ -112,13 +112,7 @@ TYPED_TEST(groupby_keys_test, include_null_keys)
   // clang-format on
 
   auto agg = cudf::make_sum_aggregation<cudf::groupby_aggregation>();
-  test_single_agg(keys,
-                  vals,
-                  expect_keys,
-                  expect_vals,
-                  std::move(agg),
-                  force_use_sort_impl::NO,
-                  cudf::null_policy::INCLUDE);
+  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg), cudf::null_policy::INCLUDE);
 }
 
 TYPED_TEST(groupby_keys_test, pre_sorted_keys)
@@ -141,7 +135,6 @@ TYPED_TEST(groupby_keys_test, pre_sorted_keys)
                   expect_keys,
                   expect_vals,
                   std::move(agg),
-                  force_use_sort_impl::YES,
                   cudf::null_policy::EXCLUDE,
                   cudf::sorted::YES);
 }
@@ -166,7 +159,6 @@ TYPED_TEST(groupby_keys_test, pre_sorted_keys_descending)
                   expect_keys,
                   expect_vals,
                   std::move(agg),
-                  force_use_sort_impl::YES,
                   cudf::null_policy::EXCLUDE,
                   cudf::sorted::YES,
                   {cudf::order::DESCENDING});
@@ -193,7 +185,6 @@ TYPED_TEST(groupby_keys_test, pre_sorted_keys_nullable)
                   expect_keys,
                   expect_vals,
                   std::move(agg),
-                  force_use_sort_impl::YES,
                   cudf::null_policy::EXCLUDE,
                   cudf::sorted::YES);
 }
@@ -221,7 +212,6 @@ TYPED_TEST(groupby_keys_test, pre_sorted_keys_nulls_before_include_nulls)
                   expect_keys,
                   expect_vals,
                   std::move(agg),
-                  force_use_sort_impl::YES,
                   cudf::null_policy::INCLUDE,
                   cudf::sorted::YES);
 }
@@ -352,12 +342,6 @@ TEST_F(groupby_dictionary_keys_test, basic)
 
   test_single_agg(
     keys, vals, expect_keys, expect_vals, cudf::make_sum_aggregation<cudf::groupby_aggregation>());
-  test_single_agg(keys,
-                  vals,
-                  expect_keys,
-                  expect_vals,
-                  cudf::make_sum_aggregation<cudf::groupby_aggregation>(),
-                  force_use_sort_impl::YES);
 }
 
 struct groupby_cache_test : public cudf::test::BaseFixture {};
@@ -381,13 +365,6 @@ TEST_F(groupby_cache_test, duplicate_agggregations)
   requests[0].aggregations.push_back(cudf::make_sum_aggregation<cudf::groupby_aggregation>());
   requests[0].aggregations.push_back(cudf::make_sum_aggregation<cudf::groupby_aggregation>());
 
-  // hash groupby
-  EXPECT_NO_THROW(gb_obj.aggregate(requests));
-
-  // sort groupby
-  // WAR to force groupby to use sort implementation
-  requests[0].aggregations.push_back(
-    cudf::make_nth_element_aggregation<cudf::groupby_aggregation>(0));
   EXPECT_NO_THROW(gb_obj.aggregate(requests));
 }
 
@@ -412,17 +389,311 @@ TEST_F(groupby_cache_test, duplicate_columns)
   requests[1].values = vals;
   requests[1].aggregations.push_back(cudf::make_sum_aggregation<cudf::groupby_aggregation>());
 
-  // hash groupby
-  EXPECT_NO_THROW(gb_obj.aggregate(requests));
-
-  // sort groupby
-  // WAR to force groupby to use sort implementation
-  requests[0].aggregations.push_back(
-    cudf::make_nth_element_aggregation<cudf::groupby_aggregation>(0));
   EXPECT_NO_THROW(gb_obj.aggregate(requests));
 }
 
 using groupby_key_shape_test = groupby_keys_test<int32_t>;
+
+struct groupby_count_reuse_test : groupby_key_shape_test {
+  template <typename Check>
+  void check_unsorted_key_shapes(Check&& check)
+  {
+    using lists_column = cudf::test::lists_column_wrapper<int32_t>;
+    // Guard rows exercise sliced views. Both key types interleave null and repeated keys;
+    // list keys also include empty lists. Presorted inputs do not need a counts-only upgrade.
+    cudf::test::fixed_width_column_wrapper<int32_t> flat_keys{{99, 2, 0, 2, 1, 0, 2, 4, 1, 2, 99},
+                                                              nulls_at({2, 5})};
+    lists_column nested_keys{{{99}, {1}, {0}, {1}, {}, {0}, {1}, {2}, {}, {1}, {99}},
+                             nulls_at({2, 5})};
+    cudf::test::fixed_width_column_wrapper<int32_t> input_values{
+      90, 100, 101, 10, 11, 20, 21, 30, 31, 40, 91};
+    ASSERT_EQ(cudf::column_view(input_values).size(), 11);
+    auto const values = cudf::slice(input_values, {1, 10}).front();
+    std::vector<cudf::column_view> const key_columns{flat_keys, nested_keys};
+    for (std::size_t shape = 0; shape < key_columns.size(); ++shape) {
+      SCOPED_TRACE(shape);
+      ASSERT_EQ(key_columns[shape].size(), 11);
+      auto const keys = cudf::slice(key_columns[shape], {1, 10}).front();
+      for (auto const nulls : {cudf::null_policy::EXCLUDE, cudf::null_policy::INCLUDE}) {
+        SCOPED_TRACE(::testing::Message() << "shape=" << shape << " include_null_keys="
+                                          << (nulls == cudf::null_policy::INCLUDE));
+        check(keys, values, nulls);
+      }
+    }
+  }
+
+  auto canonical(cudf::table_view keys, cudf::table_view values)
+  {
+    std::vector<cudf::column_view> columns(keys.begin(), keys.end());
+    columns.insert(columns.end(), values.begin(), values.end());
+    auto const order = cudf::stable_sorted_order(keys);
+    return cudf::gather(cudf::table_view{columns}, *order);
+  }
+
+  auto counts(cudf::column_view values)
+  {
+    std::vector<cudf::groupby::aggregation_request> requests(1);
+    requests[0].values = values;
+    requests[0].aggregations.push_back(
+      cudf::make_count_aggregation<cudf::groupby_aggregation>(cudf::null_policy::INCLUDE));
+    // Nonnullable values allow COUNT_VALID to use the same metadata-only grouping.
+    requests[0].aggregations.push_back(cudf::make_count_aggregation<cudf::groupby_aggregation>());
+    return requests;
+  }
+
+  void check_aggregations(cudf::groupby::groupby& gb,
+                          cudf::column_view keys,
+                          cudf::null_policy nulls,
+                          std::vector<cudf::groupby::aggregation_request> const& requests)
+  {
+    auto const actual = gb.aggregate(requests);
+    ASSERT_EQ(actual.second.size(), requests.size());
+    for (std::size_t request = 0; request < requests.size(); ++request) {
+      ASSERT_EQ(actual.second[request].results.size(), requests[request].aggregations.size());
+      for (std::size_t agg = 0; agg < requests[request].aggregations.size(); ++agg) {
+        SCOPED_TRACE(::testing::Message() << "request=" << request << " aggregation=" << agg);
+        // An independent single-aggregation reference cannot share a mixed-request cache bug.
+        std::vector<cudf::groupby::aggregation_request> reference(1);
+        reference[0].values = requests[request].values;
+        reference[0].aggregations.emplace_back(dynamic_cast<cudf::groupby_aggregation*>(
+          requests[request].aggregations[agg]->clone().release()));
+        cudf::groupby::groupby fresh(cudf::table_view{{keys}}, nulls);
+        auto const expected = fresh.aggregate(reference);
+        auto const actual_sorted =
+          canonical(actual.first->view(), cudf::table_view{{*actual.second[request].results[agg]}});
+        auto const expected_sorted =
+          canonical(expected.first->view(), cudf::table_view{{*expected.second[0].results[0]}});
+        CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected_sorted->view(), actual_sorted->view());
+      }
+    }
+  }
+};
+
+TEST_F(groupby_count_reuse_test, CountsBeforeReductionsAndOrderedValues)
+{
+  check_unsorted_key_shapes([&](auto keys, auto values, auto nulls) {
+    cudf::groupby::groupby gb(cudf::table_view{{keys}}, nulls);
+    auto count_requests = counts(values);
+    check_aggregations(gb, keys, nulls, count_requests);
+
+    std::vector<cudf::groupby::aggregation_request> requests(1);
+    requests[0].values = values;
+    requests[0].aggregations.push_back(cudf::make_sum_aggregation<cudf::groupby_aggregation>());
+    check_aggregations(gb, keys, nulls, requests);
+    requests[0].aggregations.clear();
+    requests[0].aggregations.push_back(
+      cudf::make_collect_list_aggregation<cudf::groupby_aggregation>());
+    check_aggregations(gb, keys, nulls, requests);
+    check_aggregations(gb, keys, nulls, count_requests);
+  });
+}
+
+TEST_F(groupby_count_reuse_test, CountsWithSpecializedAggregations)
+{
+  check_unsorted_key_shapes([&](auto keys, auto values, auto nulls) {
+    for (bool const ordered : {false, true}) {
+      SCOPED_TRACE(::testing::Message() << "ordered=" << ordered);
+      cudf::groupby::groupby gb(cudf::table_view{{keys}}, nulls);
+      auto requests = counts(values);
+      if (ordered) {
+        requests[0].aggregations.push_back(
+          cudf::make_nth_element_aggregation<cudf::groupby_aggregation>(0));
+      } else {
+        requests[0].aggregations.push_back(
+          cudf::make_bitwise_aggregation<cudf::groupby_aggregation>(cudf::bitwise_op::OR));
+      }
+      check_aggregations(gb, keys, nulls, requests);
+    }
+  });
+}
+
+TEST_F(groupby_count_reuse_test, CountsBeforeScansAndGetGroups)
+{
+  check_unsorted_key_shapes([&](auto keys, auto values, auto nulls) {
+    for (bool const scan : {false, true}) {
+      SCOPED_TRACE(::testing::Message() << "scan=" << scan);
+      cudf::groupby::groupby gb(cudf::table_view{{keys}}, nulls);
+      auto count_requests = counts(values);
+      check_aggregations(gb, keys, nulls, count_requests);
+      cudf::groupby::groupby fresh(cudf::table_view{{keys}}, nulls);
+      if (scan) {
+        std::vector<cudf::groupby::scan_request> requests(1);
+        requests[0].values = values;
+        requests[0].aggregations.push_back(
+          cudf::make_sum_aggregation<cudf::groupby_scan_aggregation>());
+        auto const actual   = gb.scan(requests);
+        auto const expected = fresh.scan(requests);
+        auto const actual_sorted =
+          canonical(actual.first->view(), cudf::table_view{{*actual.second[0].results[0]}});
+        auto const expected_sorted =
+          canonical(expected.first->view(), cudf::table_view{{*expected.second[0].results[0]}});
+        CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected_sorted->view(), actual_sorted->view());
+      } else {
+        auto const actual          = gb.get_groups(cudf::table_view{{values}});
+        auto const expected        = fresh.get_groups(cudf::table_view{{values}});
+        auto const actual_sorted   = canonical(actual.keys->view(), actual.values->view());
+        auto const expected_sorted = canonical(expected.keys->view(), expected.values->view());
+        CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected_sorted->view(), actual_sorted->view());
+        ASSERT_EQ(actual.offsets.size(), expected.offsets.size());
+        EXPECT_EQ(actual.offsets.front(), 0);
+        EXPECT_EQ(actual.offsets.back(), actual.keys->num_rows());
+      }
+      check_aggregations(gb, keys, nulls, count_requests);
+    }
+  });
+}
+
+TEST_F(groupby_key_shape_test, PresortedNestedKeyBoundaries)
+{
+  using lists_column = cudf::test::lists_column_wrapper<int32_t>;
+  auto const stream  = cudf::test::get_default_stream();
+  // Slice away guard rows. The remaining keys contain leading nulls, empty lists, repeated
+  // lists of different lengths, and a trailing singleton. Check both null-key policies for
+  // list keys and structs containing lists.
+  lists_column list_keys{{{99}, {0}, {0}, {}, {}, {1}, {1}, {1, 2}, {1, 2}, {2}, {99}},
+                         nulls_at({1, 2})};
+  lists_column struct_child{{99}, {0}, {0}, {}, {}, {1}, {1}, {1, 2}, {1, 2}, {2}, {99}};
+  cudf::test::structs_column_wrapper struct_keys{{struct_child}, nulls_at({1, 2})};
+  cudf::test::fixed_width_column_wrapper<int32_t> input_values{90, 10, 20, 1, 2, 3, 4, 5, 6, 7, 91};
+  auto const values = cudf::slice(input_values, {1, 10}).front();
+  cudf::test::fixed_width_column_wrapper<int32_t> representatives{0, 2, 4, 6, 8};
+  cudf::test::fixed_width_column_wrapper<int64_t> sums{30, 3, 7, 11, 7};
+  cudf::test::fixed_width_column_wrapper<int32_t> first_values{10, 1, 3, 5, 7};
+
+  for (auto const& keys_column : {cudf::column_view(list_keys), cudf::column_view(struct_keys)}) {
+    auto const keys = cudf::slice(keys_column, {1, 10}).front();
+    for (auto const nulls : {cudf::null_policy::INCLUDE, cudf::null_policy::EXCLUDE}) {
+      SCOPED_TRACE(::testing::Message()
+                   << "type=" << static_cast<int>(keys.type().id())
+                   << " include_nulls=" << (nulls == cudf::null_policy::INCLUDE));
+      auto const skip_null     = nulls == cudf::null_policy::EXCLUDE ? 1 : 0;
+      auto const expected_rows = cudf::slice(representatives, {skip_null, 5}).front();
+      auto const expected_keys = cudf::gather(
+        cudf::table_view{{keys}}, expected_rows, cudf::out_of_bounds_policy::DONT_CHECK, stream);
+      cudf::groupby::groupby gb(cudf::table_view{{keys}},
+                                nulls,
+                                cudf::sorted::YES,
+                                {cudf::order::ASCENDING},
+                                {cudf::null_order::BEFORE});
+      std::vector<cudf::groupby::aggregation_request> requests(1);
+      requests[0].values = values;
+      requests[0].aggregations.push_back(cudf::make_sum_aggregation<cudf::groupby_aggregation>());
+      requests[0].aggregations.push_back(
+        cudf::make_nth_element_aggregation<cudf::groupby_aggregation>(0));
+      auto const [result_keys, results] = gb.aggregate(requests, stream);
+      CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected_keys->view(), result_keys->view());
+      ASSERT_EQ(results.size(), 1);
+      ASSERT_EQ(results[0].results.size(), 2);
+      CUDF_TEST_EXPECT_COLUMNS_EQUAL(cudf::slice(sums, {skip_null, 5}).front(),
+                                     results[0].results[0]->view());
+      CUDF_TEST_EXPECT_COLUMNS_EQUAL(cudf::slice(first_values, {skip_null, 5}).front(),
+                                     results[0].results[1]->view());
+    }
+  }
+}
+
+TEST_F(groupby_key_shape_test, PresortedRepresentativesAcrossOperations)
+{
+  auto const stream = cudf::test::get_default_stream();
+  auto const check  = [&](cudf::column_view keys,
+                         cudf::column_view values,
+                         cudf::column_view expected_grouped_keys,
+                         cudf::column_view expected_ranks,
+                         cudf::column_view expected_keys,
+                         cudf::column_view expected_sums,
+                         cudf::null_policy policy) {
+    cudf::groupby::groupby gb(cudf::table_view{{keys}},
+                              policy,
+                              cudf::sorted::YES,
+                               {cudf::order::ASCENDING},
+                               {cudf::null_order::BEFORE});
+    std::vector<cudf::groupby::scan_request> scans(1);
+    scans[0].values = values;
+    scans[0].aggregations.push_back(
+      cudf::make_rank_aggregation<cudf::groupby_scan_aggregation>(cudf::rank_method::DENSE));
+    auto const check_scan = [&] {
+      auto const [result_keys, results] = gb.scan(scans, stream);
+      CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_grouped_keys, result_keys->view().column(0));
+      ASSERT_EQ(results.size(), 1);
+      ASSERT_EQ(results[0].results.size(), 1);
+      CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_ranks, results[0].results[0]->view());
+    };
+    check_scan();
+
+    // A scan builds reusable metadata before any operation requests representatives.
+    auto const [unique_keys, empty_results] = gb.aggregate({}, stream);
+    EXPECT_TRUE(empty_results.empty());
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_keys, unique_keys->view().column(0));
+
+    std::vector<cudf::groupby::aggregation_request> requests(1);
+    requests[0].values = values;
+    requests[0].aggregations.push_back(cudf::make_sum_aggregation<cudf::groupby_aggregation>());
+    auto const [result_keys, results] = gb.aggregate(requests, stream);
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_keys, result_keys->view().column(0));
+    ASSERT_EQ(results.size(), 1);
+    ASSERT_EQ(results[0].results.size(), 1);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_sums, results[0].results[0]->view());
+    check_scan();
+  };
+
+  using keys_column = cudf::test::fixed_width_column_wrapper<int32_t>;
+  using sums_column = cudf::test::fixed_width_column_wrapper<int64_t>;
+  keys_column const keys{1, 1, 4, 4, 4, 9};
+  keys_column const ranks{1, 2, 1, 2, 3, 1};
+  keys_column const unique_keys{1, 4, 9};
+  sums_column const sums{3, 12, 6};
+
+  keys_column const nullable_keys({0, 0, 1, 1, 4, 4, 4, 9}, {0, 0, 1, 1, 1, 1, 1, 1});
+  keys_column const nullable_values{90, 91, 1, 2, 3, 4, 5, 6};
+  // Leading excluded rows make group offsets differ from representative input rows.
+  check(nullable_keys, nullable_values, keys, ranks, unique_keys, sums, cudf::null_policy::EXCLUDE);
+
+  keys_column const included_ranks{1, 2, 1, 2, 1, 2, 3, 1};
+  keys_column const included_keys({0, 1, 4, 9}, {0, 1, 1, 1});
+  sums_column const included_sums{181, 3, 12, 6};
+  check(nullable_keys,
+        nullable_values,
+        nullable_keys,
+        included_ranks,
+        included_keys,
+        included_sums,
+        cudf::null_policy::INCLUDE);
+}
+
+TEST_F(groupby_key_shape_test, SingletonRepresentativesAcrossOperations)
+{
+  auto const stream = cudf::test::get_default_stream();
+  cudf::test::fixed_width_column_wrapper<int32_t> keys{7, 2, 5};
+  cudf::test::fixed_width_column_wrapper<int32_t> values{30, 10, 20};
+  cudf::test::fixed_width_column_wrapper<int32_t> expected_keys{2, 5, 7};
+  cudf::test::fixed_width_column_wrapper<int64_t> expected_sums{10, 20, 30};
+  cudf::groupby::groupby gb(cudf::table_view{{keys}});
+  auto const check_unique = [&] {
+    auto const [result_keys, results] = gb.aggregate({}, stream);
+    EXPECT_TRUE(results.empty());
+    auto const sorted_keys = cudf::sort(result_keys->view(), {}, {}, stream);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_keys, sorted_keys->view().column(0));
+  };
+  check_unique();  // Representatives-only build, before grouped rows are cached.
+
+  std::vector<cudf::groupby::scan_request> scans(1);
+  scans[0].values = values;
+  scans[0].aggregations.push_back(
+    cudf::make_rank_aggregation<cudf::groupby_scan_aggregation>(cudf::rank_method::DENSE));
+  auto const scan_result = gb.scan(scans, stream);
+  EXPECT_EQ(scan_result.first->num_rows(), 3);
+  check_unique();  // Cached singleton metadata uses the group-offset prefix.
+
+  std::vector<cudf::groupby::aggregation_request> requests(1);
+  requests[0].values = values;
+  requests[0].aggregations.push_back(cudf::make_sum_aggregation<cudf::groupby_aggregation>());
+  auto const [result_keys, results] = gb.aggregate(requests, stream);
+  ASSERT_EQ(results.size(), 1);
+  ASSERT_EQ(results[0].results.size(), 1);
+  auto const actual = cudf::sort(
+    cudf::table_view{{result_keys->view().column(0), *results[0].results[0]}}, {}, {}, stream);
+  CUDF_TEST_EXPECT_TABLES_EQUAL((cudf::table_view{{expected_keys, expected_sums}}), actual->view());
+}
 
 template <typename T>
 struct groupby_small_key_domain_test : public cudf::test::BaseFixture {};
@@ -464,7 +735,6 @@ TYPED_TEST(groupby_small_key_domain_test, CompleteNullableDomain)
       expected_keys,
       expected_counts,
       cudf::make_count_aggregation<cudf::groupby_aggregation>(cudf::null_policy::INCLUDE),
-      force_use_sort_impl::NO,
       policy);
   }
 }

@@ -1853,8 +1853,6 @@ NODEIDS_THAT_FAIL = {
     "tests/groupby/test_groupby.py::test_groups_repr_truncates[1-{0: [0], ...}]": "TODO: Add a reason for failure",
     "tests/groupby/test_groupby.py::test_groups_repr_truncates[4-{0: [0], 1: [1], 2: [2], 3: [3], ...}]": "TODO: Add a reason for failure",
     "tests/groupby/test_groupby.py::test_groups_repr_truncates[5-{0: [0], 1: [1], 2: [2], 3: [3], 4: [4]}]": "TODO: Add a reason for failure",
-    "tests/groupby/test_groupby.py::test_groups_sort_dropna[False-False]": "AssertionError: numpy array are different",
-    "tests/groupby/test_groupby.py::test_groups_sort_dropna[False-True]": "AssertionError: numpy array are different",
     "tests/groupby/test_groupby.py::test_ops_not_as_index[idxmin]": "TODO: Add a reason for failure",
     "tests/groupby/test_groupby.py::test_ops_not_as_index[size]": "TODO: Add a reason for failure",
     "tests/groupby/test_groupby.py::test_single_element_listlike_level_grouping[level_arg0-False]": "AssertionError: assert ['x', 'y'] == [('x',), ('y',)]",

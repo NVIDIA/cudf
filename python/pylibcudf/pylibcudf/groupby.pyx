@@ -109,12 +109,18 @@ cdef class GroupBy:
         Default is ``null_policy.EXCLUDE``.
     keys_are_sorted : sorted, optional
         Whether the keys are already sorted. Default is ``sorted.NO``.
+        With ``sorted.YES``, equal keys must be adjacent and are grouped by
+        comparing neighboring rows instead of hashing. Input sortedness is
+        not detected or checked. Grouping metadata is still constructed,
+        and ``null_handling`` still determines whether null-key rows are included.
     column_order : list[order]
         Indicates the order of each column. Default is ``order.ASCENDING``.
-        Ignored if `keys_are_sorted` is ``sorted.NO``.
+        Grouping presorted keys only requires equal keys to be adjacent, so this
+        does not affect the result. Ignored if `keys_are_sorted` is ``sorted.NO``.
     null_precedence : list[null_order]
         Indicates the ordering of null values in each column.
-        Default is ``null_order.AFTER``. Ignored if `keys_are_sorted` is ``sorted.NO``.
+        Default is ``null_order.AFTER``. Like ``column_order``, this does not
+        affect the result. Ignored if `keys_are_sorted` is ``sorted.NO``.
     """
     def __init__(
         self,

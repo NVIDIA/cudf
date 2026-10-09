@@ -4,6 +4,7 @@
  */
 
 #include <cudf_test/base_fixture.hpp>
+#include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
 
 #include <cudf/aggregation/host_udf.hpp>
@@ -182,8 +183,20 @@ TEST_F(HostUDFGroupbyExampleTest, SimpleInput)
   // Group sum_sqr: [ 90, null, 93 ]
   // Group max: [ 9, null, 8 ]
   // Group sum: [ 12, null, 15 ]
-  // Output: [ 1 * 90 - 9 * 12, null, 3 * 93 - 8 * 15 ]
-  auto const expected = doubles_col{{-18.0, null, 159.0}, {true, false, true}};
+  // The UDF includes the group index in its result, and group order is unspecified.
+  auto const [group_keys, key_validity] =
+    cudf::test::to_host<int32_t>(grp_result.first->view().column(0));
+  std::vector<double> expected_values;
+  std::vector<bool> expected_validity;
+  for (std::size_t group = 0; group < group_keys.size(); ++group) {
+    auto const key = group_keys[group];
+    expected_values.push_back(key == 0   ? (group + 1) * 90.0 - 9.0 * 12.0
+                              : key == 2 ? (group + 1) * 93.0 - 8.0 * 15.0
+                                         : null);
+    expected_validity.push_back(key != 1);
+  }
+  auto const expected =
+    doubles_col{expected_values.begin(), expected_values.end(), expected_validity.begin()};
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *result);
 }
 

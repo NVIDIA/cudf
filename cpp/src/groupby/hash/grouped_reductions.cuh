@@ -175,7 +175,7 @@ void reduce_segments(size_type num_segments,
 
 /// Small and bounded groups write final outputs; only long groups need chunk partials.
 template <typename Columns, typename Op, typename T>
-void reduce_group_columns(grouped_rows const& grouped,
+void reduce_group_columns(group_reduction_plan const& grouped,
                           Columns columns,
                           Op op,
                           T init,
@@ -290,7 +290,7 @@ void reduce_group_columns(grouped_rows const& grouped,
 }
 
 template <typename ValueIterator, typename OutputIterator, typename Op, typename T>
-void reduce_groups(grouped_rows const& grouped,
+void reduce_groups(group_reduction_plan const& grouped,
                    ValueIterator values,
                    OutputIterator output,
                    Op op,

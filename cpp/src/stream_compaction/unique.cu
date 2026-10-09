@@ -30,7 +30,6 @@
 #include <cuda/std/functional>
 #include <cuda/std/iterator>
 #include <cuda/stream>
-#include <thrust/execution_policy.h>
 
 #include <utility>
 #include <vector>

@@ -658,8 +658,7 @@ TEST_F(Unique, EmptyDeepListKeepAny)
   // 2. Null
   // 3. Null
 
-  auto const keys =
-    lists_col{{lists_col{}, lists_col{}, lists_col{}, lists_col{}}, nulls_at({2, 3})};
+  auto const keys = lists_col{{{}, {}, {}, {}}, nulls_at({2, 3})};
 
   auto const idx     = int32s_col{1, 1, 2, 2};
   auto const input   = cudf::table_view{{idx, keys}};

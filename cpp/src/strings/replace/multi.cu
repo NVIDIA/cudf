@@ -31,7 +31,6 @@
 #include <cuda/std/tuple>
 #include <cuda/stream>
 #include <thrust/binary_search.h>
-#include <thrust/copy.h>
 #include <thrust/execution_policy.h>
 #include <thrust/for_each.h>
 #include <thrust/transform.h>
@@ -346,13 +345,7 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
   auto const out_itr = cuda::make_zip_iterator(
     cuda::std::make_tuple(targets_positions.begin(), targets_indices.begin()));
   auto const copy_end =
-    cudf::detail::copy_if(copy_itr,
-                          copy_itr + chars_bytes,
-                          out_itr,
-                          copy_if_fn{},
-                          stream,
-                          cudf::memory_resources{cudf::get_current_device_resource_ref(),
-                                                 cudf::get_current_device_resource_ref()});
+    cudf::detail::copy_if(copy_itr, copy_itr + chars_bytes, out_itr, copy_if_fn{}, stream, mr);
 
   // adjust target count since the copy-if may have eliminated some invalid targets
   target_count = std::min(static_cast<int64_t>(std::distance(out_itr, copy_end)), target_count);

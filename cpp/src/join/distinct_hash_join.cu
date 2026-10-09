@@ -24,14 +24,12 @@
 #include <rmm/resource_ref.hpp>
 
 #include <cooperative_groups.h>
-#include <cub/block/block_scan.cuh>
 #include <cuco/static_set.cuh>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/tuple>
 #include <cuda/stream>
 #include <thrust/fill.h>
-#include <thrust/sequence.h>
 
 #include <limits>
 #include <memory>
@@ -303,8 +301,7 @@ distinct_hash_join::inner_join(cudf::table_view const& left,
                           cuda::proclaim_return_type<bool>(
                             [] __device__(size_type idx) { return idx != cudf::JoinNoMatch; }),
                           stream,
-                          cudf::memory_resources{cudf::get_current_device_resource_ref(),
-                                                 cudf::get_current_device_resource_ref()});
+                          mr);
   auto const actual_size = std::distance(output_begin, output_end);
 
   right_indices->resize(actual_size, stream);

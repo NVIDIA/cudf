@@ -28,7 +28,6 @@
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/stream>
-#include <thrust/copy.h>
 #include <thrust/execution_policy.h>
 #include <thrust/merge.h>
 #include <thrust/remove.h>
@@ -435,13 +434,7 @@ std::unique_ptr<cudf::column> byte_pair_encoding(cudf::strings_column_view const
     return d_spaces[idx] > 0;  // separator to be inserted here
   };
   auto const copy_end =
-    cudf::detail::copy_if(chars_begin + 1,
-                          chars_end,
-                          d_inserts,
-                          offsets_at_non_zero,
-                          stream,
-                          cudf::memory_resources{cudf::get_current_device_resource_ref(),
-                                                 cudf::get_current_device_resource_ref()});
+    cudf::detail::copy_if(chars_begin + 1, chars_end, d_inserts, offsets_at_non_zero, stream, mr);
 
   // this will insert the single-byte separator into positions specified in d_inserts
   auto const sep_char = cuda::constant_iterator<char>(separator.to_string(stream)[0]);

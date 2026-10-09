@@ -246,8 +246,7 @@ wordpiece_vocabulary::wordpiece_vocabulary(cudf::strings_column_view const& inpu
     sub_map_indices.begin(),
     copy_pieces_fn{*d_vocabulary},
     stream,
-    cudf::memory_resources{cudf::get_current_device_resource_ref(),
-                           cudf::get_current_device_resource_ref()});
+    mr);
   sub_map_indices.resize(cuda::std::distance(sub_map_indices.begin(), end), stream);
 
   // build a 2nd map with just the ## prefixed items

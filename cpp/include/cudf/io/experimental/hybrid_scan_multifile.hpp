@@ -106,12 +106,16 @@ class hybrid_scan_multifile {
   /**
    * @brief Get byte ranges of the page index for all sources
    *
+   * @throws std::overflow_error if the page index byte ranges in any metadata overflow int64_t
+   *
    * @return Vector of page index byte ranges, one per source
    */
   [[nodiscard]] std::vector<byte_range_info> page_index_byte_ranges() const;
 
   /**
    * @brief Setup the per-source page index within each Parquet file metadata
+   *
+   * @throws std::invalid_argument if any page index buffer or byte range in the metadata is invalid
    *
    * @param page_index_bytes Host span of Parquet page index buffer bytes, one per source
    */

@@ -9,6 +9,7 @@
 #include "groupby/hash/hash_compound_agg_finalizer.hpp"
 #include "groupby/hash/output_utils.hpp"
 
+#include <cudf/column/column_stream.hpp>
 #include <cudf/column/column_view.hpp>
 #include <cudf/concatenate.hpp>
 #include <cudf/copying.hpp>
@@ -314,14 +315,11 @@ std::unique_ptr<table> streaming_groupby::impl::gather_distinct_keys(
 }
 
 std::pair<std::unique_ptr<table>, std::vector<aggregation_result>>
-streaming_groupby::impl::do_finalize(cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr) const
+streaming_groupby::impl::finalize_gathered(std::unique_ptr<table> keys,
+                                           std::unique_ptr<table> agg_gathered,
+                                           cuda::stream_ref stream,
+                                           cudf::memory_resources mr) const
 {
-  CUDF_EXPECTS(_initialized, "Cannot finalize streaming_groupby with no accumulated data.");
-
-  auto keys         = gather_distinct_keys(stream, mr);
-  auto agg_gathered = gather_agg_results(stream, mr);
-
   // Group user requests by their target column in `agg_gathered` so the cache layout
   // produced by `extract_single_pass_aggs` matches the dedup'd `agg_gathered`.  Uses
   // linear search on a small `group_offsets` vector since the number of distinct
@@ -377,9 +375,32 @@ streaming_groupby::impl::do_finalize(cuda::stream_ref stream,
     user_requests.push_back(std::move(ar));
   }
 
-  return {std::move(keys),
-          detail::extract_results(
-            std::span<aggregation_request const>{user_requests}, cache, stream, mr)};
+  return {
+    std::move(keys),
+    detail::extract_results(
+      std::span<aggregation_request const>{user_requests}, cache, stream, mr.get_output_mr())};
+}
+
+std::pair<std::unique_ptr<table>, std::vector<aggregation_result>>
+streaming_groupby::impl::do_finalize(cuda::stream_ref stream,
+                                     rmm::device_async_resource_ref mr) const
+{
+  CUDF_EXPECTS(_initialized, "Cannot finalize streaming_groupby with no accumulated data.");
+  return finalize_gathered(
+    gather_distinct_keys(stream, mr), gather_agg_results(stream, mr), stream, mr);
+}
+
+std::pair<std::unique_ptr<table>, std::vector<aggregation_result>>
+streaming_groupby::impl::do_finalize_and_release(cuda::stream_ref stream, cudf::memory_resources mr)
+{
+  auto keys = gather_distinct_keys(stream, mr.get_output_mr());
+  _compacted_batches.clear();
+  _empty_key_schema.reset();
+
+  auto agg_gathered = gather_agg_results(stream, mr.get_output_mr());
+  _agg_results.reset();
+
+  return finalize_gathered(std::move(keys), std::move(agg_gathered), stream, mr);
 }
 
 streaming_groupby::impl::batch_insert_result streaming_groupby::impl::probe_and_insert(
@@ -413,23 +434,58 @@ streaming_groupby& streaming_groupby::operator=(streaming_groupby&&) noexcept = 
 // The public API wrappers in streaming_groupby.cpp call these.
 void streaming_groupby::do_aggregate(table_view const& data, cuda::stream_ref stream)
 {
+  CUDF_EXPECTS(_impl != nullptr, "streaming_groupby has been consumed or moved from.");
   _impl->do_aggregate(data, stream);
 }
 
 void streaming_groupby::do_merge(streaming_groupby const& other, cuda::stream_ref stream)
 {
+  CUDF_EXPECTS(_impl != nullptr && other._impl != nullptr,
+               "streaming_groupby has been consumed or moved from.");
   _impl->do_merge(*other._impl, stream);
 }
 
 std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> streaming_groupby::do_finalize(
   cuda::stream_ref stream, rmm::device_async_resource_ref mr) const
 {
+  CUDF_EXPECTS(_impl != nullptr, "streaming_groupby has been consumed or moved from.");
   return _impl->do_finalize(stream, mr);
+}
+
+std::pair<std::unique_ptr<table>, std::vector<aggregation_result>>
+streaming_groupby::do_finalize_and_release(cuda::stream_ref stream, cudf::memory_resources mr)
+{
+  CUDF_EXPECTS(_impl != nullptr, "streaming_groupby has been consumed or moved from.");
+  CUDF_EXPECTS(_impl->_initialized, "Cannot finalize streaming_groupby with no accumulated data.");
+  // The caller must order all prior uses before stream. Wait for those uses
+  // before destroying lookup structures on their original allocation streams.
+  stream.sync();
+  auto state = std::move(_impl);
+  state->_key_set.reset();
+  state->_key_loc.reset();
+  state->_preprocessed_batches.clear();
+  // Finalization reads these columns asynchronously. Rebind before enqueueing any
+  // copies so destruction is stream-ordered even if finalization throws.
+  auto rebind_table = [stream](std::unique_ptr<table>& source) {
+    if (!source) return;
+    auto columns = source->release();
+    for (auto& col : columns) {
+      col = cudf::rebind_stream(std::move(*col), stream);
+    }
+    source = std::make_unique<table>(std::move(columns));
+  };
+  for (auto& batch : state->_compacted_batches) {
+    rebind_table(batch);
+  }
+  rebind_table(state->_empty_key_schema);
+  rebind_table(state->_agg_results);
+
+  return state->do_finalize_and_release(stream, mr);
 }
 
 size_type streaming_groupby::distinct_keys() const noexcept
 {
-  return _impl->_distinct_keys.load(std::memory_order_relaxed);
+  return _impl ? _impl->_distinct_keys.load(std::memory_order_relaxed) : 0;
 }
 
 bool is_streaming_groupby_supported(data_type values_type, aggregation::Kind kind)

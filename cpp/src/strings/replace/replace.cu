@@ -33,8 +33,6 @@
 #include <cuda/std/iterator>
 #include <cuda/stream>
 #include <thrust/binary_search.h>
-#include <thrust/copy.h>
-#include <thrust/count.h>
 #include <thrust/execution_policy.h>
 #include <thrust/for_each.h>
 #include <thrust/transform.h>
@@ -301,8 +299,7 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
     targets_positions.begin(),
     [fn] __device__(int64_t idx) -> bool { return fn.is_target_within_row(idx); },
     stream,
-    cudf::memory_resources{cudf::get_current_device_resource_ref(),
-                           cudf::get_current_device_resource_ref()});
+    mr);
 
   // adjust target count since the copy-if may have eliminated some invalid targets
   target_count = std::min(std::distance(targets_positions.begin(), copy_end), target_count);

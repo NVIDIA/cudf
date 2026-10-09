@@ -11,7 +11,6 @@
 
 #include <cuda/functional>
 #include <cuda/stream>
-#include <thrust/logical.h>
 
 #include <cstddef>
 #include <future>

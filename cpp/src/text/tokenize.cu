@@ -211,8 +211,7 @@ std::unique_ptr<cudf::column> character_tokenize(cudf::strings_column_view const
       return idx < chars_bytes ? cudf::strings::detail::is_begin_utf8_char(d_chars[idx]) : true;
     },
     stream,
-    cudf::memory_resources{cudf::get_current_device_resource_ref(),
-                           cudf::get_current_device_resource_ref()});
+    mr);
 
   // create the output chars buffer -- just a copy of the input's chars
   rmm::device_uvector<char> output_chars(chars_bytes, stream, mr);

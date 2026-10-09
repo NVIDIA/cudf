@@ -22,7 +22,7 @@ from polars import polars as plrs  # type: ignore[attr-defined]
 import pylibcudf as plc
 
 from cudf_polars.containers import DataType
-from cudf_polars.containers.datatype import _contains_array
+from cudf_polars.containers.datatype import _contains_array, _contains_categorical
 from cudf_polars.dsl import expr, ir
 from cudf_polars.dsl.expressions.base import ExecutionContext
 from cudf_polars.dsl.to_ast import insert_colrefs
@@ -47,7 +47,7 @@ from cudf_polars.utils.versions import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Generator, Sequence
 
     from polars import GPUEngine
 
@@ -91,6 +91,30 @@ def _contains_array_input(expression: expr.Expr) -> bool:
     return any(
         _contains_array(node.dtype.polars_type) for node in traversal([expression])
     )
+
+
+def _contains_categorical_input(expression: expr.Expr) -> bool:
+    """Return whether an expression consumes a Categorical or Enum input."""
+    return any(
+        _contains_categorical(node.dtype.polars_type)
+        for node in traversal([expression])
+    )
+
+
+def _contains_categorical_key(keys: Sequence[expr.NamedExpr]) -> bool:
+    return any(_contains_categorical(k.value.dtype.polars_type) for k in keys)
+
+
+def _supports_categorical(config_options: config.ConfigOptions) -> bool:
+    # TODO: Support multi-rank execution of Categorical columns.
+    executor = config_options.executor
+    if executor.name == "in-memory":
+        return True
+    if executor.ray_context is not None or executor.dask_context is not None:
+        return False
+    if executor.spmd_context is not None:
+        return executor.spmd_context.comm.nranks == 1
+    return executor.cluster == config.Cluster.DEFAULT_SINGLETON
 
 
 def _strip_file_uri(path: str) -> str:
@@ -268,6 +292,17 @@ class Translator:
                 )
                 self.errors.append(error)
                 return ir.ErrorNode(schema, str(error))
+            if not _supports_categorical(self.config_options) and any(
+                isinstance(dtype, pl.Categorical)
+                for dtype in pl.datatypes.unpack_dtypes(*polars_schema.values())
+            ):
+                error = NotImplementedError(
+                    "Categorical columns are only supported on the in-memory "
+                    "executor and single-rank streaming engines; use pl.Enum "
+                    "for multi-rank execution"
+                )
+                self.errors.append(error)
+                return ir.ErrorNode(schema, str(error))
 
             return result
 
@@ -345,6 +380,13 @@ class Translator:
             error = NotImplementedError(_ARRAY_PASSTHROUGH_ERROR)
             self.errors.append(error)
             return expr.ErrorExpr(dtype, str(error))
+        is_column = isinstance(node, plrs._expr_nodes.Column)
+        if not is_column and _contains_categorical(dtype.polars_type):
+            error = NotImplementedError(
+                "Only pass-through of Categorical/Enum columns is supported"
+            )
+            self.errors.append(error)
+            return expr.ErrorExpr(dtype, str(error))
         try:
             translated = _translate_expr(node, self, dtype, schema)
         except Exception as e:
@@ -352,6 +394,12 @@ class Translator:
             return expr.ErrorExpr(dtype, str(e))
         if not is_array_passthrough and _contains_array_input(translated):
             error = NotImplementedError(_ARRAY_PASSTHROUGH_ERROR)
+            self.errors.append(error)
+            return expr.ErrorExpr(dtype, str(error))
+        if not is_column and _contains_categorical_input(translated):
+            error = NotImplementedError(
+                "Only pass-through of Categorical/Enum columns is supported"
+            )
             self.errors.append(error)
             return expr.ErrorExpr(dtype, str(error))
         return translated
@@ -521,6 +569,8 @@ def _(node: plrs._ir_nodes.PythonScan, translator: Translator, schema: Schema) -
 @_translate_ir.register
 def _(node: plrs._ir_nodes.Scan, translator: Translator, schema: Schema) -> ir.IR:
     typ, *options = node.scan_type
+    if any(_contains_categorical(dtype.polars_type) for dtype in schema.values()):
+        raise NotImplementedError("Reading Categorical/Enum columns is not supported")
     paths = [_strip_file_uri(p) for p in node.paths]
     # Polars can produce a Scan with an empty ``node.paths`` (eg. the native
     # Iceberg reader on a table with no data files yet). In this case, polars returns an
@@ -653,6 +703,8 @@ def _(node: plrs._ir_nodes.GroupBy, translator: Translator, schema: Schema) -> i
                 translate_named_expr(translator, n=e, schema=inp.schema)
                 for e in node.aggs
             ]
+    if _contains_categorical_key(keys):
+        raise NotImplementedError("Grouping by Categorical/Enum keys is not supported")
     is_rolling = node.options.rolling is not None
     is_dynamic = node.options.dynamic is not None
     if is_dynamic:
@@ -690,6 +742,8 @@ def _(node: plrs._ir_nodes.Join, translator: Translator, schema: Schema) -> ir.I
             translate_named_expr(translator, n=e, schema=inp_right.schema)
             for e in node.right_on
         ]
+    if _contains_categorical_key(left_on) or _contains_categorical_key(right_on):
+        raise NotImplementedError("Joining on Categorical/Enum keys is not supported")
 
     if (how := node.options[0]) in {
         "Inner",
@@ -788,6 +842,10 @@ def _(node: plrs._ir_nodes.Distinct, translator: Translator, schema: Schema) -> 
     keys = inp.schema if subset is None else subset
     if any(_contains_array(inp.schema[name].polars_type) for name in keys):
         raise NotImplementedError(_ARRAY_PASSTHROUGH_ERROR)
+    if any(_contains_categorical(inp.schema[name].polars_type) for name in keys):
+        raise NotImplementedError(
+            "Distinct on Categorical/Enum columns is not supported"
+        )
     return ir.Distinct(
         schema,
         keep,
@@ -806,6 +864,8 @@ def _(node: plrs._ir_nodes.Sort, translator: Translator, schema: Schema) -> ir.I
             translate_named_expr(translator, n=e, schema=inp.schema)
             for e in node.by_column
         ]
+    if _contains_categorical_key(by):
+        raise NotImplementedError("Sorting by Categorical/Enum keys is not supported")
     stable, nulls_last, descending = node.sort_options
     order, null_order = sorting.sort_order(
         descending, nulls_last=nulls_last, num_keys=len(by)
@@ -864,6 +924,8 @@ def _(
         key = key[0]
     inp_left = translator.translate_ir(n=node.input_left)
     inp_right = translator.translate_ir(n=node.input_right)
+    if _contains_categorical(inp_left.schema[key].polars_type):
+        raise NotImplementedError("Merging on Categorical/Enum keys is not supported")
     return ir.MergeSorted(
         schema,
         key,
@@ -959,6 +1021,8 @@ def _(node: plrs._ir_nodes.Sink, translator: Translator, schema: Schema) -> ir.I
     df = translator.translate_ir(n=node.input)
     if any(_contains_array(dtype.polars_type) for dtype in df.schema.values()):
         raise NotImplementedError(_ARRAY_PASSTHROUGH_ERROR)
+    if any(_contains_categorical(dtype.polars_type) for dtype in df.schema.values()):
+        raise NotImplementedError("Writing Categorical/Enum columns is not supported")
 
     return ir.Sink(
         schema=schema,

@@ -166,8 +166,8 @@ TEST_F(SliceListTest, Lists)
                                                {6},
                                                {7, 8},
                                                {9, 10, 11},
-                                               LCW{},
-                                               LCW{},
+                                               {},
+                                               {},
                                                {-1, -2, -3, -4, -5},
                                                {-10},
                                                {-100, -200}};
@@ -177,8 +177,7 @@ TEST_F(SliceListTest, Lists)
     std::vector<cudf::test::lists_column_wrapper<int>> expected;
     expected.push_back(LCW{{4, 5}, {6}});
     expected.push_back(LCW{{6}, {7, 8}});
-    expected.push_back(
-      LCW{{4, 5}, {6}, {7, 8}, {9, 10, 11}, LCW{}, LCW{}, {-1, -2, -3, -4, -5}, {-10}});
+    expected.push_back(LCW{{4, 5}, {6}, {7, 8}, {9, 10, 11}, {}, {}, {-1, -2, -3, -4, -5}, {-10}});
 
     std::vector<cudf::column_view> result = cudf::slice(list, indices);
     EXPECT_EQ(expected.size(), result.size());
@@ -190,18 +189,18 @@ TEST_F(SliceListTest, Lists)
 
   {
     cudf::test::lists_column_wrapper<int> list{{{1, 2, 3}, {4, 5}},
-                                               {LCW{}, LCW{}, {7, 8}, LCW{}},
-                                               {{{6}}},  // NOLINT
-                                               {{7, 8}, {9, 10, 11}, LCW{}},
-                                               {LCW{}, {-1, -2, -3, -4, -5}},
-                                               {LCW{}},
+                                               {{}, {}, {7, 8}, {}},
+                                               {{6}},
+                                               {{7, 8}, {9, 10, 11}, {}},
+                                               {{}, {-1, -2, -3, -4, -5}},
+                                               {{}},
                                                {{-10}, {-100, -200}}};
 
     std::vector<cudf::size_type> indices{1, 3, 3, 6};
 
     std::vector<cudf::test::lists_column_wrapper<int>> expected;
-    expected.push_back(LCW{{LCW{}, LCW{}, {7, 8}, LCW{}}, {{{6}}}});  // NOLINT
-    expected.push_back(LCW{{{7, 8}, {9, 10, 11}, LCW{}}, {LCW{}, {-1, -2, -3, -4, -5}}, {LCW{}}});
+    expected.push_back(LCW{{{}, {}, {7, 8}, {}}, {{6}}});
+    expected.push_back(LCW{{{7, 8}, {9, 10, 11}, {}}, {{}, {-1, -2, -3, -4, -5}}, {{}}});
 
     std::vector<cudf::column_view> result = cudf::slice(list, indices);
     EXPECT_EQ(expected.size(), result.size());
@@ -224,8 +223,8 @@ TEST_F(SliceListTest, ListsWithNulls)
                                                {6},
                                                {{7, 8}, valids},
                                                {9, 10, 11},
-                                               LCW{},
-                                               LCW{},
+                                               {},
+                                               {},
                                                {{-1, -2, -3, -4, -5}, valids},
                                                {-10},
                                                {{-100, -200}, valids}};
@@ -235,14 +234,8 @@ TEST_F(SliceListTest, ListsWithNulls)
     std::vector<cudf::test::lists_column_wrapper<int>> expected;
     expected.push_back(LCW{{4, 5}, {6}});
     expected.push_back(LCW{{6}, {{7, 8}, valids}});
-    expected.push_back(LCW{{4, 5},
-                           {6},
-                           {{7, 8}, valids},
-                           {9, 10, 11},
-                           LCW{},
-                           LCW{},
-                           {{-1, -2, -3, -4, -5}, valids},
-                           {-10}});
+    expected.push_back(LCW{
+      {4, 5}, {6}, {{7, 8}, valids}, {9, 10, 11}, {}, {}, {{-1, -2, -3, -4, -5}, valids}, {-10}});
 
     std::vector<cudf::column_view> result = cudf::slice(list, indices);
     EXPECT_EQ(expected.size(), result.size());
@@ -254,20 +247,19 @@ TEST_F(SliceListTest, ListsWithNulls)
 
   {
     cudf::test::lists_column_wrapper<int> list{{{{1, 2, 3}, valids}, {4, 5}},
-                                               {{LCW{}, LCW{}, {7, 8}, LCW{}}, valids},
-                                               {{{6}}},  // NOLINT
-                                               {{{7, 8}, {{9, 10, 11}, valids}, LCW{}}, valids},
-                                               {{LCW{}, {-1, -2, -3, -4, -5}}, valids},
-                                               {LCW{}},
+                                               {{{}, {}, {7, 8}, {}}, valids},
+                                               {{6}},
+                                               {{{7, 8}, {{9, 10, 11}, valids}, {}}, valids},
+                                               {{{}, {-1, -2, -3, -4, -5}}, valids},
+                                               {{}},
                                                {{-10}, {-100, -200}}};
 
     std::vector<cudf::size_type> indices{1, 3, 3, 6};
 
     std::vector<cudf::test::lists_column_wrapper<int>> expected;
-    expected.push_back(LCW{{{LCW{}, LCW{}, {7, 8}, LCW{}}, valids}, {{{6}}}});  // NOLINT
-    expected.push_back(LCW{{{{7, 8}, {{9, 10, 11}, valids}, LCW{}}, valids},
-                           {{LCW{}, {-1, -2, -3, -4, -5}}, valids},
-                           {LCW{}}});
+    expected.push_back(LCW{{{{}, {}, {7, 8}, {}}, valids}, {{6}}});
+    expected.push_back(LCW{
+      {{{7, 8}, {{9, 10, 11}, valids}, {}}, valids}, {{{}, {-1, -2, -3, -4, -5}}, valids}, {{}}});
 
     std::vector<cudf::column_view> result = cudf::slice(list, indices);
     EXPECT_EQ(expected.size(), result.size());
@@ -523,8 +515,6 @@ TEST_F(SliceTableCornerCases, MiscOffset)
 TEST_F(SliceTableCornerCases, PreSlicedInputs)
 {
   {
-    using LCW = cudf::test::lists_column_wrapper<float>;
-
     cudf::test::fixed_width_column_wrapper<int> a{
       {0, 1, 2, 3, 4, 5, 6, 7, 8, 9},
       {true, true, false, true, true, true, false, false, true, false}};
@@ -552,7 +542,7 @@ TEST_F(SliceTableCornerCases, PreSlicedInputs)
     cudf::test::fixed_width_column_wrapper<int> e0_b({-4}, {false});
     cudf::test::strings_column_wrapper e0_c({""}, {false});
     std::vector<bool> e0_list_validity{true};
-    cudf::test::lists_column_wrapper<float> e0_d({LCW{7, 7}}, e0_list_validity.begin());
+    cudf::test::lists_column_wrapper<float> e0_d({{7, 7}}, e0_list_validity.begin());
     cudf::table_view expected0({e0_a, e0_b, e0_c, e0_d});
     CUDF_TEST_EXPECT_TABLES_EQUAL(result[0], expected0);
 

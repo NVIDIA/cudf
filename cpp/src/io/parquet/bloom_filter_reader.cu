@@ -23,10 +23,10 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
-#include <rmm/device_buffer.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuco/bloom_filter_ref.cuh>
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/bit>
 #include <cuda/std/chrono>
@@ -430,7 +430,8 @@ std::optional<std::pair<int64_t, std::size_t>> parse_bloom_filter_header(
                    static_cast<std::size_t>(header.num_bytes)};
 }
 
-std::pair<std::vector<rmm::device_buffer>, std::vector<cudf::device_span<cuda::std::byte const>>>
+std::pair<std::vector<cuda::device_buffer<uint8_t>>,
+          std::vector<cudf::device_span<cuda::std::byte const>>>
 aggregate_reader_metadata::read_bloom_filters(
   host_span<std::unique_ptr<datasource> const> sources,
   host_span<std::vector<size_type> const> row_group_indices,

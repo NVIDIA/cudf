@@ -15,7 +15,6 @@
 #include <cuda/std/execution>
 #include <cuda/std/functional>
 #include <cuda/stream>
-#include <thrust/copy.h>
 
 namespace cudf::detail {
 
@@ -57,9 +56,9 @@ OutputIterator copy_if(InputIterator begin,
 
   auto num_selected = cudf::detail::device_scalar<cuda::std::size_t>(stream, temp_mr);
 
-  auto env =
-    cuda::std::execution::env{cuda::std::execution::prop{cuda::get_stream_t{}, stream},
-                              cuda::std::execution::prop{cuda::mr::get_memory_resource_t{}, temp_mr}};
+  auto env = cuda::std::execution::env{
+    cuda::std::execution::prop{cuda::get_stream_t{}, stream},
+    cuda::std::execution::prop{cuda::mr::get_memory_resource_t{}, temp_mr}};
   CUDF_CUDA_TRY(cub::DeviceSelect::FlaggedIf(
     begin, stencil, result, num_selected.data(), num_items, predicate, env));
 
@@ -99,9 +98,9 @@ OutputIterator copy_if(InputIterator begin,
   // Device scalar to store the number of selected elements
   auto num_selected = cudf::detail::device_scalar<cuda::std::size_t>(stream, temp_mr);
 
-  auto env =
-    cuda::std::execution::env{cuda::std::execution::prop{cuda::get_stream_t{}, stream},
-                              cuda::std::execution::prop{cuda::mr::get_memory_resource_t{}, temp_mr}};
+  auto env = cuda::std::execution::env{
+    cuda::std::execution::prop{cuda::get_stream_t{}, stream},
+    cuda::std::execution::prop{cuda::mr::get_memory_resource_t{}, temp_mr}};
   CUDF_CUDA_TRY(
     cub::DeviceSelect::If(begin, output, num_selected.data(), num_items, predicate, env));
 

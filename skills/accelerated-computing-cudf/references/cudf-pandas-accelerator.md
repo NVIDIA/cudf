@@ -21,7 +21,11 @@
 ```python
 %load_ext cudf.pandas
 import pandas as pd
+```
 
+Run the profiler magic at the start of a separate cell:
+
+```python
 %%cudf.pandas.profile
 df = pd.read_csv("data.csv")
 result = df.groupby("category")["amount"].sum()
@@ -36,7 +40,7 @@ Output shows each operation's execution path (GPU or CPU) and time.
 %%cudf.pandas.line_profile
 df = pd.DataFrame({"a": range(1000000), "b": range(1000000)})
 result = df.groupby("a")["b"].sum()    # shows GPU time
-df.apply(lambda x: x + 1, axis=1)     # shows CPU fallback time
+df.apply(lambda x: x + 1, axis=1)
 ```
 
 ### CLI Profiling
@@ -55,18 +59,25 @@ The profiling tools are also a convenient way to detect silent fallback. If the 
 # Method 1: Run nvidia-smi during execution
 # nvidia-smi dmon -s u -d 1
 
-# Method 2: Check cudf.pandas stats
+# Activate before importing pandas so the profiler can observe GPU dispatch.
 import cudf.pandas
-stats = cudf.pandas.get_stats()
-print(stats)  # shows GPU vs CPU operation counts
+cudf.pandas.install()
+from cudf.pandas import Profiler
+import pandas as pd
+
+with Profiler() as profiler:
+    df = pd.read_csv("data.csv")
+    result = df.groupby("category")["amount"].sum()
+profiler.print_per_function_stats()
 ```
 
-If GPU utilization stays 0% during execution, the entire workload fell back. Diagnose with `%%cudf.pandas.profile`.
+Low sampled GPU utilization alone does not prove fallback: short GPU operations
+can be missed. Diagnose with `%%cudf.pandas.profile` or `Profiler`.
 
 ## multiprocessing Support
 
 ```python
-# This pattern ensures workers also use cudf.pandas
+# Top-level activation also runs when spawned workers import this module.
 import cudf.pandas
 cudf.pandas.install()           # must be FIRST, before everything else
 
@@ -74,12 +85,12 @@ from multiprocessing import Pool
 import pandas as pd
 
 def process_chunk(args):
-    # Workers inherit cudf.pandas installation
     df = pd.read_csv(args)
     return df.groupby("key")["value"].sum()
 
-with Pool(4) as pool:
-    results = pool.map(process_chunk, file_list)
+if __name__ == "__main__":
+    with Pool(4) as pool:
+        results = pool.map(process_chunk, file_list)
 ```
 
 ## Limitations

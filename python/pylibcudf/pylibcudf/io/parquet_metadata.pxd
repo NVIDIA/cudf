@@ -7,11 +7,16 @@ from pylibcudf.io.types cimport SourceInfo
 from pylibcudf.libcudf.io.parquet_schema cimport (
     ColumnChunk as cpp_ColumnChunk,
     ColumnChunkMetaData as cpp_ColumnChunkMetaData,
+    DecimalType as cpp_DecimalType,
     FileMetaData as cpp_FileMetaData,
+    IntType as cpp_IntType,
+    LogicalType as cpp_LogicalType,
     RowGroup as cpp_RowGroup,
     SchemaElement as cpp_SchemaElement,
     SortingColumn as cpp_SortingColumn,
     Statistics as cpp_Statistics,
+    TimestampType as cpp_TimestampType,
+    TimeType as cpp_TimeType,
 )
 from pylibcudf.libcudf.io.parquet_metadata cimport(
     parquet_metadata,
@@ -75,6 +80,36 @@ cdef class FileMetaData:
 
     @staticmethod
     cdef FileMetaData from_libcudf(unique_ptr[cpp_FileMetaData] metadata)
+
+cdef class DecimalType:
+    cdef cpp_DecimalType c_obj
+
+    @staticmethod
+    cdef DecimalType from_cpp(cpp_DecimalType decimal_type)
+
+cdef class TimeType:
+    cdef cpp_TimeType c_obj
+
+    @staticmethod
+    cdef TimeType from_cpp(cpp_TimeType time_type)
+
+cdef class TimestampType:
+    cdef cpp_TimestampType c_obj
+
+    @staticmethod
+    cdef TimestampType from_cpp(cpp_TimestampType timestamp_type)
+
+cdef class IntType:
+    cdef cpp_IntType c_obj
+
+    @staticmethod
+    cdef IntType from_cpp(cpp_IntType int_type)
+
+cdef class LogicalType:
+    cdef cpp_LogicalType c_obj
+
+    @staticmethod
+    cdef LogicalType from_cpp(cpp_LogicalType logical_type)
 
 cdef class SchemaElement:
     cdef cpp_SchemaElement c_obj

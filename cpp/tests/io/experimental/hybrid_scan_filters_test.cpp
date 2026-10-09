@@ -1351,8 +1351,7 @@ TEST_F(HybridScanFiltersTest, FilterRowGroupsWithDictionary)
     auto filter_expression = cudf::ast::operation(
       cudf::ast::ast_operator::LOGICAL_OR, uint_filter_expression, uint_filter_expression2);
 
-    auto const options =
-      cudf::io::parquet_reader_options::builder().filter(filter_expression).build();
+    auto options = cudf::io::parquet_reader_options::builder().filter(filter_expression).build();
     reader->reset_column_selection();
     EXPECT_TRUE(
       reader->dictionary_pages_byte_ranges(reader->all_row_groups(options), options).empty());
@@ -1361,6 +1360,36 @@ TEST_F(HybridScanFiltersTest, FilterRowGroupsWithDictionary)
     EXPECT_EQ(
       filter_row_groups_with_dictionaries(datasource_ref, reader_ref, options, stream, mr).size(),
       expected_row_groups);
+
+    // AND'ing a `table[2] == "9999"` to the filter must only fetch col2's dictionaries.
+    auto str_value   = cudf::string_scalar("9999", true, stream);
+    auto str_literal = cudf::ast::literal(str_value);
+    auto str_filter  = cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col2_ref, str_literal);
+
+    options.set_filter(str_filter);
+    reader->reset_column_selection();
+    auto const expected_ranges =
+      reader->dictionary_pages_byte_ranges(reader->all_row_groups(options), options);
+    ASSERT_FALSE(expected_ranges.empty());
+
+    auto conjunction =
+      cudf::ast::operation(cudf::ast::ast_operator::LOGICAL_AND, filter_expression, str_filter);
+    options.set_filter(conjunction);
+
+    reader->reset_column_selection();
+    auto const dict_ranges =
+      reader->dictionary_pages_byte_ranges(reader->all_row_groups(options), options);
+
+    ASSERT_EQ(dict_ranges.size(), expected_ranges.size());
+    EXPECT_TRUE(std::equal(dict_ranges.begin(),
+                           dict_ranges.end(),
+                           expected_ranges.begin(),
+                           expected_ranges.end(),
+                           [](auto const& lhs, auto const& rhs) {
+                             return lhs.offset() == rhs.offset() and lhs.size() == rhs.size();
+                           }));
+    EXPECT_TRUE(
+      filter_row_groups_with_dictionaries(datasource_ref, reader_ref, options, stream, mr).empty());
   }
 
   {

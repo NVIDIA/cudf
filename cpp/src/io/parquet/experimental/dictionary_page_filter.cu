@@ -1315,6 +1315,25 @@ struct dictionary_caster {
   }
 };
 
+/**
+ * @brief Whether a dictionary page can be queried for a `col op literal` predicate
+ *
+ * @throws cudf::logic_error if the column and literal types mismatch
+ *
+ * @param op Comparison operator
+ * @param col_type Output type of the column
+ * @param literal Literal compared against the column
+ * @return Whether the dictionary page can be queried
+ */
+[[nodiscard]] bool is_dictionary_filterable(ast::ast_operator op,
+                                            cudf::data_type col_type,
+                                            ast::literal const& literal)
+{
+  // A dictionary page holds the values in a column chunk, so (in)equality can be evaluated exactly
+  if (op != ast::ast_operator::EQUAL and op != ast::ast_operator::NOT_EQUAL) { return false; }
+  return parquet::detail::is_membership_queryable(col_type, literal);
+}
+
 using parquet::detail::parquet_expression_simplifier;
 using parquet::detail::simplified_expression_opt;
 
@@ -1366,8 +1385,6 @@ class dictionary_expression_converter final : public parquet_expression_simplifi
   {
     using cudf::ast::ast_operator;
 
-    if (op != ast_operator::EQUAL and op != ast_operator::NOT_EQUAL) { return std::nullopt; }
-
     auto const col_idx             = col_ref.get_column_index();
     auto const& equality_literals  = _literals[col_idx];
     auto const& equality_operators = _operators[col_idx];
@@ -1375,8 +1392,9 @@ class dictionary_expression_converter final : public parquet_expression_simplifi
     auto const literal_iter        = std::ranges::find_if(literal_indices, [&](auto idx) {
       return equality_literals[idx] == &literal and equality_operators[idx] == op;
     });
-    CUDF_EXPECTS(literal_iter != literal_indices.end(),
-                 "Dictionary expression converter encountered an unexpected literal");
+
+    // Unsupported comparisons and those in discarded OR branches were not collected
+    if (literal_iter == literal_indices.end()) { return std::nullopt; }
 
     auto const col_literal_offset =
       _col_literals_offsets[col_idx] + static_cast<cudf::size_type>(*literal_iter);
@@ -1458,9 +1476,6 @@ aggregate_reader_metadata::apply_dictionary_filter(
       // Skip if no equality literals for this column
       if (literals[input_col_idx].empty()) { return; }
 
-      // Skip if non-comparable (compound) type except string
-      if (cudf::is_compound(dtype) and dtype.id() != cudf::type_id::STRING) { return; }
-
       // Create a dictionary membership caster struct for the current column
       dictionary_caster const dictionary_col{chunks,
                                              pages,
@@ -1504,29 +1519,20 @@ aggregate_reader_metadata::apply_dictionary_filter(
 
 dictionary_literals_collector::dictionary_literals_collector(
   ast::expression const& expr, std::span<cudf::data_type const> output_dtypes)
-  : equality_literals_collector{output_dtypes, {}, {}}
+  : equality_literals_collector{output_dtypes, {}}
 {
-  _operators.resize(static_cast<cudf::size_type>(output_dtypes.size()));
   collect(expr);
 }
 
 simplified_expression_opt dictionary_literals_collector::simplify_comparison(
   ast::ast_operator op, ast::column_reference const& col_ref, ast::literal const& literal)
 {
-  using cudf::ast::ast_operator;
-
-  if (op != ast_operator::EQUAL and op != ast_operator::NOT_EQUAL) { return std::nullopt; }
-
   auto const col_idx = col_ref.get_column_index();
-  _literals[col_idx].emplace_back(const_cast<ast::literal*>(&literal));
-  _operators[col_idx].emplace_back(op);
-  return placeholder_expr();
-}
 
-std::pair<std::vector<std::vector<ast::literal*>>, std::vector<std::vector<ast::ast_operator>>>
-dictionary_literals_collector::get_literals_and_operators() &&
-{
-  return {std::move(_literals), std::move(_operators)};
+  // Do not collect literals that dictionary pages cannot be queried for
+  if (not is_dictionary_filterable(op, _output_dtypes[col_idx], literal)) { return std::nullopt; }
+
+  return _tree.push(ast::operation{op, col_ref, literal});
 }
 
 }  // namespace cudf::io::parquet::experimental::detail

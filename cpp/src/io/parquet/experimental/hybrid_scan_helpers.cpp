@@ -375,14 +375,20 @@ aggregate_reader_metadata::bloom_filters_byte_ranges(
   std::span<cudf::size_type const> output_column_schemas,
   std::reference_wrapper<ast::expression const> filter)
 {
+  // Timestamp columns stored with another precision in any source cannot use bloom filters
+  auto const ts_precision_mismatches =
+    calc_mismatched_timestamp_mask(output_dtypes, output_column_schemas);
+
   // Collect equality literals for each input table column
   auto literals_collector = equality_literals_collector{
-    filter.get(), output_dtypes, output_column_schemas, per_file_metadata[0].schema};
+    filter.get(),
+    output_dtypes,
+    std::span{ts_precision_mismatches.data(), ts_precision_mismatches.size()}};
 
   // Return early if bloom filters cannot prune any row groups with this filter
   if (not literals_collector.can_filter()) { return {}; }
 
-  auto const literals = std::move(literals_collector).get_literals();
+  auto const literals = std::move(literals_collector).get_literals_and_operators().first;
 
   // Collect schema indices of columns with equality predicate(s)
   std::vector<cudf::size_type> bloom_filter_col_schemas;
@@ -454,7 +460,7 @@ aggregate_reader_metadata::dictionary_pages_byte_ranges(
   // Return early if dictionary pages cannot prune any row groups with this filter
   if (not literals_collector.can_filter()) { return {}; }
 
-  auto const literals = std::move(literals_collector).get_literals();
+  auto const literals = std::move(literals_collector).get_literals_and_operators().first;
 
   // Collect schema indices of columns with equality predicate(s)
   std::vector<cudf::size_type> dictionary_col_schemas;
@@ -610,14 +616,20 @@ aggregate_reader_metadata::filter_row_groups_with_bloom_filters(
   std::reference_wrapper<ast::expression const> filter,
   cuda::stream_ref stream) const
 {
+  // Timestamp columns stored with another precision in any source cannot use bloom filters
+  auto const ts_precision_mismatches =
+    calc_mismatched_timestamp_mask(output_dtypes, output_column_schemas);
+
   // Collect equality literals for each input table column
   auto literals_collector = equality_literals_collector{
-    filter.get(), output_dtypes, output_column_schemas, per_file_metadata[0].schema};
+    filter.get(),
+    output_dtypes,
+    std::span{ts_precision_mismatches.data(), ts_precision_mismatches.size()}};
 
   // Return early if bloom filters cannot prune any row groups with this filter
   if (not literals_collector.can_filter()) { return all_row_group_indices(row_group_indices); }
 
-  auto const literals = std::move(literals_collector).get_literals();
+  auto const [literals, operators] = std::move(literals_collector).get_literals_and_operators();
 
   // Collect schema indices of columns with equality predicate(s)
   std::vector<cudf::size_type> bloom_filter_col_schemas;
@@ -652,6 +664,7 @@ aggregate_reader_metadata::filter_row_groups_with_bloom_filters(
                         host_span<std::vector<cudf::size_type> const>{row_group_indices.data(),
                                                                       row_group_indices.size()},
                         literals,
+                        operators,
                         total_row_groups,
                         host_span<data_type const>{output_dtypes.data(), output_dtypes.size()},
                         bloom_filter_col_schemas,

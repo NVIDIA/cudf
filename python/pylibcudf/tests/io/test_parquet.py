@@ -12,9 +12,11 @@ import pyarrow.parquet as pq
 import pytest
 from pyarrow.parquet import read_table, write_table
 from utils import (
+    BLOOM_FILTER_OPTIONS,
     assert_table_and_meta_eq,
     get_bytes_from_source,
     make_source,
+    requires_pyarrow_bloom_filters,
     synchronize_stream,
 )
 
@@ -262,15 +264,6 @@ def _read_parquet_equal_to(path, column, value, and_expr=None):
     return plc.io.parquet.read_parquet(options)
 
 
-requires_pyarrow_bloom_filters = pytest.mark.skipif(
-    int(pa.__version__.split(".", 1)[0]) < 24,
-    reason="pyarrow writes Parquet bloom filters from 24.0",
-)
-
-# Sized so that absent values are practically never false positives
-_BLOOM_FILTER = {"ndv": 1000, "fpp": 0.0001}
-
-
 # The default 28-digit context would round 38-digit decimals
 _DECIMAL_CONTEXT = decimal.Context(prec=40)
 
@@ -367,7 +360,7 @@ def test_read_parquet_bloom_filter_physical_types(
         ),
         path,
         row_group_size=len(evens),
-        bloom_filter_options={"c": _BLOOM_FILTER},
+        bloom_filter_options={"c": BLOOM_FILTER_OPTIONS},
         **write_kwargs,
     )
 
@@ -400,7 +393,7 @@ def test_read_parquet_bloom_filter_decimal_scale_mismatch(tmp_path):
         pa.table({"c": pa.array(with_five + evens, pa.decimal128(5, 2))}),
         path,
         row_group_size=len(evens),
-        bloom_filter_options={"c": _BLOOM_FILTER},
+        bloom_filter_options={"c": BLOOM_FILTER_OPTIONS},
     )
 
     for value, num_rows in [(5, 20), (7, 0)]:
@@ -425,7 +418,7 @@ def test_read_parquet_bloom_filter_signed_zero(
         pa.table({"c": pa.array(with_zero + odds, arrow_type)}),
         path,
         row_group_size=len(odds),
-        bloom_filter_options={"c": _BLOOM_FILTER},
+        bloom_filter_options={"c": BLOOM_FILTER_OPTIONS},
     )
 
     result = _read_parquet_equal_to(path, "c", pa.scalar(literal, arrow_type))

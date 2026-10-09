@@ -15,6 +15,7 @@
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/utilities/bit.hpp>
+#include <cudf/utilities/traits.hpp>
 
 #include <cuda/iterator>
 
@@ -120,6 +121,20 @@ bool is_boolean_valued(ast::expression const& expr)
     case ast_operator::NOT: return true;
     default: return false;
   }
+}
+
+bool is_membership_queryable(cudf::data_type column_type, ast::literal const& literal)
+{
+  CUDF_EXPECTS(column_type.id() == literal.get_data_type().id(),
+               "Mismatched predicate column and literal types");
+  // Booleans and non-comparable compound types cannot be queried
+  if (column_type.id() == cudf::type_id::BOOL8 or
+      (cudf::is_compound(column_type) and column_type.id() != cudf::type_id::STRING)) {
+    return false;
+  }
+  // A decimal literal with a different scale cannot be queried
+  return not cudf::is_fixed_point(column_type) or
+         column_type.scale() == literal.get_data_type().scale();
 }
 
 unary_operand extract_unary_operand(ast::operation const& expr)
@@ -521,11 +536,6 @@ void parquet_expression_simplifier::validate_column_reference(
                            col_index,
                            _output_dtypes.size()),
                std::out_of_range);
-}
-
-ast::expression const& parquet_expression_simplifier::placeholder_expr()
-{
-  return _tree.push(ast::column_reference{0});
 }
 
 void parquet_expression_simplifier::validate_operands(ast::expression const& expr) const

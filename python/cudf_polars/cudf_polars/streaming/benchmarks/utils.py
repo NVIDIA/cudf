@@ -69,7 +69,7 @@ try:
     import cudf_polars.dsl.tracing
     import cudf_polars.quent
     from cudf_polars.dsl.ir import IRExecutionContext
-    from cudf_polars.dsl.tracing import Scope
+    from cudf_polars.dsl.tracing import _HAS_QUENT, Scope
     from cudf_polars.dsl.translate import Translator
     from cudf_polars.engine.core import StreamingEngine
     from cudf_polars.quent._export import write_quent_export
@@ -848,9 +848,10 @@ def get_executor_options(
     executor_options: dict[str, Any] = (
         run_config.streaming_options.to_executor_options()
     )
-    executor_options["quent_context"] = cudf_polars.quent.QuentConfig(
-        engine_id=run_config.run_id
-    )
+    if _HAS_QUENT and run_config.collect_traces:
+        executor_options["quent_context"] = cudf_polars.quent.QuentConfig(
+            engine_id=run_config.run_id
+        )
 
     return executor_options
 

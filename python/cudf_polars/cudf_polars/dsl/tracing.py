@@ -26,7 +26,8 @@ try:  # pragma: no cover; requires structlog and cudf_polars_quent
 except ImportError:  # pragma: no cover; requires no structlog
     _HAS_STRUCTLOG = False
 else:  # pragma: no cover; requires structlog
-    _HAS_STRUCTLOG = importlib.util.find_spec("cudf_polars_quent") is not None
+    _HAS_STRUCTLOG = True
+_HAS_QUENT = importlib.util.find_spec("cudf_polars_quent") is not None
 
 
 LOG_TRACES = _HAS_STRUCTLOG and _bool_converter(
@@ -176,7 +177,6 @@ def log_do_evaluate(
             *args: P.args,
             **kwargs: P.kwargs,
         ) -> cudf_polars.containers.DataFrame:
-            import cudf_polars_quent as _quent
 
             log = structlog.get_logger()
 
@@ -190,6 +190,8 @@ def log_do_evaluate(
             ir_execution_context: IRExecutionContext = kwargs["context"]  # type: ignore[assignment]
 
             if ir_execution_context.quent_ir_execution_state is not None:
+                import cudf_polars_quent as _quent
+
                 quent_state = ir_execution_context.quent_ir_execution_state
                 quent_evaluate_id = _quent.now_v7()
                 instance_name = (

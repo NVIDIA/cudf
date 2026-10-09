@@ -1122,6 +1122,186 @@ def test_file_metadata_schema_elements() -> None:
     ]
 
 
+def test_file_metadata_schema_element_nesting() -> None:
+    schema = pa.schema(
+        [
+            pa.field("a", pa.int64()),
+            pa.field("s", pa.struct([pa.field("x", pa.int64())])),
+            pa.field("l", pa.list_(pa.int32())),
+            pa.field("r", pa.int32(), nullable=False),
+        ]
+    )
+    table = pa.table(
+        [
+            pa.array([1, None, 3], type=pa.int64()),
+            pa.array([{"x": 1}, {"x": 2}, None], type=schema.field("s").type),
+            pa.array([[1], [], None], type=schema.field("l").type),
+            pa.array([1, 2, 3], type=pa.int32()),
+        ],
+        schema=schema,
+    )
+    sink = io.BytesIO()
+    write_table(table, sink)
+    sink.seek(0)
+
+    elements = plc.io.parquet_metadata.read_parquet_footers(
+        plc.io.SourceInfo([sink])
+    )[0].schema
+
+    FieldRepetitionType = plc.io.parquet_metadata.FieldRepetitionType
+    result = [
+        (
+            element.name,
+            element.repetition_type,
+            element.max_definition_level,
+            element.max_repetition_level,
+            element.parent_idx,
+            element.children_idx,
+            element.is_stub(),
+            element.is_struct(),
+            element.is_one_level_list(elements[element.parent_idx]),
+            element.output_as_byte_array,
+            element.arrow_type,
+        )
+        for element in elements
+    ]
+    assert result == [
+        (
+            "schema",
+            FieldRepetitionType.REQUIRED,
+            0,
+            0,
+            0,
+            [1, 2, 4, 7],
+            False,
+            True,
+            False,
+            False,
+            None,
+        ),
+        (
+            "a",
+            FieldRepetitionType.OPTIONAL,
+            1,
+            0,
+            0,
+            [],
+            False,
+            False,
+            False,
+            False,
+            None,
+        ),
+        (
+            "s",
+            FieldRepetitionType.OPTIONAL,
+            1,
+            0,
+            0,
+            [3],
+            False,
+            True,
+            False,
+            False,
+            None,
+        ),
+        (
+            "x",
+            FieldRepetitionType.OPTIONAL,
+            2,
+            0,
+            2,
+            [],
+            False,
+            False,
+            False,
+            False,
+            None,
+        ),
+        (
+            "l",
+            FieldRepetitionType.OPTIONAL,
+            1,
+            0,
+            0,
+            [5],
+            False,
+            True,
+            False,
+            False,
+            None,
+        ),
+        (
+            "list",
+            FieldRepetitionType.REPEATED,
+            2,
+            1,
+            4,
+            [6],
+            True,
+            False,
+            False,
+            False,
+            None,
+        ),
+        (
+            "element",
+            FieldRepetitionType.OPTIONAL,
+            3,
+            1,
+            5,
+            [],
+            False,
+            False,
+            False,
+            False,
+            None,
+        ),
+        (
+            "r",
+            FieldRepetitionType.REQUIRED,
+            0,
+            0,
+            0,
+            [],
+            False,
+            False,
+            False,
+            False,
+            None,
+        ),
+    ]
+
+
+def test_file_metadata_schema_element_arrow_type() -> None:
+    table = pa.table(
+        {
+            "d": pa.array([1, 2, 3], type=pa.duration("ms")),
+            "i": pa.array([1, 2, 3], type=pa.int32()),
+        }
+    )
+    sink = io.BytesIO()
+    write_table(table, sink, store_schema=True)
+    sink.seek(0)
+    footer, _ = _extract_footer_bytes_with_suffix(sink.getvalue())
+
+    from_footers = plc.io.parquet_metadata.read_parquet_footers(
+        plc.io.SourceInfo([sink])
+    )[0]
+    from_bytes = plc.io.parquet_metadata.FileMetaData.from_bytes(footer)
+
+    assert [element.arrow_type for element in from_footers.schema] == [
+        None,
+        None,
+        None,
+    ]
+    assert [element.arrow_type for element in from_bytes.schema] == [
+        None,
+        plc.TypeId.DURATION_MILLISECONDS,
+        None,
+    ]
+
+
 def test_file_metadata_schema_without_field_ids() -> None:
     tables = [
         pa.table({"a": [1, 2, 3], "b": ["x", "y", "z"]}),

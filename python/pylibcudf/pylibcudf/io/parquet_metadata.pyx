@@ -31,6 +31,7 @@ from pylibcudf.libcudf.io.parquet_schema cimport (
     Statistics as cpp_Statistics,
 )
 from pylibcudf.libcudf.table.table cimport table as cpp_table
+from pylibcudf.libcudf.types cimport type_id
 from pylibcudf.libcudf.utilities.span cimport host_span
 from pylibcudf.table cimport Table
 from pylibcudf.types cimport DataType
@@ -41,10 +42,12 @@ from rmm.pylibrmm.stream cimport Stream
 from typing import TYPE_CHECKING
 
 from pylibcudf.libcudf.io.parquet_schema import (
+    FieldRepetitionType,  # no-cython-lint
     LogicalTypeId,  # no-cython-lint
     TimeUnit,  # no-cython-lint
     Type as PhysicalType,  # no-cython-lint
 )
+from pylibcudf.types import TypeId
 
 if TYPE_CHECKING:
     from typing_extensions import Buffer
@@ -59,6 +62,7 @@ __all__ = [
     "ColumnChunk",
     "ColumnChunkMetaData",
     "ColumnChunkStatistics",
+    "FieldRepetitionType",
     "FileMetaData",
     "LogicalType",
     "LogicalTypeId",
@@ -424,6 +428,82 @@ cdef class SchemaElement:
         if not self.c_obj.logical_type.has_value():
             return None
         return LogicalType.from_cpp(self.c_obj.logical_type.value())
+
+    @property
+    def repetition_type(self) -> FieldRepetitionType:
+        """Whether the field is required, optional, or repeated."""
+        return FieldRepetitionType(<int>self.c_obj.repetition_type)
+
+    @property
+    def output_as_byte_array(self) -> bool:
+        """Whether the writer stores the column as a byte array."""
+        return self.c_obj.output_as_byte_array
+
+    @property
+    def arrow_type(self) -> TypeId | None:
+        """cudf type recorded in the file's arrow schema, if any was applied."""
+        if not self.c_obj.arrow_type.has_value():
+            return None
+        cdef type_id arrow_type = self.c_obj.arrow_type.value()
+        return TypeId(<int>arrow_type)
+
+    @property
+    def max_definition_level(self) -> int:
+        """Maximum definition level of the field."""
+        return self.c_obj.max_definition_level
+
+    @property
+    def max_repetition_level(self) -> int:
+        """Maximum repetition level of the field."""
+        return self.c_obj.max_repetition_level
+
+    @property
+    def parent_idx(self) -> int:
+        """Index of the parent element in ``FileMetaData.schema``."""
+        return self.c_obj.parent_idx
+
+    @property
+    def children_idx(self) -> list[int]:
+        """Indices of the child elements in ``FileMetaData.schema``."""
+        return list(self.c_obj.children_idx)
+
+    def is_stub(self) -> bool:
+        """
+        Whether the element is a repeated group that is not a nesting level.
+
+        Returns
+        -------
+        bool
+            ``True`` for the repeated wrapper of a three-level list encoding.
+        """
+        return self.c_obj.is_stub()
+
+    def is_one_level_list(self, SchemaElement parent) -> bool:
+        """
+        Whether the element is a list in the one-level list encoding.
+
+        Parameters
+        ----------
+        parent : SchemaElement
+            Parent of this element.
+
+        Returns
+        -------
+        bool
+            ``True`` for a repeated leaf whose parent is not a list.
+        """
+        return self.c_obj.is_one_level_list(parent.c_obj)
+
+    def is_struct(self) -> bool:
+        """
+        Whether the element is a struct.
+
+        Returns
+        -------
+        bool
+            ``True`` for a group that is a level of struct nesting.
+        """
+        return self.c_obj.is_struct()
 
 
 cdef class SortingColumn:

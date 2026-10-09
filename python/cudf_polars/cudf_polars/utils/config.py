@@ -27,7 +27,7 @@ import functools
 import importlib.util
 import json
 import os
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 import kvikio
 import kvikio.defaults
@@ -233,7 +233,7 @@ T = TypeVar("T")
 DefaultT = TypeVar("DefaultT")
 
 
-def _make_default_factory(
+def _make_default_factory[T, DefaultT](
     key: str, converter: Callable[[str], T], *, default: DefaultT
 ) -> Callable[[], T | DefaultT]:
     def default_factory() -> T | DefaultT:
@@ -1513,7 +1513,7 @@ ExecutorType = TypeVar("ExecutorType", StreamingExecutor, InMemoryExecutor)
 
 
 @dataclasses.dataclass(frozen=True, eq=True)
-class ConfigOptions(Generic[ExecutorType]):
+class ConfigOptions[ExecutorType: (StreamingExecutor, InMemoryExecutor)]:
     """
     Configuration for the polars GPUEngine.
 

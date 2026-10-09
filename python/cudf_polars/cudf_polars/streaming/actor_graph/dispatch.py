@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import dataclasses
 from functools import singledispatch
-from typing import TYPE_CHECKING, Any, NamedTuple, TypeAlias, TypedDict
+from typing import TYPE_CHECKING, Any, NamedTuple, TypedDict
 
 from cudf_polars.typing import GenericTransformer
 
@@ -121,7 +121,7 @@ def ir_context_for_node(rec: SubNetGenerator, ir: IR) -> IRExecutionContext:
     return ir_context
 
 
-SubNetGenerator: TypeAlias = GenericTransformer[
+type SubNetGenerator = GenericTransformer[
     "IR", "tuple[dict[IR, list[Any]], dict[IR, ChannelManager]]", GenState
 ]
 """Protocol for Generating a streaming sub-network."""

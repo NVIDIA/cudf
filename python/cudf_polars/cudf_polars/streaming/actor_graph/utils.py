@@ -15,7 +15,7 @@ from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from functools import reduce
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import pylibcudf as plc
 import rmm.mr
@@ -86,15 +86,15 @@ if TYPE_CHECKING:
     from cudf_polars.typing import Schema
 
 
-InterRankScheme: TypeAlias = HashScheme | OrderScheme | None
-PartitioningScheme: TypeAlias = InterRankScheme | Literal["inherit"]
-OrderingMetadata: TypeAlias = dict[int, OrderKey]
+type InterRankScheme = HashScheme | OrderScheme | None
+type PartitioningScheme = InterRankScheme | Literal["inherit"]
+type OrderingMetadata = dict[int, OrderKey]
 
 # Partitioning-level predicates:
 # - "flat": inter-rank scheme with local layout inherited from it.
 # - "inter_rank": inter-rank scheme only.
 # - "local": explicit local scheme only.
-PartitioningLevel: TypeAlias = Literal["flat", "inter_rank", "local"]
+type PartitioningLevel = Literal["flat", "inter_rank", "local"]
 
 # cuDF column/concatenate row limit (int32)
 CUDF_ROW_LIMIT = 2**31 - 1

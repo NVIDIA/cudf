@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import operator
 from functools import reduce
-from typing import TYPE_CHECKING, TypeAlias, TypedDict
+from typing import TYPE_CHECKING, TypedDict
 
 import polars as pl
 
@@ -89,7 +89,9 @@ class State(TypedDict):
     unique_names: Generator[str, None, None]
 
 
-ExprDecomposer: TypeAlias = "GenericTransformer[Expr, tuple[Expr, IR, MutableMapping[IR, PartitionInfo]], State]"
+type ExprDecomposer = GenericTransformer[
+    Expr, tuple[Expr, IR, MutableMapping[IR, PartitionInfo]], State
+]
 """Protocol for decomposing expressions."""
 
 

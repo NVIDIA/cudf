@@ -19,7 +19,7 @@ authors = [
 ]
 license = "Apache-2.0"
 license-files = ["LICENSE"]
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "cuda-bindings>=13.0.2,<14.0",
     "cudf-streaming==26.12.*,>=0.0.0a0",
@@ -36,7 +36,6 @@ classifiers = [
     "Topic :: Database",
     "Topic :: Scientific/Engineering",
     "Programming Language :: Python",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
@@ -115,7 +114,7 @@ omit = [
 [tool.ruff]
 line-length = 88
 indent-width = 4
-target-version = "py311"
+target-version = "py312"
 fix = true
 
 [tool.ruff.lint]

@@ -17,7 +17,7 @@ authors = [
     { name = "NVIDIA Corporation" },
 ]
 license = "Apache-2.0"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 classifiers = [
     "Intended Audience :: Developers",
     "Topic :: Database",

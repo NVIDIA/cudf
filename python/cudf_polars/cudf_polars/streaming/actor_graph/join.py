@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from functools import partial
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias, assert_never
+from typing import TYPE_CHECKING, Any, Literal, assert_never
 
 from cudf_streaming import CardinalityEstimator
 from cudf_streaming.channel_metadata import (
@@ -163,10 +163,8 @@ class OrderedJoinStrategy:
     """Join-output ordering metadata."""
 
 
-JoinStrategy: TypeAlias = (
-    BroadcastJoinStrategy | ShuffleJoinStrategy | OrderedJoinStrategy
-)
-OrderedJoinDecision: TypeAlias = Literal[
+type JoinStrategy = BroadcastJoinStrategy | ShuffleJoinStrategy | OrderedJoinStrategy
+type OrderedJoinDecision = Literal[
     "ordered_aligned",
     "ordered_adjust_left",
     "ordered_adjust_right",

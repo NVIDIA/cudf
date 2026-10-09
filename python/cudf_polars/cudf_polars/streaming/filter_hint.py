@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeAlias
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from cudf_polars.dsl.ir import IR, Join
 
@@ -18,8 +18,8 @@ if TYPE_CHECKING:
     from cudf_polars.typing import Schema
 
 
-JoinSide: TypeAlias = Literal["left", "right"]
-HintPlacement: TypeAlias = Literal["join_input", "pushed_down"]
+type JoinSide = Literal["left", "right"]
+type HintPlacement = Literal["join_input", "pushed_down"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,7 +34,7 @@ class ExternalDomain:
     """A prefilter domain provided by an additional join input."""
 
 
-PrefilterDomain: TypeAlias = JoinInputDomain | ExternalDomain
+type PrefilterDomain = JoinInputDomain | ExternalDomain
 
 
 @dataclass(frozen=True, slots=True)

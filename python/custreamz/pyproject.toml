@@ -19,7 +19,7 @@ authors = [
 ]
 license = "Apache-2.0"
 license-files = ["LICENSE"]
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "confluent-kafka",
     "cudf==26.12.*,>=0.0.0a0",
@@ -32,7 +32,6 @@ classifiers = [
     "Topic :: Scientific/Engineering",
     "Topic :: Apache Kafka",
     "Programming Language :: Python",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Helpers for :class:`polars.GPUEngine` tests."""
@@ -174,7 +174,9 @@ def merge_streaming_options(
 EngineT = TypeVar("EngineT", bound="StreamingEngine")
 
 
-def configure_streaming_engine(engine: EngineT, options: StreamingOptions) -> EngineT:
+def configure_streaming_engine[EngineT: "StreamingEngine"](
+    engine: EngineT, options: StreamingOptions
+) -> EngineT:
     """
     Configure an engine with a set of options.
 

@@ -11,7 +11,7 @@ directory. No local `docker build` is required, and no GPU is required to build.
 ### Prerequisites
 
 1. Docker is installed and the current user can run `docker`.
-2. Network access to pull `rapidsai/ci-wheel:<rapids>-cuda<ver>-rockylinux8-py3.11`.
+2. Network access to pull `rapidsai/ci-wheel:<rapids>-cuda<ver>-rockylinux8-py3.12`.
 
 ### Local one-command shortcut
 

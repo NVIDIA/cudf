@@ -31,9 +31,6 @@ from typing import (
     TYPE_CHECKING,
     Any,
     ClassVar,
-    ParamSpec,
-    TypeAlias,
-    TypeVar,
     assert_never,
     overload,
 )
@@ -95,9 +92,6 @@ if TYPE_CHECKING:
     from cudf_polars.utils.config import ParquetOptions
     from cudf_polars.utils.timer import Timer
 
-    P = ParamSpec("P")
-    T = TypeVar("T")
-
 __all__ = [
     "IR",
     "Cache",
@@ -156,7 +150,7 @@ class IRExecutionContext:
     quent_ir_execution_context: QuentIRExecutionContext | None = None
     tracer: ActorTracer | None = None
 
-    async def to_thread(
+    async def to_thread[**P, T](
         self, func: Callable[P, T], /, *args: P.args, **kwargs: P.kwargs
     ) -> T:
         """
@@ -2772,7 +2766,7 @@ def _strip_predicate_casts(node: expr.Expr) -> expr.Expr:
     return node.reconstruct([_strip_predicate_casts(child) for child in node.children])
 
 
-_ColumnKey: TypeAlias = tuple[plc_expr.TableReference, str]
+type _ColumnKey = tuple[plc_expr.TableReference, str]
 
 
 def _colref_comparisons(

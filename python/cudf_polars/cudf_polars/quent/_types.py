@@ -13,7 +13,7 @@ import itertools
 import sys
 import time
 import uuid
-from typing import TYPE_CHECKING, Any, Literal, Self, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, Literal, Self, cast
 
 from cudf_polars import __version__
 
@@ -481,11 +481,11 @@ class QueryGroup:
 
 
 ScalarValue = int | float | str | bool
-StructValue: TypeAlias = dict[str, "Value | None"]
+type StructValue = dict[str, "Value | None"]
 HomogeneousListValue = (
     list[int] | list[float] | list[str] | list[bool] | list[StructValue]
 )
-Value: TypeAlias = ScalarValue | HomogeneousListValue | StructValue
+type Value = ScalarValue | HomogeneousListValue | StructValue
 
 _INT_VARIANTS: tuple[tuple[str, int, int], ...] = (
     ("U8", 0, 2**8 - 1),

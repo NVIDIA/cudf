@@ -17,7 +17,7 @@ tracked separately in ``ChannelMetadata``.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, TypeAlias
+from typing import TYPE_CHECKING, Literal
 
 from cudf_polars.dsl import expr
 from cudf_polars.dsl.ir import (
@@ -58,7 +58,7 @@ class StrictPartitioningRequest:
     keys: tuple[str, ...]
 
 
-OrderRequestSource: TypeAlias = Literal["consumer", "hint"]
+type OrderRequestSource = Literal["consumer", "hint"]
 
 
 @dataclass(frozen=True)
@@ -70,7 +70,7 @@ class OrderPartitioningRequest:
     source: OrderRequestSource = "consumer"
 
 
-PartitioningRequest: TypeAlias = StrictPartitioningRequest | OrderPartitioningRequest
+type PartitioningRequest = StrictPartitioningRequest | OrderPartitioningRequest
 
 
 def collect_partitioning_requests(

@@ -41,7 +41,7 @@ quiet-level = 3
 
 [tool.ruff]
 line-length = 79
-target-version = "py311"
+target-version = "py312"
 
 [tool.ruff.lint]
 typing-modules = ["cudf._typing"]

@@ -113,6 +113,7 @@ CUDF_KERNEL void copy_range_kernel(SourceValueIterator source_value_begin,
  * @param target_end The index of the last element in the target range
  * (exclusive)
  * @param stream CUDA stream used for device memory operations and kernel launches.
+ * @param mr Memory resources used for temporary allocations
  */
 template <typename SourceValueIterator, typename SourceValidityIterator>
 void copy_range(SourceValueIterator source_value_begin,
@@ -120,7 +121,8 @@ void copy_range(SourceValueIterator source_value_begin,
                 mutable_column_view& target,
                 size_type target_begin,
                 size_type target_end,
-                cuda::stream_ref stream)
+                cuda::stream_ref stream,
+                cudf::memory_resources mr)
 {
   CUDF_EXPECTS((target_begin <= target_end) && (target_begin >= 0) &&
                  (target_begin < target.size()) && (target_end <= target.size()),
@@ -138,16 +140,17 @@ void copy_range(SourceValueIterator source_value_begin,
 
   auto grid = cudf::detail::grid_1d{num_items, block_size, 1};
 
+  auto const temp_mr = mr.get_temporary_mr();
+
   if (target.nullable()) {
-    cudf::detail::device_scalar<size_type> null_count(
-      target.null_count(), stream, cudf::get_current_device_resource_ref());
+    cudf::detail::device_scalar<size_type> null_count(target.null_count(), stream, temp_mr);
 
     auto kernel =
       copy_range_kernel<block_size, SourceValueIterator, SourceValidityIterator, T, true>;
     kernel<<<grid.num_blocks, block_size, 0, stream.get()>>>(
       source_value_begin,
       source_validity_begin,
-      *mutable_column_device_view::create(target, stream),
+      *mutable_column_device_view::create(target, stream, temp_mr),
       target_begin,
       target_end,
       null_count.data());
@@ -159,7 +162,7 @@ void copy_range(SourceValueIterator source_value_begin,
     kernel<<<grid.num_blocks, block_size, 0, stream.get()>>>(
       source_value_begin,
       source_validity_begin,
-      *mutable_column_device_view::create(target, stream),
+      *mutable_column_device_view::create(target, stream, temp_mr),
       target_begin,
       target_end,
       nullptr);

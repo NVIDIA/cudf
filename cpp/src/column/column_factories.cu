@@ -34,7 +34,9 @@ struct column_from_scalar_dispatch {
     auto output_column =
       make_fixed_width_column(value.type(), size, mask_state::UNALLOCATED, stream, mr);
     auto view = output_column->mutable_view();
-    detail::fill_in_place(view, 0, size, value, stream);
+    // TODO: route through the caller's memory resources once make_column_from_scalar is migrated
+    auto const temp_mr = cudf::get_current_device_resource_ref();
+    detail::fill_in_place(view, 0, size, value, stream, cudf::memory_resources{temp_mr, temp_mr});
     return output_column;
   }
 };

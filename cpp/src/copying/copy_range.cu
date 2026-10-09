@@ -39,7 +39,10 @@ void in_place_copy_range(cudf::column_view const& source,
                          cudf::size_type target_begin,
                          cuda::stream_ref stream)
 {
-  auto p_source_device_view = cudf::column_device_view::create(source, stream);
+  // TODO: route through the caller's memory resources once copy_range_in_place is migrated
+  auto const temp_mr        = cudf::get_current_device_resource_ref();
+  auto const temp_mrs       = cudf::memory_resources{temp_mr, temp_mr};
+  auto p_source_device_view = cudf::column_device_view::create(source, stream, temp_mr);
   if (source.has_nulls()) {
     cudf::detail::copy_range(
       cudf::detail::make_null_replacement_iterator<T>(*p_source_device_view, T()) + source_begin,
@@ -47,14 +50,16 @@ void in_place_copy_range(cudf::column_view const& source,
       target,
       target_begin,
       target_begin + (source_end - source_begin),
-      stream);
+      stream,
+      temp_mrs);
   } else {
     cudf::detail::copy_range(p_source_device_view->begin<T>() + source_begin,
                              cuda::make_constant_iterator(true),  // dummy
                              target,
                              target_begin,
                              target_begin + (source_end - source_begin),
-                             stream);
+                             stream,
+                             temp_mrs);
   }
 }
 

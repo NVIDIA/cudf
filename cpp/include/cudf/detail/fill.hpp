@@ -24,7 +24,8 @@ void fill_in_place(mutable_column_view& destination,
                    size_type begin,
                    size_type end,
                    scalar const& value,
-                   cuda::stream_ref stream);
+                   cuda::stream_ref stream,
+                   cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::fill

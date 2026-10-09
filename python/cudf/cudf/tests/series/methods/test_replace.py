@@ -439,6 +439,26 @@ def test_series_replace_errors():
             [2, pd.NA],
         ),
         (
+            lambda: cudf.Series([1, 2, None, 3], dtype="Int64"),
+            [None, 1],
+            [1, 5],
+        ),
+        (
+            lambda: cudf.Series([1.0, np.nan, 3.0], nan_as_null=False),
+            np.nan,
+            0.0,
+        ),
+        (
+            lambda: cudf.Series([1.5, 2.5, None, np.nan], nan_as_null=False),
+            [np.nan, 1.5],
+            [1.5, 9.0],
+        ),
+        (
+            lambda: cudf.Series(["a", "b", "c", None]),
+            [pd.NA, "a"],
+            ["a", "z"],
+        ),
+        (
             lambda: cudf.Series(["a", "q", "t", None], dtype="category"),
             None,
             "z",
@@ -452,6 +472,11 @@ def test_series_replace_errors():
             lambda: cudf.Series(["a", None, "t", None], dtype="category"),
             [None, "t"],
             ["p", None],
+        ),
+        (
+            lambda: cudf.Series([True, False, None, False], dtype="category"),
+            [None],
+            [True],
         ),
     ],
 )
@@ -467,6 +492,26 @@ def test_replace_nulls(gsr, old, new):
     else:
         actual = gsr.replace(old, new)
         assert_eq(expected, actual)
+
+
+@pytest.mark.parametrize(
+    "old,new,expected",
+    [
+        ([None], [True], [True, False, True, False]),
+        ({None: True}, None, [True, False, True, False]),
+        ([pd.NA], [False], [True, False, False, False]),
+        ([True, None], [False, True], [False, False, True, False]),
+    ],
+)
+def test_replace_nulls_bool(old, new, expected):
+    # pandas returns object dtype for a bool column with nulls, so
+    # compare against the expected values directly
+    gsr = cudf.Series([True, False, None, False])
+    if new is None:
+        actual = gsr.replace(old)
+    else:
+        actual = gsr.replace(old, new)
+    assert_eq(actual, cudf.Series(expected))
 
 
 def test_replace_with_index_objects():

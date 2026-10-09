@@ -130,8 +130,7 @@ std::pair<std::unique_ptr<column>, std::unique_ptr<column>> purge_null_entries(
                               new_gather_map->mutable_view().template begin<size_type>(),
                               input_row_not_null,
                               stream,
-                              cudf::memory_resources{cudf::get_current_device_resource_ref(),
-                                                     cudf::get_current_device_resource_ref()});
+                              mr);
 
   // Recalculate offsets after null entries are purged.
   auto new_sizes = make_fixed_width_column(data_type{type_to_id<size_type>()},

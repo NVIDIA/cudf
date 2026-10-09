@@ -245,8 +245,7 @@ filter_join_indices(cudf::table_view const& left,
             cuda::counting_iterator{static_cast<size_type>(left_indices.size())},
             valid_predicate,
             stream,
-            cudf::memory_resources{cudf::get_current_device_resource_ref(),
-                                   cudf::get_current_device_resource_ref()});
+            mr);
 
     if (num_valid == 0) { return make_empty_result(); }
 
@@ -264,8 +263,7 @@ filter_join_indices(cudf::table_view const& left,
       output_iter,
       [valid_predicate] __device__(size_type idx) -> bool { return valid_predicate(idx); },
       stream,
-      cudf::memory_resources{cudf::get_current_device_resource_ref(),
-                             cudf::get_current_device_resource_ref()});
+      mr);
 
     return std::pair{std::move(filtered_left_indices), std::move(filtered_right_indices)};
 
@@ -350,8 +348,7 @@ filter_join_indices(cudf::table_view const& left,
                                   output_iter,
                                   valid_predicate,
                                   stream,
-                                  cudf::memory_resources{cudf::get_current_device_resource_ref(),
-                                                         cudf::get_current_device_resource_ref()});
+                                  mr);
     }
     if (num_invalid > 0) {
       {
@@ -369,8 +366,7 @@ filter_join_indices(cudf::table_view const& left,
           filtered_left_indices->begin() + num_valid,
           is_unmatched_idx,
           stream,
-          cudf::memory_resources{cudf::get_current_device_resource_ref(),
-                                 cudf::get_current_device_resource_ref()});
+          mr);
       }
       cub::DeviceTransform::Fill(
         filtered_right_indices->begin() + num_valid, num_invalid, JoinNoMatch, stream.get());

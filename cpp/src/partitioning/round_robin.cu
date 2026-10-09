@@ -110,8 +110,7 @@ std::pair<std::unique_ptr<cudf::table>, std::vector<cudf::size_type>> degenerate
       d_row_indices.begin(),
       [nrows] __device__(auto index) -> bool { return (index < nrows); },
       stream,
-      cudf::memory_resources{cudf::get_current_device_resource_ref(),
-                             cudf::get_current_device_resource_ref()});
+      mr);
 
     //...and then use the result, d_row_indices, as gather map:
     auto uniq_tbl = cudf::detail::gather(input,

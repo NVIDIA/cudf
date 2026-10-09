@@ -660,8 +660,7 @@ decompress_page_data(host_span<ColumnChunkDesc const> chunks,
                            return res.status == codec_status::SUCCESS;
                          }),
                          stream,
-                         cudf::memory_resources{cudf::get_current_device_resource_ref(),
-                                                cudf::get_current_device_resource_ref()}),
+                         mr),
     "Error during decompression");
 
   return {std::move(pass_decomp_pages), std::move(subpass_decomp_pages)};

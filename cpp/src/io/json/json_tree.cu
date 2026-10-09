@@ -289,13 +289,7 @@ tree_meta_t get_tree_representation(device_span<PdaTokenT const> tokens,
   }
 
   auto const num_tokens = tokens.size();
-  auto const num_nodes =
-    cudf::detail::count_if(tokens.begin(),
-                           tokens.end(),
-                           is_node,
-                           stream,
-                           cudf::memory_resources{cudf::get_current_device_resource_ref(),
-                                                  cudf::get_current_device_resource_ref()});
+  auto const num_nodes  = cudf::detail::count_if(tokens.begin(), tokens.end(), is_node, stream, mr);
 
   // Node levels: transform_exclusive_scan, copy_if.
   rmm::device_uvector<TreeDepthT> node_levels(num_nodes, stream, mr);
@@ -317,15 +311,13 @@ tree_meta_t get_tree_representation(device_span<PdaTokenT const> tokens,
                            token_level_output_it,
                            size_type{0});
 
-    auto const node_levels_end =
-      cudf::detail::copy_if(token_levels.begin(),
-                            token_levels.end(),
-                            tokens.begin(),
-                            node_levels.begin(),
-                            is_node,
-                            stream,
-                            cudf::memory_resources{cudf::get_current_device_resource_ref(),
-                                                   cudf::get_current_device_resource_ref()});
+    auto const node_levels_end = cudf::detail::copy_if(token_levels.begin(),
+                                                       token_levels.end(),
+                                                       tokens.begin(),
+                                                       node_levels.begin(),
+                                                       is_node,
+                                                       stream,
+                                                       mr);
     CUDF_EXPECTS(
       !depth_out_of_range.value(stream),
       "JSON token nesting depth is outside the supported range for TreeDepthT [" +
@@ -349,8 +341,7 @@ tree_meta_t get_tree_representation(device_span<PdaTokenT const> tokens,
                                 node_token_ids.begin(),
                                 is_node,
                                 stream,
-                                cudf::memory_resources{cudf::get_current_device_resource_ref(),
-                                                       cudf::get_current_device_resource_ref()});
+                                mr);
 
     // previous push node_id
     // if previous node is a push, then i-1
@@ -400,13 +391,7 @@ tree_meta_t get_tree_representation(device_span<PdaTokenT const> tokens,
   auto const node_categories_it =
     cuda::make_transform_output_iterator(node_categories.begin(), token_to_node{});
   auto const node_categories_end =
-    cudf::detail::copy_if(tokens.begin(),
-                          tokens.end(),
-                          node_categories_it,
-                          is_node,
-                          stream,
-                          cudf::memory_resources{cudf::get_current_device_resource_ref(),
-                                                 cudf::get_current_device_resource_ref()});
+    cudf::detail::copy_if(tokens.begin(), tokens.end(), node_categories_it, is_node, stream, mr);
   CUDF_EXPECTS(cuda::std::distance(node_categories_it, node_categories_end) ==
                  static_cast<std::ptrdiff_t>(num_nodes),
                "node category count mismatch");
@@ -430,8 +415,7 @@ tree_meta_t get_tree_representation(device_span<PdaTokenT const> tokens,
       return is_node(tokens_gpu[i]);
     },
     stream,
-    cudf::memory_resources{cudf::get_current_device_resource_ref(),
-                           cudf::get_current_device_resource_ref()});
+    mr);
   CUDF_EXPECTS(cuda::std::distance(node_range_out_it, node_range_out_end) ==
                  static_cast<std::ptrdiff_t>(num_nodes),
                "node range count mismatch");
@@ -454,12 +438,7 @@ tree_meta_t get_tree_representation(device_span<PdaTokenT const> tokens,
       };
     };
     auto const num_nested =
-      cudf::detail::count_if(tokens.begin(),
-                             tokens.end(),
-                             is_nested,
-                             stream,
-                             cudf::memory_resources{cudf::get_current_device_resource_ref(),
-                                                    cudf::get_current_device_resource_ref()});
+      cudf::detail::count_if(tokens.begin(), tokens.end(), is_nested, stream, mr);
     rmm::device_uvector<TreeDepthT> token_levels(num_nested, stream);
     rmm::device_uvector<NodeIndexT> token_id(num_nested, stream);
     rmm::device_uvector<NodeIndexT> parent_node_ids(num_nested, stream);
@@ -484,8 +463,7 @@ tree_meta_t get_tree_representation(device_span<PdaTokenT const> tokens,
                                 zipped_out_it,
                                 is_nested,
                                 stream,
-                                cudf::memory_resources{cudf::get_current_device_resource_ref(),
-                                                       cudf::get_current_device_resource_ref()});
+                                mr);
 
     thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                            token_levels.begin(),

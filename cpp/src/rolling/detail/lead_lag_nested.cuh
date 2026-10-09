@@ -168,8 +168,7 @@ std::unique_ptr<column> compute_lead_lag_for_nested(aggregation::Kind op,
                           scatter_map.begin(),
                           is_null_index_predicate(input.size(), gather_map.begin<size_type>()),
                           stream,
-                          cudf::memory_resources{cudf::get_current_device_resource_ref(),
-                                                 cudf::get_current_device_resource_ref()});
+                          mr);
 
   scatter_map.resize(cuda::std::distance(scatter_map.begin(), scatter_map_end), stream);
   // Bail early, if all LEAD/LAG computations succeeded. No defaults need be substituted.

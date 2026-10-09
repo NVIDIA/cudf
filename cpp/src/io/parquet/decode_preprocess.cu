@@ -11,6 +11,7 @@
 
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/hashing/detail/default_hash.cuh>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/exec_policy.hpp>
 
@@ -18,6 +19,8 @@
 #include <cuda/barrier>
 #include <cuda/std/iterator>
 #include <cuda/std/limits>
+#include <thrust/copy.h>
+#include <thrust/fill.h>
 
 namespace cudf::io::parquet::detail {
 
@@ -28,6 +31,138 @@ namespace {
 // # of threads we're decoding with
 constexpr int preprocess_block_size   = 512;
 constexpr int level_decode_block_size = 128;
+
+/**
+ * @brief Computes the nz map for one page.
+ *
+ * Walks the page's already-decoded definition levels once, writing
+ *  - the output column's null mask for the rows this page contributes
+ *  - `nz_idx[rank] = input position of the rank-th valid value`
+ *  - `nz_count`.
+ * The matching decode kernel reads that map so it can skip walking levels.
+ *
+ * @param[in,out] pages All pages to be processed
+ * @param[in] chunks All chunks to be processed
+ * @param[in] page_mask Boolean vector indicating which pages need to be processed
+ * @param[in] min_row Minimum row index to read
+ * @param[in] num_rows Number of rows to read starting from min_row
+ */
+template <typename level_t>
+CUDF_KERNEL void __launch_bounds__(level_decode_block_size)
+  precompute_flat_nz_map_kernel(PageInfo* pages,
+                                device_span<ColumnChunkDesc const> chunks,
+                                cudf::device_span<bool const> page_mask,
+                                cudf::device_span<bool> non_nz_map_page_mask,
+                                size_t min_row,
+                                size_t num_rows)
+{
+  static constexpr int num_warps = level_decode_block_size / cudf::detail::warp_size;
+  __shared__ __align__(16) full_page_decode_state state_g;
+  __shared__ int warp_valid_counts[num_warps];
+  auto const block   = cg::this_thread_block();
+  int const page_idx = blockIdx.x;
+  int const t        = block.thread_rank();
+  PageInfo* const pp = &pages[page_idx];
+  if (!pp->has_nz_map(nz_map_kind::DELTA_FLAT)) { return; }
+  if (!page_mask.empty() && !page_mask[page_idx]) { return; }
+
+  // This kernel must mark that it is producing nz map for this page so that
+  // downstream decode kernels can use the boolean buffer to determine whether or not to run.
+  if (t == 0 && !non_nz_map_page_mask.empty()) { non_nz_map_page_mask[page_idx] = false; }
+
+  auto* const s = &state_g;
+  null_count_back_copier _{s, t};
+  if (!setup_local_page_info(
+        s, pp, chunks, min_row, num_rows, all_types_filter{}, page_processing_stage::DECODE)) {
+    return;
+  }
+
+  auto& ni = s->nesting.nesting_info[s->setup.col.max_nesting_depth - 1];
+  // The per-page level buffers are slices of a shared allocation, and bounds preprocessing sizes
+  // each buffer to only the values inside the requested row range, so for a sliced read it holds
+  // fewer than the page contains; scanning past `num_decoded_level_values` reads the next page's
+  // levels. A required page has no level streams at all, so zero is its normal state and the whole
+  // page is in range.
+  int const decoded_value_limit =
+    pp->num_decoded_level_values > 0
+      ? min(s->setup.page.num_input_values, pp->num_decoded_level_values)
+      : s->setup.page.num_input_values;
+  int const first_row   = min(s->setup.first_row, decoded_value_limit);
+  int const value_limit = min(decoded_value_limit, first_row + s->setup.num_rows);
+
+  // A required page's rank map is the identity, so there is nothing to materialize; the consumer
+  // synthesizes it. `nz_idx` stays null, which is what tells the consumer to do that.
+  if (!should_process_nulls(s)) {
+    if (t == 0) { pp->nz_map->nz_count = value_limit; }
+    block.sync();
+    return;
+  }
+
+  // The other way to reach `num_decoded_level_values == 0`: an optional page that contributes no
+  // rows to this read gets no level buffer, and there is nothing to map.
+  auto const* def = reinterpret_cast<level_t const*>(pp->lvl_decode_buf[level_type::DEFINITION]);
+  if (def == nullptr) {
+    if (t == 0) { pp->nz_map->nz_count = 0; }
+    block.sync();
+    return;
+  }
+
+  auto* const nz_idx = pp->nz_map->nz_idx;
+  int const lane     = t % cudf::detail::warp_size;
+  int const warp_id  = t / cudf::detail::warp_size;
+  int valid_count    = 0;
+
+  // Hoisted for the same reason as `nz_idx` above: `store_validity` writes through a global
+  // `bitmask_type*`, which the compiler cannot prove does not alias the shared decode state, so it
+  // re-reads these from shared memory on every iteration otherwise.
+  auto* const valid_map       = ni.valid_map;
+  auto const valid_map_offset = ni.valid_map_offset;
+
+  for (int value_base = 0; value_base < value_limit; value_base += level_decode_block_size) {
+    int const value_pos   = value_base + t;
+    int const is_valid    = value_pos < value_limit && def[value_pos] > 0;
+    auto const valid_mask = ballot(is_valid);
+
+    // Write the output column's null mask, which only requires the ballot. Queuing the write here
+    // allows us to submit the write operation before the synchronizations below.
+    {
+      bool const in_output   = value_pos >= first_row && value_pos < value_limit;
+      auto const output_mask = ballot(in_output);
+      int const write_start  = __ffs(output_mask) - 1;
+      if (write_start >= 0 && lane == 0 && valid_map != nullptr) {
+        int const write_end = cudf::detail::warp_size - __clz(output_mask);
+        store_validity(valid_map_offset + value_base + (t - lane) + write_start - first_row,
+                       valid_map,
+                       valid_mask >> write_start,
+                       write_end - write_start);
+      }
+    }
+
+    // The ballot already carries every rank in the warp, so the block-wide exclusive sum is a
+    // popcount plus a four-element scan, with no shuffle chain and no block scan temp storage.
+    if (lane == 0) { warp_valid_counts[warp_id] = __popc(valid_mask); }
+    block.sync();
+    int warp_prefix       = 0;
+    int block_valid_count = 0;
+    for (int w = 0; w < num_warps; ++w) {
+      if (w < warp_id) { warp_prefix += warp_valid_counts[w]; }
+      block_valid_count += warp_valid_counts[w];
+    }
+    int const thread_valid_count = warp_prefix + __popc(valid_mask & ((1u << lane) - 1));
+
+    if (is_valid) { nz_idx[valid_count + thread_valid_count] = value_pos; }
+    valid_count += block_valid_count;
+    // This sync ensures that a warp reaching iteration i+1 does not overwrite its
+    // `warp_valid_counts` entry while another warp is still on iteration i, summing those entries
+    // above.
+    block.sync();
+  }
+
+  // The consumer recomputes the null count for the rows this page contributes, so the producer
+  // writes only the rank map and its size.
+  if (t == 0) { pp->nz_map->nz_count = valid_count; }
+  block.sync();
+}
 
 using unused_state_buf = page_state_buffers_s<0, 0, 0>;
 
@@ -524,6 +659,42 @@ void preprocess_levels(cudf::detail::hostdevice_span<PageInfo> pages,
         pages.device_ptr(), chunks, page_mask, min_row, num_rows);
     CUDF_CUDA_TRY(cudaGetLastError());
   }
+}
+
+void precompute_flat_nz_map(cudf::detail::hostdevice_span<PageInfo> pages,
+                            cudf::detail::hostdevice_span<ColumnChunkDesc const> chunks,
+                            cudf::device_span<bool const> page_mask,
+                            cudf::device_span<bool> non_nz_map_page_mask,
+                            size_t min_row,
+                            size_t num_rows,
+                            int level_type_size,
+                            cuda::stream_ref stream)
+{
+  if (pages.size() == 0) { return; }
+
+  // Seed the level-decoding kernels' page mask before clearing anything out of it.
+  //
+  // Note: When a second nz_map producer is added it must move out to the caller, or it would wipe
+  // the entries the first one already cleared.
+  if (not non_nz_map_page_mask.empty()) {
+    auto const policy = rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref());
+    if (page_mask.empty()) {
+      thrust::fill(policy, non_nz_map_page_mask.begin(), non_nz_map_page_mask.end(), true);
+    } else {
+      thrust::copy(policy, page_mask.begin(), page_mask.end(), non_nz_map_page_mask.begin());
+    }
+  }
+
+  dim3 const grid(pages.size(), 1);
+  dim3 const block(level_decode_block_size, 1);
+  if (level_type_size == 1) {
+    precompute_flat_nz_map_kernel<uint8_t><<<grid, block, 0, stream.get()>>>(
+      pages.device_ptr(), chunks, page_mask, non_nz_map_page_mask, min_row, num_rows);
+  } else {
+    precompute_flat_nz_map_kernel<uint16_t><<<grid, block, 0, stream.get()>>>(
+      pages.device_ptr(), chunks, page_mask, non_nz_map_page_mask, min_row, num_rows);
+  }
+  CUDF_CUDA_TRY(cudaGetLastError());
 }
 
 }  // namespace cudf::io::parquet::detail

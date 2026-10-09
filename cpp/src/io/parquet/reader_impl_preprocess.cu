@@ -40,26 +40,22 @@ namespace cudf::io::parquet::detail {
 namespace {
 
 /**
- * @brief Decide which level-prepass consumer, if any, can decode @p page.
+ * @brief Decide which nz map consumer, if any, can decode @p page.
  *
  * @param page Page to classify
  * @param chunk Column chunk the page belongs to
- * @return The page's prepass family, or `NONE` if no consumer can decode it
+ * @return The page's nz map kind, or `NONE` if no consumer can decode it
  */
-[[nodiscard]] level_prepass_family classify_prepass_family(PageInfo const& page,
-                                                           ColumnChunkDesc const& chunk)
+[[nodiscard]] nz_map_kind classify_nz_map_kind(PageInfo const& page, ColumnChunkDesc const& chunk)
 {
-  // For now, only the DELTA encodings have a prepass consumer.
-  bool const is_delta = BitAnd(page.kernel_mask,
-                               BitOr(decode_kernel_mask::DELTA_BINARY,
-                                     decode_kernel_mask::DELTA_BYTE_ARRAY,
-                                     decode_kernel_mask::DELTA_LENGTH_BA)) != 0;
-  if (!is_delta) { return level_prepass_family::NONE; }
+  // DELTA_BINARY_PACKED is the only encoding with an nz map consumer today.
+  bool const has_consumer = BitAnd(page.kernel_mask, decode_kernel_mask::DELTA_BINARY) != 0;
+  if (!has_consumer) { return nz_map_kind::NONE; }
 
   // Only flat (depth-1, non-repeated) columns have a consumer today. Lists and structs of delta
-  // leaves stay on the legacy path.
+  // leaves keep decoding their own levels.
   bool const is_flat = chunk.max_level[level_type::REPETITION] == 0 && chunk.max_nesting_depth <= 1;
-  return is_flat ? level_prepass_family::DELTA_FLAT : level_prepass_family::NONE;
+  return is_flat ? nz_map_kind::DELTA_FLAT : nz_map_kind::NONE;
 }
 
 // Tests the passed in logical type for a FIXED_LENGTH_BYTE_ARRAY column to see if it should
@@ -325,12 +321,12 @@ void reader_impl::allocate_level_decode_space()
     // Clear any selection left over from a previous subpass, on every page, including masked-out
     // ones. A subpass's page array is filled by copying whole `PageInfo` structs out of
     // `pass.pages`, so on the second and later subpasses of a pass these two fields can still hold
-    // what the previous subpass wrote, including a `prepass_state` pointer into scratch that
+    // what the previous subpass wrote, including a `nz_map` pointer into scratch that
     // subpass has since released. The reset has to precede the page-mask `continue` below, or a
     // masked-out page would keep that stale selection and carry the dangling pointer to the
     // device.
-    page.prepass_family = level_prepass_family::NONE;
-    page.prepass_state  = nullptr;
+    page.map_kind = nz_map_kind::NONE;
+    page.nz_map   = nullptr;
 
     // Skip pages that are masked out - no need to allocate level decode space for them
     if (!page_mask.is_empty() && !page_mask[idx]) {
@@ -341,7 +337,7 @@ void reader_impl::allocate_level_decode_space()
 
     auto const& chunk = pass.chunks[page.chunk_idx];
     // A masked-out page is never classified, so it is never selected and never allocated for.
-    if (_level_prepass_enabled) { page.prepass_family = classify_prepass_family(page, chunk); }
+    if (_nz_map_enabled) { page.map_kind = classify_nz_map_kind(page, chunk); }
 
     compute_page_level_decode_sizes(page,
                                     chunk,
@@ -385,67 +381,65 @@ void reader_impl::allocate_level_decode_space()
       std::max(def_level_sizes[idx], rep_level_sizes[idx]) / pass.level_type_size;
   }
 
-  // Nothing below can do anything with the prepass disabled: `classify_prepass_family` is not
+  // Nothing below can do anything with the nz map producer disabled: `classify_nz_map_kind` is not
   // called in that case, so every page is `NONE`. Return before allocating or scanning anything.
-  if (!_level_prepass_enabled) { return; }
+  if (!_nz_map_enabled) { return; }
 
-  // TODO: count the prepass scratch in the chunked-read budget, before the prepass is enabled by
-  // default.
+  // TODO: count the nz map scratch in the chunked-read budget, before the nz map producer is
+  // enabled by default.
   //
   // For now, both `level_decode_data` above and the allocations below are not tracked in the
-  // chunked-read budget. We will fix that once we start actually leveraging the prepass and
+  // chunked-read budget. We will fix that once we start actually leveraging the nz map producer and
   // therefore introduce some of the machinery that will be needed to calculate the memory usage.
   //
-  // Hand out the out-of-line prepass scratch. There is exactly one for each claimed page, so most
-  // pages (those that do not use the prepass) have nothing here. This information is only needed on
-  // the host. On device, a non-null `PageInfo::prepass_state` always indicates that state exists.
-  std::vector<size_t> prepass_slot(num_pages, std::numeric_limits<size_t>::max());
+  // Hand out the out-of-line nz map scratch. There is exactly one for each mapped page, so most
+  // pages (those that do not use the nz map producer) have nothing here. This information is only
+  // needed on the host. On device, a non-null `PageInfo::nz_map` always indicates that state
+  // exists.
+  std::vector<size_t> nz_map_slot(num_pages, std::numeric_limits<size_t>::max());
   size_t num_claimed = 0;
   for (size_t idx = 0; idx < num_pages; ++idx) {
-    if (pages[idx].prepass_family != level_prepass_family::NONE) {
-      prepass_slot[idx] = num_claimed++;
-    }
+    if (pages[idx].map_kind != nz_map_kind::NONE) { nz_map_slot[idx] = num_claimed++; }
   }
   if (num_claimed == 0) { return; }
 
-  subpass.prepass_state_buf =
-    cudf::detail::hostdevice_vector<page_prepass_state>(num_claimed, _stream);
+  subpass.nz_map_buf = cudf::detail::hostdevice_vector<page_nz_map>(num_claimed, _stream);
 
-  auto host_state = [&](size_t idx) -> page_prepass_state* {
-    return prepass_slot[idx] != std::numeric_limits<size_t>::max()
-             ? subpass.prepass_state_buf.host_ptr(prepass_slot[idx])
+  auto host_state = [&](size_t idx) -> page_nz_map* {
+    return nz_map_slot[idx] != std::numeric_limits<size_t>::max()
+             ? subpass.nz_map_buf.host_ptr(nz_map_slot[idx])
              : nullptr;
   };
 
-  // Point each claimed page at its scratch and size the flat valid-rank maps in a single walk.
+  // Point each mapped page at its scratch and size the flat valid-rank maps in a single walk.
   // `PageInfo` travels to the device, so the page carries the device address while the seeding
   // here goes through `host_state()`. A required page needs no map at all since its rank map is
   // the identity, which the consumer synthesizes rather than reading. The sizes are stored rather
   // than recomputed so that the loop below, which hands out the slices, cannot disagree with this
   // one.
   std::vector<size_t> flat_map_sizes(num_pages, 0);
-  size_t flat_prepass_size = 0;
+  size_t flat_nz_map_size = 0;
   for (size_t idx = 0; idx < num_pages; ++idx) {
     auto* const state = host_state(idx);
     if (state == nullptr) { continue; }
-    auto& page         = pages[idx];
-    page.prepass_state = subpass.prepass_state_buf.device_ptr(prepass_slot[idx]);
-    if (page.is_prepass_family(level_prepass_family::DELTA_FLAT)) {
+    auto& page  = pages[idx];
+    page.nz_map = subpass.nz_map_buf.device_ptr(nz_map_slot[idx]);
+    if (page.has_nz_map(nz_map_kind::DELTA_FLAT)) {
       auto const& chunk = pass.chunks[page.chunk_idx];
-      state->nz_count   = page_prepass_state::not_yet_produced;
+      state->nz_count   = page_nz_map::not_yet_produced;
       if (chunk.max_level[level_type::DEFINITION] != 0) {
         flat_map_sizes[idx] = static_cast<size_t>(page.num_input_values) * sizeof(uint32_t);
-        flat_prepass_size += flat_map_sizes[idx];
+        flat_nz_map_size += flat_map_sizes[idx];
       }
     }
   }
-  subpass.flat_prepass_data = cuda::device_buffer<std::byte>{
-    _stream, cudf::get_current_device_resource_ref(), flat_prepass_size, cuda::no_init};
-  auto* flat_prepass_ptr = reinterpret_cast<uint8_t*>(subpass.flat_prepass_data.data());
+  subpass.flat_nz_map_data = cuda::device_buffer<std::byte>{
+    _stream, cudf::get_current_device_resource_ref(), flat_nz_map_size, cuda::no_init};
+  auto* flat_nz_map_ptr = reinterpret_cast<uint8_t*>(subpass.flat_nz_map_data.data());
   for (size_t idx = 0; idx < num_pages; ++idx) {
     if (flat_map_sizes[idx] != 0) {
-      host_state(idx)->nz_idx = reinterpret_cast<uint32_t*>(flat_prepass_ptr);
-      flat_prepass_ptr += flat_map_sizes[idx];
+      host_state(idx)->nz_idx = reinterpret_cast<uint32_t*>(flat_nz_map_ptr);
+      flat_nz_map_ptr += flat_map_sizes[idx];
     }
   }
 }

@@ -333,30 +333,31 @@ struct PageNestingInfo {
 };
 
 /**
- * @brief Which level-prepass consumer a page uses, or NONE for the legacy decoders.
+ * @brief Which nz map consumer a page uses, or NONE to decode without precomputed validity
+ * data.
  *
- * The level prepass walks a page's definition levels once up front and publishes a valid-rank
+ * The nz map producer walks a page's definition levels once up front and precomputes a valid-rank
  * map, so that the decode kernel can place values without decoding levels
  * itself. For now, only the DELTA encodings have a consumer for the map. See
- * `classify_prepass_family` in reader_impl_preprocess.cu.
+ * `classify_nz_map_kind` in reader_impl_preprocess.cu.
  *
  * uint8_t to minimize the overhead in PageInfo
  */
-enum class level_prepass_family : uint8_t {
+enum class nz_map_kind : uint8_t {
   NONE       = 0,
   DELTA_FLAT = 1,
 };
 
 /**
- * @brief Level prepass scratch information
+ * @brief Per-page nz map scratch
  *
- * Contains a valid-rank map computed from the rep and def levels for later decode kernels to use
+ * Contains a valid-rank map computed from the definition levels for later decode kernels to use
  *
  * Reached through a pointer on `PageInfo`, like `PageNestingInfo`, rather than copied into a
  * per-kernel shared-memory struct: the map is indexed by rank straight out of global memory.
  */
-struct page_prepass_state {
-  // `nz_count` value meaning "claimed, but the producer has not run yet".
+struct page_nz_map {
+  // `nz_count` value meaning "this page has a map, but the producer has not run yet".
   static constexpr int32_t not_yet_produced = -1;
 
   // Valid-rank map: `nz_idx[rank]` is the input position of the rank-th valid value. Null for a
@@ -364,8 +365,8 @@ struct page_prepass_state {
   uint32_t* nz_idx{};
   // Negative until the producer runs; the page's valid count afterwards.
   int32_t nz_count{not_yet_produced};
-  // Producer-written count whose meaning depends on the page's family, which is why it is not
-  // named for one of them. `DELTA_FLAT`, the only family here, uses it for the page's null count.
+  // A second producer-written count, for map kinds that need one. Unused by `DELTA_FLAT`, whose
+  // consumer derives the null count from `nz_idx` and `nz_count` itself.
   int32_t aux_count{};
 };
 
@@ -447,21 +448,21 @@ struct PageInfo {
   bool is_compressed;                  // Whether the page is compressed (V2 header)
   bool has_value_info;  // true if str_bytes, num_valids, etc are derivable from page indexes
 
-  // prepass_family indicates which prepass consumer a page uses.
-  // `prepass_state` is null when the selector did not claim this page -- non-null *is* the
-  // selection flag.
-  level_prepass_family prepass_family{level_prepass_family::NONE};
-  page_prepass_state* prepass_state{};
+  // map_kind indicates which nz map consumer a page uses.
+  // `nz_map` is null when `classify_nz_map_kind` selected no consumer for this page --
+  // non-null *is* the selection flag.
+  nz_map_kind map_kind{nz_map_kind::NONE};
+  page_nz_map* nz_map{};
 
   /**
-   * @brief True when this page was selected for @p family's prepass.
+   * @brief True when this page carries an nz map of kind @p kind.
    *
-   * @param family Prepass family to test against
-   * @return True if the page carries prepass scratch for @p family
+   * @param kind Map kind to test against
+   * @return True if the page carries nz map scratch of kind @p kind
    */
-  [[nodiscard]] CUDF_HOST_DEVICE constexpr bool is_prepass_family(level_prepass_family family) const
+  [[nodiscard]] CUDF_HOST_DEVICE constexpr bool has_nz_map(nz_map_kind kind) const
   {
-    return prepass_state != nullptr && prepass_family == family;
+    return nz_map != nullptr && map_kind == kind;
   }
 };
 
@@ -1074,6 +1075,7 @@ void write_final_offsets(host_span<size_type const> offsets,
  * @param[in] min_row Minimum number of rows to read
  * @param[in] level_type_size Size in bytes of the type for level decoding
  * @param[in] page_mask Boolean vector indicating which pages need to be decoded
+ * @param[in] non_nz_map_page_mask Pages with no nz map, empty when no page has one
  * @param[out] error_code Error code for kernel failures
  * @param[in] stream CUDA stream to use
  */
@@ -1083,6 +1085,7 @@ void decode_delta_binary(cudf::detail::hostdevice_span<PageInfo> pages,
                          size_t min_row,
                          int level_type_size,
                          cudf::device_span<bool const> page_mask,
+                         cudf::device_span<bool const> non_nz_map_page_mask,
                          kernel_error::pointer error_code,
                          cuda::stream_ref stream);
 
@@ -1184,6 +1187,33 @@ void preprocess_levels(cudf::detail::hostdevice_span<PageInfo> pages,
                        size_t num_rows,
                        int level_type_size,
                        cuda::stream_ref stream);
+
+/**
+ * @brief Launches the kernel that computes the flat nz map
+ *
+ * Runs once per subpass, before the decode kernels, over the pages `classify_nz_map_kind`
+ * selected a consumer for. Writes
+ * `page_nz_map::nz_idx` / `nz_count` and the leaf column's null mask, so that the matching
+ * decode kernel can place values without walking definition levels itself.
+ *
+ * @param[in,out] pages All pages to be processed
+ * @param[in] chunks All chunks to be processed
+ * @param[in] page_mask Boolean vector indicating which pages need to be processed
+ * @param[out] non_nz_map_page_mask Page mask for the level-decoding kernels. Seeded here from
+ *             @p page_mask (all true when that is empty), then cleared for every page mapped
+ * @param[in] min_row Minimum row index to read
+ * @param[in] num_rows Number of rows to read starting from min_row
+ * @param[in] level_type_size Size in bytes of the type for level decoding (1 or 2)
+ * @param[in] stream CUDA stream to use
+ */
+void precompute_flat_nz_map(cudf::detail::hostdevice_span<PageInfo> pages,
+                            cudf::detail::hostdevice_span<ColumnChunkDesc const> chunks,
+                            cudf::device_span<bool const> page_mask,
+                            cudf::device_span<bool> non_nz_map_page_mask,
+                            size_t min_row,
+                            size_t num_rows,
+                            int level_type_size,
+                            cuda::stream_ref stream);
 
 /**
  * @brief Fills output offset entries for pruned string and list pages

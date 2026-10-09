@@ -90,6 +90,84 @@ TEST_F(ParquetReaderTest, ManyTinyStringPages)
   CUDF_TEST_EXPECT_TABLES_EQUAL(input, result.tbl->view());
 }
 
+// TODO: delete this test once the nz map is on by default.
+//
+// This test enables usage of the nz map producer and the corresponding delta binary kernels that
+// consume the nz map producer to validate them. Currently those kernels are gated by an environment
+// variable that will be removed once the full set of kernels has been merged and the end result
+// benchmarked. Once the default flips, the rest of the suite covers those paths and this has
+// nothing left to add.
+TEST_F(ParquetReaderTest, NzMapMatchesLevelDecoder)
+{
+  // The nz map is a second decode path selected by an env var: the same file must read
+  // identically with it on and off.
+  //
+  // DELTA_BINARY_PACKED because it is the only encoding with a consumer at this point in the
+  // series, and nullable so that the map itself is exercised. A required column gets one too, but
+  // takes the consumer's identity-map path, where no map is allocated.
+  static constexpr char const* nz_map_env_var = "LIBCUDF_PARQUET_NZ_MAP";
+
+  constexpr int num_rows = 50000;
+  auto const values      = cudf::detail::make_counting_transform_iterator(
+    0, [](auto i) { return static_cast<int32_t>(i * 3 - 7); });
+  auto const valids =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return (i % 7) != 0; });
+  cudf::test::fixed_width_column_wrapper<int32_t> const col{values, values + num_rows, valids};
+  auto const expected = table_view({col});
+
+  auto input_metadata = cudf::io::table_input_metadata{expected};
+  input_metadata.column_metadata[0].set_encoding(cudf::io::column_encoding::DELTA_BINARY_PACKED);
+
+  std::vector<char> buffer;
+  cudf::io::write_parquet(
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, expected)
+      .write_v2_headers(true)
+      .metadata(input_metadata)
+      .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+      .build());
+
+  auto const read_back = [&] {
+    return cudf::io::read_parquet(
+      cudf::io::parquet_reader_options::builder(
+        cudf::io::source_info{cudf::host_span<std::byte const>{
+          reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
+        .build());
+  };
+
+  // Unset is the shipping configuration while the feature is opt-in.
+  {
+    tmp_env_var const env{nz_map_env_var, "0"};
+    auto const legacy = read_back();
+    CUDF_TEST_EXPECT_TABLES_EQUAL(expected, legacy.tbl->view());
+  }
+  {
+    tmp_env_var const env{nz_map_env_var, "1"};
+    auto const with_nz_map = read_back();
+    CUDF_TEST_EXPECT_TABLES_EQUAL(expected, with_nz_map.tbl->view());
+  }
+  // A bounded read puts the same pages on the bounds-page path, where the two routes diverge most.
+  {
+    auto const trimmed = [&] {
+      return cudf::io::read_parquet(
+        cudf::io::parquet_reader_options::builder(
+          cudf::io::source_info{cudf::host_span<std::byte const>{
+            reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
+          .skip_rows(1001)
+          .num_rows(4321)
+          .build());
+    };
+    auto const sliced = cudf::slice(expected, {1001, 1001 + 4321});
+    {
+      tmp_env_var const env{nz_map_env_var, "0"};
+      CUDF_TEST_EXPECT_TABLES_EQUAL(sliced, trimmed().tbl->view());
+    }
+    {
+      tmp_env_var const env{nz_map_env_var, "1"};
+      CUDF_TEST_EXPECT_TABLES_EQUAL(sliced, trimmed().tbl->view());
+    }
+  }
+}
+
 TEST_F(ParquetReaderTest, UserBounds)
 {
   // trying to read more rows than there are should result in

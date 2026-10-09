@@ -26,11 +26,13 @@
 
 #include <cuda/iterator>
 #include <cuda/std/tuple>
+#include <cuda/stream>
 
 #include <algorithm>
 #include <bitset>
 #include <limits>
 #include <numeric>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 
@@ -199,9 +201,44 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
   // create this before we fork streams
   kernel_error error_code(_stream);
 
-  // get the number of streams we need from the pool and tell them to wait on the H2D copies
+  auto const has_flat_nz_map =
+    _nz_map_enabled &&
+    std::any_of(subpass.pages.host_begin(), subpass.pages.host_end(), [](PageInfo const& page) {
+      return page.has_nz_map(nz_map_kind::DELTA_FLAT);
+    });
+
+  // Partitions the pages into those with and without an nz map. Allocated before the fork, like
+  // `error_code` above: `fork_streams` records its event on `_stream` at fork time, so anything
+  // allocated afterwards is not ordered against its use on a forked stream under a stream-ordered
+  // memory resource.
+  //
+  // TODO: this mask is transitional. It exists only because the level-decoding kernels are
+  // deliberately left unmodified, so the page mask they already consult is the only way to tell
+  // them which pages another kernel has taken. Once every delta kernel has an nz map consumer and
+  // the feature is on by default, each can test `has_nz_map()` on the page directly and this
+  // buffer, its seeding and the producer's marking all go away.
+  rmm::device_uvector<bool> non_nz_map_page_mask(has_flat_nz_map ? subpass.pages.size() : 0,
+                                                 _stream);
+
+  // The producer gets its own stream and its own event rather than `fork_streams`' shared one, so
+  // that only the delta consumer waits on it and the other decoders overlap with it instead.
   int const nkernels = std::bitset<32>(kernel_mask).count();
-  auto streams       = cudf::detail::fork_streams(_stream, nkernels);
+  auto streams       = cudf::detail::fork_streams(_stream, nkernels + (has_flat_nz_map ? 1 : 0));
+  std::optional<cuda::event> nz_map_done;
+
+  if (has_flat_nz_map) {
+    auto const nz_map_stream = streams.back();
+    auto const page_mask     = subpass_page_mask_span();
+    precompute_flat_nz_map(subpass.pages,
+                           pass.chunks,
+                           page_mask,
+                           non_nz_map_page_mask,
+                           skip_rows,
+                           num_rows,
+                           level_type_size,
+                           nz_map_stream);
+    nz_map_done.emplace(nz_map_stream);
+  }
 
   int s_idx = 0;
 
@@ -297,14 +334,19 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
 
   // launch delta binary decoder
   if (BitAnd(kernel_mask, decode_kernel_mask::DELTA_BINARY) != 0) {
+    auto const delta_stream = streams[s_idx++];
+    // The only kernel that reads the nz map. The others overlap with the producer rather than
+    // queueing behind it, which is why the producer does not ride `fork_streams`' shared event.
+    if (has_flat_nz_map) { delta_stream.wait(*nz_map_done); }
     decode_delta_binary(subpass.pages,
                         pass.chunks,
                         num_rows,
                         skip_rows,
                         level_type_size,
                         subpass_page_mask_span(),
+                        non_nz_map_page_mask,
                         error_code.data(),
-                        streams[s_idx++]);
+                        delta_stream);
   }
 
   // launch byte stream split decoder

@@ -430,23 +430,27 @@ def _(
             # Legacy task-engine case
             scan_child = child
 
-    if scan_child and scan_child.predicate is None and scan_child.typ == "parquet":
-        # Special Case: Fast count.
+    if (
+        scan_child
+        and scan_child.predicate is None
+        and scan_child.typ == "parquet"
         # We can't use prefetched file metadata here, because we're in lowering,
         # not execution, so we don't have an IRExecutionContext with the prefetched
         # file metadata yet. Hybrid scan requires prefetched file metadata,
         # so disable that as well.
-        count = Scan._get_parquet_row_count_from_metadata(
-            scan_child.paths,
-            scan_child.skip_rows,
-            scan_child.n_rows,
-            dataclasses.replace(
-                scan_child.parquet_options,
-                prefetch_file_metadata=False,
-                use_hybrid_scan=False,
-            ),
-            None,
+        and (
+            count := Select._count_parquet_rows(
+                scan_child,
+                dataclasses.replace(
+                    scan_child.parquet_options,
+                    prefetch_file_metadata=False,
+                    use_hybrid_scan=False,
+                ),
+            )
         )
+        is not None
+    ):
+        # Special Case: Fast count.
         dtype = ir.exprs[0].value.dtype
 
         lit_expr = expr.LiteralColumn(

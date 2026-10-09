@@ -229,6 +229,7 @@ def test_scan_do_evaluate_missing_prefetch_metadata() -> None:
             parquet_options,
             None,
             [],
+            None,
             context=context,
         )
 

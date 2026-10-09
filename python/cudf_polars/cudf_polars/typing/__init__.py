@@ -65,7 +65,6 @@ PolarsIR: TypeAlias = Union[
     plrs._ir_nodes.MapFunction,
     plrs._ir_nodes.Union,
     plrs._ir_nodes.HConcat,
-    plrs._ir_nodes.ExtContext,
 ]
 
 PolarsExpr: TypeAlias = Union[

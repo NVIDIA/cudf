@@ -30,6 +30,7 @@ dependencies:
 - cxx-compiler
 - cython>=3.2.2,<3.3.0a0
 - dask-cuda==26.12.*,>=0.0.0a0
+- deltalake>=1.6.0
 - dlpack>=0.8,<1.0
 - doxygen=1.18.0
 - fastavro>=0.22.9
@@ -77,10 +78,11 @@ dependencies:
 - packaging
 - pandas>=3.0.0,<3.1.0
 - pandoc
-- polars>=1.35,<1.45
+- polars>=2.0.0,<2.1
 - pre-commit
 - psutil
 - pyarrow>=19.0.0,<26.0.0
+- pyiceberg>=0.12.0
 - pytables
 - pytest-benchmark
 - pytest-cases>=3.8.2

@@ -97,7 +97,10 @@ class CachedParquetInfo:
 
 @nvtx_annotate_cudf_polars(message="fetch_parquet_footers_for_paths")
 def _prefetch_parquet_footers_for_paths(
-    paths: list[str], *, parse_hybrid_metadata: bool = False
+    paths: list[str],
+    *,
+    parse_hybrid_metadata: bool = False,
+    uniform_schema: bool = True,
 ) -> list[CachedParquetInfo]:
     """
     Prefetch parquet footers for a list of paths.
@@ -111,6 +114,8 @@ def _prefetch_parquet_footers_for_paths(
         The paths to prefetch.
     parse_hybrid_metadata
         Whether to eagerly parse ``HybridScanMetadata`` for each path.
+    uniform_schema
+        Whether every path stores the same columns.
 
     Returns
     -------
@@ -134,14 +139,22 @@ def _prefetch_parquet_footers_for_paths(
         else:
             sizes.append(None)
 
-    metadata = plc.io.parquet_metadata.read_parquet_footers(
-        plc.io.types.SourceInfo(
-            [
-                plc.io.types.FilepathSource(path, size)
-                for path, size in zip(paths, sizes, strict=True)
-            ]
+    sources = [
+        plc.io.types.FilepathSource(path, size)
+        for path, size in zip(paths, sizes, strict=True)
+    ]
+    if uniform_schema:
+        metadata = plc.io.parquet_metadata.read_parquet_footers(
+            plc.io.types.SourceInfo(sources)
         )
-    )
+    else:
+        # Might not be the case for Iceberg reads
+        metadata = [
+            plc.io.parquet_metadata.read_parquet_footers(
+                plc.io.types.SourceInfo([source])
+            )[0]
+            for source in sources
+        ]
 
     return [
         CachedParquetInfo(

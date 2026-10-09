@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Utilities for tracking scan statistics."""
@@ -68,6 +68,7 @@ def collect_statistics(
             schema=tuple(schema.items()),
         ): scan_nodes
         for needed_cols, schema, scan_nodes in parquet_groups.values()
+        if needed_cols
     }
 
     try:

@@ -12,12 +12,18 @@
 #include <cudf/detail/utilities/cuda.cuh>
 
 #include <cooperative_groups.h>
+#include <cuda/std/array>
 #include <cuda/std/bit>
 #include <cuda/std/iterator>
 
 namespace cudf::io::parquet::detail {
 
 namespace {
+
+// DICT_INT32 rolling buffers hold four values per thread. Cache small maps in shared memory and
+// stage their lookups; larger maps and identity mappings use sequential writes.
+constexpr int dict_transcode_values_per_thread = 4;
+constexpr int dict_transcode_cache_entries     = 1024;
 
 // Unlike cub's algorithm, this provides warp-wide and block-wide results simultaneously.
 // Also, this provides the ability to compute warp_bits & lane_mask manually, which we need for
@@ -86,8 +92,8 @@ __device__ static void scan_block_exclusive_sum(
  * @brief Write a batch of decoded dictionary indices directly as INT32 output values.
  *
  * Used by the Parquet-dict → DICTIONARY32 transcode path: instead of materializing the dictionary
- * keys, the per-row dictionary indices are emitted verbatim as the INT32 indices child of the
- * output DICTIONARY32 column.
+ * keys for each row, dictionary IDs are mapped directly to the unique output keys. A null map
+ * preserves local IDs for a single chunk whose dictionary entries are already distinct.
  *
  * @tparam block_size Number of threads per block
  * @tparam has_lists_t Whether the column has a list (repetition) level
@@ -95,13 +101,14 @@ __device__ static void scan_block_exclusive_sum(
  * @tparam state_buf Page state buffer type providing the decoded dictionary indices
  * @param s Page decode state for the current page
  * @param sb Page state buffers holding the decoded dictionary indices
+ * @param dict_index_map Chunk-local dictionary ID to output ID map; null means identity
  * @param start First value position (within the page) to write in this batch
  * @param end One-past-the-last value position to write in this batch
  * @param t Thread index within the block
  */
 template <int block_size, bool has_lists_t, copy_mode copy_mode_t, typename state_buf>
 __device__ void decode_dict_indices_as_int32(
-  auto* s, state_buf* const sb, int start, int end, int t)
+  auto* s, state_buf* const sb, int32_t const* dict_index_map, int start, int end, int t)
 {
   constexpr int num_warps      = block_size / cudf::detail::warp_size;
   constexpr int max_batch_size = num_warps * cudf::detail::warp_size;
@@ -139,10 +146,78 @@ __device__ void decode_dict_indices_as_int32(
       if (idx >= num_keys) {
         s->set_error_code(decode_error::DATA_STREAM_OVERRUN);
       } else {
-        *dst = idx;
+        *dst = dict_index_map == nullptr ? static_cast<int32_t>(idx) : dict_index_map[idx];
       }
     }
 
+    pos += batch_size;
+    __syncthreads();
+  }
+}
+
+/**
+ * @brief Write dictionary indices using a cached map, staging four independent lookups per thread.
+ *
+ * All threads must participate, including those with no output in the final partial batch.
+ * The final barrier protects the rolling buffers and makes decode errors visible to the block.
+ *
+ * @tparam block_size Number of threads per block
+ * @tparam has_lists_t Whether the column has a list (repetition) level
+ * @tparam copy_mode_t Whether destination positions are direct or indirect (nz_idx) mapped
+ * @tparam state_buf Page state buffer type providing the decoded dictionary indices
+ * @param s Page decode state for the current page
+ * @param sb Page state buffers holding the decoded dictionary indices
+ * @param dict_index_map Non-null chunk-local dictionary ID to output ID map in shared memory
+ * @param start First value position (within the page) to write in this batch
+ * @param end One-past-the-last value position to write in this batch
+ * @param t Thread index within the block
+ */
+template <int block_size, bool has_lists_t, copy_mode copy_mode_t, typename state_buf>
+__device__ void decode_dict_indices_cached(
+  auto* s, state_buf* const sb, int32_t const* dict_index_map, int start, int end, int t)
+{
+  auto* const out = reinterpret_cast<int32_t*>(
+    s->nesting.nesting_info[s->setup.col.max_nesting_depth - 1].data_out);
+  auto const num_keys = static_cast<uint32_t>(s->stream.dict_size / sizeof(string_index_pair));
+  constexpr int items_per_thread = dict_transcode_values_per_thread;
+  for (int pos = start; pos < end;) {
+    auto const batch_size = min(block_size * items_per_thread, end - pos);
+    cuda::std::array<int32_t, items_per_thread> values{};
+    cuda::std::array<int32_t, items_per_thread> destinations{};
+    cuda::std::array<bool, items_per_thread> valid{};
+#pragma unroll
+    for (int i = 0; i < items_per_thread; ++i) {
+      auto const thread_offset = t + i * block_size;
+      if (thread_offset >= batch_size) { continue; }
+      auto const thread_pos = pos + thread_offset;
+      int const dst_pos     = [&] {
+        if constexpr (copy_mode_t == copy_mode::DIRECT) {
+          return thread_pos - s->setup.first_row;
+        } else {
+          int dst = sb->nz_idx[rolling_index<state_buf::nz_buf_size>(thread_pos)];
+          if constexpr (!has_lists_t) { dst -= s->setup.first_row; }
+          return dst;
+        }
+      }();
+      if (dst_pos < 0) { continue; }
+      auto const src = thread_pos + (has_lists_t ? s->setup.page.skipped_leaf_values : 0);
+      auto const id  = sb->dict_idx[rolling_index<state_buf::dict_buf_size>(src)];
+      if (id >= num_keys) {
+        s->set_error_code(decode_error::DATA_STREAM_OVERRUN);
+      } else {
+        values[i]       = static_cast<int32_t>(id);
+        destinations[i] = dst_pos;
+        valid[i]        = true;
+      }
+    }
+#pragma unroll
+    for (int i = 0; i < items_per_thread; ++i) {
+      if (valid[i]) { values[i] = dict_index_map[values[i]]; }
+    }
+#pragma unroll
+    for (int i = 0; i < items_per_thread; ++i) {
+      if (valid[i]) { out[destinations[i]] = values[i]; }
+    }
     pos += batch_size;
     __syncthreads();
   }
@@ -1088,6 +1163,7 @@ CUDF_HOST_DEVICE constexpr bool is_split_decode()
  * @param initial_str_offsets Vector to store the initial offsets for large nested string cols
  * @param page_string_offset_indices Device span of offsets, indexed per-page, into the column's
  * string offset buffer
+ * @param dict_index_maps Per-chunk dictionary ID maps; empty or null entries mean identity
  * @param error_code Error code to set if an error is encountered
  */
 template <typename level_t, int decode_block_size_t, decode_kernel_mask kernel_mask_t>
@@ -1099,6 +1175,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size_t, 8)
                            cudf::device_span<bool const> page_mask,
                            cudf::device_span<size_t> initial_str_offsets,
                            cudf::device_span<size_t const> page_string_offset_indices,
+                           cudf::device_span<int32_t const* const> dict_index_maps,
                            kernel_error::pointer error_code)
 {
   constexpr bool has_dict_t     = has_dict<kernel_mask_t>();
@@ -1110,7 +1187,8 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size_t, 8)
     (static_cast<uint32_t>(kernel_mask_t) & STRINGS_MASK_NON_DELTA) != 0;
   constexpr bool is_dict_int32_t = is_dict_int32_output<kernel_mask_t>();
 
-  constexpr int rolling_buf_size    = decode_block_size_t * 2;
+  constexpr int rolling_buf_size =
+    decode_block_size_t * (is_dict_int32_t ? dict_transcode_values_per_thread : 2);
   constexpr int rle_run_buffer_size = rle_stream_required_run_buffer_size<decode_block_size_t>();
 
   __shared__ __align__(16) full_page_decode_state state_g;
@@ -1144,6 +1222,25 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size_t, 8)
                              mask_filter{kernel_mask_t},
                              page_processing_stage::DECODE)) {
     return;
+  }
+
+  int32_t const* dict_index_map = nullptr;
+  if constexpr (is_dict_int32_t) {
+    if (not dict_index_maps.empty()) { dict_index_map = dict_index_maps[pp->chunk_idx]; }
+  }
+
+  [[maybe_unused]] bool use_cached_map = false;
+  if constexpr (is_dict_int32_t) {
+    __shared__ int32_t cached_map[dict_transcode_cache_entries];
+    auto const num_keys = s->stream.dict_size / sizeof(string_index_pair);
+    if (dict_index_map != nullptr and num_keys <= dict_transcode_cache_entries) {
+      for (int k = t; k < num_keys; k += decode_block_size_t) {
+        cached_map[k] = dict_index_map[k];
+      }
+      block.sync();
+      dict_index_map = cached_map;
+      use_cached_map = true;
+    }
   }
 
   bool const process_nulls = should_process_nulls(s);
@@ -1284,8 +1381,13 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size_t, 8)
 
     auto decode_values = [&]<copy_mode copy_mode_t>() {
       if constexpr (is_dict_int32_t) {
-        decode_dict_indices_as_int32<decode_block_size_t, has_lists_t, copy_mode_t>(
-          s, sb, valid_count, next_valid_count, t);
+        if (use_cached_map) {
+          decode_dict_indices_cached<decode_block_size_t, has_lists_t, copy_mode_t>(
+            s, sb, dict_index_map, valid_count, next_valid_count, t);
+        } else {
+          decode_dict_indices_as_int32<decode_block_size_t, has_lists_t, copy_mode_t>(
+            s, sb, dict_index_map, valid_count, next_valid_count, t);
+        }
       } else if constexpr (has_strings_t) {
         uint32_t* const str_offsets =
           s->setup.col.column_string_offset_base + page_string_offset_indices[page_idx];
@@ -1382,6 +1484,7 @@ void decode_page_data(cudf::detail::hostdevice_span<PageInfo> pages,
                       cudf::device_span<bool const> page_mask,
                       cudf::device_span<size_t> initial_str_offsets,
                       cudf::device_span<size_t const> page_string_offset_indices,
+                      cudf::device_span<int32_t const* const> dict_index_maps,
                       kernel_error::pointer error_code,
                       cuda::stream_ref stream)
 {
@@ -1402,6 +1505,7 @@ void decode_page_data(cudf::detail::hostdevice_span<PageInfo> pages,
                                                    page_mask,
                                                    initial_str_offsets,
                                                    page_string_offset_indices,
+                                                   dict_index_maps,
                                                    error_code);
       CUDF_CUDA_TRY(cudaGetLastError());
     } else {
@@ -1413,6 +1517,7 @@ void decode_page_data(cudf::detail::hostdevice_span<PageInfo> pages,
                                                    page_mask,
                                                    initial_str_offsets,
                                                    page_string_offset_indices,
+                                                   dict_index_maps,
                                                    error_code);
       CUDF_CUDA_TRY(cudaGetLastError());
     }

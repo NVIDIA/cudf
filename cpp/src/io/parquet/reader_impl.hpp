@@ -11,6 +11,7 @@
 #pragma once
 
 #include "expression_transform_helpers.hpp"
+#include "io/utilities/hostdevice_vector.hpp"
 #include "parquet_gpu.hpp"
 #include "reader_impl_chunking.hpp"
 #include "reader_impl_helpers.hpp"
@@ -189,26 +190,59 @@ class reader_impl {
    */
   void preprocess_chunk_strings(read_mode mode, row_range const& read_info);
 
-  /**
-   * @brief Detect per-column eligibility for direct Parquet-dict → DICTIONARY32 transcode, and
-   * apply the required host-side mutations to `_output_buffers` and `subpass.pages`.
-   *
-   * Must be called after `prepare_data()`. Populates `_dict_transcode_eligible` with a bool per
-   * input column indicating whether the column will be assembled as a DICTIONARY32 output later in
-   * `assemble_dict_transcoded_columns`. That member is the sole signal of whether the fast path is
-   * active: `assemble_dict_transcoded_columns` no-ops when no column is eligible.
-   *
-   * @param mode Value indicating if the data sources are read all at once or chunk by chunk
-   */
-  void prepare_dict_transcode(read_mode mode);
+  /** @brief Layout and owned dictionary for one column selected for direct transcode. */
+  struct dict_transcode_column {
+    size_t output_column;                      ///< Output root ordinal
+    std::vector<size_t> chunks;                ///< Chunk ordinals in row-group order
+    std::vector<size_type> key_counts_prefix;  ///< Offsets in this column's stacked key space
+    bool contiguous;                           ///< Dictionary descriptors form one range
+    size_t key_base_offset{0};                 ///< First nonempty chunk's descriptor offset
+    size_t gather_offset{0};                   ///< Start of this column's packed gather metadata
+    std::unique_ptr<column> keys;              ///< Output dictionary keys
+    std::unique_ptr<column> index_map;         ///< Owner of this column's stacked-to-unique map
+  };
 
   /**
-   * @brief Assemble DICTIONARY32 output columns for input columns that were marked eligible by
-   * `prepare_dict_transcode`.
+   * @brief Per-pass transcode selection and ownership, retained through the decode-stream join.
    *
-   * @param out_columns The output columns vector to transcode in place.
+   * Only selected columns have entries. Gather metadata packs each strided column's key prefixes
+   * followed by descriptor offsets. Host mirrors stay alive with their device copies, avoiding
+   * per-column synchronization to retire asynchronous-copy sources.
    */
-  void assemble_dict_transcoded_columns(std::vector<std::unique_ptr<column>>& out_columns);
+  struct dict_transcode_plan {
+    std::vector<dict_transcode_column> columns;
+    cudf::detail::hostdevice_vector<size_t> gather_metadata;
+    cudf::detail::hostdevice_vector<int32_t const*> chunk_index_maps;  ///< Null means identity
+
+    /** @brief Device view, constructed explicitly to avoid selecting host iterators. */
+    [[nodiscard]] cudf::device_span<int32_t const* const> index_maps() const
+    {
+      return {chunk_index_maps.device_ptr(), chunk_index_maps.size()};
+    }
+  };
+
+  /**
+   * @brief Plan eligible columns and their layouts, then publish output-type and page-mask changes.
+   *
+   * Must be called after `prepare_data()` and before output preprocessing/allocation.
+   * @param mode Value indicating if the data sources are read all at once or chunk by chunk
+   * @return Owned plan; an empty columns vector means direct transcode is inactive
+   */
+  dict_transcode_plan prepare_dict_transcode(read_mode mode);
+
+  /**
+   * @brief Build output keys and index maps for eligible columns before decoding data pages.
+   * @param plan Prepared layouts; receives keys, map owners, and the uploaded chunk map table
+   */
+  void prepare_dict_transcode_keys(dict_transcode_plan& plan);
+
+  /**
+   * @brief Attach prepared keys to the decoded, already remapped INT32 indices.
+   * @param out_columns The output columns vector to transcode in place
+   * @param plan Prepared keys and maps retained through decoding
+   */
+  void assemble_dict_transcoded_columns(std::vector<std::unique_ptr<column>>& out_columns,
+                                        dict_transcode_plan& plan);
 
   /**
    * @brief Copies over the relevant page mask information for the subpass
@@ -353,13 +387,17 @@ class reader_impl {
   cudf::detail::host_vector<size_t> calculate_page_string_offsets();
 
   /**
-   * @brief Converts the page data and outputs to columns.
+   * @brief Decode data pages, optionally mapping chunk-local dictionary IDs to output IDs.
    *
    * @param mode Value indicating if the data sources are read all at once or chunk by chunk
    * @param skip_rows Number of rows to skip from the start
    * @param num_rows Number of rows to decode
+   * @param dict_index_maps Per-chunk map pointers; empty or null entries mean identity
    */
-  void decode_page_data(read_mode mode, size_t skip_rows, size_t num_rows);
+  void decode_page_data(read_mode mode,
+                        size_t skip_rows,
+                        size_t num_rows,
+                        cudf::device_span<int32_t const* const> dict_index_maps = {});
 
   /**
    * @brief Invalidate output buffer nullmask for rows spanned by the pruned pages
@@ -600,10 +638,6 @@ class reader_impl {
 
   std::size_t _output_chunk_read_limit{0};  // output chunk size limit in bytes
   std::size_t _input_pass_read_limit{0};    // input pass memory usage limit in bytes
-
-  // Per-input-column flag indicating whether that column was selected for direct
-  // Parquet-dict → DICTIONARY32 transcode.
-  std::vector<bool> _dict_transcode_eligible;
 
   // LIBCUDF_PARQUET_LEVEL_PREPASS selector is fixed for the reader lifetime so
   // every pass and output chunk agrees on which prepass consumer families may

@@ -7,12 +7,16 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import json
+import os
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, cast
 
+import cuda.bindings.driver as cuda_driver
+import cuda.core
 import kvikio
 import kvikio.defaults
+import ucxx._lib.libucxx as ucx_api
 
 import polars as pl
 
@@ -28,7 +32,11 @@ from rapidsmpf.coll import AllGather
 from rapidsmpf.communicator.single import (
     new_communicator as single_communicator,
 )
-from rapidsmpf.communicator.ucxx import barrier
+from rapidsmpf.communicator.ucxx import (
+    barrier,
+    get_root_ucxx_address,
+    new_communicator,
+)
 from rapidsmpf.progress_thread import ProgressThread
 from rapidsmpf.statistics import Statistics
 from rapidsmpf.streaming.core.context import Context
@@ -54,6 +62,7 @@ from cudf_polars.engine.hardware_binding import (
     HardwareBindingPolicy,
     bind_to_gpu,
 )
+from cudf_polars.engine.options import StreamingOptions
 from cudf_polars.engine.persisted_result import (
     PersistedBackend,
     execute_persisted_query,
@@ -84,10 +93,126 @@ if TYPE_CHECKING:
 
     from cudf_polars.dsl.ir import IR
     from cudf_polars.engine.core import T
-    from cudf_polars.engine.options import StreamingOptions
     from cudf_polars.engine.persisted_result import PersistedQueryResult
     from cudf_polars.streaming.parallel import ConfigOptions
     from cudf_polars.utils.config import StreamingExecutor
+
+
+def use_gpu(index: int | str) -> None:
+    """
+    Restrict this process to a single GPU.
+
+    A streaming engine runs on CUDA device ordinal 0. This restricts the process
+    to the one GPU, so it becomes ordinal 0, then checks that it took effect.
+    Keeping other GPUs visible also works, provided the engine's GPU is first in
+    ``CUDA_VISIBLE_DEVICES``.
+
+    Call this before anything in the process uses CUDA. Imports are fine, so
+    this can sit alongside them at the top of a script, but it must come before
+    the first CUDA call, such as ``torch.cuda.set_device``. ``CUDA_VISIBLE_DEVICES``
+    is only read when CUDA initializes, so afterwards there is no way to change
+    which GPUs a process can see.
+
+    Launchers usually do this for you. ``rrun`` assigns a GPU to each rank, as do
+    the Dask and Ray frontends for their workers. This is for a process that no
+    launcher has set up, such as one started by ``torchrun``.
+
+    Parameters
+    ----------
+    index
+        The GPU to use, as an index into the currently visible devices or as a
+        GPU UUID.
+
+    Raises
+    ------
+    RuntimeError
+        If CUDA is already initialized, so the process is stuck with the devices
+        it can already see, if ``index`` does not name a visible GPU, or if it
+        names more than one.
+
+    Examples
+    --------
+    Under ``torchrun``, give each rank the GPU matching its local rank:
+
+    >>> import os
+    >>> from cudf_polars.engine.spmd import use_gpu
+    >>> use_gpu(int(os.environ["LOCAL_RANK"]))  # doctest: +SKIP
+    """
+    # CUDA reads CUDA_VISIBLE_DEVICES once, when it initializes, so after that
+    # setting it changes nothing. Check first: a count taken afterwards cannot
+    # tell "the mask took effect" from "CUDA was already running with a single,
+    # different GPU". This probe does not initialize CUDA itself.
+    status, _ = cuda_driver.cuCtxGetCurrent()
+    if status != cuda_driver.CUresult.CUDA_ERROR_NOT_INITIALIZED:
+        raise RuntimeError(
+            "CUDA is already initialized in this process, so its visible GPUs "
+            "are fixed and use_gpu() cannot change them. Call use_gpu() before "
+            "the first CUDA call, such as torch.cuda.set_device() or "
+            "dist.init_process_group(), or start a fresh process."
+        )
+
+    visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if visible is not None and isinstance(index, int):
+        # An index means "into the devices visible now", which is not the same
+        # as the physical device index once something has already restricted
+        # them. A scheduler that allocated GPUs 3 and 5 leaves
+        # CUDA_VISIBLE_DEVICES="3,5", where index 1 is GPU 5, not GPU 1.
+        tokens = [token.strip() for token in visible.split(",") if token.strip()]
+        if not 0 <= index < len(tokens):
+            raise RuntimeError(
+                f"GPU index {index} is out of range: CUDA_VISIBLE_DEVICES is "
+                f"{visible!r}, so this process can see {len(tokens)} GPUs."
+            )
+        selected: str = tokens[index]
+    else:
+        selected = str(index)
+
+    os.environ["CUDA_VISIBLE_DEVICES"] = selected
+    # This initializes CUDA, fixing the visible devices to the one just set.
+    try:
+        count = len(cuda.core.Device.get_all_devices())
+    except Exception as e:
+        raise RuntimeError(
+            f"no GPU matches CUDA_VISIBLE_DEVICES={selected!r}. Pass an index "
+            "into the devices visible before this call, or a GPU UUID."
+        ) from e
+    if count != 1:
+        raise RuntimeError(
+            f"CUDA_VISIBLE_DEVICES={selected!r} makes {count} GPUs visible, "
+            "where use_gpu() selects exactly one. Pass a single index or UUID."
+        )
+
+
+def _check_engine_gpu_is_first() -> None:
+    """
+    Raise :exc:`RuntimeError` unless the engine's GPU is CUDA device ordinal 0.
+
+    A streaming engine runs on ordinal 0, so its GPU must come first in
+    ``CUDA_VISIBLE_DEVICES``. Other GPUs may stay visible.
+
+    It runs its actors on threads created by rapidsmpf, and the current CUDA
+    device is per-thread: a new thread always starts on ordinal 0, whatever the
+    thread that created it had selected. Putting the engine's GPU first is what
+    makes that safe, because ordinal 0 is then the device every thread already
+    uses.
+
+    Raises
+    ------
+    RuntimeError
+        If the current CUDA device is not ordinal 0.
+    """
+    device = cuda.core.Device().device_id
+    if device != 0:
+        raise RuntimeError(
+            "cudf-polars streaming engines run on CUDA device ordinal 0, but "
+            f"the current device is ordinal {device}. Put that GPU first in "
+            "CUDA_VISIBLE_DEVICES rather than selecting it by ordinal, before "
+            "the first CUDA call:\n"
+            "    from cudf_polars.engine.spmd import use_gpu\n"
+            f"    use_gpu({device})\n"
+            "Launchers such as rrun, and the Dask and Ray frontends, already do "
+            "this for their workers."
+        )
 
 
 def evaluate_pipeline_spmd_mode(
@@ -436,6 +561,7 @@ class SPMDEngine(StreamingEngine):
         executor_options: dict[str, Any] | None = None,
         engine_options: dict[str, Any] | None = None,
     ) -> None:
+        _check_engine_gpu_is_first()
         executor_options = resolve_kvikio_executor_options(executor_options or {})
         engine_options = engine_options or {}
 
@@ -636,6 +762,151 @@ class SPMDEngine(StreamingEngine):
     def _drop_persisted(self) -> None:
         """Drop this engine's persisted partitions from the rank-local store."""
         rank_local_store.close_store(self._store_uid)
+
+    @classmethod
+    @unstable()
+    def from_torch_distributed(
+        cls,
+        options: StreamingOptions | None = None,
+        *,
+        group: Any = None,
+    ) -> SPMDEngine:
+        """
+        Build an :class:`SPMDEngine` using ``torch.distributed`` for rendezvous.
+
+        Reads ``rank`` and ``world_size`` from the active ``torch.distributed``
+        process group, exchanges the UCXX root address via
+        :func:`torch.distributed.broadcast_object_list`, and constructs a UCXX
+        communicator shared by all ranks. The returned engine is then built on
+        top of that communicator.
+
+        ``engine.rank`` is the communicator's own numbering, which UCXX assigns
+        by the order ranks connect. It need not equal ``dist.get_rank()``, just
+        as it need not equal ``RRUN_RANK`` under ``rrun``. Each rank keeps and
+        reads its own data either way, so the two numberings are independent
+        rather than inconsistent. Do not use one to index something keyed by
+        the other.
+
+        ``torch.distributed.init_process_group`` must already be called on every
+        rank. The typical pattern is to launch the script with ``torchrun`` so
+        that ``RANK`` / ``WORLD_SIZE`` / ``LOCAL_RANK`` / ``MASTER_ADDR`` /
+        ``MASTER_PORT`` are set, then give the rank its GPU with :func:`use_gpu`
+        *before* ``dist.init_process_group(backend="nccl")``, since initializing
+        NCCL is itself a CUDA call and fixes the visible devices.
+
+        Options are read as in :meth:`from_options`: every RapidsMPF, executor
+        and engine option comes from ``options``, and unset fields fall back to
+        environment variables and then to built-in defaults.
+
+        Parameters
+        ----------
+        options
+            Unified streaming configuration. ``None`` is the same as a default
+            :class:`~cudf_polars.engine.options.StreamingOptions`.
+        group
+            Optional ``torch.distributed`` process group. ``None`` uses the
+            default (world) group.
+
+        Returns
+        -------
+        A new :class:`SPMDEngine` bound to the bootstrapped UCXX communicator.
+
+        Raises
+        ------
+        RuntimeError
+            If ``torch.distributed`` is not initialized on this rank.
+
+        Examples
+        --------
+        >>> # launch with: torchrun --nproc-per-node=$(nvidia-smi -L | wc -l) script.py
+        >>> import os, torch, torch.distributed as dist
+        >>> from cudf_polars.engine.spmd import use_gpu
+        >>> use_gpu(int(os.environ["LOCAL_RANK"]))  # doctest: +SKIP
+        >>> torch.cuda.set_device(0)  # doctest: +SKIP
+        >>> dist.init_process_group(backend="nccl")  # doctest: +SKIP
+        >>> with SPMDEngine.from_torch_distributed() as engine:  # doctest: +SKIP
+        ...     df = lf.collect(engine=engine)
+        >>> dist.destroy_process_group()  # doctest: +SKIP
+        """
+        import torch.distributed as dist
+
+        if options is None:
+            options = StreamingOptions()
+        rapidsmpf_options = options.to_rapidsmpf_options()
+        executor_options = options.to_executor_options()
+        engine_options = options.to_engine_options()
+
+        if not dist.is_initialized():
+            raise RuntimeError(
+                "torch.distributed is not initialized; call "
+                "dist.init_process_group(...) before "
+                "SPMDEngine.from_torch_distributed()"
+            )
+        # The engine's own check runs too late here, after the communicator
+        # below has been set up on this device.
+        _check_engine_gpu_is_first()
+
+        rank = dist.get_rank(group)
+        world_size = dist.get_world_size(group)
+
+        # Resolve options once here so the value we pass to `new_communicator`
+        # and the value the engine ultimately uses are derived from the same
+        # source (env vars + caller overrides).
+        resolved_options = resolve_rapidsmpf_options(rapidsmpf_options)
+
+        # Rank 0 creates the root UCXX communicator and publishes its address;
+        # all other ranks join using that address. Mirrors the two-phase
+        # bootstrap used by the Ray and Dask launchers.
+        comm: Communicator | None
+        if rank == 0:
+            comm = new_communicator(
+                nranks=world_size,
+                ucx_worker=None,
+                root_ucxx_address=None,
+                options=resolved_options,
+                progress_thread=ProgressThread(),
+            )
+            root_address: bytes | None = bytes(get_root_ucxx_address(comm))
+        else:
+            comm = None
+            root_address = None
+
+        addr_box: list[bytes | None] = [root_address]
+        # `src` is a global rank. `group_src` would take the group rank directly
+        # but needs PyTorch 2.6.
+        src = 0 if group is None else dist.get_global_rank(group, 0)
+        dist.broadcast_object_list(addr_box, src=src, group=group)
+        root_address = addr_box[0]
+        if root_address is None:
+            raise RuntimeError(
+                "broadcast of UCXX root address returned None; "
+                "rank 0 did not publish an address."
+            )
+
+        if rank != 0:
+            ucx_addr = ucx_api.UCXAddress.create_from_buffer(root_address)
+            comm = new_communicator(
+                nranks=world_size,
+                ucx_worker=None,
+                root_ucxx_address=ucx_addr,
+                options=resolved_options,
+                progress_thread=ProgressThread(),
+            )
+
+        assert comm is not None
+        if world_size > 1:
+            # Finish the UCXX bootstrap before returning. While a rank is still
+            # inside `new_communicator` it needs the root to progress the
+            # handshake, so any other collective here would block the root and
+            # deadlock the two runtimes against each other.
+            barrier(comm)
+
+        return cls(
+            comm=comm,
+            rapidsmpf_options=resolved_options,
+            executor_options=executor_options,
+            engine_options=engine_options,
+        )
 
     def _reset(
         self,

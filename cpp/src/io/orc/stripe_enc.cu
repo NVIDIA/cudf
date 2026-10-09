@@ -27,8 +27,6 @@
 #include <cuda/functional>
 #include <cuda/std/limits>
 #include <cuda/stream>
-#include <thrust/for_each.h>
-#include <thrust/transform.h>
 
 namespace cudf::io::orc::detail {
 

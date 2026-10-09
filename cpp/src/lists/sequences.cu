@@ -22,7 +22,6 @@
 #include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
-#include <thrust/scan.h>
 #include <thrust/tabulate.h>
 
 #include <limits>

@@ -280,34 +280,38 @@ def test_ordering_with_locally_ordered(context: Context) -> None:
 
 
 @pytest.mark.parametrize(
-    "int_values,string_values",
+    "int_values,string_values,expected_int_values,expected_string_values",
     [
-        ([100], ["abc"]),
-        ([], []),
-        ([None], [None]),
+        ([100], ["abc"], [100], ["abc"]),
+        ([], [], [], []),
+        ([None], [None], [None], [None]),
+        ([100, 100, 200], ["abc", "abc", "xyz"], [100, 200], ["abc", "xyz"]),
     ],
 )
 def test_ordering_as_strict(
     context: Context,
     int_values: list[int | None],
     string_values: list[str | None],
+    expected_int_values: list[int | None],
+    expected_string_values: list[str | None],
 ) -> None:
-    """as_strict shares boundaries and marks them strict."""
+    """as_strict canonicalizes boundaries and marks them strict."""
     ordering = _two_key_ordering_from_boundary_values(
         context, int_values, string_values
     )
-    strict_ordering = ordering.as_strict()
+    strict_ordering = ordering.as_strict(context.br())
     strict_ordering2 = _two_key_ordering_from_boundary_values(
         context,
-        int_values,
-        string_values,
+        expected_int_values,
+        expected_string_values,
         strict_boundaries=True,
     )
     assert strict_ordering.keys == ordering.keys
-    assert strict_ordering.num_boundaries == ordering.num_boundaries
+    assert strict_ordering.num_boundaries == len(expected_int_values)
     assert strict_ordering.strict_boundaries
     assert strict_ordering.locally_ordered == ordering.locally_ordered
     assert not ordering.boundaries_aligned_with(strict_ordering, context.br())
+    assert strict_ordering.as_strict(context.br()) is strict_ordering
     assert strict_ordering.boundaries_aligned_with(
         strict_ordering2, context.br()
     )

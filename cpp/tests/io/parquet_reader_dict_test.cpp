@@ -26,6 +26,8 @@
 
 #include <rmm/device_buffer.hpp>
 
+#include <src/io/parquet/parquet_common.hpp>
+
 #include <algorithm>
 #include <array>
 #include <memory>
@@ -198,18 +200,28 @@ struct ParquetReaderDictTest : public cudf::test::BaseFixture {};
 // should match the original input.
 TEST_F(ParquetReaderDictTest, FlatStringDictTranscode)
 {
-  auto input_col = make_low_cardinality_strings();
+  auto const short_strings = make_low_cardinality_strings();
+  // Append a final row group whose dictionary entries all exceed the parser window.
+  // Each length prefix advances the cursor beyond the window, requiring another refill.
+  auto constexpr window_size = cudf::io::parquet::detail::string_dict_index_window_size;
+  auto const long_strings =
+    cudf::test::strings_column_wrapper{std::string(window_size + 1, 'a'),
+                                       std::string(2 * window_size + 1, 'b'),
+                                       std::string(3 * window_size + 1, 'c')};
+  auto const input_col =
+    cudf::concatenate(std::vector<cudf::column_view>{short_strings, long_strings});
+  auto const input_view = input_col->view();
 
-  auto const input_tbl = cudf::table_view{{input_col}};
+  auto const input_tbl = cudf::table_view{{input_view}};
   auto const filepath  = temp_env->get_temp_filepath("FlatStringDictTranscode.parquet");
   write_parquet(input_tbl, filepath);
 
-  auto const dict_input      = cudf::dictionary::encode(input_col);
+  auto const dict_input      = cudf::dictionary::encode(input_view);
   auto const dict_input_view = cudf::dictionary_column_view(dict_input->view());
   auto const decoded_input   = cudf::dictionary::decode(dict_input_view);
 
   auto const read_table = read_parquet_as_dict(filepath).tbl;
-  ASSERT_EQ(read_table->num_rows(), num_rows);
+  ASSERT_EQ(read_table->num_rows(), input_view.size());
   ASSERT_EQ(read_table->num_columns(), 1);
 
   auto const read_col = read_table->view().column(0);
@@ -219,7 +231,7 @@ TEST_F(ParquetReaderDictTest, FlatStringDictTranscode)
   cudf::dictionary_column_view dict_read_view(read_col);
   auto const decoded_read = cudf::dictionary::decode(dict_read_view);
 
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(input_col, decoded_read->view());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(input_view, decoded_read->view());
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(decoded_input->view(), decoded_read->view());
 }
 

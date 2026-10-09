@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2018-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,6 +12,10 @@ namespace cudf::io::parquet::detail {
 
 // Parquet 4-byte magic number "PAR1"
 constexpr uint32_t parquet_magic = (('P' << 0) | ('A' << 8) | ('R' << 16) | ('1' << 24));
+
+// Shared-memory window size in bytes for parsing BYTE_ARRAY string dictionaries.
+// Default value chosen for best balance between memory usage, occupancy and performance.
+constexpr int string_dict_index_window_size = 4096;
 
 // Max decimal precisions according to the parquet spec:
 // https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#decimal

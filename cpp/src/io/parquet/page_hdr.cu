@@ -6,6 +6,7 @@
 #include "cuda/std/__utility/cmp.h"
 #include "error.hpp"
 #include "io/utilities/block_utils.cuh"
+#include "parquet_common.hpp"
 #include "parquet_gpu.hpp"
 
 #include <cudf/detail/utilities/cuda.cuh>
@@ -835,10 +836,9 @@ struct decode_from_page_data_fn {
 /**
  * @brief Build string pointer/length descriptors for each chunk's dictionary entries.
  *
- * For BYTE_ARRAY dictionaries, the warp loads a shared-memory
- * window with aligned vector loads, one lane follows the variable-length prefixes, and the
- * warp writes a batch of string pointer/length descriptors. Descriptor pointers refer to the
- * original page data.
+ * For BYTE_ARRAY dictionaries, the warp loads a shared-memory window with aligned vector loads,
+ * one lane follows the variable-length prefixes, and the warp writes a batch of string
+ * pointer/length descriptors. Descriptor pointers refer to the original page data.
  *
  * For FIXED_LEN_BYTE_ARRAY dictionaries, lanes compute entry offsets independently and write
  * descriptors directly to the chunk's str_dict_index array.
@@ -852,26 +852,38 @@ CUDF_KERNEL void __launch_bounds__(build_string_dict_index_block_size)
                                        int32_t num_chunks,
                                        kernel_error::pointer error_code)
 {
-  constexpr int warp_size   = cudf::detail::warp_size;
-  constexpr int window_size = 4096;
-  constexpr int load_size   = sizeof(int4);
+  constexpr int warp_size = cudf::detail::warp_size;
+  constexpr int load_size = sizeof(int4);
 
-  static_assert(window_size % load_size == 0);
+  static_assert(string_dict_index_window_size % load_size == 0);
 
+  /**
+   * @brief Shared state for parsing one chunk's BYTE_ARRAY dictionary.
+   *
+   * One lane parses length prefixes and stages entry metadata; the warp
+   * uses that metadata to write string descriptors.
+   */
   struct parser_state {
-    int cursor;
-    int parsed;
-    int batch;
-    int window_start;
-    int window_bytes;
-    bool invalid;
-    cuda::std::array<int, warp_size> offsets;
-    cuda::std::array<int, warp_size> lengths;
+    int cursor;        ///< Page-relative byte offset of the next length prefix.
+    int parsed;        ///< Number of entries whose descriptors have been written.
+    int batch;         ///< Number of entries parsed in the current batch.
+    int window_start;  ///< Page-relative byte offset of window[0]; may be negative.
+    int window_bytes;  ///< Active window size in bytes, including leading padding.
+    bool invalid;      ///< Whether parsing detected a truncated prefix or string.
+    cuda::std::array<int, warp_size> offsets;  ///< Page-relative character-data offsets.
+    cuda::std::array<int, warp_size> lengths;  ///< String lengths in bytes.
   };
 
-  __shared__ ColumnChunkDesc ck;
+  // Fields needed. No need to copy whole of ColumnChunkDesc
+  struct dictionary_metadata {
+    PageInfo const* dict_page;
+    string_index_pair* str_dict_index;
+    Type physical_type;
+    int32_t type_length;
+  };
+  __shared__ dictionary_metadata ck;
   __shared__ parser_state state;
-  __shared__ __align__(16) cuda::std::array<uint8_t, window_size> window;
+  __shared__ __align__(16) cuda::std::array<uint8_t, string_dict_index_window_size> window;
 
   auto const warp = cg::tiled_partition<warp_size>(cg::this_thread_block());
   auto const lane = warp.thread_rank();
@@ -882,16 +894,18 @@ CUDF_KERNEL void __launch_bounds__(build_string_dict_index_block_size)
 
   // One lane initializes the shared state for the warp
   cg::invoke_one(warp, [&] {
-    ck                 = chunks[chunk];
-    state.cursor       = 0;
-    state.parsed       = 0;
-    state.window_start = 0;
-    state.window_bytes = 0;
-    state.invalid      = false;
+    auto const& chunk_desc = chunks[chunk];
+    ck                     = {chunk_desc.dict_page,
+                              chunk_desc.str_dict_index,
+                              chunk_desc.physical_type,
+                              chunk_desc.type_length};
+    state.cursor           = 0;
+    state.parsed           = 0;
+    state.window_start     = 0;
+    state.window_bytes     = 0;
+    state.invalid          = false;
   });
   warp.sync();
-
-
 
   auto const* dict      = ck.dict_page->page_data;
   int const dict_size   = ck.dict_page->uncompressed_page_size;
@@ -938,17 +952,17 @@ CUDF_KERNEL void __launch_bounds__(build_string_dict_index_block_size)
       // virtual window can start before the page; pad those bytes instead of reading them.
       int const start =
         cursor - static_cast<int>(reinterpret_cast<uintptr_t>(dict + cursor) % load_size);
-      int const this_iteration_bytes = static_cast<int>(
-        min(static_cast<int64_t>(window_size), static_cast<int64_t>(dict_size) - start));
+      int const this_iteration_bytes =
+        static_cast<int>(min(static_cast<int64_t>(string_dict_index_window_size),
+                             static_cast<int64_t>(dict_size) - start));
       for (int i = lane * load_size; i < this_iteration_bytes; i += warp_size * load_size) {
-        int64_t const source =
-          static_cast<int64_t>(start) +
-          i;  // Source is the offset of the current iteration from the start of the dictionary
+        // Source is the offset of the current iteration from the start of the dictionary.
+        int64_t const source = static_cast<int64_t>(start) + i;
         if (source >= 0 and source + load_size <= dict_size and
             i + load_size <= this_iteration_bytes) {
           reinterpret_cast<int4*>(window.data())[i / load_size] =
             *reinterpret_cast<int4 const*>(dict + source);
-        } else {  // Apply padding to the window if source is negative
+        } else {  // Byte-wise copy for the page tail; zero-pad bytes before the page start
           for (int j = 0; j < load_size and i + j < this_iteration_bytes; ++j) {
             window[i + j] = source + j >= 0 ? dict[source + j] : 0;
           }
@@ -1083,7 +1097,8 @@ void build_string_dictionary_index(ColumnChunkDesc* chunks,
                                    kernel_error::pointer error_code,
                                    cuda::stream_ref stream)
 {
-  static_assert(build_string_dict_index_block_size == cudf::detail::warp_size);
+  static_assert(build_string_dict_index_block_size == cudf::detail::warp_size,
+                "Block size for build string dictionary index kernel must be one warp");
   // One warp/block per row-group column chunk.
   build_string_dictionary_index_kernel<<<num_chunks,
                                          build_string_dict_index_block_size,

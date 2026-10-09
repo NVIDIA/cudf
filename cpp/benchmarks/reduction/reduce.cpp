@@ -11,6 +11,7 @@
 #include <cudf/column/column_view.hpp>
 #include <cudf/reduction.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/traits.hpp>
 
 #include <nvbench/nvbench.cuh>
 
@@ -49,10 +50,19 @@ static void reduction(nvbench::state& state, nvbench::type_list<DataType, nvbenc
   auto const size      = static_cast<cudf::size_type>(state.get_int64("size"));
   auto const max_value = static_cast<cudf::size_type>(state.get_int64("max_value"));
 
-  auto const input_type      = cudf::type_to_id<DataType>();
-  data_profile const profile = data_profile_builder().no_validity().distribution(
-    input_type, distribution_id::UNIFORM, 0, max_value > 0 ? max_value : 100);
-  auto const input_column = create_random_column(input_type, row_count{size}, profile);
+  auto const input_type = cudf::type_to_id<DataType>();
+  auto profile_builder  = data_profile_builder().no_validity();
+  if constexpr (cudf::is_chrono<DataType>()) {
+    profile_builder.distribution(
+      input_type, distribution_id::UNIFORM, 0, max_value > 0 ? max_value : 100);
+  } else {
+    profile_builder.distribution(input_type,
+                                 distribution_id::UNIFORM,
+                                 static_cast<DataType>(0),
+                                 static_cast<DataType>(max_value > 0 ? max_value : 100));
+  }
+  data_profile const profile = profile_builder;
+  auto const input_column    = create_random_column(input_type, row_count{size}, profile);
 
   auto const output_type = [&] {
     if (kind == cudf::aggregation::MEAN || kind == cudf::aggregation::VARIANCE ||

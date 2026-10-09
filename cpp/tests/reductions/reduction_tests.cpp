@@ -27,6 +27,7 @@
 
 #include <algorithm>
 #include <iterator>
+#include <limits>
 #include <numeric>
 #include <vector>
 
@@ -897,6 +898,57 @@ TYPED_TEST(MultiStepReductionTest, var_std)
                        col_nulls, *std_agg, cudf::data_type(cudf::type_id::FLOAT64))
                      .first,
                    std_nulls);
+}
+
+using StableVarianceReductionTest = ReductionTest<double>;
+
+TEST_F(StableVarianceReductionTest, LargeOffsetAcrossTiles)
+{
+  // Exercise multiple CUB tiles with a small variance relative to the mean.
+  for (bool nullable : {false, true}) {
+    std::vector<double> values(100003);
+    std::vector<bool> valid(values.size(), true);
+    long double sum = 0;
+    size_t count    = 0;
+    for (size_t i = 0; i < values.size(); ++i) {
+      values[i] = 1e12 + static_cast<int>(i % 9) - 4;
+      valid[i]  = !nullable || i % 33 != 0;
+      if (valid[i]) {
+        sum += values[i];
+        ++count;
+      }
+    }
+    auto const mean = sum / count;
+    long double m2  = 0;
+    for (size_t i = 0; i < values.size(); ++i) {
+      if (valid[i]) {
+        auto const delta = static_cast<long double>(values[i]) - mean;
+        m2 += delta * delta;
+      }
+    }
+    cudf::test::fixed_width_column_wrapper<double> col(values.begin(), values.end(), valid.begin());
+    for (int ddof : {0, 1}) {
+      auto const expected = static_cast<double>(m2 / (count - ddof));
+      auto const [var, var_valid] =
+        reduction_test<double>(col, *cudf::make_variance_aggregation<reduce_aggregation>(ddof));
+      auto const [std, std_valid] =
+        reduction_test<double>(col, *cudf::make_std_aggregation<reduce_aggregation>(ddof));
+      EXPECT_TRUE(var_valid);
+      EXPECT_TRUE(std_valid);
+      EXPECT_NEAR(var, expected, 1e-4);
+      EXPECT_NEAR(std, std::sqrt(expected), 1e-4);
+    }
+  }
+}
+
+TEST_F(StableVarianceReductionTest, ConstantValuesWhoseSumOverflows)
+{
+  std::vector<double> values(100003, std::numeric_limits<double>::max() / 4);
+  cudf::test::fixed_width_column_wrapper<double> col(values.begin(), values.end());
+  auto const [var, valid] =
+    reduction_test<double>(col, *cudf::make_variance_aggregation<reduce_aggregation>());
+  EXPECT_TRUE(valid);
+  EXPECT_EQ(var, 0.0);
 }
 
 // ----------------------------------------------------------------------------

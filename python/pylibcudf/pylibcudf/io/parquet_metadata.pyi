@@ -19,8 +19,10 @@ __all__ = [
     "ColumnChunk",
     "ColumnChunkMetaData",
     "ColumnChunkStatistics",
+    "DecimalType",
     "FieldRepetitionType",
     "FileMetaData",
+    "IntType",
     "LogicalType",
     "LogicalTypeId",
     "ParquetColumnSchema",
@@ -30,7 +32,9 @@ __all__ = [
     "RowGroup",
     "SchemaElement",
     "SortingColumn",
+    "TimeType",
     "TimeUnit",
+    "TimestampType",
     "read_parquet_column_chunk_bounds",
     "read_parquet_footers",
     "read_parquet_metadata",
@@ -112,21 +116,41 @@ class TimeUnit(IntEnum):
     MICROS = ...
     NANOS = ...
 
+class DecimalType:
+    @property
+    def scale(self) -> int: ...
+    @property
+    def precision(self) -> int: ...
+
+class TimeType:
+    @property
+    def is_adjusted_to_utc(self) -> bool: ...
+    @property
+    def unit(self) -> TimeUnit: ...
+
+class TimestampType:
+    @property
+    def is_adjusted_to_utc(self) -> bool: ...
+    @property
+    def unit(self) -> TimeUnit: ...
+
+class IntType:
+    @property
+    def bit_width(self) -> int: ...
+    @property
+    def is_signed(self) -> bool: ...
+
 class LogicalType:
     @property
     def type(self) -> LogicalTypeId: ...
     @property
-    def decimal_scale(self) -> int | None: ...
+    def decimal_type(self) -> DecimalType | None: ...
     @property
-    def decimal_precision(self) -> int | None: ...
+    def time_type(self) -> TimeType | None: ...
     @property
-    def time_unit(self) -> TimeUnit | None: ...
+    def timestamp_type(self) -> TimestampType | None: ...
     @property
-    def is_adjusted_to_utc(self) -> bool | None: ...
-    @property
-    def bit_width(self) -> int | None: ...
-    @property
-    def is_signed(self) -> bool | None: ...
+    def int_type(self) -> IntType | None: ...
 
 class SchemaElement:
     @property

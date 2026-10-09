@@ -23,12 +23,16 @@ from pylibcudf.libcudf.io cimport parquet_metadata as cpp_parquet_metadata
 from pylibcudf.libcudf.io.parquet_schema cimport (
     ColumnChunk as cpp_ColumnChunk,
     ColumnChunkMetaData as cpp_ColumnChunkMetaData,
+    DecimalType as cpp_DecimalType,
     FileMetaData as cpp_FileMetaData,
+    IntType as cpp_IntType,
     LogicalType as cpp_LogicalType,
     RowGroup as cpp_RowGroup,
     SchemaElement as cpp_SchemaElement,
     SortingColumn as cpp_SortingColumn,
     Statistics as cpp_Statistics,
+    TimestampType as cpp_TimestampType,
+    TimeType as cpp_TimeType,
 )
 from pylibcudf.libcudf.table.table cimport table as cpp_table
 from pylibcudf.libcudf.types cimport type_id
@@ -62,8 +66,10 @@ __all__ = [
     "ColumnChunk",
     "ColumnChunkMetaData",
     "ColumnChunkStatistics",
+    "DecimalType",
     "FieldRepetitionType",
     "FileMetaData",
+    "IntType",
     "LogicalType",
     "LogicalTypeId",
     "ParquetColumnSchema",
@@ -73,7 +79,9 @@ __all__ = [
     "RowGroup",
     "SchemaElement",
     "SortingColumn",
+    "TimeType",
     "TimeUnit",
+    "TimestampType",
     "read_parquet_column_chunk_bounds",
     "read_parquet_footers",
     "read_parquet_metadata",
@@ -316,6 +324,98 @@ cdef class ParquetMetadata:
         }
 
 
+cdef class DecimalType:
+    """Parameters of a ``DECIMAL`` logical type."""
+
+    def __init__(self):
+        raise ValueError("DecimalType cannot be constructed directly")
+
+    @staticmethod
+    cdef DecimalType from_cpp(cpp_DecimalType decimal_type):
+        cdef DecimalType result = DecimalType.__new__(DecimalType)
+        result.c_obj = decimal_type
+        return result
+
+    @property
+    def scale(self) -> int:
+        """Number of digits after the decimal point."""
+        return self.c_obj.scale
+
+    @property
+    def precision(self) -> int:
+        """Total number of digits."""
+        return self.c_obj.precision
+
+
+cdef class TimeType:
+    """Parameters of a ``TIME`` logical type."""
+
+    def __init__(self):
+        raise ValueError("TimeType cannot be constructed directly")
+
+    @staticmethod
+    cdef TimeType from_cpp(cpp_TimeType time_type):
+        cdef TimeType result = TimeType.__new__(TimeType)
+        result.c_obj = time_type
+        return result
+
+    @property
+    def is_adjusted_to_utc(self) -> bool:
+        """Whether the values are adjusted to UTC."""
+        return self.c_obj.isAdjustedToUTC
+
+    @property
+    def unit(self) -> TimeUnit:
+        """Unit of the values."""
+        return TimeUnit(<int>self.c_obj.unit.type)
+
+
+cdef class TimestampType:
+    """Parameters of a ``TIMESTAMP`` logical type."""
+
+    def __init__(self):
+        raise ValueError("TimestampType cannot be constructed directly")
+
+    @staticmethod
+    cdef TimestampType from_cpp(cpp_TimestampType timestamp_type):
+        cdef TimestampType result = TimestampType.__new__(TimestampType)
+        result.c_obj = timestamp_type
+        return result
+
+    @property
+    def is_adjusted_to_utc(self) -> bool:
+        """Whether the values are adjusted to UTC."""
+        return self.c_obj.isAdjustedToUTC
+
+    @property
+    def unit(self) -> TimeUnit:
+        """Unit of the values."""
+        return TimeUnit(<int>self.c_obj.unit.type)
+
+
+cdef class IntType:
+    """Parameters of an ``INTEGER`` logical type."""
+
+    def __init__(self):
+        raise ValueError("IntType cannot be constructed directly")
+
+    @staticmethod
+    cdef IntType from_cpp(cpp_IntType int_type):
+        cdef IntType result = IntType.__new__(IntType)
+        result.c_obj = int_type
+        return result
+
+    @property
+    def bit_width(self) -> int:
+        """Number of bits: 8, 16, 32, or 64."""
+        return self.c_obj.bitWidth
+
+    @property
+    def is_signed(self) -> bool:
+        """Whether the integer is signed."""
+        return self.c_obj.isSigned
+
+
 cdef class LogicalType:
     """Logical type annotation of a Parquet schema element."""
 
@@ -334,53 +434,32 @@ cdef class LogicalType:
         return LogicalTypeId(<int>self.c_obj.type)
 
     @property
-    def decimal_scale(self) -> int | None:
-        """Scale of a ``DECIMAL`` type, otherwise ``None``."""
+    def decimal_type(self) -> DecimalType | None:
+        """Parameters of a ``DECIMAL`` type, otherwise ``None``."""
         if not self.c_obj.decimal_type.has_value():
             return None
-        return self.c_obj.decimal_type.value().scale
+        return DecimalType.from_cpp(self.c_obj.decimal_type.value())
 
     @property
-    def decimal_precision(self) -> int | None:
-        """Precision of a ``DECIMAL`` type, otherwise ``None``."""
-        if not self.c_obj.decimal_type.has_value():
+    def time_type(self) -> TimeType | None:
+        """Parameters of a ``TIME`` type, otherwise ``None``."""
+        if not self.c_obj.time_type.has_value():
             return None
-        return self.c_obj.decimal_type.value().precision
+        return TimeType.from_cpp(self.c_obj.time_type.value())
 
     @property
-    def time_unit(self) -> TimeUnit | None:
-        """Unit of a ``TIME`` or ``TIMESTAMP`` type, otherwise ``None``."""
-        if self.c_obj.time_type.has_value():
-            return TimeUnit(<int>self.c_obj.time_type.value().unit.type)
-        if self.c_obj.timestamp_type.has_value():
-            return TimeUnit(<int>self.c_obj.timestamp_type.value().unit.type)
-        return None
+    def timestamp_type(self) -> TimestampType | None:
+        """Parameters of a ``TIMESTAMP`` type, otherwise ``None``."""
+        if not self.c_obj.timestamp_type.has_value():
+            return None
+        return TimestampType.from_cpp(self.c_obj.timestamp_type.value())
 
     @property
-    def is_adjusted_to_utc(self) -> bool | None:
-        """
-        Whether a ``TIME`` or ``TIMESTAMP`` type is adjusted to UTC,
-        otherwise ``None``.
-        """
-        if self.c_obj.time_type.has_value():
-            return self.c_obj.time_type.value().isAdjustedToUTC
-        if self.c_obj.timestamp_type.has_value():
-            return self.c_obj.timestamp_type.value().isAdjustedToUTC
-        return None
-
-    @property
-    def bit_width(self) -> int | None:
-        """Bit width of an ``INTEGER`` type, otherwise ``None``."""
+    def int_type(self) -> IntType | None:
+        """Parameters of an ``INTEGER`` type, otherwise ``None``."""
         if not self.c_obj.int_type.has_value():
             return None
-        return self.c_obj.int_type.value().bitWidth
-
-    @property
-    def is_signed(self) -> bool | None:
-        """Whether an ``INTEGER`` type is signed, otherwise ``None``."""
-        if not self.c_obj.int_type.has_value():
-            return None
-        return self.c_obj.int_type.value().isSigned
+        return IntType.from_cpp(self.c_obj.int_type.value())
 
 
 cdef class SchemaElement:

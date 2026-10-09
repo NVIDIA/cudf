@@ -912,6 +912,22 @@ def test_file_metadata_wrappers_not_directly_constructible() -> None:
         ValueError, match="LogicalType cannot be constructed directly"
     ):
         plc.io.parquet_metadata.LogicalType()
+    with pytest.raises(
+        ValueError, match="DecimalType cannot be constructed directly"
+    ):
+        plc.io.parquet_metadata.DecimalType()
+    with pytest.raises(
+        ValueError, match="TimeType cannot be constructed directly"
+    ):
+        plc.io.parquet_metadata.TimeType()
+    with pytest.raises(
+        ValueError, match="TimestampType cannot be constructed directly"
+    ):
+        plc.io.parquet_metadata.TimestampType()
+    with pytest.raises(
+        ValueError, match="IntType cannot be constructed directly"
+    ):
+        plc.io.parquet_metadata.IntType()
 
 
 def test_file_metadata_schema_elements() -> None:
@@ -1011,6 +1027,30 @@ def test_file_metadata_schema_elements() -> None:
     PhysicalType = plc.io.parquet_metadata.PhysicalType
     LogicalTypeId = plc.io.parquet_metadata.LogicalTypeId
     TimeUnit = plc.io.parquet_metadata.TimeUnit
+
+    def logical_type_values(logical_type):
+        if logical_type is None:
+            return None
+        decimal_type = logical_type.decimal_type
+        time_type = logical_type.time_type
+        timestamp_type = logical_type.timestamp_type
+        int_type = logical_type.int_type
+        return (
+            logical_type.type,
+            None
+            if decimal_type is None
+            else (decimal_type.scale, decimal_type.precision),
+            None
+            if time_type is None
+            else (time_type.unit, time_type.is_adjusted_to_utc),
+            None
+            if timestamp_type is None
+            else (timestamp_type.unit, timestamp_type.is_adjusted_to_utc),
+            None
+            if int_type is None
+            else (int_type.bit_width, int_type.is_signed),
+        )
+
     result = [
         (
             element.name,
@@ -1018,17 +1058,7 @@ def test_file_metadata_schema_elements() -> None:
             element.num_children,
             element.type,
             element.type_length,
-            None
-            if element.logical_type is None
-            else (
-                element.logical_type.type,
-                element.logical_type.decimal_scale,
-                element.logical_type.decimal_precision,
-                element.logical_type.time_unit,
-                element.logical_type.is_adjusted_to_utc,
-                element.logical_type.bit_width,
-                element.logical_type.is_signed,
-            ),
+            logical_type_values(element.logical_type),
         )
         for element in file_metadata.schema
     ]
@@ -1044,7 +1074,7 @@ def test_file_metadata_schema_elements() -> None:
             0,
             PhysicalType.BYTE_ARRAY,
             0,
-            (LogicalTypeId.STRING, None, None, None, None, None, None),
+            (LogicalTypeId.STRING, None, None, None, None),
         ),
         (
             "dec",
@@ -1052,7 +1082,7 @@ def test_file_metadata_schema_elements() -> None:
             0,
             PhysicalType.FIXED_LEN_BYTE_ARRAY,
             6,
-            (LogicalTypeId.DECIMAL, 2, 12, None, None, None, None),
+            (LogicalTypeId.DECIMAL, (2, 12), None, None, None),
         ),
         ("fixed", 40, 0, PhysicalType.FIXED_LEN_BYTE_ARRAY, 4, None),
         (
@@ -1061,7 +1091,7 @@ def test_file_metadata_schema_elements() -> None:
             0,
             PhysicalType.INT32,
             0,
-            (LogicalTypeId.INTEGER, None, None, None, None, 8, True),
+            (LogicalTypeId.INTEGER, None, None, None, (8, True)),
         ),
         (
             "u16",
@@ -1069,7 +1099,7 @@ def test_file_metadata_schema_elements() -> None:
             0,
             PhysicalType.INT32,
             0,
-            (LogicalTypeId.INTEGER, None, None, None, None, 16, False),
+            (LogicalTypeId.INTEGER, None, None, None, (16, False)),
         ),
         (
             "date",
@@ -1077,7 +1107,7 @@ def test_file_metadata_schema_elements() -> None:
             0,
             PhysicalType.INT32,
             0,
-            (LogicalTypeId.DATE, None, None, None, None, None, None),
+            (LogicalTypeId.DATE, None, None, None, None),
         ),
         (
             "time",
@@ -1088,9 +1118,7 @@ def test_file_metadata_schema_elements() -> None:
             (
                 LogicalTypeId.TIME,
                 None,
-                None,
-                TimeUnit.MILLIS,
-                time_is_adjusted_to_utc,
+                (TimeUnit.MILLIS, time_is_adjusted_to_utc),
                 None,
                 None,
             ),
@@ -1105,9 +1133,7 @@ def test_file_metadata_schema_elements() -> None:
                 LogicalTypeId.TIMESTAMP,
                 None,
                 None,
-                TimeUnit.MILLIS,
-                True,
-                None,
+                (TimeUnit.MILLIS, True),
                 None,
             ),
         ),
@@ -1121,9 +1147,7 @@ def test_file_metadata_schema_elements() -> None:
                 LogicalTypeId.TIMESTAMP,
                 None,
                 None,
-                TimeUnit.NANOS,
-                False,
-                None,
+                (TimeUnit.NANOS, False),
                 None,
             ),
         ),

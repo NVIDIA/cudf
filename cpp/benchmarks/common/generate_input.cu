@@ -442,12 +442,6 @@ rmm::device_uvector<cudf::size_type> sample_indices_with_run_length(cudf::size_t
   }
 }
 
-enum class string_encoding {
-  ASCII,
-  UTF8,
-};
-
-template <string_encoding Encoding = string_encoding::UTF8>
 struct string_generator {
   char* chars;
   cuda::std::philox4x32 engine;
@@ -470,12 +464,10 @@ struct string_generator {
     engine.discard(begin);
     for (auto i = begin; i < end; ++i) {
       auto ch = char_dist(engine);
-      if constexpr (Encoding == string_encoding::UTF8) {
-        if (i == end - 1 && ch >= '\x7F') ch = last_char;  // last element ASCII only.
-        if (ch >= '\x7F') {                                // x7F is at the top edge of ASCII
-          chars[i++] = '\xC4';  // these characters are assigned two bytes
-          ch         = (ch >> 2) | 0x80;
-        }
+      if (i == end - 1 && ch >= '\x7F') ch = last_char;  // last element ASCII only.
+      if (ch >= '\x7F') {                                // x7F is at the top edge of ASCII
+        chars[i++] = '\xC4';                             // these characters are assigned two bytes
+        ch         = (ch >> 2) | 0x80;
       }
       chars[i] = static_cast<char>(ch);
     }
@@ -486,16 +478,13 @@ struct string_generator {
  * @brief Create a UTF-8 string column with the average length.
  *
  */
-template <string_encoding Encoding = string_encoding::UTF8>
 std::unique_ptr<cudf::column> create_random_utf8_string_column(data_profile const& profile,
                                                                cuda::std::philox4x32& engine,
                                                                cudf::size_type num_rows)
 {
   auto const string_params = profile.get_distribution_params<cudf::string_view>();
   auto const char_lower    = string_params.char_lower;
-  auto const char_upper    = Encoding == string_encoding::ASCII
-                               ? std::min<unsigned char>(string_params.char_upper, 126)
-                               : string_params.char_upper;
+  auto const char_upper    = string_params.char_upper;
 
   auto len_dist   = random_value_fn<uint32_t>{string_params.length_params};
   auto valid_dist = random_value_fn<bool>(
@@ -522,7 +511,7 @@ std::unique_ptr<cudf::column> create_random_utf8_string_column(data_profile cons
   thrust::for_each_n(thrust::device,
                      cuda::make_zip_iterator(cuda::std::make_tuple(offsets_itr, offsets_itr + 1)),
                      num_rows,
-                     string_generator<Encoding>{chars.data(), engine, char_lower, char_upper});
+                     string_generator{chars.data(), engine, char_lower, char_upper});
 
   auto [result_bitmask, null_count] =
     profile.get_null_probability().has_value()
@@ -1118,8 +1107,12 @@ std::unique_ptr<cudf::column> create_ascii_string_column(data_profile const& pro
                                                          cudf::size_type num_rows,
                                                          unsigned seed)
 {
-  auto engine = deterministic_engine(seed);
-  return create_random_utf8_string_column<string_encoding::ASCII>(profile, engine, num_rows);
+  // limit the character range to ASCII and use the regular strings generator
+  auto const string_params = profile.get_distribution_params<cudf::string_view>();
+  auto ascii_profile       = profile;
+  ascii_profile.set_string_char_range(string_params.char_lower,
+                                      std::min<unsigned char>(string_params.char_upper, 126));
+  return create_random_column(cudf::type_id::STRING, row_count{num_rows}, ascii_profile, seed);
 }
 
 std::vector<cudf::type_id> get_type_or_group(int32_t id)

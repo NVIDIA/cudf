@@ -3,11 +3,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <benchmarks/common/generate_input.hpp>
 #include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf_test/column_wrapper.hpp>
 
+#include <cudf/copying.hpp>
 #include <cudf/strings/strings_column_view.hpp>
+#include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
 
@@ -15,174 +18,458 @@
 
 #include <nvbench/nvbench.cuh>
 
-// char_type = "precomposed"
-//
-// Latin-1 Supplement precomposed characters (U+00C0–U+00FF subset, 2-byte
-// UTF-8).  All are already NFC/NFKC so NFC/NFKC paths exercise the quick
-// check; NFD/NFKD paths exercise the full decomposition pipeline.
-//
-// clang-format off
-static char const PRECOMPOSED_PATTERN[] =
-  "\xC3\x80\xC3\x81\xC3\x82\xC3\x83\xC3\x84\xC3\x85"  // À Á Â Ã Ä Å
-  "\xC3\x87\xC3\x88\xC3\x89\xC3\x8A\xC3\x8B"            // Ç È É Ê Ë
-  "\xC3\x8C\xC3\x8D\xC3\x8E\xC3\x8F\xC3\x91"            // Ì Í Î Ï Ñ
-  "\xC3\x92\xC3\x93\xC3\x94\xC3\x95\xC3\x96"            // Ò Ó Ô Õ Ö
-  "\xC3\x99\xC3\x9A\xC3\x9B\xC3\x9C\xC3\x9D"            // Ù Ú Û Ü Ý
-  "\xC3\xA0\xC3\xA1\xC3\xA2\xC3\xA3\xC3\xA4\xC3\xA5"  // à á â ã ä å
-  "\xC3\xA7\xC3\xA8\xC3\xA9\xC3\xAA\xC3\xAB"            // ç è é ê ë
-  "\xC3\xAC\xC3\xAD\xC3\xAE\xC3\xAF\xC3\xB1"            // ì í î ï ñ
-  "\xC3\xB2\xC3\xB3\xC3\xB4\xC3\xB5\xC3\xB6"            // ò ó ô õ ö
-  "\xC3\xB9\xC3\xBA\xC3\xBB\xC3\xBC\xC3\xBD\xC3\xBF";  // ù ú û ü ý ÿ
-// clang-format on
-static auto const PRECOMPOSED_LEN =
-  static_cast<cudf::size_type>(sizeof(PRECOMPOSED_PATTERN) - 1);  // 106 bytes, 53 chars
+#include <algorithm>
+#include <array>
+#include <cstdint>
+#include <cstdio>
+#include <map>
+#include <random>
+#include <set>
+#include <string>
+#include <vector>
 
-// char_type = "mixed"
-//
-// Nine 3-byte UTF-8 codepoints (27 bytes/repeat) covering all sample
-// character types: fullwidth Latin (NFKD compat), circled digit (NFKD compat),
-// FFI ligature (NFKD compat, multi-char output), Angstrom Sign (NFC singleton
-// canonical decomposition), and halfwidth Katakana (NFKD compat).
-// All four normalization forms trigger the full pipeline on this input.
-//
-// clang-format off
-static char const MIXED_PATTERN[] =
-  "\xEF\xBC\xA1\xEF\xBC\xA2\xEF\xBC\xA3"  // ＡＢＣ  fullwidth Latin  (U+FF21–FF23)
-  "\xE2\x91\xA0"                            // ①      circled digit one (U+2460)
-  "\xEF\xAC\x83"                            // ﬃ      FFI ligature      (U+FB03)
-  "\xE2\x84\xAB"                            // Å      Angstrom Sign     (U+212B)
-  "\xEF\xBD\xB6\xEF\xBE\x80\xEF\xBE\x85"; // ｶﾀﾅ   halfwidth katakana (U+FF76,FF80,FF85)
-// clang-format on
-static auto const MIXED_LEN =
-  static_cast<cudf::size_type>(sizeof(MIXED_PATTERN) - 1);  // 27 bytes, 9 chars
+namespace {
 
-// 53 precomposed Latin-1 chars + 7 combining marks = 60 rows
-static std::unique_ptr<nvtext::unicode_normalizer> make_normalizer_precomposed(
-  nvtext::unicode_normalization_form form)
+/**
+ * @brief Synthetic table in the 3-column UnicodeData.txt layout used to build the normalizer
+ *
+ * The real UnicodeData.txt has about 35K rows, but most of them have CCC 0 and no decomposition
+ * and so do not affect normalization. This table has about 2.4K rows with a realistic number of
+ * canonical composition pairs (about 1.1K vs about 940 in Unicode 15), multi-step canonical
+ * decompositions, singleton decompositions, and several kinds of compatibility decompositions.
+ */
+struct synthetic_unicode_data {
+  std::vector<std::string> codepoints;
+  std::vector<int32_t> ccc;
+  std::vector<std::string> decomps;
+
+  std::map<char, std::vector<uint32_t>> latin_composites;  // ASCII letter -> its composites
+  std::vector<uint32_t> greek_bases;
+  std::vector<uint32_t> greek_composites;
+
+  void add(uint32_t cp, int32_t cc, std::string decomp)
+  {
+    codepoints.push_back(hex(cp));
+    ccc.push_back(cc);
+    decomps.push_back(std::move(decomp));
+  }
+
+  static std::string hex(uint32_t cp)
+  {
+    char buffer[16];
+    std::snprintf(buffer, sizeof(buffer), "%04X", cp);
+    return buffer;
+  }
+};
+
+/// Approximates the Canonical_Combining_Class values of the U+0300-U+036F block
+int32_t combining_mark_ccc(uint32_t cp)
 {
-  // clang-format off
-  cudf::test::strings_column_wrapper codepoints({
-    "00C0","00C1","00C2","00C3","00C4","00C5",
-    "00C7","00C8","00C9","00CA","00CB",
-    "00CC","00CD","00CE","00CF","00D1",
-    "00D2","00D3","00D4","00D5","00D6",
-    "00D9","00DA","00DB","00DC","00DD",
-    "00E0","00E1","00E2","00E3","00E4","00E5",
-    "00E7","00E8","00E9","00EA","00EB",
-    "00EC","00ED","00EE","00EF","00F1",
-    "00F2","00F3","00F4","00F5","00F6",
-    "00F9","00FA","00FB","00FC","00FD","00FF",
-    "0300","0301","0302","0303","0308","030A","0327"
-  });
-  cudf::test::fixed_width_column_wrapper<int32_t> ccc_values({
-    0,0,0,0,0,0,   // À Á Â Ã Ä Å
-    0,0,0,0,0,     // Ç È É Ê Ë
-    0,0,0,0,0,     // Ì Í Î Ï Ñ
-    0,0,0,0,0,     // Ò Ó Ô Õ Ö
-    0,0,0,0,0,     // Ù Ú Û Ü Ý
-    0,0,0,0,0,0,   // à á â ã ä å
-    0,0,0,0,0,     // ç è é ê ë
-    0,0,0,0,0,     // ì í î ï ñ
-    0,0,0,0,0,     // ò ó ô õ ö
-    0,0,0,0,0,0,   // ù ú û ü ý ÿ
-    230,230,230,230,230,230,202  // combining marks
-  });
-  cudf::test::strings_column_wrapper decomp_mappings({
-    "0041 0300","0041 0301","0041 0302","0041 0303","0041 0308","0041 030A",
-    "0043 0327","0045 0300","0045 0301","0045 0302","0045 0308",
-    "0049 0300","0049 0301","0049 0302","0049 0308","004E 0303",
-    "004F 0300","004F 0301","004F 0302","004F 0303","004F 0308",
-    "0055 0300","0055 0301","0055 0302","0055 0308","0059 0301",
-    "0061 0300","0061 0301","0061 0302","0061 0303","0061 0308","0061 030A",
-    "0063 0327","0065 0300","0065 0301","0065 0302","0065 0308",
-    "0069 0300","0069 0301","0069 0302","0069 0308","006E 0303",
-    "006F 0300","006F 0301","006F 0302","006F 0303","006F 0308",
-    "0075 0300","0075 0301","0075 0302","0075 0308","0079 0301","0079 0308",
-    "","","","","","",""  // combining marks have no decomp
-  });
-  // clang-format on
-  return nvtext::create_unicode_normalizer(
-    cudf::table_view({codepoints, ccc_values, decomp_mappings}), form);
+  if (cp >= 0x0334 && cp <= 0x0338) { return 1; }
+  if (cp == 0x0321 || cp == 0x0322 || cp == 0x0327 || cp == 0x0328) { return 202; }
+  if (cp == 0x031B) { return 216; }
+  if (cp == 0x0315 || cp == 0x031A) { return 232; }
+  if (cp == 0x0345) { return 240; }
+  if ((cp >= 0x0316 && cp <= 0x0319) || (cp >= 0x031C && cp <= 0x0320) ||
+      (cp >= 0x0323 && cp <= 0x0326) || (cp >= 0x0329 && cp <= 0x0333) ||
+      (cp >= 0x0339 && cp <= 0x033C) || (cp >= 0x0347 && cp <= 0x0349) || cp == 0x034D ||
+      cp == 0x034E) {
+    return 220;
+  }
+  return 230;
 }
 
-// Mixed character set: 11 rows covering all MIXED_PATTERN codepoints and their
-// decomposition targets.
-static std::unique_ptr<nvtext::unicode_normalizer> make_normalizer_mixed(
-  nvtext::unicode_normalization_form form)
+synthetic_unicode_data create_unicode_data(std::mt19937& gen)
 {
-  // clang-format off
-  cudf::test::strings_column_wrapper codepoints({
-    "FF21","FF22","FF23",     // ＡＢＣ  fullwidth Latin
-    "2460",                   // ①      circled digit one
-    "FB03",                   // ﬃ      FFI ligature
-    "212B",                   // Å      Angstrom Sign (singleton canonical → 00C5)
-    "FF76","FF80","FF85",     // ｶﾀﾅ   halfwidth katakana
-    "00C5",                   // Å      canonical decomp target of 212B
-    "030A"                    // ◌̊     combining ring above (CCC=230)
-  });
-  cudf::test::fixed_width_column_wrapper<int32_t> ccc_values({
-    0,0,0,   // fullwidth Latin
-    0,       // circled digit
-    0,       // FFI ligature
-    0,       // Angstrom Sign
-    0,0,0,   // halfwidth katakana
-    0,       // Å (U+00C5)
-    230      // combining ring above
-  });
-  cudf::test::strings_column_wrapper decomp_mappings({
-    "<compat> 0041","<compat> 0042","<compat> 0043",  // fullwidth Latin → ABC
-    "<compat> 0031",                                   // ① → 1
-    "<compat> 0066 0066 0069",                         // ﬃ → ffi
-    "00C5",                                            // Angstrom → Å (singleton canonical)
-    "<compat> 30AB","<compat> 30BF","<compat> 30CA",  // halfwidth katakana → fullwidth
-    "0041 030A",                                       // Å → A + combining ring (canonical)
-    ""                                                 // combining ring: no decomp
-  });
-  // clang-format on
-  return nvtext::create_unicode_normalizer(
-    cudf::table_view({codepoints, ccc_values, decomp_mappings}), form);
+  synthetic_unicode_data data;
+  auto const hex = synthetic_unicode_data::hex;
+
+  // combining marks (CGJ U+034F has CCC 0 and is left out)
+  for (uint32_t cp = 0x0300; cp <= 0x036F; ++cp) {
+    if (cp != 0x034F) { data.add(cp, combining_mark_ccc(cp), ""); }
+  }
+  // Hebrew points with distinct CCC values exercise canonical reordering
+  for (uint32_t cp = 0x05B0; cp <= 0x05BC; ++cp) {
+    data.add(cp, static_cast<int32_t>(cp - 0x05B0 + 10), "");
+  }
+
+  // codepoints assigned to synthetic precomposed characters
+  std::vector<uint32_t> latin_slots;
+  for (auto [first, last] : std::array<std::pair<uint32_t, uint32_t>, 3>{
+         {{0x00C0, 0x024F}, {0x1E00, 0x1EFF}, {0x0400, 0x04FF}}}) {
+    for (auto cp = first; cp <= last; ++cp) {
+      latin_slots.push_back(cp);
+    }
+  }
+  auto next_slot = latin_slots.begin();
+
+  // single-mark Latin composites: 12 marks for each ASCII letter
+  std::vector<uint32_t> marks = {0x0300,
+                                 0x0301,
+                                 0x0302,
+                                 0x0303,
+                                 0x0304,
+                                 0x0306,
+                                 0x0307,
+                                 0x0308,
+                                 0x0309,
+                                 0x030A,
+                                 0x030B,
+                                 0x030C,
+                                 0x0323,
+                                 0x0327,
+                                 0x0328,
+                                 0x0331};
+  std::vector<std::pair<uint32_t, uint32_t>> second_level;  // (composite, first mark)
+  std::string const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+  for (auto letter : letters) {
+    std::shuffle(marks.begin(), marks.end(), gen);
+    for (std::size_t m = 0; m < 12; ++m) {
+      auto const cp = *next_slot++;
+      data.add(cp, 0, hex(static_cast<uint32_t>(letter)) + " " + hex(marks[m]));
+      data.latin_composites[letter].push_back(cp);
+      if (marks[m] == 0x0302 || marks[m] == 0x0304 || marks[m] == 0x0306 || marks[m] == 0x0308) {
+        second_level.emplace_back(cp, static_cast<uint32_t>(letter));
+      }
+    }
+  }
+  // two-mark Latin composites decompose in two steps (e.g. U+1EA4 -> U+00C2 U+0301)
+  // and use second marks with the same CCC as the first so no reordering is needed
+  std::vector<uint32_t> second_marks = {0x0300, 0x0301, 0x0303, 0x0309};
+  for (auto [composite, letter] : second_level) {
+    std::shuffle(second_marks.begin(), second_marks.end(), gen);
+    for (std::size_t m = 0; m < 2 && next_slot != latin_slots.end(); ++m) {
+      auto const cp = *next_slot++;
+      data.add(cp, 0, hex(composite) + " " + hex(second_marks[m]));
+      data.latin_composites[static_cast<char>(letter)].push_back(cp);
+    }
+  }
+
+  // Greek composites
+  for (uint32_t cp = 0x0391; cp <= 0x03C9; ++cp) {
+    if (cp != 0x03A2 && (cp <= 0x03A9 || cp >= 0x03B1) && cp != 0x03C2) {
+      data.greek_bases.push_back(cp);
+    }
+  }
+  uint32_t greek_slot = 0x1F00;
+  for (auto base : data.greek_bases) {
+    for (auto mark : {0x0301u, 0x0313u, 0x0314u, 0x0342u}) {
+      data.add(greek_slot, 0, hex(base) + " " + hex(mark));
+      data.greek_composites.push_back(greek_slot++);
+    }
+  }
+
+  // singleton canonical decompositions
+  data.add(0x2126, 0, "03A9");  // OHM SIGN
+  data.add(0x212A, 0, "004B");  // KELVIN SIGN
+  data.add(0x212B, 0, hex(data.latin_composites['A'].front()));
+  for (uint32_t cp = 0xF900; cp <= 0xFA2D; ++cp) {  // CJK compatibility ideographs
+    data.add(cp, 0, hex(0x4E00 + ((cp - 0xF900) * 37) % 20000));
+  }
+
+  // compatibility decompositions
+  for (uint32_t cp = 0xFF01; cp <= 0xFF5E; ++cp) {
+    data.add(cp, 0, "<wide> " + hex(cp - 0xFF01 + 0x21));
+  }
+  for (uint32_t cp = 0xFF66; cp <= 0xFF9D; ++cp) {
+    data.add(cp, 0, "<narrow> " + hex(cp - 0xFF66 + 0x30A1));
+  }
+  data.add(0xFB00, 0, "<compat> 0066 0066");
+  data.add(0xFB01, 0, "<compat> 0066 0069");
+  data.add(0xFB02, 0, "<compat> 0066 006C");
+  data.add(0xFB03, 0, "<compat> 0066 0066 0069");
+  data.add(0xFB04, 0, "<compat> 0066 0066 006C");
+  for (uint32_t i = 1; i <= 20; ++i) {
+    auto digits = std::to_string(i);
+    std::string circled, parenthesized = "<compat> 0028";
+    for (auto d : digits) {
+      circled += (circled.empty() ? "" : " ") + hex(static_cast<uint32_t>(d));
+      parenthesized += " " + hex(static_cast<uint32_t>(d));
+    }
+    data.add(0x2460 + i - 1, 0, "<circle> " + circled);
+    data.add(0x2474 + i - 1, 0, parenthesized + " 0029");
+  }
+  data.add(0x2103, 0, "<compat> 00B0 0043");  // DEGREE CELSIUS
+  data.add(0x00BD, 0, "<fraction> 0031 2044 0032");
+  std::uniform_int_distribution<std::size_t> letter_dist(0, letters.size() - 1);
+  for (uint32_t cp = 0x3380; cp <= 0x33DF; ++cp) {  // squared abbreviations
+    std::string decomp = "<square>";
+    for (int i = 0; i < 2 + static_cast<int>(cp % 3); ++i) {
+      decomp += " " + hex(static_cast<uint32_t>(letters[letter_dist(gen)]));
+    }
+    data.add(cp, 0, decomp);
+  }
+  for (uint32_t cp = 0x1D400; cp < 0x1D400 + 13 * 52; ++cp) {  // mathematical alphanumerics
+    data.add(cp, 0, "<font> " + hex(static_cast<uint32_t>(letters[(cp - 0x1D400) % 52])));
+  }
+  // Hangul compatibility jamo decompose to conjoining jamo that NFKC recomposes
+  for (uint32_t i = 0; i < 19; ++i) {
+    data.add(0x3131 + i, 0, "<compat> " + hex(0x1100 + i));
+  }
+  for (uint32_t i = 0; i < 21; ++i) {
+    data.add(0x314F + i, 0, "<compat> " + hex(0x1161 + i));
+  }
+  return data;
 }
+
+void append_utf8(std::string& str, uint32_t cp)
+{
+  if (cp < 0x80) {
+    str += static_cast<char>(cp);
+  } else if (cp < 0x800) {
+    str += static_cast<char>(0xC0 | (cp >> 6));
+    str += static_cast<char>(0x80 | (cp & 0x3F));
+  } else if (cp < 0x10000) {
+    str += static_cast<char>(0xE0 | (cp >> 12));
+    str += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+    str += static_cast<char>(0x80 | (cp & 0x3F));
+  } else {
+    str += static_cast<char>(0xF0 | (cp >> 18));
+    str += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+    str += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+    str += static_cast<char>(0x80 | (cp & 0x3F));
+  }
+}
+
+/**
+ * @brief Generates random words of different kinds of text
+ */
+struct word_generator {
+  synthetic_unicode_data const& data;
+  std::mt19937& gen;
+
+  uint32_t uniform(uint32_t first, uint32_t last)
+  {
+    return std::uniform_int_distribution<uint32_t>(first, last)(gen);
+  }
+  bool chance(double probability) { return std::bernoulli_distribution(probability)(gen); }
+  template <typename T>
+  T pick(std::vector<T> const& values)
+  {
+    return values[uniform(0, static_cast<uint32_t>(values.size() - 1))];
+  }
+
+  std::string english()
+  {
+    // letter frequencies roughly following English text
+    static std::string const letters =
+      "eeeeeeeeeeeettttttttaaaaaaaaoooooooiiiiiiinnnnnnnsssssshhhhhhrrrrrrddddllllcccuuummwwffgg"
+      "yyppbbvkjxqz";
+    std::string word;
+    auto const size = uniform(2, 9);
+    for (uint32_t i = 0; i < size; ++i) {
+      word += letters[uniform(0, static_cast<uint32_t>(letters.size() - 1))];
+    }
+    if (chance(0.1)) { word[0] = static_cast<char>(word[0] - 'a' + 'A'); }
+    return word;
+  }
+
+  // precomposed (NFC) Latin letters mixed into English-like words
+  std::string accented()
+  {
+    std::string word;
+    for (auto ch : english()) {
+      if (chance(0.3)) {
+        append_utf8(word, pick(data.latin_composites.at(ch)));
+      } else {
+        word += ch;
+      }
+    }
+    return word;
+  }
+
+  // letters followed by unordered runs of combining marks
+  std::string decomposed()
+  {
+    std::string word;
+    for (auto ch : english()) {
+      word += ch;
+      if (chance(0.3)) {
+        auto const num_marks = uniform(1, 3);
+        for (uint32_t i = 0; i < num_marks; ++i) {
+          append_utf8(word, uniform(0x0300, 0x0333));
+        }
+      }
+    }
+    return word;
+  }
+
+  std::string greek()
+  {
+    std::string word;
+    auto const size = uniform(3, 8);
+    for (uint32_t i = 0; i < size; ++i) {
+      append_utf8(word, chance(0.3) ? pick(data.greek_composites) : pick(data.greek_bases));
+    }
+    return word;
+  }
+
+  std::string from_range(uint32_t first, uint32_t last, uint32_t min_size, uint32_t max_size)
+  {
+    std::string word;
+    auto const size = uniform(min_size, max_size);
+    for (uint32_t i = 0; i < size; ++i) {
+      append_utf8(word, uniform(first, last));
+    }
+    return word;
+  }
+
+  std::string cjk()
+  {
+    std::string word;
+    auto const size = uniform(2, 4);
+    for (uint32_t i = 0; i < size; ++i) {
+      append_utf8(word, chance(0.1) ? uniform(0xF900, 0xFA2D) : uniform(0x4E00, 0x9FFF));
+    }
+    return word;
+  }
+
+  std::string width_variant()
+  {
+    return chance(0.5) ? from_range(0xFF21, 0xFF5A, 3, 6) : from_range(0xFF66, 0xFF9D, 3, 6);
+  }
+
+  std::string symbol()
+  {
+    switch (uniform(0, 5)) {
+      case 0: return from_range(0xFB00, 0xFB04, 1, 1) + english();
+      case 1: return from_range(0x2460, 0x2473, 1, 1);
+      case 2: return from_range(0x2474, 0x2487, 1, 1);
+      case 3: return from_range(0x3380, 0x33DF, 1, 1);
+      case 4: return from_range(0x1D400, 0x1D400 + 13 * 52 - 1, 3, 6);
+      default: return std::to_string(uniform(0, 40)) + "\xE2\x84\x83";  // degrees Celsius
+    }
+  }
+
+  // Hebrew letters with up to 2 points in random order
+  std::string hebrew()
+  {
+    std::string word;
+    auto const size = uniform(3, 6);
+    for (uint32_t i = 0; i < size; ++i) {
+      append_utf8(word, uniform(0x05D0, 0x05EA));
+      auto const num_points = uniform(0, 2);
+      for (uint32_t p = 0; p < num_points; ++p) {
+        append_utf8(word, uniform(0x05B0, 0x05BC));
+      }
+    }
+    return word;
+  }
+
+  std::string compat_jamo()
+  {
+    std::string word;
+    auto const size = uniform(1, 3);
+    for (uint32_t i = 0; i < size; ++i) {
+      append_utf8(word, uniform(0x3131, 0x3143));
+      append_utf8(word, uniform(0x314F, 0x3163));
+    }
+    return word;
+  }
+
+  /**
+   * @brief Returns a random word for the given text type
+   *
+   * "latin" is mostly ASCII with some precomposed accented letters and a few decomposed
+   * sequences, which is enough to make NFC/NFKC run the full pipeline.
+   * "mixed" includes all the word types including Hangul, CJK, and compatibility characters.
+   */
+  std::string word(std::string const& text_type)
+  {
+    if (text_type == "latin") {
+      std::discrete_distribution<int> dist({85, 13, 2});
+      switch (dist(gen)) {
+        case 0: return english();
+        case 1: return accented();
+        default: return decomposed();
+      }
+    }
+    std::discrete_distribution<int> dist({35, 12, 5, 6, 10, 10, 5, 7, 6, 4});
+    switch (dist(gen)) {
+      case 0: return english();
+      case 1: return accented();
+      case 2: return decomposed();
+      case 3: return greek();
+      case 4: return from_range(0xAC00, 0xD7A3, 2, 4);  // Hangul syllables
+      case 5: return cjk();
+      case 6: return width_variant();
+      case 7: return symbol();
+      case 8: return hebrew();
+      default: return compat_jamo();
+    }
+  }
+};
+
+std::vector<std::string> create_rows(synthetic_unicode_data const& data,
+                                     std::mt19937& gen,
+                                     cudf::size_type num_rows,
+                                     cudf::size_type row_width,
+                                     std::string const& text_type)
+{
+  word_generator words{data, gen};
+  std::vector<std::string> rows(num_rows);
+  for (auto& row : rows) {
+    while (true) {
+      auto const word = words.word(text_type);
+      if (row.size() + word.size() + 1 > static_cast<std::size_t>(row_width)) { break; }
+      if (!row.empty()) { row += words.chance(0.08) ? ", " : " "; }
+      row += word;
+    }
+  }
+  return rows;
+}
+
+}  // namespace
 
 static void bench_unicode_normalize(nvbench::state& state)
 {
   auto const num_rows  = static_cast<cudf::size_type>(state.get_int64("num_rows"));
-  auto const row_width = static_cast<cudf::size_type>(state.get_int64("row_width_bytes"));
+  auto const row_width = static_cast<cudf::size_type>(state.get_int64("row_width"));
   auto const form_str  = state.get_string("form");
-  auto const char_type = state.get_string("char_type");
+  auto const text_type = state.get_string("text_type");
+
+  if (static_cast<int64_t>(num_rows) * row_width > (int64_t{1} << 29)) {
+    state.skip("Skip benchmarks greater than 512MB");
+    return;
+  }
 
   auto const form = [&] {
-    if (form_str == "NFD") return nvtext::unicode_normalization_form::NFD;
-    if (form_str == "NFKD") return nvtext::unicode_normalization_form::NFKD;
-    if (form_str == "NFKC") return nvtext::unicode_normalization_form::NFKC;
+    if (form_str == "NFD") { return nvtext::unicode_normalization_form::NFD; }
+    if (form_str == "NFKD") { return nvtext::unicode_normalization_form::NFKD; }
+    if (form_str == "NFKC") { return nvtext::unicode_normalization_form::NFKC; }
     return nvtext::unicode_normalization_form::NFC;
   }();
 
-  bool const is_mixed       = (char_type == "mixed");
-  char const* const pattern = is_mixed ? MIXED_PATTERN : PRECOMPOSED_PATTERN;
-  auto const pattern_len    = is_mixed ? MIXED_LEN : PRECOMPOSED_LEN;
-
-  // Fill each row with complete repetitions of the pattern up to row_width bytes.
-  // For precomposed (2-byte chars) this fills row_width exactly.
-  // For mixed (3-byte chars, 27-byte pattern) each row is
-  // floor(row_width / 27) * 27 bytes — slightly under row_width.
-  std::string row_str;
-  row_str.reserve(row_width);
-  while (static_cast<cudf::size_type>(row_str.size()) + pattern_len <= row_width) {
-    row_str.append(pattern, pattern_len);
-  }
-
-  std::vector<std::string> rows(num_rows, row_str);
-  cudf::test::strings_column_wrapper str_col(rows.begin(), rows.end());
-  auto input_col = str_col.release();
-  cudf::strings_column_view input(input_col->view());
-
-  // Normalizer is created once and reused — construction time is not measured.
+  std::mt19937 gen(0);
+  auto const data = create_unicode_data(gen);
+  auto const codepoints =
+    cudf::test::strings_column_wrapper(data.codepoints.begin(), data.codepoints.end());
+  auto const ccc =
+    cudf::test::fixed_width_column_wrapper<int32_t>(data.ccc.begin(), data.ccc.end());
+  auto const decomps = cudf::test::strings_column_wrapper(data.decomps.begin(), data.decomps.end());
+  // the normalizer is created once and reused so construction time is not measured
   auto const normalizer =
-    is_mixed ? make_normalizer_mixed(form) : make_normalizer_precomposed(form);
+    nvtext::create_unicode_normalizer(cudf::table_view({codepoints, ccc, decomps}), form);
+
+  // create a pool of unique rows and then randomly sample from it to build the input
+  auto const pool_size       = std::min(num_rows, cudf::size_type{4096});
+  auto const h_rows          = create_rows(data, gen, pool_size, row_width, text_type);
+  auto const pool            = cudf::test::strings_column_wrapper(h_rows.begin(), h_rows.end());
+  data_profile const profile = data_profile_builder().no_validity().distribution(
+    cudf::type_id::INT32, distribution_id::UNIFORM, 0, pool_size - 1);
+  auto const indices = create_random_column(cudf::type_id::INT32, row_count{num_rows}, profile);
+  auto const table   = cudf::gather(cudf::table_view({pool}), indices->view());
+  auto const input   = cudf::strings_column_view(table->view().column(0));
 
   state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
-  state.add_global_memory_reads<nvbench::int8_t>(input_col->alloc_size());
-  state.add_global_memory_writes<nvbench::int8_t>(input_col->alloc_size());
+  auto const chars_size = input.chars_size(cudf::get_default_stream());
+  state.add_global_memory_reads<nvbench::int8_t>(chars_size);
+  {
+    // the output size depends on the data so compute it before timing
+    auto const result = nvtext::normalize_unicode(input, *normalizer);
+    state.add_global_memory_writes<nvbench::int8_t>(
+      cudf::strings_column_view(result->view()).chars_size(cudf::get_default_stream()));
+  }
 
   auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
@@ -195,6 +482,6 @@ static void bench_unicode_normalize(nvbench::state& state)
 NVBENCH_BENCH(bench_unicode_normalize)
   .set_name("unicode_normalize")
   .add_string_axis("form", {"NFD", "NFC", "NFKD", "NFKC"})
-  .add_string_axis("char_type", {"precomposed", "mixed"})
+  .add_string_axis("text_type", {"latin", "mixed"})
   .add_int64_axis("num_rows", {32768, 262144})
-  .add_int64_axis("row_width_bytes", {128, 512});
+  .add_int64_axis("row_width", {128, 512, 2048, 8192});

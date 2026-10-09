@@ -14,6 +14,9 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/sizes_to_offsets_iterator.cuh>
+#include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/grid_1d.cuh>
+#include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/strings/detail/converters.hpp>
 #include <cudf/strings/detail/strings_children.cuh>
@@ -30,15 +33,25 @@
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cub/block/block_reduce.cuh>
+#include <cub/block/block_scan.cuh>
+#include <cub/device/device_scan.cuh>
+#include <cub/device/device_segmented_reduce.cuh>
+#include <cuda/atomic>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/algorithm>
+#include <cuda/std/bit>
+#include <cuda/std/execution>
 #include <cuda/std/span>
+#include <cuda/std/utility>
 #include <cuda/stream>
-#include <thrust/fill.h>
+#include <thrust/execution_policy.h>
+#include <thrust/for_each.h>
 #include <thrust/remove.h>
 #include <thrust/sort.h>
-#include <thrust/transform.h>
 
 #include <cstdint>
 
@@ -210,6 +223,16 @@ struct write_decomp_tokens_fn {
 };
 
 /**
+ * Composition table key for a (starter, combining) codepoint pair.
+ * The starter occupies the upper 32 bits so keys sort by starter first.
+ */
+__device__ inline uint64_t composition_key(uint32_t starter, uint32_t combining)
+{
+  constexpr uint32_t starter_shift = 32;
+  return (static_cast<uint64_t>(starter) << starter_shift) | combining;
+}
+
+/**
  * Build composition table entries from canonical two-token decompositions.
  * Writes a (key, value) pair per qualifying row; zero for non-qualifying rows.
  */
@@ -252,7 +275,7 @@ struct build_comp_table_fn {
       cudf::set_bit(compat_flags.data(), static_cast<cudf::size_type>(composed));
       return;
     }
-    d_comp_keys[idx]   = (static_cast<uint64_t>(starter) << 32) | combining;
+    d_comp_keys[idx]   = composition_key(starter, combining);
     d_comp_values[idx] = composed;
     // CCC=0 second operands are not caught by the ccc_table quick-check path;
     // flag them explicitly so nfc_quick_check_fn triggers the full pipeline.
@@ -273,30 +296,13 @@ struct is_zero_comp_key_fn {
 }  // namespace detail
 
 struct unicode_normalizer::unicode_normalizer_impl {
-  rmm::device_uvector<uint32_t> decomp_offsets;  // size DECOMP_OFFSETS_SIZE
-  rmm::device_uvector<uint32_t> decomp_table;    // flat replacement codepoints
-  rmm::device_uvector<uint8_t> ccc_table;        // size CODEPOINT_TABLE_SIZE
-  rmm::device_uvector<cudf::bitmask_type> compat_decomp_flags;
-  rmm::device_uvector<uint64_t> comp_keys;    // sorted (starter<<32|combining)
-  rmm::device_uvector<uint32_t> comp_values;  // parallel composed codepoints
+  cuda::device_buffer<uint32_t> decomp_offsets;  // size DECOMP_OFFSETS_SIZE
+  cuda::device_buffer<uint32_t> decomp_table;    // flat replacement codepoints
+  cuda::device_buffer<uint8_t> ccc_table;        // size CODEPOINT_TABLE_SIZE
+  cuda::device_buffer<cudf::bitmask_type> compat_decomp_flags;
+  cuda::device_buffer<uint64_t> comp_keys;    // sorted composition_key(starter, combining)
+  cuda::device_buffer<uint32_t> comp_values;  // parallel composed codepoints
   unicode_normalization_form form;
-
-  unicode_normalizer_impl(rmm::device_uvector<uint32_t>&& decomp_offsets,
-                          rmm::device_uvector<uint32_t>&& decomp_table,
-                          rmm::device_uvector<uint8_t>&& ccc_table,
-                          rmm::device_uvector<cudf::bitmask_type>&& compat_decomp_flags,
-                          rmm::device_uvector<uint64_t>&& comp_keys,
-                          rmm::device_uvector<uint32_t>&& comp_values,
-                          unicode_normalization_form form)
-    : decomp_offsets(std::move(decomp_offsets)),
-      decomp_table(std::move(decomp_table)),
-      ccc_table(std::move(ccc_table)),
-      compat_decomp_flags(std::move(compat_decomp_flags)),
-      comp_keys(std::move(comp_keys)),
-      comp_values(std::move(comp_values)),
-      form(form)
-  {
-  }
 };
 
 unicode_normalizer::unicode_normalizer(cudf::table_view const& unicode_data,
@@ -340,24 +346,24 @@ unicode_normalizer::unicode_normalizer(cudf::table_view const& unicode_data,
   auto const row_iter = cuda::make_counting_iterator(cudf::size_type{0});
 
   // Build Canonical Combining Class (CCC) table
-  auto ccc_table = cudf::detail::make_zeroed_device_uvector_async<uint8_t>(
-    detail::CODEPOINT_TABLE_SIZE, stream, mr);
+  auto ccc_table = cuda::make_buffer(
+    stream, mr, static_cast<std::size_t>(detail::CODEPOINT_TABLE_SIZE), uint8_t{0});
 
   // Allocate compat_decomp_flags only for NFC/NFKC (NFD/NFKD never run the quick check).
   bool const need_compat_flags =
     (form == unicode_normalization_form::NFC || form == unicode_normalization_form::NFKC);
-  auto compat_decomp_flags = rmm::device_uvector<cudf::bitmask_type>(
-    need_compat_flags ? cudf::num_bitmask_words(detail::CODEPOINT_TABLE_SIZE) : 0, stream, mr);
-  if (need_compat_flags) {
-    thrust::uninitialized_fill(
-      policy, compat_decomp_flags.begin(), compat_decomp_flags.end(), uint32_t{0});
-  }
+  auto compat_decomp_flags = cuda::make_buffer(
+    stream,
+    mr,
+    static_cast<std::size_t>(
+      need_compat_flags ? cudf::num_bitmask_words(detail::CODEPOINT_TABLE_SIZE) : 0),
+    cudf::bitmask_type{0});
 
   // Fused single-pass kernel: scatter CCC values, scatter per-codepoint decomposition
   // token counts into decomp_offsets, and (for NFC/NFKC) set initial quick-check flags
   // for compat decompositions and singleton canonical decompositions.
-  auto decomp_offsets = cudf::detail::make_zeroed_device_uvector_async<uint32_t>(
-    detail::DECOMP_OFFSETS_SIZE, stream, mr);
+  auto decomp_offsets = cuda::make_buffer(
+    stream, mr, static_cast<std::size_t>(detail::DECOMP_OFFSETS_SIZE), uint32_t{0});
   thrust::for_each_n(policy,
                      row_iter,
                      num_rows,
@@ -381,57 +387,67 @@ unicode_normalizer::unicode_normalizer(cudf::table_view const& unicode_data,
   // In-place exclusive scan of decomp_offsets: each codepoint's slot becomes
   // its start offset in the flat decomp_table.  The extra sentinel slot at
   // MAX_CODEPOINT+1 accumulates the total via the scan.
-  auto const total_decomp_size = cudf::detail::sizes_to_offsets(
-    decomp_offsets.begin(), decomp_offsets.end(), decomp_offsets.begin(), 0, stream, temp_mr);
+  auto const total_decomp_size =
+    cudf::detail::sizes_to_offsets(decomp_offsets.data(),
+                                   decomp_offsets.data() + decomp_offsets.size(),
+                                   decomp_offsets.data(),
+                                   0,
+                                   stream,
+                                   temp_mr);
 
   // Fill decomp_table
-  auto decomp_table    = rmm::device_uvector<uint32_t>(total_decomp_size, stream, mr);
+  auto decomp_table = cuda::device_buffer<uint32_t>{
+    stream, mr, static_cast<std::size_t>(total_decomp_size), cuda::no_init};
   auto write_tokens_fn = detail::write_decomp_tokens_fn{
     *d_decomp_map, apply_compat, d_codepoints, decomp_offsets, decomp_table};
   thrust::for_each_n(policy, row_iter, num_rows, write_tokens_fn);
 
   if (!need_compat_flags) {
     _impl = std::make_unique<unicode_normalizer_impl>(
-      std::move(decomp_offsets),
-      std::move(decomp_table),
-      std::move(ccc_table),
-      rmm::device_uvector<cudf::bitmask_type>(0, stream, mr),  // unused for NFD/NFKD
-      rmm::device_uvector<uint64_t>(0, stream, mr),
-      rmm::device_uvector<uint32_t>(0, stream, mr),
-      form);
+      unicode_normalizer_impl{std::move(decomp_offsets),
+                              std::move(decomp_table),
+                              std::move(ccc_table),
+                              std::move(compat_decomp_flags),  // empty for NFD/NFKD
+                              cuda::device_buffer<uint64_t>{stream, mr},
+                              cuda::device_buffer<uint32_t>{stream, mr},
+                              form});
     return;
   }
 
   // Build composition table (NFC/NFKC only)
-  auto d_comp_keys    = rmm::device_uvector<uint64_t>(num_rows, stream, temp_mr);
-  auto d_comp_values  = rmm::device_uvector<uint32_t>(num_rows, stream, temp_mr);
+  auto d_comp_keys = cuda::device_buffer<uint64_t>{
+    stream, temp_mr, static_cast<std::size_t>(num_rows), cuda::no_init};
+  auto d_comp_values = cuda::device_buffer<uint32_t>{
+    stream, temp_mr, static_cast<std::size_t>(num_rows), cuda::no_init};
   auto build_table_fn = detail::build_comp_table_fn{
     *d_decomp_map, d_codepoints, ccc_table, compat_decomp_flags, d_comp_keys, d_comp_values};
   thrust::for_each_n(policy, row_iter, num_rows, build_table_fn);
 
   // Compact keys and values together in one pass: remove any (key, value) pair
   // where the key is 0 (rows that build_comp_table_fn left empty).
-  // Compact keys and values together in one pass: remove any (key, value) pair
-  // where the key is 0 (rows that build_comp_table_fn left empty).
-  auto kv_begin        = cuda::make_zip_iterator(d_comp_keys.begin(), d_comp_values.begin());
-  auto kv_end          = cuda::make_zip_iterator(d_comp_keys.end(), d_comp_values.end());
+  auto kv_begin        = cuda::make_zip_iterator(d_comp_keys.data(), d_comp_values.data());
+  auto kv_end          = kv_begin + num_rows;
   auto const end_itr   = thrust::remove_if(policy, kv_begin, kv_end, detail::is_zero_comp_key_fn{});
   auto const comp_size = end_itr - kv_begin;
 
-  // Copy into exact-size allocations so _impl retains ~12 KiB rather than the
-  // ~400 KiB num_rows capacity left over from the compaction.
-  auto comp_keys   = cudf::detail::make_device_uvector_async(d_comp_keys, stream, mr);
-  auto comp_values = cudf::detail::make_device_uvector_async(d_comp_values, stream, mr);
+  // Copy only the compacted prefix into exact-size allocations; the tail past
+  // comp_size holds unspecified leftovers from remove_if.
+  auto comp_keys =
+    cuda::device_buffer<uint64_t>{stream, mr, d_comp_keys.data(), d_comp_keys.data() + comp_size};
+  auto comp_values = cuda::device_buffer<uint32_t>{
+    stream, mr, d_comp_values.data(), d_comp_values.data() + comp_size};
 
-  thrust::sort_by_key(policy, comp_keys.begin(), comp_keys.end(), comp_values.begin());
+  thrust::sort_by_key(
+    policy, comp_keys.data(), comp_keys.data() + comp_keys.size(), comp_values.data());
 
-  _impl = std::make_unique<unicode_normalizer_impl>(std::move(decomp_offsets),
-                                                    std::move(decomp_table),
-                                                    std::move(ccc_table),
-                                                    std::move(compat_decomp_flags),
-                                                    std::move(comp_keys),
-                                                    std::move(comp_values),
-                                                    form);
+  _impl = std::make_unique<unicode_normalizer_impl>(
+    unicode_normalizer_impl{std::move(decomp_offsets),
+                            std::move(decomp_table),
+                            std::move(ccc_table),
+                            std::move(compat_decomp_flags),
+                            std::move(comp_keys),
+                            std::move(comp_values),
+                            form});
 }
 
 unicode_normalizer::~unicode_normalizer() {}
@@ -452,46 +468,66 @@ namespace {
 //   bits 20:0  — Unicode codepoint (21 bits, range 0x000000–0x10FFFF)
 //   bits 28:21 — Canonical Combining Class (8 bits, range 0–254)
 //   bit  29    — consumed-by-composition flag (set when the slot is eliminated)
-// The consumed flag lives above the CCC field so a single "&" test suffices.
-// Bits 31:30 are unused; they are always zero in well-formed slots.
+//   bits 31:30 — UTF-8 encoded width of the codepoint minus 1
+// A consumed slot holds only the consumed flag so it contributes no output bytes.
 constexpr uint32_t PACKED_CP_MASK      = 0x001F'FFFFu;  // bits 20:0
 constexpr uint32_t PACKED_CCC_SHIFT    = 21u;
+constexpr uint32_t PACKED_CCC_MASK     = 0xFFu;
 constexpr uint32_t PACKED_CONSUMED_BIT = 1u << 29;  // bit 29
+constexpr uint32_t PACKED_WIDTH_SHIFT  = 30u;
 
 __device__ __forceinline__ uint32_t pack_cp_ccc(uint32_t cp, uint8_t ccc)
 {
-  return (static_cast<uint32_t>(ccc) << PACKED_CCC_SHIFT) | (cp & PACKED_CP_MASK);
+  auto const width =
+    cudf::strings::detail::bytes_in_char_utf8(cudf::strings::detail::codepoint_to_utf8(cp));
+  return (static_cast<uint32_t>(width - 1) << PACKED_WIDTH_SHIFT) |
+         (static_cast<uint32_t>(ccc) << PACKED_CCC_SHIFT) | (cp & PACKED_CP_MASK);
 }
 __device__ __forceinline__ uint32_t cp_of(uint32_t packed) { return packed & PACKED_CP_MASK; }
 __device__ __forceinline__ uint8_t ccc_of(uint32_t packed)
 {
-  return static_cast<uint8_t>((packed >> PACKED_CCC_SHIFT) & 0xFFu);
+  return static_cast<uint8_t>((packed >> PACKED_CCC_SHIFT) & PACKED_CCC_MASK);
 }
 __device__ __forceinline__ bool is_consumed(uint32_t packed)
 {
   return (packed & PACKED_CONSUMED_BIT) != 0u;
 }
+__device__ __forceinline__ int64_t utf8_width_of(uint32_t packed)
+{
+  return is_consumed(packed) ? 0 : static_cast<int64_t>(packed >> PACKED_WIDTH_SHIFT) + 1;
+}
 
 /**
- * Transitively decompose a single Unicode codepoint and invoke `fn` with the result.
- * Runs the full NFD/NFKD ping-pong expansion loop.  The `fn` is called as
- * `fn(buf, count)` where `buf[0..count)` holds the expanded codepoints.
- * Returns immediately for intermediate UTF-8 bytes.
+ * Transitively decompose the codepoint whose UTF-8 encoding starts at @p idx.
+ *
+ * Runs the full NFD/NFKD ping-pong expansion loop and writes the resulting
+ * codepoints in order to @p out.
+ *
+ * @return The number of codepoints written to `out` (0 for intermediate UTF-8 bytes)
  */
-template <typename Fn>
-__device__ void for_each_decomposed_cp(int64_t idx,
-                                       cuda::std::span<char const> chars,
-                                       cuda::std::span<uint32_t const> decomp_offsets,
-                                       cuda::std::span<uint32_t const> decomp_table,
-                                       Fn fn)
+template <typename OutputIterator>
+__device__ int32_t decompose_cp(int64_t idx,
+                                cuda::std::span<char const> chars,
+                                cuda::std::span<uint32_t const> decomp_offsets,
+                                cuda::std::span<uint32_t const> decomp_table,
+                                OutputIterator out)
 {
-  if (!cudf::strings::detail::is_begin_utf8_char(chars[idx])) { return; }
-  cudf::char_utf8 ch = static_cast<unsigned char>(chars[idx]);  // cast preserves high order bit
-  if (ch > 0x7F) { cudf::strings::detail::to_char_utf8(chars.data() + idx, ch); }
+  if (!cudf::strings::detail::is_begin_utf8_char(chars[idx])) { return 0; }
+  cudf::char_utf8 ch = 0;
+  cudf::strings::detail::to_char_utf8(chars.data() + idx, ch);
+  uint32_t const cp = cudf::strings::detail::utf8_to_codepoint(ch);
+
+  // Fast path: most codepoints have no decomposition so the expansion buffers are not needed
+  bool const is_hangul = (cp >= HANGUL_SBASE && cp <= HANGUL_SEND);
+  if (!is_hangul && (cp > MAX_CODEPOINT || decomp_offsets[cp] == decomp_offsets[cp + 1])) {
+    *out = cp;
+    return 1;
+  }
+
   uint32_t buf_a[MAX_DECOMP_EXPAND];
   uint32_t buf_b[MAX_DECOMP_EXPAND];
   int32_t count_a = 1;
-  buf_a[0]        = cudf::strings::detail::utf8_to_codepoint(ch);
+  buf_a[0]        = cp;
   for (int32_t depth = 0; depth < MAX_DECOMP_DEPTH; ++depth) {
     int32_t count_b = 0;
     bool expanded   = false;
@@ -523,179 +559,357 @@ __device__ void for_each_decomposed_cp(int64_t idx,
     count_a = count_b;
     if (!expanded) { break; }
   }
-  fn(buf_a, count_a);
+  cuda::std::copy_n(buf_a, count_a, out);
+  return count_a;
 }
 
 /**
- * Count output codepoints for the input byte at @p idx (size pass).
- * Non-lead bytes return 0.
+ * Packs a decomposed codepoint with its CCC into a slot
  */
-struct decompose_size_fn {
-  cuda::std::span<char const> d_input_chars;
-  cuda::std::span<uint32_t const> decomp_offsets;
-  cuda::std::span<uint32_t const> decomp_table;
+struct pack_slot_fn {
+  cuda::std::span<uint8_t const> ccc_table;
 
-  __device__ int32_t operator()(int64_t idx) const
+  __device__ uint32_t operator()(uint32_t cp) const
   {
-    auto count = int32_t{0};
-    auto fn    = [&count](uint32_t const*, int32_t n) { count = n; };
-    for_each_decomposed_cp(idx, d_input_chars, decomp_offsets, decomp_table, fn);
-    return count;
+    auto const ccc = (cp <= MAX_CODEPOINT) ? ccc_table[cp] : uint8_t{0};
+    return pack_cp_ccc(cp, ccc);
   }
 };
 
 /**
- * Write packed (codepoint | CCC) slots for the input byte at @p idx (fill pass).
- * Non-lead bytes are skipped.  Each slot uses the PACKED_* layout defined above.
+ * Decomposes the input bytes into codepoints using the normalizer's tables
  */
-struct decompose_fill_fn {
+struct decompose_fn {
   cuda::std::span<char const> d_input_chars;
   cuda::std::span<uint32_t const> decomp_offsets;
   cuda::std::span<uint32_t const> decomp_table;
   cuda::std::span<uint8_t const> ccc_table;
-  cuda::std::span<int64_t const> d_out_positions;  // exclusive-scan of expanded sizes
-  cuda::std::span<uint32_t> d_out_cps;             // packed cp+ccc slots
 
-  __device__ void operator()(int64_t idx) const
+  /// Returns the number of codepoints for the input byte at @p idx (at most MAX_DECOMP_EXPAND)
+  __device__ int32_t count(int64_t idx) const
   {
-    auto fn = [this, idx](uint32_t const* cps, int32_t count) {
-      auto const out_pos = d_out_positions[idx];
-      for (int32_t i = 0; i < count; ++i) {
-        auto const cp          = cps[i];
-        auto const ccc         = (cp <= MAX_CODEPOINT) ? ccc_table[cp] : uint8_t{0};
-        d_out_cps[out_pos + i] = pack_cp_ccc(cp, ccc);
-      }
-    };
-    for_each_decomposed_cp(idx, d_input_chars, decomp_offsets, decomp_table, fn);
+    return decompose_cp(idx, d_input_chars, decomp_offsets, decomp_table, cuda::discard_iterator{});
+  }
+
+  /// Writes the packed slots for the input byte at @p idx to @p d_out
+  __device__ void fill(int64_t idx, uint32_t* d_out) const
+  {
+    decompose_cp(idx,
+                 d_input_chars,
+                 decomp_offsets,
+                 decomp_table,
+                 cuda::transform_output_iterator{d_out, pack_slot_fn{ccc_table}});
   }
 };
 
+constexpr int32_t decompose_block_size = 256;
+
 /**
- * Stable-sort combining mark runs within a string's codepoint slice.
- * One invocation per string; insertion-sort each maximal run of CCC>0 marks.
- * d_cps holds packed (cp | ccc) slots; CCC is extracted from the packed value.
+ * @brief Computes the number of decomposed codepoints for each input byte
+ *
+ * Launched as a thread per input byte.
+ *
+ * @param fn Decomposes each input byte
+ * @param d_counts Number of codepoints for each input byte
+ * @param d_block_counts Total number of codepoints for each block
+ */
+CUDF_KERNEL void decompose_count_kernel(decompose_fn fn, uint8_t* d_counts, int64_t* d_block_counts)
+{
+  auto const idx = cudf::detail::grid_1d::global_thread_id();
+  int32_t count  = 0;
+  if (idx < static_cast<int64_t>(fn.d_input_chars.size())) {
+    count         = fn.count(idx);
+    d_counts[idx] = static_cast<uint8_t>(count);
+  }
+  using block_reduce = cub::BlockReduce<int32_t, decompose_block_size>;
+  __shared__ typename block_reduce::TempStorage temp_storage;
+  auto const block_count = block_reduce(temp_storage).Sum(count);
+  if (threadIdx.x == 0) { d_block_counts[blockIdx.x] = block_count; }
+}
+
+/**
+ * @brief Writes the packed slots of the decomposed codepoints for each input byte
+ *
+ * Launched as a thread per input byte. Each thread's slots are located using the
+ * exclusive scan of the block's counts added to the block's offset.
+ *
+ * @param fn Decomposes each input byte
+ * @param d_counts Number of codepoints for each input byte
+ * @param d_block_offsets Offset of the first slot for each block
+ * @param d_cps Output packed slots
+ */
+CUDF_KERNEL void decompose_fill_kernel(decompose_fn fn,
+                                       uint8_t const* d_counts,
+                                       int64_t const* d_block_offsets,
+                                       uint32_t* d_cps)
+{
+  auto const idx = cudf::detail::grid_1d::global_thread_id();
+  int32_t const count =
+    idx < static_cast<int64_t>(fn.d_input_chars.size()) ? d_counts[idx] : int32_t{0};
+  using block_scan = cub::BlockScan<int32_t, decompose_block_size>;
+  __shared__ typename block_scan::TempStorage temp_storage;
+  int32_t offset = 0;
+  block_scan(temp_storage).ExclusiveSum(count, offset);
+  if (count > 0) { fn.fill(idx, d_cps + d_block_offsets[blockIdx.x] + offset); }
+}
+
+/**
+ * Canonical reordering of runs of combining marks (CCC>0).
+ *
+ * The runs never cross a row boundary so they are located with the row offsets of the
+ * packed slots. Only runs of 2 or more marks need sorting and these are independent of
+ * each other so each run is sorted by its own thread.
  */
 struct reorder_fn {
   cuda::std::span<uint32_t> d_cps;  // packed cp+ccc slots
   cuda::std::span<int64_t const> d_str_cp_offsets;
 
-  __device__ void operator()(cudf::size_type str_idx) const
+  /// Returns the [start, end) slots of the row containing slot @p idx
+  __device__ cuda::std::pair<int64_t, int64_t> row_bounds(int64_t idx) const
   {
-    auto const cp_start = d_str_cp_offsets[str_idx];
-    auto const cp_end   = d_str_cp_offsets[str_idx + 1];
-    auto run_start      = cp_start;
-    for (int64_t i = cp_start; i <= cp_end; ++i) {
-      bool const is_combining = (i < cp_end) && (ccc_of(d_cps[i]) > 0);
-      if (is_combining) { continue; }
-      auto const run_len = i - run_start;
-      if (run_len > 1) {
-        // Insertion sort: upper_bound locates the insertion point by CCC, then
-        // a single rotate on the packed array moves both cp and ccc together.
-        for (int64_t j = run_start + 1; j < i; ++j) {
-          auto const ccc_j = ccc_of(d_cps[j]);
-          // upper_bound(begin, end, value, comp): returns first element where comp(value, elem)
-          // is true, i.e., first packed slot whose CCC exceeds ccc_j.
-          auto const ins = cuda::std::upper_bound(
-                             d_cps.begin() + run_start,
-                             d_cps.begin() + j,
-                             ccc_j,
-                             [](uint8_t val, uint32_t packed) { return val < ccc_of(packed); }) -
-                           d_cps.begin();
-          if (ins < j) {
-            cuda::std::rotate(d_cps.begin() + ins, d_cps.begin() + j, d_cps.begin() + j + 1);
-          }
-        }
+    // the last row offset <= idx identifies the (non-empty) row containing idx
+    auto const itr =
+      cuda::std::upper_bound(d_str_cp_offsets.begin(), d_str_cp_offsets.end(), idx) - 1;
+    return {*itr, *(itr + 1)};
+  }
+
+  /// Returns true if slot @p idx is the first mark of a run of 2 or more combining marks
+  __device__ bool is_run_start(int64_t idx) const
+  {
+    auto const size = static_cast<int64_t>(d_cps.size());
+    if (ccc_of(d_cps[idx]) == 0 || idx + 1 >= size || ccc_of(d_cps[idx + 1]) == 0) { return false; }
+    auto const [row_start, row_end] = row_bounds(idx);
+    if (idx + 1 >= row_end) { return false; }
+    return idx == row_start || ccc_of(d_cps[idx - 1]) == 0;
+  }
+
+  /// Stable-sorts the run of combining marks starting at slot @p run_start by CCC
+  __device__ void operator()(int64_t run_start) const
+  {
+    auto const row_end = row_bounds(run_start).second;
+    auto run_end       = run_start + 1;
+    while (run_end < row_end && ccc_of(d_cps[run_end]) > 0) {
+      ++run_end;
+    }
+    // Insertion sort: upper_bound locates the insertion point by CCC, then
+    // a single rotate on the packed array moves both cp and ccc together.
+    for (int64_t j = run_start + 1; j < run_end; ++j) {
+      auto const ccc_j = ccc_of(d_cps[j]);
+      // upper_bound(begin, end, value, comp): returns first element where comp(value, elem)
+      // is true, i.e., first packed slot whose CCC exceeds ccc_j.
+      auto const ins =
+        cuda::std::upper_bound(d_cps.begin() + run_start,
+                               d_cps.begin() + j,
+                               ccc_j,
+                               [](uint8_t val, uint32_t packed) { return val < ccc_of(packed); }) -
+        d_cps.begin();
+      if (ins < j) {
+        cuda::std::rotate(d_cps.begin() + ins, d_cps.begin() + j, d_cps.begin() + j + 1);
       }
-      run_start = i + 1;
     }
   }
 };
 
 /**
- * Canonical composition pass (NFC/NFKC only).
- * One invocation per string.  The composition table is small (~600 entries,
- * ~7 KB) and accessed by all strings, so it stays L2-hot throughout execution.
- * Consumed slots are marked with PACKED_CONSUMED_BIT and skipped by output_fn.
- * Composed starters always have CCC=0, so pack_cp_ccc(composed, 0) needs no
- * additional CCC table lookup.
+ * Canonical composition (NFC/NFKC only).
+ *
+ * The composition table is small (about 1K entries, ~12 KB) and accessed by all
+ * threads, so it stays L2-hot throughout execution. Consumed slots are marked with
+ * PACKED_CONSUMED_BIT and contribute no output bytes. Composed starters always have
+ * CCC=0, so pack_cp_ccc(composed, 0) needs no additional CCC table lookup.
+ *
+ * Composition runs left to right over a row's slots carrying a small state. A segment
+ * start is a starter that can never be composed with an earlier starter, so the state
+ * after it is the same no matter what preceded it. Composition also only modifies slots
+ * at or after the segment's first slot so the segments are composed independently.
  */
-struct compose_fn {
+struct composer {
   cuda::std::span<uint32_t> d_cps;  // packed cp+ccc slots
-  cuda::std::span<int64_t const> d_str_cp_offsets;
   cuda::std::span<uint64_t const> comp_keys;
   cuda::std::span<uint32_t const> comp_values;
+  cuda::std::span<cudf::bitmask_type const> compat_flags;  // NFC/NFKC quick-check bitset
 
-  __device__ void operator()(cudf::size_type str_idx) const
-  {
-    auto const cp_start  = d_str_cp_offsets[str_idx];
-    auto const cp_end    = d_str_cp_offsets[str_idx + 1];
+  struct state {
     int64_t last_starter = -1;
     uint8_t last_class   = 0;
+  };
 
-    for (int64_t i = cp_start; i < cp_end; ++i) {
-      auto const packed_i = d_cps[i];
-      if (is_consumed(packed_i)) { continue; }
-      uint8_t const ccc = ccc_of(packed_i);
-      if (last_starter < 0) {
-        last_starter = ccc == 0 ? i : last_starter;
-        last_class   = ccc;
-        continue;
-      }
-      if (ccc == 0) {
-        // New starter — attempt composition only when unblocked (last_class == 0).
-        // Try Hangul algorithmic composition first, then the canonical table for
-        // starter+starter pairs (e.g. Bengali U+09C7 + U+09BE → U+09CB).
-        if (last_class == 0) {
-          auto const composed_hangul = hangul_compose(cp_of(d_cps[last_starter]), cp_of(packed_i));
-          if (composed_hangul != 0) {
-            d_cps[last_starter] = pack_cp_ccc(composed_hangul, 0);
-            d_cps[i]            = PACKED_CONSUMED_BIT;
-            continue;
-          }
-          auto const key =
-            (static_cast<uint64_t>(cp_of(d_cps[last_starter])) << 32) | cp_of(packed_i);
-          auto const it = cuda::std::lower_bound(comp_keys.begin(), comp_keys.end(), key);
+  /// Returns true if the slot is a starter that cannot be composed with an earlier starter
+  __device__ bool is_segment_start(uint32_t packed) const
+  {
+    if (ccc_of(packed) != 0) { return false; }
+    auto const cp = cp_of(packed);
+    // Hangul V and T jamo compose with a preceding L or LV syllable
+    if ((cp >= HANGUL_VBASE && cp <= HANGUL_VEND) || (cp >= HANGUL_TSTART && cp <= HANGUL_TEND)) {
+      return false;
+    }
+    // CCC=0 second operands of a composition are flagged when the table is built
+    return cp > MAX_CODEPOINT ||
+           !cudf::bit_is_set(compat_flags.data(), static_cast<cudf::size_type>(cp));
+  }
+
+  /// Composes slot @p i with the current state
+  __device__ void step(int64_t i, state& s) const
+  {
+    auto const packed_i = d_cps[i];
+    if (is_consumed(packed_i)) { return; }
+    uint8_t const ccc = ccc_of(packed_i);
+    if (s.last_starter < 0) {
+      s.last_starter = ccc == 0 ? i : s.last_starter;
+      s.last_class   = ccc;
+      return;
+    }
+    if (ccc == 0) {
+      // New starter — attempt composition only when unblocked (last_class == 0).
+      // Try Hangul algorithmic composition first, then the canonical table for
+      // starter+starter pairs (e.g. Bengali U+09C7 + U+09BE → U+09CB).
+      if (s.last_class == 0) {
+        auto const composed_hangul = hangul_compose(cp_of(d_cps[s.last_starter]), cp_of(packed_i));
+        if (composed_hangul != 0) {
+          d_cps[s.last_starter] = pack_cp_ccc(composed_hangul, 0);
+          d_cps[i]              = PACKED_CONSUMED_BIT;
+          return;
+        }
+        // Only codepoints flagged as CCC=0 second operands can match a table key here
+        auto const cp = cp_of(packed_i);
+        if (cp <= MAX_CODEPOINT &&
+            cudf::bit_is_set(compat_flags.data(), static_cast<cudf::size_type>(cp))) {
+          auto const key = composition_key(cp_of(d_cps[s.last_starter]), cp);
+          auto const it  = cuda::std::lower_bound(comp_keys.begin(), comp_keys.end(), key);
           if (it != comp_keys.end() && *it == key) {
-            d_cps[last_starter] =
+            d_cps[s.last_starter] =
               pack_cp_ccc(comp_values[cuda::std::distance(comp_keys.begin(), it)], 0);
             d_cps[i] = PACKED_CONSUMED_BIT;
-            continue;
-          }
-        }
-        last_starter = i;
-      } else {
-        // Combining mark: compose with last_starter
-        if (last_class < ccc) {
-          auto const key =
-            (static_cast<uint64_t>(cp_of(d_cps[last_starter])) << 32) | cp_of(packed_i);
-          auto const it = cuda::std::lower_bound(comp_keys.begin(), comp_keys.end(), key);
-          if (it != comp_keys.end() && *it == key) {
-            d_cps[last_starter] =
-              pack_cp_ccc(comp_values[cuda::std::distance(comp_keys.begin(), it)], 0);
-            d_cps[i] = PACKED_CONSUMED_BIT;
-            continue;
+            return;
           }
         }
       }
-      last_class = ccc;
+      s.last_starter = i;
+    } else {
+      // Combining mark: compose with last_starter
+      if (s.last_class < ccc) {
+        auto const key = composition_key(cp_of(d_cps[s.last_starter]), cp_of(packed_i));
+        auto const it  = cuda::std::lower_bound(comp_keys.begin(), comp_keys.end(), key);
+        if (it != comp_keys.end() && *it == key) {
+          d_cps[s.last_starter] =
+            pack_cp_ccc(comp_values[cuda::std::distance(comp_keys.begin(), it)], 0);
+          d_cps[i] = PACKED_CONSUMED_BIT;
+          return;
+        }
+      }
+    }
+    s.last_class = ccc;
+  }
+};
+
+__device__ inline bool is_bit_set(cudf::bitmask_type const* bits, int64_t idx)
+{
+  return (bits[idx / cudf::detail::warp_size] >> (idx % cudf::detail::warp_size)) & 1u;
+}
+
+constexpr int32_t mark_block_size       = 256;
+constexpr int32_t mark_items_per_thread = 4;
+
+/**
+ * @brief Marks the first slot of each run of 2 or more combining marks and,
+ * when composing, the composition segment starts
+ *
+ * Each block processes `mark_block_size * mark_items_per_thread` slots with each thread
+ * loading slots a block-width apart so the loads are coalesced and independent.
+ * Each warp writes the flags of 32 consecutive slots as a single bitmask word.
+ * The row starts are also segment starts and are added afterwards by mark_row_starts_fn.
+ *
+ * @param fn Reorders the runs of combining marks
+ * @param comp Composes the segments
+ * @param d_run_starts Output bit per slot set for each run start
+ * @param d_segment_starts Output bit per slot set for each segment start (nullptr if not composing)
+ */
+CUDF_KERNEL void mark_slots_kernel(reorder_fn fn,
+                                   composer comp,
+                                   cudf::bitmask_type* d_run_starts,
+                                   cudf::bitmask_type* d_segment_starts)
+{
+  auto const size = static_cast<int64_t>(fn.d_cps.size());
+  auto const base = static_cast<int64_t>(blockIdx.x) * mark_block_size * mark_items_per_thread +
+                    static_cast<int64_t>(threadIdx.x);
+  bool const is_lane0 = (threadIdx.x % cudf::detail::warp_size) == 0;
+
+  uint32_t slots[mark_items_per_thread];
+  for (int32_t k = 0; k < mark_items_per_thread; ++k) {
+    auto const idx = base + k * mark_block_size;
+    slots[k]       = idx < size ? fn.d_cps[idx] : 0u;
+  }
+  for (int32_t k = 0; k < mark_items_per_thread; ++k) {
+    auto const idx       = base + k * mark_block_size;
+    bool const run_start = ccc_of(slots[k]) > 0 && fn.is_run_start(idx);
+    auto const run_bits  = __ballot_sync(0xFFFF'FFFFu, run_start);
+    if (is_lane0 && idx < size) { d_run_starts[idx / cudf::detail::warp_size] = run_bits; }
+    if (d_segment_starts != nullptr) {
+      bool const segment_start = idx < size && comp.is_segment_start(slots[k]);
+      auto const segment_bits  = __ballot_sync(0xFFFF'FFFFu, segment_start);
+      if (is_lane0 && idx < size) {
+        d_segment_starts[idx / cudf::detail::warp_size] = segment_bits;
+      }
+    }
+  }
+}
+
+/**
+ * @brief Sorts the runs of combining marks marked in a bitmask word
+ */
+struct sort_marked_runs_fn {
+  reorder_fn reorder;
+  cudf::bitmask_type const* d_run_starts;
+
+  __device__ void operator()(int64_t word_idx) const
+  {
+    auto bits = d_run_starts[word_idx];
+    while (bits != 0) {
+      auto const bit = cuda::std::countr_zero(bits);
+      reorder(word_idx * cudf::detail::warp_size + bit);
+      bits &= bits - 1;
     }
   }
 };
 
 /**
- * Fused canonical reorder + composition for NFC/NFKC.
- * One thread per string reorders and then immediately composes its codepoint
- * interval, eliminating a kernel launch and giving composition a warm L2 cache
- * for the row just touched by reorder.
+ * @brief Marks the first slot of each non-empty row as a composition segment start
  */
-struct reorder_and_compose_fn {
-  reorder_fn reorder;
-  compose_fn compose;
+struct mark_row_starts_fn {
+  int64_t const* d_str_cp_offsets;
+  cudf::bitmask_type* d_segment_starts;
 
-  __device__ void operator()(cudf::size_type str_idx) const
+  __device__ void operator()(cudf::size_type row) const
   {
-    reorder(str_idx);
-    compose(str_idx);
+    auto const pos = d_str_cp_offsets[row];
+    if (pos == d_str_cp_offsets[row + 1]) { return; }
+    cuda::atomic_ref<cudf::bitmask_type, cuda::thread_scope_device> word(
+      d_segment_starts[pos / cudf::detail::warp_size]);
+    word.fetch_or(cudf::bitmask_type{1} << (pos % cudf::detail::warp_size),
+                  cuda::std::memory_order_relaxed);
+  }
+};
+
+/**
+ * @brief Composes the segment starting at a slot
+ *
+ * Launched as a thread per slot and only the threads at a segment start do any work.
+ * The segment starts are read from a bitmask built before composition so no thread
+ * reads a slot that another thread is composing.
+ */
+struct compose_segments_fn {
+  composer comp;
+  cudf::bitmask_type const* d_segment_starts;
+
+  __device__ void operator()(int64_t idx) const
+  {
+    if (!is_bit_set(d_segment_starts, idx)) { return; }
+    auto const size = static_cast<int64_t>(comp.d_cps.size());
+    composer::state s{};
+    comp.step(idx, s);
+    for (auto i = idx + 1; i < size && !is_bit_set(d_segment_starts, i); ++i) {
+      comp.step(i, s);
+    }
   }
 };
 
@@ -720,8 +934,8 @@ struct nfc_quick_check_fn {
   __device__ bool operator()(int64_t idx) const
   {
     if (!cudf::strings::detail::is_begin_utf8_char(chars[idx])) { return false; }
-    auto ch = static_cast<cudf::char_utf8>(chars[idx]);
-    if (ch > 0x7F) { cudf::strings::detail::to_char_utf8(chars.data() + idx, ch); }
+    cudf::char_utf8 ch = 0;
+    cudf::strings::detail::to_char_utf8(chars.data() + idx, ch);
     auto const cp = cudf::strings::detail::utf8_to_codepoint(ch);
     if (cp > MAX_CODEPOINT) { return false; }
     if (ccc_table[cp] > 0) { return true; }
@@ -734,34 +948,73 @@ struct nfc_quick_check_fn {
 };
 
 /**
- * Output codepoints to UTF-8 bytes.
+ * Write the UTF-8 bytes of the packed slot at @p idx starting at @p out_pos.
+ *
+ * Called through a tabulate output iterator by the exclusive scan of the slot widths.
+ * The rows are contiguous in the slots so the scan gives each slot's position in the
+ * output chars directly.
  */
-struct output_fn {
-  uint32_t* d_cps;
-  int64_t* d_scp;
-  cudf::size_type* d_sizes{};
-  char* d_chars{};
-  cudf::detail::input_offsetalator d_offsets{};
+struct write_utf8_fn {
+  uint32_t const* d_cps;
+  char* d_chars;
 
-  __device__ void operator()(cudf::size_type idx) const
+  __device__ void operator()(int64_t idx, int64_t out_pos) const
   {
-    auto const cp_start   = d_scp[idx];
-    auto const cp_end     = d_scp[idx + 1];
-    cudf::size_type bytes = 0;
-    auto d_output         = d_chars ? d_chars + d_offsets[idx] : nullptr;
-    for (int64_t i = cp_start; i < cp_end; ++i) {
-      auto const packed = d_cps[i];
-      if (is_consumed(packed)) { continue; }  // consumed by composition
-      auto const utf8 = cudf::strings::detail::codepoint_to_utf8(cp_of(packed));
-      bytes += cudf::strings::detail::bytes_in_char_utf8(utf8);
-      if (d_output != nullptr) {
-        cudf::strings::detail::from_char_utf8(utf8, d_output);
-        d_output += cudf::strings::detail::bytes_in_char_utf8(utf8);
-      }
-    }
-    if (d_sizes) { d_sizes[idx] = bytes; }
+    auto const packed = d_cps[idx];
+    if (is_consumed(packed)) { return; }
+    auto const utf8 = cudf::strings::detail::codepoint_to_utf8(cp_of(packed));
+    cudf::strings::detail::from_char_utf8(utf8, d_chars + out_pos);
   }
 };
+
+struct utf8_width_fn {
+  __device__ int64_t operator()(uint32_t packed) const { return utf8_width_of(packed); }
+};
+
+/**
+ * @brief Sums `d_in` over the segments [d_begin[i], d_end[i]) for each of the `size` rows
+ */
+template <typename InputIterator, typename OffsetIterator, typename OutputType>
+void segmented_sum(InputIterator d_in,
+                   OutputType* d_out,
+                   cudf::size_type size,
+                   OffsetIterator d_begin,
+                   OffsetIterator d_end,
+                   cuda::stream_ref stream)
+{
+  auto const env =
+    cuda::std::execution::env{cuda::std::execution::prop{cuda::get_stream_t{}, stream},
+                              cuda::std::execution::prop{cuda::mr::get_memory_resource_t{},
+                                                         cudf::get_current_device_resource_ref()}};
+  CUDF_CUDA_TRY(cub::DeviceSegmentedReduce::Sum(d_in, d_out, size, d_begin, d_end, env));
+}
+
+/**
+ * @brief In-place exclusive sum of `d_data[0, num_items)`
+ */
+template <typename T>
+void exclusive_sum(T* d_data, int64_t num_items, cuda::stream_ref stream)
+{
+  auto const env =
+    cuda::std::execution::env{cuda::std::execution::prop{cuda::get_stream_t{}, stream},
+                              cuda::std::execution::prop{cuda::mr::get_memory_resource_t{},
+                                                         cudf::get_current_device_resource_ref()}};
+  CUDF_CUDA_TRY(cub::DeviceScan::ExclusiveSum(d_data, num_items, env));
+}
+
+/**
+ * @brief Exclusive sum of `d_in` written through a tabulate output iterator calling `fn`
+ */
+template <typename InputIterator, typename Fn>
+void scan_with(InputIterator d_in, Fn fn, int64_t num_items, cuda::stream_ref stream)
+{
+  auto const env =
+    cuda::std::execution::env{cuda::std::execution::prop{cuda::get_stream_t{}, stream},
+                              cuda::std::execution::prop{cuda::mr::get_memory_resource_t{},
+                                                         cudf::get_current_device_resource_ref()}};
+  CUDF_CUDA_TRY(
+    cub::DeviceScan::ExclusiveSum(d_in, cuda::tabulate_output_iterator(fn), num_items, env));
+}
 
 }  // namespace
 
@@ -795,75 +1048,111 @@ std::unique_ptr<cudf::column> normalize_unicode(cudf::strings_column_view const&
     }
   }
 
-  // Decomposition: write int64_t output-codepoint counts per input byte into out_positions,
-  // then scan in-place to produce per-byte CP start offsets.  Using int64_t directly
-  // avoids a separate int32_t expanded_sizes allocation (~4 × (B+1) bytes saved).
-  auto out_positions = rmm::device_uvector<int64_t>(chars_size + 1, stream, temp_mr);
-  {
-    auto size_fn     = detail::decompose_size_fn{chars_span, p.decomp_offsets, p.decomp_table};
-    int64_t const cs = chars_size;
-    // Transform [0, chars_size+1): sizes for valid byte indices, 0 for the sentinel slot.
-    thrust::transform(
-      policy,
-      byte_iter,
-      byte_iter + chars_size + 1,
-      out_positions.begin(),
-      cuda::proclaim_return_type<int64_t>([size_fn, cs] __device__(int64_t idx) -> int64_t {
-        return idx < cs ? static_cast<int64_t>(size_fn(idx)) : int64_t{0};
-      }));
-  }
-  // In-place exclusive scan: out_positions[i] becomes the CP start offset for input byte i.
-  // sizes_to_offsets diverts the last scan value to a device scalar (requiring a sync to
-  // read); write it back to out_positions[chars_size] for the per-string boundary lookup.
-  auto const total_cps = cudf::detail::sizes_to_offsets(
-    out_positions.begin(), out_positions.end(), out_positions.begin(), int64_t{0}, stream, temp_mr);
-  thrust::fill_n(policy, out_positions.begin() + chars_size, 1, total_cps);
+  auto const num_rows = input.size();
 
-  // Fill packed (cp|ccc) slots at pre-scanned positions
-  auto cps            = rmm::device_uvector<uint32_t>(total_cps, stream, temp_mr);
-  auto decomp_fill_fn = detail::decompose_fill_fn{
-    chars_span, p.decomp_offsets, p.decomp_table, p.ccc_table, out_positions, cps};
-  thrust::for_each_n(policy, byte_iter, chars_size, decomp_fill_fn);
+  // Decomposition: the number of output codepoints for each input byte (0 for non-lead bytes)
+  // fits in a uint8_t. These counts are summed per row for the row boundaries in the packed
+  // slots and scanned within each block to locate each byte's slots when filling them.
+  auto const decomposer =
+    detail::decompose_fn{chars_span, p.decomp_offsets, p.decomp_table, p.ccc_table};
+  cudf::detail::grid_1d const grid{chars_size, detail::decompose_block_size};
+  auto str_cp_offsets = cuda::device_buffer<int64_t>{
+    stream, temp_mr, static_cast<std::size_t>(num_rows + 1), cuda::no_init};
+  auto cps = [&] {
+    auto d_counts = cuda::device_buffer<uint8_t>{
+      stream, temp_mr, static_cast<std::size_t>(chars_size), cuda::no_init};
+    auto d_block_offsets = cuda::device_buffer<int64_t>{
+      stream, temp_mr, static_cast<std::size_t>(grid.num_blocks), cuda::no_init};
+    detail::
+      decompose_count_kernel<<<grid.num_blocks, grid.num_threads_per_block, 0, stream.get()>>>(
+        decomposer, d_counts.data(), d_block_offsets.data());
+    CUDF_CUDA_TRY(cudaGetLastError());
+    detail::exclusive_sum(d_block_offsets.data(), grid.num_blocks, stream);
 
-  // Build per-string codepoint offset boundaries: after the in-place scan,
-  // out_positions[local] is the CP start offset for input byte local.
-  auto str_cp_offsets = rmm::device_uvector<int64_t>(input.size() + 1, stream, temp_mr);
-  {
-    auto const input_char_offsets =
+    // the counts are indexed from first_offset so the row offsets are normalized to match
+    auto const d_offsets =
       cudf::detail::offsetalator_factory::make_input_iterator(input.offsets(), input.offset());
-    auto const d_out_pos = out_positions.data();
-    int64_t const first  = first_offset;
-    thrust::transform(
-      policy,
-      input_char_offsets,
-      input_char_offsets + input.size() + 1,
-      str_cp_offsets.begin(),
-      cuda::proclaim_return_type<int64_t>(
-        [d_out_pos, first] __device__(int64_t offset) { return d_out_pos[offset - first]; }));
+    auto const d_row_offsets = cuda::transform_iterator(
+      d_offsets, cuda::proclaim_return_type<int64_t>([first = first_offset] __device__(int64_t o) {
+        return o - first;
+      }));
+    detail::segmented_sum(
+      d_counts.data(), str_cp_offsets.data(), num_rows, d_row_offsets, d_row_offsets + 1, stream);
+    CUDF_CUDA_TRY(
+      cudaMemsetAsync(str_cp_offsets.data() + num_rows, 0, sizeof(int64_t), stream.get()));
+    auto const total_cps = cudf::detail::sizes_to_offsets(str_cp_offsets.data(),
+                                                          str_cp_offsets.data() + num_rows + 1,
+                                                          str_cp_offsets.data(),
+                                                          int64_t{0},
+                                                          stream,
+                                                          temp_mr);
+
+    // Fill the packed (cp|ccc|width) slots for each input byte
+    auto cps = cuda::device_buffer<uint32_t>{
+      stream, temp_mr, static_cast<std::size_t>(total_cps), cuda::no_init};
+    detail::decompose_fill_kernel<<<grid.num_blocks, grid.num_threads_per_block, 0, stream.get()>>>(
+      decomposer, d_counts.data(), d_block_offsets.data(), cps.data());
+    CUDF_CUDA_TRY(cudaGetLastError());
+    return cps;
+  }();
+
+  // Canonical reordering and composition (NFC/NFKC only).
+  // The starts of the runs of 2 or more combining marks and of the composition segments are
+  // marked before any slots are modified so no slot is read while another thread modifies it.
+  bool const is_composing =
+    p.form == unicode_normalization_form::NFC || p.form == unicode_normalization_form::NFKC;
+  if (!cps.empty()) {
+    auto const reorder   = detail::reorder_fn{cps, str_cp_offsets};
+    auto const composer  = detail::composer{cps, p.comp_keys, p.comp_values, p.compat_decomp_flags};
+    auto const num_slots = static_cast<int64_t>(cps.size());
+    auto const num_words =
+      cudf::util::div_rounding_up_safe(num_slots, static_cast<int64_t>(cudf::detail::warp_size));
+    auto run_starts = cuda::device_buffer<cudf::bitmask_type>{
+      stream, temp_mr, static_cast<std::size_t>(num_words), cuda::no_init};
+    auto segment_starts = cuda::device_buffer<cudf::bitmask_type>{
+      stream, temp_mr, static_cast<std::size_t>(is_composing ? num_words : 0), cuda::no_init};
+
+    auto const num_blocks = cudf::util::div_rounding_up_safe(
+      num_slots, static_cast<int64_t>(detail::mark_block_size * detail::mark_items_per_thread));
+    detail::mark_slots_kernel<<<num_blocks, detail::mark_block_size, 0, stream.get()>>>(
+      reorder, composer, run_starts.data(), is_composing ? segment_starts.data() : nullptr);
+    CUDF_CUDA_TRY(cudaGetLastError());
+
+    thrust::for_each_n(policy,
+                       cuda::make_counting_iterator(int64_t{0}),
+                       num_words,
+                       detail::sort_marked_runs_fn{reorder, run_starts.data()});
+
+    if (is_composing) {
+      thrust::for_each_n(policy,
+                         cuda::make_counting_iterator(cudf::size_type{0}),
+                         num_rows,
+                         detail::mark_row_starts_fn{str_cp_offsets.data(), segment_starts.data()});
+      thrust::for_each_n(policy,
+                         cuda::make_counting_iterator(int64_t{0}),
+                         num_slots,
+                         detail::compose_segments_fn{composer, segment_starts.data()});
+    }
   }
-  out_positions.release();
 
-  auto const row_iter = cuda::make_counting_iterator(cudf::size_type{0});
-  auto const d_cps    = cps.data();
-  auto const d_scp    = str_cp_offsets.data();
+  // Output: the UTF-8 width of each slot is summed per row for the output offsets
+  // and scanned to locate each slot's bytes in the output chars
+  auto const d_widths = cuda::transform_iterator(cps.data(), detail::utf8_width_fn{});
+  auto [offsets_column, total_bytes] = [&] {
+    auto sizes = cuda::device_buffer<cudf::size_type>{
+      stream, temp_mr, static_cast<std::size_t>(num_rows), cuda::no_init};
+    detail::segmented_sum(
+      d_widths, sizes.data(), num_rows, str_cp_offsets.data(), str_cp_offsets.data() + 1, stream);
+    return cudf::strings::detail::make_offsets_child_column(
+      sizes.data(), sizes.data() + sizes.size(), stream, mr);
+  }();
+  auto chars = rmm::device_uvector<char>(total_bytes, stream, mr);
+  detail::scan_with(d_widths,
+                    detail::write_utf8_fn{cps.data(), chars.data()},
+                    static_cast<int64_t>(cps.size()),
+                    stream);
 
-  // Canonical Reorder + Composition:
-  // For NFC/NFKC, fuse reorder and compose in one launch so each thread
-  // composes its row immediately after reordering, while the data is still hot.
-  // For NFD/NFKD, only the reorder step is needed.
-  if (p.form == unicode_normalization_form::NFC || p.form == unicode_normalization_form::NFKC) {
-    auto fn = detail::reorder_and_compose_fn{
-      detail::reorder_fn{cps, str_cp_offsets},
-      detail::compose_fn{cps, str_cp_offsets, p.comp_keys, p.comp_values}};
-    thrust::for_each_n(policy, row_iter, input.size(), fn);
-  } else {
-    thrust::for_each_n(policy, row_iter, input.size(), detail::reorder_fn{cps, str_cp_offsets});
-  }
-
-  auto output_fn = detail::output_fn{d_cps, d_scp};
-  auto [offsets_column, chars] =
-    cudf::strings::detail::make_strings_children(output_fn, input.size(), stream, mr);
-  return cudf::make_strings_column(input.size(),
+  return cudf::make_strings_column(num_rows,
                                    std::move(offsets_column),
                                    chars.release(),
                                    input.null_count(),

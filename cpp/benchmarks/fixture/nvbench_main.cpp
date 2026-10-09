@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,8 +12,7 @@
 
 namespace cudf {
 
-// strip off the rmm_mode and cuio_host_mem parameters before passing the
-// remaining arguments to nvbench::option_parser
+// Strip cudf-specific parameters before passing the remaining arguments to nvbench::option_parser.
 void benchmark_arg_handler(std::vector<std::string>& args)
 {
   std::vector<std::string> _cudf_tmp_args;
@@ -23,6 +22,8 @@ void benchmark_arg_handler(std::vector<std::string>& args)
     if (arg == cudf::detail::rmm_mode_param) {
       i++;  // skip the next argument
     } else if (arg == cudf::detail::cuio_host_mem_param) {
+      i++;  // skip the next argument
+    } else if (arg == cudf::detail::output_directory_param) {
       i++;  // skip the next argument
     } else {
       _cudf_tmp_args.push_back(arg);

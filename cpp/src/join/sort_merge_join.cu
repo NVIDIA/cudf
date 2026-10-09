@@ -335,7 +335,7 @@ class merge {
   device_span<size_type const> unique_smaller_rows;
   device_span<size_type const> smaller_run_offsets;
   std::unique_ptr<detail::row::lexicographic::two_table_comparator> tt_comparator;
-  rmm::device_async_resource_ref temp_mr{cudf::get_current_device_resource_ref()};
+  memory_resources mrs{cudf::get_current_device_resource_ref()};
 
  public:
   struct match_ranges {
@@ -358,7 +358,7 @@ class merge {
     std::vector<cudf::order> column_order(smaller.num_columns(), cudf::order::ASCENDING);
     std::vector<cudf::null_order> null_precedence(smaller.num_columns(), cudf::null_order::BEFORE);
     tt_comparator = std::make_unique<detail::row::lexicographic::two_table_comparator>(
-      smaller, larger, column_order, null_precedence, stream, temp_mr);
+      smaller, larger, column_order, null_precedence, stream, mrs);
   }
 
   std::unique_ptr<rmm::device_uvector<size_type>> matches_per_row(
@@ -381,6 +381,7 @@ template <typename SmallerIterator>
 typename merge<SmallerIterator>::match_ranges merge<SmallerIterator>::find_match_ranges(
   compute_match_starts compute_starts, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
 {
+  auto const temp_mr          = mrs.get_temporary_mr();
   auto const has_nulls        = has_nested_nulls(smaller) or has_nested_nulls(larger);
   auto const larger_numrows   = larger.num_rows();
   auto const num_smaller_runs = static_cast<size_type>(unique_smaller_rows.size());
@@ -439,6 +440,7 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
 merge<SmallerIterator>::inner(cuda::stream_ref stream, rmm::device_async_resource_ref mr)
 {
+  auto const temp_mr        = mrs.get_temporary_mr();
   auto const larger_numrows = larger.num_rows();
 
   auto [match_starts, match_counts] = find_match_ranges(compute_match_starts::YES, stream, temp_mr);
@@ -490,6 +492,7 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
 merge<SmallerIterator>::left(cuda::stream_ref stream, rmm::device_async_resource_ref mr)
 {
+  auto const temp_mr        = mrs.get_temporary_mr();
   auto const larger_numrows = larger.num_rows();
 
   auto [match_starts, match_counts] = find_match_ranges(compute_match_starts::YES, stream, temp_mr);

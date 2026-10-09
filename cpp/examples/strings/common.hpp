@@ -18,6 +18,7 @@
 
 #include <chrono>
 #include <iostream>
+#include <optional>
 #include <string>
 
 /**
@@ -56,9 +57,11 @@ int main(int argc, char const** argv)
 
   auto const mr_name = std::string{argc > 2 ? std::string(argv[2]) : std::string("cuda")};
   rmm::mr::cuda_memory_resource cuda_mr{};
-  rmm::mr::pool_memory_resource pool_mr{cuda_mr, rmm::percent_of_free_device_memory(50)};
+  std::optional<rmm::mr::pool_memory_resource> pool_mr;
   if (mr_name == "pool") {
-    cudf::set_current_device_resource(pool_mr);
+    // Unused pools would reserve GPU memory needed by concurrent examples.
+    pool_mr.emplace(cuda_mr, rmm::percent_of_free_device_memory(50));
+    cudf::set_current_device_resource(*pool_mr);
   } else {
     cudf::set_current_device_resource(cuda_mr);
   }

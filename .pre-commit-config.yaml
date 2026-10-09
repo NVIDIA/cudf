@@ -87,6 +87,13 @@ repos:
           )
   - repo: local
     hooks:
+      - id: test-cudf-example-runner
+        name: test-cudf-example-runner
+        entry: python ci/utils/test_run_cudf_examples.py
+        language: python
+        files: ^ci/(run_cudf_examples\.sh|utils/test_run_cudf_examples\.py)$
+        pass_filenames: false
+        stages: [manual]
       - id: no-deprecationwarning
         name: no-deprecationwarning
         description: 'Enforce that DeprecationWarning is not introduced (use FutureWarning instead)'

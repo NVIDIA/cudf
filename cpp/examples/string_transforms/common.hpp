@@ -23,6 +23,7 @@
 #include <chrono>
 #include <iostream>
 #include <numeric>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -74,14 +75,16 @@ int main(int argc, char const** argv)
   auto stream = cudf::get_default_stream();
 
   rmm::mr::cuda_memory_resource cuda_mr{};
-  rmm::mr::pool_memory_resource pool_mr{cuda_mr, rmm::percent_of_free_device_memory(50)};
+  std::optional<rmm::mr::pool_memory_resource> pool_mr;
   rmm::mr::cuda_async_memory_resource async_mr{};
 
   auto const base_name = enable_stats
                            ? memory_resource_name.substr(0, memory_resource_name.size() - 6)
                            : memory_resource_name;
   if (base_name == "pool") {
-    cudf::set_current_device_resource(pool_mr);
+    // Unused pools would reserve GPU memory needed by concurrent examples.
+    pool_mr.emplace(cuda_mr, rmm::percent_of_free_device_memory(50));
+    cudf::set_current_device_resource(*pool_mr);
   } else if (base_name == "async") {
     cudf::set_current_device_resource(async_mr);
   } else if (base_name == "cuda") {

@@ -444,15 +444,46 @@ def test_merge_numeric_vs_string_key_raises():
 
 
 def test_merge_unmatched_rows_upcast_int_to_float():
-    # Unmatched rows introduce NaN, upcasting a numpy integer column to
-    # float64 (matching pandas).
+    # In pandas-compatible mode, unmatched rows introduce NaN, upcasting a
+    # numpy integer column to float64 (matching pandas).
     left = cudf.DataFrame({"key": [1, 2, 3], "a": [1, 2, 3]})
     right = cudf.DataFrame({"key": [1, 2], "b": [4, 5]})
-    got = left.merge(right, on="key", how="left")
+    with cudf.option_context("mode.pandas_compatible", True):
+        got = left.merge(right, on="key", how="left")
     assert got["b"].dtype == np.dtype("float64")
     assert_eq(
         left.to_pandas().merge(right.to_pandas(), on="key", how="left"), got
     )
+
+
+@pytest.mark.parametrize("dtype", ["int64", "uint64", "int32"])
+def test_merge_unmatched_rows_keep_int(dtype):
+    # Outside pandas-compatible mode, unmatched rows become nulls in the
+    # integer column, so values that float64 cannot represent survive.
+    big = np.iinfo(dtype).max
+    left = cudf.DataFrame({"key": [1, 2]})
+    right = cudf.DataFrame({"key": [1], "b": cudf.Series([big], dtype=dtype)})
+    got = left.merge(right, on="key", how="left")
+    expect = cudf.DataFrame(
+        {"key": [1, 2], "b": cudf.Series([big, None], dtype=dtype)}
+    )
+    assert_eq(expect, got)
+
+
+@pytest.mark.parametrize("pandas_compatible", [False, True])
+def test_merge_left_on_right_index_mapped_index_dtype(pandas_compatible):
+    # The mapped index of a single-flag mixed merge is upcast to float64 in
+    # pandas-compatible mode, and otherwise keeps its integer dtype and
+    # values; 2**62 + 1 is not representable in float64.
+    left = cudf.DataFrame({"key": [0, 9]}, index=[2**62 + 1, 2**62 + 3])
+    right = cudf.DataFrame({"b": [1, 2]})
+    with cudf.option_context("mode.pandas_compatible", pandas_compatible):
+        got = left.merge(right, left_on="key", right_index=True, how="right")
+    if pandas_compatible:
+        assert got.index.dtype == np.dtype("float64")
+    else:
+        assert got.index.dtype == np.dtype("int64")
+        assert got.index.to_arrow().to_pylist() == [2**62 + 1, None]
 
 
 def test_merge_differently_named_keys_keep_own_dtype():

@@ -132,9 +132,14 @@ std::unique_ptr<column> group_merge_histogram(column_view const& values,
                  new_offsets.begin());
 
   // Generate labels for the new lists.
-  auto key_labels = rmm::device_uvector<size_type>(histogram_cv.size(), stream);
-  cudf::detail::label_segments(
-    new_offsets.begin(), new_offsets.end(), key_labels.begin(), key_labels.end(), stream);
+  auto key_labels    = rmm::device_uvector<size_type>(histogram_cv.size(), stream);
+  auto const temp_mr = cudf::get_current_device_resource_ref();
+  cudf::detail::label_segments(new_offsets.begin(),
+                               new_offsets.end(),
+                               key_labels.begin(),
+                               key_labels.end(),
+                               stream,
+                               cudf::memory_resources{temp_mr, temp_mr});
 
   auto const structs_cv   = structs_column_view{histogram_cv};
   auto const input_values = structs_cv.get_sliced_child(0, stream);

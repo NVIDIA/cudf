@@ -56,16 +56,19 @@ namespace detail {
 VectorPair full_to_left_join_indices(device_span<size_type const> left_indices,
                                      device_span<size_type const> right_indices,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
 {
-  auto const keep = [left = left_indices.data()] __device__(std::size_t i) -> bool {
+  auto const temp_mr = mr.get_temporary_mr();
+  auto const keep    = [left = left_indices.data()] __device__(std::size_t i) -> bool {
     return left[i] != JoinNoMatch;
   };
   auto const begin = cuda::counting_iterator<std::size_t>{0};
   auto const size  = cudf::detail::count_if(
-    begin, begin + left_indices.size(), keep, stream, cudf::memory_resources{mr, mr});
-  auto left_result  = std::make_unique<rmm::device_uvector<size_type>>(size, stream, mr);
-  auto right_result = std::make_unique<rmm::device_uvector<size_type>>(size, stream, mr);
+    begin, begin + left_indices.size(), keep, stream, cudf::memory_resources{temp_mr, temp_mr});
+  auto left_result =
+    std::make_unique<rmm::device_uvector<size_type>>(size, stream, mr.get_output_mr());
+  auto right_result =
+    std::make_unique<rmm::device_uvector<size_type>>(size, stream, mr.get_output_mr());
   if (size > 0) {
     auto const input =
       cuda::make_zip_iterator(cuda::std::tuple{left_indices.begin(), right_indices.begin()});
@@ -77,7 +80,7 @@ VectorPair full_to_left_join_indices(device_span<size_type const> left_indices,
                                 output,
                                 keep,
                                 stream,
-                                cudf::memory_resources{mr, mr});
+                                cudf::memory_resources{temp_mr, temp_mr});
   }
   return {std::move(left_result), std::move(right_result)};
 }

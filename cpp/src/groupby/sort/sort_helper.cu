@@ -152,8 +152,13 @@ sort_groupby_helper::index_vector const& sort_groupby_helper::group_labels(cuda:
 
   if (num_keys(stream)) {
     auto const& offsets = group_offsets(stream);
-    cudf::detail::label_segments(
-      offsets.begin(), offsets.end(), group_labels->begin(), group_labels->end(), stream);
+    auto const temp_mr  = cudf::get_current_device_resource_ref();
+    cudf::detail::label_segments(offsets.begin(),
+                                 offsets.end(),
+                                 group_labels->begin(),
+                                 group_labels->end(),
+                                 stream,
+                                 cudf::memory_resources{temp_mr, temp_mr});
   }
 
   _group_labels = std::move(group_labels);

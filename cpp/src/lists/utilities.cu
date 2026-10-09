@@ -20,8 +20,13 @@ std::unique_ptr<column> generate_labels(lists_column_view const& input,
   auto labels = make_numeric_column(
     data_type(type_to_id<size_type>()), n_elements, cudf::mask_state::UNALLOCATED, stream, mr);
   auto const labels_begin = labels->mutable_view().template begin<size_type>();
-  cudf::detail::label_segments(
-    input.offsets_begin(), input.offsets_end(), labels_begin, labels_begin + n_elements, stream);
+  auto const temp_mr      = cudf::get_current_device_resource_ref();
+  cudf::detail::label_segments(input.offsets_begin(),
+                               input.offsets_end(),
+                               labels_begin,
+                               labels_begin + n_elements,
+                               stream,
+                               cudf::memory_resources{temp_mr, temp_mr});
   return labels;
 }
 
@@ -36,11 +41,13 @@ std::unique_ptr<column> reconstruct_offsets(column_view const& labels,
 
   auto const labels_begin  = labels.template begin<size_type>();
   auto const offsets_begin = out_offsets->mutable_view().template begin<int32_t>();
+  auto const temp_mr       = cudf::get_current_device_resource_ref();
   cudf::detail::labels_to_offsets(labels_begin,
                                   labels_begin + labels.size(),
                                   offsets_begin,
                                   offsets_begin + out_offsets->size(),
-                                  stream);
+                                  stream,
+                                  cudf::memory_resources{temp_mr, temp_mr});
   return out_offsets;
 }
 

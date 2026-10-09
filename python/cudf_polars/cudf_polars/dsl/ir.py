@@ -4107,8 +4107,8 @@ class Union(IR):
 class HConcat(IR):
     """Concatenate dataframes horizontally."""
 
-    __slots__ = ("should_broadcast", "strict")
-    _non_child = ("schema", "should_broadcast", "strict")
+    __slots__ = ("should_broadcast", "streaming_safe", "strict")
+    _non_child = ("schema", "should_broadcast", "strict", "streaming_safe")
     _n_non_child_args = 3
 
     def __init__(
@@ -4116,11 +4116,13 @@ class HConcat(IR):
         schema: Schema,
         should_broadcast: bool,  # noqa: FBT001
         strict: bool,  # noqa: FBT001
+        streaming_safe: bool,  # noqa: FBT001
         *children: IR,
     ):
         self.schema = schema
         self.should_broadcast = should_broadcast
         self.strict = strict
+        self.streaming_safe = streaming_safe
         self._non_child_args = (schema, should_broadcast, strict)
         self.children = children
 

@@ -33,7 +33,12 @@ from __future__ import annotations
 
 import operator
 from functools import reduce
-from typing import TYPE_CHECKING, TypeAlias, TypedDict
+from typing import (
+    TYPE_CHECKING,
+    Literal as TypingLiteral,
+    TypeAlias,
+    TypedDict,
+)
 
 import polars as pl
 
@@ -89,8 +94,31 @@ class State(TypedDict):
     unique_names: Generator[str, None, None]
 
 
-ExprDecomposer: TypeAlias = "GenericTransformer[Expr, tuple[Expr, IR, MutableMapping[IR, PartitionInfo]], State]"
+HConcatShape: TypeAlias = TypingLiteral["row_aligned", "broadcast", "unaligned"]
+DecomposedExpr: TypeAlias = (
+    "tuple[Expr, IR, MutableMapping[IR, PartitionInfo], HConcatShape]"
+)
+
+
+ExprDecomposer: TypeAlias = "GenericTransformer[Expr, DecomposedExpr, State]"
 """Protocol for decomposing expressions."""
+
+
+def _combine_hconcat_shapes(shapes: Sequence[HConcatShape]) -> HConcatShape:
+    non_broadcast = [shape for shape in shapes if shape != "broadcast"]
+    if not non_broadcast:
+        return "broadcast"
+    if all(shape == "row_aligned" for shape in non_broadcast):
+        return "row_aligned"
+    return "unaligned"
+
+
+def hconcat_streaming_safe(shapes: Sequence[HConcatShape]) -> bool:
+    """Return whether decomposed expressions can be horizontally concatenated."""
+    non_broadcast = [shape for shape in shapes if shape != "broadcast"]
+    return len(non_broadcast) <= 1 or all(
+        shape == "row_aligned" for shape in non_broadcast
+    )
 
 
 def select(
@@ -237,6 +265,8 @@ def _decompose_agg_node(
         GPUEngine configuration options.
     names
         Generator of unique names for temporaries.
+    hconcat_shape
+        How this expression lines up with sibling expressions.
 
     Returns
     -------
@@ -389,7 +419,8 @@ def _decompose_expr_node(
     config_options: ConfigOptions[StreamingExecutor],
     *,
     names: Generator[str, None, None],
-) -> tuple[Expr, IR, MutableMapping[IR, PartitionInfo]]:
+    hconcat_shape: HConcatShape = "row_aligned",
+) -> DecomposedExpr:
     """
     Decompose an expression into partition-wise stages.
 
@@ -406,6 +437,8 @@ def _decompose_expr_node(
         GPUEngine configuration options.
     names
         Generator of unique names for temporaries.
+    hconcat_shape
+        How this expression lines up with sibling expressions.
 
     Returns
     -------
@@ -423,33 +456,37 @@ def _decompose_expr_node(
         # mess up the result of ``HConcat``.
         input_ir = Empty({})
         partition_info[input_ir] = PartitionInfo(count=1)
+        hconcat_shape = "broadcast"
 
     partition_count = partition_info[input_ir].count
-
-    # Check for dynamic planning - may have more partitions at runtime
     dynamic_planning = _dynamic_planning_on(config_options)
 
-    if expr.is_pointwise or (partition_count == 1 and not dynamic_planning):
-        # Single-partition and pointwise expressions are always supported.
-        return expr, input_ir, partition_info
+    if expr.is_pointwise:
+        return expr, input_ir, partition_info, hconcat_shape
     elif isinstance(expr, Len) or (
         isinstance(expr, Agg) and expr.name in _SUPPORTED_AGGS
     ):
+        if partition_count == 1 and not dynamic_planning:
+            return expr, input_ir, partition_info, "broadcast"
         # This is a supported Agg expression.
-        return _decompose_agg_node(
+        expr, input_ir, partition_info = _decompose_agg_node(
             expr, input_ir, partition_info, config_options, names=names
         )
+        return expr, input_ir, partition_info, "broadcast"
     elif isinstance(expr, UnaryFunction) and expr.name == "drop_nulls":
-        return expr, input_ir, partition_info
+        return expr, input_ir, partition_info, "unaligned"
     elif isinstance(expr, UnaryFunction) and expr.name == "unique":
-        return _decompose_unique(
+        expr, input_ir, partition_info = _decompose_unique(
             expr,
             input_ir,
             partition_info,
             config_options,
             names=names,
         )
+        return expr, input_ir, partition_info, "unaligned"
     elif isinstance(expr, UnaryFunction) and expr.name == "null_count":
+        if partition_count == 1 and not dynamic_planning:
+            return expr, input_ir, partition_info, "broadcast"
         columns, input_ir, partition_info = select(
             [expr],
             input_ir,
@@ -465,11 +502,16 @@ def _decompose_expr_node(
             names=names,
         )
         (expr,) = columns
-        return expr, input_ir, partition_info
+        return expr, input_ir, partition_info, "broadcast"
     elif isinstance(expr, GroupedWindow) and _dynamic_planning_on(config_options):
-        return _decompose_grouped_window_node(
+        expr, input_ir, partition_info = _decompose_grouped_window_node(
             expr, input_ir, partition_info, config_options, names=names
         )
+        return expr, input_ir, partition_info, "row_aligned"
+    elif partition_count == 1 and not dynamic_planning:
+        # A single-partition expression can be evaluated as-is, but it may not
+        # preserve row alignment with other decomposed expressions.
+        return expr, input_ir, partition_info, "unaligned"
     else:
         # This is an un-supported expression - raise.
         raise NotImplementedError(
@@ -477,9 +519,7 @@ def _decompose_expr_node(
         )
 
 
-def _decompose(
-    expr: Expr, rec: ExprDecomposer
-) -> tuple[Expr, IR, MutableMapping[IR, PartitionInfo]]:
+def _decompose(expr: Expr, rec: ExprDecomposer) -> DecomposedExpr:
     # Used by `decompose_expr_graph``
 
     if not expr.children:
@@ -493,7 +533,7 @@ def _decompose(
         )
 
     # Process child Exprs first
-    children, input_irs, _partition_info = zip(
+    children, input_irs, _partition_info, hconcat_shapes = zip(
         *(rec(c) for c in expr.children), strict=True
     )
     partition_info = reduce(operator.or_, _partition_info)
@@ -504,10 +544,6 @@ def _decompose(
     partition_count = max(partition_info[ir].count for ir in input_irs)
     unique_input_irs = [k for k in dict.fromkeys(input_irs) if not isinstance(k, Empty)]
     if len(unique_input_irs) > 1:
-        # Need to make sure we only have a single input IR
-        # TODO: Check that we aren't concatenating misaligned
-        # columns that cannot be broadcasted. For example, what
-        # if one of the columns is sorted?
         schema: Schema = {}
         for ir in unique_input_irs:
             schema.update(ir.schema)
@@ -515,6 +551,7 @@ def _decompose(
             schema,
             True,  # noqa: FBT003
             False,  # noqa: FBT003
+            hconcat_streaming_safe(hconcat_shapes),
             *unique_input_irs,
         )
         partition_info[input_ir] = PartitionInfo(count=partition_count)
@@ -535,6 +572,7 @@ def _decompose(
         partition_info,
         rec.state["config_options"],
         names=rec.state["unique_names"],
+        hconcat_shape=_combine_hconcat_shapes(hconcat_shapes),
     )
 
 
@@ -560,7 +598,7 @@ def decompose_expr_graph(
     named_expr: NamedExpr,
     *,
     mapper: ExprDecomposer,
-) -> tuple[NamedExpr, IR, MutableMapping[IR, PartitionInfo]]:
+) -> tuple[NamedExpr, IR, MutableMapping[IR, PartitionInfo], HConcatShape]:
     """
     Decompose a NamedExpr into stages using a shared expression decomposer.
 
@@ -581,5 +619,10 @@ def decompose_expr_graph(
         A mapping from unique nodes in the new graph to associated
         partitioning information.
     """
-    expr, input_ir, partition_info = mapper(named_expr.value)
-    return named_expr.reconstruct(expr), input_ir, partition_info
+    expr, input_ir, partition_info, hconcat_shape = mapper(named_expr.value)
+    return (
+        named_expr.reconstruct(expr),
+        input_ir,
+        partition_info,
+        hconcat_shape,
+    )

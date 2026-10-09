@@ -347,7 +347,15 @@ def _lower_ir_pwise(
     return new_node, partition_info
 
 
-lower_ir_node.register(HConcat, _lower_ir_pwise)
+@lower_ir_node.register(HConcat)
+def _(
+    ir: HConcat, rec: LowerIRTransformer
+) -> tuple[IR, MutableMapping[IR, PartitionInfo]]:
+    if ir.streaming_safe:
+        return _lower_ir_pwise(ir, rec)
+    return _lower_ir_fallback(
+        ir, rec, msg="HConcat is not supported for multiple partitions."
+    )
 
 
 @lower_ir_node.register(Filter)

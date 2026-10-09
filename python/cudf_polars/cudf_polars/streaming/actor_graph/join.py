@@ -87,7 +87,7 @@ from cudf_polars.streaming.repartition import Repartition
 from cudf_polars.streaming.utils import _concat, partition_range
 
 if TYPE_CHECKING:
-    from collections.abc import MutableMapping
+    from collections.abc import MutableMapping, Sequence
 
     from cudf_streaming.channel_metadata import Ordering
     from rapidsmpf.communicator.communicator import Communicator
@@ -2075,6 +2075,26 @@ def _use_pwise_join(
     return left_partitioned and right_partitioned
 
 
+def _forward_join_partitioning(
+    ir: IR,
+    child_metadatas: Sequence[ChannelMetadata],
+    context: Context,
+) -> Partitioning | None:
+    """Build partitioning metadata for a partition-wise join."""
+    assert isinstance(ir, Join)
+    child_index = 1 if ir.options[0] == "Right" else 0
+    side: Literal["left", "right"] = "left" if child_index == 0 else "right"
+    partitioning = maybe_remap_partitioning(
+        ir,
+        child_metadatas[child_index].partitioning,
+        child_ir=ir.children[child_index],
+        context=context,
+    )
+    if not join_preserves_side_order(ir.options[5], side):
+        partitioning = clear_local_ordering(partitioning)
+    return partitioning
+
+
 @generate_ir_sub_network.register(Join)
 @generate_ir_sub_network.register(JoinWithPrefilter)
 def _(
@@ -2102,7 +2122,6 @@ def _(
 
     if pwise_join:
         # Partition-wise join (use default_node_multi)
-        partitioning_index = 1 if ir.options[0] == "Right" else 0
         actors[ir] = [
             default_node_multi(
                 rec.state["context"],
@@ -2113,7 +2132,7 @@ def _(
                     channels[left].reserve_output_slot(),
                     channels[right].reserve_output_slot(),
                 ),
-                partitioning_index=partitioning_index,
+                partitioning_callback=_forward_join_partitioning,
             )
         ]
         return actors, channels

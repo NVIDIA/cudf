@@ -43,6 +43,7 @@ from cudf_polars.dsl.expr import Cast, Col, NamedExpr, TemporalFunction
 from cudf_polars.dsl.ir import (
     Filter,
     GroupBy,
+    HConcat,
     HStack,
     Join,
     Projection,
@@ -754,7 +755,7 @@ def maybe_remap_partitioning(
             ),
             local=_remap_scheme_simple(ir, partitioning.local, ir.children[0]),
         )
-    if isinstance(ir, (Join, Projection, Filter)):
+    if isinstance(ir, (HConcat, Join, Projection, Filter)):
         child = child_ir if child_ir is not None else ir.children[0]
         return Partitioning(
             inter_rank=_remap_scheme_simple(ir, partitioning.inter_rank, child),

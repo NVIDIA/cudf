@@ -19,6 +19,7 @@ from cudf_polars.streaming.base import PartitionInfo
 from cudf_polars.streaming.dispatch import lower_ir_node
 from cudf_polars.streaming.expressions import (
     decompose_expr_graph,
+    hconcat_streaming_safe,
     make_expr_decomposer,
 )
 from cudf_polars.streaming.io import StreamingScan
@@ -150,12 +151,16 @@ def decompose_select(
         config_options,
         name_generator,
     )
+    hconcat_shapes = []
     for ne in select_ir.exprs:
         # Decompose this partial expression
-        new_ne, partial_input_ir, _partition_info = decompose_expr_graph(
-            ne,
-            mapper=shared_mapper,
-        )
+        (
+            new_ne,
+            partial_input_ir,
+            _partition_info,
+            hconcat_shape,
+        ) = decompose_expr_graph(ne, mapper=shared_mapper)
+        hconcat_shapes.append(hconcat_shape)
         pi = _partition_info[partial_input_ir]
         partial_input_ir = Select(
             {ne.name: ne.value.dtype},
@@ -179,6 +184,7 @@ def decompose_select(
             select_ir.schema,
             True,  # noqa: FBT003
             False,  # noqa: FBT003
+            hconcat_streaming_safe(hconcat_shapes),
             *selections,
         )
         partition_info[new_ir] = PartitionInfo(
@@ -354,6 +360,7 @@ def _fuse_simple_reductions(
             hconcat_schema,
             True,  # noqa: FBT003
             False,  # noqa: FBT003
+            True,  # noqa: FBT003
             *new_decomposed_select_irs,
         )
         count = max(pi[c].count for c in new_decomposed_select_irs)

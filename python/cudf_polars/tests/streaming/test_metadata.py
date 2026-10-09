@@ -453,6 +453,42 @@ def test_remap_partitioning_hstack_appends_preserves_keys(streaming_engine) -> N
     assert result.local == "inherit"
 
 
+def test_decomposed_select_preserves_row_ordering_metadata(
+    spmd_engine_factory,
+) -> None:
+    engine = spmd_engine_factory(
+        StreamingOptions(
+            max_rows_per_partition=2,
+            dynamic_planning=None,
+            fallback_mode="raise",
+            raise_on_fail=True,
+        )
+    )
+    q = (
+        pl.LazyFrame({"a": [3, 1, 2], "b": [6, 4, 5]})
+        .sort("a")
+        .select("a", (pl.col("b") + 1).alias("b1"))
+    )
+    ir = Translator(q._ldf.visit(), engine).translate_ir()
+
+    metadata_collector = evaluate_logical_plan(
+        ir, ConfigOptions.from_polars_engine(engine), collect_metadata=True
+    )[1]
+
+    assert metadata_collector is not None
+    assert len(metadata_collector) == 1
+    metadata = metadata_collector[0]
+    scheme = metadata.partitioning.inter_rank
+    assert isinstance(scheme, OrderScheme)
+
+    output_cols = list(ir.schema.keys())
+    assert [
+        tuple(key.column_index for key in ordering.keys)
+        for ordering in scheme.orderings
+    ] == [(output_cols.index("a"),)]
+    assert all(ordering.locally_ordered for ordering in scheme.orderings)
+
+
 def test_remap_partitioning_select_drops_key(streaming_engine) -> None:
     part = Partitioning(inter_rank=HashScheme((0, 1), 8), local="inherit")
     result = maybe_remap_partitioning(_make_select_ir(streaming_engine, ("a",)), part)

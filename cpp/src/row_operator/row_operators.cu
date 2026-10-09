@@ -415,7 +415,7 @@ auto replace_child(column_view const& input,
                    column_view const& new_child,
                    std::vector<std::unique_ptr<column>>& out_cols,
                    cuda::stream_ref stream,
-                   rmm::device_async_resource_ref mr)
+                   cudf::memory_resources mr)
 {
   auto const make_output = [&input](auto const& offsets_cv, auto const& child_cv) {
     return column_view{data_type{type_id::LIST},
@@ -431,8 +431,8 @@ auto replace_child(column_view const& input,
     return make_output(input.child(lists_column_view::offsets_column_index), new_child);
   }
 
-  out_cols.emplace_back(
-    cudf::lists::detail::get_normalized_offsets(lists_column_view{input}, stream, mr));
+  out_cols.emplace_back(cudf::lists::detail::get_normalized_offsets(
+    lists_column_view{input}, stream, mr.get_output_mr()));
   return make_output(out_cols.back()->view(), new_child);
 }
 
@@ -464,7 +464,7 @@ auto replace_child(column_view const& input,
 auto compute_ranks(column_view const& input,
                    null_order column_null_order,
                    cuda::stream_ref stream,
-                   rmm::device_async_resource_ref mr)
+                   cudf::memory_resources mr)
 {
   return cudf::detail::rank(input,
                             rank_method::DENSE,
@@ -473,7 +473,7 @@ auto compute_ranks(column_view const& input,
                             column_null_order,
                             false /*percentage*/,
                             stream,
-                            mr);
+                            mr.get_output_mr());
 }
 
 /**
@@ -488,7 +488,7 @@ auto compute_ranks(column_view const& input,
  * @param input The input column to transform
  * @param column_null_order The flag indicating how nulls compare to non-null values
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column(s)
+ * @param mr Memory resources used for temporary allocations and the returned column(s)
  * @return A pair consisting of new column_view representing the transformed input, along with
  *         an array containing its rank column(s) (of `size_type` type) and possibly new list
  *         offsets generated during the transformation process
@@ -497,7 +497,7 @@ std::pair<column_view, std::vector<std::unique_ptr<column>>> transform_lists_of_
   column_view const& input,
   null_order column_null_order,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   std::vector<std::unique_ptr<column>> out_cols;
 
@@ -551,7 +551,7 @@ std::pair<column_view, std::vector<std::unique_ptr<column>>> transform_lists_of_
  * @param rhs The input rhs column to transform
  * @param column_null_order The flag indicating how nulls compare to non-null values
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column(s)
+ * @param mr Memory resources used for temporary allocations and the returned column(s)
  * @return A tuple consisting of new column_view(s) representing the transformed input, along with
  *         their rank column(s) (of `size_type` type) and possibly new list offsets generated
  *         during the transformation process
@@ -570,8 +570,8 @@ transform_lists_of_structs(column_view const& lhs,
   std::vector<std::unique_ptr<column>> out_cols_rhs;
 
   auto const make_output = [&](auto const& new_child_lhs, auto const& new_child_rhs) {
-    return std::tuple{replace_child(lhs, new_child_lhs, out_cols_lhs, stream, mr.get_output_mr()),
-                      replace_child(rhs, new_child_rhs, out_cols_rhs, stream, mr.get_output_mr()),
+    return std::tuple{replace_child(lhs, new_child_lhs, out_cols_lhs, stream, mr),
+                      replace_child(rhs, new_child_rhs, out_cols_rhs, stream, mr),
                       std::move(out_cols_lhs),
                       std::move(out_cols_rhs)};
   };
@@ -585,8 +585,11 @@ transform_lists_of_structs(column_view const& lhs,
       auto const concatenated_children = cudf::detail::concatenate(
         std::vector<column_view>{child_lhs, child_rhs}, stream, mr.get_temporary_mr());
 
-      auto const ranks = compute_ranks(
-        concatenated_children->view(), column_null_order, stream, mr.get_temporary_mr());
+      auto const temp_mr      = mr.get_temporary_mr();
+      auto const ranks        = compute_ranks(concatenated_children->view(),
+                                       column_null_order,
+                                       stream,
+                                       cudf::memory_resources{temp_mr, temp_mr});
       auto const ranks_slices = cudf::detail::slice(
         ranks->view(),
         {0, child_lhs.size(), child_lhs.size(), child_lhs.size() + child_rhs.size()},

@@ -452,11 +452,15 @@ struct string_generator {
   char* chars;
   cuda::std::philox4x32 engine;
   cuda::std::uniform_int_distribution<unsigned char> char_dist;
-  string_generator(char* c, cuda::std::philox4x32& engine)
-    : chars(c), engine(engine), char_dist(32, Encoding == string_encoding::ASCII ? 126 : 137)
-  // ~90% ASCII, ~10% UTF-8.
-  // ~80% not-space, ~20% space.
-  // range 32-127 is ASCII; 127-136 will be multi-byte UTF-8
+  unsigned char last_char;  // replaces a multi-byte character that would not fit at the end;
+                            // char_lower is always ASCII so it is within the range
+  // With the default range of 32-137: ~90% ASCII, ~10% UTF-8.
+  // Characters 32-126 are ASCII; 127 and above will be multi-byte UTF-8
+  string_generator(char* c,
+                   cuda::std::philox4x32& engine,
+                   unsigned char char_lower,
+                   unsigned char char_upper)
+    : chars(c), engine(engine), char_dist(char_lower, char_upper), last_char(char_lower)
   {
   }
   __device__ void operator()(cuda::std::tuple<int64_t, int64_t> str_begin_end)
@@ -467,9 +471,9 @@ struct string_generator {
     for (auto i = begin; i < end; ++i) {
       auto ch = char_dist(engine);
       if constexpr (Encoding == string_encoding::UTF8) {
-        if (i == end - 1 && ch >= '\x7F') ch = ' ';  // last element ASCII only.
-        if (ch >= '\x7F') {                          // x7F is at the top edge of ASCII
-          chars[i++] = '\xC4';                       // these characters are assigned two bytes
+        if (i == end - 1 && ch >= '\x7F') ch = last_char;  // last element ASCII only.
+        if (ch >= '\x7F') {                                // x7F is at the top edge of ASCII
+          chars[i++] = '\xC4';  // these characters are assigned two bytes
           ch         = (ch >> 2) | 0x80;
         }
       }
@@ -487,8 +491,13 @@ std::unique_ptr<cudf::column> create_random_utf8_string_column(data_profile cons
                                                                cuda::std::philox4x32& engine,
                                                                cudf::size_type num_rows)
 {
-  auto len_dist =
-    random_value_fn<uint32_t>{profile.get_distribution_params<cudf::string_view>().length_params};
+  auto const string_params = profile.get_distribution_params<cudf::string_view>();
+  auto const char_lower    = string_params.char_lower;
+  auto const char_upper    = Encoding == string_encoding::ASCII
+                               ? std::min<unsigned char>(string_params.char_upper, 126)
+                               : string_params.char_upper;
+
+  auto len_dist   = random_value_fn<uint32_t>{string_params.length_params};
   auto valid_dist = random_value_fn<bool>(
     distribution_params<bool>{1. - profile.get_null_probability().value_or(0)});
   auto lengths   = len_dist(engine, num_rows + 1);
@@ -513,7 +522,7 @@ std::unique_ptr<cudf::column> create_random_utf8_string_column(data_profile cons
   thrust::for_each_n(thrust::device,
                      cuda::make_zip_iterator(cuda::std::make_tuple(offsets_itr, offsets_itr + 1)),
                      num_rows,
-                     string_generator<Encoding>{chars.data(), engine});
+                     string_generator<Encoding>{chars.data(), engine, char_lower, char_upper});
 
   auto [result_bitmask, null_count] =
     profile.get_null_probability().has_value()
@@ -863,6 +872,10 @@ template <>
 std::unique_ptr<cudf::column> create_distinct_rows_column<cudf::string_view>(
   data_profile const& profile, cuda::std::philox4x32& engine, cudf::size_type num_rows)
 {
+  // uniqueness comes from appending the row index as decimal digits
+  auto const string_params = profile.get_distribution_params<cudf::string_view>();
+  CUDF_EXPECTS(string_params.char_lower <= '0' && string_params.char_upper >= '9',
+               "Character range must include the digits 0-9 to generate distinct strings");
   auto col        = create_random_column<cudf::string_view>(profile, engine, num_rows);
   auto int_col    = cudf::sequence(num_rows, *cudf::make_fixed_width_scalar<int32_t>(0));
   auto int2strcol = cudf::strings::from_integers(int_col->view());
@@ -1194,6 +1207,8 @@ void data_profile::set_struct_types(cudf::host_span<cudf::type_id const> types)
 void data_profile::set_string_char_range(unsigned char lower, unsigned char upper)
 {
   CUDF_EXPECTS(lower <= upper, "Lower bound must be <= upper bound");
+  // a single-byte character is needed to end a string when a 2-byte character does not fit
+  CUDF_EXPECTS(lower < 127, "Lower bound must be an ASCII character (< 127)");
   string_dist_desc.char_lower = lower;
   string_dist_desc.char_upper = upper;
 }

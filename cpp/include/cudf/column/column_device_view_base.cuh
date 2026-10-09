@@ -337,15 +337,9 @@ class alignas(16) column_device_view_base {
   {
   }
 
-  template <typename C, typename T, typename = void>
-  struct has_element_accessor_impl : cuda::std::false_type {};
-
   template <typename C, typename T>
-  struct has_element_accessor_impl<
-    C,
-    T,
-    void_t<decltype(cuda::std::declval<C>().template element<T>(cuda::std::declval<size_type>()))>>
-    : cuda::std::true_type {};
+  static constexpr bool has_element_accessor_impl =
+    requires { cuda::std::declval<C>().template element<T>(cuda::std::declval<size_type>()); };
 };
 // @cond
 // Forward declaration

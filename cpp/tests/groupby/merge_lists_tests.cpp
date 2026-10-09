@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -56,7 +56,7 @@ TYPED_TEST(GroupbyMergeListsTypedTest, InvalidInput)
   auto const keys = keys_col{1, 2, 3};
 
   // The input lists column must NOT be nullable.
-  auto const lists = lists_col{{lists_col{1}, lists_col{} /*NULL*/, lists_col{2}}, null_at(1)};
+  auto const lists = lists_col{{{1}, {} /*NULL*/, {2}}, null_at(1)};
   EXPECT_THROW(merge_lists({keys}, {lists}), cudf::logic_error);
 
   // The input column must be a lists column.
@@ -131,27 +131,27 @@ TYPED_TEST(GroupbyMergeListsTypedTest, InputHasNulls)
   // Note that the null elements here are not sorted, while the results from current collect_list
   // are sorted.
   auto const lists1 = lists_col{
-    lists_col{{1, null, 3}, null_at(1)},  // key = 1
-    lists_col{4, 5, 6}                    // key = 2
+    {{1, null, 3}, null_at(1)},  // key = 1
+    {4, 5, 6}                    // key = 2
   };
   auto const lists2 = lists_col{
-    lists_col{10, 11},                          // key = 1
-    lists_col{{null, null, null}, all_nulls()}  // key = 3
+    {10, 11},                          // key = 1
+    {{null, null, null}, all_nulls()}  // key = 3
   };
   auto const lists3 = lists_col{
-    lists_col{20, 21, 22},                          // key = 2
-    lists_col{{null, 24, null}, nulls_at({0, 2})},  // key = 3
-    lists_col{{24, 25, 26}, no_nulls()}             // key = 4
+    {20, 21, 22},                          // key = 2
+    {{null, 24, null}, nulls_at({0, 2})},  // key = 3
+    {{24, 25, 26}, no_nulls()}             // key = 4
   };
 
   auto const [out_keys, out_lists] =
     merge_lists(vcol_views{keys1, keys2, keys3}, vcol_views{lists1, lists2, lists3});
   auto const expected_keys  = keys_col{1, 2, 3, 4};
   auto const expected_lists = lists_col{
-    lists_col{{1, null, 3, 10, 11}, null_at(1)},                               // key = 1
-    lists_col{4, 5, 6, 20, 21, 22},                                            // key = 2
-    lists_col{{null, null, null, null, 24, null}, nulls_at({0, 1, 2, 3, 5})},  // key = 3
-    lists_col{24, 25, 26}                                                      // key = 4
+    {{1, null, 3, 10, 11}, null_at(1)},                               // key = 1
+    {4, 5, 6, 20, 21, 22},                                            // key = 2
+    {{null, null, null, null, 24, null}, nulls_at({0, 1, 2, 3, 5})},  // key = 3
+    {24, 25, 26}                                                      // key = 4
   };
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_keys, *out_keys, verbosity);
@@ -207,29 +207,29 @@ TYPED_TEST(GroupbyMergeListsTypedTest, InputHasNullsAndEmptyLists)
   // Note that the null elements here are not sorted, while the results from current collect_list
   // are sorted.
   auto const lists1 = lists_col{
-    lists_col{{1, null, 3}, null_at(1)},  // key = 1
-    lists_col{},                          // key = 2
-    lists_col{4, 5}                       // key = 3
+    {{1, null, 3}, null_at(1)},  // key = 1
+    {},                          // key = 2
+    {4, 5}                       // key = 3
   };
   auto const lists2 = lists_col{
-    lists_col{10, 11},                           // key = 1
-    lists_col{{null, null, null}, all_nulls()},  // key = 3
-    lists_col{}                                  // key = 4
+    {10, 11},                           // key = 1
+    {{null, null, null}, all_nulls()},  // key = 3
+    {}                                  // key = 4
   };
   auto const lists3 = lists_col{
-    lists_col{20, 21, 22},                          // key = 2
-    lists_col{{null, 24, null}, nulls_at({0, 2})},  // key = 3
-    lists_col{{24, 25, 26}, no_nulls()}             // key = 4
+    {20, 21, 22},                          // key = 2
+    {{null, 24, null}, nulls_at({0, 2})},  // key = 3
+    {{24, 25, 26}, no_nulls()}             // key = 4
   };
 
   auto const [out_keys, out_lists] =
     merge_lists(vcol_views{keys1, keys2, keys3}, vcol_views{lists1, lists2, lists3});
   auto const expected_keys  = keys_col{1, 2, 3, 4};
   auto const expected_lists = lists_col{
-    lists_col{{1, null, 3, 10, 11}, null_at(1)},                                     // key = 1
-    lists_col{20, 21, 22},                                                           // key = 2
-    lists_col{{4, 5, null, null, null, null, 24, null}, nulls_at({2, 3, 4, 5, 7})},  // key = 3
-    lists_col{24, 25, 26}                                                            // key = 4
+    {{1, null, 3, 10, 11}, null_at(1)},                                     // key = 1
+    {20, 21, 22},                                                           // key = 2
+    {{4, 5, null, null, null, null, 24, null}, nulls_at({2, 3, 4, 5, 7})},  // key = 3
+    {24, 25, 26}                                                            // key = 4
   };
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_keys, *out_keys, verbosity);
@@ -246,28 +246,27 @@ TYPED_TEST(GroupbyMergeListsTypedTest, InputHasListsOfLists)
   auto const keys3 = keys_col{2, 3, 4};
 
   auto const lists1 = lists_col{
-    lists_col{lists_col{1, 2, 3}, lists_col{4}, lists_col{5, 6}},  // key = 1
-    lists_col{lists_col{}, lists_col{7}}                           // key = 2
+    {{1, 2, 3}, {4}, {5, 6}},  // key = 1
+    {{}, {7}}                  // key = 2
   };
   auto const lists2 = lists_col{
-    lists_col{lists_col{}, lists_col{8, 9}},     // key = 1
-    lists_col{lists_col{11}, lists_col{12, 13}}  // key = 3
+    {{}, {8, 9}},     // key = 1
+    {{11}, {12, 13}}  // key = 3
   };
   auto const lists3 = lists_col{
-    lists_col{lists_col{14}, lists_col{15, 16, 17, 18}},             // key = 2
-    lists_col{lists_col{}},                                          // key = 3
-    lists_col{lists_col{17, 18, 19, 20, 21}, lists_col{18, 19, 20}}  // key = 4
+    {{14}, {15, 16, 17, 18}},             // key = 2
+    {{}},                                 // key = 3
+    {{17, 18, 19, 20, 21}, {18, 19, 20}}  // key = 4
   };
 
   auto const [out_keys, out_lists] =
     merge_lists(vcol_views{keys1, keys2, keys3}, vcol_views{lists1, lists2, lists3});
   auto const expected_keys  = keys_col{1, 2, 3, 4};
   auto const expected_lists = lists_col{
-    lists_col{
-      lists_col{1, 2, 3}, lists_col{4}, lists_col{5, 6}, lists_col{}, lists_col{8, 9}},  // key = 1
-    lists_col{lists_col{}, lists_col{7}, lists_col{14}, lists_col{15, 16, 17, 18}},      // key = 2
-    lists_col{lists_col{11}, lists_col{12, 13}, lists_col{}},                            // key = 3
-    lists_col{lists_col{17, 18, 19, 20, 21}, lists_col{18, 19, 20}}                      // key = 4
+    {{1, 2, 3}, {4}, {5, 6}, {}, {8, 9}},  // key = 1
+    {{}, {7}, {14}, {15, 16, 17, 18}},     // key = 2
+    {{11}, {12, 13}, {}},                  // key = 3
+    {{17, 18, 19, 20, 21}, {18, 19, 20}}   // key = 4
   };
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_keys, *out_keys, verbosity);
@@ -334,39 +333,39 @@ TEST_F(GroupbyMergeListsTest, StringsColumnInput)
   auto const keys3 = strings_col{"apple", "dog", "water melon"};
 
   auto const lists1 = lists_col{
-    lists_col{"Poodle", "Golden Retriever", "Corgi"},            // key = "dog"
-    lists_col{{"Whale", "" /*NULL*/, "Polar Bear"}, null_at(1)}  // key = "unknown"
+    {"Poodle", "Golden Retriever", "Corgi"},            // key = "dog"
+    {{"Whale", "" /*NULL*/, "Polar Bear"}, null_at(1)}  // key = "unknown"
   };
   auto const lists2 = lists_col{
-    lists_col{"Green", "Yellow"},                       // key = "banana"
-    lists_col{},                                        // key = "unknown"
-    lists_col{{"" /*NULL*/, "" /*NULL*/}, all_nulls()}  // key = "dog"
+    {"Green", "Yellow"},                       // key = "banana"
+    {},                                        // key = "unknown"
+    {{"" /*NULL*/, "" /*NULL*/}, all_nulls()}  // key = "dog"
   };
   auto const lists3 = lists_col{
-    lists_col{"Fuji", "Red Delicious"},                                          // key = "apple"
-    lists_col{{"" /*NULL*/, "German Shepherd", "" /*NULL*/}, nulls_at({0, 2})},  // key = "dog"
-    lists_col{{"Seeedless", "Mini"}, no_nulls()}  // key = "water melon"
+    {"Fuji", "Red Delicious"},                                          // key = "apple"
+    {{"" /*NULL*/, "German Shepherd", "" /*NULL*/}, nulls_at({0, 2})},  // key = "dog"
+    {{"Seeedless", "Mini"}, no_nulls()}                                 // key = "water melon"
   };
 
   auto const [out_keys, out_lists] =
     merge_lists(vcol_views{keys1, keys2, keys3}, vcol_views{lists1, lists2, lists3});
   auto const expected_keys  = strings_col{"apple", "banana", "dog", "unknown", "water melon"};
   auto const expected_lists = lists_col{
-    lists_col{"Fuji", "Red Delicious"},  // key = "apple"
-    lists_col{"Green", "Yellow"},        // key = "banana"
-    lists_col{{
-                "Poodle",
-                "Golden Retriever",
-                "Corgi",
-                "" /*NULL*/,
-                "" /*NULL*/,
-                "" /*NULL*/,
-                "German Shepherd",
-                "" /*NULL*/
-              },
-              nulls_at({3, 4, 5, 7})},                            // key = "dog"
-    lists_col{{"Whale", "" /*NULL*/, "Polar Bear"}, null_at(1)},  // key = "unknown"
-    lists_col{{"Seeedless", "Mini"}, no_nulls()}                  // key = "water melon"
+    {"Fuji", "Red Delicious"},  // key = "apple"
+    {"Green", "Yellow"},        // key = "banana"
+    {{
+       "Poodle",
+       "Golden Retriever",
+       "Corgi",
+       "" /*NULL*/,
+       "" /*NULL*/,
+       "" /*NULL*/,
+       "German Shepherd",
+       "" /*NULL*/
+     },
+     nulls_at({3, 4, 5, 7})},                            // key = "dog"
+    {{"Whale", "" /*NULL*/, "Polar Bear"}, null_at(1)},  // key = "unknown"
+    {{"Seeedless", "Mini"}, no_nulls()}                  // key = "water melon"
   };
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_keys, *out_keys, verbosity);

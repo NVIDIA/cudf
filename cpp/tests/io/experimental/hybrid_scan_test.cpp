@@ -32,6 +32,10 @@
 
 #include <cuda/iterator>
 
+#include <format>
+#include <limits>
+#include <stdexcept>
+
 namespace {
 
 /**
@@ -242,6 +246,49 @@ std::unique_ptr<cudf::table> test_hybrid_scan_column_selection(
 
 // Base test fixture for tests
 struct HybridScanTest : public cudf::test::BaseFixture {};
+
+TEST_F(HybridScanTest, PageIndexOverflowThrows)
+{
+  auto [written_table, parquet_buffer] = create_parquet_with_stats<uint32_t, 1>();
+
+  auto datasource          = cudf::io::datasource::create(cudf::host_span<std::byte const>{
+    reinterpret_cast<std::byte const*>(parquet_buffer.data()), parquet_buffer.size()});
+  auto const footer_buffer = cudf::io::parquet::fetch_footer_to_host(*datasource);
+
+  auto const options = cudf::io::parquet_reader_options::builder().build();
+  auto reader =
+    std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(*footer_buffer, options);
+
+  ASSERT_FALSE(reader->page_index_byte_range().is_empty());
+
+  enum class CorruptionType : bool { COLUMN_INDEX = true, OFFSET_INDEX = false };
+
+  // Corrupt the column index or the offset index byte range of the first column chunk
+  auto const test_overflow = [&](CorruptionType corruption_type) {
+    SCOPED_TRACE(
+      std::format("Corrupt {} index byte range",
+                  corruption_type == CorruptionType::COLUMN_INDEX ? "column" : "offset"));
+    auto file_metadata = reader->parquet_metadata();
+    auto& column       = file_metadata.row_groups.front().columns.front();
+    if (corruption_type == CorruptionType::COLUMN_INDEX) {
+      column.column_index_offset = std::numeric_limits<int64_t>::max() - 1;
+      column.column_index_length = 8;
+    } else {
+      column.offset_index_offset = std::numeric_limits<int64_t>::max() - 1;
+      column.offset_index_length = 8;
+    }
+
+    // Reset the reader with the corrupted metadata
+    reader =
+      std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(file_metadata, options);
+
+    // Check for overflow error
+    EXPECT_THROW(std::ignore = reader->page_index_byte_range(), std::overflow_error);
+  };
+
+  test_overflow(CorruptionType::COLUMN_INDEX);
+  test_overflow(CorruptionType::OFFSET_INDEX);
+}
 
 TEST_F(HybridScanTest, FilterRowGroupsOnlyAndScanSelectColumns)
 {

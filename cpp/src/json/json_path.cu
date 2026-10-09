@@ -33,7 +33,6 @@
 
 #include <cuda/std/optional>
 #include <cuda/std/utility>
-#include <thrust/scan.h>
 #include <thrust/tuple.h>
 
 namespace cudf {

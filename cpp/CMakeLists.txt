@@ -752,6 +752,8 @@ add_library(
   src/groupby/sort/aggregate.cpp
   src/groupby/sort/group_argmax.cu
   src/groupby/sort/group_argmin.cu
+  src/groupby/sort/group_argminmax_nested.cu
+  src/groupby/sort/group_argminmax_primitives.cu
   src/groupby/sort/group_bitwise.cu
   src/groupby/sort/group_collect.cu
   src/groupby/sort/group_correlation.cu
@@ -1107,7 +1109,6 @@ add_library(
   src/strings/attributes.cu
   src/strings/capitalize.cu
   src/strings/case.cu
-  src/strings/char_types/char_cases.cu
   src/strings/char_types/char_types.cu
   src/strings/combine/concatenate.cu
   src/strings/combine/join.cu

@@ -98,14 +98,14 @@ struct segment_stats {
  * @param segment_offsets Offsets of the segments in `col`
  * @param k Number of rows to select from each segment
  * @param stream CUDA stream used to inspect the offsets
- * @param temp_mr Memory resource for temporary allocations
+ * @param mr Memory resources for output and temporary allocations
  * @return Top-k selection method
  */
 top_k_method select_top_k_method(column_view const& col,
                                  column_view const& segment_offsets,
                                  size_type k,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref temp_mr)
+                                 cudf::memory_resources mr)
 {
   auto const num_segments = segment_offsets.size() - 1;
   if (not is_cub_top_k_supported(col) or num_segments <= 0) { return top_k_method::SORT; }
@@ -136,7 +136,7 @@ top_k_method select_top_k_method(column_view const& col,
 
   auto const d_offsets = segment_offsets.begin<size_type>();
   auto const stats     = thrust::transform_reduce(
-    rmm::exec_policy_nosync(stream, temp_mr),
+    rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
     cuda::counting_iterator<size_type>{0},
     cuda::counting_iterator<size_type>{num_segments},
     [d_offsets] __device__(size_type i) -> segment_stats {
@@ -448,7 +448,7 @@ std::unique_ptr<column> segmented_top_k_order(column_view const& col,
                "segment_offsets must not have nulls",
                std::invalid_argument);
 
-  switch (select_top_k_method(col, segment_offsets, k, stream, mr.get_temporary_mr())) {
+  switch (select_top_k_method(col, segment_offsets, k, stream, mr)) {
     case top_k_method::CUB_SEGMENTS:
       return type_dispatcher<dispatch_storage_type>(
         col.type(), dispatch_cub_top_k_key{[&]<typename T>() {

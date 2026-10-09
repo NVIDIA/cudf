@@ -367,3 +367,140 @@ def test_masked_string_comparison_propagates_validity():
     for i in range(n):
         if got_valid[i]:
             assert bool(out.get()[i]) is (a[i] == b[i])
+
+
+def test_string_affix():
+    """``startswith`` / ``endswith`` against a literal, over an array."""
+    strings = ["abc", "abcd", "xabc", "ab", "", "cab", "h\u00e9llo"]
+    arr, _k = _make_mlir_string_array(strings)
+    n = len(strings)
+    starts = cp.zeros(n, dtype=np.bool_)
+    ends = cp.zeros(n, dtype=np.bool_)
+
+    @cuda.jit(
+        types.void(
+            types.boolean[::1],
+            types.boolean[::1],
+            types.CPointer(mlir_string),
+        ),
+        extensions=[mlir_string_arg_handler],
+    )
+    def k(so, eo, s):
+        i = cuda.grid(1)
+        if i < so.size:
+            so[i] = s[i].startswith("ab")
+            eo[i] = s[i].endswith("bc")
+
+    with MLIRNumbaCudaConfig():
+        k[1, n](starts, ends, arr)
+    cuda.synchronize()
+    assert starts.get().tolist() == [s.startswith("ab") for s in strings]
+    assert ends.get().tolist() == [s.endswith("bc") for s in strings]
+
+
+def test_masked_string_affix_propagates_validity():
+    """``Masked(str).startswith(literal)`` -> ``Masked(bool)``; validity carried."""
+    strings = ["abc", "abd", "xyz"]
+    valid = [True, False, True]
+    arr, _k = _make_mlir_string_array(strings)
+    n = len(strings)
+    out = cp.zeros(n, dtype=np.bool_)
+    out_valid = cp.zeros(n, dtype=np.bool_)
+
+    @cuda.jit(
+        types.void(
+            types.boolean[::1],
+            types.boolean[::1],
+            types.CPointer(mlir_string),
+            types.boolean[::1],
+        ),
+        extensions=[mlir_string_arg_handler],
+    )
+    def k(o, ov, s, sv):
+        i = cuda.grid(1)
+        if i < o.size:
+            r = Masked(s[i], sv[i]).startswith("ab")
+            o[i] = r.value
+            ov[i] = r.valid
+
+    with MLIRNumbaCudaConfig():
+        k[1, n](out, out_valid, arr, cp.array(valid, dtype=np.bool_))
+    cuda.synchronize()
+    assert out_valid.get().tolist() == valid
+    for i in range(n):
+        if valid[i]:
+            assert bool(out.get()[i]) is strings[i].startswith("ab")
+
+
+def test_string_affix_masked_arg_promotes_to_masked():
+    """A masked *argument* makes the result ``Masked(bool)`` even for a plain receiver."""
+    strings = ["abc", "abc", "xyz"]
+    prefixes = ["ab", "ab", "ab"]
+    pvalid = [True, False, True]
+    sarr, _ks = _make_mlir_string_array(strings)
+    parr, _kp = _make_mlir_string_array(prefixes)
+    n = len(strings)
+    out = cp.zeros(n, dtype=np.bool_)
+    out_valid = cp.zeros(n, dtype=np.bool_)
+
+    @cuda.jit(
+        types.void(
+            types.boolean[::1],
+            types.boolean[::1],
+            types.CPointer(mlir_string),
+            types.CPointer(mlir_string),
+            types.boolean[::1],
+        ),
+        extensions=[mlir_string_arg_handler],
+    )
+    def k(o, ov, s, p, pv):
+        i = cuda.grid(1)
+        if i < o.size:
+            r = s[i].startswith(Masked(p[i], pv[i]))
+            o[i] = r.value
+            ov[i] = r.valid
+
+    with MLIRNumbaCudaConfig():
+        k[1, n](out, out_valid, sarr, parr, cp.array(pvalid, dtype=np.bool_))
+    cuda.synchronize()
+    # receiver is always valid, so result validity == argument validity
+    assert out_valid.get().tolist() == pvalid
+    for i in range(n):
+        if pvalid[i]:
+            assert bool(out.get()[i]) is strings[i].startswith(prefixes[i])
+
+
+def test_masked_mlir_string_value_valid_resolve():
+    """``.value`` / ``.valid`` still resolve on a ``Masked(mlir_string)`` receiver.
+
+    A ``Masked(mlir_string)``-keyed attribute template shadows the generic
+    ``MaskedType`` one, so it must inherit ``.value``/``.valid``.
+    """
+    strings = ["abc", "abde"]
+    valid = [True, False]
+    arr, _k = _make_mlir_string_array(strings)
+    n = len(strings)
+    out_valid = cp.zeros(n, dtype=np.bool_)
+    out_len = cp.zeros(n, dtype=np.int64)
+
+    @cuda.jit(
+        types.void(
+            types.boolean[::1],
+            types.int64[::1],
+            types.CPointer(mlir_string),
+            types.boolean[::1],
+        ),
+        extensions=[mlir_string_arg_handler],
+    )
+    def k(ov, ol, s, sv):
+        i = cuda.grid(1)
+        if i < ov.size:
+            m = Masked(s[i], sv[i])
+            ov[i] = m.valid
+            ol[i] = len(m.value)
+
+    with MLIRNumbaCudaConfig():
+        k[1, n](out_valid, out_len, arr, cp.array(valid, dtype=np.bool_))
+    cuda.synchronize()
+    assert out_valid.get().tolist() == valid
+    assert out_len.get().tolist() == [len(s) for s in strings]

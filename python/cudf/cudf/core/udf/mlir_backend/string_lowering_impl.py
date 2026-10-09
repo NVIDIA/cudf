@@ -153,3 +153,59 @@ def _lower_compare(lhs: ir.Value, rhs: ir.Value) -> ir.Value:
         arith.select(rhs_longer, arith.constant(i32, -1), zero_i32),
     )
     return arith.select(found, byte_diff, len_cmp)
+
+
+def _bytes_equal(
+    a_data: ir.Value, a_off: ir.Value, b_data: ir.Value, n: ir.Value
+) -> ir.Value:
+    """i1: whether ``a_data[a_off:a_off+n] == b_data[0:n]`` byte-for-byte.
+
+    Early-exits (``scf.while``) at the first differing byte; callers must pass
+    ``n == 0`` when the range would read out of bounds.
+    """
+    i1 = ir.IntegerType.get_signless(1)
+    zero_i64 = arith.constant(T.i64(), 0)
+    loop = scf.WhileOp([T.i64(), i1], [zero_i64, arith.constant(i1, 1)])
+    before = loop.before.blocks.append(T.i64(), i1)
+    with ir.InsertionPoint(before):
+        idx, eq = before.arguments
+        in_bounds = arith.cmpi(arith.CmpIPredicate.ult, idx, n)
+        scf.condition(arith.andi(in_bounds, eq), [idx, eq])
+    after = loop.after.blocks.append(T.i64(), i1)
+    with ir.InsertionPoint(after):
+        idx, _eq = after.arguments
+        av = _byte_at(a_data, arith.addi(a_off, idx))
+        bv = _byte_at(b_data, idx)
+        next_idx = arith.addi(idx, arith.constant(T.i64(), 1))
+        scf.YieldOp([next_idx, arith.cmpi(arith.CmpIPredicate.eq, av, bv)])
+    return loop.results[1]
+
+
+def _lower_startswith(str_view: ir.Value, prefix: ir.Value) -> ir.Value:
+    """``startswith(prefix)`` -> ``i1`` (byte prefix match)."""
+    i1 = ir.IntegerType.get_signless(1)
+    src_nb = llvm.zext(T.i64(), _view_nbytes(str_view))
+    pfx_nb = llvm.zext(T.i64(), _view_nbytes(prefix))
+    too_long = arith.cmpi(arith.CmpIPredicate.ugt, pfx_nb, src_nb)
+    # Compare 0 bytes when the prefix cannot fit, so the scan never over-reads
+    # the source; the result is false anyway.
+    n = arith.select(too_long, arith.constant(T.i64(), 0), pfx_nb)
+    eq = _bytes_equal(
+        _view_data(str_view), arith.constant(T.i64(), 0), _view_data(prefix), n
+    )
+    return arith.andi(arith.xori(too_long, arith.constant(i1, 1)), eq)
+
+
+def _lower_endswith(str_view: ir.Value, suffix: ir.Value) -> ir.Value:
+    """``endswith(suffix)`` -> ``i1`` (byte suffix match)."""
+    i1 = ir.IntegerType.get_signless(1)
+    src_nb = llvm.zext(T.i64(), _view_nbytes(str_view))
+    sfx_nb = llvm.zext(T.i64(), _view_nbytes(suffix))
+    too_long = arith.cmpi(arith.CmpIPredicate.ugt, sfx_nb, src_nb)
+    zero_i64 = arith.constant(T.i64(), 0)
+    # Clamp both the start offset and the length when the suffix cannot fit so
+    # the scan stays in bounds; the result is false anyway.
+    n = arith.select(too_long, zero_i64, sfx_nb)
+    offset = arith.select(too_long, zero_i64, arith.subi(src_nb, sfx_nb))
+    eq = _bytes_equal(_view_data(str_view), offset, _view_data(suffix), n)
+    return arith.andi(arith.xori(too_long, arith.constant(i1, 1)), eq)

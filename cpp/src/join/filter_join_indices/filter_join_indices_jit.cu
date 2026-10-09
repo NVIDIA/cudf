@@ -30,6 +30,7 @@
 #include <cub/device/device_transform.cuh>
 #include <cuco/static_set.cuh>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/tuple>
 #include <cuda/stream>
 
@@ -93,7 +94,7 @@ kernel build_join_filter_kernel(std::string const& predicate_code,
                                 bool has_user_data,
                                 bool is_null_aware,
                                 cuda::stream_ref stream,
-                                rmm::device_async_resource_ref mr)
+                                cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -135,7 +136,7 @@ void launch_join_filter_kernel(kernel const& kernel,
                                bool* predicate_results,
                                std::optional<void*> user_data,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr)
+                               cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -181,7 +182,7 @@ apply_join_semantics(cudf::table_view const& left,
                      rmm::device_uvector<bool> const& predicate_results,
                      join_kind join_kind,
                      cuda::stream_ref stream,
-                     rmm::device_async_resource_ref mr)
+                     cuda::mr::device_resource_ref mr)
 {
   auto make_empty_result = [&]() {
     return std::pair{std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr),
@@ -329,7 +330,7 @@ filter_join_indices_jit(cudf::table_view const& left,
                         join_kind join_kind,
                         bool is_ptx,
                         cuda::stream_ref stream,
-                        rmm::device_async_resource_ref mr)
+                        cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -418,7 +419,7 @@ filter_join_indices_jit(cudf::table_view const& left,
                         ast::expression const& predicate,
                         join_kind join_kind,
                         cuda::stream_ref stream,
-                        rmm::device_async_resource_ref mr)
+                        cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -505,7 +506,7 @@ filter_join_indices_jit(cudf::table_view const& left,
                         cudf::join_kind join_kind,
                         bool is_ptx,
                         cuda::stream_ref stream,
-                        rmm::device_async_resource_ref mr)
+                        cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::filter_join_indices_jit(
@@ -521,7 +522,7 @@ filter_join_indices_jit(cudf::table_view const& left,
                         cudf::ast::expression const& predicate,
                         cudf::join_kind join_kind,
                         cuda::stream_ref stream,
-                        rmm::device_async_resource_ref mr)
+                        cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::filter_join_indices_jit(

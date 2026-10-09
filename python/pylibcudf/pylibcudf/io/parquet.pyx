@@ -13,6 +13,7 @@ from libcpp.utility cimport move
 from libcpp.vector cimport vector
 
 from rmm.pylibrmm.stream cimport Stream
+from pylibcudf.libcudf.utilities.memory_resource cimport to_device_resource_ref
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
 from pylibcudf.contiguous_split cimport HostBuffer
@@ -678,7 +679,7 @@ cdef class ChunkedParquetReader:
                         pass_read_limit,
                         options.c_obj,
                         stream_view,
-                        self.mr.get_mr()
+                        to_device_resource_ref(self.mr.get_mr())
                     )
                 )
         else:
@@ -702,7 +703,7 @@ cdef class ChunkedParquetReader:
                         move(c_metadatas),
                         options.c_obj,
                         stream_view,
-                        self.mr.get_mr()
+                        to_device_resource_ref(self.mr.get_mr())
                     )
                 )
 
@@ -780,7 +781,7 @@ cpdef TableWithMetadata read_parquet(
     mr = _get_memory_resource(mr)
     if parquet_metadatas is None:
         with nogil:
-            c_result = move(cpp_read_parquet(options.c_obj, _cs, mr.get_mr()))
+            c_result = move(cpp_read_parquet(options.c_obj, _cs, to_device_resource_ref(mr.get_mr())))
     else:
         # Collect pointers under GIL; clone + read must share one nogil block so
         # Cython does not deep-copy vector[FileMetaData] while holding the GIL.
@@ -800,7 +801,7 @@ cpdef TableWithMetadata read_parquet(
                     move(c_metadatas),
                     options.c_obj,
                     _cs,
-                    mr.get_mr(),
+                    to_device_resource_ref(mr.get_mr()),
                 )
             )
 

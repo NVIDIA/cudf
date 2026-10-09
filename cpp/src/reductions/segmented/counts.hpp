@@ -11,6 +11,7 @@
 
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 namespace cudf {
@@ -39,7 +40,7 @@ rmm::device_uvector<size_type> segmented_counts(bitmask_type const* null_mask,
                                                 device_span<size_type const> offsets,
                                                 null_policy null_handling,
                                                 cuda::stream_ref stream,
-                                                rmm::device_async_resource_ref mr);
+                                                cuda::mr::device_resource_ref mr);
 
 }  // namespace detail
 }  // namespace reduction

@@ -26,6 +26,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/functional>
 #include <cuda/stream>
 #include <thrust/scan.h>
@@ -50,7 +51,7 @@ struct group_scan_dispatcher {
                                      size_type num_groups,
                                      cudf::device_span<cudf::size_type const> group_labels,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cuda::mr::device_resource_ref mr)
   {
     return group_scan_functor<K, T>::invoke(values, num_groups, group_labels, stream, mr);
   }
@@ -79,7 +80,7 @@ struct group_scan_functor<K, T, std::enable_if_t<is_group_scan_supported<K, T>()
                                         size_type num_groups,
                                         cudf::device_span<cudf::size_type const> group_labels,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cuda::mr::device_resource_ref mr)
   {
     using DeviceType       = device_storage_type_t<T>;
     using OpType           = cudf::detail::corresponding_operator_t<K>;
@@ -139,7 +140,7 @@ struct group_scan_functor<K,
                                         size_type num_groups,
                                         cudf::device_span<cudf::size_type const> group_labels,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cuda::mr::device_resource_ref mr)
   {
     using OpType = cudf::detail::corresponding_operator_t<K>;
 
@@ -186,7 +187,7 @@ struct group_scan_functor<K,
                                         size_type num_groups,
                                         cudf::device_span<cudf::size_type const> group_labels,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cuda::mr::device_resource_ref mr)
   {
     if (values.is_empty()) { return cudf::empty_like(values); }
 

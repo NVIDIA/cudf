@@ -7,6 +7,8 @@
 
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
+
 namespace cudf::io::orc::detail {
 
 std::unique_ptr<column> create_empty_column(size_type orc_col_id,
@@ -109,7 +111,7 @@ column_buffer assemble_buffer(size_type orc_col_id,
                               column_hierarchy const& selected_columns,
                               std::vector<std::vector<column_buffer>>& col_buffers,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cuda::mr::device_resource_ref mr)
 {
   auto const col_id = col_meta.orc_col_map[level][orc_col_id];
   auto& col_buffer  = col_buffers[level][col_id];

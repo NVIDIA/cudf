@@ -10,8 +10,8 @@
 #include <cudf/utilities/span.hpp>
 
 #include <rmm/device_uvector.hpp>
-#include <rmm/resource_ref.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <memory>
@@ -62,7 +62,7 @@ using VectorPair = std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
 VectorPair get_trivial_left_join_indices(table_view const& left,
                                          size_type left_offset,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr);
+                                         cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Finalize a full-join result from a single `(left, right)` index pair.
@@ -93,7 +93,7 @@ VectorPair finalize_full_join(VectorPair&& indices,
                               size_type right_table_num_rows,
                               std::optional<cudf::device_span<size_type const>> right_matches,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr,
+                              cuda::mr::device_resource_ref mr,
                               std::optional<size_type> unmatched_right_count = std::nullopt);
 
 /**
@@ -121,6 +121,6 @@ VectorPair finalize_full_join(
   size_type left_table_num_rows,
   size_type right_table_num_rows,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cuda::mr::device_resource_ref mr);
 
 }  // namespace cudf::detail

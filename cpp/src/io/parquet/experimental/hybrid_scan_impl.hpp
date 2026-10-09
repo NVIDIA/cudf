@@ -19,6 +19,7 @@
 #include <cudf/io/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <thrust/host_vector.h>
 
@@ -161,7 +162,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
   [[nodiscard]] std::unique_ptr<cudf::column> build_all_true_row_mask(
     std::span<std::vector<size_type> const> row_group_indices,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr);
+    cuda::mr::device_resource_ref mr);
 
   /**
    * @copydoc
@@ -171,7 +172,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
     std::span<std::vector<size_type> const> row_group_indices,
     parquet_reader_options const& options,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr);
+    cuda::mr::device_resource_ref mr);
 
   /**
    * @brief Fetches byte ranges of column chunks of filter columns
@@ -195,7 +196,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
     use_data_page_mask mask_data_pages,
     parquet_reader_options const& options,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr);
+    cuda::mr::device_resource_ref mr);
 
   /**
    * @brief Fetches byte ranges of column chunks of payload columns
@@ -228,7 +229,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
     use_data_page_mask mask_data_pages,
     parquet_reader_options const& options,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr);
+    cuda::mr::device_resource_ref mr);
 
   /**
    * @copydoc cudf::io::parquet::experimental::hybrid_scan_multifile::all_column_chunks_byte_ranges
@@ -245,7 +246,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
     std::span<cudf::device_span<uint8_t const> const> column_chunk_data,
     parquet_reader_options const& options,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr);
+    cuda::mr::device_resource_ref mr);
 
   /**
    * @copydoc
@@ -260,7 +261,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
     std::span<cudf::device_span<uint8_t const> const> column_chunk_data,
     parquet_reader_options const& options,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr);
+    cuda::mr::device_resource_ref mr);
 
   /**
    * @copydoc
@@ -282,7 +283,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
     std::span<cudf::device_span<uint8_t const> const> column_chunk_data,
     parquet_reader_options const& options,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr);
+    cuda::mr::device_resource_ref mr);
 
   /**
    * @copydoc
@@ -296,7 +297,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
     std::span<cudf::device_span<uint8_t const> const> page_data,
     parquet_reader_options const& options,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr);
+    cuda::mr::device_resource_ref mr);
 
   /**
    * @copydoc
@@ -315,7 +316,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
     std::span<cudf::device_span<uint8_t const> const> column_chunk_data,
     parquet_reader_options const& options,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr);
+    cuda::mr::device_resource_ref mr);
 
   /**
    * @copydoc cudf::io::parquet::experimental::hybrid_scan_multifile::materialize_all_columns_chunk
@@ -364,7 +365,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
   void initialize_options(parquet_reader_options const& options,
                           std::size_t num_sources,
                           cuda::stream_ref stream,
-                          rmm::device_async_resource_ref mr);
+                          cuda::mr::device_resource_ref mr);
 
   /**
    * @brief Normalize input filter such that all column names are converted to index references and
@@ -448,7 +449,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
                                std::size_t num_sources,
                                parquet_reader_options const& options,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr);
+                               cuda::mr::device_resource_ref mr);
 
   /**
    * @brief Perform the necessary data preprocessing for parsing file later on

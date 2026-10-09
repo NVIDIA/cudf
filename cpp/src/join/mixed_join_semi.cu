@@ -26,6 +26,7 @@
 #include <rmm/mr/polymorphic_allocator.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/iterator>
 #include <cuda/stream>
 
@@ -43,7 +44,7 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_join_semi(
   null_equality compare_nulls,
   join_kind join_type,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS((join_type != join_kind::INNER_JOIN) and (join_type != join_kind::LEFT_JOIN) and
                  (join_type != join_kind::FULL_JOIN),
@@ -221,7 +222,7 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_left_semi_join(
   ast::expression const& binary_predicate,
   null_equality compare_nulls,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::mixed_join_semi(left_equality,
@@ -243,7 +244,7 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_left_anti_join(
   ast::expression const& binary_predicate,
   null_equality compare_nulls,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::mixed_join_semi(left_equality,

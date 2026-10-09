@@ -14,6 +14,7 @@
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <cuda/buffer>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <dlpack/dlpack.h>
@@ -113,7 +114,7 @@ struct dltensor_context {
   int64_t strides[2]{};  // NOLINT
   cuda::device_buffer<std::byte> buffer;
 
-  dltensor_context(cuda::stream_ref stream, rmm::device_async_resource_ref mr) : buffer(stream, mr)
+  dltensor_context(cuda::stream_ref stream, cuda::mr::device_resource_ref mr) : buffer(stream, mr)
   {
   }
 
@@ -130,7 +131,7 @@ struct dltensor_context {
 namespace detail {
 std::unique_ptr<table> from_dlpack(DLManagedTensor const* managed_tensor,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(nullptr != managed_tensor, "managed_tensor is null");
   auto const& tensor = managed_tensor->dl_tensor;
@@ -213,7 +214,7 @@ std::unique_ptr<table> from_dlpack(DLManagedTensor const* managed_tensor,
 
 DLManagedTensor* to_dlpack(table_view const& input,
                            cuda::stream_ref stream,
-                           rmm::device_async_resource_ref mr)
+                           cuda::mr::device_resource_ref mr)
 {
   auto const num_rows = input.num_rows();
   auto const num_cols = input.num_columns();
@@ -288,7 +289,7 @@ DLManagedTensor* to_dlpack(table_view const& input,
 
 std::unique_ptr<table> from_dlpack(DLManagedTensor const* managed_tensor,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::from_dlpack(managed_tensor, stream, mr);
@@ -296,7 +297,7 @@ std::unique_ptr<table> from_dlpack(DLManagedTensor const* managed_tensor,
 
 DLManagedTensor* to_dlpack(table_view const& input,
                            cuda::stream_ref stream,
-                           rmm::device_async_resource_ref mr)
+                           cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::to_dlpack(input, stream, mr);

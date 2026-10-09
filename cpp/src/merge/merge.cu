@@ -32,6 +32,7 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/iterator>
 #include <cuda/std/utility>
 #include <cuda/stream>
@@ -339,7 +340,7 @@ struct column_merger {
   std::unique_ptr<column> operator()(column_view const&,
                                      column_view const&,
                                      cuda::stream_ref,
-                                     rmm::device_async_resource_ref) const
+                                     cuda::mr::device_resource_ref) const
   {
     CUDF_FAIL("Unsupported type for merge.");
   }
@@ -350,7 +351,7 @@ struct column_merger {
   std::unique_ptr<column> operator()(column_view const& lcol,
                                      column_view const& rcol,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr) const
+                                     cuda::mr::device_resource_ref mr) const
     requires(is_rep_layout_compatible<Element>())
   {
     auto lsz         = lcol.size();
@@ -423,7 +424,7 @@ std::unique_ptr<column> column_merger::operator()<cudf::string_view>(
   column_view const& lcol,
   column_view const& rcol,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr) const
+  cuda::mr::device_resource_ref mr) const
 {
   return strings::detail::merge(
     strings_column_view(lcol), strings_column_view(rcol), row_order_, stream, mr);
@@ -435,7 +436,7 @@ std::unique_ptr<column> column_merger::operator()<cudf::dictionary32>(
   column_view const& lcol,
   column_view const& rcol,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr) const
+  cuda::mr::device_resource_ref mr) const
 {
   auto result = cudf::dictionary::detail::merge(
     cudf::dictionary_column_view(lcol), cudf::dictionary_column_view(rcol), row_order_, stream, mr);
@@ -455,7 +456,7 @@ std::unique_ptr<column> column_merger::operator()<cudf::list_view>(
   column_view const& lcol,
   column_view const& rcol,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr) const
+  cuda::mr::device_resource_ref mr) const
 {
   std::vector<column_view> columns{lcol, rcol};
   auto concatenated_list = cudf::lists::detail::concatenate(columns, stream, mr);
@@ -483,7 +484,7 @@ std::unique_ptr<column> column_merger::operator()<cudf::struct_view>(
   column_view const& lcol,
   column_view const& rcol,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr) const
+  cuda::mr::device_resource_ref mr) const
 {
   // merge each child.
   auto const lhs = structs_column_view{lcol};
@@ -532,7 +533,7 @@ table_ptr_type merge(cudf::table_view const& left_table,
                      std::vector<cudf::order> const& column_order,
                      std::vector<cudf::null_order> const& null_precedence,
                      cuda::stream_ref stream,
-                     rmm::device_async_resource_ref mr)
+                     cuda::mr::device_resource_ref mr)
 {
   // collect index columns for lhs, rhs, resp.
   //
@@ -602,7 +603,7 @@ table_ptr_type merge(std::vector<table_view> const& tables_to_merge,
                      std::vector<cudf::order> const& column_order,
                      std::vector<cudf::null_order> const& null_precedence,
                      cuda::stream_ref stream,
-                     rmm::device_async_resource_ref mr)
+                     cuda::mr::device_resource_ref mr)
 {
   if (tables_to_merge.empty()) { return std::make_unique<cudf::table>(); }
 
@@ -685,7 +686,7 @@ std::unique_ptr<cudf::table> merge(std::vector<table_view> const& tables_to_merg
                                    std::vector<cudf::order> const& column_order,
                                    std::vector<cudf::null_order> const& null_precedence,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::merge(tables_to_merge, key_cols, column_order, null_precedence, stream, mr);

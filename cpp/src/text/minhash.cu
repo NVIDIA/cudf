@@ -32,6 +32,7 @@
 #include <cuda/atomic>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/iterator>
 #include <cuda/std/limits>
 #include <cuda/std/tuple>
@@ -429,7 +430,7 @@ std::unique_ptr<cudf::column> minhash_fn(cudf::strings_column_view const& input,
                                          cudf::device_span<hash_value_type const> parameter_b,
                                          cudf::size_type width,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(width >= 2,
                "Parameter width should be an integer value of 2 or greater",
@@ -519,7 +520,7 @@ std::unique_ptr<cudf::column> minhash_ngrams_fn(
   cudf::device_span<hash_value_type const> parameter_a,
   cudf::device_span<hash_value_type const> parameter_b,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(ngrams >= 2,
                "Parameter ngrams should be an integer value of 2 or greater",
@@ -605,7 +606,7 @@ std::unique_ptr<cudf::column> build_list_result(cudf::column_view const& input,
                                                 std::unique_ptr<cudf::column>&& hashes,
                                                 cudf::size_type seeds_size,
                                                 cuda::stream_ref stream,
-                                                rmm::device_async_resource_ref mr)
+                                                cuda::mr::device_resource_ref mr)
 {
   // build the offsets for the output lists column
   auto const zero =
@@ -636,7 +637,7 @@ std::unique_ptr<cudf::column> minhash(cudf::strings_column_view const& input,
                                       cudf::device_span<uint32_t const> parameter_b,
                                       cudf::size_type width,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cuda::mr::device_resource_ref mr)
 {
   using HashFunction = cudf::hashing::detail::MurmurHash3_x86_32<cudf::string_view>;
   auto hashes =
@@ -650,7 +651,7 @@ std::unique_ptr<cudf::column> minhash_ngrams(cudf::lists_column_view const& inpu
                                              cudf::device_span<uint32_t const> parameter_a,
                                              cudf::device_span<uint32_t const> parameter_b,
                                              cuda::stream_ref stream,
-                                             rmm::device_async_resource_ref mr)
+                                             cuda::mr::device_resource_ref mr)
 {
   using HashFunction = cudf::hashing::detail::MurmurHash3_x86_32<cudf::string_view>;
   auto hashes        = detail::minhash_ngrams_fn<HashFunction>(
@@ -664,7 +665,7 @@ std::unique_ptr<cudf::column> minhash64(cudf::strings_column_view const& input,
                                         cudf::device_span<uint64_t const> parameter_b,
                                         cudf::size_type width,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cuda::mr::device_resource_ref mr)
 {
   using HashFunction = cudf::hashing::detail::MurmurHash3_x64_128<cudf::string_view>;
   auto hashes =
@@ -678,7 +679,7 @@ std::unique_ptr<cudf::column> minhash64_ngrams(cudf::lists_column_view const& in
                                                cudf::device_span<uint64_t const> parameter_a,
                                                cudf::device_span<uint64_t const> parameter_b,
                                                cuda::stream_ref stream,
-                                               rmm::device_async_resource_ref mr)
+                                               cuda::mr::device_resource_ref mr)
 {
   using HashFunction = cudf::hashing::detail::MurmurHash3_x64_128<cudf::string_view>;
   auto hashes        = detail::minhash_ngrams_fn<HashFunction>(
@@ -694,7 +695,7 @@ std::unique_ptr<cudf::column> minhash(cudf::strings_column_view const& input,
                                       cudf::device_span<uint32_t const> parameter_b,
                                       cudf::size_type width,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::minhash(input, seed, parameter_a, parameter_b, width, stream, mr);
@@ -706,7 +707,7 @@ std::unique_ptr<cudf::column> minhash_ngrams(cudf::lists_column_view const& inpu
                                              cudf::device_span<uint32_t const> parameter_a,
                                              cudf::device_span<uint32_t const> parameter_b,
                                              cuda::stream_ref stream,
-                                             rmm::device_async_resource_ref mr)
+                                             cuda::mr::device_resource_ref mr)
 
 {
   CUDF_FUNC_RANGE();
@@ -719,7 +720,7 @@ std::unique_ptr<cudf::column> minhash64(cudf::strings_column_view const& input,
                                         cudf::device_span<uint64_t const> parameter_b,
                                         cudf::size_type width,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::minhash64(input, seed, parameter_a, parameter_b, width, stream, mr);
@@ -731,7 +732,7 @@ std::unique_ptr<cudf::column> minhash64_ngrams(cudf::lists_column_view const& in
                                                cudf::device_span<uint64_t const> parameter_a,
                                                cudf::device_span<uint64_t const> parameter_b,
                                                cuda::stream_ref stream,
-                                               rmm::device_async_resource_ref mr)
+                                               cuda::mr::device_resource_ref mr)
 
 {
   CUDF_FUNC_RANGE();

@@ -475,7 +475,7 @@ std::pair<table_with_metadata, std::optional<table_with_metadata>> read_batch(
   host_span<std::unique_ptr<datasource>> sources,
   json_reader_options const& reader_opts,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr,
+  cuda::mr::device_resource_ref mr,
   read_json_diagnostics* diagnostics_out = nullptr)
 {
   CUDF_FUNC_RANGE();
@@ -540,7 +540,7 @@ std::pair<table_with_metadata, std::optional<table_with_metadata>> read_batch(
 table_with_metadata read_json_impl(host_span<std::unique_ptr<datasource>> sources,
                                    json_reader_options const& reader_opts,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr,
+                                   cuda::mr::device_resource_ref mr,
                                    read_json_diagnostics* diagnostics_out = nullptr)
 {
   std::size_t const total_source_size = sources_size(sources, 0, 0);
@@ -843,7 +843,7 @@ namespace {
 table_with_metadata read_json_dispatch(host_span<std::unique_ptr<datasource>> sources,
                                        json_reader_options const& reader_opts,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr,
+                                       cuda::mr::device_resource_ref mr,
                                        read_json_diagnostics* diagnostics_out)
 {
   if (reader_opts.get_byte_range_offset() != 0 or reader_opts.get_byte_range_size() != 0) {
@@ -881,7 +881,7 @@ table_with_metadata read_json_dispatch(host_span<std::unique_ptr<datasource>> so
 table_with_metadata read_json(host_span<std::unique_ptr<datasource>> sources,
                               json_reader_options const& reader_opts,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return read_json_dispatch(sources, reader_opts, stream, mr, /*diagnostics_out=*/nullptr);
@@ -890,7 +890,7 @@ table_with_metadata read_json(host_span<std::unique_ptr<datasource>> sources,
 json_reader_result read_json_with_diagnostics(host_span<std::unique_ptr<datasource>> sources,
                                               json_reader_options const& reader_opts,
                                               cuda::stream_ref stream,
-                                              rmm::device_async_resource_ref mr)
+                                              cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   read_json_diagnostics diagnostics;
@@ -904,7 +904,7 @@ json_reader_result_with_row_diagnostics read_json_with_row_diagnostics(
   host_span<std::unique_ptr<datasource>> sources,
   json_reader_options const& reader_opts,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   read_json_diagnostics diagnostics;

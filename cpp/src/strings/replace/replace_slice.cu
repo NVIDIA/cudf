@@ -17,6 +17,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/functional>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 namespace cudf {
@@ -70,7 +71,7 @@ std::unique_ptr<column> replace_slice(strings_column_view const& input,
                                       size_type start,
                                       size_type stop,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cuda::mr::device_resource_ref mr)
 {
   if (input.is_empty()) { return make_empty_column(type_id::STRING); }
   CUDF_EXPECTS(repl.is_valid(stream), "Parameter repl must be valid.");
@@ -100,7 +101,7 @@ std::unique_ptr<column> replace_slice(strings_column_view const& input,
                                       size_type start,
                                       size_type stop,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::replace_slice(input, repl, start, stop, stream, mr);

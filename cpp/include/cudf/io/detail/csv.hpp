@@ -8,6 +8,7 @@
 #include <cudf/io/csv.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 namespace cudf {
@@ -26,7 +27,7 @@ namespace io::detail::csv {
 table_with_metadata read_csv(std::unique_ptr<cudf::io::datasource>&& source,
                              csv_reader_options const& options,
                              cuda::stream_ref stream,
-                             rmm::device_async_resource_ref mr);
+                             cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Write an entire dataset to CSV format.

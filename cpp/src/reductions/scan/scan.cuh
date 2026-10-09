@@ -12,6 +12,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <utility>
@@ -23,20 +24,20 @@ namespace detail {
 std::pair<cuda::device_buffer<std::byte>, size_type> mask_scan(column_view const& input_view,
                                                                scan_type inclusive,
                                                                cuda::stream_ref stream,
-                                                               rmm::device_async_resource_ref mr);
+                                                               cuda::mr::device_resource_ref mr);
 
 // exponentially weighted moving average of the input
 std::unique_ptr<column> exponentially_weighted_moving_average(column_view const& input,
                                                               scan_aggregation const& agg,
                                                               cuda::stream_ref stream,
-                                                              rmm::device_async_resource_ref mr);
+                                                              cuda::mr::device_resource_ref mr);
 
 template <template <typename> typename DispatchFn>
 std::unique_ptr<column> scan_agg_dispatch(column_view const& input,
                                           scan_aggregation const& agg,
                                           bitmask_type const* output_mask,
                                           cuda::stream_ref stream,
-                                          rmm::device_async_resource_ref mr)
+                                          cuda::mr::device_resource_ref mr)
 {
   switch (agg.kind) {
     case aggregation::SUM:

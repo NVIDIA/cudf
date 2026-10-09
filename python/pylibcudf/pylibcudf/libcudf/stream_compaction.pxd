@@ -15,7 +15,7 @@ from pylibcudf.libcudf.types cimport (
     size_type,
 )
 from cuda.bindings.cyruntime cimport cudaStream_t
-from rmm.librmm.memory_resource cimport device_async_resource_ref
+from pylibcudf.libcudf.utilities.memory_resource cimport device_resource_ref
 
 
 cdef extern from "cudf/stream_compaction.hpp" namespace "cudf" nogil:
@@ -30,7 +30,7 @@ cdef extern from "cudf/stream_compaction.hpp" namespace "cudf" nogil:
         vector[size_type] keys,
         size_type keep_threshold,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[table] drop_nans(
@@ -38,28 +38,28 @@ cdef extern from "cudf/stream_compaction.hpp" namespace "cudf" nogil:
         vector[size_type] keys,
         size_type keep_threshold,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[table] apply_retention_mask(
         table_view source_table,
         column_view retention_mask,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[table] apply_boolean_mask(
         table_view source_table,
         column_view boolean_mask,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[table] apply_deletion_mask(
         table_view source_table,
         column_view deletion_mask,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[table] unique(
@@ -68,7 +68,7 @@ cdef extern from "cudf/stream_compaction.hpp" namespace "cudf" nogil:
         duplicate_keep_option keep,
         null_equality nulls_equal,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[table] distinct(
@@ -78,7 +78,7 @@ cdef extern from "cudf/stream_compaction.hpp" namespace "cudf" nogil:
         null_equality nulls_equal,
         nan_equality nans_equals,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[column] distinct_indices(
@@ -87,7 +87,7 @@ cdef extern from "cudf/stream_compaction.hpp" namespace "cudf" nogil:
         null_equality nulls_equal,
         nan_equality nans_equal,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[table] stable_distinct(
@@ -97,7 +97,7 @@ cdef extern from "cudf/stream_compaction.hpp" namespace "cudf" nogil:
         null_equality nulls_equal,
         nan_equality nans_equal,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[table] filter(
@@ -105,5 +105,5 @@ cdef extern from "cudf/stream_compaction.hpp" namespace "cudf" nogil:
         const expression& predicate_expr,
         table_view filter_table,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler

@@ -13,7 +13,10 @@
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 
+#include <rmm/device_uvector.hpp>
+
 #include <cuda/buffer>
+#include <cuda/memory_resource>
 #include <cuda/std/array>
 #include <cuda/stream>
 

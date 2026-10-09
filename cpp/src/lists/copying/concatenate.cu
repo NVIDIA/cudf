@@ -18,6 +18,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <thrust/transform.h>
 
@@ -47,7 +48,7 @@ namespace {
 std::unique_ptr<column> merge_offsets(host_span<lists_column_view const> columns,
                                       size_type total_list_count,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cuda::mr::device_resource_ref mr)
 {
   // outgoing offsets
   auto merged_offsets = cudf::make_fixed_width_column(
@@ -87,7 +88,7 @@ std::unique_ptr<column> merge_offsets(host_span<lists_column_view const> columns
  */
 std::unique_ptr<column> concatenate(host_span<column_view const> columns,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cuda::mr::device_resource_ref mr)
 {
   std::vector<lists_column_view> lists_columns;
   lists_columns.reserve(columns.size());

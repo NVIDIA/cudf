@@ -9,6 +9,7 @@ from libcpp.vector cimport vector
 
 from rmm.pylibrmm.stream cimport Stream
 from cuda.bindings.cyruntime cimport cudaStream_t
+from pylibcudf.libcudf.utilities.memory_resource cimport to_device_resource_ref
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
 from pylibcudf.io.types cimport SourceInfo, SinkInfo, TableWithMetadata
@@ -702,7 +703,7 @@ cpdef TableWithMetadata read_csv(
     cdef cudaStream_t _cs = s.view().get()
     mr = _get_memory_resource(mr)
     with nogil:
-        c_result = move(cpp_read_csv(options.c_obj, _cs, mr.get_mr()))
+        c_result = move(cpp_read_csv(options.c_obj, _cs, to_device_resource_ref(mr.get_mr())))
 
     cdef TableWithMetadata tbl_meta = TableWithMetadata.from_libcudf(c_result, s, mr)
     return tbl_meta

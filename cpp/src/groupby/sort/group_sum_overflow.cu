@@ -21,6 +21,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/functional>
 #include <cuda/std/tuple>
 #include <cuda/stream>
@@ -50,7 +51,7 @@ struct group_sum_overflow_fn {
                                      size_type num_groups,
                                      cudf::device_span<size_type const> group_labels,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr) const
+                                     cuda::mr::device_resource_ref mr) const
   {
     using DeviceType = cudf::device_storage_type_t<Source>;
 
@@ -120,7 +121,7 @@ std::unique_ptr<column> group_sum_overflow(column_view const& values,
                                            size_type num_groups,
                                            cudf::device_span<size_type const> group_labels,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cuda::mr::device_resource_ref mr)
 {
   return cudf::type_dispatcher(
     values.type(), group_sum_overflow_fn{}, values, num_groups, group_labels, stream, mr);

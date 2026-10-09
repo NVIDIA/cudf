@@ -14,6 +14,7 @@
 #include <cudf/detail/utilities/integer_utils.hpp>
 
 #include <cuda/functional>
+#include <cuda/memory_resource>
 #include <cuda/std/utility>
 #include <cuda/stream>
 #include <thrust/binary_search.h>
@@ -192,7 +193,7 @@ decompress_page_data(host_span<ColumnChunkDesc const> chunks,
                      host_span<PageInfo> subpass_pages,
                      host_span<bool const> subpass_page_mask,
                      cuda::stream_ref stream,
-                     rmm::device_async_resource_ref mr);
+                     cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Detect malformed parquet input data
@@ -242,7 +243,7 @@ rmm::device_uvector<size_t> compute_string_offset_sizes(device_span<ColumnChunkD
                                                         size_t skip_rows,
                                                         size_t num_rows,
                                                         cuda::stream_ref stream,
-                                                        rmm::device_async_resource_ref mr);
+                                                        cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Computes the per-page buffer sizes required for level decode preprocessing.
@@ -266,7 +267,7 @@ rmm::device_uvector<size_t> compute_level_decode_sizes(device_span<ColumnChunkDe
                                                        size_t skip_rows,
                                                        size_t num_rows,
                                                        cuda::stream_ref stream,
-                                                       rmm::device_async_resource_ref mr);
+                                                       cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Computes the level decode buffer sizes for a single page.

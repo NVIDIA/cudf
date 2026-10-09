@@ -9,6 +9,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 namespace cudf {
@@ -21,7 +22,7 @@ struct nunique_scalar_fn {
     requires(cudf::is_numeric_not_bool<T>())
   std::unique_ptr<cudf::scalar> operator()(size_type count,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr) const
+                                           cuda::mr::device_resource_ref mr) const
   {
     auto const value = static_cast<T>(count);
     return cudf::make_fixed_width_scalar<T>(value, stream, mr);
@@ -31,7 +32,7 @@ struct nunique_scalar_fn {
     requires(not cudf::is_numeric_not_bool<T>())
   std::unique_ptr<cudf::scalar> operator()(size_type,
                                            cuda::stream_ref,
-                                           rmm::device_async_resource_ref) const
+                                           cuda::mr::device_resource_ref) const
   {
     CUDF_FAIL("NUNIQUE is not supported for boolean or non-numeric types", std::invalid_argument);
   }
@@ -42,7 +43,7 @@ std::unique_ptr<cudf::scalar> nunique(column_view const& col,
                                       cudf::null_policy null_handling,
                                       cudf::data_type const output_dtype,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cuda::mr::device_resource_ref mr)
 {
   size_type count =
     cudf::detail::distinct_count(col, null_handling, nan_policy::NAN_IS_VALID, stream);

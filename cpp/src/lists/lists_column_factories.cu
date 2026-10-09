@@ -15,6 +15,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 namespace cudf {
@@ -24,7 +25,7 @@ namespace detail {
 std::unique_ptr<cudf::column> make_lists_column_from_scalar(list_scalar const& value,
                                                             size_type size,
                                                             cuda::stream_ref stream,
-                                                            rmm::device_async_resource_ref mr)
+                                                            cuda::mr::device_resource_ref mr)
 {
   if (size == 0) {
     return make_lists_column(
@@ -83,7 +84,7 @@ std::unique_ptr<column> make_empty_lists_column(data_type child_type)
 std::unique_ptr<column> make_all_nulls_lists_column(size_type size,
                                                     data_type child_type,
                                                     cuda::stream_ref stream,
-                                                    rmm::device_async_resource_ref mr)
+                                                    cuda::mr::device_resource_ref mr)
 {
   auto offsets = [&] {
     auto offsets_buff =

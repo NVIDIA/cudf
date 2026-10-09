@@ -33,6 +33,7 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/iterator>
 #include <cuda/stream>
 #include <thrust/binary_search.h>
@@ -77,7 +78,7 @@ void enable_hugepage(ArrowBuffer* buffer)
 struct dispatch_to_arrow_host {
   cudf::column_view column;
   cuda::stream_ref stream;
-  rmm::device_async_resource_ref mr;
+  cuda::mr::device_resource_ref mr;
 
   int populate_validity_bitmap(ArrowBitmap* bitmap) const
   {
@@ -135,7 +136,7 @@ struct dispatch_to_arrow_host {
 
 int get_column(cudf::column_view column,
                cuda::stream_ref stream,
-               rmm::device_async_resource_ref mr,
+               cuda::mr::device_resource_ref mr,
                ArrowArray* out);
 
 template <>
@@ -303,7 +304,7 @@ int dispatch_to_arrow_host::operator()<cudf::struct_view>(ArrowArray* out) const
 
 int get_column(cudf::column_view column,
                cuda::stream_ref stream,
-               rmm::device_async_resource_ref mr,
+               cuda::mr::device_resource_ref mr,
                ArrowArray* out)
 {
   return column.type().id() != type_id::EMPTY
@@ -335,7 +336,7 @@ unique_device_array_t create_device_array(nanoarrow::UniqueArray&& out)
 
 unique_device_array_t to_arrow_host(cudf::table_view const& table,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cuda::mr::device_resource_ref mr)
 {
   nanoarrow::UniqueArray tmp;
   NANOARROW_THROW_NOT_OK(ArrowArrayInitFromType(tmp.get(), NANOARROW_TYPE_STRUCT));
@@ -361,7 +362,7 @@ unique_device_array_t to_arrow_host(cudf::table_view const& table,
 
 unique_device_array_t to_arrow_host(cudf::column_view const& col,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cuda::mr::device_resource_ref mr)
 {
   nanoarrow::UniqueArray tmp;
 
@@ -421,7 +422,7 @@ struct strings_to_binary_view {
 
 unique_device_array_t to_arrow_host_stringview(cudf::strings_column_view const& col,
                                                cuda::stream_ref stream,
-                                               rmm::device_async_resource_ref mr)
+                                               cuda::mr::device_resource_ref mr)
 {
   nanoarrow::UniqueArray out;
   NANOARROW_THROW_NOT_OK(ArrowArrayInitFromType(out.get(), NANOARROW_TYPE_STRING_VIEW));
@@ -544,7 +545,7 @@ unique_device_array_t to_arrow_host_stringview(cudf::strings_column_view const& 
 
 unique_device_array_t to_arrow_host(cudf::column_view const& col,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::to_arrow_host(col, stream, mr);
@@ -552,7 +553,7 @@ unique_device_array_t to_arrow_host(cudf::column_view const& col,
 
 unique_device_array_t to_arrow_host(cudf::table_view const& table,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::to_arrow_host(table, stream, mr);
@@ -560,7 +561,7 @@ unique_device_array_t to_arrow_host(cudf::table_view const& table,
 
 unique_device_array_t to_arrow_host_stringview(cudf::strings_column_view const& col,
                                                cuda::stream_ref stream,
-                                               rmm::device_async_resource_ref mr)
+                                               cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::to_arrow_host_stringview(col, stream, mr);

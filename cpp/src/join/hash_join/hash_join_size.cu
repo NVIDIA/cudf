@@ -12,6 +12,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/std/cstdint>
 #include <cuda/std/functional>
 
@@ -75,7 +76,7 @@ template <typename Hasher>
 template <join_kind Join>
 std::size_t hash_join<Hasher>::join_size(cudf::table_view const& left,
                                          cuda::stream_ref stream,
-                                         [[maybe_unused]] rmm::device_async_resource_ref mr) const
+                                         [[maybe_unused]] cuda::mr::device_resource_ref mr) const
 {
   static_assert(Join == join_kind::FULL_JOIN);
 
@@ -132,6 +133,6 @@ template std::size_t hash_join<hash_join_hasher>::join_size<join_kind::INNER_JOI
 template std::size_t hash_join<hash_join_hasher>::join_size<join_kind::LEFT_JOIN>(
   cudf::table_view const&, cuda::stream_ref) const;
 template std::size_t hash_join<hash_join_hasher>::join_size<join_kind::FULL_JOIN>(
-  cudf::table_view const&, cuda::stream_ref, rmm::device_async_resource_ref) const;
+  cudf::table_view const&, cuda::stream_ref, cuda::mr::device_resource_ref) const;
 
 }  // namespace cudf::detail

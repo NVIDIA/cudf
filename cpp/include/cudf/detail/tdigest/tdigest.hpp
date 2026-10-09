@@ -11,6 +11,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 namespace CUDF_EXPORT cudf {
@@ -63,7 +64,7 @@ std::unique_ptr<column> group_tdigest(column_view const& values,
                                       size_type num_groups,
                                       int max_centroids,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr);
+                                      cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Merges tdigests within the same group to generate a new tdigest.
@@ -106,7 +107,7 @@ std::unique_ptr<column> group_merge_tdigest(column_view const& values,
                                             size_type num_groups,
                                             int max_centroids,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr);
+                                            cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Create a tdigest column from its constituent components.
@@ -132,7 +133,7 @@ std::unique_ptr<column> make_tdigest_column(size_type num_rows,
                                             std::unique_ptr<column>&& min_values,
                                             std::unique_ptr<column>&& max_values,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr);
+                                            cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Create a tdigest column of empty tdigests.
@@ -148,7 +149,7 @@ std::unique_ptr<column> make_tdigest_column(size_type num_rows,
 CUDF_EXPORT
 std::unique_ptr<column> make_empty_tdigests_column(size_type num_rows,
                                                    cuda::stream_ref stream,
-                                                   rmm::device_async_resource_ref mr);
+                                                   cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Create a scalar of an empty tdigest cluster.
@@ -161,7 +162,7 @@ std::unique_ptr<column> make_empty_tdigests_column(size_type num_rows,
  * @returns A scalar of an empty tdigest cluster.
  */
 std::unique_ptr<scalar> make_empty_tdigest_scalar(cuda::stream_ref stream,
-                                                  rmm::device_async_resource_ref mr);
+                                                  cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Generate a tdigest scalar from a set of numeric input values.
@@ -195,7 +196,7 @@ std::unique_ptr<scalar> make_empty_tdigest_scalar(cuda::stream_ref stream,
 std::unique_ptr<scalar> reduce_tdigest(column_view const& values,
                                        int max_centroids,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr);
+                                       cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Merges multiple tdigest columns to generate a new tdigest scalar.
@@ -229,7 +230,7 @@ std::unique_ptr<scalar> reduce_tdigest(column_view const& values,
 std::unique_ptr<scalar> reduce_merge_tdigest(column_view const& input,
                                              int max_centroids,
                                              cuda::stream_ref stream,
-                                             rmm::device_async_resource_ref mr);
+                                             cuda::mr::device_resource_ref mr);
 
 }  // namespace tdigest::detail
 }  // namespace CUDF_EXPORT cudf

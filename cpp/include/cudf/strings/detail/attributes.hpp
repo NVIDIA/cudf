@@ -8,6 +8,8 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
+
 namespace cudf {
 namespace strings {
 namespace detail {
@@ -17,7 +19,7 @@ namespace detail {
  */
 std::unique_ptr<column> count_characters(strings_column_view const& input,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr);
+                                         cuda::mr::device_resource_ref mr);
 
 }  // namespace detail
 }  // namespace strings

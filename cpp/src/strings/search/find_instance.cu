@@ -21,6 +21,7 @@
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
 #include <cooperative_groups/scan.h>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 namespace cudf {
@@ -85,7 +86,7 @@ std::unique_ptr<column> find_instance(strings_column_view const& input,
                                       string_scalar const& target,
                                       size_type instance,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(
     instance >= 0, "Parameter instance must be positive integer or zero.", std::invalid_argument);
@@ -122,7 +123,7 @@ std::unique_ptr<column> find_instance(strings_column_view const& input,
                                       string_scalar const& target,
                                       size_type instance,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::find_instance(input, target, instance, stream, mr);

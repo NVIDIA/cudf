@@ -26,9 +26,8 @@
 #include <cudf/utilities/type_checks.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/resource_ref.hpp>
-
 #include <cuda/functional>
+#include <cuda/memory_resource>
 #include <cuda/std/cmath>
 #include <cuda/std/iterator>
 #include <cuda/std/limits>
@@ -665,7 +664,7 @@ struct range_window_clamper {
     bool nulls_at_start,
     range_window_delta const& delta,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr) const
+    cuda::mr::device_resource_ref mr) const
   {
     auto result = make_numeric_column(
       data_type(type_to_id<size_type>()), orderby.size(), mask_state::UNALLOCATED, stream, mr);
@@ -770,7 +769,7 @@ struct range_window_clamper {
     bool nulls_at_start,
     range_window_delta const& delta,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr) const
+    cuda::mr::device_resource_ref mr) const
   {
     using ScalarT         = cudf::scalar_type_t<typename OrderbyT::duration>;
     auto const* row_delta = as_scalar_delta(delta);
@@ -803,7 +802,7 @@ struct range_window_clamper {
     bool nulls_at_start,
     range_window_delta const& delta,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr) const
+    cuda::mr::device_resource_ref mr) const
   {
     if constexpr (is_column_range_window<WindowType>()) {
       // Column-valued bounds are unsupported for fixed-point orderby columns. Rejecting here
@@ -853,7 +852,7 @@ struct range_window_clamper {
     bool nulls_at_start,
     range_window_delta const& delta,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr) const
+    cuda::mr::device_resource_ref mr) const
   {
     auto const* row_delta = as_scalar_delta(delta);
     CUDF_EXPECTS(!row_delta || cudf::have_same_types(orderby, *row_delta),
@@ -882,7 +881,7 @@ struct range_window_clamper {
     bool nulls_at_start,
     range_window_delta const& delta,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr) const
+    cuda::mr::device_resource_ref mr) const
   {
     CUDF_EXPECTS(!as_scalar_delta(delta),
                  "Not expecting window range to have value for string-based window calculation");
@@ -901,7 +900,7 @@ struct range_window_clamper {
                                      bool,
                                      range_window_delta const&,
                                      cuda::stream_ref,
-                                     rmm::device_async_resource_ref) const
+                                     cuda::mr::device_resource_ref) const
   {
     CUDF_FAIL("Unsupported rolling window type.", cudf::data_type_error);
   }

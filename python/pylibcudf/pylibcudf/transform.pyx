@@ -23,6 +23,7 @@ from pylibcudf.libcudf.types cimport (
 )
 
 from rmm.pylibrmm.stream cimport Stream
+from pylibcudf.libcudf.utilities.memory_resource cimport to_device_resource_ref
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
 from .column cimport Column
@@ -84,7 +85,7 @@ cpdef Column column_nans_to_nulls(
     cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_transform.column_nans_to_nulls(
-            c_input, _cs, mr.get_mr()
+            c_input, _cs, to_device_resource_ref(mr.get_mr())
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -121,7 +122,7 @@ cpdef Column compute_column(
     cdef table_view c_input = input.view()
     with nogil:
         c_result = cpp_transform.compute_column(
-            c_input, dereference(expr.c_obj.get()), _cs, mr.get_mr()
+            c_input, dereference(expr.c_obj.get()), _cs, to_device_resource_ref(mr.get_mr())
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -160,7 +161,7 @@ cpdef Column compute_column_jit(
     cdef table_view c_input = input.view()
     with nogil:
         c_result = cpp_transform.compute_column_jit(
-            c_input, dereference(expr.c_obj.get()), _cs, mr.get_mr()
+            c_input, dereference(expr.c_obj.get()), _cs, to_device_resource_ref(mr.get_mr())
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -196,7 +197,7 @@ cpdef tuple[gpumemoryview, int] bools_to_mask(
     cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_transform.bools_to_mask(
-            c_input, _cs, mr.get_mr()
+            c_input, _cs, to_device_resource_ref(mr.get_mr())
         )
 
     return (
@@ -245,7 +246,7 @@ cpdef Column mask_to_bools(
             begin_bit,
             end_bit,
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -352,7 +353,7 @@ cpdef Column transform(
             move(string_offsets),
             row_size,
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
         c_columns = dereference(c_table_result).release()
         c_result = move(c_columns[0])
@@ -387,7 +388,7 @@ cpdef tuple[Table, Column] encode(
 
     cdef table_view c_input = input.view()
     with nogil:
-        c_result = cpp_transform.encode(c_input, _cs, mr.get_mr())
+        c_result = cpp_transform.encode(c_input, _cs, to_device_resource_ref(mr.get_mr()))
 
     return (
         Table.from_libcudf(move(c_result.first), _stream, mr),
@@ -434,7 +435,7 @@ cpdef Table one_hot_encode(
             c_input,
             c_categories,
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
 
     owner_table = Table(

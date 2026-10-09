@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <cuda/memory_resource>
 #include <cuda_runtime_api.h>
 
 #include <climits>
@@ -31,11 +32,11 @@
 
 #include <cudf/hashing.hpp>
 #include <cudf/table/table_view.hpp>
+#include <cudf/types.hpp>
 
 #include <cudf_streaming/detail/device_bloom_filter.hpp>
 
 #include <rmm/aligned.hpp>
-#include <rmm/resource_ref.hpp>
 
 #include <cub/device/device_transform.cuh>
 #include <cuda/std/tuple>
@@ -96,7 +97,7 @@ device_bloom_filter const device_bloom_filter::view(std::size_t filter_size,
 
 std::unique_ptr<rmm::device_buffer> device_bloom_filter::storage(std::size_t filter_size,
                                                                  cuda::stream_ref stream,
-                                                                 rmm::device_async_resource_ref mr)
+                                                                 cuda::mr::device_resource_ref mr)
 {
   return std::make_unique<rmm::device_buffer>(
     num_blocks(filter_size) * sizeof(storage_type), std::alignment_of_v<storage_type>, stream, mr);
@@ -104,7 +105,7 @@ std::unique_ptr<rmm::device_buffer> device_bloom_filter::storage(std::size_t fil
 
 void device_bloom_filter::add(cudf::table_view const& values_to_hash,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cuda::mr::device_resource_ref mr)
 {
   RAPIDSMPF_NVTX_FUNC_RANGE();
   auto filter_ref = bloom_filter_ref_type{
@@ -129,7 +130,7 @@ void device_bloom_filter::merge(device_bloom_filter const& other, cuda::stream_r
 
 rmm::device_uvector<bool> device_bloom_filter::contains(cudf::table_view const& values,
                                                         cuda::stream_ref stream,
-                                                        rmm::device_async_resource_ref mr) const
+                                                        cuda::mr::device_resource_ref mr) const
 {
   RAPIDSMPF_NVTX_FUNC_RANGE();
   auto filter_ref = bloom_filter_ref_type{

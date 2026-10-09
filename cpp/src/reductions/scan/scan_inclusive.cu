@@ -22,6 +22,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
+#include <cuda/memory_resource>
 #include <cuda/std/functional>
 #include <cuda/stream>
 #include <thrust/find.h>
@@ -36,7 +37,7 @@ namespace detail {
 std::pair<cuda::device_buffer<std::byte>, size_type> mask_scan(column_view const& input_view,
                                                                scan_type inclusive,
                                                                cuda::stream_ref stream,
-                                                               rmm::device_async_resource_ref mr)
+                                                               cuda::mr::device_resource_ref mr)
 {
   cuda::device_buffer<std::byte> mask =
     detail::create_null_mask(input_view.size(), mask_state::UNINITIALIZED, stream, mr);
@@ -70,7 +71,7 @@ struct scan_functor {
   static std::unique_ptr<column> invoke(column_view const& input_view,
                                         bitmask_type const*,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cuda::mr::device_resource_ref mr)
   {
     auto output_column = detail::allocate_like(
       input_view, input_view.size(), mask_allocation_policy::NEVER, stream, mr);
@@ -99,7 +100,7 @@ struct scan_functor<Op, cudf::string_view> {
   static std::unique_ptr<column> invoke(column_view const& input_view,
                                         bitmask_type const* mask,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cuda::mr::device_resource_ref mr)
   {
     return cudf::strings::detail::scan_inclusive<Op>(input_view, mask, stream, mr);
   }
@@ -111,7 +112,7 @@ struct scan_functor<Op, cudf::struct_view> {
   static std::unique_ptr<column> invoke(column_view const& input,
                                         bitmask_type const*,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cuda::mr::device_resource_ref mr)
   {
     return cudf::structs::detail::scan_inclusive<Op>(input, stream, mr);
   }
@@ -123,7 +124,7 @@ struct scan_functor<Op, T> {
   static std::unique_ptr<column> invoke(column_view const& input_view,
                                         bitmask_type const* mask,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cuda::mr::device_resource_ref mr)
   {
     auto output_column = make_numeric_column(data_type{type_to_id<size_type>()},
                                              input_view.size(),
@@ -182,7 +183,7 @@ struct scan_dispatcher {
   std::unique_ptr<column> operator()(column_view const& input,
                                      bitmask_type const* output_mask,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cuda::mr::device_resource_ref mr)
     requires(is_supported<T>())
   {
     return scan_functor<Op, T>::invoke(input, output_mask, stream, mr);
@@ -202,7 +203,7 @@ std::unique_ptr<column> scan_inclusive(column_view const& input,
                                        scan_aggregation const& agg,
                                        null_policy null_handling,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cuda::mr::device_resource_ref mr)
 {
   auto [mask, null_count] = [&] {
     if (null_handling == null_policy::EXCLUDE) {

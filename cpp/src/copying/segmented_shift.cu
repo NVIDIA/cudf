@@ -14,6 +14,7 @@
 #include <cudf/utilities/traits.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
@@ -62,7 +63,7 @@ struct segmented_shift_functor<T, std::enable_if_t<is_rep_layout_compatible<T>()
                                      size_type offset,
                                      scalar const& fill_value,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cuda::mr::device_resource_ref mr)
   {
     auto values_device_view = column_device_view::create(segmented_values, stream);
     bool nullable           = not fill_value.is_valid(stream) or segmented_values.nullable();
@@ -91,7 +92,7 @@ struct segmented_shift_functor<string_view> {
                                      size_type offset,
                                      scalar const& fill_value,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cuda::mr::device_resource_ref mr)
   {
     auto values_device_view = column_device_view::create(segmented_values, stream);
     auto input_iterator     = make_optional_iterator<cudf::string_view>(
@@ -118,7 +119,7 @@ struct segmented_shift_functor_forwarder {
                                      size_type offset,
                                      scalar const& fill_value,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cuda::mr::device_resource_ref mr)
   {
     segmented_shift_functor<T> shifter;
     return shifter(segmented_values, segment_offsets, offset, fill_value, stream, mr);
@@ -132,7 +133,7 @@ std::unique_ptr<column> segmented_shift(column_view const& segmented_values,
                                         size_type offset,
                                         scalar const& fill_value,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cuda::mr::device_resource_ref mr)
 {
   if (segmented_values.is_empty()) { return empty_like(segmented_values); }
   if (offset == 0) { return std::make_unique<column>(segmented_values, stream, mr); };

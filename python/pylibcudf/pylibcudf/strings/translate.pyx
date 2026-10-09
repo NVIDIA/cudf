@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pylibcudf.typing import CudaStreamLike
+from pylibcudf.libcudf.utilities.memory_resource cimport to_device_resource_ref
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
@@ -87,7 +88,7 @@ cpdef Column translate(
             c_input,
             c_chars_table,
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
     return Column.from_libcudf(move(c_result), _stream, mr)
 
@@ -145,7 +146,7 @@ cpdef Column filter_characters(
             keep_characters,
             dereference(c_replacement),
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
     return Column.from_libcudf(move(c_result), _stream, mr)
 

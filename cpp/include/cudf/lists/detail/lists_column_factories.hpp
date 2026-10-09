@@ -10,6 +10,8 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
+
 namespace cudf {
 namespace lists::detail {
 
@@ -25,7 +27,7 @@ namespace lists::detail {
 std::unique_ptr<cudf::column> make_lists_column_from_scalar(list_scalar const& value,
                                                             size_type size,
                                                             cuda::stream_ref stream,
-                                                            rmm::device_async_resource_ref mr);
+                                                            cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Create an empty lists column.
@@ -47,7 +49,7 @@ std::unique_ptr<column> make_empty_lists_column(data_type child_type);
 std::unique_ptr<column> make_all_nulls_lists_column(size_type size,
                                                     data_type child_type,
                                                     cuda::stream_ref stream,
-                                                    rmm::device_async_resource_ref mr);
+                                                    cuda::mr::device_resource_ref mr);
 
 }  // namespace lists::detail
 }  // namespace cudf

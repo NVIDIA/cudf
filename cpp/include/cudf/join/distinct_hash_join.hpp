@@ -14,6 +14,7 @@
 
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <utility>
@@ -72,11 +73,10 @@ class distinct_hash_join {
    * @param mr Device memory resource used to allocate the internal hash table
    */
   distinct_hash_join(cudf::table_view const& right,
-                     null_equality compare_nulls = null_equality::EQUAL,
-                     double load_factor          = 0.5,
-                     cuda::stream_ref stream     = cudf::get_default_stream(),
-                     cuda::mr::any_resource<cuda::mr::device_accessible> mr =
-                       cudf::get_current_device_resource_ref());
+                     null_equality compare_nulls      = null_equality::EQUAL,
+                     double load_factor               = 0.5,
+                     cuda::stream_ref stream          = cudf::get_default_stream(),
+                     cuda::mr::any_device_resource mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Returns the row indices that can be used to construct the result of performing
@@ -93,8 +93,8 @@ class distinct_hash_join {
   [[nodiscard]] std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
                           std::unique_ptr<rmm::device_uvector<size_type>>>
   inner_join(cudf::table_view const& left,
-             cuda::stream_ref stream           = cudf::get_default_stream(),
-             rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
+             cuda::stream_ref stream          = cudf::get_default_stream(),
+             cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref()) const;
 
   /**
    * @brief Returns the right table indices that can be used to construct the result of performing
@@ -115,8 +115,8 @@ class distinct_hash_join {
    */
   [[nodiscard]] std::unique_ptr<rmm::device_uvector<size_type>> left_join(
     cudf::table_view const& left,
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
+    cuda::stream_ref stream          = cudf::get_default_stream(),
+    cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref()) const;
 
  private:
   using impl_type = cudf::detail::distinct_hash_join;  ///< Implementation type

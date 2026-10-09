@@ -8,6 +8,8 @@
 #include <cudf/binaryop.hpp>
 #include <cudf/unary.hpp>
 
+#include <cuda/memory_resource>
+
 namespace cudf::detail::checked_arithmetic {
 
 [[nodiscard]] constexpr bool is_checked(binary_operator op)
@@ -28,7 +30,7 @@ std::unique_ptr<column> binary_operation(scalar const& lhs,
                                          data_type output_type,
                                          error_policy policy,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr);
+                                         cuda::mr::device_resource_ref mr);
 
 std::unique_ptr<column> binary_operation(column_view const& lhs,
                                          scalar const& rhs,
@@ -36,7 +38,7 @@ std::unique_ptr<column> binary_operation(column_view const& lhs,
                                          data_type output_type,
                                          error_policy policy,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr);
+                                         cuda::mr::device_resource_ref mr);
 
 std::unique_ptr<column> binary_operation(column_view const& lhs,
                                          column_view const& rhs,
@@ -44,12 +46,12 @@ std::unique_ptr<column> binary_operation(column_view const& lhs,
                                          data_type output_type,
                                          error_policy policy,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr);
+                                         cuda::mr::device_resource_ref mr);
 
 std::unique_ptr<column> unary_operation(column_view const& input,
                                         unary_operator op,
                                         error_policy policy,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr);
+                                        cuda::mr::device_resource_ref mr);
 
 }  // namespace cudf::detail::checked_arithmetic

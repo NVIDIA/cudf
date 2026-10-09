@@ -13,6 +13,7 @@
 
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 namespace CUDF_EXPORT cudf {
@@ -34,7 +35,7 @@ namespace strings::detail {
 std::unique_ptr<column> create_offsets_child_column(int64_t chars_bytes,
                                                     size_type count,
                                                     cuda::stream_ref stream,
-                                                    rmm::device_async_resource_ref mr);
+                                                    cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Creates a string_view vector from a strings column.
@@ -47,7 +48,7 @@ std::unique_ptr<column> create_offsets_child_column(int64_t chars_bytes,
 rmm::device_uvector<string_view> create_string_vector_from_column(
   cudf::strings_column_view const strings,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Return the threshold size for a strings column to use int64 offsets

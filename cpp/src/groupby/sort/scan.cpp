@@ -24,6 +24,7 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <memory>
@@ -212,9 +213,7 @@ void scan_result_functor::operator()<aggregation::RANK>(aggregation const& agg)
 
 // Sort-based groupby
 std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> groupby::sort_scan(
-  std::span<scan_request const> requests,
-  cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  std::span<scan_request const> requests, cuda::stream_ref stream, cuda::mr::device_resource_ref mr)
 {
   // We're going to start by creating a cache of results so that aggs that
   // depend on other aggs will not have to be recalculated. e.g. mean depends on

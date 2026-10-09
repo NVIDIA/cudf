@@ -20,6 +20,7 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/traits.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <memory>

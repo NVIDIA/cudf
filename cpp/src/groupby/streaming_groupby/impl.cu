@@ -30,6 +30,7 @@
 #include <rmm/device_uvector.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <algorithm>
@@ -118,7 +119,7 @@ streaming_groupby::impl::impl(host_span<size_type const> key_indices,
                               host_span<streaming_aggregation_request const> requests,
                               size_type max_distinct_keys,
                               null_policy null_handling,
-                              cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+                              cuda::mr::any_device_resource mr)
   : _max_distinct_keys{max_distinct_keys},
     _null_handling{null_handling},
     _mr{std::move(mr)},
@@ -286,7 +287,7 @@ void streaming_groupby::impl::update_nullable_state(table_view const& batch_keys
 }
 
 std::unique_ptr<table> streaming_groupby::impl::gather_agg_results(
-  cuda::stream_ref stream, rmm::device_async_resource_ref mr) const
+  cuda::stream_ref stream, cuda::mr::device_resource_ref mr) const
 {
   // The results we care about are dense in `[0, _distinct_keys)` and can be extracted by
   // slice+copy.
@@ -298,7 +299,7 @@ std::unique_ptr<table> streaming_groupby::impl::gather_agg_results(
 }
 
 std::unique_ptr<table> streaming_groupby::impl::gather_distinct_keys(
-  cuda::stream_ref stream, rmm::device_async_resource_ref mr) const
+  cuda::stream_ref stream, cuda::mr::device_resource_ref mr) const
 {
   if (_compacted_batches.empty()) {
     return std::make_unique<table>(_empty_key_schema->view(), stream, mr);
@@ -383,7 +384,7 @@ streaming_groupby::impl::finalize_gathered(std::unique_ptr<table> keys,
 
 std::pair<std::unique_ptr<table>, std::vector<aggregation_result>>
 streaming_groupby::impl::do_finalize(cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr) const
+                                     cuda::mr::device_resource_ref mr) const
 {
   CUDF_EXPECTS(_initialized, "Cannot finalize streaming_groupby with no accumulated data.");
   return finalize_gathered(
@@ -418,7 +419,7 @@ streaming_groupby::streaming_groupby(host_span<size_type const> key_indices,
                                      host_span<streaming_aggregation_request const> requests,
                                      size_type max_distinct_keys,
                                      null_policy null_handling,
-                                     cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+                                     cuda::mr::any_device_resource mr)
   : _impl{std::make_unique<impl>(
       key_indices, requests, max_distinct_keys, null_handling, std::move(mr))}
 {
@@ -446,7 +447,7 @@ void streaming_groupby::do_merge(streaming_groupby const& other, cuda::stream_re
 }
 
 std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> streaming_groupby::do_finalize(
-  cuda::stream_ref stream, rmm::device_async_resource_ref mr) const
+  cuda::stream_ref stream, cuda::mr::device_resource_ref mr) const
 {
   CUDF_EXPECTS(_impl != nullptr, "streaming_groupby has been consumed or moved from.");
   return _impl->do_finalize(stream, mr);

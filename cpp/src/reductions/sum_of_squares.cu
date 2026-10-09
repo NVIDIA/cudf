@@ -9,6 +9,7 @@
 #include <cudf/reduction/detail/reduction_functions.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 namespace cudf {
@@ -18,7 +19,7 @@ namespace detail {
 std::unique_ptr<cudf::scalar> sum_of_squares(column_view const& col,
                                              cudf::data_type const output_dtype,
                                              cuda::stream_ref stream,
-                                             rmm::device_async_resource_ref mr)
+                                             cuda::mr::device_resource_ref mr)
 {
   return cudf::type_dispatcher(
     cudf::is_dictionary(col.type()) ? dictionary_column_view(col).keys().type() : col.type(),

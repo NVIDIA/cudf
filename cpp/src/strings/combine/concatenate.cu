@@ -24,6 +24,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <thrust/execution_policy.h>
 #include <thrust/logical.h>
@@ -114,7 +115,7 @@ std::unique_ptr<column> concatenate(table_view const& strings_columns,
                                     string_scalar const& narep,
                                     separator_on_nulls separate_nulls,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cuda::mr::device_resource_ref mr)
 {
   auto const num_columns = strings_columns.num_columns();
   CUDF_EXPECTS(num_columns > 1, "At least two columns must be specified");
@@ -198,7 +199,7 @@ std::unique_ptr<column> concatenate(table_view const& strings_columns,
                                     string_scalar const& col_narep,
                                     separator_on_nulls separate_nulls,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cuda::mr::device_resource_ref mr)
 {
   auto const num_columns = strings_columns.num_columns();
   CUDF_EXPECTS(num_columns > 0, "At least one column must be specified");
@@ -254,7 +255,7 @@ std::unique_ptr<column> concatenate(table_view const& strings_columns,
                                     string_scalar const& narep,
                                     separator_on_nulls separate_nulls,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::concatenate(strings_columns, separator, narep, separate_nulls, stream, mr);
@@ -266,7 +267,7 @@ std::unique_ptr<column> concatenate(table_view const& strings_columns,
                                     string_scalar const& col_narep,
                                     separator_on_nulls separate_nulls,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::concatenate(

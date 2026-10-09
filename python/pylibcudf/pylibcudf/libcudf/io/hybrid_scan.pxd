@@ -16,7 +16,7 @@ from pylibcudf.libcudf.io.types cimport table_with_metadata
 from pylibcudf.libcudf.types cimport size_type
 from pylibcudf.libcudf.utilities.span cimport device_span, host_span
 from cuda.bindings.cyruntime cimport cudaStream_t
-from rmm.librmm.memory_resource cimport device_async_resource_ref
+from pylibcudf.libcudf.utilities.memory_resource cimport device_resource_ref
 
 ctypedef const uint8_t const_uint8_t
 ctypedef const size_type const_size_type
@@ -111,14 +111,14 @@ cdef extern from "cudf/io/experimental/hybrid_scan.hpp" \
         unique_ptr[column] build_all_true_row_mask(
             std_span[const_size_type] row_group_indices,
             cudaStream_t stream,
-            device_async_resource_ref mr
+            device_resource_ref mr
         ) except +libcudf_exception_handler
 
         unique_ptr[column] build_row_mask_with_page_index_stats(
             std_span[const_size_type] row_group_indices,
             const parquet_reader_options& options,
             cudaStream_t stream,
-            device_async_resource_ref mr
+            device_resource_ref mr
         ) except +libcudf_exception_handler
 
         vector[byte_range_info] filter_column_chunks_byte_ranges(
@@ -133,7 +133,7 @@ cdef extern from "cudf/io/experimental/hybrid_scan.hpp" \
             use_data_page_mask mask_data_pages,
             const parquet_reader_options& options,
             cudaStream_t stream,
-            device_async_resource_ref mr
+            device_resource_ref mr
         ) except +libcudf_exception_handler
 
         vector[byte_range_info] payload_column_chunks_byte_ranges(
@@ -148,7 +148,7 @@ cdef extern from "cudf/io/experimental/hybrid_scan.hpp" \
             use_data_page_mask mask_data_pages,
             const parquet_reader_options& options,
             cudaStream_t stream,
-            device_async_resource_ref mr
+            device_resource_ref mr
         ) except +libcudf_exception_handler
 
         vector[byte_range_info] all_column_chunks_byte_ranges(
@@ -161,7 +161,7 @@ cdef extern from "cudf/io/experimental/hybrid_scan.hpp" \
             std_span[const_device_span_const_uint8_t] column_chunk_data,
             const parquet_reader_options& options,
             cudaStream_t stream,
-            device_async_resource_ref mr
+            device_resource_ref mr
         ) except +libcudf_exception_handler
 
         void setup_chunking_for_filter_columns(
@@ -173,7 +173,7 @@ cdef extern from "cudf/io/experimental/hybrid_scan.hpp" \
             std_span[const_device_span_const_uint8_t] column_chunk_data,
             const parquet_reader_options& options,
             cudaStream_t stream,
-            device_async_resource_ref mr
+            device_resource_ref mr
         ) except +libcudf_exception_handler
 
         table_with_metadata materialize_filter_columns_chunk(
@@ -189,7 +189,7 @@ cdef extern from "cudf/io/experimental/hybrid_scan.hpp" \
             std_span[const_device_span_const_uint8_t] column_chunk_data,
             const parquet_reader_options& options,
             cudaStream_t stream,
-            device_async_resource_ref mr
+            device_resource_ref mr
         ) except +libcudf_exception_handler
 
         table_with_metadata materialize_payload_columns_chunk(

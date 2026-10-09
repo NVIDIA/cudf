@@ -23,6 +23,7 @@
 
 #include <cuda/buffer>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <cudf_fragments.hpp>
@@ -62,7 +63,7 @@ struct fixed_width_column {
                    cuda::device_buffer<std::byte> null_mask,
                    size_type null_count,
                    cuda::stream_ref stream,
-                   rmm::device_async_resource_ref mr)
+                   cuda::mr::device_resource_ref mr)
   {
     return fixed_width_column{
       make_fixed_width_column(type, size, std::move(null_mask), null_count, stream, mr)};
@@ -105,7 +106,7 @@ struct string_views_column {
                    cuda::device_buffer<std::byte> null_mask,
                    size_type null_count,
                    cuda::stream_ref stream,
-                   rmm::device_async_resource_ref mr)
+                   cuda::mr::device_resource_ref mr)
   {
     cuda::device_buffer<string_view> data{stream, mr, static_cast<size_t>(size), cuda::no_init};
     return string_views_column{std::move(data), size, std::move(null_mask), null_count};
@@ -511,7 +512,7 @@ std::tuple<rtcx::blob, lto_binary_type, std::string> instantiate_fragment(
 auto to_args(std::span<input_column_view const> inputs,
              std::span<output_column> outputs,
              cuda::stream_ref stream,
-             rmm::device_async_resource_ref mr)
+             cuda::mr::device_resource_ref mr)
 {
   std::vector<handle> handles;
   auto h_args =
@@ -593,7 +594,7 @@ void run(bool is_null_aware,
          std::string const& udf,
          udf_source_type source_type,
          cuda::stream_ref stream,
-         rmm::device_async_resource_ref mr)
+         cuda::mr::device_resource_ref mr)
 {
   auto kernel = get_kernel(is_null_aware, has_user_data, inputs, outputs, udf, source_type);
   auto [cols, handles] = to_args(inputs, outputs, stream, mr);
@@ -612,7 +613,7 @@ void run(kernel const& kernel,
          std::span<output_column> outputs,
          int32_t* d_max_error,
          cuda::stream_ref stream,
-         rmm::device_async_resource_ref mr)
+         cuda::mr::device_resource_ref mr)
 {
   auto [cols, handles] = to_args(inputs, outputs, stream, mr);
   auto* input_cols     = reinterpret_cast<column_device_view_core const*>(cols.data());
@@ -647,7 +648,7 @@ void run_lto(std::optional<std::tuple<std::span<uint8_t const>, lto_binary_type,
              std::span<uint8_t const> udf_binary,
              lto_binary_type source_type,
              cuda::stream_ref stream,
-             rmm::device_async_resource_ref mr)
+             cuda::mr::device_resource_ref mr)
 {
   auto [in_types, out_types, ptx_in_types, ptx_out_types] = reflect(source_type, inputs, outputs);
 
@@ -969,7 +970,7 @@ rmm::device_uvector<char> make_chars_buffer(column_view const& offsets_view,
                                             bitmask_type const* stencil,
                                             size_type size,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cuda::mr::device_resource_ref mr)
 {
   auto offsets = detail::offsetalator_factory::make_input_iterator(offsets_view);
   auto chars   = rmm::device_uvector<char>(chars_size, stream, mr);
@@ -1003,7 +1004,7 @@ std::unique_ptr<column> make_strings_column(device_span<string_view const> strin
                                             cuda::device_buffer<std::byte> null_mask,
                                             size_type null_count,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   auto size = static_cast<size_type>(strings.size());
@@ -1034,7 +1035,7 @@ auto make_outputs(null_aware is_null_aware,
                   std::span<char const> is_output_nullable,
                   std::vector<std::unique_ptr<column>> string_offsets,
                   cuda::stream_ref stream,
-                  rmm::device_async_resource_ref mr)
+                  cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -1102,19 +1103,19 @@ void update_null_counts(std::span<output_column> outputs,
   }
 }
 
-auto finalize_output(fixed_width_column&& c, cuda::stream_ref, rmm::device_async_resource_ref)
+auto finalize_output(fixed_width_column&& c, cuda::stream_ref, cuda::mr::device_resource_ref)
 {
   return std::move(c._col);
 }
 
-auto finalize_output(mutable_strings_column&& c, cuda::stream_ref, rmm::device_async_resource_ref)
+auto finalize_output(mutable_strings_column&& c, cuda::stream_ref, cuda::mr::device_resource_ref)
 {
   return std::move(c._col);
 }
 
 auto finalize_output(string_views_column&& c,
                      cuda::stream_ref stream,
-                     rmm::device_async_resource_ref mr)
+                     cuda::mr::device_resource_ref mr)
 {
   return make_strings_column(
     device_span<string_view const>{c._data.data(), static_cast<size_t>(c._size)},
@@ -1128,7 +1129,7 @@ auto finalize_outputs(null_aware is_null_aware,
                       size_type row_size,
                       std::vector<output_column> outputs,
                       cuda::stream_ref stream,
-                      rmm::device_async_resource_ref mr)
+                      cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -1153,7 +1154,7 @@ std::unique_ptr<table> execute_transform(std::string const& udf,
                                          std::vector<std::unique_ptr<column>> string_offsets,
                                          kernel const* compiled_kernel,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cuda::mr::device_resource_ref mr)
 {
   auto row_size = in_row_size.has_value() ? *in_row_size : jit::get_projection_size(inputs);
   auto output_may_be_nullable    = get_null_transformation(is_null_aware, inputs, outputs);
@@ -1221,7 +1222,7 @@ std::unique_ptr<table> transform(std::string const& udf,
                                  std::vector<std::unique_ptr<column>>&& string_offsets,
                                  std::optional<size_type> row_size,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   perform_checks(source_type, is_null_aware, row_size, inputs, outputs, string_offsets);
@@ -1247,7 +1248,7 @@ std::unique_ptr<table> multi_transform(std::string const& udf,
                                        std::vector<std::unique_ptr<column>>&& string_offsets,
                                        std::optional<size_type> row_size,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cuda::mr::device_resource_ref mr)
 {
   return transform(udf,
                    source_type,
@@ -1270,7 +1271,7 @@ std::unique_ptr<column> transform_extended(std::span<transform_input const> inpu
                                            std::optional<size_type> row_size,
                                            output_nullability null_policy,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cuda::mr::device_resource_ref mr)
 {
   transform_output outputs[] = {{.type = output_type, .nullability = null_policy}};
 
@@ -1283,7 +1284,7 @@ std::unique_ptr<column> transform_extended(std::span<transform_input const> inpu
 std::unique_ptr<column> compute_column_jit(table_view const& table,
                                            ast::expression const& expr,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   std::array<std::reference_wrapper<ast::expression const>, 1> expressions{expr};
@@ -1307,7 +1308,7 @@ std::unique_ptr<table> compute_table_jit(
   table_view const& table,
   std::span<std::reference_wrapper<ast::expression const> const> expressions,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   auto args = detail::row_ir::ast_converter::compute_table(
@@ -1376,7 +1377,7 @@ std::unique_ptr<table> transform_lto(std::span<uint8_t const> udf,
                                      std::vector<std::unique_ptr<column>>&& string_offsets,
                                      std::optional<size_type> in_row_size,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   perform_checks(binary_type, is_null_aware, in_row_size, inputs, outputs, string_offsets);
@@ -1510,7 +1511,7 @@ transform_program::transform_program(
   table_view const& table,
   std::span<std::reference_wrapper<ast::expression const> const> expressions,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   auto args = detail::row_ir::ast_converter::compute_table(
@@ -1552,7 +1553,7 @@ std::unique_ptr<table> transform_program::run(std::span<transform_input const> i
                                               std::vector<std::unique_ptr<column>>&& string_offsets,
                                               std::optional<size_type> row_size,
                                               cuda::stream_ref stream,
-                                              rmm::device_async_resource_ref mr)
+                                              cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   impl_->validate(impl_->source_type_, inputs, outputs, string_offsets);
@@ -1573,7 +1574,7 @@ std::unique_ptr<table> transform_program::run(std::span<transform_input const> i
 
 std::unique_ptr<table> transform_program::run(table_view const& table,
                                               cuda::stream_ref stream,
-                                              rmm::device_async_resource_ref mr)
+                                              cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(impl_->ast_input_column_indices_.has_value(),

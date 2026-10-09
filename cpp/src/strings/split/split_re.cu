@@ -21,6 +21,7 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/algorithm>
 #include <cuda/std/iterator>
 #include <cuda/std/tuple>
@@ -204,7 +205,7 @@ std::unique_ptr<table> split_re(strings_column_view const& input,
                                 split_direction direction,
                                 size_type maxsplit,
                                 cuda::stream_ref stream,
-                                rmm::device_async_resource_ref mr)
+                                cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(!prog.pattern().empty(), "Parameter pattern must not be empty");
 
@@ -277,7 +278,7 @@ std::unique_ptr<column> split_record_re(strings_column_view const& input,
                                         split_direction direction,
                                         size_type maxsplit,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(!prog.pattern().empty(), "Parameter pattern must not be empty");
 
@@ -318,7 +319,7 @@ std::unique_ptr<table> split_re(strings_column_view const& input,
                                 regex_program const& prog,
                                 size_type maxsplit,
                                 cuda::stream_ref stream,
-                                rmm::device_async_resource_ref mr)
+                                cuda::mr::device_resource_ref mr)
 {
   return split_re(input, prog, split_direction::FORWARD, maxsplit, stream, mr);
 }
@@ -327,7 +328,7 @@ std::unique_ptr<column> split_record_re(strings_column_view const& input,
                                         regex_program const& prog,
                                         size_type maxsplit,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cuda::mr::device_resource_ref mr)
 {
   return split_record_re(input, prog, split_direction::FORWARD, maxsplit, stream, mr);
 }
@@ -336,7 +337,7 @@ std::unique_ptr<table> rsplit_re(strings_column_view const& input,
                                  regex_program const& prog,
                                  size_type maxsplit,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cuda::mr::device_resource_ref mr)
 {
   return split_re(input, prog, split_direction::BACKWARD, maxsplit, stream, mr);
 }
@@ -345,7 +346,7 @@ std::unique_ptr<column> rsplit_record_re(strings_column_view const& input,
                                          regex_program const& prog,
                                          size_type maxsplit,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cuda::mr::device_resource_ref mr)
 {
   return split_record_re(input, prog, split_direction::BACKWARD, maxsplit, stream, mr);
 }
@@ -358,7 +359,7 @@ std::unique_ptr<table> split_re(strings_column_view const& input,
                                 regex_program const& prog,
                                 size_type maxsplit,
                                 cuda::stream_ref stream,
-                                rmm::device_async_resource_ref mr)
+                                cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::split_re(input, prog, maxsplit, stream, mr);
@@ -368,7 +369,7 @@ std::unique_ptr<column> split_record_re(strings_column_view const& input,
                                         regex_program const& prog,
                                         size_type maxsplit,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::split_record_re(input, prog, maxsplit, stream, mr);
@@ -378,7 +379,7 @@ std::unique_ptr<table> rsplit_re(strings_column_view const& input,
                                  regex_program const& prog,
                                  size_type maxsplit,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::rsplit_re(input, prog, maxsplit, stream, mr);
@@ -388,7 +389,7 @@ std::unique_ptr<column> rsplit_record_re(strings_column_view const& input,
                                          regex_program const& prog,
                                          size_type maxsplit,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::rsplit_record_re(input, prog, maxsplit, stream, mr);

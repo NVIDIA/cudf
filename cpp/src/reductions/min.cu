@@ -9,6 +9,8 @@
 #include <cudf/reduction/detail/reduction_functions.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
+
 namespace cudf {
 namespace reduction {
 namespace detail {
@@ -16,7 +18,7 @@ std::unique_ptr<cudf::scalar> min(column_view const& col,
                                   data_type const output_dtype,
                                   std::optional<std::reference_wrapper<scalar const>> init,
                                   cuda::stream_ref stream,
-                                  rmm::device_async_resource_ref mr)
+                                  cuda::mr::device_resource_ref mr)
 {
   auto const input_type =
     cudf::is_dictionary(col.type()) ? cudf::dictionary_column_view(col).keys().type() : col.type();

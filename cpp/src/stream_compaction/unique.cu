@@ -27,6 +27,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/functional>
 #include <cuda/std/iterator>
 #include <cuda/stream>
@@ -41,7 +42,7 @@ std::unique_ptr<table> unique(table_view const& input,
                               duplicate_keep_option keep,
                               null_equality nulls_equal,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cuda::mr::device_resource_ref mr)
 {
   // If keep is KEEP_ANY, just alias it to KEEP_FIRST.
   if (keep == duplicate_keep_option::KEEP_ANY) { keep = duplicate_keep_option::KEEP_FIRST; }
@@ -112,7 +113,7 @@ std::unique_ptr<table> unique(table_view const& input,
                               duplicate_keep_option const keep,
                               null_equality nulls_equal,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::unique(input, keys, keep, nulls_equal, stream, mr);

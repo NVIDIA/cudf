@@ -24,6 +24,7 @@
 #include <cub/device/device_memcpy.cuh>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/execution>
 #include <cuda/stream>
 
@@ -46,7 +47,7 @@ namespace detail {
  * @throw std::overflow_error if the output exceeds the column size limit
  */
 CUDF_EXPORT std::pair<std::unique_ptr<column>, int64_t> make_offsets_child_column(
-  device_span<size_type const> sizes, cuda::stream_ref stream, rmm::device_async_resource_ref mr);
+  device_span<size_type const> sizes, cuda::stream_ref stream, cuda::mr::device_resource_ref mr);
 
 template <typename Iter>
 struct string_offsets_fn {
@@ -82,7 +83,7 @@ rmm::device_uvector<char> make_chars_buffer(column_view const& offsets,
                                             IndexPairIterator begin,
                                             size_type strings_count,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cuda::mr::device_resource_ref mr)
 {
   auto chars_data      = rmm::device_uvector<char>(chars_size, stream, mr);
   auto const d_offsets = cudf::detail::offsetalator_factory::make_input_iterator(offsets);
@@ -236,7 +237,7 @@ auto make_strings_children(SizeAndExecuteFunction size_and_exec_fn,
                            size_type exec_size,
                            size_type strings_count,
                            cuda::stream_ref stream,
-                           rmm::device_async_resource_ref mr)
+                           cuda::mr::device_resource_ref mr)
 {
   // This is called twice -- once for computing sizes and once for writing chars.
   // Reducing the number of places size_and_exec_fn is inlined speeds up compile time.
@@ -316,7 +317,7 @@ template <typename SizeAndExecuteFunction>
 auto make_strings_children(SizeAndExecuteFunction size_and_exec_fn,
                            size_type strings_count,
                            cuda::stream_ref stream,
-                           rmm::device_async_resource_ref mr)
+                           cuda::mr::device_resource_ref mr)
 {
   return make_strings_children(size_and_exec_fn, strings_count, strings_count, stream, mr);
 }

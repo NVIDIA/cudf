@@ -16,6 +16,7 @@ from pylibcudf.libcudf.types cimport mask_state, null_equality
 from pylibcudf.libcudf.utilities.device_buffer cimport byte, device_buffer
 
 from rmm.pylibrmm.stream cimport Stream
+from pylibcudf.libcudf.utilities.memory_resource cimport to_device_resource_ref
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
 from .column cimport Column
@@ -59,7 +60,7 @@ cdef Column _column_from_gather_map(
             0,
             mask_state.UNALLOCATED,
             _stream.view().get(),
-            mr.get_mr(),
+            to_device_resource_ref(mr.get_mr()),
         )
     )
     return Column.from_libcudf(
@@ -113,7 +114,7 @@ cpdef tuple[Column, Column] inner_join(
             c_right_keys,
             nulls_equal,
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
     return (
         _column_from_gather_map(move(c_result.first), _stream, mr),
@@ -161,7 +162,7 @@ cpdef tuple[Column, Column] left_join(
             c_right_keys,
             nulls_equal,
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
     return (
         _column_from_gather_map(move(c_result.first), _stream, mr),
@@ -209,7 +210,7 @@ cpdef tuple[Column, Column] full_join(
             c_right_keys,
             nulls_equal,
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
     return (
         _column_from_gather_map(move(c_result.first), _stream, mr),
@@ -263,7 +264,7 @@ cpdef Column left_semi_join(
         c_result = join_obj.get()[0].semi_join(
             c_left_keys,
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
     return _column_from_gather_map(move(c_result), _stream, mr)
 
@@ -314,7 +315,7 @@ cpdef Column left_anti_join(
         c_result = join_obj.get()[0].anti_join(
             c_left_keys,
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
     return _column_from_gather_map(move(c_result), _stream, mr)
 
@@ -352,7 +353,7 @@ cpdef Table cross_join(
     cdef table_view c_right = right.view()
     with nogil:
         result = cpp_join.cross_join(
-            c_left, c_right, _cs, mr.get_mr()
+            c_left, c_right, _cs, to_device_resource_ref(mr.get_mr())
         )
     return Table.from_libcudf(move(result), _stream, mr)
 
@@ -399,7 +400,7 @@ cpdef tuple[Column, Column] conditional_inner_join(
             dereference(binary_predicate.c_obj.get()),
             output_size,
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
     return (
         _column_from_gather_map(move(c_result.first), _stream, mr),
@@ -449,7 +450,7 @@ cpdef tuple[Column, Column] conditional_left_join(
             dereference(binary_predicate.c_obj.get()),
             output_size,
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
     return (
         _column_from_gather_map(move(c_result.first), _stream, mr),
@@ -497,7 +498,7 @@ cpdef tuple[Column, Column] conditional_full_join(
             c_right,
             dereference(binary_predicate.c_obj.get()),
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
     return (
         _column_from_gather_map(move(c_result.first), _stream, mr),
@@ -546,7 +547,7 @@ cpdef Column conditional_left_semi_join(
             dereference(binary_predicate.c_obj.get()),
             output_size,
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
     return _column_from_gather_map(move(c_result), _stream, mr)
 
@@ -592,7 +593,7 @@ cpdef Column conditional_left_anti_join(
             dereference(binary_predicate.c_obj.get()),
             output_size,
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
     return _column_from_gather_map(move(c_result), _stream, mr)
 
@@ -653,7 +654,7 @@ cpdef tuple[Column, Column] mixed_inner_join(
             nulls_equal,
             empty_optional,
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
     return (
         _column_from_gather_map(move(c_result.first), _stream, mr),
@@ -717,7 +718,7 @@ cpdef tuple[Column, Column] mixed_left_join(
             nulls_equal,
             empty_optional,
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
     return (
         _column_from_gather_map(move(c_result.first), _stream, mr),
@@ -781,7 +782,7 @@ cpdef tuple[Column, Column] mixed_full_join(
             nulls_equal,
             empty_optional,
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
     return (
         _column_from_gather_map(move(c_result.first), _stream, mr),
@@ -842,7 +843,7 @@ cpdef Column mixed_left_semi_join(
             dereference(binary_predicate.c_obj.get()),
             nulls_equal,
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
     return _column_from_gather_map(move(c_result), _stream, mr)
 
@@ -900,7 +901,7 @@ cpdef Column mixed_left_anti_join(
             dereference(binary_predicate.c_obj.get()),
             nulls_equal,
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
     return _column_from_gather_map(move(c_result), _stream, mr)
 
@@ -991,7 +992,7 @@ cdef class FilteredJoin:
             c_result = self.c_obj.get()[0].semi_join(
                 c_left,
                 _cs,
-                mr.get_mr()
+                to_device_resource_ref(mr.get_mr())
             )
         return _column_from_gather_map(move(c_result), _stream, mr)
 
@@ -1032,6 +1033,6 @@ cdef class FilteredJoin:
             c_result = self.c_obj.get()[0].anti_join(
                 c_left,
                 _cs,
-                mr.get_mr()
+                to_device_resource_ref(mr.get_mr())
             )
         return _column_from_gather_map(move(c_result), _stream, mr)

@@ -9,6 +9,8 @@
 
 #include <cudf/detail/copy.hpp>
 
+#include <cuda/memory_resource>
+
 #include <algorithm>
 
 namespace cudf::io::orc::detail {
@@ -124,7 +126,7 @@ table_metadata reader_impl::get_meta_with_user_data()
 reader_impl::reader_impl(std::vector<std::unique_ptr<datasource>>&& sources,
                          orc_reader_options const& options,
                          cuda::stream_ref stream,
-                         rmm::device_async_resource_ref mr)
+                         cuda::mr::device_resource_ref mr)
   : reader_impl::reader_impl(0UL, 0UL, std::move(sources), options, stream, mr)
 {
 }
@@ -134,7 +136,7 @@ reader_impl::reader_impl(std::size_t chunk_read_limit,
                          std::vector<std::unique_ptr<datasource>>&& sources,
                          orc_reader_options const& options,
                          cuda::stream_ref stream,
-                         rmm::device_async_resource_ref mr)
+                         cuda::mr::device_resource_ref mr)
   : reader_impl::reader_impl(chunk_read_limit,
                              pass_read_limit,
                              DEFAULT_OUTPUT_ROW_GRANULARITY,
@@ -151,7 +153,7 @@ reader_impl::reader_impl(std::size_t chunk_read_limit,
                          std::vector<std::unique_ptr<datasource>>&& sources,
                          orc_reader_options const& options,
                          cuda::stream_ref stream,
-                         rmm::device_async_resource_ref mr)
+                         cuda::mr::device_resource_ref mr)
   : _stream(stream),
     _mr(mr),
     _options{options.get_timestamp_type(),
@@ -197,7 +199,7 @@ chunked_reader::chunked_reader(std::size_t chunk_read_limit,
                                std::vector<std::unique_ptr<datasource>>&& sources,
                                orc_reader_options const& options,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr)
+                               cuda::mr::device_resource_ref mr)
   : _impl{std::make_unique<reader_impl>(
       chunk_read_limit, pass_read_limit, std::move(sources), options, stream, mr)}
 {
@@ -209,7 +211,7 @@ chunked_reader::chunked_reader(std::size_t chunk_read_limit,
                                std::vector<std::unique_ptr<datasource>>&& sources,
                                orc_reader_options const& options,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr)
+                               cuda::mr::device_resource_ref mr)
   : _impl{std::make_unique<reader_impl>(chunk_read_limit,
                                         pass_read_limit,
                                         output_row_granularity,
@@ -229,7 +231,7 @@ table_with_metadata chunked_reader::read_chunk() const { return _impl->read_chun
 reader::reader(std::vector<std::unique_ptr<cudf::io::datasource>>&& sources,
                orc_reader_options const& options,
                cuda::stream_ref stream,
-               rmm::device_async_resource_ref mr)
+               cuda::mr::device_resource_ref mr)
   : _impl{std::make_unique<reader_impl>(std::move(sources), options, stream, mr)}
 {
 }

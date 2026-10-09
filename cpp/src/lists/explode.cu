@@ -18,6 +18,7 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/iterator>
 #include <cuda/std/optional>
 #include <cuda/stream>
@@ -47,7 +48,7 @@ std::unique_ptr<table> build_table(
   cuda::std::optional<cudf::device_span<size_type const>> explode_col_gather_map,
   cuda::std::optional<rmm::device_uvector<size_type>> position_array,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   auto select_iter = cuda::transform_iterator(
     cuda::counting_iterator<cudf::size_type>{0},
@@ -103,7 +104,7 @@ std::unique_ptr<table> build_table(
 std::unique_ptr<table> explode(table_view const& input_table,
                                size_type const explode_column_idx,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr)
+                               cuda::mr::device_resource_ref mr)
 {
   lists_column_view explode_col{input_table.column(explode_column_idx)};
   auto sliced_child = explode_col.get_sliced_child(stream);
@@ -141,7 +142,7 @@ std::unique_ptr<table> explode(table_view const& input_table,
 std::unique_ptr<table> explode_position(table_view const& input_table,
                                         size_type const explode_column_idx,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cuda::mr::device_resource_ref mr)
 {
   lists_column_view explode_col{input_table.column(explode_column_idx)};
   auto sliced_child = explode_col.get_sliced_child(stream);
@@ -192,7 +193,7 @@ std::unique_ptr<table> explode_outer(table_view const& input_table,
                                      size_type const explode_column_idx,
                                      bool include_position,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cuda::mr::device_resource_ref mr)
 {
   lists_column_view explode_col{input_table.column(explode_column_idx)};
   auto sliced_child  = explode_col.get_sliced_child(stream);
@@ -292,12 +293,12 @@ std::unique_ptr<table> explode_outer(table_view const& input_table,
 
 /**
  * @copydoc cudf::explode(table_view const&, size_type, cuda::stream_ref,
- * rmm::device_async_resource_ref)
+ * cuda::mr::device_resource_ref)
  */
 std::unique_ptr<table> explode(table_view const& input_table,
                                size_type explode_column_idx,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr)
+                               cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(input_table.column(explode_column_idx).type().id() == type_id::LIST,
@@ -307,12 +308,12 @@ std::unique_ptr<table> explode(table_view const& input_table,
 
 /**
  * @copydoc cudf::explode_position(table_view const&, size_type, cuda::stream_ref,
- * rmm::device_async_resource_ref)
+ * cuda::mr::device_resource_ref)
  */
 std::unique_ptr<table> explode_position(table_view const& input_table,
                                         size_type explode_column_idx,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(input_table.column(explode_column_idx).type().id() == type_id::LIST,
@@ -322,12 +323,12 @@ std::unique_ptr<table> explode_position(table_view const& input_table,
 
 /**
  * @copydoc cudf::explode_outer(table_view const&, size_type, cuda::stream_ref,
- * rmm::device_async_resource_ref)
+ * cuda::mr::device_resource_ref)
  */
 std::unique_ptr<table> explode_outer(table_view const& input_table,
                                      size_type explode_column_idx,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(input_table.column(explode_column_idx).type().id() == type_id::LIST,
@@ -337,12 +338,12 @@ std::unique_ptr<table> explode_outer(table_view const& input_table,
 
 /**
  * @copydoc cudf::explode_outer_position(table_view const&, size_type,
- * cuda::stream_ref, rmm::device_async_resource_ref)
+ * cuda::stream_ref, cuda::mr::device_resource_ref)
  */
 std::unique_ptr<table> explode_outer_position(table_view const& input_table,
                                               size_type explode_column_idx,
                                               cuda::stream_ref stream,
-                                              rmm::device_async_resource_ref mr)
+                                              cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(input_table.column(explode_column_idx).type().id() == type_id::LIST,

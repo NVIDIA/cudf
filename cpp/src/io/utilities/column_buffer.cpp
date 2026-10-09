@@ -19,6 +19,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 
 #include <functional>
 #include <sstream>
@@ -92,7 +93,7 @@ void column_buffer_base<string_policy>::create_with_mask(size_type _size,
                                                          cudf::mask_state null_mask_state,
                                                          bool memset_data,
                                                          cuda::stream_ref stream,
-                                                         rmm::device_async_resource_ref mr)
+                                                         cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(_size >= 0 and _size <= std::numeric_limits<cudf::size_type>::max(),
                "Unexpected column buffer allocation size requested",
@@ -126,7 +127,7 @@ template <class string_policy>
 void column_buffer_base<string_policy>::create(size_type _size,
                                                bool memset_data,
                                                cuda::stream_ref stream,
-                                               rmm::device_async_resource_ref mr)
+                                               cuda::mr::device_resource_ref mr)
 {
   create_with_mask(_size, mask_state::ALL_NULL, memset_data, stream, mr);
 }
@@ -134,7 +135,7 @@ void column_buffer_base<string_policy>::create(size_type _size,
 template <class string_policy>
 void column_buffer_base<string_policy>::create(size_type _size,
                                                cuda::stream_ref stream,
-                                               rmm::device_async_resource_ref mr)
+                                               cuda::mr::device_resource_ref mr)
 {
   create_with_mask(_size, mask_state::ALL_NULL, true, stream, mr);
 }
@@ -333,7 +334,7 @@ template <class string_policy>
 std::unique_ptr<column> empty_like(column_buffer_base<string_policy>& buffer,
                                    column_name_info* schema_info,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cuda::mr::device_resource_ref mr)
 {
   if (schema_info != nullptr) { schema_info->name = buffer.name; }
 
@@ -434,12 +435,12 @@ template std::unique_ptr<column> make_column<pointer_type>(
 template std::unique_ptr<column> empty_like<string_type>(string_column_buffer& buffer,
                                                          column_name_info* schema_info,
                                                          cuda::stream_ref stream,
-                                                         rmm::device_async_resource_ref mr);
+                                                         cuda::mr::device_resource_ref mr);
 
 template std::unique_ptr<column> empty_like<pointer_type>(pointer_column_buffer& buffer,
                                                           column_name_info* schema_info,
                                                           cuda::stream_ref stream,
-                                                          rmm::device_async_resource_ref mr);
+                                                          cuda::mr::device_resource_ref mr);
 
 template std::string type_to_name<string_type>(string_column_buffer const& buffer);
 template std::string type_to_name<pointer_type>(pointer_column_buffer const& buffer);

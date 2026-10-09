@@ -10,6 +10,8 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
+
 namespace cudf::groupby::detail::hash {
 
 /**

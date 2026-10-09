@@ -19,6 +19,7 @@
 #include <cudf/types.hpp>
 
 #include <cuda/buffer>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 namespace cudf::groupby::detail::hash {

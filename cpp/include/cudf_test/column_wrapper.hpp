@@ -30,6 +30,7 @@
 #include <rmm/device_buffer.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/functional>
 #include <cuda/stream>
 #include <thrust/copy.h>
@@ -2049,7 +2050,7 @@ class lists_column_wrapper : public detail::column_wrapper {
   std::unique_ptr<column> normalize_column(column_view const& col,
                                            column_view const& expected_hierarchy,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref temp_mr)
+                                           cuda::mr::device_resource_ref temp_mr)
   {
     // if are at the bottom of the short column, it must be empty
     if (col.type().id() != type_id::LIST) {
@@ -2076,7 +2077,7 @@ class lists_column_wrapper : public detail::column_wrapper {
     column_view& expected_hierarchy,
     int expected_depth,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref temp_mr)
+    cuda::mr::device_resource_ref temp_mr)
   {
     std::vector<std::unique_ptr<column>> stubs;
     std::vector<column_view> cols;

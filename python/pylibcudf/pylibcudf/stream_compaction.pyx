@@ -19,6 +19,7 @@ from pylibcudf.libcudf.types cimport (
 
 from pylibcudf.libcudf.stream_compaction import \
     duplicate_keep_option as DuplicateKeepOption  # no-cython-lint, isort:skip
+from pylibcudf.libcudf.utilities.memory_resource cimport to_device_resource_ref
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
@@ -83,7 +84,7 @@ cpdef Table drop_nulls(
     cdef table_view c_source_table = source_table.view()
     with nogil:
         c_result = cpp_stream_compaction.drop_nulls(
-            c_source_table, c_keys, keep_threshold, _cs, mr.get_mr()
+            c_source_table, c_keys, keep_threshold, _cs, to_device_resource_ref(mr.get_mr())
         )
     return Table.from_libcudf(move(c_result), _stream, mr)
 
@@ -123,7 +124,7 @@ cpdef Table drop_nans(
     cdef table_view c_source_table = source_table.view()
     with nogil:
         c_result = cpp_stream_compaction.drop_nans(
-            c_source_table, c_keys, keep_threshold, _cs, mr.get_mr()
+            c_source_table, c_keys, keep_threshold, _cs, to_device_resource_ref(mr.get_mr())
         )
     return Table.from_libcudf(move(c_result), _stream, mr)
 
@@ -160,7 +161,7 @@ cpdef Table apply_retention_mask(
     cdef column_view c_retention_mask = retention_mask.view()
     with nogil:
         c_result = cpp_stream_compaction.apply_retention_mask(
-            c_source_table, c_retention_mask, _cs, mr.get_mr()
+            c_source_table, c_retention_mask, _cs, to_device_resource_ref(mr.get_mr())
         )
     return Table.from_libcudf(move(c_result), _stream, mr)
 
@@ -212,7 +213,7 @@ cpdef Table apply_deletion_mask(
     cdef column_view c_deletion_mask = deletion_mask.view()
     with nogil:
         c_result = cpp_stream_compaction.apply_deletion_mask(
-            c_source_table, c_deletion_mask, _cs, mr.get_mr()
+            c_source_table, c_deletion_mask, _cs, to_device_resource_ref(mr.get_mr())
         )
     return Table.from_libcudf(move(c_result), _stream, mr)
 
@@ -261,7 +262,7 @@ cpdef Table unique(
     cdef table_view c_input = input.view()
     with nogil:
         c_result = cpp_stream_compaction.unique(
-            c_input, c_keys, keep, nulls_equal, _cs, mr.get_mr()
+            c_input, c_keys, keep, nulls_equal, _cs, to_device_resource_ref(mr.get_mr())
         )
     return Table.from_libcudf(move(c_result), _stream, mr)
 
@@ -309,7 +310,7 @@ cpdef Table distinct(
     with nogil:
         c_result = cpp_stream_compaction.distinct(
             c_input, c_keys, keep, nulls_equal, nans_equal, _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
     return Table.from_libcudf(move(c_result), _stream, mr)
 
@@ -351,7 +352,7 @@ cpdef Column distinct_indices(
     cdef table_view c_input = input.view()
     with nogil:
         c_result = cpp_stream_compaction.distinct_indices(
-            c_input, keep, nulls_equal, nans_equal, _cs, mr.get_mr()
+            c_input, keep, nulls_equal, nans_equal, _cs, to_device_resource_ref(mr.get_mr())
         )
     return Column.from_libcudf(move(c_result), _stream, mr)
 
@@ -399,7 +400,7 @@ cpdef Table stable_distinct(
     with nogil:
         c_result = cpp_stream_compaction.stable_distinct(
             c_input, c_keys, keep, nulls_equal, nans_equal, _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
     return Table.from_libcudf(move(c_result), _stream, mr)
 
@@ -443,7 +444,7 @@ cpdef Table filter(
             dereference(predicate_expr.c_obj.get()),
             c_filter_table,
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
     return Table.from_libcudf(move(c_result), _stream, mr)
 

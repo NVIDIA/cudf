@@ -5,17 +5,19 @@
 
 #include "common.cuh"
 
+#include <cuda/memory_resource>
+
 namespace cudf::detail {
 
 template <typename Hasher>
 std::size_t hash_join<Hasher>::full_join_size(cudf::table_view const& left,
                                               cuda::stream_ref stream,
-                                              rmm::device_async_resource_ref mr) const
+                                              cuda::mr::device_resource_ref mr) const
 {
   return this->template join_size<join_kind::FULL_JOIN>(left, stream, mr);
 }
 
 template std::size_t hash_join<hash_join_hasher>::full_join_size(
-  cudf::table_view const& left, cuda::stream_ref stream, rmm::device_async_resource_ref mr) const;
+  cudf::table_view const& left, cuda::stream_ref stream, cuda::mr::device_resource_ref mr) const;
 
 }  // namespace cudf::detail

@@ -17,9 +17,8 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/resource_ref.hpp>
-
 #include <cub/device/device_for.cuh>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <cstdint>
@@ -38,7 +37,7 @@ std::unique_ptr<column> murmurhash3_x86_32_impl(
   uint32_t seed,
   Nullate nulls,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   auto output = make_numeric_column(
     data_type(type_to_id<hash_value_type>()), num_rows, mask_state::UNALLOCATED, stream, mr);
@@ -65,7 +64,7 @@ std::unique_ptr<column> murmurhash3_x86_32_impl(
 std::unique_ptr<column> murmurhash3_x86_32(table_view const& input,
                                            uint32_t seed,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cuda::mr::device_resource_ref mr)
 {
   auto const preprocessed_input = cudf::detail::row::hash::preprocessed_table::create(
     input, stream, cudf::get_current_device_resource_ref());
@@ -78,7 +77,7 @@ std::unique_ptr<column> murmurhash3_x86_32(
   size_type num_rows,
   uint32_t seed,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   return murmurhash3_x86_32_impl(input, num_rows, seed, nullate::YES{}, stream, mr);
 }
@@ -88,7 +87,7 @@ std::unique_ptr<column> murmurhash3_x86_32(
 std::unique_ptr<column> murmurhash3_x86_32(table_view const& input,
                                            uint32_t seed,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::murmurhash3_x86_32(input, seed, stream, mr);

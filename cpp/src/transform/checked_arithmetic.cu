@@ -17,6 +17,7 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/std/expected>
 #include <cuda/std/optional>
 
@@ -249,7 +250,7 @@ std::unique_ptr<column> binary_operation_impl(column_view const& lhs,
                                               data_type output_type,
                                               error_policy policy,
                                               cuda::stream_ref stream,
-                                              rmm::device_async_resource_ref mr)
+                                              cuda::mr::device_resource_ref mr)
 {
   validate_binary(lhs, rhs, op, output_type);
 
@@ -278,7 +279,7 @@ std::unique_ptr<column> binary_operation(scalar const& lhs,
                                          data_type output_type,
                                          error_policy policy,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cuda::mr::device_resource_ref mr)
 {
   auto lhs_column =
     make_column_from_scalar(lhs, 1, stream, cudf::get_current_device_resource_ref());
@@ -292,7 +293,7 @@ std::unique_ptr<column> binary_operation(column_view const& lhs,
                                          data_type output_type,
                                          error_policy policy,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cuda::mr::device_resource_ref mr)
 {
   auto rhs_column =
     make_column_from_scalar(rhs, 1, stream, cudf::get_current_device_resource_ref());
@@ -306,7 +307,7 @@ std::unique_ptr<column> binary_operation(column_view const& lhs,
                                          data_type output_type,
                                          error_policy policy,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(lhs.size() == rhs.size(), "Column sizes do not match", std::invalid_argument);
   return binary_operation_impl<false, false>(
@@ -317,7 +318,7 @@ std::unique_ptr<column> unary_operation(column_view const& input,
                                         unary_operator op,
                                         error_policy policy,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(is_checked(op),
                "Error policies are only supported for checked arithmetic operators");

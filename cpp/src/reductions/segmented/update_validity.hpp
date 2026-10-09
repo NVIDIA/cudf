@@ -11,6 +11,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <optional>
@@ -41,7 +42,7 @@ void segmented_update_validity(column& result,
                                null_policy null_handling,
                                std::optional<std::reference_wrapper<scalar const>> init,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr);
+                               cuda::mr::device_resource_ref mr);
 
 }  // namespace detail
 }  // namespace reduction

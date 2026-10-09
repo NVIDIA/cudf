@@ -19,6 +19,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/limits>
 #include <cuda/stream>
 #include <thrust/transform.h>
@@ -77,7 +78,7 @@ std::unique_ptr<column> all_characters_of_type(strings_column_view const& input,
                                                string_character_types types,
                                                string_character_types verify_types,
                                                cuda::stream_ref stream,
-                                               rmm::device_async_resource_ref mr)
+                                               cuda::mr::device_resource_ref mr)
 {
   auto d_strings = column_device_view::create(input.parent(), stream);
 
@@ -166,7 +167,7 @@ std::unique_ptr<column> filter_characters_of_type(strings_column_view const& str
                                                   string_scalar const& replacement,
                                                   string_character_types types_to_keep,
                                                   cuda::stream_ref stream,
-                                                  rmm::device_async_resource_ref mr)
+                                                  cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(replacement.is_valid(stream), "Parameter replacement must be valid");
   if (types_to_remove == ALL_TYPES)
@@ -210,7 +211,7 @@ std::unique_ptr<column> all_characters_of_type(strings_column_view const& input,
                                                string_character_types types,
                                                string_character_types verify_types,
                                                cuda::stream_ref stream,
-                                               rmm::device_async_resource_ref mr)
+                                               cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::all_characters_of_type(input, types, verify_types, stream, mr);
@@ -221,7 +222,7 @@ std::unique_ptr<column> filter_characters_of_type(strings_column_view const& inp
                                                   string_scalar const& replacement,
                                                   string_character_types types_to_keep,
                                                   cuda::stream_ref stream,
-                                                  rmm::device_async_resource_ref mr)
+                                                  cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::filter_characters_of_type(

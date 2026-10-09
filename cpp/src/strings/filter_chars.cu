@@ -21,6 +21,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/std/utility>
 #include <cuda/stream>
 #include <thrust/execution_policy.h>
@@ -108,7 +109,7 @@ std::unique_ptr<column> filter_characters(
   filter_type keep_characters,
   string_scalar const& replacement,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   size_type strings_count = strings.size();
   if (strings_count == 0) return make_empty_column(type_id::STRING);
@@ -149,7 +150,7 @@ std::unique_ptr<column> filter_characters(
   filter_type keep_characters,
   string_scalar const& replacement,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::filter_characters(

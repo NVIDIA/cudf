@@ -12,8 +12,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/resource_ref.hpp>
-
+#include <cuda/memory_resource>
 #include <cuda/std/cstddef>
 #include <cuda/stream>
 
@@ -147,8 +146,8 @@ class roaring_bitmap {
    */
   [[nodiscard]] std::unique_ptr<cudf::column> contains_async(
     cudf::column_view const& keys,
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
+    cuda::stream_ref stream          = cudf::get_default_stream(),
+    cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref()) const;
 
   /**
    * @brief Asynchronously queries the bitmap for membership of each key in a column and stores the

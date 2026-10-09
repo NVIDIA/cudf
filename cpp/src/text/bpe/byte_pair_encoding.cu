@@ -27,6 +27,7 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <thrust/execution_policy.h>
 #include <thrust/merge.h>
@@ -332,7 +333,7 @@ std::unique_ptr<cudf::column> byte_pair_encoding(cudf::strings_column_view const
                                                  bpe_merge_pairs const& merge_pairs,
                                                  cudf::string_scalar const& separator,
                                                  cuda::stream_ref stream,
-                                                 rmm::device_async_resource_ref mr)
+                                                 cuda::mr::device_resource_ref mr)
 {
   if (input.is_empty() || input.chars_size(stream) == 0) {
     return cudf::make_empty_column(cudf::type_id::STRING);
@@ -461,7 +462,7 @@ std::unique_ptr<cudf::column> byte_pair_encoding(cudf::strings_column_view const
                                                  bpe_merge_pairs const& merges_table,
                                                  cudf::string_scalar const& separator,
                                                  cuda::stream_ref stream,
-                                                 rmm::device_async_resource_ref mr)
+                                                 cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::byte_pair_encoding(input, merges_table, separator, stream, mr);

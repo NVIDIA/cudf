@@ -16,6 +16,7 @@
 #include <rmm/device_uvector.hpp>
 
 #include <cuda/buffer>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <memory>
@@ -67,7 +68,7 @@ class sort_merge_join {
             std::unique_ptr<rmm::device_uvector<size_type>>>
   inner_join(table_view const& left,
              cuda::stream_ref stream,
-             rmm::device_async_resource_ref mr) const;
+             cuda::mr::device_resource_ref mr) const;
 
   /**
    * @brief Returns the row indices for a left join.
@@ -81,7 +82,7 @@ class sort_merge_join {
             std::unique_ptr<rmm::device_uvector<size_type>>>
   left_join(table_view const& left,
             cuda::stream_ref stream,
-            rmm::device_async_resource_ref mr) const;
+            cuda::mr::device_resource_ref mr) const;
 
   /**
    * @brief Returns context information about matches between the left and right tables.
@@ -92,7 +93,7 @@ class sort_merge_join {
    * @return A unique_ptr to join_match_context
    */
   std::unique_ptr<join_match_context> inner_join_match_context(
-    table_view const& left, cuda::stream_ref stream, rmm::device_async_resource_ref mr) const;
+    table_view const& left, cuda::stream_ref stream, cuda::mr::device_resource_ref mr) const;
 
   /**
    * @brief Performs an inner join between a partition of the left table and the right table.
@@ -106,7 +107,7 @@ class sort_merge_join {
             std::unique_ptr<rmm::device_uvector<size_type>>>
   partitioned_inner_join(cudf::join_partition_context const& context,
                          cuda::stream_ref stream,
-                         rmm::device_async_resource_ref mr) const;
+                         cuda::mr::device_resource_ref mr) const;
 
  private:
   /**

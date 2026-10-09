@@ -16,6 +16,7 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <thrust/transform.h>
 
@@ -38,7 +39,7 @@ std::unique_ptr<column> create_collect_offsets(size_type input_size,
                                                FollowingIter following_begin,
                                                size_type min_periods,
                                                cuda::stream_ref stream,
-                                               rmm::device_async_resource_ref mr)
+                                               cuda::mr::device_resource_ref mr)
 {
   // Materialize offsets column.
   auto static constexpr size_data_type = data_type{type_to_id<size_type>()};
@@ -143,7 +144,7 @@ std::pair<std::unique_ptr<column>, std::unique_ptr<column>> purge_null_entries(
   column_view const& offsets,
   size_type num_child_nulls,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cuda::mr::device_resource_ref mr);
 
 template <typename PrecedingIter, typename FollowingIter>
 std::unique_ptr<column> rolling_collect_list(column_view const& input,
@@ -153,7 +154,7 @@ std::unique_ptr<column> rolling_collect_list(column_view const& input,
                                              size_type min_periods,
                                              null_policy null_handling,
                                              cuda::stream_ref stream,
-                                             rmm::device_async_resource_ref mr)
+                                             cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(default_outputs.is_empty(),
                "COLLECT_LIST window function does not support default values.");

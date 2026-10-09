@@ -11,6 +11,7 @@
 
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/std/bit>
 #include <cuda/std/cstdint>
 
@@ -25,7 +26,7 @@ struct hash_join<Hasher>::impl {
   impl(cuda::std::uint32_t capacity,
        size_type rows,
        cuda::stream_ref stream,
-       cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+       cuda::mr::any_device_resource mr)
     : _mr(std::move(mr)),
       _slots(capacity, stream, _mr),
       _offsets(static_cast<std::size_t>(rows) + 1, stream, _mr),
@@ -44,7 +45,7 @@ struct hash_join<Hasher>::impl {
 
   csr_ref csr() const { return {_offsets.data(), _values.data()}; }
 
-  cuda::mr::any_resource<cuda::mr::device_accessible> _mr;
+  cuda::mr::any_device_resource _mr;
   rmm::device_uvector<hash_table_slot_type> _slots;
   rmm::device_uvector<size_type> _offsets;
   rmm::device_uvector<size_type> _values;

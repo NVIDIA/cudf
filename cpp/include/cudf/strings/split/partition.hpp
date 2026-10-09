@@ -9,6 +9,8 @@
 #include <cudf/table/table.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
+
 /**
  * @file strings/split/partition.hpp
  * @brief Strings partition APIs
@@ -51,9 +53,9 @@ namespace strings {
  */
 std::unique_ptr<table> partition(
   strings_column_view const& input,
-  string_scalar const& delimiter    = string_scalar(""),
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  string_scalar const& delimiter   = string_scalar(""),
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns a set of 3 columns by splitting each string using the
@@ -85,9 +87,9 @@ std::unique_ptr<table> partition(
  */
 std::unique_ptr<table> rpartition(
   strings_column_view const& input,
-  string_scalar const& delimiter    = string_scalar(""),
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  string_scalar const& delimiter   = string_scalar(""),
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of doxygen group
 }  // namespace strings

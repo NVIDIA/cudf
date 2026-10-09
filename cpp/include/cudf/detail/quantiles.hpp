@@ -9,6 +9,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 namespace cudf {
@@ -23,7 +24,7 @@ std::unique_ptr<column> quantile(column_view const& input,
                                  column_view const& ordered_indices,
                                  bool exact,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr);
+                                 cuda::mr::device_resource_ref mr);
 
 /**
  * @copydoc cudf::quantiles()
@@ -35,16 +36,16 @@ std::unique_ptr<table> quantiles(table_view const& input,
                                  std::vector<order> const& column_order,
                                  std::vector<null_order> const& null_precedence,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr);
+                                 cuda::mr::device_resource_ref mr);
 
 /**
  * @copydoc cudf::percentile_approx(tdigest_column_view const&, column_view const&,
- * rmm::device_async_resource_ref)
+ * cuda::mr::device_resource_ref)
  */
 std::unique_ptr<column> percentile_approx(tdigest::tdigest_column_view const& input,
                                           column_view const& percentiles,
                                           cuda::stream_ref stream,
-                                          rmm::device_async_resource_ref mr);
+                                          cuda::mr::device_resource_ref mr);
 
 }  // namespace detail
 }  // namespace cudf

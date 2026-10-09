@@ -18,6 +18,8 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
+#include <cuda/memory_resource>
+
 namespace cudf {
 namespace dictionary {
 namespace detail {
@@ -25,7 +27,7 @@ namespace detail {
 std::unique_ptr<column> add_keys(dictionary_column_view const& input,
                                  column_view const& new_keys,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(!new_keys.has_nulls(), "Keys must not have nulls", std::invalid_argument);
   auto old_keys = input.keys();
@@ -60,7 +62,7 @@ std::unique_ptr<column> add_keys(dictionary_column_view const& input,
 std::unique_ptr<column> add_keys(dictionary_column_view const& dictionary_column,
                                  column_view const& keys,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::add_keys(dictionary_column, keys, stream, mr);

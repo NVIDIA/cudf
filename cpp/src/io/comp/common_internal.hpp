@@ -10,6 +10,8 @@
 #include <cudf/io/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
+
 #include <optional>
 
 namespace cudf::io::detail {

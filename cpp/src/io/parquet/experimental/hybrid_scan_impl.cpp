@@ -24,6 +24,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <thrust/host_vector.h>
 
 #include <algorithm>
@@ -358,7 +359,7 @@ void hybrid_scan_reader_impl::prepare_materialization(read_columns_mode columns_
                                                       std::size_t num_sources,
                                                       parquet_reader_options const& options,
                                                       cuda::stream_ref stream,
-                                                      rmm::device_async_resource_ref mr)
+                                                      cuda::mr::device_resource_ref mr)
 {
   reset_internal_state();
   initialize_options(options, num_sources, stream, mr);
@@ -502,7 +503,7 @@ std::vector<std::vector<size_type>> hybrid_scan_reader_impl::filter_row_groups_w
 std::unique_ptr<cudf::column> hybrid_scan_reader_impl::build_all_true_row_mask(
   std::span<std::vector<size_type> const> row_group_indices,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(not row_group_indices.empty(), "Empty input row group indices encountered");
 
@@ -513,7 +514,7 @@ std::unique_ptr<cudf::column> hybrid_scan_reader_impl::build_row_mask_with_page_
   std::span<std::vector<size_type> const> row_group_indices,
   parquet_reader_options const& options,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(not row_group_indices.empty(), "Empty input row group indices encountered");
   auto [expr_conv, output_dtypes] = prepare_filter_and_output_types(options);
@@ -732,7 +733,7 @@ table_with_metadata hybrid_scan_reader_impl::materialize_filter_columns(
   use_data_page_mask mask_data_pages,
   parquet_reader_options const& options,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(std::cmp_equal(row_mask.size(), total_rows_in_row_groups(row_group_indices)),
                "Row mask must span across all input row groups");
@@ -769,7 +770,7 @@ table_with_metadata hybrid_scan_reader_impl::materialize_payload_columns(
   use_data_page_mask mask_data_pages,
   parquet_reader_options const& options,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(std::cmp_equal(row_mask.size(), total_rows_in_row_groups(row_group_indices)),
                "Row mask must span across all input row groups");
@@ -802,7 +803,7 @@ table_with_metadata hybrid_scan_reader_impl::materialize_all_columns(
   std::span<cudf::device_span<uint8_t const> const> column_chunk_data,
   parquet_reader_options const& options,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(not row_group_indices.empty(), "Empty input row group indices encountered");
 
@@ -832,7 +833,7 @@ void hybrid_scan_reader_impl::setup_chunking_for_filter_columns(
   std::span<cudf::device_span<uint8_t const> const> column_chunk_data,
   parquet_reader_options const& options,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(options.get_filter().has_value(), "Empty input filter expression encountered");
   CUDF_EXPECTS(std::cmp_equal(row_mask.size(), total_rows_in_row_groups(row_group_indices)),
@@ -890,7 +891,7 @@ void hybrid_scan_reader_impl::setup_chunking_for_payload_columns(
   std::span<cudf::device_span<uint8_t const> const> column_chunk_data,
   parquet_reader_options const& options,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(std::cmp_equal(row_mask.size(), total_rows_in_row_groups(row_group_indices)),
                "Row mask must span across all input row groups");
@@ -926,7 +927,7 @@ void hybrid_scan_reader_impl::setup_chunking_for_payload_columns(
   std::span<cudf::device_span<uint8_t const> const> page_data,
   parquet_reader_options const& options,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(std::cmp_equal(row_mask.size(), total_rows_in_row_groups(row_group_indices)),
                "Row mask must span across all input row groups");
@@ -992,7 +993,7 @@ void hybrid_scan_reader_impl::setup_chunking_for_all_columns(
   std::span<cudf::device_span<uint8_t const> const> column_chunk_data,
   parquet_reader_options const& options,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(not row_group_indices.empty(), "Empty input row group indices encountered");
 
@@ -1167,7 +1168,7 @@ void hybrid_scan_reader_impl::initialize_reader_config(parquet_reader_options co
 void hybrid_scan_reader_impl::initialize_options(parquet_reader_options const& options,
                                                  std::size_t num_sources,
                                                  cuda::stream_ref stream,
-                                                 rmm::device_async_resource_ref mr)
+                                                 cuda::mr::device_resource_ref mr)
 {
   // Binary columns can be read as binary or strings
   _reader_column_schema = options.get_column_schema();

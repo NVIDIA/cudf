@@ -5,12 +5,14 @@
 
 #include "extrema_utils.cuh"
 
+#include <cuda/memory_resource>
+
 namespace cudf::reduction::detail {
 
 std::unique_ptr<scalar> argmin(column_view const& input,
                                data_type dispatch_type,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr)
+                               cuda::mr::device_resource_ref mr)
 {
   return type_dispatcher(
     dispatch_type, simple::detail::arg_minmax_dispatcher<aggregation::ARGMIN>{}, input, stream, mr);

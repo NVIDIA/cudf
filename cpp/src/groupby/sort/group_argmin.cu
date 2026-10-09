@@ -11,6 +11,7 @@
 
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <thrust/gather.h>
 
@@ -22,7 +23,7 @@ std::unique_ptr<column> group_argmin(column_view const& values,
                                      cudf::device_span<size_type const> group_labels,
                                      column_view const& key_sort_order,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cuda::mr::device_resource_ref mr)
 {
   auto dispatch_type = cudf::is_dictionary(values.type())
                          ? dictionary_column_view(values).keys().type()

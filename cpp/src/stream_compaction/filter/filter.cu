@@ -12,6 +12,7 @@
 #include <cudf/stream_compaction.hpp>
 #include <cudf/transform.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <jit/helpers.hpp>
@@ -30,7 +31,7 @@ std::unique_ptr<table> filter(std::string const& predicate_udf,
                               table_view const& filter_table,
                               output_nullability predicate_nullability,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(filter_table.num_columns() > 0,
                "At least one column must be provided to filter.",
@@ -74,7 +75,7 @@ std::unique_ptr<table> filter(table_view const& predicate_table,
                               ast::expression const& predicate_expr,
                               table_view const& filter_table,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cuda::mr::device_resource_ref mr)
 {
   auto args = cudf::detail::row_ir::ast_converter::filter(cudf::detail::row_ir::target::CUDA,
                                                           predicate_expr,
@@ -104,7 +105,7 @@ std::vector<std::unique_ptr<column>> filter_extended(
   null_aware is_null_aware,
   output_nullability predicate_nullability,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   auto table = detail::filter(predicate_udf,
@@ -127,7 +128,7 @@ std::vector<std::unique_ptr<column>> filter(std::vector<column_view> const& pred
                                             null_aware is_null_aware,
                                             output_nullability predicate_nullability,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cuda::mr::device_resource_ref mr)
 {
   // legacy behavior was to detect which column were scalars based on their sizes
   std::vector<std::variant<column_view, scalar_column_view>> inputs;

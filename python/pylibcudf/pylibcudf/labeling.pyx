@@ -11,6 +11,7 @@ from pylibcudf.libcudf.labeling cimport inclusive
 from pylibcudf.libcudf.labeling import inclusive as Inclusive  # no-cython-lint
 
 from rmm.pylibrmm.stream cimport Stream
+from pylibcudf.libcudf.utilities.memory_resource cimport to_device_resource_ref
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
 from .column cimport Column
@@ -75,7 +76,7 @@ cpdef Column label_bins(
             c_right_edges,
             right_inclusive,
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)

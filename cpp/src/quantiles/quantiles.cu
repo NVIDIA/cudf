@@ -19,6 +19,7 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <memory>
@@ -33,7 +34,7 @@ std::unique_ptr<table> quantiles(table_view const& input,
                                  std::vector<double> const& q,
                                  interpolation interp,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cuda::mr::device_resource_ref mr)
 {
   auto quantile_idx_lookup = cuda::proclaim_return_type<size_type>(
     [sortmap, interp, size = input.num_rows()] __device__(double q) {
@@ -61,7 +62,7 @@ std::unique_ptr<table> quantiles(table_view const& input,
                                  std::vector<order> const& column_order,
                                  std::vector<null_order> const& null_precedence,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cuda::mr::device_resource_ref mr)
 {
   if (q.empty()) { return empty_like(input); }
 
@@ -90,7 +91,7 @@ std::unique_ptr<table> quantiles(table_view const& input,
                                  std::vector<order> const& column_order,
                                  std::vector<null_order> const& null_precedence,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::quantiles(

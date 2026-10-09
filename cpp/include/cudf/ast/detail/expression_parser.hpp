@@ -13,6 +13,7 @@
 #include <cudf/utilities/span.hpp>
 
 #include <cuda/buffer>
+#include <cuda/memory_resource>
 
 #include <cstddef>
 #include <functional>
@@ -110,7 +111,7 @@ class expression_parser {
                     std::optional<std::reference_wrapper<cudf::table_view const>> right,
                     bool has_nulls,
                     cuda::stream_ref stream,
-                    rmm::device_async_resource_ref mr);
+                    cuda::mr::device_resource_ref mr);
 
   /**
    * @brief Construct a new expression_parser object
@@ -125,7 +126,7 @@ class expression_parser {
                     cudf::table_view const& table,
                     bool has_nulls,
                     cuda::stream_ref stream,
-                    rmm::device_async_resource_ref mr);
+                    cuda::mr::device_resource_ref mr);
 
   /**
    * @brief Get the root data type of the abstract syntax tree.
@@ -243,7 +244,7 @@ class expression_parser {
     alignment = std::max(alignment, static_cast<cudf::size_type>(alignof(T)));
   }
 
-  void move_to_device(cuda::stream_ref stream, rmm::device_async_resource_ref mr);
+  void move_to_device(cuda::stream_ref stream, cuda::mr::device_resource_ref mr);
 
   /**
    * @brief Helper function for recursive traversal of expressions.

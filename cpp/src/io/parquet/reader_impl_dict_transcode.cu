@@ -22,6 +22,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
 #include <thrust/for_each.h>
@@ -149,7 +150,7 @@ void update_from_chunk(column_eligibility& e, ColumnChunkDesc const& chunk)
   string_index_pair const* begin,
   size_type entry_count,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   if (entry_count <= 0) { return cudf::make_empty_column(data_type{type_id::STRING}); }
   return cudf::strings::detail::make_strings_column(begin, begin + entry_count, stream, mr);

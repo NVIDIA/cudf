@@ -10,6 +10,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 namespace cudf {
@@ -17,14 +18,14 @@ namespace strings::detail {
 
 /**
  * @copydoc cudf::strings::replace(strings_column_view const&, string_scalar const&,
- * string_scalar const&, int32_t, cuda::stream_ref, rmm::device_async_resource_ref)
+ * string_scalar const&, int32_t, cuda::stream_ref, cuda::mr::device_resource_ref)
  */
 std::unique_ptr<column> replace(strings_column_view const& strings,
                                 string_scalar const& target,
                                 string_scalar const& repl,
                                 int32_t maxrepl,
                                 cuda::stream_ref stream,
-                                rmm::device_async_resource_ref mr);
+                                cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Replaces any null string entries with the given string.
@@ -47,18 +48,18 @@ std::unique_ptr<column> replace(strings_column_view const& strings,
 std::unique_ptr<column> replace_nulls(strings_column_view const& strings,
                                       string_scalar const& repl,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr);
+                                      cuda::mr::device_resource_ref mr);
 
 /**
  * @copydoc cudf::strings::replace_slice(strings_column_view const&, string_scalar const&,
- * size_type, size_type, cuda::stream_ref, rmm::device_async_resource_ref)
+ * size_type, size_type, cuda::stream_ref, cuda::mr::device_resource_ref)
  */
 std::unique_ptr<column> replace_slice(strings_column_view const& strings,
                                       string_scalar const& repl,
                                       size_type start,
                                       size_type stop,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr);
+                                      cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Return a copy of `input` replacing any `values_to_replace[i]`
@@ -76,7 +77,7 @@ std::unique_ptr<cudf::column> find_and_replace_all(
   cudf::strings_column_view const& values_to_replace,
   cudf::strings_column_view const& replacement_values,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cuda::mr::device_resource_ref mr);
 
 }  // namespace strings::detail
 }  // namespace cudf

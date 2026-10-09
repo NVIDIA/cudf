@@ -28,6 +28,7 @@
 #include <cudf/utilities/type_checks.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <memory>
@@ -53,7 +54,7 @@ groupby::groupby(table_view const& keys,
 std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> groupby::dispatch_aggregation(
   std::span<aggregation_request const> requests,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   // If sort groupby has been called once on this groupby object, then
   // always use sort groupby from now on. Because once keys are sorted,
@@ -88,7 +89,7 @@ struct empty_column_constructor {
   column_view values;
   aggregation const& agg;
   cuda::stream_ref stream;
-  rmm::device_async_resource_ref mr;
+  cuda::mr::device_resource_ref mr;
 
   template <typename ValuesType, aggregation::Kind k>
   std::unique_ptr<cudf::column> operator()() const
@@ -164,7 +165,7 @@ struct empty_column_constructor {
 template <typename RequestType>
 auto empty_results(std::span<RequestType const> requests,
                    cuda::stream_ref stream,
-                   rmm::device_async_resource_ref mr)
+                   cuda::mr::device_resource_ref mr)
 {
   std::vector<aggregation_result> empty_results;
 
@@ -228,7 +229,7 @@ void verify_valid_requests(std::span<RequestType const> requests)
 std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> groupby::aggregate(
   std::span<aggregation_request const> requests,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(
@@ -246,9 +247,7 @@ std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> groupby::aggr
 
 // Compute scan requests
 std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> groupby::scan(
-  std::span<scan_request const> requests,
-  cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  std::span<scan_request const> requests, cuda::stream_ref stream, cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(
@@ -268,7 +267,7 @@ std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> groupby::scan
 
 groupby::groups groupby::get_groups(table_view values,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   auto grouped_keys = helper().sorted_keys(stream, mr);
@@ -294,7 +293,7 @@ std::pair<std::unique_ptr<table>, std::unique_ptr<table>> groupby::replace_nulls
   table_view const& values,
   std::span<cudf::replace_policy const> replace_policies,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(_keys.num_rows() == values.num_rows(),
@@ -338,7 +337,7 @@ std::pair<std::unique_ptr<table>, std::unique_ptr<table>> groupby::shift(
   std::span<size_type const> offsets,
   std::vector<std::reference_wrapper<scalar const>> const& fill_values,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(values.num_columns() == static_cast<size_type>(fill_values.size()),

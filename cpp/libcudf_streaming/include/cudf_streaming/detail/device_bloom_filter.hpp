@@ -5,11 +5,12 @@
 
 #pragma once
 #include <cudf/table/table_view.hpp>
+#include <cudf/types.hpp>
 
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
-#include <rmm/resource_ref.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <cstddef>
@@ -64,7 +65,7 @@ struct device_bloom_filter {
    */
   static std::unique_ptr<rmm::device_buffer> storage(std::size_t filter_size,
                                                      cuda::stream_ref stream,
-                                                     rmm::device_async_resource_ref mr);
+                                                     cuda::mr::device_resource_ref mr);
 
   /**
    * @brief Find the largest valid filter size no greater than a byte count.
@@ -90,7 +91,7 @@ struct device_bloom_filter {
    */
   void add(cudf::table_view const& values_to_hash,
            cuda::stream_ref stream,
-           rmm::device_async_resource_ref mr);
+           cuda::mr::device_resource_ref mr);
 
   /**
    * @brief Merge two filters, computing their union.
@@ -113,7 +114,7 @@ struct device_bloom_filter {
    */
   [[nodiscard]] rmm::device_uvector<bool> contains(cudf::table_view const& values,
                                                    cuda::stream_ref stream,
-                                                   rmm::device_async_resource_ref mr) const;
+                                                   cuda::mr::device_resource_ref mr) const;
 
   /**
    * @brief @return Pointer to the underlying storage.

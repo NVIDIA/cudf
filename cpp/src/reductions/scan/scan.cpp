@@ -8,6 +8,8 @@
 #include <cudf/detail/scan.hpp>
 #include <cudf/reduction.hpp>
 
+#include <cuda/memory_resource>
+
 namespace cudf {
 namespace detail {
 namespace {
@@ -16,7 +18,7 @@ std::unique_ptr<column> scan(column_view const& input,
                              scan_type inclusive,
                              null_policy null_handling,
                              cuda::stream_ref stream,
-                             rmm::device_async_resource_ref mr)
+                             cuda::mr::device_resource_ref mr)
 {
   if (agg.kind == aggregation::RANK) {
     CUDF_EXPECTS(inclusive == scan_type::INCLUSIVE,
@@ -47,7 +49,7 @@ std::unique_ptr<column> scan(column_view const& input,
                              scan_type inclusive,
                              null_policy null_handling,
                              cuda::stream_ref stream,
-                             rmm::device_async_resource_ref mr)
+                             cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::scan(input, agg, inclusive, null_handling, stream, mr);

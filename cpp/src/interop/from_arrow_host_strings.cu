@@ -28,6 +28,7 @@
 
 #include <cuda/buffer>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <thrust/transform.h>
 
@@ -49,7 +50,7 @@ std::unique_ptr<column> from_arrow_string(ArrowSchemaView const* schema,
                                           std::unique_ptr<cuda::device_buffer<std::byte>>&& mask,
                                           size_type null_count,
                                           cuda::stream_ref stream,
-                                          rmm::device_async_resource_ref mr)
+                                          cuda::mr::device_resource_ref mr)
 {
   auto [offsets_column, offset, char_data_length] = get_offsets_column(schema, input, stream, mr);
 
@@ -71,7 +72,7 @@ std::unique_ptr<column> from_arrow_stringview(
   ArrowArray const* input,
   std::unique_ptr<cuda::device_buffer<std::byte>>&& mask,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   ArrowArrayView view;
   NANOARROW_THROW_NOT_OK(ArrowArrayViewInitFromSchema(&view, schema->schema, nullptr));
@@ -136,7 +137,7 @@ std::unique_ptr<column> string_column_from_arrow_host(
   std::unique_ptr<cuda::device_buffer<std::byte>>&& mask,
   size_type null_count,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   return schema->type == NANOARROW_TYPE_STRING_VIEW
            ? from_arrow_stringview(schema, input, std::move(mask), stream, mr)

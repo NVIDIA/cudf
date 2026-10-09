@@ -14,6 +14,7 @@
 #include <cudf/structs/structs_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <algorithm>
@@ -29,7 +30,7 @@ namespace detail {
  */
 std::unique_ptr<column> concatenate(host_span<column_view const> columns,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cuda::mr::device_resource_ref mr)
 {
   // get ordered children
   auto ordered_children = extract_ordered_struct_children(columns, stream);

@@ -15,6 +15,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <thrust/uninitialized_fill.h>
 
 namespace cudf {
@@ -26,7 +27,7 @@ struct column_from_scalar_dispatch {
   std::unique_ptr<cudf::column> operator()(scalar const& value,
                                            size_type size,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr) const
+                                           cuda::mr::device_resource_ref mr) const
   {
     if (size == 0) return make_empty_column(value.type());
     if (!value.is_valid(stream))
@@ -44,7 +45,7 @@ std::unique_ptr<cudf::column> column_from_scalar_dispatch::operator()<cudf::stri
   scalar const& value,
   size_type size,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr) const
+  cuda::mr::device_resource_ref mr) const
 {
   if (size == 0) return make_empty_column(value.type());
 
@@ -79,7 +80,7 @@ std::unique_ptr<cudf::column> column_from_scalar_dispatch::operator()<cudf::stri
 
 template <>
 std::unique_ptr<cudf::column> column_from_scalar_dispatch::operator()<cudf::dictionary32>(
-  scalar const&, size_type, cuda::stream_ref, rmm::device_async_resource_ref) const
+  scalar const&, size_type, cuda::stream_ref, cuda::mr::device_resource_ref) const
 {
   CUDF_FAIL("dictionary not supported when creating from scalar");
 }
@@ -89,7 +90,7 @@ std::unique_ptr<cudf::column> column_from_scalar_dispatch::operator()<cudf::list
   scalar const& value,
   size_type size,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr) const
+  cuda::mr::device_resource_ref mr) const
 {
   auto lv = static_cast<list_scalar const*>(&value);
   return lists::detail::make_lists_column_from_scalar(*lv, size, stream, mr);
@@ -100,7 +101,7 @@ std::unique_ptr<cudf::column> column_from_scalar_dispatch::operator()<cudf::stru
   scalar const& value,
   size_type size,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr) const
+  cuda::mr::device_resource_ref mr) const
 {
   CUDF_EXPECTS(size != 0, "0-length struct column is unsupported.");
   auto& ss  = static_cast<scalar_type_t<cudf::struct_view> const&>(value);
@@ -124,7 +125,7 @@ std::unique_ptr<cudf::column> column_from_scalar_dispatch::operator()<cudf::stru
 std::unique_ptr<column> make_column_from_scalar(scalar const& s,
                                                 size_type size,
                                                 cuda::stream_ref stream,
-                                                rmm::device_async_resource_ref mr)
+                                                cuda::mr::device_resource_ref mr)
 {
   return type_dispatcher(s.type(), column_from_scalar_dispatch{}, s, size, stream, mr);
 }

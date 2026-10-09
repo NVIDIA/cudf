@@ -10,6 +10,8 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
+
 /**
  * @file
  * @brief APIs for extracting an element at a given position from each row of a list column
@@ -59,8 +61,8 @@ namespace lists {
 std::unique_ptr<column> extract_list_element(
   lists_column_view const& lists_column,
   size_type index,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Create a column where each row is a single element from the corresponding sublist
@@ -100,8 +102,8 @@ std::unique_ptr<column> extract_list_element(
 std::unique_ptr<column> extract_list_element(
   lists_column_view const& lists_column,
   column_view const& indices,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 }  // namespace lists

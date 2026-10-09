@@ -10,6 +10,8 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
+
 namespace CUDF_EXPORT nvtext {
 /**
  * @addtogroup nvtext_tokenize
@@ -37,8 +39,8 @@ struct wordpiece_vocabulary {
    * @param mr Device memory resource used to allocate the returned column's device memory
    */
   wordpiece_vocabulary(cudf::strings_column_view const& input,
-                       cuda::stream_ref stream           = cudf::get_default_stream(),
-                       rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+                       cuda::stream_ref stream          = cudf::get_default_stream(),
+                       cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
   ~wordpiece_vocabulary();
 
   struct wordpiece_vocabulary_impl;
@@ -60,8 +62,8 @@ struct wordpiece_vocabulary {
  */
 std::unique_ptr<wordpiece_vocabulary> load_wordpiece_vocabulary(
   cudf::strings_column_view const& input,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns the token ids for the input string a wordpiece tokenizer
@@ -108,7 +110,7 @@ std::unique_ptr<cudf::column> wordpiece_tokenize(
   wordpiece_vocabulary const& vocabulary,
   cudf::size_type max_words_per_row = 0,
   cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::mr::device_resource_ref mr  = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of tokenize group
 }  // namespace CUDF_EXPORT nvtext

@@ -14,6 +14,8 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/memory_resource>
+
 namespace cudf {
 namespace groupby {
 namespace detail {
@@ -31,7 +33,7 @@ std::unique_ptr<column> group_replace_nulls(cudf::column_view const& grouped_val
                                             device_span<size_type const> group_labels,
                                             cudf::replace_policy replace_policy,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr);
+                                            cuda::mr::device_resource_ref mr);
 
 }  // namespace detail
 }  // namespace groupby

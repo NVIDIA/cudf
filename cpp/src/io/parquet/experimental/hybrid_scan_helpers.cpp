@@ -14,6 +14,7 @@
 #include <cudf/logger.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 
 #include <algorithm>
 #include <cstdint>
@@ -257,7 +258,7 @@ std::size_t aggregate_reader_metadata::total_rows_in_row_groups(
 std::unique_ptr<cudf::column> aggregate_reader_metadata::build_all_true_row_mask(
   std::span<std::vector<size_type> const> row_group_indices,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr) const
+  cuda::mr::device_resource_ref mr) const
 {
   CUDF_FUNC_RANGE();
   auto const num_rows = total_rows_in_row_groups(row_group_indices);

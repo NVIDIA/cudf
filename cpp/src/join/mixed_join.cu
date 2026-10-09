@@ -20,6 +20,7 @@
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <thrust/uninitialized_fill.h>
 
@@ -44,7 +45,7 @@ equality_join_indices(cudf::hash_join const& hash_joiner,
                       table_view const& left_equality,
                       join_kind join_type,
                       cuda::stream_ref stream,
-                      rmm::device_async_resource_ref mr)
+                      cuda::mr::device_resource_ref mr)
 {
   switch (join_type) {
     case join_kind::INNER_JOIN: return hash_joiner.inner_join(left_equality, {}, stream, mr);
@@ -67,7 +68,7 @@ mixed_join(table_view const& left_equality,
            join_kind join_type,
            output_size_data_type const& output_size_data,
            cuda::stream_ref stream,
-           rmm::device_async_resource_ref mr)
+           cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS((join_type != join_kind::LEFT_SEMI_JOIN) && (join_type != join_kind::LEFT_ANTI_JOIN),
                "Left semi and anti joins should use mixed_join_semi.");
@@ -139,7 +140,7 @@ compute_mixed_join_output_size(table_view const& left_equality,
                                null_equality compare_nulls,
                                join_kind join_type,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr)
+                               cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(join_type != join_kind::FULL_JOIN,
                "Size estimation is not available for full joins.");
@@ -195,7 +196,7 @@ mixed_inner_join(
   null_equality compare_nulls,
   std::optional<std::pair<std::size_t, device_span<size_type const>>> const output_size_data,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::mixed_join(left_equality,
@@ -218,7 +219,7 @@ std::pair<std::size_t, std::unique_ptr<rmm::device_uvector<size_type>>> mixed_in
   ast::expression const& binary_predicate,
   null_equality compare_nulls,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::compute_mixed_join_output_size(left_equality,
@@ -242,7 +243,7 @@ mixed_left_join(table_view const& left_equality,
                 null_equality compare_nulls,
                 output_size_data_type const output_size_data,
                 cuda::stream_ref stream,
-                rmm::device_async_resource_ref mr)
+                cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::mixed_join(left_equality,
@@ -265,7 +266,7 @@ std::pair<std::size_t, std::unique_ptr<rmm::device_uvector<size_type>>> mixed_le
   ast::expression const& binary_predicate,
   null_equality compare_nulls,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::compute_mixed_join_output_size(left_equality,
@@ -289,7 +290,7 @@ mixed_full_join(table_view const& left_equality,
                 null_equality compare_nulls,
                 output_size_data_type const output_size_data,
                 cuda::stream_ref stream,
-                rmm::device_async_resource_ref mr)
+                cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::mixed_join(left_equality,

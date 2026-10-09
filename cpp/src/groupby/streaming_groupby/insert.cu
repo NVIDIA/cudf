@@ -5,6 +5,7 @@
 
 #include "insert.cuh"
 
+#include <cuda/memory_resource>
 #include <thrust/transform.h>
 
 namespace cudf::groupby {
@@ -16,7 +17,7 @@ void compute_batch_hashes(
   hash_value_type* batch_hash_cache,
   size_type batch_size,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   auto const batch_hasher_obj = cudf::detail::row::hash::row_hasher{preprocessed_batch};
   auto const d_batch_hash     = batch_hasher_obj.device_hasher(has_null);

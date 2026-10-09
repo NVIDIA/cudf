@@ -13,6 +13,7 @@ from pylibcudf.libcudf.column.column_factories cimport (
     make_empty_lists_column as cpp_make_empty_lists_column,
 )
 from pylibcudf.libcudf.types cimport mask_state, size_type
+from pylibcudf.libcudf.utilities.memory_resource cimport to_device_resource_ref
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
@@ -117,7 +118,7 @@ cpdef Column make_numeric_column(
             size,
             state,
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
 
     return Column.from_libcudf(move(result), _stream, mr)
@@ -152,7 +153,7 @@ cpdef Column make_fixed_point_column(
             size,
             state,
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
 
     return Column.from_libcudf(move(result), _stream, mr)
@@ -188,7 +189,7 @@ cpdef Column make_timestamp_column(
             size,
             state,
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
 
     return Column.from_libcudf(move(result), _stream, mr)
@@ -224,7 +225,7 @@ cpdef Column make_duration_column(
             size,
             state,
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
 
     return Column.from_libcudf(move(result), _stream, mr)
@@ -260,7 +261,7 @@ cpdef Column make_fixed_width_column(
             size,
             state,
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
 
     return Column.from_libcudf(move(result), _stream, mr)

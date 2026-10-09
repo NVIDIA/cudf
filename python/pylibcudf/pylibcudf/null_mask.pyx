@@ -12,6 +12,7 @@ from pylibcudf.libcudf.types cimport mask_state, size_type, bitmask_type
 from pylibcudf.libcudf.utilities.device_buffer cimport byte, device_buffer
 
 from rmm.pylibrmm.stream cimport Stream
+from pylibcudf.libcudf.utilities.memory_resource cimport to_device_resource_ref
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
 from pylibcudf.libcudf.types import mask_state as MaskState  # no-cython-lint
@@ -69,7 +70,7 @@ cpdef gpumemoryview copy_bitmask(
 
     cdef column_view c_col = col.view()
     with nogil:
-        db = cpp_null_mask.copy_bitmask_to_unique_ptr(c_col, _cs, mr.get_mr())
+        db = cpp_null_mask.copy_bitmask_to_unique_ptr(c_col, _cs, to_device_resource_ref(mr.get_mr()))
 
     return _from_cuda_device_buffer(move(db), _stream, mr)
 
@@ -121,7 +122,7 @@ cpdef gpumemoryview copy_bitmask_from_bitmask(
             begin_bit,
             end_bit,
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
 
     return _from_cuda_device_buffer(move(db), _stream, mr)
@@ -184,7 +185,7 @@ cpdef gpumemoryview create_null_mask(
 
     with nogil:
         db = cpp_null_mask.create_null_mask_unique_ptr(
-            size, state, _cs, mr.get_mr()
+            size, state, _cs, to_device_resource_ref(mr.get_mr())
         )
 
     return _from_cuda_device_buffer(move(db), _stream, mr)
@@ -222,7 +223,7 @@ cpdef tuple[gpumemoryview, int] bitmask_and(
     cdef table_view c_input = c_table.view()
     with nogil:
         c_result = cpp_null_mask.bitmask_and_unique_ptr(
-            c_input, _cs, mr.get_mr()
+            c_input, _cs, to_device_resource_ref(mr.get_mr())
         )
 
     return (
@@ -263,7 +264,7 @@ cpdef tuple[gpumemoryview, int] bitmask_or(
     cdef table_view c_input = c_table.view()
     with nogil:
         c_result = cpp_null_mask.bitmask_or_unique_ptr(
-            c_input, _cs, mr.get_mr()
+            c_input, _cs, to_device_resource_ref(mr.get_mr())
         )
 
     return (

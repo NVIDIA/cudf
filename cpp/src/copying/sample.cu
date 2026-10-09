@@ -17,6 +17,7 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/random>
 #include <cuda/stream>
 #include <thrust/shuffle.h>
@@ -29,7 +30,7 @@ std::unique_ptr<table> sample(table_view const& input,
                               sample_with_replacement replacement,
                               int64_t const seed,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(n >= 0, "expected number of samples should be non-negative", std::invalid_argument);
   auto const num_rows = input.num_rows();
@@ -89,7 +90,7 @@ std::unique_ptr<table> sample(table_view const& input,
                               sample_with_replacement replacement,
                               int64_t const seed,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::sample(input, n, replacement, seed, stream, mr);

@@ -24,6 +24,7 @@
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 
 #include <functional>
 #include <stdexcept>
@@ -413,7 +414,7 @@ auto replace_child(column_view const& input,
                    column_view const& new_child,
                    std::vector<std::unique_ptr<column>>& out_cols,
                    cuda::stream_ref stream,
-                   rmm::device_async_resource_ref mr)
+                   cuda::mr::device_resource_ref mr)
 {
   auto const make_output = [&input](auto const& offsets_cv, auto const& child_cv) {
     return column_view{data_type{type_id::LIST},
@@ -462,7 +463,7 @@ auto replace_child(column_view const& input,
 auto compute_ranks(column_view const& input,
                    null_order column_null_order,
                    cuda::stream_ref stream,
-                   rmm::device_async_resource_ref mr)
+                   cuda::mr::device_resource_ref mr)
 {
   return cudf::detail::rank(input,
                             rank_method::DENSE,
@@ -495,7 +496,7 @@ std::pair<column_view, std::vector<std::unique_ptr<column>>> transform_lists_of_
   column_view const& input,
   null_order column_null_order,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   std::vector<std::unique_ptr<column>> out_cols;
 
@@ -562,7 +563,7 @@ transform_lists_of_structs(column_view const& lhs,
                            column_view const& rhs,
                            null_order column_null_order,
                            cuda::stream_ref stream,
-                           rmm::device_async_resource_ref mr)
+                           cuda::mr::device_resource_ref mr)
 {
   std::vector<std::unique_ptr<column>> out_cols_lhs;
   std::vector<std::unique_ptr<column>> out_cols_rhs;
@@ -845,7 +846,7 @@ two_table_comparator::two_table_comparator(table_view const& left,
 namespace equality {
 
 std::shared_ptr<preprocessed_table> preprocessed_table::create(
-  table_view const& t, cuda::stream_ref stream, rmm::device_async_resource_ref temp_mr)
+  table_view const& t, cuda::stream_ref stream, cuda::mr::device_resource_ref temp_mr)
 {
   check_eq_compatibility(t);
 
@@ -862,7 +863,7 @@ std::shared_ptr<preprocessed_table> preprocessed_table::create(
 two_table_comparator::two_table_comparator(table_view const& left,
                                            table_view const& right,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref temp_mr)
+                                           cuda::mr::device_resource_ref temp_mr)
   : d_left_table{preprocessed_table::create(left, stream, temp_mr)},
     d_right_table{preprocessed_table::create(right, stream, temp_mr)}
 {

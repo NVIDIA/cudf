@@ -42,7 +42,7 @@ std::unique_ptr<table> create_results_table(size_type output_size,
                                             host_span<aggregation::Kind const> agg_kinds,
                                             std::span<int8_t const> is_agg_intermediate,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr);
+                                            cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Perform some final computation for the aggregation results such as null count and move

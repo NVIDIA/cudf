@@ -17,6 +17,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 namespace cudf {
@@ -44,7 +45,7 @@ template <typename ReplacementIter>
 std::unique_ptr<column> replace_indices(column_view const& input,
                                         ReplacementIter replacement_iter,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cuda::mr::device_resource_ref mr)
 {
   auto const input_view = column_device_view::create(input, stream);
   auto const d_input    = *input_view;
@@ -66,12 +67,12 @@ std::unique_ptr<column> replace_indices(column_view const& input,
 
 /**
  * @copydoc cudf::dictionary::detail::replace_nulls(cudf::column_view const&,cudf::column_view
- * const&, cuda::stream_ref, rmm::device_async_resource_ref)
+ * const&, cuda::stream_ref, cuda::mr::device_resource_ref)
  */
 std::unique_ptr<column> replace_nulls(dictionary_column_view const& input,
                                       dictionary_column_view const& replacement,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cuda::mr::device_resource_ref mr)
 {
   if (input.is_empty()) { return cudf::empty_like(input.parent()); }
   if (!input.has_nulls()) { return std::make_unique<cudf::column>(input.parent(), stream, mr); }
@@ -101,12 +102,12 @@ std::unique_ptr<column> replace_nulls(dictionary_column_view const& input,
 
 /**
  * @copydoc cudf::dictionary::detail::replace_nulls(cudf::column_view const&,cudf::scalar
- * const&, cuda::stream_ref, rmm::device_async_resource_ref)
+ * const&, cuda::stream_ref, cuda::mr::device_resource_ref)
  */
 std::unique_ptr<column> replace_nulls(dictionary_column_view const& input,
                                       scalar const& replacement,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cuda::mr::device_resource_ref mr)
 {
   if (input.is_empty()) { return cudf::empty_like(input.parent()); }
   if (!input.has_nulls() || !replacement.is_valid(stream)) {

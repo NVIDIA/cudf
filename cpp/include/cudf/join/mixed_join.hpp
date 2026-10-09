@@ -15,6 +15,7 @@
 
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <optional>
@@ -98,7 +99,7 @@ mixed_inner_join(table_view const& left_equality,
                  null_equality compare_nulls            = null_equality::EQUAL,
                  output_size_data_type output_size_data = {},
                  cuda::stream_ref stream                = cudf::get_default_stream(),
-                 rmm::device_async_resource_ref mr      = cudf::get_current_device_resource_ref());
+                 cuda::mr::device_resource_ref mr       = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns a pair of row index vectors corresponding to all pairs of
@@ -159,7 +160,7 @@ mixed_left_join(table_view const& left_equality,
                 null_equality compare_nulls            = null_equality::EQUAL,
                 output_size_data_type output_size_data = {},
                 cuda::stream_ref stream                = cudf::get_default_stream(),
-                rmm::device_async_resource_ref mr      = cudf::get_current_device_resource_ref());
+                cuda::mr::device_resource_ref mr       = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns a pair of row index vectors corresponding to all pairs of
@@ -220,7 +221,7 @@ mixed_full_join(table_view const& left_equality,
                 null_equality compare_nulls            = null_equality::EQUAL,
                 output_size_data_type output_size_data = {},
                 cuda::stream_ref stream                = cudf::get_default_stream(),
-                rmm::device_async_resource_ref mr      = cudf::get_current_device_resource_ref());
+                cuda::mr::device_resource_ref mr       = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns an index vector corresponding to all rows in the left tables
@@ -265,9 +266,9 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_left_semi_join(
   table_view const& left_conditional,
   table_view const& right_conditional,
   ast::expression const& binary_predicate,
-  null_equality compare_nulls       = null_equality::EQUAL,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  null_equality compare_nulls      = null_equality::EQUAL,
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns an index vector corresponding to all rows in the left tables
@@ -313,9 +314,9 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_left_anti_join(
   table_view const& left_conditional,
   table_view const& right_conditional,
   ast::expression const& binary_predicate,
-  null_equality compare_nulls       = null_equality::EQUAL,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  null_equality compare_nulls      = null_equality::EQUAL,
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns the exact number of matches (rows) when performing a
@@ -355,9 +356,9 @@ std::pair<std::size_t, std::unique_ptr<rmm::device_uvector<size_type>>> mixed_in
   table_view const& left_conditional,
   table_view const& right_conditional,
   ast::expression const& binary_predicate,
-  null_equality compare_nulls       = null_equality::EQUAL,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  null_equality compare_nulls      = null_equality::EQUAL,
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns the exact number of matches (rows) when performing a
@@ -397,9 +398,9 @@ std::pair<std::size_t, std::unique_ptr<rmm::device_uvector<size_type>>> mixed_le
   table_view const& left_conditional,
   table_view const& right_conditional,
   ast::expression const& binary_predicate,
-  null_equality compare_nulls       = null_equality::EQUAL,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  null_equality compare_nulls      = null_equality::EQUAL,
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 

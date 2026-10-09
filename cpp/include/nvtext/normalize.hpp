@@ -10,6 +10,7 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 //! NVText APIs
@@ -46,8 +47,8 @@ namespace CUDF_EXPORT nvtext {
  */
 std::unique_ptr<cudf::column> normalize_spaces(
   cudf::strings_column_view const& input,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Flags providing more control of nvtext::normalize_characters output
@@ -142,8 +143,8 @@ struct character_normalizer {
    */
   character_normalizer(bool do_lower_case,
                        cudf::strings_column_view const& special_tokens,
-                       cuda::stream_ref stream           = cudf::get_default_stream(),
-                       rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+                       cuda::stream_ref stream          = cudf::get_default_stream(),
+                       cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
   ~character_normalizer();
 
   struct character_normalizer_impl;
@@ -172,7 +173,7 @@ std::unique_ptr<character_normalizer> create_character_normalizer(
   cudf::strings_column_view const& special_tokens = cudf::strings_column_view(cudf::column_view{
     cudf::data_type{cudf::type_id::STRING}, 0, nullptr, nullptr, 0}),
   cuda::stream_ref stream                         = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr               = cudf::get_current_device_resource_ref());
+  cuda::mr::device_resource_ref mr                = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Normalizes the text in input strings column
@@ -202,8 +203,8 @@ std::unique_ptr<character_normalizer> create_character_normalizer(
 std::unique_ptr<cudf::column> normalize_characters(
   cudf::strings_column_view const& input,
   character_normalizer const& normalizer,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Normalizes the text in input strings column with explicit behavioral flags.
@@ -237,8 +238,8 @@ std::unique_ptr<cudf::column> normalize_characters(
   cudf::strings_column_view const& input,
   character_normalizer const& normalizer,
   normalize_flags flags,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 }  // namespace CUDF_EXPORT nvtext

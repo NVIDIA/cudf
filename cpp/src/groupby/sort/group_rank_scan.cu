@@ -18,6 +18,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/functional>
 #include <cuda/std/iterator>
 #include <cuda/std/limits>
@@ -91,7 +92,7 @@ std::unique_ptr<column> rank_generator(column_view const& grouped_values,
                                        scan_operator scan_op,
                                        bool has_nulls,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cuda::mr::device_resource_ref mr)
 {
   auto const grouped_values_view = table_view{{grouped_values}};
   auto const temp_mr             = cudf::get_current_device_resource_ref();
@@ -148,7 +149,7 @@ std::unique_ptr<column> min_rank_scan(column_view const& grouped_values,
                                       device_span<size_type const> group_labels,
                                       device_span<size_type const> group_offsets,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cuda::mr::device_resource_ref mr)
 {
   return rank_generator<true>(
     grouped_values,
@@ -169,7 +170,7 @@ std::unique_ptr<column> max_rank_scan(column_view const& grouped_values,
                                       device_span<size_type const> group_labels,
                                       device_span<size_type const> group_offsets,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cuda::mr::device_resource_ref mr)
 {
   return rank_generator<false>(
     grouped_values,
@@ -190,7 +191,7 @@ std::unique_ptr<column> first_rank_scan(column_view const& grouped_values,
                                         device_span<size_type const> group_labels,
                                         device_span<size_type const> group_offsets,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cuda::mr::device_resource_ref mr)
 {
   auto ranks = make_fixed_width_column(
     data_type{type_to_id<size_type>()}, group_labels.size(), mask_state::UNALLOCATED, stream, mr);
@@ -212,7 +213,7 @@ std::unique_ptr<column> average_rank_scan(column_view const& grouped_values,
                                           device_span<size_type const> group_labels,
                                           device_span<size_type const> group_offsets,
                                           cuda::stream_ref stream,
-                                          rmm::device_async_resource_ref mr)
+                                          cuda::mr::device_resource_ref mr)
 {
   auto max_rank = max_rank_scan(grouped_values,
                                 value_order,
@@ -245,7 +246,7 @@ std::unique_ptr<column> dense_rank_scan(column_view const& grouped_values,
                                         device_span<size_type const> group_labels,
                                         device_span<size_type const> group_offsets,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cuda::mr::device_resource_ref mr)
 {
   return rank_generator<true>(
     grouped_values,
@@ -266,7 +267,7 @@ std::unique_ptr<column> group_rank_to_percentage(rank_method const method,
                                                  device_span<size_type const> group_labels,
                                                  device_span<size_type const> group_offsets,
                                                  cuda::stream_ref stream,
-                                                 rmm::device_async_resource_ref mr)
+                                                 cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(percentage != rank_percentage::NONE, "Percentage cannot be NONE");
   auto ranks = make_fixed_width_column(

@@ -13,20 +13,19 @@
 
 namespace cudf::jni {
 
-inline jlong make_jni_resource(cuda::mr::any_resource<cuda::mr::device_accessible> resource)
+inline jlong make_jni_resource(cuda::mr::any_device_resource resource)
 {
-  return reinterpret_cast<jlong>(
-    new cuda::mr::any_resource<cuda::mr::device_accessible>(std::move(resource)));
+  return reinterpret_cast<jlong>(new cuda::mr::any_device_resource(std::move(resource)));
 }
 
-inline cuda::mr::any_resource<cuda::mr::device_accessible>& get_resource(jlong handle)
+inline cuda::mr::any_device_resource& get_resource(jlong handle)
 {
-  return *reinterpret_cast<cuda::mr::any_resource<cuda::mr::device_accessible>*>(handle);
+  return *reinterpret_cast<cuda::mr::any_device_resource*>(handle);
 }
 
 inline void delete_jni_resource(jlong handle)
 {
-  safe_delete<cuda::mr::any_resource<cuda::mr::device_accessible>>(handle);
+  safe_delete<cuda::mr::any_device_resource>(handle);
 }
 
 }  // namespace cudf::jni

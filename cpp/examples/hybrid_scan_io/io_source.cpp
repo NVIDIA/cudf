@@ -10,6 +10,7 @@
 
 #include <rmm/mr/pinned_host_memory_resource.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <thrust/host_vector.h>
 
@@ -17,7 +18,7 @@
 #include <fstream>
 #include <string>
 
-rmm::host_async_resource_ref pinned_memory_resource()
+cuda::mr::host_resource_ref pinned_memory_resource()
 {
   static auto mr = rmm::mr::pinned_host_memory_resource{};
   return mr;

@@ -27,6 +27,7 @@
 
 #include <cuda/buffer>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/cstddef>
 #include <cuda/std/cstdint>
 #include <cuda/std/iterator>

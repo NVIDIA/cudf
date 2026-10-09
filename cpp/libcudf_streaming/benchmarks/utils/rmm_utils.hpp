@@ -27,8 +27,7 @@
  *  - `managed`: use a CUDA managed memory resource.
  * @return An owning resource holding the created memory resource.
  */
-inline cuda::mr::any_resource<cuda::mr::device_accessible> create_rmm_resource(
-  std::string const& name)
+inline cuda::mr::any_device_resource create_rmm_resource(std::string const& name)
 {
   if (name == "cuda") {
     return rmm::mr::cuda_memory_resource{};

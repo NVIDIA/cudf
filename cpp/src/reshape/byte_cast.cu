@@ -19,6 +19,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <thrust/copy.h>
 #include <thrust/for_each.h>
@@ -46,7 +47,7 @@ struct byte_list_conversion_dispatcher {
   std::unique_ptr<column> operator()(column_view const& input,
                                      flip_endianness configuration,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr) const
+                                     cuda::mr::device_resource_ref mr) const
   {
     return byte_list_conversion_fn<T>::invoke(input, configuration, stream, mr);
   }
@@ -57,7 +58,7 @@ struct byte_list_conversion_fn<T, std::enable_if_t<cudf::is_numeric<T>()>> {
   static std::unique_ptr<column> invoke(column_view const& input,
                                         flip_endianness configuration,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cuda::mr::device_resource_ref mr)
   {
     if (input.size() == 0) { return cudf::lists::detail::make_empty_lists_column(output_type); }
     if (input.size() == input.null_count()) {
@@ -113,7 +114,7 @@ struct byte_list_conversion_fn<T, std::enable_if_t<std::is_same_v<T, cudf::strin
   static std::unique_ptr<column> invoke(column_view const& input,
                                         flip_endianness,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cuda::mr::device_resource_ref mr)
   {
     if (input.size() == 0) { return cudf::lists::detail::make_empty_lists_column(output_type); }
     if (input.size() == input.null_count()) {
@@ -162,7 +163,7 @@ struct byte_list_conversion_fn<T, std::enable_if_t<std::is_same_v<T, cudf::strin
 std::unique_ptr<column> byte_cast(column_view const& input,
                                   flip_endianness endian_configuration,
                                   cuda::stream_ref stream,
-                                  rmm::device_async_resource_ref mr)
+                                  cuda::mr::device_resource_ref mr)
 {
   return type_dispatcher(
     input.type(), byte_list_conversion_dispatcher{}, input, endian_configuration, stream, mr);
@@ -173,7 +174,7 @@ std::unique_ptr<column> byte_cast(column_view const& input,
 std::unique_ptr<column> byte_cast(column_view const& input,
                                   flip_endianness endian_configuration,
                                   cuda::stream_ref stream,
-                                  rmm::device_async_resource_ref mr)
+                                  cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::byte_cast(input, endian_configuration, stream, mr);

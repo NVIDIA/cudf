@@ -8,6 +8,8 @@
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
+
 /**
  * @file
  * @brief APIs for searching for a key value within a dictionary column's keys.
@@ -36,8 +38,8 @@ namespace dictionary {
 std::unique_ptr<scalar> get_index(
   dictionary_column_view const& dictionary,
   scalar const& key,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 }  // namespace dictionary

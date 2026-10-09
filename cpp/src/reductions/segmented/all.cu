@@ -8,6 +8,8 @@
 #include <cudf/reduction/detail/segmented_reduction_functions.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
+
 namespace cudf {
 namespace reduction {
 namespace detail {
@@ -19,7 +21,7 @@ std::unique_ptr<cudf::column> segmented_all(
   null_policy null_handling,
   std::optional<std::reference_wrapper<scalar const>> init,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(output_dtype == cudf::data_type(cudf::type_id::BOOL8),
                "segmented_all() operation requires output type `BOOL8`");

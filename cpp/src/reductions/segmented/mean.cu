@@ -8,6 +8,7 @@
 #include <cudf/reduction/detail/segmented_reduction_functions.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 namespace cudf {
@@ -19,7 +20,7 @@ std::unique_ptr<cudf::column> segmented_mean(column_view const& col,
                                              cudf::data_type const output_dtype,
                                              null_policy null_handling,
                                              cuda::stream_ref stream,
-                                             rmm::device_async_resource_ref mr)
+                                             cuda::mr::device_resource_ref mr)
 {
   using reducer            = compound::detail::compound_segmented_dispatcher<op::mean>;
   constexpr size_type ddof = 1;  // ddof for mean calculation

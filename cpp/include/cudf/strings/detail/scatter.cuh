@@ -16,6 +16,7 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/iterator>
 #include <cuda/stream>
 #include <thrust/scatter.h>
@@ -54,7 +55,7 @@ std::unique_ptr<column> scatter(SourceIterator begin,
                                 MapIterator scatter_map,
                                 strings_column_view const& target,
                                 cuda::stream_ref stream,
-                                rmm::device_async_resource_ref mr)
+                                cuda::mr::device_resource_ref mr)
 {
   if (target.is_empty()) return make_empty_column(type_id::STRING);
 

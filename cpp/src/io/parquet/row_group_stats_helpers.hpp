@@ -16,6 +16,8 @@
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 
+#include <cuda/memory_resource>
+
 #include <algorithm>
 #include <cstddef>
 #include <memory>
@@ -56,7 +58,7 @@ struct row_group_stats_caster : public stats_caster_base {
   result_type operator()(host_span<int const> per_source_schema_indices,
                          cudf::data_type dtype,
                          cuda::stream_ref stream,
-                         rmm::device_async_resource_ref mr) const
+                         cuda::mr::device_resource_ref mr) const
   {
     CUDF_EXPECTS(row_group_indices.size() == per_file_metadata.size(),
                  "Row-group indices must match parquet metadata sources",

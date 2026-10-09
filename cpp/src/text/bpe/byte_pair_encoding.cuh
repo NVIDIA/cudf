@@ -18,6 +18,7 @@
 #include <rmm/mr/polymorphic_allocator.hpp>
 
 #include <cuco/static_map.cuh>
+#include <cuda/memory_resource>
 #include <cuda/std/iterator>
 #include <cuda/std/utility>
 #include <cuda/stream>
@@ -162,7 +163,7 @@ using mp_table_map_type = cuco::static_map<cudf::size_type,
 using col_device_view = std::invoke_result_t<decltype(&cudf::column_device_view::create),
                                              cudf::column_view,
                                              cuda::stream_ref,
-                                             rmm::device_async_resource_ref>;
+                                             cuda::mr::device_resource_ref>;
 
 struct bpe_merge_pairs::bpe_merge_pairs_impl {
   std::unique_ptr<cudf::column> const merge_pairs;

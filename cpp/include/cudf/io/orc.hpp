@@ -12,6 +12,8 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
+
 #include <memory>
 #include <optional>
 #include <string>
@@ -472,8 +474,8 @@ class orc_reader_options_builder {
  */
 table_with_metadata read_orc(
   orc_reader_options const& options,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief The chunked orc reader class to read an ORC file iteratively into a series of
@@ -542,8 +544,8 @@ class chunked_orc_reader {
     std::size_t pass_read_limit,
     size_type output_row_granularity,
     orc_reader_options const& options,
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+    cuda::stream_ref stream          = cudf::get_default_stream(),
+    cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Construct the reader from input/output size limits along with other ORC reader options.
@@ -563,8 +565,8 @@ class chunked_orc_reader {
     std::size_t chunk_read_limit,
     std::size_t pass_read_limit,
     orc_reader_options const& options,
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+    cuda::stream_ref stream          = cudf::get_default_stream(),
+    cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Construct the reader from output size limits along with other ORC reader options.
@@ -581,8 +583,8 @@ class chunked_orc_reader {
   explicit chunked_orc_reader(
     std::size_t chunk_read_limit,
     orc_reader_options const& options,
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+    cuda::stream_ref stream          = cudf::get_default_stream(),
+    cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Destructor, destroying the internal reader instance.

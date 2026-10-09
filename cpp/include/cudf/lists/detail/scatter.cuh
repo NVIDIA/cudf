@@ -23,6 +23,7 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <thrust/scatter.h>
 #include <thrust/sequence.h>
 #include <thrust/transform.h>
@@ -40,7 +41,7 @@ rmm::device_uvector<unbound_list_view> list_vector_from_column(
   IndexIterator index_begin,
   IndexIterator index_end,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   auto n_rows = cuda::std::distance(index_begin, index_end);
 
@@ -85,7 +86,7 @@ std::unique_ptr<column> scatter_impl(rmm::device_uvector<unbound_list_view> cons
                                      column_view const& source,
                                      column_view const& target,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(have_same_types(source, target), "Mismatched column types.");
 
@@ -165,7 +166,7 @@ std::unique_ptr<column> scatter(column_view const& source,
                                 MapIterator scatter_map_end,
                                 column_view const& target,
                                 cuda::stream_ref stream,
-                                rmm::device_async_resource_ref mr)
+                                cuda::mr::device_resource_ref mr)
 {
   auto const num_rows = target.size();
   if (num_rows == 0) { return cudf::empty_like(target); }
@@ -220,7 +221,7 @@ std::unique_ptr<column> scatter(scalar const& slr,
                                 MapIterator scatter_map_end,
                                 column_view const& target,
                                 cuda::stream_ref stream,
-                                rmm::device_async_resource_ref mr)
+                                cuda::mr::device_resource_ref mr)
 {
   auto const num_rows = target.size();
   if (num_rows == 0) { return cudf::empty_like(target); }

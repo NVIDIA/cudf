@@ -23,6 +23,7 @@
 
 #include <cuco/static_set.cuh>
 #include <cuda/buffer>
+#include <cuda/memory_resource>
 #include <cuda/std/functional>
 #include <cuda/std/utility>
 #include <cuda/stream>
@@ -287,7 +288,7 @@ struct streaming_groupby::impl {
   std::vector<streaming_aggregation_request> _requests_clone;
   size_type _max_distinct_keys;
   null_policy _null_handling;
-  cuda::mr::any_resource<cuda::mr::device_accessible> _mr;
+  cuda::mr::any_device_resource _mr;
 
   /*
    * Serializes the insertion phase of `aggregate()` and `merge()`.  Callers may invoke those
@@ -361,7 +362,7 @@ struct streaming_groupby::impl {
        host_span<streaming_aggregation_request const> requests,
        size_type max_distinct_keys,
        null_policy null_handling,
-       cuda::mr::any_resource<cuda::mr::device_accessible> mr);
+       cuda::mr::any_device_resource mr);
 
   void initialize(table_view const& data, cuda::stream_ref stream);
   void create_key_set(cuda::stream_ref stream);
@@ -418,9 +419,9 @@ struct streaming_groupby::impl {
   void do_aggregate(table_view const& data, cuda::stream_ref stream);
 
   [[nodiscard]] std::unique_ptr<table> gather_agg_results(cuda::stream_ref stream,
-                                                          rmm::device_async_resource_ref mr) const;
-  [[nodiscard]] std::unique_ptr<table> gather_distinct_keys(
-    cuda::stream_ref stream, rmm::device_async_resource_ref mr) const;
+                                                          cuda::mr::device_resource_ref mr) const;
+  [[nodiscard]] std::unique_ptr<table> gather_distinct_keys(cuda::stream_ref stream,
+                                                            cuda::mr::device_resource_ref mr) const;
 
   [[nodiscard]] std::pair<std::unique_ptr<table>, std::vector<aggregation_result>>
   finalize_gathered(std::unique_ptr<table> keys,
@@ -428,7 +429,7 @@ struct streaming_groupby::impl {
                     cuda::stream_ref stream,
                     cudf::memory_resources mr) const;
   [[nodiscard]] std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> do_finalize(
-    cuda::stream_ref stream, rmm::device_async_resource_ref mr) const;
+    cuda::stream_ref stream, cuda::mr::device_resource_ref mr) const;
   [[nodiscard]] std::pair<std::unique_ptr<table>, std::vector<aggregation_result>>
   do_finalize_and_release(cuda::stream_ref stream, cudf::memory_resources mr);
 

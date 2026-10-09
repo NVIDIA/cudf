@@ -8,6 +8,8 @@
 #include <cudf/reduction/detail/segmented_reduction_functions.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
+
 namespace cudf {
 namespace reduction {
 namespace detail {
@@ -18,7 +20,7 @@ std::unique_ptr<cudf::column> segmented_product(
   null_policy null_handling,
   std::optional<std::reference_wrapper<scalar const>> init,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   using reducer = simple::detail::column_type_dispatcher<op::product>;
   return cudf::type_dispatcher(

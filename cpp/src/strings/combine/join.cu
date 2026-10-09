@@ -25,6 +25,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/utility>
 #include <cuda/stream>
 
@@ -124,7 +125,7 @@ std::unique_ptr<column> join_strings(strings_column_view const& input,
                                      string_scalar const& separator,
                                      string_scalar const& narep,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cuda::mr::device_resource_ref mr)
 {
   if (input.is_empty()) { return make_empty_column(type_id::STRING); }
 
@@ -190,7 +191,7 @@ std::unique_ptr<column> join_strings(strings_column_view const& strings,
                                      string_scalar const& separator,
                                      string_scalar const& narep,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::join_strings(strings, separator, narep, stream, mr);

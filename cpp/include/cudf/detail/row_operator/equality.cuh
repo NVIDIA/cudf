@@ -20,6 +20,7 @@
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/functional>
 #include <thrust/equal.h>
 #include <thrust/execution_policy.h>
@@ -411,7 +412,7 @@ class self_comparator {
    */
   self_comparator(table_view const& t,
                   cuda::stream_ref stream,
-                  rmm::device_async_resource_ref temp_mr)
+                  cuda::mr::device_resource_ref temp_mr)
     : d_t(preprocessed_table::create(t, stream, temp_mr))
   {
   }
@@ -523,7 +524,7 @@ class two_table_comparator {
   two_table_comparator(table_view const& left,
                        table_view const& right,
                        cuda::stream_ref stream,
-                       rmm::device_async_resource_ref temp_mr);
+                       cuda::mr::device_resource_ref temp_mr);
 
   /**
    * @brief Construct an owning object for performing equality comparisons between two rows from two

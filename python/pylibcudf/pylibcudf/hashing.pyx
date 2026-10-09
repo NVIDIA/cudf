@@ -19,6 +19,7 @@ from pylibcudf.libcudf.hash cimport (
 )
 from pylibcudf.libcudf.table.table cimport table
 from pylibcudf.libcudf.table.table_view cimport table_view
+from pylibcudf.libcudf.utilities.memory_resource cimport to_device_resource_ref
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
@@ -81,7 +82,7 @@ cpdef Column murmurhash3_x86_32(
             c_input,
             seed,
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -121,7 +122,7 @@ cpdef Table murmurhash3_x64_128(
             c_input,
             seed,
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
 
     return Table.from_libcudf(move(c_result), _stream, mr)
@@ -162,7 +163,7 @@ cpdef Column xxhash_32(
             c_input,
             seed,
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -203,7 +204,7 @@ cpdef Column xxhash_64(
             c_input,
             seed,
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -240,7 +241,7 @@ cpdef Column md5(
 
     cdef table_view c_input = input.view()
     with nogil:
-        c_result = cpp_md5(c_input, _cs, mr.get_mr())
+        c_result = cpp_md5(c_input, _cs, to_device_resource_ref(mr.get_mr()))
     return Column.from_libcudf(move(c_result), _stream, mr)
 
 cpdef Column sha1(
@@ -272,7 +273,7 @@ cpdef Column sha1(
 
     cdef table_view c_input = input.view()
     with nogil:
-        c_result = cpp_sha1(c_input, _cs, mr.get_mr())
+        c_result = cpp_sha1(c_input, _cs, to_device_resource_ref(mr.get_mr()))
     return Column.from_libcudf(move(c_result), _stream, mr)
 
 
@@ -305,7 +306,7 @@ cpdef Column sha224(
 
     cdef table_view c_input = input.view()
     with nogil:
-        c_result = cpp_sha224(c_input, _cs, mr.get_mr())
+        c_result = cpp_sha224(c_input, _cs, to_device_resource_ref(mr.get_mr()))
     return Column.from_libcudf(move(c_result), _stream, mr)
 
 
@@ -338,7 +339,7 @@ cpdef Column sha256(
 
     cdef table_view c_input = input.view()
     with nogil:
-        c_result = cpp_sha256(c_input, _cs, mr.get_mr())
+        c_result = cpp_sha256(c_input, _cs, to_device_resource_ref(mr.get_mr()))
     return Column.from_libcudf(move(c_result), _stream, mr)
 
 
@@ -371,7 +372,7 @@ cpdef Column sha384(
 
     cdef table_view c_input = input.view()
     with nogil:
-        c_result = cpp_sha384(c_input, _cs, mr.get_mr())
+        c_result = cpp_sha384(c_input, _cs, to_device_resource_ref(mr.get_mr()))
     return Column.from_libcudf(move(c_result), _stream, mr)
 
 
@@ -404,5 +405,5 @@ cpdef Column sha512(
 
     cdef table_view c_input = input.view()
     with nogil:
-        c_result = cpp_sha512(c_input, _cs, mr.get_mr())
+        c_result = cpp_sha512(c_input, _cs, to_device_resource_ref(mr.get_mr()))
     return Column.from_libcudf(move(c_result), _stream, mr)

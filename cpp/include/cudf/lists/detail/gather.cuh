@@ -17,6 +17,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <thrust/transform.h>
 
@@ -48,7 +49,7 @@ struct gather_data {
  *                                 MapItType gather_map,
  *                                 size_type gather_map_size,
  *                                 cuda::stream_ref stream,
- *                                 rmm::device_async_resource_ref mr)
+ *                                 cuda::mr::device_resource_ref mr)
  *
  * @param prev_base_offsets The buffer backing the base offsets used in the gather map. We can
  *                          free this buffer before allocating the new one to keep peak memory
@@ -60,7 +61,7 @@ gather_data make_gather_data(cudf::lists_column_view const& source_column,
                              size_type gather_map_size,
                              rmm::device_uvector<int32_t>&& prev_base_offsets,
                              cuda::stream_ref stream,
-                             rmm::device_async_resource_ref mr)
+                             cuda::mr::device_resource_ref mr)
 {
   // size of the gather map is the # of output rows
   size_type output_count = gather_map_size;
@@ -241,7 +242,7 @@ gather_data make_gather_data(cudf::lists_column_view const& source_column,
                              MapItType gather_map,
                              size_type gather_map_size,
                              cuda::stream_ref stream,
-                             rmm::device_async_resource_ref mr)
+                             cuda::mr::device_resource_ref mr)
 {
   return make_gather_data<NullifyOutOfBounds, MapItType>(
     source_column,
@@ -267,7 +268,7 @@ gather_data make_gather_data(cudf::lists_column_view const& source_column,
 std::unique_ptr<column> gather_list_nested(lists_column_view const& list,
                                            gather_data& gd,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr);
+                                           cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Gather a leaf column from a hierarchy of list columns.
@@ -284,13 +285,13 @@ std::unique_ptr<column> gather_list_nested(lists_column_view const& list,
 std::unique_ptr<column> gather_list_leaf(column_view const& column,
                                          gather_data const& gd,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr);
+                                         cuda::mr::device_resource_ref mr);
 
 /**
  * @copydoc cudf::lists::segmented_gather(lists_column_view const& source_column,
  *                                        lists_column_view const& gather_map_list,
  *                                        out_of_bounds_policy bounds_policy,
- *                                        rmm::device_async_resource_ref mr)
+ *                                        cuda::mr::device_resource_ref mr)
  *
  * @param stream CUDA stream on which to execute kernels
  */
@@ -298,7 +299,7 @@ std::unique_ptr<column> segmented_gather(lists_column_view const& source_column,
                                          lists_column_view const& gather_map_list,
                                          out_of_bounds_policy bounds_policy,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr);
+                                         cuda::mr::device_resource_ref mr);
 
 }  // namespace detail
 }  // namespace lists

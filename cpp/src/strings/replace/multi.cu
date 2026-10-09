@@ -27,6 +27,7 @@
 #include <cuda/atomic>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/iterator>
 #include <cuda/std/tuple>
 #include <cuda/stream>
@@ -305,7 +306,7 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
                                                    strings_column_view const& targets,
                                                    strings_column_view const& repls,
                                                    cuda::stream_ref stream,
-                                                   rmm::device_async_resource_ref mr)
+                                                   cuda::mr::device_resource_ref mr)
 {
   auto d_strings = column_device_view::create(input.parent(), stream);
 
@@ -474,7 +475,7 @@ std::unique_ptr<column> replace_string_parallel(strings_column_view const& input
                                                 strings_column_view const& targets,
                                                 strings_column_view const& repls,
                                                 cuda::stream_ref stream,
-                                                rmm::device_async_resource_ref mr)
+                                                cuda::mr::device_resource_ref mr)
 {
   auto d_strings      = column_device_view::create(input.parent(), stream);
   auto d_targets      = column_device_view::create(targets.parent(), stream);
@@ -499,7 +500,7 @@ std::unique_ptr<column> replace_multiple(strings_column_view const& input,
                                          strings_column_view const& targets,
                                          strings_column_view const& repls,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   if (input.is_empty()) { return make_empty_column(type_id::STRING); }

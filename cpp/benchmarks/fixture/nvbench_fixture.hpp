@@ -53,8 +53,7 @@ struct nvbench_base_fixture {
     return rmm::mr::pool_memory_resource{make_managed(), rmm::percent_of_free_device_memory(50)};
   }
 
-  inline cuda::mr::any_resource<cuda::mr::device_accessible> create_memory_resource(
-    std::string const& mode)
+  inline cuda::mr::any_device_resource create_memory_resource(std::string const& mode)
   {
     if (mode == "cuda") return make_cuda();
     if (mode == "pool") return make_pool();
@@ -66,14 +65,14 @@ struct nvbench_base_fixture {
               "\nExpecting: cuda, pool, async, arena, managed, or managed_pool");
   }
 
-  inline rmm::host_device_async_resource_ref make_cuio_host_pinned()
+  inline cuda::mr::host_device_resource_ref make_cuio_host_pinned()
   {
     static std::shared_ptr<rmm::mr::pinned_host_memory_resource> mr =
       std::make_shared<rmm::mr::pinned_host_memory_resource>();
     return *mr;
   }
 
-  inline rmm::host_device_async_resource_ref create_cuio_host_memory_resource(
+  inline cuda::mr::host_device_resource_ref create_cuio_host_memory_resource(
     std::string const& mode)
   {
     if (mode == "pinned") return make_cuio_host_pinned();
@@ -111,7 +110,7 @@ struct nvbench_base_fixture {
     cudf::set_pinned_memory_resource(this->make_cuio_host_pinned());
   }
 
-  cuda::mr::any_resource<cuda::mr::device_accessible> mr;
+  cuda::mr::any_device_resource mr;
   std::string rmm_mode{"async"};
 
   std::string cuio_host_mode{"pinned_pool"};

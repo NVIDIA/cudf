@@ -10,6 +10,8 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
+
 #include <cstdint>
 #include <memory>
 #include <span>
@@ -73,8 +75,8 @@ namespace CUDF_EXPORT cudf {
 std::vector<packed_table> contiguous_split(
   cudf::table_view const& input,
   std::vector<size_type> const& splits,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 namespace detail {
 
@@ -159,8 +161,8 @@ class chunked_pack {
   explicit chunked_pack(
     cudf::table_view const& input,
     std::size_t user_buffer_size,
-    cuda::stream_ref stream                = cudf::get_default_stream(),
-    rmm::device_async_resource_ref temp_mr = cudf::get_current_device_resource_ref());
+    cuda::stream_ref stream               = cudf::get_default_stream(),
+    cuda::mr::device_resource_ref temp_mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Destructor that will be implemented as default. Declared with definition here because
@@ -226,8 +228,8 @@ class chunked_pack {
   [[nodiscard]] static std::unique_ptr<chunked_pack> create(
     cudf::table_view const& input,
     std::size_t user_buffer_size,
-    cuda::stream_ref stream                = cudf::get_default_stream(),
-    rmm::device_async_resource_ref temp_mr = cudf::get_current_device_resource_ref());
+    cuda::stream_ref stream               = cudf::get_default_stream(),
+    cuda::mr::device_resource_ref temp_mr = cudf::get_current_device_resource_ref());
 
  private:
   // internal state of contiguous split
@@ -248,8 +250,8 @@ class chunked_pack {
  *         and device memory respectively
  */
 packed_columns pack(cudf::table_view const& input,
-                    cuda::stream_ref stream           = cudf::get_default_stream(),
-                    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+                    cuda::stream_ref stream          = cudf::get_default_stream(),
+                    cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Compute the size in bytes of the contiguous memory buffer needed to pack the input table.
@@ -265,8 +267,8 @@ packed_columns pack(cudf::table_view const& input,
  */
 std::size_t packed_size(
   cudf::table_view const& input,
-  cuda::stream_ref stream                = cudf::get_default_stream(),
-  rmm::device_async_resource_ref temp_mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream               = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref temp_mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Produce the metadata used for packing a table stored in a contiguous buffer.

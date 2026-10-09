@@ -12,7 +12,8 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/mr/pinned_host_memory_resource.hpp>
-#include <rmm/resource_ref.hpp>
+
+#include <cuda/memory_resource>
 
 #include <nvbench/nvbench.cuh>
 
@@ -55,7 +56,7 @@ void set_throughput_counters(nvbench::state& state, cudf::table const& table)
  * @brief Shared body for the pack benchmarks. `packed_mr` selects the destination of the packed
  * buffer (device MR for device_pack, pinned host MR for host_pack).
  */
-void run_pack(nvbench::state& state, rmm::device_async_resource_ref packed_mr)
+void run_pack(nvbench::state& state, cuda::mr::device_resource_ref packed_mr)
 {
   auto const table      = setup_bench(state);
   auto const table_view = table->view();

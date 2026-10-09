@@ -11,6 +11,8 @@
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/table/table.hpp>
 
+#include <cuda/memory_resource>
+
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
@@ -572,7 +574,7 @@ struct host_transition_table {
 std::unique_ptr<table> make_timezone_transition_table(std::optional<std::string_view> tzif_dir,
                                                       std::string_view timezone_name,
                                                       cuda::stream_ref stream,
-                                                      rmm::device_async_resource_ref mr)
+                                                      cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::make_timezone_transition_table(tzif_dir, timezone_name, stream, mr);
@@ -583,7 +585,7 @@ namespace detail {
 std::unique_ptr<table> make_timezone_transition_table(std::optional<std::string_view> tzif_dir,
                                                       std::string_view timezone_name,
                                                       cuda::stream_ref stream,
-                                                      rmm::device_async_resource_ref mr)
+                                                      cuda::mr::device_resource_ref mr)
 {
   auto const tz_table = build_transition_table(tzif_dir, timezone_name);
   if (tz_table.empty()) { return std::make_unique<cudf::table>(); }

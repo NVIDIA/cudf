@@ -13,6 +13,7 @@
 #include <rmm/device_uvector.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/functional>
 #include <cuda/std/tuple>
 #include <thrust/scan.h>
@@ -27,7 +28,7 @@ std::unique_ptr<column> group_replace_nulls(cudf::column_view const& grouped_val
                                             device_span<size_type const> group_labels,
                                             cudf::replace_policy replace_policy,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cuda::mr::device_resource_ref mr)
 {
   cudf::size_type size = grouped_value.size();
 

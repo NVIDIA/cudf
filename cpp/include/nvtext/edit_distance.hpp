@@ -10,6 +10,8 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
+
 //! NVText APIs
 namespace CUDF_EXPORT nvtext {
 /**
@@ -52,8 +54,8 @@ namespace CUDF_EXPORT nvtext {
 std::unique_ptr<cudf::column> edit_distance(
   cudf::strings_column_view const& input,
   cudf::strings_column_view const& targets,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 }  // namespace CUDF_EXPORT nvtext

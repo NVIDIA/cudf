@@ -5,6 +5,8 @@
 
 #include "reader_impl.hpp"
 
+#include <cuda/memory_resource>
+
 namespace cudf::io::parquet::detail {
 
 reader::reader() = default;
@@ -13,7 +15,7 @@ reader::reader(std::vector<std::unique_ptr<datasource>>&& sources,
                std::vector<FileMetaData>&& parquet_metadatas,
                parquet_reader_options const& options,
                cuda::stream_ref stream,
-               rmm::device_async_resource_ref mr)
+               cuda::mr::device_resource_ref mr)
   : _impl(std::make_unique<reader_impl>(
       std::move(sources), std::move(parquet_metadatas), options, stream, mr))
 {
@@ -29,7 +31,7 @@ chunked_reader::chunked_reader(std::size_t chunk_read_limit,
                                std::vector<FileMetaData>&& parquet_metadatas,
                                parquet_reader_options const& options,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr)
+                               cuda::mr::device_resource_ref mr)
 {
   _impl = std::make_unique<reader_impl>(chunk_read_limit,
                                         pass_read_limit,

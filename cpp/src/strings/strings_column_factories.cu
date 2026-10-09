@@ -19,6 +19,7 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/utility>
 #include <cuda/stream>
 #include <thrust/scan.h>
@@ -36,7 +37,7 @@ template <typename OutputType>
 std::pair<std::vector<std::unique_ptr<column>>, rmm::device_uvector<int64_t>>
 make_offsets_child_column_batch_async(std::vector<column_string_pairs> const& input,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cuda::mr::device_resource_ref mr)
 {
   auto const num_columns = input.size();
   std::vector<std::unique_ptr<column>> offsets_columns(num_columns);
@@ -69,7 +70,7 @@ make_offsets_child_column_batch_async(std::vector<column_string_pairs> const& in
 }  // namespace
 
 CUDF_EXPORT std::pair<std::unique_ptr<column>, int64_t> make_offsets_child_column(
-  device_span<size_type const> sizes, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
+  device_span<size_type const> sizes, cuda::stream_ref stream, cuda::mr::device_resource_ref mr)
 {
   return make_offsets_child_column(sizes.begin(), sizes.end(), stream, mr);
 }
@@ -77,7 +78,7 @@ CUDF_EXPORT std::pair<std::unique_ptr<column>, int64_t> make_offsets_child_colum
 std::vector<std::unique_ptr<column>> make_strings_column_batch(
   std::vector<column_string_pairs> const& input,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   auto const num_columns = input.size();
 
@@ -186,7 +187,7 @@ std::vector<std::unique_ptr<column>> make_strings_column_batch(
 std::unique_ptr<column> make_strings_column(
   device_span<cuda::std::pair<char const*, size_type> const> strings,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return cudf::strings::detail::make_strings_column(strings.begin(), strings.end(), stream, mr);
@@ -195,7 +196,7 @@ std::unique_ptr<column> make_strings_column(
 std::vector<std::unique_ptr<column>> make_strings_column_batch(
   std::vector<cudf::device_span<cuda::std::pair<char const*, size_type> const>> const& input,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return cudf::strings::detail::make_strings_column_batch(input, stream, mr);
@@ -218,7 +219,7 @@ struct string_view_to_pair {
 std::unique_ptr<column> make_strings_column(device_span<string_view const> string_views,
                                             string_view null_placeholder,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
 

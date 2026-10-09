@@ -21,6 +21,8 @@
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 
+#include <cuda/memory_resource>
+
 #include <bit>
 #include <numeric>
 #include <span>
@@ -261,7 +263,7 @@ class stats_caster_base {
     make_strings_children(cudf::host_span<cudf::string_view const> host_strings,
                           cudf::host_span<char const> host_chars,
                           cuda::stream_ref stream,
-                          rmm::device_async_resource_ref mr)
+                          cuda::mr::device_resource_ref mr)
     {
       auto offsets =
         cudf::detail::make_empty_host_vector<cudf::size_type>(host_strings.size() + 1, stream);
@@ -281,7 +283,7 @@ class stats_caster_base {
 
     [[nodiscard]] std::unique_ptr<column> inline to_device(cudf::data_type dtype,
                                                            cuda::stream_ref stream,
-                                                           rmm::device_async_resource_ref mr) const
+                                                           cuda::mr::device_resource_ref mr) const
     {
       if constexpr (std::is_same_v<T, string_view>) {
         auto [d_chars, d_offsets, _] = make_strings_children(val, chars, stream, mr);

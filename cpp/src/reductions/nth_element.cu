@@ -15,6 +15,7 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/scan.h>
@@ -25,7 +26,7 @@ std::unique_ptr<cudf::scalar> nth_element(column_view const& col,
                                           size_type n,
                                           null_policy null_handling,
                                           cuda::stream_ref stream,
-                                          rmm::device_async_resource_ref mr)
+                                          cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(n >= -col.size() and n < col.size(), "Index out of bounds");
   auto wrap_n = [n](size_type size) { return (n < 0 ? size + n : n); };

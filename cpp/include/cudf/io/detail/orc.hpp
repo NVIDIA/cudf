@@ -13,6 +13,7 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <memory>
@@ -51,7 +52,7 @@ class reader {
   explicit reader(std::vector<std::unique_ptr<cudf::io::datasource>>&& sources,
                   orc_reader_options const& options,
                   cuda::stream_ref stream,
-                  rmm::device_async_resource_ref mr);
+                  cuda::mr::device_resource_ref mr);
 
   /**
    * @brief Destructor explicitly declared to avoid inlining in header
@@ -76,7 +77,7 @@ class chunked_reader {
  public:
   /**
    * @copydoc cudf::io::chunked_orc_reader::chunked_orc_reader(std::size_t, std::size_t, size_type,
-   * orc_reader_options const&, cuda::stream_ref, rmm::device_async_resource_ref)
+   * orc_reader_options const&, cuda::stream_ref, cuda::mr::device_resource_ref)
    *
    * @param sources Input `datasource` objects to read the dataset from
    */
@@ -86,10 +87,10 @@ class chunked_reader {
                           std::vector<std::unique_ptr<cudf::io::datasource>>&& sources,
                           orc_reader_options const& options,
                           cuda::stream_ref stream,
-                          rmm::device_async_resource_ref mr);
+                          cuda::mr::device_resource_ref mr);
   /**
    * @copydoc cudf::io::chunked_orc_reader::chunked_orc_reader(std::size_t, std::size_t,
-   * orc_reader_options const&, cuda::stream_ref, rmm::device_async_resource_ref)
+   * orc_reader_options const&, cuda::stream_ref, cuda::mr::device_resource_ref)
    *
    * @param sources Input `datasource` objects to read the dataset from
    */
@@ -98,7 +99,7 @@ class chunked_reader {
                           std::vector<std::unique_ptr<cudf::io::datasource>>&& sources,
                           orc_reader_options const& options,
                           cuda::stream_ref stream,
-                          rmm::device_async_resource_ref mr);
+                          cuda::mr::device_resource_ref mr);
 
   /**
    * @brief Destructor explicitly-declared to avoid inlined in header.

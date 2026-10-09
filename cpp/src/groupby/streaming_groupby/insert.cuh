@@ -17,6 +17,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <thrust/for_each.h>
 
@@ -32,7 +33,7 @@ void compute_batch_hashes(
   hash_value_type* batch_hash_cache,
   size_type batch_size,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cuda::mr::device_resource_ref mr);
 
 template <bool has_nested>
 streaming_groupby::impl::batch_insert_result streaming_groupby::impl::probe_and_insert_impl(

@@ -11,6 +11,7 @@
 #include <cudf/detail/utilities/vector_factories.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 
 #include <jit/cache.hpp>
 
@@ -38,7 +39,7 @@ std::map<uint32_t, std::string> build_ptx_params(std::span<std::string const> ou
 template <typename T>
 rmm::device_uvector<T> to_device_vector(std::vector<T> const& host,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cuda::mr::device_resource_ref mr)
 {
   rmm::device_uvector<T> device{host.size(), stream, mr};
   cudf::detail::cuda_memcpy_async<T>(device, host, stream);
@@ -50,7 +51,7 @@ std::tuple<std::vector<std::unique_ptr<DeviceView, std::function<void(DeviceView
            rmm::device_uvector<DeviceView>>
 column_views_to_device(std::span<ColumnView const> views,
                        cuda::stream_ref stream,
-                       rmm::device_async_resource_ref mr)
+                       cuda::mr::device_resource_ref mr)
 {
   std::vector<std::unique_ptr<DeviceView, std::function<void(DeviceView*)>>> handles;
 

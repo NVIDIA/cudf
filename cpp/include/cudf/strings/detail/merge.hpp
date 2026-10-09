@@ -7,9 +7,9 @@
 #include <cudf/column/column.hpp>
 #include <cudf/detail/merge.hpp>
 #include <cudf/strings/strings_column_view.hpp>
+#include <cudf/types.hpp>
 
-#include <rmm/resource_ref.hpp>
-
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 namespace cudf {
@@ -28,7 +28,7 @@ std::unique_ptr<column> merge(strings_column_view const& lhs,
                               strings_column_view const& rhs,
                               cudf::detail::index_vector const& row_order,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr);
+                              cuda::mr::device_resource_ref mr);
 
 }  // namespace strings::detail
 }  // namespace cudf

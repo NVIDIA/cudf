@@ -10,6 +10,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <memory>
@@ -34,7 +35,7 @@ std::unique_ptr<column> fill(column_view const& input,
                              size_type end,
                              scalar const& value,
                              cuda::stream_ref stream,
-                             rmm::device_async_resource_ref mr);
+                             cuda::mr::device_resource_ref mr);
 
 }  // namespace detail
 }  // namespace cudf

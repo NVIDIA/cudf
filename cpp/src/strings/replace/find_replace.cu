@@ -11,6 +11,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <thrust/execution_policy.h>
 #include <thrust/transform.h>
@@ -55,7 +56,7 @@ std::unique_ptr<cudf::column> find_and_replace_all(
   cudf::strings_column_view const& values_to_replace,
   cudf::strings_column_view const& replacement_values,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   auto d_input             = cudf::column_device_view::create(input.parent(), stream);
   auto d_values_to_replace = cudf::column_device_view::create(values_to_replace.parent(), stream);

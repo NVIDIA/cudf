@@ -13,6 +13,7 @@
 
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <memory>
@@ -59,8 +60,8 @@ namespace CUDF_EXPORT cudf {
 direct_inner_join(column_view const& left_keys,
                   column_view const& right_keys,
                   std::size_t capacity,
-                  cuda::stream_ref stream           = cudf::get_default_stream(),
-                  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+                  cuda::stream_ref stream          = cudf::get_default_stream(),
+                  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 

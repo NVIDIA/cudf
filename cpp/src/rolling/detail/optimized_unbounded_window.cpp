@@ -13,6 +13,8 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
+
 namespace cudf::detail {
 namespace {
 
@@ -56,7 +58,7 @@ std::unique_ptr<column> aggregation_based_rolling_window(table_view const& group
                                                          column_view const& input,
                                                          rolling_aggregation const& aggr,
                                                          cuda::stream_ref stream,
-                                                         rmm::device_async_resource_ref mr)
+                                                         cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(group_keys.num_columns() > 0,
                "Ungrouped rolling window not supported in aggregation path.");
@@ -90,7 +92,7 @@ std::unique_ptr<column> aggregation_based_rolling_window(table_view const& group
 std::unique_ptr<column> reduction_based_rolling_window(column_view const& input,
                                                        rolling_aggregation const& aggr,
                                                        cuda::stream_ref stream,
-                                                       rmm::device_async_resource_ref mr)
+                                                       cuda::mr::device_resource_ref mr)
 {
   auto const reduce_results = [&] {
     auto const return_dtype = cudf::detail::target_type(input.type(), aggr.kind);
@@ -144,7 +146,7 @@ std::unique_ptr<column> optimized_unbounded_window(table_view const& group_keys,
                                                    column_view const& input,
                                                    rolling_aggregation const& aggr,
                                                    cuda::stream_ref stream,
-                                                   rmm::device_async_resource_ref mr)
+                                                   cuda::mr::device_resource_ref mr)
 {
   return group_keys.num_columns() > 0
            ? aggregation_based_rolling_window(group_keys, input, aggr, stream, mr)

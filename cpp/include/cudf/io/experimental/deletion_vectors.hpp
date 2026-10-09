@@ -11,6 +11,8 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/roaring_bitmap.hpp>
 
+#include <cuda/memory_resource>
+
 #include <queue>
 
 /**
@@ -84,8 +86,8 @@ class chunked_parquet_reader {
     std::size_t chunk_read_limit,
     parquet_reader_options const& options,
     deletion_vector_info const& deletion_vector_info,
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+    cuda::stream_ref stream          = cudf::get_default_stream(),
+    cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Constructor for the chunked reader
@@ -112,8 +114,8 @@ class chunked_parquet_reader {
     std::size_t pass_read_limit,
     parquet_reader_options const& options,
     deletion_vector_info const& deletion_vector_info,
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+    cuda::stream_ref stream          = cudf::get_default_stream(),
+    cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Destructor, destroying the internal reader instance and the roaring bitmap deletion
@@ -152,8 +154,8 @@ class chunked_parquet_reader {
   bool _is_unspecified_row_group_data;
   bool _are_retentions;
   cuda::stream_ref _stream;
-  rmm::device_async_resource_ref _mr;
-  rmm::device_async_resource_ref _table_mr;
+  cuda::mr::device_resource_ref _mr;
+  cuda::mr::device_resource_ref _table_mr;
 };
 
 /**
@@ -181,8 +183,8 @@ class chunked_parquet_reader {
 table_with_metadata read_parquet(
   parquet_reader_options const& options,
   deletion_vector_info const& deletion_vector_info,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Computes the number of rows deleted by the serialized 64-bit roaring bitmap deletion

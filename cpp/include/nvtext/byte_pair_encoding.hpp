@@ -12,6 +12,8 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
+
 namespace CUDF_EXPORT nvtext {
 
 /**
@@ -37,8 +39,8 @@ struct bpe_merge_pairs {
    * @param mr Device memory resource used to allocate the device memory
    */
   bpe_merge_pairs(std::unique_ptr<cudf::column>&& input,
-                  cuda::stream_ref stream           = cudf::get_default_stream(),
-                  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+                  cuda::stream_ref stream          = cudf::get_default_stream(),
+                  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Construct a new bpe merge pairs object
@@ -48,8 +50,8 @@ struct bpe_merge_pairs {
    * @param mr Device memory resource used to allocate the device memory
    */
   bpe_merge_pairs(cudf::strings_column_view const& input,
-                  cuda::stream_ref stream           = cudf::get_default_stream(),
-                  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+                  cuda::stream_ref stream          = cudf::get_default_stream(),
+                  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
   ~bpe_merge_pairs();
   bpe_merge_pairs();
@@ -86,8 +88,8 @@ struct bpe_merge_pairs {
  */
 std::unique_ptr<bpe_merge_pairs> load_merge_pairs(
   cudf::strings_column_view const& merge_pairs,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Byte pair encode the input strings.
@@ -121,7 +123,7 @@ std::unique_ptr<cudf::column> byte_pair_encoding(
   bpe_merge_pairs const& merges_pairs,
   cudf::string_scalar const& separator = cudf::string_scalar(" "),
   cuda::stream_ref stream              = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr    = cudf::get_current_device_resource_ref());
+  cuda::mr::device_resource_ref mr     = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 }  // namespace CUDF_EXPORT nvtext

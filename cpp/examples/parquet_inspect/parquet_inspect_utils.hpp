@@ -7,11 +7,11 @@
 
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/io/text/byte_range_info.hpp>
+#include <cudf/types.hpp>
 #include <cudf/utilities/span.hpp>
 
 #include <rmm/mr/cuda_async_memory_resource.hpp>
 #include <rmm/mr/pool_memory_resource.hpp>
-#include <rmm/resource_ref.hpp>
 
 #include <cuda/memory_resource>
 #include <cuda/stream>
@@ -27,7 +27,7 @@
  * @param pool Whether to use a pool memory resource.
  * @return Memory resource instance
  */
-cuda::mr::any_resource<cuda::mr::device_accessible> create_memory_resource(bool is_pool_used);
+cuda::mr::any_device_resource create_memory_resource(bool is_pool_used);
 
 /**
  * @brief Reads parquet metadata (FileMetaData struct) from a file

@@ -11,6 +11,7 @@
 #include <cudf/reduction/detail/reduction_functions.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 namespace cudf {
@@ -22,7 +23,7 @@ std::unique_ptr<cudf::scalar> quantile(column_view const& col,
                                        cudf::interpolation interpolation,
                                        cudf::data_type const output_type,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cuda::mr::device_resource_ref mr)
 {
   auto current_mr = cudf::get_current_device_resource_ref();
   auto sorted_indices =

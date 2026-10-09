@@ -39,6 +39,7 @@
 #include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/functional>
 #include <cuda/std/tuple>
 #include <cuda/stream>
@@ -56,7 +57,7 @@ namespace detail {
 VectorPair full_to_left_join_indices(device_span<size_type const> left_indices,
                                      device_span<size_type const> right_indices,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cuda::mr::device_resource_ref mr)
 {
   auto const keep = [left = left_indices.data()] __device__(std::size_t i) -> bool {
     return left[i] != JoinNoMatch;
@@ -85,7 +86,7 @@ filter_join_indices(cudf::table_view const& left,
                     join_kind join_kind,
                     std::optional<std::size_t> output_size,
                     cuda::stream_ref stream,
-                    rmm::device_async_resource_ref mr)
+                    cuda::mr::device_resource_ref mr)
 {
   // Validate inputs
   CUDF_EXPECTS(left_indices.size() == right_indices.size(),
@@ -376,7 +377,7 @@ filter_join_indices_output_size(cudf::table_view const& left,
                                 ast::expression const& predicate,
                                 join_kind join_kind,
                                 cuda::stream_ref stream,
-                                rmm::device_async_resource_ref mr)
+                                cuda::mr::device_resource_ref mr)
 {
   // Validate inputs (same constraints as filter_join_indices)
   CUDF_EXPECTS(left_indices.size() == right_indices.size(),
@@ -483,7 +484,7 @@ filter_join_indices(cudf::table_view const& left,
                     cudf::join_kind join_kind,
                     std::optional<std::size_t> output_size,
                     cuda::stream_ref stream,
-                    rmm::device_async_resource_ref mr)
+                    cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::filter_join_indices(
@@ -498,7 +499,7 @@ filter_join_indices_output_size(cudf::table_view const& left,
                                 ast::expression const& predicate,
                                 cudf::join_kind join_kind,
                                 cuda::stream_ref stream,
-                                rmm::device_async_resource_ref mr)
+                                cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::filter_join_indices_output_size(

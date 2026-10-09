@@ -7,6 +7,7 @@
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 namespace cudf {
@@ -19,7 +20,7 @@ std::unique_ptr<column> sort_lists(lists_column_view const& input,
                                    order column_order,
                                    null_order null_precedence,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr);
+                                   cuda::mr::device_resource_ref mr);
 
 /**
  * @copydoc cudf::lists::stable_sort_lists
@@ -28,7 +29,7 @@ std::unique_ptr<column> stable_sort_lists(lists_column_view const& input,
                                           order column_order,
                                           null_order null_precedence,
                                           cuda::stream_ref stream,
-                                          rmm::device_async_resource_ref mr);
+                                          cuda::mr::device_resource_ref mr);
 
 }  // namespace lists::detail
 }  // namespace cudf

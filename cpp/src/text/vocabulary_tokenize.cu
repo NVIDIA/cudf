@@ -31,6 +31,7 @@
 
 #include <cuco/static_map.cuh>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/functional>
 #include <cuda/std/iterator>
 #include <cuda/stream>
@@ -101,7 +102,7 @@ using vocabulary_map_type = cuco::static_map<cudf::size_type,
 using col_device_view = std::invoke_result_t<decltype(&cudf::column_device_view::create),
                                              cudf::column_view,
                                              cuda::stream_ref,
-                                             rmm::device_async_resource_ref>;
+                                             cuda::mr::device_resource_ref>;
 
 struct tokenize_vocabulary::tokenize_vocabulary_impl {
   std::unique_ptr<cudf::column> const vocabulary;
@@ -128,7 +129,7 @@ struct key_pair {
 
 tokenize_vocabulary::tokenize_vocabulary(cudf::strings_column_view const& input,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(not input.is_empty(), "vocabulary must not be empty");
   CUDF_EXPECTS(not input.has_nulls(), "vocabulary must not have nulls");
@@ -159,7 +160,7 @@ tokenize_vocabulary::~tokenize_vocabulary() { delete _impl; }
 
 std::unique_ptr<tokenize_vocabulary> load_vocabulary(cudf::strings_column_view const& input,
                                                      cuda::stream_ref stream,
-                                                     rmm::device_async_resource_ref mr)
+                                                     cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return std::make_unique<tokenize_vocabulary>(input, stream, mr);
@@ -349,7 +350,7 @@ std::unique_ptr<cudf::column> tokenize_with_vocabulary(cudf::strings_column_view
                                                        cudf::string_scalar const& delimiter,
                                                        cudf::size_type default_id,
                                                        cuda::stream_ref stream,
-                                                       rmm::device_async_resource_ref mr)
+                                                       cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(delimiter.is_valid(stream), "Parameter delimiter must be valid");
 
@@ -464,7 +465,7 @@ std::unique_ptr<cudf::column> tokenize_with_vocabulary(cudf::strings_column_view
                                                        cudf::string_scalar const& delimiter,
                                                        cudf::size_type default_id,
                                                        cuda::stream_ref stream,
-                                                       rmm::device_async_resource_ref mr)
+                                                       cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::tokenize_with_vocabulary(input, vocabulary, delimiter, default_id, stream, mr);

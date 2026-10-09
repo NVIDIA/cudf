@@ -13,6 +13,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <thrust/transform.h>
 
@@ -27,7 +28,7 @@ std::unique_ptr<cudf::column> copy_slice(lists_column_view const& lists,
                                          size_type start,
                                          size_type end,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cuda::mr::device_resource_ref mr)
 {
   if (lists.is_empty() or start == end) { return cudf::empty_like(lists.parent()); }
   if (end < 0 || end > lists.size()) end = lists.size();

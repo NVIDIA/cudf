@@ -11,6 +11,7 @@
 #include <cudf/utilities/span.hpp>
 
 #include <cuda/buffer>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <span>

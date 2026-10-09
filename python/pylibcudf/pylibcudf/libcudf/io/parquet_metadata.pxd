@@ -14,7 +14,7 @@ from pylibcudf.libcudf.types cimport data_type, size_type
 from pylibcudf.libcudf.io.types cimport source_info
 from pylibcudf.libcudf.utilities.span cimport host_span
 from cuda.bindings.cyruntime cimport cudaStream_t
-from rmm.librmm.memory_resource cimport device_async_resource_ref
+from pylibcudf.libcudf.utilities.memory_resource cimport device_resource_ref
 
 ctypedef const unique_ptr[datasource] const_unique_ptr_datasource
 ctypedef const string const_string
@@ -58,5 +58,5 @@ cdef extern from "cudf/io/parquet_metadata.hpp" namespace "cudf::io" nogil:
         std_span[const_FileMetaData] parquet_metadatas,
         std_span[const_string] column_names,
         cudaStream_t stream,
-        device_async_resource_ref mr,
+        device_resource_ref mr,
     ) except +libcudf_exception_handler

@@ -23,6 +23,7 @@
 
 #include <cuda/atomic>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/functional>
 #include <cuda/std/iterator>
 #include <cuda/std/utility>
@@ -258,7 +259,7 @@ template <typename ReplacerFn>
 std::unique_ptr<cudf::column> replace_helper(ReplacerFn replacer,
                                              cudf::strings_column_view const& input,
                                              cuda::stream_ref stream,
-                                             rmm::device_async_resource_ref mr)
+                                             cuda::mr::device_resource_ref mr)
 {
   auto const first_offset = (input.offset() == 0) ? 0L
                                                   : cudf::strings::detail::get_offset_value(
@@ -365,7 +366,7 @@ std::unique_ptr<cudf::column> replace_tokens(cudf::strings_column_view const& in
                                              cudf::strings_column_view const& replacements,
                                              cudf::string_scalar const& delimiter,
                                              cuda::stream_ref stream,
-                                             rmm::device_async_resource_ref mr)
+                                             cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(!targets.has_nulls(), "Parameter targets must not have nulls");
   CUDF_EXPECTS(!replacements.has_nulls(), "Parameter replacements must not have nulls");
@@ -395,7 +396,7 @@ std::unique_ptr<cudf::column> filter_tokens(cudf::strings_column_view const& inp
                                             cudf::string_scalar const& replacement,
                                             cudf::string_scalar const& delimiter,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(replacement.is_valid(stream), "Parameter replacement must be valid");
   CUDF_EXPECTS(delimiter.is_valid(stream), "Parameter delimiter must be valid");
@@ -420,7 +421,7 @@ std::unique_ptr<cudf::column> replace_tokens(cudf::strings_column_view const& in
                                              cudf::strings_column_view const& replacements,
                                              cudf::string_scalar const& delimiter,
                                              cuda::stream_ref stream,
-                                             rmm::device_async_resource_ref mr)
+                                             cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::replace_tokens(input, targets, replacements, delimiter, stream, mr);
@@ -431,7 +432,7 @@ std::unique_ptr<cudf::column> filter_tokens(cudf::strings_column_view const& inp
                                             cudf::string_scalar const& replacement,
                                             cudf::string_scalar const& delimiter,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::filter_tokens(input, min_token_length, replacement, delimiter, stream, mr);

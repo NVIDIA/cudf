@@ -165,8 +165,9 @@ cuda::std::size_t roaring_bitmap::size_bytes() const
     _type, [&]<roaring_bitmap_type Type>() { return _impl->size_bytes<Type>(); });
 }
 
-std::unique_ptr<cudf::column> roaring_bitmap::contains_async(
-  cudf::column_view const& keys, cuda::stream_ref stream, rmm::device_async_resource_ref mr) const
+std::unique_ptr<cudf::column> roaring_bitmap::contains_async(cudf::column_view const& keys,
+                                                             cuda::stream_ref stream,
+                                                             cuda::mr::device_resource_ref mr) const
 {
   auto result = cudf::make_fixed_width_column(
     cudf::data_type{cudf::type_id::BOOL8}, keys.size(), cudf::mask_state::UNALLOCATED, stream, mr);

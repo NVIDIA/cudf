@@ -29,6 +29,7 @@
 #include <cuda/atomic>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/merge.h>
@@ -385,7 +386,7 @@ CUDF_KERNEL void multibyte_converter_kernel(convert_char_fn converter,
 std::unique_ptr<column> convert_case(strings_column_view const& input,
                                      character_flags_table_type case_flag,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cuda::mr::device_resource_ref mr)
 {
   if (input.size() == input.null_count()) {
     return std::make_unique<column>(input.parent(), stream, mr);
@@ -497,7 +498,7 @@ std::unique_ptr<column> convert_case(strings_column_view const& input,
 
 std::unique_ptr<column> to_lower(strings_column_view const& strings,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cuda::mr::device_resource_ref mr)
 {
   character_flags_table_type case_flag = IS_UPPER(0xFF);  // convert only upper case characters
   return convert_case(strings, case_flag, stream, mr);
@@ -506,7 +507,7 @@ std::unique_ptr<column> to_lower(strings_column_view const& strings,
 //
 std::unique_ptr<column> to_upper(strings_column_view const& strings,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cuda::mr::device_resource_ref mr)
 {
   character_flags_table_type case_flag = IS_LOWER(0xFF);  // convert only lower case characters
   return convert_case(strings, case_flag, stream, mr);
@@ -515,7 +516,7 @@ std::unique_ptr<column> to_upper(strings_column_view const& strings,
 //
 std::unique_ptr<column> swapcase(strings_column_view const& strings,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cuda::mr::device_resource_ref mr)
 {
   // convert only upper or lower case characters
   character_flags_table_type case_flag = IS_LOWER(0xFF) | IS_UPPER(0xFF);
@@ -528,7 +529,7 @@ std::unique_ptr<column> swapcase(strings_column_view const& strings,
 
 std::unique_ptr<column> to_lower(strings_column_view const& strings,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::to_lower(strings, stream, mr);
@@ -536,7 +537,7 @@ std::unique_ptr<column> to_lower(strings_column_view const& strings,
 
 std::unique_ptr<column> to_upper(strings_column_view const& strings,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::to_upper(strings, stream, mr);
@@ -544,7 +545,7 @@ std::unique_ptr<column> to_upper(strings_column_view const& strings,
 
 std::unique_ptr<column> swapcase(strings_column_view const& strings,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::swapcase(strings, stream, mr);

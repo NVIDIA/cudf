@@ -11,6 +11,7 @@
 
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 //! NVText APIs
@@ -41,8 +42,8 @@ namespace CUDF_EXPORT nvtext {
 std::unique_ptr<rmm::device_uvector<cudf::size_type>> build_suffix_array(
   cudf::strings_column_view const& input,
   cudf::size_type min_width,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns duplicate strings found in the given input
@@ -68,8 +69,8 @@ std::unique_ptr<cudf::column> resolve_duplicates(
   cudf::strings_column_view const& input,
   cudf::device_span<cudf::size_type const> indices,
   cudf::size_type min_width,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns duplicate strings found from input1 found in the given input2
@@ -99,8 +100,8 @@ std::unique_ptr<cudf::column> resolve_duplicates_pair(
   cudf::strings_column_view const& input2,
   cudf::device_span<cudf::size_type const> indices2,
   cudf::size_type min_width,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 }  // namespace CUDF_EXPORT nvtext

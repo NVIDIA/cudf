@@ -14,6 +14,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/cmath>
 #include <cuda/stream>
 #include <thrust/for_each.h>
@@ -163,7 +164,7 @@ struct dispatch_from_durations_fn {
   template <typename T>
   std::unique_ptr<column> operator()(column_view const& durations,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr) const
+                                     cuda::mr::device_resource_ref mr) const
     requires(cudf::is_duration<T>())
   {
     size_type strings_count = durations.size();
@@ -201,7 +202,7 @@ struct dispatch_from_durations_fn {
   template <typename T>
   std::unique_ptr<column> operator()(column_view const&,
                                      cuda::stream_ref,
-                                     rmm::device_async_resource_ref) const
+                                     cuda::mr::device_resource_ref) const
     requires(not cudf::is_duration<T>())
   {
     CUDF_FAIL("Values for from_durations function must be a duration type.");
@@ -212,7 +213,7 @@ struct dispatch_from_durations_fn {
 
 std::unique_ptr<column> pandas_format_durations(column_view const& durations,
                                                 cuda::stream_ref stream,
-                                                rmm::device_async_resource_ref mr)
+                                                cuda::mr::device_resource_ref mr)
 {
   size_type strings_count = durations.size();
   if (strings_count == 0) return make_empty_column(type_id::STRING);

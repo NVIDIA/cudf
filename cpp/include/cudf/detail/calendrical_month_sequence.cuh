@@ -16,6 +16,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <thrust/transform.h>
 
@@ -27,7 +28,7 @@ struct calendrical_month_sequence_functor {
                                            scalar const& input,
                                            size_type months,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cuda::mr::device_resource_ref mr)
     requires(cudf::is_timestamp_t<T>::value)
   {
     // Return empty column if n = 0

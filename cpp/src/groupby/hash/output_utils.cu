@@ -41,11 +41,11 @@ namespace {
 struct result_column_creator {
   size_type output_size;
   cuda::stream_ref stream;
-  rmm::device_async_resource_ref mr;
+  cuda::mr::device_resource_ref mr;
 
   explicit result_column_creator(size_type output_size_,
                                  cuda::stream_ref stream_,
-                                 rmm::device_async_resource_ref mr_)
+                                 cuda::mr::device_resource_ref mr_)
     : output_size{output_size_}, stream{stream_}, mr{mr_}
   {
   }
@@ -109,7 +109,7 @@ std::unique_ptr<table> create_results_table(size_type output_size,
                                             host_span<aggregation::Kind const> agg_kinds,
                                             std::span<int8_t const> is_agg_intermediate,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(values.num_columns() == static_cast<size_type>(agg_kinds.size()),
                "The number of values columns and size of agg_kinds vector must be the same.");

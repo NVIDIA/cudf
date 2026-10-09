@@ -21,12 +21,12 @@
 
 #include <rmm/device_uvector.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
-#include <rmm/resource_ref.hpp>
 
 #include <cooperative_groups.h>
 #include <cuco/static_set.cuh>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/tuple>
 #include <cuda/stream>
 #include <thrust/fill.h>
@@ -143,7 +143,7 @@ void find_matches_in_hash_table(HashTableType const& hash_table,
 distinct_hash_join::distinct_hash_join(cudf::table_view const& right,
                                        cudf::null_equality compare_nulls,
                                        cuda::stream_ref stream,
-                                       cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+                                       cuda::mr::any_device_resource mr)
   : distinct_hash_join{right, compare_nulls, CUCO_DESIRED_LOAD_FACTOR, stream, std::move(mr)}
 {
 }
@@ -152,7 +152,7 @@ distinct_hash_join::distinct_hash_join(cudf::table_view const& right,
                                        cudf::null_equality compare_nulls,
                                        double load_factor,
                                        cuda::stream_ref stream,
-                                       cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+                                       cuda::mr::any_device_resource mr)
   : _has_nested_columns{cudf::has_nested_columns(right)},
     _nulls_equal{compare_nulls},
     _right{right},
@@ -214,7 +214,7 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
 distinct_hash_join::inner_join(cudf::table_view const& left,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr) const
+                               cuda::mr::device_resource_ref mr) const
 {
   cudf::scoped_range range{"distinct_hash_join::inner_join"};
 
@@ -310,7 +310,7 @@ distinct_hash_join::inner_join(cudf::table_view const& left,
 }
 
 std::unique_ptr<rmm::device_uvector<size_type>> distinct_hash_join::left_join(
-  cudf::table_view const& left, cuda::stream_ref stream, rmm::device_async_resource_ref mr) const
+  cudf::table_view const& left, cuda::stream_ref stream, cuda::mr::device_resource_ref mr) const
 {
   cudf::scoped_range range{"distinct_hash_join::left_join"};
 
@@ -397,7 +397,7 @@ distinct_hash_join::distinct_hash_join(cudf::table_view const& right,
                                        null_equality compare_nulls,
                                        double load_factor,
                                        cuda::stream_ref stream,
-                                       cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+                                       cuda::mr::any_device_resource mr)
   : _impl{std::make_unique<impl_type>(right, compare_nulls, load_factor, stream, std::move(mr))}
 {
 }
@@ -406,13 +406,13 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
 distinct_hash_join::inner_join(cudf::table_view const& left,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr) const
+                               cuda::mr::device_resource_ref mr) const
 {
   return _impl->inner_join(left, stream, mr);
 }
 
 std::unique_ptr<rmm::device_uvector<size_type>> distinct_hash_join::left_join(
-  cudf::table_view const& left, cuda::stream_ref stream, rmm::device_async_resource_ref mr) const
+  cudf::table_view const& left, cuda::stream_ref stream, cuda::mr::device_resource_ref mr) const
 {
   return _impl->left_join(left, stream, mr);
 }

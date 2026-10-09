@@ -12,6 +12,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 namespace cudf {
@@ -20,7 +21,7 @@ struct dispatch_create_indices {
   template <typename IndexType>
   std::unique_ptr<column> operator()(column_view const& indices,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cuda::mr::device_resource_ref mr)
     requires(is_index_type<IndexType>())
   {
     CUDF_EXPECTS(
@@ -32,7 +33,7 @@ struct dispatch_create_indices {
   template <typename IndexType>
   std::unique_ptr<column> operator()(column_view const&,
                                      cuda::stream_ref,
-                                     rmm::device_async_resource_ref)
+                                     cuda::mr::device_resource_ref)
     requires(!is_index_type<IndexType>())
   {
     CUDF_FAIL("indices must be an integer type.");
@@ -43,7 +44,7 @@ struct dispatch_create_indices {
 std::unique_ptr<column> make_dictionary_column(column_view const& keys_column,
                                                column_view const& indices_column,
                                                cuda::stream_ref stream,
-                                               rmm::device_async_resource_ref mr)
+                                               cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(!keys_column.has_nulls(), "keys column must not have nulls", std::invalid_argument);
   if (keys_column.is_empty()) return make_empty_column(type_id::DICTIONARY32);
@@ -115,7 +116,7 @@ struct make_signed_fn {
 std::unique_ptr<column> make_dictionary_column(std::unique_ptr<column> keys,
                                                std::unique_ptr<column> indices,
                                                cuda::stream_ref stream,
-                                               rmm::device_async_resource_ref mr)
+                                               cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(!keys->has_nulls(), "keys column must not have nulls", std::invalid_argument);
 

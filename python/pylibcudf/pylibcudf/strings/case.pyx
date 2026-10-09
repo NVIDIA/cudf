@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pylibcudf.typing import CudaStreamLike
+from pylibcudf.libcudf.utilities.memory_resource cimport to_device_resource_ref
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 from cuda.bindings.cyruntime cimport cudaStream_t
@@ -43,7 +44,7 @@ cpdef Column to_lower(Column input, object stream: CudaStreamLike | None = None,
     mr = _get_memory_resource(mr)
     cdef column_view c_input = input.view()
     with nogil:
-        c_result = cpp_case.to_lower(c_input, _cs, mr.get_mr())
+        c_result = cpp_case.to_lower(c_input, _cs, to_device_resource_ref(mr.get_mr()))
 
     return Column.from_libcudf(move(c_result), _stream, mr)
 
@@ -72,7 +73,7 @@ cpdef Column to_upper(Column input, object stream: CudaStreamLike | None = None,
     mr = _get_memory_resource(mr)
     cdef column_view c_input = input.view()
     with nogil:
-        c_result = cpp_case.to_upper(c_input, _cs, mr.get_mr())
+        c_result = cpp_case.to_upper(c_input, _cs, to_device_resource_ref(mr.get_mr()))
 
     return Column.from_libcudf(move(c_result), _stream, mr)
 
@@ -103,6 +104,6 @@ cpdef Column swapcase(Column input, object stream: CudaStreamLike | None = None,
     mr = _get_memory_resource(mr)
     cdef column_view c_input = input.view()
     with nogil:
-        c_result = cpp_case.swapcase(c_input, _cs, mr.get_mr())
+        c_result = cpp_case.swapcase(c_input, _cs, to_device_resource_ref(mr.get_mr()))
 
     return Column.from_libcudf(move(c_result), _stream, mr)

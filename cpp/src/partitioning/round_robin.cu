@@ -24,6 +24,7 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <thrust/execution_policy.h>
 #include <thrust/scan.h>
@@ -71,7 +72,7 @@ std::pair<std::unique_ptr<cudf::table>, std::vector<cudf::size_type>> degenerate
   cudf::size_type num_partitions,
   cudf::size_type start_partition,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   auto nrows = input.num_rows();
 
@@ -151,7 +152,7 @@ std::pair<std::unique_ptr<table>, std::vector<cudf::size_type>> round_robin_part
   cudf::size_type num_partitions,
   cudf::size_type start_partition,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   auto nrows = input.num_rows();
 
@@ -268,7 +269,7 @@ std::pair<std::unique_ptr<cudf::table>, std::vector<cudf::size_type>> round_robi
   cudf::size_type num_partitions,
   cudf::size_type start_partition,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::round_robin_partition(input, num_partitions, start_partition, stream, mr);

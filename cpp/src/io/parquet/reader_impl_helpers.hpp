@@ -16,6 +16,7 @@
 #include <cudf/types.hpp>
 
 #include <cuda/buffer>
+#include <cuda/memory_resource>
 
 #include <algorithm>
 #include <exception>
@@ -388,7 +389,7 @@ class aggregate_reader_metadata {
                      host_span<int const> column_schemas,
                      size_type num_row_groups,
                      cuda::stream_ref stream,
-                     rmm::device_async_resource_ref mr) const;
+                     cuda::mr::device_resource_ref mr) const;
 
   /**
    * @brief Collects Parquet types for the columns with the specified schema indices
@@ -618,7 +619,7 @@ class aggregate_reader_metadata {
   [[nodiscard]] std::unique_ptr<table> read_column_chunk_bounds(
     std::span<std::string const> column_names,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr) const;
+    cuda::mr::device_resource_ref mr) const;
 
   /**
    * @brief Get total number of rows across all files

@@ -44,6 +44,7 @@ Mark Adler    madler@alumni.caltech.edu
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/algorithm>
 #include <cuda/std/cmath>
 #include <cuda/std/tuple>

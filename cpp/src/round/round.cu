@@ -20,6 +20,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <thrust/transform.h>
 #include <thrust/uninitialized_fill.h>
@@ -212,7 +213,7 @@ template <typename T, template <typename> typename RoundFunctor>
 std::unique_ptr<column> round_with(column_view const& input,
                                    int32_t decimal_places,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cuda::mr::device_resource_ref mr)
   requires(not cudf::is_fixed_point<T>())
 {
   using Functor = RoundFunctor<T>;
@@ -245,7 +246,7 @@ template <typename T, template <typename> typename RoundFunctor>
 std::unique_ptr<column> round_with(column_view const& input,
                                    int32_t decimal_places,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cuda::mr::device_resource_ref mr)
   requires(cudf::is_fixed_point<T>())
 {
   using namespace numeric;
@@ -311,7 +312,7 @@ struct round_type_dispatcher {
                                      int32_t decimal_places,
                                      cudf::rounding_method method,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cuda::mr::device_resource_ref mr)
     requires(is_supported_round_type<T>())
   {
     // clang-format off
@@ -351,7 +352,7 @@ struct round_dispatch_fn {
                                      int32_t decimal_places,
                                      cudf::rounding_method method,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cuda::mr::device_resource_ref mr)
     requires(is_supported<T>())
   {
     // clang-format off
@@ -378,7 +379,7 @@ std::unique_ptr<column> round(column_view const& input,
                               int32_t decimal_places,
                               cudf::rounding_method method,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(cudf::is_numeric(input.type()) || cudf::is_fixed_point(input.type()),
                "Only integral/floating point/fixed point currently supported.");
@@ -399,7 +400,7 @@ std::unique_ptr<column> round_decimal(column_view const& input,
                                       int32_t decimal_places,
                                       cudf::rounding_method method,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cuda::mr::device_resource_ref mr)
 {
   CUDF_EXPECTS(cudf::is_integral_not_bool(input.type()) || cudf::is_fixed_point(input.type()),
                "Only integral or fixed point currently supported by round_decimal",
@@ -423,7 +424,7 @@ std::unique_ptr<column> round(column_view const& input,
                               int32_t decimal_places,
                               rounding_method method,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::round(input, decimal_places, method, stream, mr);
@@ -433,7 +434,7 @@ std::unique_ptr<column> round_decimal(column_view const& input,
                                       int32_t decimal_places,
                                       rounding_method method,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::round_decimal(input, decimal_places, method, stream, mr);

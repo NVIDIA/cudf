@@ -5,12 +5,12 @@
 
 #pragma once
 
+#include <cudf/types.hpp>
 #include <cudf/utilities/export.hpp>
-
-#include <rmm/resource_ref.hpp>
 
 #include <cub/block/block_scan.cuh>
 #include <cuda/atomic>
+#include <cuda/memory_resource>
 
 namespace CUDF_EXPORT cudf {
 namespace io {
@@ -74,7 +74,7 @@ struct scan_tile_state {
 
   scan_tile_state(cudf::size_type num_tiles,
                   cuda::stream_ref stream,
-                  rmm::device_async_resource_ref mr)
+                  cuda::mr::device_resource_ref mr)
     : tile_status(rmm::device_uvector<cuda::atomic<scan_tile_status, cuda::thread_scope_device>>(
         num_tiles, stream, mr)),
       tile_state_partial(rmm::device_uvector<T>(num_tiles, stream, mr)),

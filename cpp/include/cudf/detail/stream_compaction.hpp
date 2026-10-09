@@ -13,29 +13,30 @@
 
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 namespace cudf {
 namespace detail {
 /**
  * @copydoc cudf::drop_nulls(table_view const&, std::vector<size_type> const&,
- *                           cudf::size_type, cuda::stream_ref, rmm::device_async_resource_ref)
+ *                           cudf::size_type, cuda::stream_ref, cuda::mr::device_resource_ref)
  */
 std::unique_ptr<table> drop_nulls(table_view const& input,
                                   std::vector<size_type> const& keys,
                                   cudf::size_type keep_threshold,
                                   cuda::stream_ref stream,
-                                  rmm::device_async_resource_ref mr);
+                                  cuda::mr::device_resource_ref mr);
 
 /**
  * @copydoc cudf::drop_nans(table_view const&, std::vector<size_type> const&,
- *                          cudf::size_type, cuda::stream_ref, rmm::device_async_resource_ref)
+ *                          cudf::size_type, cuda::stream_ref, cuda::mr::device_resource_ref)
  */
 std::unique_ptr<table> drop_nans(table_view const& input,
                                  std::vector<size_type> const& keys,
                                  cudf::size_type keep_threshold,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr);
+                                 cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Specifies how the boolean mask should be interpreted by `apply_mask` API.
@@ -62,7 +63,7 @@ std::unique_ptr<table> apply_mask(table_view const& input,
                                   column_view const& boolean_mask,
                                   mask_type mask_kind,
                                   cuda::stream_ref stream,
-                                  rmm::device_async_resource_ref mr);
+                                  cuda::mr::device_resource_ref mr);
 
 /**
  * @copydoc cudf::unique
@@ -72,7 +73,7 @@ std::unique_ptr<table> unique(table_view const& input,
                               duplicate_keep_option keep,
                               null_equality nulls_equal,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr);
+                              cuda::mr::device_resource_ref mr);
 
 /**
  * @copydoc cudf::distinct
@@ -83,7 +84,7 @@ std::unique_ptr<table> distinct(table_view const& input,
                                 null_equality nulls_equal,
                                 nan_equality nans_equal,
                                 cuda::stream_ref stream,
-                                rmm::device_async_resource_ref mr);
+                                cuda::mr::device_resource_ref mr);
 
 /**
  * @copydoc cudf::stable_distinct
@@ -94,7 +95,7 @@ std::unique_ptr<table> stable_distinct(table_view const& input,
                                        null_equality nulls_equal,
                                        nan_equality nans_equal,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr);
+                                       cuda::mr::device_resource_ref mr);
 
 /**
  * @copydoc cudf::distinct_indices
@@ -106,7 +107,7 @@ rmm::device_uvector<size_type> distinct_indices(table_view const& input,
                                                 null_equality nulls_equal,
                                                 nan_equality nans_equal,
                                                 cuda::stream_ref stream,
-                                                rmm::device_async_resource_ref mr);
+                                                cuda::mr::device_resource_ref mr);
 
 }  // namespace detail
 }  // namespace cudf

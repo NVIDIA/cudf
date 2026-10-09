@@ -10,6 +10,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <memory>
@@ -22,14 +23,14 @@ namespace detail {
 std::unique_ptr<table> tile(table_view const& input,
                             size_type count,
                             cuda::stream_ref,
-                            rmm::device_async_resource_ref mr);
+                            cuda::mr::device_resource_ref mr);
 
 /**
  * @copydoc cudf::interleave_columns
  */
 std::unique_ptr<column> interleave_columns(table_view const& input,
                                            cuda::stream_ref,
-                                           rmm::device_async_resource_ref mr);
+                                           cuda::mr::device_resource_ref mr);
 
 /**
  * @copydoc cudf::table_to_array

@@ -15,6 +15,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <algorithm>
@@ -55,7 +56,7 @@ std::unique_ptr<cudf::table> hybrid_scan(
   std::unordered_set<hybrid_scan_filter_type> const& filters,
   bool verbose,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Helper to set up multifile hybrid scan tasks

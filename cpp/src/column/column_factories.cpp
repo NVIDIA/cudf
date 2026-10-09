@@ -11,6 +11,8 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/traits.hpp>
 
+#include <cuda/memory_resource>
+
 namespace cudf {
 namespace {
 struct size_of_helper {
@@ -64,7 +66,7 @@ std::unique_ptr<column> make_numeric_column(data_type type,
                                             size_type size,
                                             mask_state state,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(type.id() != type_id::EMPTY && is_numeric(type),
@@ -86,7 +88,7 @@ std::unique_ptr<column> make_fixed_point_column(data_type type,
                                                 size_type size,
                                                 mask_state state,
                                                 cuda::stream_ref stream,
-                                                rmm::device_async_resource_ref mr)
+                                                cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(is_fixed_point(type), "Invalid, non-fixed_point type.", cudf::data_type_error);
@@ -106,7 +108,7 @@ std::unique_ptr<column> make_timestamp_column(data_type type,
                                               size_type size,
                                               mask_state state,
                                               cuda::stream_ref stream,
-                                              rmm::device_async_resource_ref mr)
+                                              cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(is_timestamp(type), "Invalid, non-timestamp type.", cudf::data_type_error);
@@ -126,7 +128,7 @@ std::unique_ptr<column> make_duration_column(data_type type,
                                              size_type size,
                                              mask_state state,
                                              cuda::stream_ref stream,
-                                             rmm::device_async_resource_ref mr)
+                                             cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(is_duration(type), "Invalid, non-duration type.", cudf::data_type_error);
@@ -146,7 +148,7 @@ std::unique_ptr<column> make_fixed_width_column(data_type type,
                                                 size_type size,
                                                 mask_state state,
                                                 cuda::stream_ref stream,
-                                                rmm::device_async_resource_ref mr)
+                                                cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(type.id() != type_id::EMPTY && is_fixed_width(type),
@@ -164,7 +166,7 @@ std::unique_ptr<column> make_fixed_width_column(data_type type,
 std::unique_ptr<column> make_dictionary_from_scalar(scalar const& s,
                                                     size_type size,
                                                     cuda::stream_ref stream,
-                                                    rmm::device_async_resource_ref mr)
+                                                    cuda::mr::device_resource_ref mr)
 {
   if (size == 0) return make_empty_column(type_id::DICTIONARY32);
   CUDF_EXPECTS(size >= 0, "Column size cannot be negative.");

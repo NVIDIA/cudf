@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from libcpp.memory cimport unique_ptr
 from libcpp.string cimport string
@@ -10,7 +10,7 @@ from pylibcudf.libcudf.strings.regex_program cimport regex_program
 from pylibcudf.libcudf.table.table cimport table
 from pylibcudf.libcudf.types cimport size_type
 from cuda.bindings.cyruntime cimport cudaStream_t
-from rmm.librmm.memory_resource cimport device_async_resource_ref
+from pylibcudf.libcudf.utilities.memory_resource cimport device_resource_ref
 
 
 cdef extern from "cudf/strings/split/split.hpp" namespace \
@@ -21,35 +21,35 @@ cdef extern from "cudf/strings/split/split.hpp" namespace \
         string_scalar delimiter,
         size_type maxsplit,
         cudaStream_t stream,
-        device_async_resource_ref mr) except +libcudf_exception_handler
+        device_resource_ref mr) except +libcudf_exception_handler
 
     cdef unique_ptr[table] rsplit(
         column_view strings_column,
         string_scalar delimiter,
         size_type maxsplit,
         cudaStream_t stream,
-        device_async_resource_ref mr) except +libcudf_exception_handler
+        device_resource_ref mr) except +libcudf_exception_handler
 
     cdef unique_ptr[column] split_record(
         column_view strings,
         string_scalar delimiter,
         size_type maxsplit,
         cudaStream_t stream,
-        device_async_resource_ref mr) except +libcudf_exception_handler
+        device_resource_ref mr) except +libcudf_exception_handler
 
     cdef unique_ptr[column] rsplit_record(
         column_view strings,
         string_scalar delimiter,
         size_type maxsplit,
         cudaStream_t stream,
-        device_async_resource_ref mr) except +libcudf_exception_handler
+        device_resource_ref mr) except +libcudf_exception_handler
 
     cdef unique_ptr[column] split_part(
         column_view strings,
         string_scalar delimiter,
         size_type index,
         cudaStream_t stream,
-        device_async_resource_ref mr) except +libcudf_exception_handler
+        device_resource_ref mr) except +libcudf_exception_handler
 
 
 cdef extern from "cudf/strings/split/split_re.hpp" namespace \
@@ -60,25 +60,25 @@ cdef extern from "cudf/strings/split/split_re.hpp" namespace \
         regex_program prog,
         size_type maxsplit,
         cudaStream_t stream,
-        device_async_resource_ref mr) except +libcudf_exception_handler
+        device_resource_ref mr) except +libcudf_exception_handler
 
     cdef unique_ptr[table] rsplit_re(
         const column_view& input,
         regex_program prog,
         size_type maxsplit,
         cudaStream_t stream,
-        device_async_resource_ref mr) except +libcudf_exception_handler
+        device_resource_ref mr) except +libcudf_exception_handler
 
     cdef unique_ptr[column] split_record_re(
         const column_view& input,
         regex_program prog,
         size_type maxsplit,
         cudaStream_t stream,
-        device_async_resource_ref mr) except +libcudf_exception_handler
+        device_resource_ref mr) except +libcudf_exception_handler
 
     cdef unique_ptr[column] rsplit_record_re(
         const column_view& input,
         regex_program prog,
         size_type maxsplit,
         cudaStream_t stream,
-        device_async_resource_ref mr) except +libcudf_exception_handler
+        device_resource_ref mr) except +libcudf_exception_handler

@@ -15,6 +15,7 @@
 
 #include <rmm/mr/callback_memory_resource.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <cuda_runtime_api.h>
 
@@ -159,7 +160,7 @@ TEST_F(ScalarTest, AsyncStringConstructionOwnsHostSource)
   cudf::string_scalar scalar{std::string_view{source.data(), source.size()},
                              true,
                              stream_ref,
-                             rmm::device_async_resource_ref{mr}};
+                             cuda::mr::device_resource_ref{mr}};
   std::fill(source.begin(), source.end(), 'x');
   EXPECT_FALSE(gate.complete());
 

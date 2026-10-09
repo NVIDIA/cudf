@@ -16,6 +16,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <algorithm>
@@ -65,7 +66,7 @@ std::unique_ptr<table> apply_mask(table_view const& input,
                                   column_view const& boolean_mask,
                                   mask_type mask_kind,
                                   cuda::stream_ref stream,
-                                  rmm::device_async_resource_ref mr)
+                                  cuda::mr::device_resource_ref mr)
 {
   auto const is_retention = (mask_kind == mask_type::RETENTION);
 
@@ -102,7 +103,7 @@ std::unique_ptr<table> apply_mask(table_view const& input,
 std::unique_ptr<table> apply_retention_mask(table_view const& input,
                                             column_view const& retention_mask,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::apply_mask(input, retention_mask, detail::mask_type::RETENTION, stream, mr);
@@ -111,7 +112,7 @@ std::unique_ptr<table> apply_retention_mask(table_view const& input,
 std::unique_ptr<table> apply_boolean_mask(table_view const& input,
                                           column_view const& boolean_mask,
                                           cuda::stream_ref stream,
-                                          rmm::device_async_resource_ref mr)
+                                          cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::apply_mask(input, boolean_mask, detail::mask_type::RETENTION, stream, mr);
@@ -120,7 +121,7 @@ std::unique_ptr<table> apply_boolean_mask(table_view const& input,
 std::unique_ptr<table> apply_deletion_mask(table_view const& input,
                                            column_view const& deletion_mask,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::apply_mask(input, deletion_mask, detail::mask_type::DELETION, stream, mr);

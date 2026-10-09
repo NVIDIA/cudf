@@ -411,6 +411,7 @@ ConfigureTest(
   sort/sort_test.cpp
   sort/stable_sort_tests.cpp
   sort/string_sort_prefix_test.cpp
+  sort/string_sort_lrb_test.cpp
   sort/top_k_tests.cpp
   GPUS 1
   PERCENT 70

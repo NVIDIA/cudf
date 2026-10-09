@@ -28,6 +28,8 @@ std::unique_ptr<column> sorted_order<sort_method::UNSTABLE>(column_view const& i
 {
   auto sorted_indices = cudf::make_numeric_column(
     data_type(type_to_id<size_type>()), input.size(), mask_state::UNALLOCATED, stream, mr);
+  if (input.is_empty()) { return sorted_indices; }
+
   mutable_column_view indices_view = sorted_indices->mutable_view();
   if (is_radix_sortable(input)) {
     sorted_order_radix(input, indices_view, column_order == order::ASCENDING, stream);
@@ -56,6 +58,8 @@ std::unique_ptr<column> sorted_order<sort_method::STABLE>(column_view const& inp
 {
   auto sorted_indices = cudf::make_numeric_column(
     data_type(type_to_id<size_type>()), input.size(), mask_state::UNALLOCATED, stream, mr);
+  if (input.is_empty()) { return sorted_indices; }
+
   mutable_column_view indices_view = sorted_indices->mutable_view();
   if (is_radix_sortable(input)) {
     sorted_order_radix(input, indices_view, column_order == order::ASCENDING, stream);

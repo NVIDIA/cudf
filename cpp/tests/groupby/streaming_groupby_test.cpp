@@ -26,6 +26,7 @@
 #include <cuda_runtime_api.h>
 
 #include <atomic>
+#include <limits>
 #include <cstddef>
 #include <thread>
 #include <tuple>
@@ -1604,6 +1605,226 @@ TEST_F(StreamingGroupbyTest, StructKeySumTwoBatches)
   verify_against_groupby(keys, results, {batch1, batch2}, KEY_COL, reqs);
 }
 
+namespace {
+
+// Key patterns that differ in how many updates to the same group meet in a warp, over batch
+// sizes and group counts from a few rows per group to many.
+cudf::size_type constexpr LARGE_BATCH = 1 << 17;
+cudf::size_type constexpr SMALL_BATCH = 32;
+
+/// {key, int32 value with nulls, int8 value, double value, double value} for rows
+/// `[0, num_rows)`.
+template <typename KeyFn>
+std::unique_ptr<cudf::table> make_key_pattern_table(cudf::size_type num_rows, KeyFn key_fn)
+{
+  std::vector<int32_t> keys(num_rows);
+  std::vector<int32_t> ints(num_rows);
+  std::vector<bool> ints_valid(num_rows);
+  std::vector<int8_t> bytes(num_rows);
+  std::vector<double> doubles(num_rows);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    keys[i]       = key_fn(i);
+    ints[i]       = (i * 7) % 1000 - 500;
+    ints_valid[i] = i % 11 != 0;
+    bytes[i]      = static_cast<int8_t>((i * 13) % 251 - 125);
+    // Multiples of 1/8 keep the double sums exact regardless of summation order.
+    doubles[i] = ((i * 31) % 997) / 8.0;
+  }
+  std::vector<std::unique_ptr<cudf::column>> cols;
+  cols.push_back(
+    cudf::test::fixed_width_column_wrapper<int32_t>(keys.begin(), keys.end()).release());
+  cols.push_back(
+    cudf::test::fixed_width_column_wrapper<int32_t>(ints.begin(), ints.end(), ints_valid.begin())
+      .release());
+  cols.push_back(
+    cudf::test::fixed_width_column_wrapper<int8_t>(bytes.begin(), bytes.end()).release());
+  cols.push_back(
+    cudf::test::fixed_width_column_wrapper<double>(doubles.begin(), doubles.end()).release());
+  cols.push_back(
+    cudf::test::fixed_width_column_wrapper<double>(doubles.rbegin(), doubles.rend()).release());
+  return std::make_unique<cudf::table>(std::move(cols));
+}
+
+std::vector<cudf::groupby::streaming_aggregation_request> key_pattern_requests()
+{
+  std::vector<cudf::groupby::streaming_aggregation_request> reqs;
+  reqs.push_back(make_req(1, cudf::make_sum_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(1, cudf::make_count_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(
+    1, cudf::make_count_aggregation<cudf::groupby_aggregation>(cudf::null_policy::INCLUDE)));
+  reqs.push_back(make_req(2, cudf::make_min_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(2, cudf::make_max_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(3, cudf::make_mean_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(4, cudf::make_variance_aggregation<cudf::groupby_aggregation>()));
+  return reqs;
+}
+
+/// Splits `data` into consecutive batches of `batch_size` rows.
+std::vector<cudf::table_view> split_batches(cudf::table_view data, cudf::size_type batch_size)
+{
+  std::vector<cudf::size_type> bounds;
+  for (cudf::size_type start = 0; start < data.num_rows(); start += batch_size) {
+    bounds.push_back(start);
+    bounds.push_back(std::min(start + batch_size, data.num_rows()));
+  }
+  return cudf::slice(data, bounds);
+}
+
+void aggregate_and_verify(std::vector<cudf::table_view> const& batches,
+                          cudf::size_type max_distinct_keys)
+{
+  auto const reqs = key_pattern_requests();
+  cudf::groupby::streaming_groupby streaming_agg(KEY_COL, reqs, max_distinct_keys);
+  for (auto const& batch : batches) {
+    streaming_agg.aggregate(batch);
+  }
+  auto [keys, results] = streaming_agg.finalize();
+  verify_against_groupby(keys, results, batches, KEY_COL, reqs);
+}
+
+}  // namespace
+
+struct StreamingGroupbyKeyPatternTest
+  : public cudf::test::BaseFixture,
+    public ::testing::WithParamInterface<std::tuple<cudf::size_type, cudf::size_type>> {};
+
+INSTANTIATE_TEST_SUITE_P(StreamingGroupbyTest,
+                         StreamingGroupbyKeyPatternTest,
+                         ::testing::Combine(::testing::Values(SMALL_BATCH, 16383, LARGE_BATCH),
+                                            ::testing::Values(1, 3, 128, 255, 256, 257)));
+
+TEST_P(StreamingGroupbyKeyPatternTest, CyclicKeys)
+{
+  auto const [batch_size, cardinality] = GetParam();
+  auto const num_rows = batch_size == SMALL_BATCH ? 4 * cardinality + 7 : 3 * batch_size;
+  auto const data =
+    make_key_pattern_table(num_rows, [c = cardinality](cudf::size_type i) { return i % c; });
+  aggregate_and_verify(split_batches(data->view(), batch_size), std::max(batch_size, 1024));
+}
+
+TEST_P(StreamingGroupbyKeyPatternTest, SortedKeys)
+{
+  auto const [batch_size, cardinality] = GetParam();
+  auto const num_rows = batch_size == SMALL_BATCH ? 4 * cardinality + 7 : 3 * batch_size;
+  auto const run      = std::max(1, num_rows / cardinality);
+  auto const data     = make_key_pattern_table(
+    num_rows, [run, c = cardinality](cudf::size_type i) { return (i / run) % c; });
+  aggregate_and_verify(split_batches(data->view(), batch_size), std::max(batch_size, 1024));
+}
+
+// Runs of equal keys are reduced within a warp before updating the results.  The runs below
+// cross warp boundaries and mix nulls with infinities, which must not be confused with the
+// MIN/MAX identities, and include types that take the per-row path.
+TEST_F(StreamingGroupbyTest, WarpReducedRuns)
+{
+  for (cudf::size_type num_rows : {5'000, 1 << 17}) {
+    for (cudf::size_type run : {1, 37, 1000}) {
+      std::vector<int32_t> keys(num_rows);
+      std::vector<double> doubles(num_rows);
+      std::vector<bool> doubles_valid(num_rows);
+      std::vector<int8_t> bytes(num_rows);
+      std::vector<int64_t> decimals(num_rows);
+      std::vector<int64_t> seconds(num_rows);
+      for (cudf::size_type i = 0; i < num_rows; ++i) {
+        keys[i] = i / run;
+        // Each group's only valid double is +inf or -inf.
+        doubles[i]       = keys[i] % 2 == 0 ? std::numeric_limits<double>::infinity()
+                                            : -std::numeric_limits<double>::infinity();
+        doubles_valid[i] = i % run == run / 2;
+        bytes[i]         = static_cast<int8_t>((i * 13) % 251 - 125);
+        decimals[i]      = (i * 7) % 1000 - 500;
+        seconds[i]       = (i * 31) % 100'000;
+      }
+      cudf::test::fixed_width_column_wrapper<int32_t> key_col(keys.begin(), keys.end());
+      cudf::test::fixed_width_column_wrapper<double> double_col(
+        doubles.begin(), doubles.end(), doubles_valid.begin());
+      cudf::test::fixed_width_column_wrapper<int8_t> byte_col(bytes.begin(), bytes.end());
+      cudf::test::fixed_point_column_wrapper<int64_t> decimal_col(
+        decimals.begin(), decimals.end(), numeric::scale_type{-2});
+      cudf::test::fixed_width_column_wrapper<cudf::timestamp_s, int64_t> time_col(seconds.begin(),
+                                                                                  seconds.end());
+      cudf::table_view batch{{key_col, double_col, byte_col, decimal_col, time_col}};
+
+      std::vector<cudf::groupby::streaming_aggregation_request> reqs;
+      reqs.push_back(make_req(1, cudf::make_min_aggregation<cudf::groupby_aggregation>()));
+      reqs.push_back(make_req(1, cudf::make_max_aggregation<cudf::groupby_aggregation>()));
+      reqs.push_back(make_req(1, cudf::make_count_aggregation<cudf::groupby_aggregation>()));
+      reqs.push_back(make_req(2, cudf::make_sum_aggregation<cudf::groupby_aggregation>()));
+      reqs.push_back(make_req(2, cudf::make_min_aggregation<cudf::groupby_aggregation>()));
+      reqs.push_back(make_req(3, cudf::make_sum_aggregation<cudf::groupby_aggregation>()));
+      reqs.push_back(make_req(4, cudf::make_max_aggregation<cudf::groupby_aggregation>()));
+
+      cudf::groupby::streaming_groupby streaming_agg(KEY_COL, reqs, num_rows);
+      streaming_agg.aggregate(batch);
+      streaming_agg.aggregate(batch);
+      auto [out_keys, results] = streaming_agg.finalize();
+      verify_against_groupby(out_keys, results, {batch, batch}, KEY_COL, reqs);
+    }
+  }
+}
+
+namespace {
+
+template <typename T>
+void nan_with_nulls_min_max()
+{
+  auto constexpr nan = std::numeric_limits<T>::quiet_NaN();
+  std::vector<int32_t> keys{1, 1, 2, 2, 3, 3, 3, 4, 4, 6};
+  std::vector<T> vals{nan, 0, 0, nan, 0, nan, 0, 0, 0, 1};
+  std::vector<bool> valid{true, false, false, true, false, true, false, false, false, true};
+  for (int i = 0; i < 40; ++i) {
+    keys.push_back(5);
+    vals.push_back(i == 30 ? nan : 0);
+    valid.push_back(i == 30);
+  }
+  keys.push_back(7);
+  vals.push_back(2);
+  valid.push_back(true);
+  cudf::test::fixed_width_column_wrapper<int32_t> key_col(keys.begin(), keys.end());
+  cudf::test::fixed_width_column_wrapper<T> val_col(vals.begin(), vals.end(), valid.begin());
+  cudf::table_view batch{{key_col, val_col}};
+
+  std::vector<cudf::groupby::streaming_aggregation_request> reqs;
+  reqs.push_back(make_req(1, cudf::make_min_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(1, cudf::make_max_aggregation<cudf::groupby_aggregation>()));
+
+  cudf::groupby::streaming_groupby streaming_agg(KEY_COL, reqs, DEFAULT_MAX_DISTINCT_KEYS);
+  streaming_agg.aggregate(batch);
+  streaming_agg.aggregate(batch);
+  auto [out_keys, results] = streaming_agg.finalize();
+
+  cudf::test::fixed_width_column_wrapper<int32_t> expect_keys{1, 2, 3, 4, 5, 6, 7};
+  cudf::test::fixed_width_column_wrapper<T> expect_vals{{nan, nan, nan, T{0}, nan, T{1}, T{2}},
+                                                        {true, true, true, false, true, true, true}};
+  check(out_keys, results, cudf::table_view{{expect_keys}}, {expect_vals, expect_vals});
+}
+
+}  // namespace
+
+TEST_F(StreamingGroupbyTest, MinMaxNaNWithNulls)
+{
+  nan_with_nulls_min_max<float>();
+  nan_with_nulls_min_max<double>();
+}
+
+// Without requests no aggregation kernel is launched, and only the distinct keys are returned.
+TEST_F(StreamingGroupbyTest, NoRequests)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> keys{1, 2, 3, 1};
+  cudf::test::fixed_width_column_wrapper<int32_t> vals{10, 20, 30, 40};
+  cudf::table_view batch{{keys, vals}};
+
+  std::vector<cudf::groupby::streaming_aggregation_request> reqs;
+  cudf::groupby::streaming_groupby streaming_agg(KEY_COL, reqs, DEFAULT_MAX_DISTINCT_KEYS);
+  streaming_agg.aggregate(batch);
+  streaming_agg.aggregate(batch);
+  auto [out_keys, results] = streaming_agg.finalize();
+
+  EXPECT_TRUE(results.empty());
+  auto const sorted_keys = cudf::sort(out_keys->view());
+  cudf::test::fixed_width_column_wrapper<int32_t> expect_keys{1, 2, 3};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expect_keys, sorted_keys->get_column(0));
+}
 TEST_F(StreamingGroupbyTest, DenseAggregationsNullableFlatAndNestedKeys)
 {
   // Stable key nullability layouts isolate launcher delegation from cross-batch key schema

@@ -218,6 +218,7 @@ void streaming_groupby::impl::initialize(table_view const& data, cuda::stream_re
 
   _d_agg_kinds = std::make_unique<rmm::device_uvector<aggregation::Kind>>(
     cudf::detail::make_device_uvector_async(_agg_kinds, stream, mr));
+  split_agg_columns(values_view, stream, mr);
 
   // Map each column in `values_view` back to its index in `data`.
   _value_col_indices.reserve(values_view.num_columns());

@@ -714,7 +714,7 @@ TEST_P(StreamingTableChunk, ToMessageCopy)
             expected_packed_size);
   EXPECT_EQ(m.copy_cost(), expected_packed_size);
 
-  // Deep copy: device → mem_type.
+  // Deep copy from device to `spill_mem_type`
   // The copy cost includes cudf's packed-buffer alignment and is therefore sufficient
   // before pack() allocates its output.
   auto reservation                 = br->reserve_or_fail(m.copy_cost(), spill_mem_type);

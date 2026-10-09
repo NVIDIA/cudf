@@ -8,7 +8,11 @@
 
 #include <cudf/lists/list_view.hpp>
 #include <cudf/structs/struct_view.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/traits.hpp>
+
+#include <cuda/std/chrono>
+#include <cuda/std/concepts>
 
 #include <gtest/gtest.h>
 
@@ -180,5 +184,50 @@ TEST_F(TraitsTest, CvQualifiedBoolIsNotAnInteger)
   EXPECT_FALSE(cudf::is_numeric_not_bool<bool volatile>());
   EXPECT_TRUE(cudf::is_boolean<bool volatile>());
 }
+
+template <typename T>
+constexpr bool concepts_match_traits()
+{
+  static_assert(cudf::concepts::arithmetic<T> == cudf::is_numeric<T>());
+  static_assert(cudf::concepts::arithmetic_not_bool<T> == cudf::is_numeric_not_bool<T>());
+  static_assert(cudf::concepts::integral_not_bool<T> == cudf::is_integral_not_bool<T>());
+  static_assert(cudf::concepts::integral_not_bool<T> == cudf::is_index_type<T>());
+  static_assert(cuda::std::floating_point<T> == cudf::is_floating_point<T>());
+  static_assert(cudf::concepts::boolean<T> == cudf::is_boolean<T>());
+  static_assert(cudf::concepts::timestamp<T> == cudf::is_timestamp<T>());
+  static_assert(cudf::concepts::duration<T> == cudf::is_duration<T>());
+  static_assert(cudf::concepts::chrono<T> == cudf::is_chrono<T>());
+  static_assert(cudf::concepts::fixed_point<T> == cudf::is_fixed_point<T>());
+  static_assert(cudf::concepts::fixed_width<T> == cudf::is_fixed_width<T>());
+  static_assert(cudf::concepts::rep_layout_compatible<T> == cudf::is_rep_layout_compatible<T>());
+  static_assert(cudf::concepts::dictionary<T> == cudf::is_dictionary<T>());
+  static_assert(cudf::concepts::dictionary_key<T> == cudf::is_dictionary_key<T>());
+  static_assert(cudf::concepts::nested<T> == cudf::is_nested<T>());
+  static_assert(cudf::concepts::compound<T> == cudf::is_compound<T>());
+  return true;
+}
+
+TYPED_TEST(CvQualifiedTraitsTest, ConceptsMatchTraits)
+{
+  using T = TypeParam;
+  static_assert(concepts_match_traits<T>());
+  static_assert(concepts_match_traits<T const>());
+  static_assert(concepts_match_traits<T volatile>());
+  static_assert(concepts_match_traits<T const volatile>());
+  static_assert(concepts_match_traits<std::byte>());
+  static_assert(concepts_match_traits<std::byte const>());
+}
+
+namespace cudf::test {
+// Concept names such as `duration` must not hide names that cudf code brings in with
+// `using namespace cuda::std::chrono`.
+template <typename PeriodT>
+constexpr int64_t unqualified_chrono_duration_count(int64_t v)
+{
+  using namespace cuda::std::chrono;
+  return duration<int64_t, PeriodT>{v}.count();
+}
+static_assert(unqualified_chrono_duration_count<cuda::std::milli>(42) == 42);
+}  // namespace cudf::test
 
 CUDF_TEST_PROGRAM_MAIN()

@@ -6,6 +6,7 @@
 #include <cudf/detail/copy.hpp>
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
@@ -17,8 +18,7 @@ namespace {
 struct scalar_construction_helper {
   data_type type_;
 
-  template <typename T,
-            std::enable_if_t<is_fixed_width<T>() and not is_fixed_point<T>()>* = nullptr>
+  template <concepts::fixed_width T>
   std::unique_ptr<scalar> operator()(cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr) const
   {
@@ -27,7 +27,7 @@ struct scalar_construction_helper {
     return std::make_unique<ScalarType>(Type{}, false, stream, mr);
   }
 
-  template <typename T, std::enable_if_t<is_fixed_point<T>()>* = nullptr>
+  template <concepts::fixed_point T>
   std::unique_ptr<scalar> operator()(cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr) const
   {
@@ -37,8 +37,9 @@ struct scalar_construction_helper {
       Type{}, numeric::scale_type{type_.scale()}, false, stream, mr);
   }
 
-  template <typename T, typename... Args, std::enable_if_t<not is_fixed_width<T>()>* = nullptr>
+  template <typename T, typename... Args>
   std::unique_ptr<scalar> operator()(Args... args) const
+    requires(not concepts::fixed_width<T>)
   {
     CUDF_FAIL("Invalid type.");
   }

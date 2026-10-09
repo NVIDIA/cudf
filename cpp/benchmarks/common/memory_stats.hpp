@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/mr/statistics_resource_adaptor.hpp>
@@ -21,6 +22,22 @@ class memory_stats_logger {
   ~memory_stats_logger()
   {
     cudf::set_current_device_resource(statistics_mr.get_upstream_resource());
+  }
+
+  /**
+   * @brief Start a fresh measurement interval without replacing the tracked resource.
+   *
+   * First release all tracked allocation owners and synchronize the relevant streams.
+   * Clients that captured the resource continue contributing statistics.
+   *
+   * @throws cudf::logic_error if any tracked bytes or allocations remain live.
+   */
+  void reset_counters()
+  {
+    CUDF_EXPECTS(statistics_mr.get_bytes_counter().value == 0 &&
+                   statistics_mr.get_allocations_counter().value == 0,
+                 "Release tracked allocations before resetting memory statistics");
+    statistics_mr.push_counters();
   }
 
   [[nodiscard]] size_t peak_memory_usage() const noexcept

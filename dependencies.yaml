@@ -841,10 +841,10 @@ dependencies:
     common:
       - output_types: [conda]
         packages:
-          - pyarrow>=19.0.0
+          - pyarrow>=19.0.0,<26.0.0
       - output_types: [requirements, constraints, pyproject]
         packages:
-          - pyarrow>=19.0.0
+          - pyarrow>=19.0.0,<26.0.0
   # 'cuda_version' intentionally does not contain fallback entries... we want
   # a loud error if an unsupported 'cuda' value is passed
   cuda_version:

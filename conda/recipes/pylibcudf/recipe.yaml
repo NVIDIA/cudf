@@ -99,7 +99,7 @@ requirements:
     - nvtx >=0.2.1
   run_constraints:
     - numpy >=2.0,<3.0
-    - pyarrow>=19.0.0
+    - pyarrow>=19.0.0,<26.0.0
   ignore_run_exports:
     from_package:
       - cuda-cudart-dev

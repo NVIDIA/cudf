@@ -27,7 +27,9 @@ namespace cudf::io::parquet::detail {
 namespace {
 
 auto constexpr decode_page_headers_block_size     = 4 * cudf::detail::warp_size;
-auto constexpr count_page_headers_block_size      = 4 * cudf::detail::warp_size;
+// Counting walks each chunk's header chain with a single thread, so a block covers one chunk per
+// thread rather than one per warp.
+auto constexpr count_page_headers_block_size      = cudf::detail::warp_size;
 auto constexpr build_string_dict_index_block_size = 4 * cudf::detail::warp_size;
 
 namespace cg = cooperative_groups;
@@ -652,6 +654,9 @@ void __launch_bounds__(decode_page_headers_block_size)
 /**
  * @brief Kernel for counting the number of page headers from the specified column chunks
  *
+ * One thread per column chunk: page headers are chained, so walking a chunk cannot be split
+ * across threads, and keeping a chunk to a single thread lets many more of them be in flight.
+ *
  * @param[in] chunks Device span of column chunks
  * @param[out] error_code Pointer to the error code for kernel failures
  */
@@ -659,80 +664,61 @@ CUDF_KERNEL void __launch_bounds__(count_page_headers_block_size)
   count_page_headers_kernel(cudf::device_span<ColumnChunkDesc> chunks,
                             kernel_error::pointer error_code)
 {
-  auto constexpr num_warps_per_block = count_page_headers_block_size / cudf::detail::warp_size;
-
-  auto const block = cg::this_thread_block();
-  auto const warp  = cg::tiled_partition<cudf::detail::warp_size>(block);
-
-  auto const warp_id = warp.meta_group_rank();
-  auto const lane_id = warp.thread_rank();
-  auto const chunk_idx =
-    static_cast<cudf::size_type>((cg::this_grid().block_rank() * num_warps_per_block) + warp_id);
+  auto const chunk_idx  = static_cast<cudf::size_type>(cg::this_grid().thread_rank());
   auto const num_chunks = static_cast<cudf::size_type>(chunks.size());
 
   if (chunk_idx >= num_chunks) { return; }
 
-  __shared__ byte_stream_s bs_g[num_warps_per_block];
-  __shared__ kernel_error::value_type error[num_warps_per_block];
+  // The header chain is walked one page at a time, and the offset of the next header is only known
+  // once the current one has been parsed, so a chunk is inherently the work of a single thread.
+  // Nothing here is shared between threads -- each byte is read exactly once, by the thread that
+  // owns the chunk -- so the stream state is local and no shared memory is needed.
+  byte_stream_s bs_local;
+  auto* const bs                 = &bs_local;
+  kernel_error::value_type error = 0;
 
-  auto const bs = &bs_g[warp_id];
+  bs->ck   = chunks[chunk_idx];
+  bs->base = bs->cur = bs->ck.compressed_data;
+  bs->end            = bs->base + bs->ck.compressed_size;
 
-  cg::invoke_one(warp, [&] {
-    bs->ck         = chunks[chunk_idx];
-    error[warp_id] = 0;
-    bs->base = bs->cur = bs->ck.compressed_data;
-    bs->end            = bs->base + bs->ck.compressed_size;
-  });
-  warp.sync();
   size_t const num_values        = bs->ck.num_values;
   size_t values_found            = 0;
   uint32_t data_page_count       = 0;
   uint32_t dictionary_page_count = 0;
-  warp.sync();
+
   while (values_found < num_values and bs->cur < bs->end) {
-    // Let all threads read before `parse_page_header_fn{}`
-    warp.sync();
-    // Must be lane 0 here as `shuffle(values_found)` assumes lane 0 is the root
-    if (lane_id == 0) {
-      if (parse_valid_page_header(bs)) {
-        if (not is_supported_encoding(bs->page.encoding)) {
-          error[warp_id] |=
-            static_cast<kernel_error::value_type>(decode_error::UNSUPPORTED_ENCODING);
-        }
-        switch (bs->page_type) {
-          case PageType::DATA_PAGE:
-            data_page_count++;
-            values_found += bs->page.num_input_values;
-            break;
-          case PageType::DATA_PAGE_V2:
-            data_page_count++;
-            values_found += bs->page.num_input_values;
-            break;
-          case PageType::DICTIONARY_PAGE: dictionary_page_count++; break;
-          default:
-            error[warp_id] |=
-              static_cast<kernel_error::value_type>(decode_error::INVALID_PAGE_TYPE);
-            bs->cur = bs->end;
-            break;
-        }
-        bs->cur += bs->page.compressed_page_size;
-        if (bs->cur > bs->end) {
-          error[warp_id] |=
-            static_cast<kernel_error::value_type>(decode_error::DATA_STREAM_OVERRUN);
-        }
-      } else {
-        error[warp_id] |= static_cast<kernel_error::value_type>(decode_error::INVALID_PAGE_HEADER);
-        bs->cur = bs->end;
+    if (parse_valid_page_header(bs)) {
+      if (not is_supported_encoding(bs->page.encoding)) {
+        error |= static_cast<kernel_error::value_type>(decode_error::UNSUPPORTED_ENCODING);
       }
+      switch (bs->page_type) {
+        case PageType::DATA_PAGE:
+          data_page_count++;
+          values_found += static_cast<size_t>(bs->page.num_input_values);
+          break;
+        case PageType::DATA_PAGE_V2:
+          data_page_count++;
+          values_found += static_cast<size_t>(bs->page.num_input_values);
+          break;
+        case PageType::DICTIONARY_PAGE: dictionary_page_count++; break;
+        default:
+          error |= static_cast<kernel_error::value_type>(decode_error::INVALID_PAGE_TYPE);
+          bs->cur = bs->end;
+          break;
+      }
+      bs->cur += bs->page.compressed_page_size;
+      if (bs->cur > bs->end) {
+        error |= static_cast<kernel_error::value_type>(decode_error::DATA_STREAM_OVERRUN);
+      }
+    } else {
+      error |= static_cast<kernel_error::value_type>(decode_error::INVALID_PAGE_HEADER);
+      bs->cur = bs->end;
     }
-    values_found = shuffle(values_found);
-    warp.sync();
   }
-  cg::invoke_one(warp, [&] {
-    chunks[chunk_idx].num_data_pages = data_page_count;
-    chunks[chunk_idx].num_dict_pages = dictionary_page_count;
-    if (error[warp_id] != 0) { set_error(error[warp_id], error_code); }
-  });
+
+  chunks[chunk_idx].num_data_pages = data_page_count;
+  chunks[chunk_idx].num_dict_pages = dictionary_page_count;
+  if (error != 0) { set_error(error, error_code); }
 }
 
 /**
@@ -743,7 +729,29 @@ struct decode_from_page_data_fn {
   cudf::device_span<PageInfo> pages;
   cudf::device_span<cudf::device_span<uint8_t const> const> page_data;
   cudf::device_span<size_type const> chunk_page_offsets;
+  cudf::device_span<page_index_info const> page_indexes;
   kernel_error::pointer error_code;
+
+  __device__ void store_page(PageInfo page, size_type page_idx) const noexcept
+  {
+    if (page_indexes.empty()) {
+      pages[page_idx] = page;
+      return;
+    }
+    auto const& index   = page_indexes[page_idx];
+    page.num_rows       = index.num_rows;
+    page.chunk_row      = index.chunk_row;
+    page.has_value_info = index.has_value_info;
+    page.start_val      = 0;
+    if (page.has_value_info) {
+      page.num_nulls            = index.num_nulls;
+      page.num_valids           = index.num_valids;
+      page.str_bytes_from_index = index.str_bytes;
+      page.str_bytes            = index.str_bytes;
+      page.end_val              = page.num_valids;
+    }
+    pages[page_idx] = page;
+  }
 
   __device__ void operator()(size_type page_idx) const noexcept
   {
@@ -776,12 +784,11 @@ struct decode_from_page_data_fn {
 
     bs.page.chunk_idx      = chunk_idx;
     bs.page.src_col_schema = bs.ck.src_col_schema;
-    // bs.page.chunk_row not computed here and will be filled in later by
-    // `fill_in_page_info()`.
+    // Row positions and available value counts are applied from the index when storing the page.
 
     // Return if empty page span (pruned page)
     if (page_span.empty()) {
-      pages[page_idx] = bs.page;
+      store_page(bs.page, page_idx);
       return;
     }
 
@@ -827,7 +834,7 @@ struct decode_from_page_data_fn {
     bs.page.kernel_mask = kernel_mask_for_page(bs.page, bs.ck);
 
     // Copy over the page info from byte stream
-    pages[page_idx] = bs.page;
+    store_page(bs.page, page_idx);
   }
 };
 
@@ -911,11 +918,10 @@ void count_page_headers(cudf::detail::hostdevice_span<ColumnChunkDesc> chunks,
                         cuda::stream_ref stream)
 {
   static_assert(count_page_headers_block_size % cudf::detail::warp_size == 0,
-                "Block size for decode page headers kernel must be a multiple of warp size");
+                "Block size for count page headers kernel must be a multiple of warp size");
 
-  auto constexpr num_warps_per_block = count_page_headers_block_size / cudf::detail::warp_size;
-  auto const num_blocks              = cudf::util::div_rounding_up_unsafe<cudf::size_type>(
-    chunks.size(), num_warps_per_block);  // 1 warp per chunk
+  auto const num_blocks = cudf::util::div_rounding_up_unsafe<cudf::size_type>(
+    chunks.size(), count_page_headers_block_size);  // 1 thread per chunk
 
   dim3 dim_block(count_page_headers_block_size, 1);
   dim3 dim_grid(num_blocks, 1);
@@ -953,10 +959,13 @@ void decode_page_headers_from_page_data(
   cudf::device_span<cudf::device_span<uint8_t const> const> page_data,
   cudf::device_span<size_type const> chunk_page_offsets,
   kernel_error::pointer error_code,
-  cuda::stream_ref stream)
+  cuda::stream_ref stream,
+  cudf::device_span<page_index_info const> page_indexes)
 {
   CUDF_EXPECTS(chunk_page_offsets.size() == chunks.size() + 1,
                "Chunk page offsets must cover all chunks");
+  CUDF_EXPECTS(page_indexes.empty() || page_indexes.size() == pages.size(),
+               "Page index metadata must cover all pages");
   thrust::for_each(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                    cuda::counting_iterator<cudf::size_type>{0},
                    cuda::counting_iterator{static_cast<cudf::size_type>(pages.size())},
@@ -964,6 +973,7 @@ void decode_page_headers_from_page_data(
                                             .pages              = pages,
                                             .page_data          = page_data,
                                             .chunk_page_offsets = chunk_page_offsets,
+                                            .page_indexes       = page_indexes,
                                             .error_code         = error_code});
 }
 

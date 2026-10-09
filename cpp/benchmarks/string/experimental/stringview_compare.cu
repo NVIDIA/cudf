@@ -460,9 +460,10 @@ static void BM_sv_sort(nvbench::state& state)
   state.add_global_memory_writes(num_rows * sizeof(cudf::size_type));
 
   // indices are the keys that are sorted (not inplace)
-  auto keys      = rmm::device_uvector<cudf::size_type>(num_rows, stream);
+  auto keys = cuda::device_buffer<cudf::size_type>(
+    stream, cudf::get_current_device_resource_ref(), num_rows, cuda::no_init);
   auto in_keys   = cuda::counting_iterator<cudf::size_type>{0};
-  auto out_keys  = keys.begin();
+  auto out_keys  = keys.data();
   auto tmp_bytes = std::size_t{0};
 
   if (std::getenv(BM_ARROWSTRINGVIEW)) {

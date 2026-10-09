@@ -30,12 +30,12 @@ from rapidsmpf.statistics import Statistics
 from rapidsmpf.streaming.core.context import Context
 
 import cudf_polars.quent
-import cudf_polars.quent._logging
-import cudf_polars.quent._types
+import cudf_polars.quent._runtime
 from cudf_polars.engine import persisted_result, rank_local_store
 from cudf_polars.engine.core import (
     ClusterInfo,
     StreamingEngine,
+    _run_cleanup_steps,
     check_reserved_keys,
     drop_if_replicated,
     evaluate_on_rank,
@@ -53,9 +53,9 @@ from cudf_polars.engine.persisted_result import (
     PersistedBackend,
     execute_persisted_query,
 )
-from cudf_polars.quent._context import (
-    LocalQuentContext,
-    WorkerResources,
+from cudf_polars.quent._runtime import (
+    QuentControllerRuntime,
+    QuentWorkerRuntime,
 )
 from cudf_polars.unstable import unstable
 from cudf_polars.utils.config import (
@@ -63,11 +63,13 @@ from cudf_polars.utils.config import (
     MemoryResourceConfig,
     configure_kvikio,
     resolve_kvikio_executor_options,
+    resolve_quent_context,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    import cudf_polars_quent as quent_bindings
     import kvikio
 
     from cudf_streaming.channel_metadata import ChannelMetadata
@@ -78,7 +80,7 @@ if TYPE_CHECKING:
     from cudf_polars.engine.core import T
     from cudf_polars.engine.options import StreamingOptions
     from cudf_polars.engine.persisted_result import PersistedQueryResult
-    from cudf_polars.quent._context import QuentContext
+    from cudf_polars.quent._context import QuentQueryWorkerState
     from cudf_polars.streaming.parallel import ConfigOptions
     from cudf_polars.utils.config import StreamingExecutor
 
@@ -98,6 +100,14 @@ def _get_visible_gpu_ids() -> list[str]:
 
 
 _nanny_preload_counter = 0
+
+
+def _get_worker_addresses(client: distributed.Client) -> list[str]:
+    """Return current worker addresses, requiring at least one worker."""
+    workers = client.scheduler_info(n_workers=-1)["workers"]
+    if not workers:
+        raise RuntimeError("No workers found in the Dask cluster.")
+    return list(workers)
 
 
 def dask_setup(nanny: distributed.Nanny) -> None:
@@ -142,12 +152,10 @@ class _WorkerContext:
     ctx: Context | None
     py_executor: ThreadPoolExecutor | None
     base_mr: rmm.mr.DeviceMemoryResource | None
-    quent_logger: cudf_polars.quent._logging.QuentLogger | None
-    quent_worker: cudf_polars.quent._types.Worker
+    quent_worker_runtime: QuentWorkerRuntime | None
     statistics: Statistics
     mr: RmmResourceAdaptor | None = None  # set after `Context` is built (below).
     kvikio_monitor: kvikio.SummaryMonitor | None = None
-    worker_resources: WorkerResources | None = None
 
 
 def _worker_evaluate_persisted(
@@ -184,6 +192,12 @@ def _worker_evaluate_persisted(
         raise RuntimeError(
             "_setup_worker must be called before _worker_evaluate_persisted"
         )
+    quent_query_worker_state = None
+    if config_options.executor.quent_context is not None:
+        assert mp_ctx.quent_worker_runtime is not None
+        quent_query_worker_state = mp_ctx.quent_worker_runtime.query_worker_state(
+            query_id
+        )
     return persisted_result.evaluate_and_persist(
         uid,
         mp_ctx.ctx,
@@ -195,6 +209,7 @@ def _worker_evaluate_persisted(
         # Partitions are gathered to the client and concatenated, so a duplicated
         # output is deduplicated to a single copy.
         deduplicate_replicated=True,
+        quent_query_worker_state=quent_query_worker_state,
     )
 
 
@@ -251,9 +266,7 @@ def _setup_root(
     hardware_binding: HardwareBindingPolicy,
     memory_resource_config: MemoryResourceConfig | None,
     dask_worker: distributed.Worker | None = None,
-    engine_id: uuid.UUID,
     worker_id: uuid.UUID,
-    quent_context: QuentContext | None,
 ) -> bytes:
     """
     Initialize the root rank on one Dask worker.
@@ -278,12 +291,8 @@ def _setup_root(
         :class:`rmm.mr.CudaAsyncMemoryResource`.
     dask_worker
         Injected by ``distributed`` when called via :meth:`distributed.Client.run`.
-    engine_id
-        Unique identifier for the engine this worker belongs to.
     worker_id
         Unique identifier for this worker.
-    quent_context: QuentContext | None
-        Quent context to use for this worker, if quent is enabled.
 
     Returns
     -------
@@ -302,20 +311,6 @@ def _setup_root(
         options=options,
         progress_thread=ProgressThread(statistics),
     )
-
-    quent_worker = cudf_polars.quent._types.Worker(
-        id=worker_id,
-        engine=cudf_polars.quent.Engine(id=engine_id),
-        instance_name=f"rank-{comm.rank}",
-    )
-
-    if quent_context is not None:
-        quent_logger: cudf_polars.quent._logging.QuentLogger | None = (
-            cudf_polars.quent._logging.QuentLogger()
-        )
-    else:
-        quent_logger = None
-
     setattr(
         dask_worker,
         f"_cudf_polars_mp_context_{uid}",
@@ -324,8 +319,7 @@ def _setup_root(
             ctx=None,
             py_executor=None,
             base_mr=base_mr,
-            quent_worker=quent_worker,
-            quent_logger=quent_logger,
+            quent_worker_runtime=None,
             statistics=statistics,
         ),
     )
@@ -341,7 +335,7 @@ def _setup_worker(
     hardware_binding: HardwareBindingPolicy,
     memory_resource_config: MemoryResourceConfig | None,
     worker_ids: list[uuid.UUID],
-    engine_id: uuid.UUID,
+    quent_context: cudf_polars.quent.QuentConfig | None,
     num_py_executors: int,
     kvikio_nthreads: int | None,
     kvikio_statistics: bool,
@@ -351,7 +345,7 @@ def _setup_worker(
     kvikio_reactor_count: int,
     kvikio_reactor_dispatch: kvikio.RemoteReactorDispatch,
     kvikio_request_ceiling: int,
-    quent_context: QuentContext | None,
+    quent_collector_address: str | None,
     dask_worker: distributed.Worker | None = None,
 ) -> None:
     """
@@ -379,9 +373,8 @@ def _setup_worker(
     worker_ids
         List of Quent worker UUIDs indexed by rank. Each worker picks
         its own ID after the barrier using ``comm.rank``.
-    engine_id
-        Quent engine UUID that owns this worker.
-        :meth:`cudf_polars.utils.config.MemoryResourceConfig.default`.
+    quent_context
+        Serializable Quent configuration, or ``None`` when tracing is disabled.
     dask_worker
         Injected by ``distributed`` when called via :meth:`distributed.Client.run`.
     num_py_executors
@@ -403,9 +396,8 @@ def _setup_worker(
         ``MULTI_POLL`` reactor dispatch policy to configure on this worker process.
     kvikio_request_ceiling
         ``MULTI_POLL`` concurrent-request ceiling to configure on this worker process.
-    quent_context
-        Quent context to use for this worker, if quent is enabled.
-
+    quent_collector_address
+        Address of the Quent collector, if Quent is enabled.
     """
     assert dask_worker is not None
     options = Options.deserialize(rapidsmpf_options_as_bytes)
@@ -456,11 +448,6 @@ def _setup_worker(
 
     barrier(comm)
     worker_id = worker_ids[comm.rank]
-    quent_worker = cudf_polars.quent._types.Worker(
-        id=worker_id,
-        engine=cudf_polars.quent.Engine(id=engine_id),
-        instance_name=f"rank-{comm.rank}",
-    )
     ctx = Context.from_options(comm.logger, base_mr, options, statistics)
     # Set the current RMM device resource so all temporary allocations
     # in libcudf also use the same memory resource.
@@ -471,20 +458,18 @@ def _setup_worker(
         thread_name_prefix="dask-executor",
     )
 
-    if quent_context is not None:
-        quent_logger = cudf_polars.quent._logging.QuentLogger()
-        worker_resources = WorkerResources.build(
-            instance_suffix=f"rank-{comm.rank}",
-            engine_id=engine_id,
+    if quent_collector_address is not None:
+        assert quent_context is not None
+        quent_worker_runtime = QuentWorkerRuntime.create(
+            quent_context,
+            quent_collector_address,
             worker_id=worker_id,
             rank=comm.rank,
             nranks=comm.nranks,
+            instance_name=f"rank-{comm.rank}",
         )
-        quent_logger.emit(quent_worker._init())
-        worker_resources.declare(quent_logger)
     else:
-        quent_logger = None
-        worker_resources = None
+        quent_worker_runtime = None
 
     mp_ctx = _WorkerContext(
         comm=comm,
@@ -492,18 +477,29 @@ def _setup_worker(
         py_executor=py_executor,
         base_mr=base_mr,
         mr=mr,
-        quent_worker=quent_worker,
-        quent_logger=quent_logger,
-        worker_resources=worker_resources,
+        quent_worker_runtime=quent_worker_runtime,
         statistics=statistics,
         kvikio_monitor=make_kvikio_monitor(enabled=kvikio_statistics),
     )
     setattr(dask_worker, attr, mp_ctx)
 
 
+def _close_quent_worker(
+    *, uid: str, dask_worker: distributed.Worker | None = None
+) -> None:
+    """Close one worker's Quent collector client."""
+    assert dask_worker is not None
+    mp_ctx: _WorkerContext | None = getattr(
+        dask_worker, f"_cudf_polars_mp_context_{uid}", None
+    )
+    if mp_ctx is not None and mp_ctx.quent_worker_runtime is not None:
+        mp_ctx.quent_worker_runtime.close()
+        mp_ctx.quent_worker_runtime = None
+
+
 def _teardown_worker(
     *, uid: str, dask_worker: distributed.Worker | None = None
-) -> list[dict[str, Any]]:
+) -> None:
     """
     Emit Worker.exit, then release per-worker GPU resources.
 
@@ -520,19 +516,12 @@ def _teardown_worker(
     assert dask_worker is not None
     attr = f"_cudf_polars_mp_context_{uid}"
     mp_ctx: _WorkerContext | None = getattr(dask_worker, attr, None)
-    traces = []
     if mp_ctx is not None:
         # First, so that a failure below cannot leave it counting. The monitor is
         # process-global and the worker outlives this teardown.
         if mp_ctx.kvikio_monitor is not None:
             mp_ctx.kvikio_monitor.stop()
             mp_ctx.kvikio_monitor = None
-        if mp_ctx.quent_logger is not None:
-            if mp_ctx.worker_resources is not None:
-                mp_ctx.worker_resources.finalize(mp_ctx.quent_logger)
-            mp_ctx.quent_logger.emit(mp_ctx.quent_worker._exit())
-            traces = mp_ctx.quent_logger.drain()
-
         # Drop this engine's persisted partitions before the Context is torn down,
         # so they don't outlive their allocator.
         rank_local_store.close_store(uid)
@@ -550,7 +539,36 @@ def _teardown_worker(
             mp_ctx.mr = None
             delattr(dask_worker, attr)
 
-    return traces
+
+def _shutdown_dask(
+    client: distributed.Client | None,
+    uid: str,
+    quent_runtime: QuentControllerRuntime | None,
+    quent_collector: quent_bindings.Collector | None,
+    owned_client: distributed.Client | None,
+    owned_cluster: distributed.SpecCluster | None,
+) -> None:
+    """Release Dask resources in dependency order."""
+    steps: list[Callable[[], object]] = []
+    if client is not None and (
+        quent_runtime is not None or quent_collector is not None
+    ):
+        steps.append(
+            lambda: client.run(functools.partial(_close_quent_worker, uid=uid))
+        )
+    if quent_runtime is not None:
+        steps.append(quent_runtime.close)
+    elif (
+        quent_collector is not None
+    ):  # pragma: no-cover; runs on the worker, not client
+        steps.append(quent_collector.close)
+    if client is not None:
+        steps.append(lambda: client.run(functools.partial(_teardown_worker, uid=uid)))
+    if owned_client is not None:
+        steps.append(owned_client.close)
+    if owned_cluster is not None:
+        steps.append(owned_cluster.close)
+    _run_cleanup_steps("Dask engine shutdown failed", *steps)
 
 
 def _reset_worker(
@@ -765,7 +783,7 @@ def _worker_evaluate(
     uid: str,
     collect_metadata: bool = False,
     query_id: uuid.UUID,
-    quent_context: cudf_polars.quent.QuentContext | None = None,
+    quent_context: cudf_polars.quent.QuentConfig | None = None,
     dask_worker: distributed.Worker | None = None,
 ) -> tuple[int, pl.DataFrame, list[ChannelMetadata] | None]:
     """
@@ -807,16 +825,11 @@ def _worker_evaluate(
     mp_ctx: _WorkerContext = getattr(dask_worker, f"_cudf_polars_mp_context_{uid}")
     if mp_ctx.ctx is None or mp_ctx.comm is None or mp_ctx.py_executor is None:
         raise RuntimeError("_setup_worker must be called before _worker_evaluate")
-    local_quent_context: LocalQuentContext | None = None
+    quent_query_worker_state: QuentQueryWorkerState | None = None
     if quent_context is not None:
-        assert mp_ctx.worker_resources is not None
-        assert mp_ctx.quent_logger is not None
-        local_quent_context = LocalQuentContext(
-            context=quent_context,
-            query=quent_context.query_for(query_id),
-            worker=mp_ctx.quent_worker,
-            logger=mp_ctx.quent_logger,
-            worker_resources=mp_ctx.worker_resources,
+        assert mp_ctx.quent_worker_runtime is not None
+        quent_query_worker_state = mp_ctx.quent_worker_runtime.query_worker_state(
+            query_id
         )
     # evaluate_on_rank always collects metadata internally so we can read
     # metadata[-1].duplicated to decide whether to suppress this rank's output.
@@ -831,25 +844,11 @@ def _worker_evaluate(
         mp_ctx.py_executor,
         ir,
         config_options,
-        local_quent_context=local_quent_context,
+        quent_query_worker_state=quent_query_worker_state,
         query_id=query_id,
     )
     gpu_df = drop_if_replicated(gpu_df, mp_ctx.comm.rank, metadata)
     return mp_ctx.comm.rank, gpu_df.to_polars(), metadata if collect_metadata else None
-
-
-def drain_quent_events(
-    dask_worker: distributed.Worker | None = None,
-    *,
-    uid: str,
-) -> list[dict[str, Any]]:
-    """Drain Quent events from the Dask worker."""
-    assert dask_worker is not None
-
-    mp_ctx: _WorkerContext = getattr(dask_worker, f"_cudf_polars_mp_context_{uid}")
-    if mp_ctx.quent_worker is not None and mp_ctx.quent_logger is not None:
-        return mp_ctx.quent_logger.drain()
-    return []
 
 
 def evaluate_pipeline_dask_mode(
@@ -898,22 +897,25 @@ def evaluate_pipeline_dask_mode(
     dask_context = config_options.executor.dask_context
 
     quent_context = config_options.executor.quent_context
-    if quent_context is not None:
-        quent_logger = dask_context.quent_logger
-        assert quent_logger is not None
-        query = quent_context.query_for(query_id)
-        quent_context._emit_query_group_events(quent_logger)
-        quent_context._emit_query_events(quent_logger, query)
-
+    quent_runtime = dask_context.quent_controller_runtime
     worker_config = config_options.drop_unserializable()
-    result_map = dask_context.client.run(
-        functools.partial(_worker_evaluate, uid=dask_context.rapidsmpf_id),
-        ir,
-        worker_config,
-        collect_metadata=collect_metadata,
-        quent_context=quent_context,
-        query_id=query_id,
-    )
+
+    if quent_context is not None:
+        assert quent_runtime is not None
+        query_scope: contextlib.AbstractContextManager = quent_runtime.query(
+            query_id, query_config=quent_context.query
+        )
+    else:
+        query_scope = contextlib.nullcontext()
+    with query_scope:
+        result_map = dask_context.client.run(
+            functools.partial(_worker_evaluate, uid=dask_context.rapidsmpf_id),
+            ir,
+            worker_config,
+            collect_metadata=collect_metadata,
+            quent_context=quent_context,
+            query_id=query_id,
+        )
 
     ranked: list[tuple[int, pl.DataFrame]] = []
     metadata_collector: list[ChannelMetadata] = []
@@ -921,11 +923,6 @@ def evaluate_pipeline_dask_mode(
         ranked.append((rank, df))
         if md is not None:
             metadata_collector.extend(md)
-
-    if quent_context is not None:
-        quent_logger = dask_context.quent_logger
-        assert quent_logger is not None
-        quent_context._emit_query_exit_events(quent_logger, query)
 
     ranked.sort(key=lambda p: p[0])
     dfs = [df for _, df in ranked]
@@ -1032,13 +1029,9 @@ class DaskEngine(StreamingEngine):
         executor_options = resolve_kvikio_executor_options(executor_options or {})
         engine_options = engine_options or {}
 
-        quent_context: cudf_polars.quent.QuentContext | None = executor_options.get(
-            "quent_context"
-        )
-        if quent_context is not None:
-            self._quent_logger = cudf_polars.quent._logging.QuentLogger()
-        else:
-            self._quent_logger = None
+        quent_context = resolve_quent_context(executor_options)
+        executor_options["quent_context"] = quent_context
+        self._quent_runtime = None
 
         if bootstrap.is_running_with_rrun():
             raise RuntimeError(
@@ -1060,117 +1053,140 @@ class DaskEngine(StreamingEngine):
         # TODO: there's no reason our API needs a plain dict[str, Any] rather than
         # a typed config object here.
         if quent_context is not None:
-            executor_options.setdefault("quent_context", quent_context)
-            assert self._quent_logger is not None
-            quent_context._emit_engine_init_events(self._quent_logger)
-            rapidsmpf_id = str(quent_context.engine.id)
-            engine_id = quent_context.engine.id
+            rapidsmpf_id = str(quent_context.engine_id)
         else:
             rapidsmpf_id = str(uuid.uuid4())
-            engine_id = uuid.UUID(rapidsmpf_id)
 
-        owned_cluster: Any = None
+        exit_stack = contextlib.ExitStack()
+        owned_cluster: distributed.SpecCluster | None = None
         owned_client: distributed.Client | None = None
-        if dask_client is None:
-            gpu_ids = _get_visible_gpu_ids()
-
-            worker_spec: dict[str, Any] = {}
-            for i, gpu_id in enumerate(gpu_ids):
-                worker_spec[str(gpu_id)] = {
-                    "cls": distributed.Nanny,
-                    "options": {
-                        "nthreads": 1,
-                        # Set worker subprocess log level to WARNING
-                        # (is INFO by default).
-                        "silence_logs": logging.WARNING,
-                        # We oversubscribe the system memory limit on multi-gpu systems.
-                        # In general, Dask won't be aware of what we're doing with we're
-                        # doing with host memory, so just giving each worker access to
-                        # all of it seems like the option with the fewest downsides.
-                        "memory_limit": distributed.system.MEMORY_LIMIT,
-                        "env": {
-                            "CUDA_VISIBLE_DEVICES": gpu_ids[i],
-                        },
-                    },
-                }
-            # Set scheduler/client log level to WARNING in the main
-            # process (is INFO by default).
-            owned_cluster = distributed.SpecCluster(
-                workers=worker_spec, silence_logs=logging.WARNING
+        quent_collector: quent_bindings.Collector | None = None
+        quent_runtime: QuentControllerRuntime | None = None
+        exit_stack.callback(
+            lambda: _shutdown_dask(
+                dask_client,
+                rapidsmpf_id,
+                quent_runtime,
+                quent_collector,
+                owned_client,
+                owned_cluster,
             )
-            owned_client = distributed.Client(owned_cluster)
-            dask_client = owned_client
-
-        workers_info = dask_client.scheduler_info(n_workers=-1)["workers"]
-        nranks = len(workers_info)
-        if nranks == 0:
-            raise RuntimeError("No workers found in the Dask cluster.")
-        worker_addresses = list(workers_info.keys())
-        root_worker = worker_addresses[0]
-
-        worker_ids = [uuid.uuid4() for _ in range(nranks)]
-
-        # Phase 1: initialize root communicator on one worker.
-        root_result = dask_client.run(
-            functools.partial(
-                _setup_root,
-                uid=rapidsmpf_id,
-                hardware_binding=hw_binding,
-                memory_resource_config=mr_config,
-                worker_id=worker_ids[0],
-                engine_id=engine_id,
-            ),
-            nranks,
-            rapidsmpf_options_as_bytes,
-            quent_context=quent_context,
-            workers=[root_worker],
         )
-        root_ucxx_address_as_bytes: bytes = root_result[root_worker]
+        try:
+            if dask_client is None:
+                gpu_ids = _get_visible_gpu_ids()
 
-        # Phase 2: complete bootstrap on all workers concurrently.
-        # All workers call barrier() so they must all run simultaneously.
-        # Each worker picks its own worker_id from the list using comm.rank.
-        dask_client.run(
-            functools.partial(
-                _setup_worker,
-                uid=rapidsmpf_id,
-                hardware_binding=hw_binding,
-                memory_resource_config=mr_config,
-                worker_ids=worker_ids,
-                engine_id=engine_id,
-            ),
-            root_ucxx_address_as_bytes,
-            nranks,
-            rapidsmpf_options_as_bytes,
-            quent_context=quent_context,
-            num_py_executors=executor_options.get("num_py_executors", 8),
-            kvikio_nthreads=executor_options["kvikio_nthreads"],
-            kvikio_statistics=executor_options["kvikio_statistics"],
-            kvikio_remote_io_backend=executor_options["kvikio_remote_io_backend"],
-            kvikio_task_size=executor_options["kvikio_task_size"],
-            kvikio_bounce_buffer_bytes=executor_options["kvikio_bounce_buffer_bytes"],
-            kvikio_reactor_count=executor_options["kvikio_reactor_count"],
-            kvikio_reactor_dispatch=executor_options["kvikio_reactor_dispatch"],
-            kvikio_request_ceiling=executor_options["kvikio_request_ceiling"],
-        )
+                worker_spec: dict[str, Any] = {}
+                for i, gpu_id in enumerate(gpu_ids):
+                    worker_spec[str(gpu_id)] = {
+                        "cls": distributed.Nanny,
+                        "options": {
+                            "nthreads": 1,
+                            # Set worker subprocess log level to WARNING
+                            # (is INFO by default).
+                            "silence_logs": logging.WARNING,
+                            # Dask does not account for our host-memory use, so let
+                            # each worker use the full process limit.
+                            "memory_limit": distributed.system.MEMORY_LIMIT,
+                            "env": {
+                                "CUDA_VISIBLE_DEVICES": gpu_ids[i],
+                            },
+                        },
+                    }
+                # Set scheduler/client log level to WARNING in the main process.
+                owned_cluster = distributed.SpecCluster(
+                    workers=worker_spec, silence_logs=logging.WARNING
+                )
+                owned_client = distributed.Client(owned_cluster)
+                dask_client = owned_client
 
-        dask_ctx = DaskContext(
-            client=dask_client,
-            rapidsmpf_id=rapidsmpf_id,
-            quent_logger=self._quent_logger,
-            owned_client=owned_client,
-            owned_cluster=owned_cluster,
-        )
-        self._dask_context: DaskContext | None = dask_ctx
-        super().__init__(
-            nranks=nranks,
-            executor_options={
-                **executor_options,
-                "cluster": "dask",
-                "dask_context": dask_ctx,
-            },
-            engine_options={**engine_options, "memory_resource": None},
-        )
+            worker_addresses = _get_worker_addresses(dask_client)
+            nranks = len(worker_addresses)
+            root_worker = worker_addresses[0]
+
+            worker_ids = [uuid.uuid4() for _ in range(nranks)]
+
+            # Phase 1: initialize root communicator on one worker.
+            root_result = dask_client.run(
+                functools.partial(
+                    _setup_root,
+                    uid=rapidsmpf_id,
+                    hardware_binding=hw_binding,
+                    memory_resource_config=mr_config,
+                    worker_id=worker_ids[0],
+                ),
+                nranks,
+                rapidsmpf_options_as_bytes,
+                workers=[root_worker],
+            )
+            root_ucxx_address_as_bytes = root_result[root_worker]
+
+            if quent_context is not None:
+                quent_collector = cudf_polars.quent._runtime.start_collector(
+                    quent_context.run_root
+                )
+                quent_collector_address = quent_collector.address
+            else:
+                quent_collector_address = None
+
+            # Phase 2: complete bootstrap on all workers concurrently.
+            # All workers call barrier() so they must all run simultaneously.
+            dask_client.run(
+                functools.partial(
+                    _setup_worker,
+                    uid=rapidsmpf_id,
+                    hardware_binding=hw_binding,
+                    memory_resource_config=mr_config,
+                    worker_ids=worker_ids,
+                    quent_context=quent_context,
+                ),
+                root_ucxx_address_as_bytes,
+                nranks,
+                rapidsmpf_options_as_bytes,
+                quent_collector_address=quent_collector_address,
+                num_py_executors=executor_options.get("num_py_executors", 8),
+                kvikio_nthreads=executor_options["kvikio_nthreads"],
+                kvikio_statistics=executor_options["kvikio_statistics"],
+                kvikio_remote_io_backend=executor_options["kvikio_remote_io_backend"],
+                kvikio_task_size=executor_options["kvikio_task_size"],
+                kvikio_bounce_buffer_bytes=executor_options[
+                    "kvikio_bounce_buffer_bytes"
+                ],
+                kvikio_reactor_count=executor_options["kvikio_reactor_count"],
+                kvikio_reactor_dispatch=executor_options["kvikio_reactor_dispatch"],
+                kvikio_request_ceiling=executor_options["kvikio_request_ceiling"],
+            )
+            if quent_context is not None:
+                assert quent_collector_address is not None
+                quent_runtime = QuentControllerRuntime.create(
+                    quent_context,
+                    quent_collector_address,
+                    backend="dask",
+                    collector=quent_collector,
+                )
+                self._quent_runtime = quent_runtime
+
+            dask_ctx = DaskContext(
+                client=dask_client,
+                rapidsmpf_id=rapidsmpf_id,
+                quent_controller_runtime=quent_runtime,
+                owned_client=owned_client,
+                owned_cluster=owned_cluster,
+            )
+            self._dask_context: DaskContext | None = dask_ctx
+            super().__init__(
+                nranks=nranks,
+                executor_options={
+                    **executor_options,
+                    "cluster": "dask",
+                    "dask_context": dask_ctx,
+                },
+                engine_options={**engine_options, "memory_resource": None},
+                exit_stack=exit_stack,
+            )
+        except Exception:
+            exit_stack.close()
+            raise
 
     def _reset(
         self,
@@ -1182,17 +1198,17 @@ class DaskEngine(StreamingEngine):
         """Reset the engine; see :meth:`StreamingEngine._reset` for the contract."""
         if self._dask_context is None:
             raise RuntimeError("Cannot reset a shut-down engine")
+        existing_executor_options = self.config.get("executor_options", {})
+        if not isinstance(existing_executor_options, dict):
+            existing_executor_options = {}
+        existing_quent_context = existing_executor_options.get("quent_context")
         super()._reset(
             rapidsmpf_options=rapidsmpf_options,
             executor_options=executor_options,
             engine_options=engine_options,
         )
         executor_options = executor_options or {}
-        existing_executor_options = self.config.get("executor_options", {})
-        if not isinstance(existing_executor_options, dict):
-            existing_executor_options = {}
-        existing_quent_context = existing_executor_options.get("quent_context")
-        if existing_quent_context is not None:
+        if "quent_context" in existing_executor_options:
             executor_options.setdefault("quent_context", existing_quent_context)
         if "kvikio_nthreads" in existing_executor_options:
             executor_options.setdefault(
@@ -1353,42 +1369,9 @@ class DaskEngine(StreamingEngine):
         """
         if self._dask_context is None:
             return  # already shut down
-        ctx = self._dask_context
         self._dask_context = None
-        exceptions: list[Exception] = []
-        quent_context: cudf_polars.quent.QuentContext | None = self.config[
-            "executor_options"
-        ].get("quent_context")
-        try:
-            # Teardown emits Worker.exit, then we drain all buffered events
-            # (including the exit event) from workers.
-            traces_map = ctx.client.run(
-                functools.partial(_teardown_worker, uid=ctx.rapidsmpf_id)
-            )
-
-            for traces in traces_map.values():
-                self._quent_events_raw.extend(traces)
-
-        except Exception as e:
-            exceptions.append(e)
-        finally:
-            if quent_context is not None:
-                assert self._quent_logger is not None
-                quent_context._emit_engine_exit_events(self._quent_logger)
-            if ctx.owned_client is not None:
-                ctx.owned_client.close()
-            if ctx.owned_cluster is not None:
-                ctx.owned_cluster.close()
-            super().shutdown()
-
-        # gather the client-side events.
-        if self._quent_logger is not None:
-            self._quent_events_raw.extend(self._quent_logger.drain())
-        # final inplace sort of the events.
-        self._quent_events_raw.sort(key=lambda x: x["timestamp"])
-
-        if exceptions:
-            raise ExceptionGroup("Worker teardown failed", exceptions)
+        self._quent_runtime = None
+        super().shutdown()
 
     def _run(self, func: Callable[..., T], *args: Any, **kwargs: Any) -> list[T]:
         return list(self._run_by_rank(_run_with_rank, func, *args, **kwargs).values())

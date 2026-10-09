@@ -24,6 +24,7 @@
 #include <cub/block/block_reduce.cuh>
 #include <cub/block/block_scan.cuh>
 #include <cub/warp/warp_reduce.cuh>
+#include <cuda/cmath>
 #include <cuda/iterator>
 #include <cuda/std/chrono>
 #include <cuda/std/functional>
@@ -514,7 +515,7 @@ __device__ size_t delta_data_len(Type physical_type,
   }();
 
   auto const vals_per_block = delta::block_size;
-  size_t const num_blocks   = util::div_rounding_up_unsafe(num_values, vals_per_block);
+  size_t const num_blocks   = cuda::ceil_div(num_values, vals_per_block);
   // need max dtype_len + 1 bytes for min_delta (because we only encode 7 bits per byte)
   // one byte per mini block for the bitwidth
   auto const mini_block_header_size = dtype_len + 1 + delta::num_mini_blocks;
@@ -522,7 +523,7 @@ __device__ size_t delta_data_len(Type physical_type,
   auto const max_bits = dtype_len * 8 + 1;
   // each data block will then be max_bits * values per block. vals_per_block is guaranteed to be
   // divisible by 128 (via static assert on delta::block_size), but do safe division anyway.
-  auto const bytes_per_block = cudf::util::div_rounding_up_unsafe(max_bits * vals_per_block, 8);
+  auto const bytes_per_block = cuda::ceil_div(max_bits * vals_per_block, 8);
   auto const block_size      = mini_block_header_size + bytes_per_block;
   // the number of DELTA_BINARY_PACKED blocks to encode
   auto const num_dbp_blocks = encoding == encode_kernel_mask::DELTA_BYTE_ARRAY ? 2 : 1;
@@ -695,10 +696,10 @@ CUDF_KERNEL void __launch_bounds__(128)
         frag_g.num_rows           = 0;
       }
       __syncwarp();
-      auto const fragment_data_size =
-        (ck_g.use_dictionary) ? static_cast<size_t>(frag_g.num_leaf_values) *
-                                  util::div_rounding_up_unsafe<size_t>(ck_g.dict_rle_bits, 8)
-                              : frag_g.fragment_data_size;
+      auto const fragment_data_size = (ck_g.use_dictionary)
+                                        ? static_cast<size_t>(frag_g.num_leaf_values) *
+                                            cuda::ceil_div<size_t, size_t>(ck_g.dict_rle_bits, 8)
+                                        : frag_g.fragment_data_size;
 
       // TODO (dm): this convoluted logic to limit page size needs refactoring
       size_t this_max_page_size = (values_in_page * 2 >= ck_g.num_values)   ? 256 * 1024
@@ -2406,7 +2407,7 @@ CUDF_KERNEL void __launch_bounds__(block_size, 8)
   non_zero = block_reduce(temp_storage.reduce_storage).Sum(non_zero);
   __syncthreads();
   suffix_bytes = block_reduce(temp_storage.reduce_storage).Sum(suffix_bytes);
-  if (t == 0) { avg_suffix_len = util::div_rounding_up_unsafe(suffix_bytes, non_zero); }
+  if (t == 0) { avg_suffix_len = non_zero == 0 ? 0 : cuda::ceil_div(suffix_bytes, non_zero); }
   __syncthreads();
 
   // Now copy the byte array data. For shorter suffixes (<= 64 bytes), it is faster to use

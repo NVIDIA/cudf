@@ -703,82 +703,66 @@ The structured schema has three top-level fields:
 Note that all integers are stored as strings to make round-tripping
 to JSON easier.
 
+## Quent
 
-## Quent Traces
+cudf-polars uses [Quent] for instrumentation. The output can be opened
+with `quent-open` and might be helpful for users and developers of cudf-polars.
 
-cudf-polars emits [Quent] Traces. Users can control some aspects of the traces,
-like the Query Group and Query names:
+### Enabling Quent Telemetry
 
-```python
-import cudf_polars.quent
-# Works with any of the streaming engines, e.g. SPMDEngine
-from cudf_polars.engine.spmd import SPMDEngine
+Set `CUDF_POLARS__EXECUTOR__QUENT_CONTEXT=1` and `CUDF_POLARS_LOG_TRACES=1` to
+enable full instrumentation. These must be set before the `cudf_polars` module
+is imported.
 
-quent_context = cudf_polars.quent.QuentContext(
-    query_group=cudf_polars.quent.QueryGroup(instance_name="test_query_group"),
-    query=cudf_polars.quent.Query(instance_name="test_query"),
-)
+### Schema
 
-with SPMDEngine(executor_options={"quent_context": quent_context}) as engine:
-    q.collect(engine=engine)
-```
+Quent uses a YAML file to define its event schema. Ours is at
+[model.yaml](../quent/model.yaml). See the [Quent Tutorial][qt] for background
+on these schemas. You can view it in the Quent [Schema Viewer][qsv].
 
-See the [Quent] README for more on visualizing the captured data.
+We define entities to represent the high-level execution model of cudf-polars.
+We won't repeat them all here, but this includes things like Plans (logical and
+physical) and [resources][qr] like Device Memory.
+
+Certain entities have special lifecycle rules, so they should be modeled as a
+[Quent FSM][fsm]. These include entities like a `Query`, `Engine`, and `Actor`.
+
+[qt]: https://rapidsai.github.io/quent/tutorial/
+[qsv]: https://rapidsai.github.io/quent/schema/
+[fsm]: https://rapidsai.github.io/quent/tutorial/instrumentation/modules/finite-state-machine/index.html
+[qr]: https://rapidsai.github.io/quent/tutorial/instrumentation/modules/resource/index.html
 
 ### Implementation Notes
 
-Quent tracing is currently implemented manually.
+The telemetry model is declared in [model.yaml](../quent/model.yaml). The
+`cudf-polars-quent-bridge` project uses maturin and Quent to
 
-`cudf_polars.quent._types` defines one dataclass per `Entity` from the quent
-data processing domain (e.g.  `Engine`, `Worker`, etc.). We prefer to reference
-other entities through instances of that type, rather than by ID. For example, a
-`Worker` has an `engine` field, rather than an `engine_id` field. This prevents
-accidentally using the ID for an entity of the wrong type.
+- validate the schema
+- generate the Rust instrumentation library
+- generate python bindings to the Rust instrumentation library
 
-All IDs in `cudf_polars.quent` are UUIDs rather than integers or strings.
+See [`cudf-polars-quent-bridge`](../quent/bridge/README.md) for details. These
+bindings are used in `cudf_polars` to build and emit Quent events matching the
+declared schema. cudf-polars starts a Quent Collector on the controller (rank 0
+for SPMD), distributes its address to every worker, and sends every process's
+events to it. The Collector writes all contexts under a common run directory,
+which our benchmark scripts package into a ZIP archive after the clients and
+Collector have closed.
 
-Currently, we don't implement the finite state machines discussed in quent. Our
-instrumentation is very-much bolted on, rather than integrated into the
-functioning of cudf-polars. Instead of FSMs, our entities have a method for the
-various phases they move through:
+`QuentConfig.output_root`, which may also be configured with
+`CUDF_POLARS__EXECUTOR__QUENT_OUTPUT_ROOT`, is local to the process hosting the
+Collector. Workers do not need access to that path or to a shared filesystem.
 
-```python
-class Worker:
-    def init(self, ...) -> Event: ...
-    def exit(self, ...) -> Event: ...
-
-class Plan:
-    def declare(self, ...) -> Event: ...
-```
-
-Each of those returns an `Event`, another in-memory data structure representing the event.
-cudf-polars just manually calls those methods at the appropriate places.
+The `cudf-polars-quent-analyzer` project is a Rust library that's used
+by `quent-open` to visualize cudf-polars instrumentation in the Quent UI.
 
 Ranks need to coordinate on the creation of some entities. For example, each
 actor in a `RayEngine` needs to use the same `engine_id` so that plans can be
-associated with the engine correctly. We store these types of worker-independent
-entities on a new `QuentContext` class, which is provided to the engine via
-`StreamingExecutor.quent_context`.
-
-Rank-local properties (like a `QuentLogger` (see below) or `Worker` entity)
-should be propagated through functions in a
-`cudf_polars.quent._context.LocalQuentContext`.
-
-`cudf_polars.quent._logging.QuentLogger` connects the `Event` objects to the
-actual events. When we want record something, we call
-`quent_logger.emit(event)`. For now, these events are just buffered in-memory
-but that could be adapted (and likely will in the future, to directly send these
-events to some collector). At the moment, we build on structlog, but this could
-probably be relaxed pretty easily. We aren't currently relying on any advanced
-features from structlog.
-
-Each rank has its own `QuentLogger`, which is constructed upon initialization of
-that rank's "worker" (`RankActor`, `_WorkerContext`). Each `StreamingEngine` subclass
-also has a `_quent_logger` attribute for "client-side" logs that records things like
-the engine start and exit events.
-
-Upon `StreamingEngine.shutdown`, all events are gathered from the workers and persisted
-on the (now closed) engine at `StreamingEngine._quent_events`.
+associated with the engine correctly. `QuentConfig` carries the shared
+engine-level values and is provided through `StreamingExecutor.quent_context`;
+its `QuentQueryConfig` carries display metadata that may change per query.
+`QuentQueryWorkerState` binds a query ID to the worker runtime that owns the
+rank-local generated handles and resource UUIDs.
 
 ### Concepts
 
@@ -803,6 +787,9 @@ Quent's names.
 | `IR` | `Operator` | A node in the query plan. |
 | - | `Port` | The input or output of some Operator. In cudf-polars, intermediate results are typically passed between IR nodes / operators as a `pylibcudf.Table` |
 | - | `Edge` | A connection between two `Port`s. |
+| `IR.do_evaluate` | `Evaluate` | Synchronous host-side evaluation of an IR node. |
+| rapidsmpf streaming actor | `Actor` | Actor lifetime and aggregate chunk/byte statistics. |
+| worker I/O or rank link | `DataChannel` | A concrete resource used for data transfer. |
 
 
 [Quent]: https://github.com/rapidsai/quent

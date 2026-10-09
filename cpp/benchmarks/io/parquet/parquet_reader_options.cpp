@@ -12,6 +12,8 @@
 #include <cudf/io/parquet.hpp>
 #include <cudf/utilities/default_stream.hpp>
 
+#include <cuda/cmath>
+
 #include <nvbench/nvbench.cuh>
 
 // Size of the data in the benchmark dataframe; chosen to be low enough to allow benchmarks to
@@ -95,7 +97,7 @@ void BM_parquet_read_options(nvbench::state& state,
   CUDF_EXPECTS(RowSelection != row_selection::ROW_GROUPS || num_row_groups >= num_chunks,
                "ROW_GROUPS option requires at least one row group per read chunk");
 
-  auto const chunk_row_cnt = cudf::util::div_rounding_up_unsafe(view.num_rows(), num_chunks);
+  auto const chunk_row_cnt = cuda::ceil_div(view.num_rows(), num_chunks);
 
   auto mem_stats_logger = cudf::memory_stats_logger();
   state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));

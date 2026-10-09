@@ -36,6 +36,7 @@
 
 #include <cooperative_groups.h>
 #include <cooperative_groups/memcpy_async.h>
+#include <cuda/cmath>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/climits>
@@ -508,29 +509,27 @@ template <typename T>
 size_t max_varint_size()
 {
   // varint encodes 7 bits in each byte
-  return cudf::util::div_rounding_up_unsafe(sizeof(T) * 8, 7);
+  return cuda::ceil_div(sizeof(T) * 8, 7);
 }
 
 size_t rle_stream_size(TypeKind kind, size_t count)
 {
-  using cudf::util::div_rounding_up_unsafe;
+  using cuda::ceil_div;
   constexpr auto byte_rle_max_len = 128;
   switch (kind) {
-    case TypeKind::BOOLEAN:
-      return div_rounding_up_unsafe(count, byte_rle_max_len * 8) * (byte_rle_max_len + 1);
-    case TypeKind::BYTE:
-      return div_rounding_up_unsafe(count, byte_rle_max_len) * (byte_rle_max_len + 1);
+    case TypeKind::BOOLEAN: return ceil_div(count, byte_rle_max_len * 8) * (byte_rle_max_len + 1);
+    case TypeKind::BYTE: return ceil_div(count, byte_rle_max_len) * (byte_rle_max_len + 1);
     case TypeKind::SHORT:
-      return div_rounding_up_unsafe(count, encode_block_size) *
+      return ceil_div(count, encode_block_size) *
              (encode_block_size * max_varint_size<int16_t>() + 2);
     case TypeKind::FLOAT:
     case TypeKind::INT:
     case TypeKind::DATE:
-      return div_rounding_up_unsafe(count, encode_block_size) *
+      return ceil_div(count, encode_block_size) *
              (encode_block_size * max_varint_size<int32_t>() + 2);
     case TypeKind::LONG:
     case TypeKind::DOUBLE:
-      return div_rounding_up_unsafe(count, encode_block_size) *
+      return ceil_div(count, encode_block_size) *
              (encode_block_size * max_varint_size<int64_t>() + 2);
     default: CUDF_FAIL("Unsupported ORC type for RLE stream size: " + std::to_string(kind));
   }
@@ -2056,8 +2055,7 @@ hostdevice_2dvector<rowgroup_rows> calculate_rowgroup_bounds(orc_table_view cons
                                                              size_type rowgroup_size,
                                                              cuda::stream_ref stream)
 {
-  auto const num_rowgroups =
-    cudf::util::div_rounding_up_unsafe<size_t, size_t>(orc_table.num_rows(), rowgroup_size);
+  auto const num_rowgroups = cuda::ceil_div<size_t, size_t>(orc_table.num_rows(), rowgroup_size);
 
   hostdevice_2dvector<rowgroup_rows> rowgroup_bounds(
     num_rowgroups, orc_table.num_columns(), stream);

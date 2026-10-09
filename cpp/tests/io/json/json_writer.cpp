@@ -255,7 +255,7 @@ TEST_F(JsonWriterTest, WriteReadNested)
   cudf::test::fixed_width_column_wrapper<int64_t> e{{0, 0, 4, 9}, nulls_at({0, 1})};
   cudf::test::structs_column_wrapper c{{d, e}};
   cudf::test::fixed_width_column_wrapper<float> f{5.5, 10.5, 5.5, 10.5};
-  LCW g{{LCW{1}, LCW{0}, LCW{{2, 0}, null_at(1)}, LCW{3, 4, 5}}, null_at(1)};
+  LCW g{{{1}, {0}, {{2, 0}, null_at(1)}, {3, 4, 5}}, null_at(1)};
   cudf::table_view tbl_view{{a, b, c, f, g}};
   cudf::io::table_metadata mt{{{"a"}, {"b"}, {"c"}, {"f"}, {"g"}}};
   mt.schema_info[2].children = {{"d"}, {"e"}};

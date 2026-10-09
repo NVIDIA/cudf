@@ -99,14 +99,19 @@ def test_evaluate_and_persist_deduplicate_replicated(
 
     # The query output is duplicated (metadata[-1].duplicated is True).
     metadata = [types.SimpleNamespace(duplicated=True)]
-    monkeypatch.setattr(
-        persisted_result, "evaluate_on_rank", lambda *a, **k: (evaluated, metadata)
-    )
+    evaluate_kwargs = {}
+
+    def _fake_evaluate(*args, **kwargs):
+        evaluate_kwargs.update(kwargs)
+        return evaluated, metadata
+
+    monkeypatch.setattr(persisted_result, "evaluate_on_rank", _fake_evaluate)
     monkeypatch.setattr(persisted_result, "drop_if_replicated", _fake_drop)
     monkeypatch.setattr(rank_local_store, "open_store", lambda uid: _Store())
 
     # comm.rank != 0 is where drop_if_replicated would empty a duplicated output.
     comm = types.SimpleNamespace(rank=1)
+    quent_query_worker_state = object()
     persisted_result.evaluate_and_persist(
         "uid",
         None,
@@ -116,7 +121,9 @@ def test_evaluate_and_persist_deduplicate_replicated(
         None,
         uuid.uuid4(),
         deduplicate_replicated=deduplicate_replicated,
+        quent_query_worker_state=quent_query_worker_state,
     )
+    assert evaluate_kwargs["quent_query_worker_state"] is quent_query_worker_state
 
     if deduplicate_replicated:
         # Dask/Ray: duplicated output emptied on non-root, stored as a non-duplicate

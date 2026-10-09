@@ -6,6 +6,7 @@ ignore_missing_imports = true
 ignore_errors = false
 enable_error_code = "ignore-without-code"
 warn_unused_ignores = true
+mypy_path = "python/cudf_polars/quent/bridge"
 exclude = [
     "cudf/_lib/",
     "cudf/cudf/tests/",

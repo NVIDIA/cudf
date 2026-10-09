@@ -7,12 +7,16 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import json
+import os
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, cast
 
+import cuda.bindings.driver as cuda_driver
+import cuda.core
 import kvikio
 import kvikio.defaults
+import ucxx._lib.libucxx as ucx_api
 
 import polars as pl
 
@@ -28,19 +32,24 @@ from rapidsmpf.coll import AllGather
 from rapidsmpf.communicator.single import (
     new_communicator as single_communicator,
 )
-from rapidsmpf.communicator.ucxx import barrier
+from rapidsmpf.communicator.ucxx import (
+    barrier,
+    get_root_ucxx_address,
+    new_communicator,
+)
 from rapidsmpf.progress_thread import ProgressThread
 from rapidsmpf.statistics import Statistics
 from rapidsmpf.streaming.core.context import Context
 
 import cudf_polars.quent
-import cudf_polars.quent._logging
+import cudf_polars.quent._runtime
 from cudf_polars.containers import DataFrame, DataType
 from cudf_polars.containers.dataframe import categoricals_to_physical
 from cudf_polars.engine import persisted_result, rank_local_store
 from cudf_polars.engine.core import (
     ClusterInfo,
     StreamingEngine,
+    _run_cleanup_steps,
     all_gather_host_data,
     check_reserved_keys,
     evaluate_on_rank,
@@ -54,15 +63,15 @@ from cudf_polars.engine.hardware_binding import (
     HardwareBindingPolicy,
     bind_to_gpu,
 )
+from cudf_polars.engine.options import StreamingOptions
 from cudf_polars.engine.persisted_result import (
     PersistedBackend,
     execute_persisted_query,
 )
-from cudf_polars.quent._context import (
-    LocalQuentContext,
-    WorkerResources,
+from cudf_polars.quent._runtime import (
+    QuentControllerRuntime,
+    QuentWorkerRuntime,
 )
-from cudf_polars.quent._types import Worker
 from cudf_polars.streaming.actor_graph.collectives.common import reserve_op_id
 from cudf_polars.streaming.actor_graph.utils import set_memory_resource
 from cudf_polars.unstable import unstable
@@ -72,6 +81,7 @@ from cudf_polars.utils.config import (
     StreamingExecutor,
     configure_kvikio,
     resolve_kvikio_executor_options,
+    resolve_quent_context,
 )
 
 if TYPE_CHECKING:
@@ -84,10 +94,127 @@ if TYPE_CHECKING:
 
     from cudf_polars.dsl.ir import IR
     from cudf_polars.engine.core import T
-    from cudf_polars.engine.options import StreamingOptions
     from cudf_polars.engine.persisted_result import PersistedQueryResult
+    from cudf_polars.quent._context import QuentQueryWorkerState
     from cudf_polars.streaming.parallel import ConfigOptions
     from cudf_polars.utils.config import StreamingExecutor
+
+
+def use_gpu(index: int | str) -> None:
+    """
+    Restrict this process to a single GPU.
+
+    A streaming engine runs on CUDA device ordinal 0. This restricts the process
+    to the one GPU, so it becomes ordinal 0, then checks that it took effect.
+    Keeping other GPUs visible also works, provided the engine's GPU is first in
+    ``CUDA_VISIBLE_DEVICES``.
+
+    Call this before anything in the process uses CUDA. Imports are fine, so
+    this can sit alongside them at the top of a script, but it must come before
+    the first CUDA call, such as ``torch.cuda.set_device``. ``CUDA_VISIBLE_DEVICES``
+    is only read when CUDA initializes, so afterwards there is no way to change
+    which GPUs a process can see.
+
+    Launchers usually do this for you. ``rrun`` assigns a GPU to each rank, as do
+    the Dask and Ray frontends for their workers. This is for a process that no
+    launcher has set up, such as one started by ``torchrun``.
+
+    Parameters
+    ----------
+    index
+        The GPU to use, as an index into the currently visible devices or as a
+        GPU UUID.
+
+    Raises
+    ------
+    RuntimeError
+        If CUDA is already initialized, so the process is stuck with the devices
+        it can already see, if ``index`` does not name a visible GPU, or if it
+        names more than one.
+
+    Examples
+    --------
+    Under ``torchrun``, give each rank the GPU matching its local rank:
+
+    >>> import os
+    >>> from cudf_polars.engine.spmd import use_gpu
+    >>> use_gpu(int(os.environ["LOCAL_RANK"]))  # doctest: +SKIP
+    """
+    # CUDA reads CUDA_VISIBLE_DEVICES once, when it initializes, so after that
+    # setting it changes nothing. Check first: a count taken afterwards cannot
+    # tell "the mask took effect" from "CUDA was already running with a single,
+    # different GPU". This probe does not initialize CUDA itself.
+    status, _ = cuda_driver.cuCtxGetCurrent()
+    if status != cuda_driver.CUresult.CUDA_ERROR_NOT_INITIALIZED:
+        raise RuntimeError(
+            "CUDA is already initialized in this process, so its visible GPUs "
+            "are fixed and use_gpu() cannot change them. Call use_gpu() before "
+            "the first CUDA call, such as torch.cuda.set_device() or "
+            "dist.init_process_group(), or start a fresh process."
+        )
+
+    visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if visible is not None and isinstance(index, int):
+        # An index means "into the devices visible now", which is not the same
+        # as the physical device index once something has already restricted
+        # them. A scheduler that allocated GPUs 3 and 5 leaves
+        # CUDA_VISIBLE_DEVICES="3,5", where index 1 is GPU 5, not GPU 1.
+        tokens = [token.strip() for token in visible.split(",") if token.strip()]
+        if not 0 <= index < len(tokens):
+            raise RuntimeError(
+                f"GPU index {index} is out of range: CUDA_VISIBLE_DEVICES is "
+                f"{visible!r}, so this process can see {len(tokens)} GPUs."
+            )
+        selected: str = tokens[index]
+    else:
+        selected = str(index)
+
+    os.environ["CUDA_VISIBLE_DEVICES"] = selected
+    # This initializes CUDA, fixing the visible devices to the one just set.
+    try:
+        count = len(cuda.core.Device.get_all_devices())
+    except Exception as e:
+        raise RuntimeError(
+            f"no GPU matches CUDA_VISIBLE_DEVICES={selected!r}. Pass an index "
+            "into the devices visible before this call, or a GPU UUID."
+        ) from e
+    if count != 1:
+        raise RuntimeError(
+            f"CUDA_VISIBLE_DEVICES={selected!r} makes {count} GPUs visible, "
+            "where use_gpu() selects exactly one. Pass a single index or UUID."
+        )
+
+
+def _check_engine_gpu_is_first() -> None:
+    """
+    Raise :exc:`RuntimeError` unless the engine's GPU is CUDA device ordinal 0.
+
+    A streaming engine runs on ordinal 0, so its GPU must come first in
+    ``CUDA_VISIBLE_DEVICES``. Other GPUs may stay visible.
+
+    It runs its actors on threads created by rapidsmpf, and the current CUDA
+    device is per-thread: a new thread always starts on ordinal 0, whatever the
+    thread that created it had selected. Putting the engine's GPU first is what
+    makes that safe, because ordinal 0 is then the device every thread already
+    uses.
+
+    Raises
+    ------
+    RuntimeError
+        If the current CUDA device is not ordinal 0.
+    """
+    device = cuda.core.Device().device_id
+    if device != 0:
+        raise RuntimeError(
+            "cudf-polars streaming engines run on CUDA device ordinal 0, but "
+            f"the current device is ordinal {device}. Put that GPU first in "
+            "CUDA_VISIBLE_DEVICES rather than selecting it by ordinal, before "
+            "the first CUDA call:\n"
+            "    from cudf_polars.engine.spmd import use_gpu\n"
+            f"    use_gpu({device})\n"
+            "Launchers such as rrun, and the Dask and Ray frontends, already do "
+            "this for their workers."
+        )
 
 
 def evaluate_pipeline_spmd_mode(
@@ -137,45 +264,33 @@ def evaluate_pipeline_spmd_mode(
     spmd_context = config_options.executor.spmd_context
 
     quent_context = config_options.executor.quent_context
-    local_quent_context: LocalQuentContext | None = None
+    quent_query_worker_state: QuentQueryWorkerState | None = None
+    quent_worker_runtime = spmd_context.quent_worker_runtime
+    quent_controller_runtime = spmd_context.quent_controller_runtime
+    query_scope: contextlib.AbstractContextManager = contextlib.nullcontext()
     if quent_context is not None:
-        quent_logger = config_options.executor.spmd_context.quent_logger
-        assert quent_logger is not None
-        assert spmd_context.worker_resources is not None
-
-        query = quent_context.query_for(query_id)
-        quent_context._emit_query_group_events(quent_logger)
-        quent_context._emit_query_events(quent_logger, query)
-        worker_id = config_options.executor.spmd_context.worker_id
-        local_quent_context = LocalQuentContext(
-            context=quent_context,
-            query=query,
-            worker=Worker(
-                id=worker_id,
-                engine=quent_context.engine,
-                instance_name=f"rank-{comm.rank}",
-            ),
-            logger=quent_logger,
-            worker_resources=spmd_context.worker_resources,
+        assert quent_worker_runtime is not None
+        query_id = synchronize_quent_query_id(
+            comm=comm,
+            context=context,
+            query_id=query_id,
         )
-
-    df, metadata = evaluate_on_rank(
-        context,
-        comm,
-        py_executor,
-        ir,
-        config_options,
-        local_quent_context=local_quent_context,
-        query_id=query_id,
-    )
-    if quent_context is not None:
-        assert config_options.executor.spmd_context.quent_logger is not None
-        assert local_quent_context is not None
-        # Device memory and the disk->device channel are engine-scoped and are
-        # finalized once at engine shutdown, not per query.
-        quent_context._emit_query_exit_events(
-            config_options.executor.spmd_context.quent_logger,
-            local_quent_context.query,
+        quent_query_worker_state = quent_worker_runtime.query_worker_state(query_id)
+        if comm.rank == 0:
+            assert quent_controller_runtime is not None
+            query_scope = quent_controller_runtime.query(
+                query_id,
+                query_config=quent_context.query,
+            )
+    with query_scope:
+        df, metadata = evaluate_on_rank(
+            context,
+            comm,
+            py_executor,
+            ir,
+            config_options,
+            quent_query_worker_state=quent_query_worker_state,
+            query_id=query_id,
         )
     return df, metadata if collect_metadata else None
 
@@ -255,31 +370,52 @@ def allgather_polars_dataframe(
     ).to_polars()
 
 
-def synchronize_quent_context(
+def synchronize_quent_configuration(
     *,
     comm: Communicator,
     context: Context,
-) -> cudf_polars.quent.QuentContext:
+    quent_config: cudf_polars.quent.QuentConfig,
+    collector_address: str,
+) -> tuple[cudf_polars.quent.QuentConfig, str]:
     """
-    Ensure all ranks use the same Quent engine ID.
+    Broadcast rank 0's Quent configuration in one collective.
 
-    Rank 0 selects the engine ID (from its local ``quent_context``), then all
-    ranks participate in an AllGather so every process converges on that value.
+    Rank 0 selects the context IDs and starts the Collector. Every process
+    receives that serialized context and the Collector's advertised address.
     """
+    if comm.nranks == 1:
+        return quent_config, collector_address
     if comm.rank == 0:
-        quent_context = cudf_polars.quent.QuentContext()
-        data = quent_context._serialize()
+        data = json.dumps(
+            {
+                "context": quent_config._serialize().decode(),
+                "collector_address": collector_address,
+            }
+        ).encode()
     else:
         data = b""
-
-    if comm.nranks == 1:
-        # skip the collective
-        return cudf_polars.quent.QuentContext()
-
     with reserve_op_id() as op_id:
         all_data = all_gather_host_data(comm, context.br(), op_id, data)
+    synchronized = json.loads(all_data[0])
+    return (
+        cudf_polars.quent.QuentConfig._deserialize(synchronized["context"].encode()),
+        synchronized["collector_address"],
+    )
 
-    return cudf_polars.quent.QuentContext._deserialize(all_data[0])
+
+def synchronize_quent_query_id(
+    *,
+    comm: Communicator,
+    context: Context,
+    query_id: uuid.UUID,
+) -> uuid.UUID:
+    """Use rank 0's per-collect query UUID on every SPMD rank."""
+    if comm.nranks == 1:
+        return query_id
+    data = query_id.bytes if comm.rank == 0 else b""
+    with reserve_op_id() as op_id:
+        all_data = all_gather_host_data(comm, context.br(), op_id, data)
+    return uuid.UUID(bytes=all_data[0])
 
 
 class SPMDEngine(StreamingEngine):
@@ -436,16 +572,14 @@ class SPMDEngine(StreamingEngine):
         executor_options: dict[str, Any] | None = None,
         engine_options: dict[str, Any] | None = None,
     ) -> None:
+        _check_engine_gpu_is_first()
         executor_options = resolve_kvikio_executor_options(executor_options or {})
         engine_options = engine_options or {}
 
-        quent_context: cudf_polars.quent.QuentContext | None = executor_options.get(
-            "quent_context"
-        )
-        if quent_context is not None:
-            self._quent_logger = cudf_polars.quent._logging.QuentLogger()
-        else:
-            self._quent_logger = None
+        quent_context = resolve_quent_context(executor_options)
+        executor_options["quent_context"] = quent_context
+        self._quent_runtime = None
+        self._quent_worker_runtime = None
 
         check_reserved_keys(executor_options, engine_options)
         hw_binding = cast(
@@ -517,34 +651,50 @@ class SPMDEngine(StreamingEngine):
             exit_stack.callback(self._cleanup_ctx)
 
             if quent_context is not None:
+                collector_cleanup: contextlib.ExitStack | None = None
+                if comm.rank == 0:
+                    quent_collector = cudf_polars.quent._runtime.start_collector(
+                        quent_context.run_root
+                    )
+                    collector_cleanup = contextlib.ExitStack()
+                    collector_cleanup.callback(quent_collector.close)
+                    exit_stack.enter_context(collector_cleanup)
+                    collector_address = quent_collector.address
+                else:
+                    quent_collector = None
+                    collector_address = ""
+                quent_context, collector_address = synchronize_quent_configuration(
+                    comm=comm,
+                    context=self._ctx,
+                    quent_config=quent_context,
+                    collector_address=collector_address,
+                )
                 executor_options["quent_context"] = quent_context
-                assert self._quent_logger is not None
-                quent_context._emit_engine_init_events(self._quent_logger)
-                engine_id = quent_context.engine.id
-            else:
-                engine_id = uuid.uuid4()
-
-            self._quent_worker = Worker(
-                id=uuid.uuid4(),
-                engine=cudf_polars.quent.Engine(id=engine_id),
-                instance_name=f"rank-{self.rank}",  # relies on self.comm
-            )
-
-            worker_resources: WorkerResources | None = None
-            if quent_context is not None:
-                assert self._quent_logger is not None
-                self._quent_logger.emit(self._quent_worker._init())
-
-                worker_resources = WorkerResources.build(
-                    instance_suffix=f"rank-{self.rank}",
-                    engine_id=engine_id,
-                    worker_id=self._quent_worker.id,
+                self._quent_worker_id = uuid.uuid4()
+                if comm.rank == 0:
+                    self._quent_runtime = QuentControllerRuntime.create(
+                        quent_context,
+                        collector_address,
+                        backend="spmd",
+                        collector=quent_collector,
+                    )
+                    exit_stack.callback(self._close_quent_controller)
+                self._quent_worker_runtime = QuentWorkerRuntime.create(
+                    quent_context,
+                    collector_address,
+                    worker_id=self._quent_worker_id,
                     rank=comm.rank,
                     nranks=comm.nranks,
+                    instance_name=f"rank-{comm.rank}",
                 )
-                worker_resources.declare(self._quent_logger)
-
-            self._worker_resources = worker_resources
+                exit_stack.callback(self._close_quent_worker)
+                if collector_cleanup is not None:
+                    # The runtime now owns the collector.
+                    collector_cleanup.pop_all()
+                engine_id = quent_context.engine_id
+            else:
+                engine_id = uuid.uuid4()
+                self._quent_worker_id = uuid.uuid4()
 
             # Register after `_cleanup_ctx` so on teardown (LIFO) the
             # executor shuts down first. `wait=True` is safe because
@@ -567,11 +717,11 @@ class SPMDEngine(StreamingEngine):
                     "spmd_context": SPMDContext(
                         comm=comm,
                         engine_id=engine_id,
-                        worker_id=self._quent_worker.id,
-                        quent_logger=self._quent_logger,
+                        worker_id=self._quent_worker_id,
+                        quent_controller_runtime=self._quent_runtime,
+                        quent_worker_runtime=self._quent_worker_runtime,
                         context=self._ctx,
                         py_executor=self._py_executor,
-                        worker_resources=self._worker_resources,
                     ),
                 },
                 engine_options={
@@ -580,6 +730,7 @@ class SPMDEngine(StreamingEngine):
                 },
                 exit_stack=exit_stack,
             )
+            exit_stack.callback(self._shutdown_spmd)
         except Exception:
             exit_stack.close()
             raise
@@ -600,6 +751,37 @@ class SPMDEngine(StreamingEngine):
         if self._ctx is not None:
             self._ctx.shutdown()
             self._ctx = None
+
+    def _close_quent_worker(self) -> None:
+        """Close and clear this rank's Quent worker runtime."""
+        if self._quent_worker_runtime is not None:
+            try:
+                self._quent_worker_runtime.close()
+            finally:
+                self._quent_worker_runtime = None
+
+    def _close_quent_controller(self) -> None:
+        """Close and clear the rank-zero Quent controller runtime."""
+        if self._quent_runtime is not None:
+            try:
+                self._quent_runtime.close()
+            finally:
+                self._quent_runtime = None
+
+    def _shutdown_spmd(self) -> None:
+        """Run collective cleanup before local resources unwind."""
+        steps: list[Callable[[], object]] = [self._drop_persisted]
+        if self._quent_worker_runtime is not None:
+            assert self._comm is not None
+            comm = self._comm
+            steps.append(self._close_quent_worker)
+            if comm.nranks > 1:
+                steps.append(lambda: barrier(comm))
+            if comm.rank == 0:
+                steps.append(self._close_quent_controller)
+            if comm.nranks > 1:
+                steps.append(lambda: barrier(comm))
+        _run_cleanup_steps("SPMD engine shutdown failed", *steps)
 
     @classmethod
     def from_options(cls, options: StreamingOptions) -> SPMDEngine:
@@ -637,6 +819,151 @@ class SPMDEngine(StreamingEngine):
         """Drop this engine's persisted partitions from the rank-local store."""
         rank_local_store.close_store(self._store_uid)
 
+    @classmethod
+    @unstable()
+    def from_torch_distributed(
+        cls,
+        options: StreamingOptions | None = None,
+        *,
+        group: Any = None,
+    ) -> SPMDEngine:
+        """
+        Build an :class:`SPMDEngine` using ``torch.distributed`` for rendezvous.
+
+        Reads ``rank`` and ``world_size`` from the active ``torch.distributed``
+        process group, exchanges the UCXX root address via
+        :func:`torch.distributed.broadcast_object_list`, and constructs a UCXX
+        communicator shared by all ranks. The returned engine is then built on
+        top of that communicator.
+
+        ``engine.rank`` is the communicator's own numbering, which UCXX assigns
+        by the order ranks connect. It need not equal ``dist.get_rank()``, just
+        as it need not equal ``RRUN_RANK`` under ``rrun``. Each rank keeps and
+        reads its own data either way, so the two numberings are independent
+        rather than inconsistent. Do not use one to index something keyed by
+        the other.
+
+        ``torch.distributed.init_process_group`` must already be called on every
+        rank. The typical pattern is to launch the script with ``torchrun`` so
+        that ``RANK`` / ``WORLD_SIZE`` / ``LOCAL_RANK`` / ``MASTER_ADDR`` /
+        ``MASTER_PORT`` are set, then give the rank its GPU with :func:`use_gpu`
+        *before* ``dist.init_process_group(backend="nccl")``, since initializing
+        NCCL is itself a CUDA call and fixes the visible devices.
+
+        Options are read as in :meth:`from_options`: every RapidsMPF, executor
+        and engine option comes from ``options``, and unset fields fall back to
+        environment variables and then to built-in defaults.
+
+        Parameters
+        ----------
+        options
+            Unified streaming configuration. ``None`` is the same as a default
+            :class:`~cudf_polars.engine.options.StreamingOptions`.
+        group
+            Optional ``torch.distributed`` process group. ``None`` uses the
+            default (world) group.
+
+        Returns
+        -------
+        A new :class:`SPMDEngine` bound to the bootstrapped UCXX communicator.
+
+        Raises
+        ------
+        RuntimeError
+            If ``torch.distributed`` is not initialized on this rank.
+
+        Examples
+        --------
+        >>> # launch with: torchrun --nproc-per-node=$(nvidia-smi -L | wc -l) script.py
+        >>> import os, torch, torch.distributed as dist
+        >>> from cudf_polars.engine.spmd import use_gpu
+        >>> use_gpu(int(os.environ["LOCAL_RANK"]))  # doctest: +SKIP
+        >>> torch.cuda.set_device(0)  # doctest: +SKIP
+        >>> dist.init_process_group(backend="nccl")  # doctest: +SKIP
+        >>> with SPMDEngine.from_torch_distributed() as engine:  # doctest: +SKIP
+        ...     df = lf.collect(engine=engine)
+        >>> dist.destroy_process_group()  # doctest: +SKIP
+        """
+        import torch.distributed as dist
+
+        if options is None:
+            options = StreamingOptions()
+        rapidsmpf_options = options.to_rapidsmpf_options()
+        executor_options = options.to_executor_options()
+        engine_options = options.to_engine_options()
+
+        if not dist.is_initialized():
+            raise RuntimeError(
+                "torch.distributed is not initialized; call "
+                "dist.init_process_group(...) before "
+                "SPMDEngine.from_torch_distributed()"
+            )
+        # The engine's own check runs too late here, after the communicator
+        # below has been set up on this device.
+        _check_engine_gpu_is_first()
+
+        rank = dist.get_rank(group)
+        world_size = dist.get_world_size(group)
+
+        # Resolve options once here so the value we pass to `new_communicator`
+        # and the value the engine ultimately uses are derived from the same
+        # source (env vars + caller overrides).
+        resolved_options = resolve_rapidsmpf_options(rapidsmpf_options)
+
+        # Rank 0 creates the root UCXX communicator and publishes its address;
+        # all other ranks join using that address. Mirrors the two-phase
+        # bootstrap used by the Ray and Dask launchers.
+        comm: Communicator | None
+        if rank == 0:
+            comm = new_communicator(
+                nranks=world_size,
+                ucx_worker=None,
+                root_ucxx_address=None,
+                options=resolved_options,
+                progress_thread=ProgressThread(),
+            )
+            root_address: bytes | None = bytes(get_root_ucxx_address(comm))
+        else:
+            comm = None
+            root_address = None
+
+        addr_box: list[bytes | None] = [root_address]
+        # `src` is a global rank. `group_src` would take the group rank directly
+        # but needs PyTorch 2.6.
+        src = 0 if group is None else dist.get_global_rank(group, 0)
+        dist.broadcast_object_list(addr_box, src=src, group=group)
+        root_address = addr_box[0]
+        if root_address is None:
+            raise RuntimeError(
+                "broadcast of UCXX root address returned None; "
+                "rank 0 did not publish an address."
+            )
+
+        if rank != 0:
+            ucx_addr = ucx_api.UCXAddress.create_from_buffer(root_address)
+            comm = new_communicator(
+                nranks=world_size,
+                ucx_worker=None,
+                root_ucxx_address=ucx_addr,
+                options=resolved_options,
+                progress_thread=ProgressThread(),
+            )
+
+        assert comm is not None
+        if world_size > 1:
+            # Finish the UCXX bootstrap before returning. While a rank is still
+            # inside `new_communicator` it needs the root to progress the
+            # handshake, so any other collective here would block the root and
+            # deadlock the two runtimes against each other.
+            barrier(comm)
+
+        return cls(
+            comm=comm,
+            rapidsmpf_options=resolved_options,
+            executor_options=executor_options,
+            engine_options=engine_options,
+        )
+
     def _reset(
         self,
         *,
@@ -653,17 +980,17 @@ class SPMDEngine(StreamingEngine):
         if self._ctx is None:
             raise RuntimeError("Cannot reset a shut-down engine")
         assert self._comm is not None
+        existing_executor_options = self.config.get("executor_options", {})
+        if not isinstance(existing_executor_options, dict):
+            existing_executor_options = {}
+        existing_quent_context = existing_executor_options.get("quent_context")
         super()._reset(
             rapidsmpf_options=rapidsmpf_options,
             executor_options=executor_options,
             engine_options=engine_options,
         )
         executor_options = executor_options or {}
-        existing_executor_options = self.config.get("executor_options", {})
-        if not isinstance(existing_executor_options, dict):
-            existing_executor_options = {}
-        existing_quent_context = existing_executor_options.get("quent_context")
-        if existing_quent_context is not None:
+        if "quent_context" in existing_executor_options:
             executor_options.setdefault("quent_context", existing_quent_context)
         if "kvikio_nthreads" in existing_executor_options:
             executor_options.setdefault(
@@ -680,7 +1007,7 @@ class SPMDEngine(StreamingEngine):
             request_ceiling=executor_options["kvikio_request_ceiling"],
         )
         engine_options = engine_options or {}
-        quent_context: cudf_polars.quent.QuentContext | None = executor_options.get(
+        quent_context: cudf_polars.quent.QuentConfig | None = executor_options.get(
             "quent_context"
         )
         rapidsmpf_options = resolve_rapidsmpf_options(rapidsmpf_options)
@@ -714,15 +1041,9 @@ class SPMDEngine(StreamingEngine):
         self._mr = self._ctx.br().device_mr_adaptor()
         rmm.mr.set_current_device_resource(self._mr)
 
-        if quent_context is not None:
-            quent_context = synchronize_quent_context(
-                comm=self._comm,
-                context=self._ctx,
-            )
-            executor_options["quent_context"] = quent_context
-            engine_id = quent_context.engine.id
-        else:
-            engine_id = uuid.uuid4()
+        engine_id = (
+            quent_context.engine_id if quent_context is not None else uuid.uuid4()
+        )
 
         # Re-run ``StreamingEngine.__init__`` on the existing instance to
         # reconfigure the polars ``GPUEngine`` layer (``self.config``,
@@ -740,9 +1061,9 @@ class SPMDEngine(StreamingEngine):
                     context=self._ctx,
                     py_executor=self.py_executor,
                     engine_id=engine_id,
-                    worker_id=self._quent_worker.id,
-                    quent_logger=self._quent_logger,
-                    worker_resources=self._worker_resources,
+                    worker_id=self._quent_worker_id,
+                    quent_controller_runtime=self._quent_runtime,
+                    quent_worker_runtime=self._quent_worker_runtime,
                 ),
             },
             engine_options={
@@ -899,37 +1220,14 @@ class SPMDEngine(StreamingEngine):
         if self._ctx is None:
             return  # already shut down
 
-        # Free persisted partitions before _cleanup_ctx tears down the Context.
-        self._drop_persisted()
-
-        # Order matters: ``super().shutdown()`` closes ``self._exit_stack``,
-        # which invokes ``self._cleanup_ctx``. That requires ``self._ctx`` to
-        # still be set so the rapidsmpf Context can be shut down correctly.
-        # But, super().shutdown() clears self.config, so we need to emit the
-        # quent traces before that.
-        # Clear the references only after shutdown completes.
-
-        if self._quent_logger is not None:
-            if self._worker_resources is not None:
-                self._worker_resources.finalize(self._quent_logger)
-            self._quent_logger.emit(self._quent_worker._exit())
-
-        quent_context: cudf_polars.quent.QuentContext | None = self.config[
-            "executor_options"
-        ].get("quent_context")
-        if quent_context is not None:
-            assert self._quent_logger is not None
-            quent_context._emit_engine_exit_events(self._quent_logger)
-
-        super().shutdown()
-
-        self._comm = None
-        self._ctx = None
-        # TODO: Figure out multi-rank handling.
-        if self._quent_logger is not None:
-            self._quent_events_raw.extend(self._quent_logger.drain())
-        self._quent_events_raw.sort(key=lambda x: x["timestamp"])
-        self._py_executor = None
+        # The exit stack runs collective/persisted cleanup first, then the
+        # executor, Context, memory resource, and monitor callbacks.
+        try:
+            super().shutdown()
+        finally:
+            self._comm = None
+            self._ctx = None
+            self._py_executor = None
 
     def _run(self, func: Callable[..., T], *args: Any, **kwargs: Any) -> list[T]:
         data = json.dumps(func(*args, **kwargs)).encode()
@@ -973,7 +1271,11 @@ class SPMDEngine(StreamingEngine):
         ...     df = result.lazy().filter(pl.col("x") > 0).collect(engine=engine)
         """
         backend = SpmdPersistedBackend(
-            self._store_uid, self.context, self.comm, self.py_executor
+            self._store_uid,
+            self.context,
+            self.comm,
+            self.py_executor,
+            self._quent_worker_runtime,
         )
         return execute_persisted_query(self, lf, backend, self._store_uid)
 
@@ -987,11 +1289,13 @@ class SpmdPersistedBackend(PersistedBackend):
         ctx: Context,
         comm: Communicator,
         py_executor: ThreadPoolExecutor,
+        quent_worker_runtime: QuentWorkerRuntime | None,
     ) -> None:
         self._uid = uid
         self._ctx = ctx
         self._comm = comm
         self._py_executor = py_executor
+        self._quent_worker_runtime = quent_worker_runtime
 
     def execute_persisted(
         self,
@@ -1000,6 +1304,12 @@ class SpmdPersistedBackend(PersistedBackend):
         query_id: uuid.UUID,
     ) -> list[int]:
         """Evaluate and store this rank's partition (see :class:`PersistedBackend`)."""
+        quent_query_worker_state = None
+        if config_options.executor.quent_context is not None:
+            assert self._quent_worker_runtime is not None
+            quent_query_worker_state = self._quent_worker_runtime.query_worker_state(
+                query_id
+            )
         rank = persisted_result.evaluate_and_persist(
             self._uid,
             self._ctx,
@@ -1011,6 +1321,7 @@ class SpmdPersistedBackend(PersistedBackend):
             # SPMD collects rank-locally: each rank reads its own partition, so a
             # duplicated output must stay whole on every rank (not deduplicated).
             deduplicate_replicated=False,
+            quent_query_worker_state=quent_query_worker_state,
         )
         return [rank]
 

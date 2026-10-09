@@ -8,6 +8,7 @@ from __future__ import annotations
 import contextlib
 import enum
 import functools
+import importlib.util
 import os
 import time
 from typing import TYPE_CHECKING, Any, Concatenate, Literal, ParamSpec
@@ -20,12 +21,13 @@ import rmm.statistics
 
 from cudf_polars.utils.config import _bool_converter, get_device_handle
 
-try:  # pragma: no cover; requires structlog
+try:  # pragma: no cover; requires structlog and cudf_polars_quent
     import structlog
 except ImportError:  # pragma: no cover; requires no structlog
     _HAS_STRUCTLOG = False
 else:  # pragma: no cover; requires structlog
     _HAS_STRUCTLOG = True
+_HAS_QUENT = importlib.util.find_spec("cudf_polars_quent") is not None
 
 
 LOG_TRACES = _HAS_STRUCTLOG and _bool_converter(
@@ -175,7 +177,6 @@ def log_do_evaluate(
             *args: P.args,
             **kwargs: P.kwargs,
         ) -> cudf_polars.containers.DataFrame:
-            from cudf_polars.quent._types import Task
 
             log = structlog.get_logger()
 
@@ -188,19 +189,25 @@ def log_do_evaluate(
             # And the kwonly 'context' argument has the IR execution context.
             ir_execution_context: IRExecutionContext = kwargs["context"]  # type: ignore[assignment]
 
-            if ir_execution_context.quent_ir_execution_context is not None:
-                quent_task = Task.from_ir(
-                    cls, ir_execution_context.quent_ir_execution_context
+            if ir_execution_context.quent_ir_execution_state is not None:
+                import cudf_polars_quent as _quent
+
+                quent_state = ir_execution_context.quent_ir_execution_state
+                quent_evaluate_id = _quent.now_v7()
+                instance_name = (
+                    f"{cls.__name__}-{quent_state.operator_id.hex[:8]}-"
+                    f"{quent_evaluate_id.hex[:8]}"
                 )
-                ir_execution_context.quent_ir_execution_context.context._emit_task_begin_events(
+                quent_state.query_worker_state.runtime.emit_evaluate_begin(
                     cls,
-                    quent_task,
-                    ir_execution_context.quent_ir_execution_context,
+                    quent_evaluate_id,
+                    instance_name,
+                    quent_state,
                     input_frames_bytes=sum(frame._size_bytes for frame in frames),
                 )
 
             else:
-                quent_task = None
+                quent_evaluate_id = None
 
             before_start = time.monotonic_ns()
             before = make_snapshot(
@@ -213,22 +220,22 @@ def log_do_evaluate(
             # argument, followed by the method-specific arguments, and returns a DataFrame.
 
             start = time.monotonic_ns()
+            result: cudf_polars.containers.DataFrame | None = None
+            error: BaseException | None = None
             try:
                 result = func(cls, *args, **kwargs)
-            except Exception:  # pragma: no cover;
-                result = None
+            except BaseException as caught:  # pragma: no cover
+                error = caught
                 raise
             finally:
                 if (
-                    quent_task is not None
-                    and ir_execution_context.quent_ir_execution_context is not None
+                    quent_evaluate_id is not None
+                    and ir_execution_context.quent_ir_execution_state is not None
                 ):
-                    # TODO: This should emit some Chunk-level statistics (duration, rows, bytes, schema, etc.)
-                    ir_execution_context.quent_ir_execution_context.context._emit_task_end_events(
-                        cls,
-                        quent_task,
-                        ir_execution_context.quent_ir_execution_context,
+                    ir_execution_context.quent_ir_execution_state.query_worker_state.runtime.emit_evaluate_end(
+                        quent_evaluate_id,
                         result,
+                        error,
                     )
             stop = time.monotonic_ns()
 

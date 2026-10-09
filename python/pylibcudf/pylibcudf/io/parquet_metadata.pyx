@@ -23,13 +23,19 @@ from pylibcudf.libcudf.io cimport parquet_metadata as cpp_parquet_metadata
 from pylibcudf.libcudf.io.parquet_schema cimport (
     ColumnChunk as cpp_ColumnChunk,
     ColumnChunkMetaData as cpp_ColumnChunkMetaData,
+    DecimalType as cpp_DecimalType,
     FileMetaData as cpp_FileMetaData,
+    IntType as cpp_IntType,
+    LogicalType as cpp_LogicalType,
     RowGroup as cpp_RowGroup,
     SchemaElement as cpp_SchemaElement,
     SortingColumn as cpp_SortingColumn,
     Statistics as cpp_Statistics,
+    TimestampType as cpp_TimestampType,
+    TimeType as cpp_TimeType,
 )
 from pylibcudf.libcudf.table.table cimport table as cpp_table
+from pylibcudf.libcudf.types cimport type_id
 from pylibcudf.libcudf.utilities.span cimport host_span
 from pylibcudf.table cimport Table
 from pylibcudf.types cimport DataType
@@ -38,6 +44,14 @@ from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
 from typing import TYPE_CHECKING
+
+from pylibcudf.libcudf.io.parquet_schema import (
+    FieldRepetitionType,  # no-cython-lint
+    LogicalTypeId,  # no-cython-lint
+    TimeUnit,  # no-cython-lint
+    Type as PhysicalType,  # no-cython-lint
+)
+from pylibcudf.types import TypeId
 
 if TYPE_CHECKING:
     from typing_extensions import Buffer
@@ -52,13 +66,22 @@ __all__ = [
     "ColumnChunk",
     "ColumnChunkMetaData",
     "ColumnChunkStatistics",
+    "DecimalType",
+    "FieldRepetitionType",
     "FileMetaData",
+    "IntType",
+    "LogicalType",
+    "LogicalTypeId",
     "ParquetColumnSchema",
     "ParquetMetadata",
     "ParquetSchema",
+    "PhysicalType",
     "RowGroup",
     "SchemaElement",
     "SortingColumn",
+    "TimeType",
+    "TimeUnit",
+    "TimestampType",
     "read_parquet_column_chunk_bounds",
     "read_parquet_footers",
     "read_parquet_metadata",
@@ -301,6 +324,144 @@ cdef class ParquetMetadata:
         }
 
 
+cdef class DecimalType:
+    """Parameters of a ``DECIMAL`` logical type."""
+
+    def __init__(self):
+        raise ValueError("DecimalType cannot be constructed directly")
+
+    @staticmethod
+    cdef DecimalType from_cpp(cpp_DecimalType decimal_type):
+        cdef DecimalType result = DecimalType.__new__(DecimalType)
+        result.c_obj = decimal_type
+        return result
+
+    @property
+    def scale(self) -> int:
+        """Number of digits after the decimal point."""
+        return self.c_obj.scale
+
+    @property
+    def precision(self) -> int:
+        """Total number of digits."""
+        return self.c_obj.precision
+
+
+cdef class TimeType:
+    """Parameters of a ``TIME`` logical type."""
+
+    def __init__(self):
+        raise ValueError("TimeType cannot be constructed directly")
+
+    @staticmethod
+    cdef TimeType from_cpp(cpp_TimeType time_type):
+        cdef TimeType result = TimeType.__new__(TimeType)
+        result.c_obj = time_type
+        return result
+
+    @property
+    def is_adjusted_to_utc(self) -> bool:
+        """Whether the values are adjusted to UTC."""
+        return self.c_obj.isAdjustedToUTC
+
+    @property
+    def unit(self) -> TimeUnit:
+        """Unit of the values."""
+        return TimeUnit(<int>self.c_obj.unit.type)
+
+
+cdef class TimestampType:
+    """Parameters of a ``TIMESTAMP`` logical type."""
+
+    def __init__(self):
+        raise ValueError("TimestampType cannot be constructed directly")
+
+    @staticmethod
+    cdef TimestampType from_cpp(cpp_TimestampType timestamp_type):
+        cdef TimestampType result = TimestampType.__new__(TimestampType)
+        result.c_obj = timestamp_type
+        return result
+
+    @property
+    def is_adjusted_to_utc(self) -> bool:
+        """Whether the values are adjusted to UTC."""
+        return self.c_obj.isAdjustedToUTC
+
+    @property
+    def unit(self) -> TimeUnit:
+        """Unit of the values."""
+        return TimeUnit(<int>self.c_obj.unit.type)
+
+
+cdef class IntType:
+    """Parameters of an ``INTEGER`` logical type."""
+
+    def __init__(self):
+        raise ValueError("IntType cannot be constructed directly")
+
+    @staticmethod
+    cdef IntType from_cpp(cpp_IntType int_type):
+        cdef IntType result = IntType.__new__(IntType)
+        result.c_obj = int_type
+        return result
+
+    @property
+    def bit_width(self) -> int:
+        """Number of bits: 8, 16, 32, or 64."""
+        return self.c_obj.bitWidth
+
+    @property
+    def is_signed(self) -> bool:
+        """Whether the integer is signed."""
+        return self.c_obj.isSigned
+
+
+cdef class LogicalType:
+    """Logical type annotation of a Parquet schema element."""
+
+    def __init__(self):
+        raise ValueError("LogicalType cannot be constructed directly")
+
+    @staticmethod
+    cdef LogicalType from_cpp(cpp_LogicalType logical_type):
+        cdef LogicalType result = LogicalType.__new__(LogicalType)
+        result.c_obj = logical_type
+        return result
+
+    @property
+    def type(self) -> LogicalTypeId:
+        """Kind of logical type."""
+        return LogicalTypeId(<int>self.c_obj.type)
+
+    @property
+    def decimal_type(self) -> DecimalType | None:
+        """Parameters of a ``DECIMAL`` type, otherwise ``None``."""
+        if not self.c_obj.decimal_type.has_value():
+            return None
+        return DecimalType.from_cpp(self.c_obj.decimal_type.value())
+
+    @property
+    def time_type(self) -> TimeType | None:
+        """Parameters of a ``TIME`` type, otherwise ``None``."""
+        if not self.c_obj.time_type.has_value():
+            return None
+        return TimeType.from_cpp(self.c_obj.time_type.value())
+
+    @property
+    def timestamp_type(self) -> TimestampType | None:
+        """Parameters of a ``TIMESTAMP`` type, otherwise ``None``."""
+        if not self.c_obj.timestamp_type.has_value():
+            return None
+        return TimestampType.from_cpp(self.c_obj.timestamp_type.value())
+
+    @property
+    def int_type(self) -> IntType | None:
+        """Parameters of an ``INTEGER`` type, otherwise ``None``."""
+        if not self.c_obj.int_type.has_value():
+            return None
+        return IntType.from_cpp(self.c_obj.int_type.value())
+
+
 cdef class SchemaElement:
     """An element of a Parquet file's schema tree."""
 
@@ -315,7 +476,7 @@ cdef class SchemaElement:
 
     @property
     def name(self) -> str:
-        """Name of the field; empty for the root element."""
+        """Name of the field, as recorded by the writer."""
         return self.c_obj.name.decode("utf-8")
 
     @property
@@ -329,6 +490,99 @@ cdef class SchemaElement:
         if not self.c_obj.field_id.has_value():
             return None
         return self.c_obj.field_id.value()
+
+    @property
+    def type(self) -> PhysicalType:
+        """Physical type of the field; ``UNDEFINED`` for non-leaf elements."""
+        return PhysicalType(<int>self.c_obj.type)
+
+    @property
+    def type_length(self) -> int:
+        """Byte length of ``FIXED_LEN_BYTE_ARRAY`` values, or the bit length."""
+        return self.c_obj.type_length
+
+    @property
+    def logical_type(self) -> LogicalType | None:
+        """Logical type annotation, if the writer recorded one."""
+        if not self.c_obj.logical_type.has_value():
+            return None
+        return LogicalType.from_cpp(self.c_obj.logical_type.value())
+
+    @property
+    def repetition_type(self) -> FieldRepetitionType:
+        """Whether the field is required, optional, or repeated."""
+        return FieldRepetitionType(<int>self.c_obj.repetition_type)
+
+    @property
+    def output_as_byte_array(self) -> bool:
+        """Whether the writer stores the column as a byte array."""
+        return self.c_obj.output_as_byte_array
+
+    @property
+    def arrow_type(self) -> TypeId | None:
+        """cudf type recorded in the file's arrow schema, if any was applied."""
+        if not self.c_obj.arrow_type.has_value():
+            return None
+        cdef type_id arrow_type = self.c_obj.arrow_type.value()
+        return TypeId(<int>arrow_type)
+
+    @property
+    def max_definition_level(self) -> int:
+        """Maximum definition level of the field."""
+        return self.c_obj.max_definition_level
+
+    @property
+    def max_repetition_level(self) -> int:
+        """Maximum repetition level of the field."""
+        return self.c_obj.max_repetition_level
+
+    @property
+    def parent_idx(self) -> int:
+        """Index of the parent element in ``FileMetaData.schema``."""
+        return self.c_obj.parent_idx
+
+    @property
+    def children_idx(self) -> list[int]:
+        """Indices of the child elements in ``FileMetaData.schema``."""
+        return list(self.c_obj.children_idx)
+
+    def is_stub(self) -> bool:
+        """
+        Whether the element is a repeated group that is not a nesting level.
+
+        Returns
+        -------
+        bool
+            ``True`` for the repeated wrapper of a three-level list encoding.
+        """
+        return self.c_obj.is_stub()
+
+    def is_one_level_list(self, SchemaElement parent not None) -> bool:
+        """
+        Whether the element is a list in the one-level list encoding.
+
+        Parameters
+        ----------
+        parent : SchemaElement
+            Parent of this element.
+
+        Returns
+        -------
+        bool
+            ``True`` for a repeated leaf whose parent is not a list.
+        """
+        return self.c_obj.is_one_level_list(parent.c_obj)
+
+    def is_struct(self) -> bool:
+        """
+        Whether the element is a struct.
+
+        Returns
+        -------
+        bool
+            ``True`` for a group that is a level of struct nesting.
+        """
+        return self.c_obj.is_struct()
 
 
 cdef class SortingColumn:

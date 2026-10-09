@@ -32,7 +32,6 @@
 #include <cuda/iterator>
 #include <cuda/stream>
 #include <thrust/gather.h>
-#include <thrust/logical.h>
 
 #include <algorithm>
 

@@ -173,6 +173,9 @@ extensions = [
 
 remove_from_toctrees = ["cudf/api_docs/api/*"]
 
+# The docs environment does not install PyTorch.
+autodoc_mock_imports = ["torch"]
+
 
 # Preprocess doxygen xml for compatibility with latest Breathe
 def clean_definitions(root):
@@ -480,6 +483,7 @@ intersphinx_mapping = {
         f"https://docs.nvidia.com/rapidsmpf/{intersphinx_version}/",
         None,
     ),
+    "torch": ("https://docs.pytorch.org/docs/stable/", None),
     "typing_extensions": (
         "https://typing-extensions.readthedocs.io/en/stable/",
         None,
@@ -850,6 +854,7 @@ nitpick_ignore = [
     ("py:class", "Value"),
     ("py:class", "polars.lazyframe.frame.LazyFrame"),
     ("py:class", "cudf_polars.engine.persisted_result.PersistedBackend"),
+    ("py:class", "cudf_polars.containers.DataFrame"),
     # pylibcudf typing aliases rendered as bare names in autodoc signatures.
     ("py:class", "ColumnNameSpec"),
     ("py:class", "CudaStreamLike"),
@@ -952,6 +957,10 @@ def linkcode_resolve(domain, info) -> str | None:
 suppress_warnings = ["myst.domains"]
 
 
+# pylibcudf enums whose names do not match their nested C++ enum.
+_enums_without_cpp_see_also = {"Kind", "LogicalTypeId", "TimeUnit"}
+
+
 class PLCIntEnumDocumenter(ClassDocumenter):
     objtype = "enum"
     directivetype = "attribute"
@@ -982,7 +991,7 @@ class PLCIntEnumDocumenter(ClassDocumenter):
         source_name = self.get_sourcename()
         enum_object: IntEnum = self.object
 
-        if self.object.__name__ != "Kind":
+        if self.object.__name__ not in _enums_without_cpp_see_also:
             self.add_line(
                 f"See also :cpp:enum:`{self.object.__name__}`.",
                 source_name,

@@ -13,7 +13,6 @@
 #include <cuda/atomic>
 #include <cuda/iterator>
 #include <thrust/for_each.h>
-#include <thrust/reduce.h>
 
 namespace cudf {
 namespace reduction {

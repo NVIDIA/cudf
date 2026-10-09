@@ -69,13 +69,14 @@ trap cleanup_example_builds EXIT
 
 for example_name in \
   basic \
+  billion_rows \
   hybrid_scan_io \
-  strings \
-  string_transforms \
   nested_types \
+  pack_unpack \
   parquet_inspect \
   parquet_io \
-  billion_rows; do
+  strings \
+  string_transforms; do
   build_example "${example_name}" &
   example_build_pids+=("$!")
 done

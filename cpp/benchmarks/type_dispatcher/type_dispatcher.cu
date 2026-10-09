@@ -11,8 +11,7 @@
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
-
-#include <rmm/device_uvector.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/buffer>
 
@@ -190,7 +189,8 @@ void type_dispatcher_benchmark(nvbench::state& state)
   }
   std::vector<TypeParam*> h_vec_p(n_cols);
   std::transform(h_vec.begin(), h_vec.end(), h_vec_p.begin(), [](auto& col) { return col.data(); });
-  rmm::device_uvector<TypeParam*> d_vec(n_cols, cudf::get_default_stream());
+  cuda::device_buffer<TypeParam*> d_vec(
+    cudf::get_default_stream(), cudf::get_current_device_resource_ref(), n_cols, cuda::no_init);
 
   if (dispatching_type == NO_DISPATCHING) {
     CUDF_CUDA_TRY(

@@ -17,7 +17,7 @@ metadata:
 ## Compatibility
 
 - Development release tracked by this skill: 26.12 (`VERSION`: `26.12.00`). Use the selected installed release for deployment requirements.
-- Read `dependencies.yaml` for the support matrix (`python` group for Python versions, `cuda_version` for CUDA versions). Match cuDF, pylibcudf, libcudf, and RMM release versions, and match pip wheel suffixes (`-cu12` / `-cu13`) to the CUDA major version.
+- Read `dependencies.yaml` for the support matrix (`py_version` group for Python versions, `cuda_version` for CUDA versions). Match cuDF, pylibcudf, libcudf, and RMM release versions, and match pip wheel suffixes (`-cu12` / `-cu13`) to the CUDA major version.
 - Requires a supported NVIDIA GPU and compatible driver. Check the [installation requirements](https://docs.nvidia.com/datascience/install/#system-req) for the selected release and CUDA version.
 - For another checkout or installed release, check `VERSION`, `dependencies.yaml`, `python/cudf/pyproject.toml`, and `cudf.__version__` before choosing versions or relying on an API.
 

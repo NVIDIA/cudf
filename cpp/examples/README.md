@@ -14,6 +14,3 @@ The CI runner, `ci/run_cudf_examples.sh`, defaults to two concurrent example gro
 `EXAMPLES_PARALLEL_LEVEL=1` for serial execution or `EXAMPLES_PARALLEL_LEVEL=2`. Invocations within
 each group remain serial because they can share output files. Basic and nested-types examples
 always run serially before the other groups because they reserve large memory pools.
-
-The runner's GPU-free regression harness can be run with
-`pre-commit run --hook-stage manual test-cudf-example-runner --all-files`.

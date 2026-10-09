@@ -11,10 +11,12 @@
 #include <cudf/detail/algorithms/copy_if.cuh>
 #include <cudf/detail/algorithms/reduce.cuh>
 #include <cudf/detail/cuco_helpers.hpp>
+#include <cudf/detail/device_scalar.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/grid_1d.cuh>
+#include <cudf/errc.hpp>
 #include <cudf/join/join.hpp>
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/table/table_view.hpp>
@@ -38,6 +40,7 @@
 #include <jit/parser.hpp>
 #include <jit/row_ir.hpp>
 
+#include <format>
 #include <memory>
 #include <utility>
 
@@ -160,16 +163,26 @@ void launch_join_filter_kernel(kernel const& kernel,
   cudf::column_device_view_core const* columns_ptr = device_views.data();
   void* user_data_ptr                              = user_data.value_or(nullptr);
 
+  cudf::detail::device_scalar<int32_t> d_max_error(static_cast<int32_t>(errc::SUCCESS), stream, mr);
+  auto max_error_ptr = d_max_error.data();
+
   void* args[]{&num_rows,
                &left_indices_ptr,
                &right_indices_ptr,
                &columns_ptr,
                &predicate_results,
-               &user_data_ptr};
+               &user_data_ptr,
+               &max_error_ptr};
 
   auto cfg = kernel.max_occupancy_config(0, 0);
 
   kernel.launch({cfg.min_grid_size}, {cfg.block_size}, 0, stream, args);
+
+  auto error = static_cast<errc>(d_max_error.value(stream));
+  if (error != errc::SUCCESS) {
+    throw evaluation_error(
+      error, std::format("Join filter UDF evaluation failed with error `{}`", to_string(error)));
+  }
 }
 
 // Same join semantics handling as the AST version

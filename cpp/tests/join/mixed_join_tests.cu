@@ -10,12 +10,14 @@
 
 #include <cudf/ast/expressions.hpp>
 #include <cudf/column/column_view.hpp>
+#include <cudf/errc.hpp>
 #include <cudf/join/conditional_join.hpp>
 #include <cudf/join/hash_join.hpp>
 #include <cudf/join/join.hpp>
 #include <cudf/join/mixed_join.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/error.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <rmm/exec_policy.hpp>
@@ -2227,3 +2229,106 @@ TEST_F(FilteredFullJoinTest, ManyToManyMixedMatches)
 {
   test({1, 1, 1, 2, 3}, {1, 10, 20, 30, 40}, {1, 1, 1, 2, 4}, {5, 15, 25, 35, 45});
 }
+
+struct FilterJoinJitErrorTest : public FilteredFullJoinTest,
+                                public ::testing::WithParamInterface<cudf::join_kind> {};
+
+TEST_P(FilterJoinJitErrorTest, UdfErrorHandling)
+{
+  auto const udf = R"(
+__device__ cudf::errc predicate(bool* output, int a, int b)
+{
+  if (a < 0) { return cudf::errc::ARITHMETIC_OVERFLOW; }
+  if (b == 0) { return cudf::errc::DIVISION_BY_ZERO; }
+  *output = a >= b;
+  return cudf::errc::SUCCESS;
+}
+)";
+  cudf::test::fixed_width_column_wrapper<int> left{1, -1, 3, 4};
+  cudf::test::fixed_width_column_wrapper<int> right{1, 1, 0, 2};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> indices{0, 1, 2, 3};
+  cudf::column_view const index_view = indices;
+  cudf::device_span<cudf::size_type const> const maps{index_view.data<cudf::size_type>(), 4};
+
+  // Errors from multiple rows must be aggregated using the maximum code.
+  try {
+    cudf::filter_join_indices_jit(
+      cudf::table_view{{left}}, cudf::table_view{{right}}, maps, maps, udf, GetParam());
+    FAIL() << "Expected predicate evaluation to fail";
+  } catch (cudf::evaluation_error const& error) {
+    EXPECT_EQ(error.error_code(), cudf::errc::DIVISION_BY_ZERO);
+  }
+
+  cudf::test::fixed_width_column_wrapper<int> valid_left{1, 2, 3, 4};
+  cudf::test::fixed_width_column_wrapper<int> valid_right{1, 1, 2, 2};
+  EXPECT_EQ(to_pairs(cudf::filter_join_indices_jit(cudf::table_view{{valid_left}},
+                                                   cudf::table_view{{valid_right}},
+                                                   maps,
+                                                   maps,
+                                                   udf,
+                                                   GetParam())),
+            (std::vector<index_pair>{{0, 0}, {1, 1}, {2, 2}, {3, 3}}));
+
+  // Null inputs and unmatched pairs must not execute the fallible predicate.
+  cudf::test::fixed_width_column_wrapper<int> nullable_left{{1, -1, 3, 4},
+                                                            {true, false, true, true}};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> skipped_indices{
+    0, 1, cudf::JoinNoMatch, 3};
+  cudf::column_view const skipped_view = skipped_indices;
+  cudf::device_span<cudf::size_type const> const skipped_maps{skipped_view.data<cudf::size_type>(),
+                                                              4};
+  EXPECT_NO_THROW(cudf::filter_join_indices_jit(cudf::table_view{{nullable_left}},
+                                                cudf::table_view{{right}},
+                                                skipped_maps,
+                                                maps,
+                                                udf,
+                                                GetParam()));
+}
+
+TEST_P(FilterJoinJitErrorTest, AstErrorHandling)
+{
+  cudf::ast::tree tree;
+  auto const& division = cudf::ast::jit::operation(
+    tree, cudf::ast::jit::op::DIV_OVERFLOW, {col_ref_left_0, col_ref_right_0});
+  auto const predicate =
+    cudf::ast::operation{cudf::ast::ast_operator::EQUAL, division, col_ref_left_0};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> indices{0, 1, 2, 3};
+  cudf::column_view const index_view = indices;
+  cudf::device_span<cudf::size_type const> const maps{index_view.data<cudf::size_type>(), 4};
+  cudf::test::fixed_width_column_wrapper<int> right{1, 1, 0, 1};
+  cudf::test::fixed_width_column_wrapper<int> valid_right{1, 1, 1, 1};
+
+  // Exercise generated predicates with and without input nulls.
+  for (bool nullable : {false, true}) {
+    std::vector<bool> validity{true, !nullable, true, true};
+    cudf::test::fixed_width_column_wrapper<int> left{{1, 2, 3, 4}, validity.begin()};
+    try {
+      cudf::filter_join_indices_jit(
+        cudf::table_view{{left}}, cudf::table_view{{right}}, maps, maps, predicate, GetParam());
+      FAIL() << "Expected predicate evaluation to fail";
+    } catch (cudf::evaluation_error const& error) {
+      EXPECT_EQ(error.error_code(), cudf::errc::DIVISION_BY_ZERO);
+    }
+    EXPECT_NO_THROW(cudf::filter_join_indices_jit(cudf::table_view{{left}},
+                                                  cudf::table_view{{valid_right}},
+                                                  maps,
+                                                  maps,
+                                                  predicate,
+                                                  GetParam()));
+  }
+
+  cudf::test::fixed_width_column_wrapper<int> null_dividend{{1, 2, 3, 4},
+                                                            {true, true, false, true}};
+  EXPECT_NO_THROW(cudf::filter_join_indices_jit(cudf::table_view{{null_dividend}},
+                                                cudf::table_view{{right}},
+                                                maps,
+                                                maps,
+                                                predicate,
+                                                GetParam()));
+}
+
+INSTANTIATE_TEST_SUITE_P(JoinKinds,
+                         FilterJoinJitErrorTest,
+                         ::testing::Values(cudf::join_kind::INNER_JOIN,
+                                           cudf::join_kind::LEFT_JOIN,
+                                           cudf::join_kind::FULL_JOIN));

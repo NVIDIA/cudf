@@ -7,15 +7,41 @@
 #include <benchmarks/common/generate_skewed_data.hpp>
 #include <benchmarks/common/memory_stats.hpp>
 
+#include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
 
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/strings/find.hpp>
 #include <cudf/strings/strings_column_view.hpp>
+#include <cudf/utilities/bit.hpp>
 #include <cudf/utilities/default_stream.hpp>
 
 #include <nvbench/nvbench.cuh>
 
+#include <string>
+
+namespace {
+/// Check contains(column, scalar) against a host reference; throws on any mismatch (local
+/// addition).
+void validate_contains(cudf::column_view const& col, std::string const& tgt)
+{
+  auto const input               = cudf::strings_column_view(col);
+  auto const [h_strings, h_mask] = cudf::test::to_host<std::string>(col);
+  auto const result              = cudf::strings::contains(input, cudf::string_scalar(tgt));
+  auto const [h_result, r_mask]  = cudf::test::to_host<bool>(result->view());
+  int64_t bad                    = 0;
+  for (cudf::size_type i = 0; i < input.size(); ++i) {
+    if (!h_mask.empty() && !cudf::bit_is_set(h_mask.data(), i)) continue;
+    auto const expected = h_strings[i].find(tgt) != std::string::npos;
+    if (expected != static_cast<bool>(h_result[i])) ++bad;
+  }
+  CUDF_EXPECTS(bad == 0, "contains() returned " + std::to_string(bad) + " wrong rows");
+}
+}  // namespace
+
+/**
+ * @brief find/contains/starts_with/ends_with over a column of uniform-width rows.
+ */
 static void bench_find_string(nvbench::state& state)
 {
   auto const num_rows  = static_cast<cudf::size_type>(state.get_int64("num_rows"));
@@ -31,6 +57,8 @@ static void bench_find_string(nvbench::state& state)
   auto target        = cudf::string_scalar("0987 5W43");
   auto targets_col   = cudf::make_column_from_scalar(target, num_rows);
   auto const targets = cudf::strings_column_view(targets_col->view());
+
+  if (api == "contains" && tgt_type == "scalar") { validate_contains(col->view(), "0987 5W43"); }
 
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   auto const data_size = col->alloc_size();
@@ -87,6 +115,9 @@ NVBENCH_BENCH(bench_find_string)
   .add_string_axis("api", {"find", "contains", "starts_with", "ends_with"})
   .add_string_axis("target", {"scalar", "column"});
 
+/**
+ * @brief contains() over a column of mostly short rows with a fixed-length long tail.
+ */
 static void bench_find_string_skewed(nvbench::state& state)
 {
   auto const num_rows         = static_cast<cudf::size_type>(state.get_int64("num_rows"));
@@ -101,6 +132,8 @@ static void bench_find_string_skewed(nvbench::state& state)
   auto const input = cudf::strings_column_view(col->view());
 
   auto target = cudf::string_scalar(skewed_string_target_substring);
+
+  validate_contains(col->view(), std::string(skewed_string_target_substring));
 
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   auto const data_size = col->alloc_size();

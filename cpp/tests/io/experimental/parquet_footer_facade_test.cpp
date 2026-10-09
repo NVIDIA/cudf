@@ -22,6 +22,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <optional>
 #include <vector>
 
 using namespace cudf::io::parquet;
@@ -94,8 +95,8 @@ FileMetaData const& make_test_footer()
 
     meta.key_value_metadata = {
       {"pandas", "{\"index\": 1}"},
-      // Empty value re-serializes as absent and reads back empty (a documented delta).
-      {"empty", ""},
+      {"empty", std::string("")},
+      {"novalue", std::nullopt},
     };
     meta.column_orders = {{{ColumnOrder::TYPE_ORDER}, {ColumnOrder::TYPE_ORDER}}};
 
@@ -187,7 +188,10 @@ void expect_footer_semantic_equal(FileMetaData const& e, FileMetaData const& a)
   for (size_t i = 0; i < e.key_value_metadata.size(); ++i) {
     SCOPED_TRACE(std::format("key/value index {}", i));
     EXPECT_EQ(e.key_value_metadata[i].key, a.key_value_metadata[i].key);
-    EXPECT_EQ(e.key_value_metadata[i].value, a.key_value_metadata[i].value);
+    EXPECT_EQ(e.key_value_metadata[i].value.has_value(), a.key_value_metadata[i].value.has_value());
+    if (e.key_value_metadata[i].value.has_value() && a.key_value_metadata[i].value.has_value()) {
+      EXPECT_EQ(e.key_value_metadata[i].value.value(), a.key_value_metadata[i].value.value());
+    }
   }
 
   EXPECT_EQ(e.column_orders.has_value(), a.column_orders.has_value());
@@ -201,14 +205,18 @@ void expect_footer_semantic_equal(FileMetaData const& e, FileMetaData const& a)
 }
 
 // Writes a small two-column table to a parquet host buffer and fills `out` with its parsed footer.
-void read_written_footer(std::vector<char>& buffer, FileMetaData& out)
+// `kv_metadata` carries per-sink user key-value metadata forwarded to the writer.
+void read_written_footer(std::vector<char>& buffer,
+                         FileMetaData& out,
+                         std::vector<std::map<std::string, std::string>> kv_metadata = {})
 {
   auto col0 = cudf::test::fixed_width_column_wrapper<int32_t>{{1, 2, 3, 4, 5}};
   auto col1 = cudf::test::strings_column_wrapper{{"a", "bb", "ccc", "dddd", "eeeee"}};
   cudf::table_view const input({col0, col1});
 
-  auto const opts =
+  auto opts =
     cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, input).build();
+  if (not kv_metadata.empty()) { opts.set_key_value_metadata(std::move(kv_metadata)); }
   cudf::io::write_parquet(opts);
 
   auto const src   = cudf::io::source_info{cudf::host_span<std::byte const>{
@@ -270,6 +278,46 @@ TEST_F(ParquetFooterFacadeTest, RealFooterRoundTrip)
   auto const bytes    = experimental::write_parquet_footer_bytes(original);
   auto const reparsed = experimental::read_parquet_footer_bytes(bytes);
   expect_footer_semantic_equal(original, reparsed);
+}
+
+// Spark's empty LEGACY-rebase marker values must remain present after a footer round trip.
+TEST_F(ParquetFooterFacadeTest, EmptyKeyValueValueRoundTrip)
+{
+  FileMetaData meta;
+  meta.version            = 2;
+  meta.num_rows           = 1;
+  meta.key_value_metadata = {
+    {"org.apache.spark.legacyDateTime", std::string("")},
+    {"org.apache.spark.legacyINT96", std::string("")},
+  };
+
+  auto const bytes = experimental::write_parquet_footer_bytes(meta);
+  ASSERT_FALSE(bytes.empty());
+  auto const reparsed = experimental::read_parquet_footer_bytes(bytes);
+  ASSERT_EQ(reparsed.key_value_metadata.size(), 2);
+  EXPECT_EQ(reparsed.key_value_metadata[0].key, "org.apache.spark.legacyDateTime");
+  ASSERT_TRUE(reparsed.key_value_metadata[0].value.has_value());
+  EXPECT_EQ(reparsed.key_value_metadata[0].value.value(), "");
+  EXPECT_EQ(reparsed.key_value_metadata[1].key, "org.apache.spark.legacyINT96");
+  ASSERT_TRUE(reparsed.key_value_metadata[1].value.has_value());
+  EXPECT_EQ(reparsed.key_value_metadata[1].value.value(), "");
+}
+
+// A key-value entry written through `write_parquet` with an empty string value survives as a
+// present-empty entry: the `map<string, string>` API cannot express absence, so present-empty is
+// the intended write-path behavior.
+TEST_F(ParquetFooterFacadeTest, EmptyKeyValueValueWrittenByWriter)
+{
+  std::vector<char> buffer;
+  FileMetaData original;
+  read_written_footer(buffer, original, {{{"key.empty", ""}, {"key.value", "v"}}});
+  ASSERT_EQ(original.key_value_metadata.size(), 2);
+  EXPECT_EQ(original.key_value_metadata[0].key, "key.empty");
+  ASSERT_TRUE(original.key_value_metadata[0].value.has_value());
+  EXPECT_EQ(original.key_value_metadata[0].value.value(), "");
+  EXPECT_EQ(original.key_value_metadata[1].key, "key.value");
+  ASSERT_TRUE(original.key_value_metadata[1].value.has_value());
+  EXPECT_EQ(original.key_value_metadata[1].value.value(), "v");
 }
 
 // A footer with no schema or row groups round-trips; an absent column_orders stays absent.

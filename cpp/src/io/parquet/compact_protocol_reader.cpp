@@ -935,7 +935,8 @@ void CompactProtocolReader::read(DataPageHeaderV2* d)
 
 void CompactProtocolReader::read(KeyValue* k)
 {
-  auto op = std::make_tuple(parquet_field_string(1, k->key), parquet_field_string(2, k->value));
+  auto op = std::make_tuple(parquet_field_string(1, k->key),
+                            parquet_field_optional<std::string, parquet_field_string>(2, k->value));
   function_builder(this, op);
 }
 

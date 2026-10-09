@@ -22,6 +22,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/std/bit>
 #include <cuda/std/limits>
 #include <cuda/stream>
 #include <thrust/execution_policy.h>
@@ -192,7 +193,7 @@ struct HashBase : public crtp<Hasher> {
     }
 
     // Convert the 64-bit message length from little-endian to big-endian.
-    uint64_t const full_length_flipped = swap_endian(message_length_in_bits);
+    uint64_t const full_length_flipped = cuda::std::byteswap(message_length_in_bits);
     memcpy(state.buffer + Hasher::message_chunk_size - message_length_supported_size,
            reinterpret_cast<uint8_t const*>(&full_length_flipped),
            message_length_supported_size);
@@ -205,7 +206,7 @@ struct HashBase : public crtp<Hasher> {
       Hasher::digest_size / (2 * sizeof(typename Hasher::sha_word_type));
     for (int i = 0; i < num_words_to_copy; i++) {
       // Convert word representation from big-endian to little-endian.
-      typename Hasher::sha_word_type flipped = swap_endian(state.hash_value[i]);
+      typename Hasher::sha_word_type flipped = cuda::std::byteswap(state.hash_value[i]);
       if constexpr (std::is_same_v<typename Hasher::sha_word_type, uint32_t>) {
         uint32ToLowercaseHexString(flipped, result_location + (8 * i));
       } else if constexpr (std::is_same_v<typename Hasher::sha_word_type, uint64_t>) {
@@ -287,13 +288,13 @@ __device__ inline void sha1_hash_step(hash_state& state)
   memcpy(&words[0], state.buffer, sizeof(words[0]) * 16);
   for (int i = 0; i < 16; i++) {
     // Convert word representation from little-endian to big-endian.
-    words[i] = swap_endian(words[i]);
+    words[i] = cuda::std::byteswap(words[i]);
   }
 
   // The rest of the 80 words are generated from the first 16 words.
   for (int i = 16; i < 80; i++) {
     uint32_t const temp = words[i - 3] ^ words[i - 8] ^ words[i - 14] ^ words[i - 16];
-    words[i]            = rotate_bits_left(temp, 1);
+    words[i]            = cuda::std::rotl(temp, 1);
   }
 
   uint32_t A = state.hash_value[0];
@@ -324,10 +325,10 @@ __device__ inline void sha1_hash_step(hash_state& state)
         k = 0xca62c1d6;
         break;
     }
-    temp = rotate_bits_left(A, 5) + F + E + k + words[i];
+    temp = cuda::std::rotl(A, 5) + F + E + k + words[i];
     E    = D;
     D    = C;
-    C    = rotate_bits_left(B, 30);
+    C    = cuda::std::rotl(B, 30);
     B    = A;
     A    = temp;
   }
@@ -356,15 +357,15 @@ __device__ inline void sha256_hash_step(hash_state& state)
   memcpy(&words[0], state.buffer, sizeof(words[0]) * 16);
   for (int i = 0; i < 16; i++) {
     // Convert word representation from little-endian to big-endian.
-    words[i] = swap_endian(words[i]);
+    words[i] = cuda::std::byteswap(words[i]);
   }
 
   // The rest of the 64 words are generated from the first 16 words.
   for (int i = 16; i < 64; i++) {
-    uint32_t const s0 = rotate_bits_right(words[i - 15], 7) ^ rotate_bits_right(words[i - 15], 18) ^
-                        (words[i - 15] >> 3);
-    uint32_t const s1 = rotate_bits_right(words[i - 2], 17) ^ rotate_bits_right(words[i - 2], 19) ^
-                        (words[i - 2] >> 10);
+    uint32_t const s0 =
+      cuda::std::rotr(words[i - 15], 7) ^ cuda::std::rotr(words[i - 15], 18) ^ (words[i - 15] >> 3);
+    uint32_t const s1 =
+      cuda::std::rotr(words[i - 2], 17) ^ cuda::std::rotr(words[i - 2], 19) ^ (words[i - 2] >> 10);
     words[i] = words[i - 16] + s0 + words[i - 7] + s1;
   }
 
@@ -378,12 +379,10 @@ __device__ inline void sha256_hash_step(hash_state& state)
   uint32_t H = state.hash_value[7];
 
   for (int i = 0; i < 64; i++) {
-    uint32_t const s1 =
-      rotate_bits_right(E, 6) ^ rotate_bits_right(E, 11) ^ rotate_bits_right(E, 25);
+    uint32_t const s1    = cuda::std::rotr(E, 6) ^ cuda::std::rotr(E, 11) ^ cuda::std::rotr(E, 25);
     uint32_t const ch    = (E & F) ^ ((~E) & G);
     uint32_t const temp1 = H + s1 + ch + sha256_hash_constants[i] + words[i];
-    uint32_t const s0 =
-      rotate_bits_right(A, 2) ^ rotate_bits_right(A, 13) ^ rotate_bits_right(A, 22);
+    uint32_t const s0    = cuda::std::rotr(A, 2) ^ cuda::std::rotr(A, 13) ^ cuda::std::rotr(A, 22);
     uint32_t const maj   = (A & B) ^ (A & C) ^ (B & C);
     uint32_t const temp2 = s0 + maj;
 
@@ -424,15 +423,15 @@ __device__ inline void sha512_hash_step(hash_state& state)
   memcpy(&words[0], state.buffer, sizeof(words[0]) * 16);
   for (int i = 0; i < 16; i++) {
     // Convert word representation from little-endian to big-endian.
-    words[i] = swap_endian(words[i]);
+    words[i] = cuda::std::byteswap(words[i]);
   }
 
   // The rest of the 80 words are generated from the first 16 words.
   for (int i = 16; i < 80; i++) {
-    uint64_t const s0 = rotate_bits_right(words[i - 15], 1) ^ rotate_bits_right(words[i - 15], 8) ^
-                        (words[i - 15] >> 7);
-    uint64_t const s1 = rotate_bits_right(words[i - 2], 19) ^ rotate_bits_right(words[i - 2], 61) ^
-                        (words[i - 2] >> 6);
+    uint64_t const s0 =
+      cuda::std::rotr(words[i - 15], 1) ^ cuda::std::rotr(words[i - 15], 8) ^ (words[i - 15] >> 7);
+    uint64_t const s1 =
+      cuda::std::rotr(words[i - 2], 19) ^ cuda::std::rotr(words[i - 2], 61) ^ (words[i - 2] >> 6);
     words[i] = words[i - 16] + s0 + words[i - 7] + s1;
   }
 
@@ -446,12 +445,10 @@ __device__ inline void sha512_hash_step(hash_state& state)
   uint64_t H = state.hash_value[7];
 
   for (int i = 0; i < 80; i++) {
-    uint64_t const s1 =
-      rotate_bits_right(E, 14) ^ rotate_bits_right(E, 18) ^ rotate_bits_right(E, 41);
+    uint64_t const s1    = cuda::std::rotr(E, 14) ^ cuda::std::rotr(E, 18) ^ cuda::std::rotr(E, 41);
     uint64_t const ch    = (E & F) ^ ((~E) & G);
     uint64_t const temp1 = H + s1 + ch + sha512_hash_constants[i] + words[i];
-    uint64_t const s0 =
-      rotate_bits_right(A, 28) ^ rotate_bits_right(A, 34) ^ rotate_bits_right(A, 39);
+    uint64_t const s0    = cuda::std::rotr(A, 28) ^ cuda::std::rotr(A, 34) ^ cuda::std::rotr(A, 39);
     uint64_t const maj   = (A & B) ^ (A & C) ^ (B & C);
     uint64_t const temp2 = s0 + maj;
 

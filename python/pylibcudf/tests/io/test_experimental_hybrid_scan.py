@@ -6,6 +6,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 from utils import (
+    assert_table_and_meta_eq,
     extract_parquet_footer,
     synchronize_stream,
     write_hybrid_scan_parquet_bytes,
@@ -1030,6 +1031,57 @@ def test_hybrid_scan_metadata_with_page_index(
     assert row_mask is not None
     assert row_mask.size() > 0
     assert row_mask.type().id() == plc.types.TypeId.BOOL8
+
+
+@pytest.mark.parametrize(
+    "write_statistics",
+    [True, False, ["col1"]],
+    ids=["column_and_offset_index", "offset_index_only", "mixed"],
+)
+def test_page_index_byte_range_optional_indexes(
+    simple_parquet_table: pa.Table,
+    row_group_size: int,
+    simple_parquet_options: plc.io.parquet.ParquetReaderOptions,
+    write_statistics: bool | list[str],
+) -> None:
+    """Page index byte range must span exactly the indexes written between the
+    last column chunk and the footer, even when column indexes are missing.
+    """
+    data = memoryview(
+        write_hybrid_scan_parquet_bytes(
+            simple_parquet_table, row_group_size, write_statistics
+        )
+    )
+
+    # Page indexes are written right after the last column chunk and before the footer
+    pa_metadata = pq.read_metadata(io.BytesIO(data))
+    data_end = max(
+        (col.dictionary_page_offset or col.data_page_offset)
+        + col.total_compressed_size
+        for rg in range(pa_metadata.num_row_groups)
+        for col in map(
+            pa_metadata.row_group(rg).column, range(pa_metadata.num_columns)
+        )
+    )
+    footer = extract_parquet_footer(data)
+    footer_start = len(data) - 8 - len(footer)
+
+    reader = HybridScanReader(footer, simple_parquet_options)
+    page_index = reader.page_index_byte_range()
+    assert page_index.offset == data_end
+    assert page_index.offset + page_index.size == footer_start
+    reader.setup_page_index(
+        data[page_index.offset : page_index.offset + page_index.size]
+    )
+
+    # Keep the source alive for the main parquet reader
+    source = io.BytesIO(data)
+    options = plc.io.parquet.ParquetReaderOptions.builder(
+        plc.io.SourceInfo([source])
+    ).build()
+    assert_table_and_meta_eq(
+        simple_parquet_table, plc.io.parquet.read_parquet(options)
+    )
 
 
 @pytest.mark.parametrize("total_rows", [1_000, 20_000])

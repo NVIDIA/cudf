@@ -15,7 +15,6 @@
 #include <cuda/std/execution>
 #include <cuda/std/functional>
 #include <cuda/stream>
-#include <thrust/copy.h>
 
 namespace cudf::detail {
 

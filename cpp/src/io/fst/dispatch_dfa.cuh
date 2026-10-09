@@ -7,8 +7,9 @@
 #include "agent_dfa.cuh"
 #include "in_reg_array.cuh"
 
-#include <cub/agent/agent_scan.cuh>
+#include <cub/agent/single_pass_scan_operators.cuh>
 #include <cub/device/device_scan.cuh>
+#include <cub/util_arch.cuh>
 #include <cub/util_device.cuh>
 #include <cuda/functional>
 

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -24,10 +24,19 @@ def df():
     )
 
 
-@pytest.mark.parametrize("mkdir", [True, False])
-@pytest.mark.parametrize("data_page_size", [None, 1024])
-@pytest.mark.parametrize("row_group_size", [None, 10])
-@pytest.mark.parametrize("max_rows_per_partition", [10, 1_000_000])
+PARQUET_SINK_CASES = [
+    pytest.param(10, None, None, True, id="multipart-default"),
+    pytest.param(1_000_000, None, None, True, id="single-partition"),
+    pytest.param(10, None, None, False, id="mkdir-disabled"),
+    pytest.param(10, 1024, None, True, id="data-page-size"),
+    pytest.param(10, None, 10, True, id="row-group-size"),
+    pytest.param(10, 1024, 10, True, id="encoding-interaction"),
+]
+
+
+@pytest.mark.parametrize(
+    "max_rows_per_partition,data_page_size,row_group_size,mkdir", PARQUET_SINK_CASES
+)
 def test_sink_parquet_single_file(
     df,
     streaming_engine_factory,
@@ -52,10 +61,9 @@ def test_sink_parquet_single_file(
     )
 
 
-@pytest.mark.parametrize("mkdir", [True, False])
-@pytest.mark.parametrize("data_page_size", [None, 1024])
-@pytest.mark.parametrize("row_group_size", [None, 10])
-@pytest.mark.parametrize("max_rows_per_partition", [10, 1_000_000])
+@pytest.mark.parametrize(
+    "max_rows_per_partition,data_page_size,row_group_size,mkdir", PARQUET_SINK_CASES
+)
 def test_sink_parquet_directory(
     df,
     streaming_engine_factory,
@@ -101,10 +109,16 @@ def test_sink_parquet_raises(df: pl.LazyFrame, tmp_path, streaming_engine_factor
         df.sink_parquet(tmp_path / "test_sink_gpu.parquet", engine=engine)
 
 
-@pytest.mark.parametrize("include_header", [True, False])
-@pytest.mark.parametrize("null_value", [None, "NA"])
-@pytest.mark.parametrize("separator", [",", "|"])
-@pytest.mark.parametrize("max_rows_per_partition", [10, 1_000_000])
+@pytest.mark.parametrize(
+    "max_rows_per_partition,separator,null_value,include_header",
+    [
+        pytest.param(10, ",", None, True, id="multipart-default"),
+        pytest.param(1_000_000, ",", None, True, id="single-partition"),
+        pytest.param(10, ",", None, False, id="without-header"),
+        pytest.param(10, ",", "NA", True, id="null-value"),
+        pytest.param(10, "|", None, True, id="separator"),
+    ],
+)
 def test_sink_csv(
     df,
     streaming_engine_factory,

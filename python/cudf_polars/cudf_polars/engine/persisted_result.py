@@ -64,6 +64,7 @@ if TYPE_CHECKING:
     from cudf_polars.containers import DataFrame
     from cudf_polars.dsl.ir import IR
     from cudf_polars.engine.core import StreamingEngine
+    from cudf_polars.quent._context import QuentQueryWorkerState
     from cudf_polars.streaming.parallel import ConfigOptions
     from cudf_polars.utils.config import StreamingExecutor
 
@@ -81,6 +82,7 @@ def evaluate_and_persist(
     query_id: uuid.UUID,
     *,
     deduplicate_replicated: bool,
+    quent_query_worker_state: QuentQueryWorkerState | None = None,
 ) -> int:
     """
     Evaluate ``ir`` on this rank and store the GPU-persisted result.
@@ -109,13 +111,22 @@ def evaluate_and_persist(
     deduplicate_replicated
         Whether to empty a duplicated output on non-root ranks so the partitions
         can be concatenated into a single copy on collect.
+    quent_query_worker_state
+        Worker-local Quent state for this query, or ``None`` when tracing is
+        disabled.
 
     Returns
     -------
     This rank's index within the cluster (``comm.rank``).
     """
     gpu_df, metadata = evaluate_on_rank(
-        ctx, comm, py_executor, ir, config_options, query_id=query_id
+        ctx,
+        comm,
+        py_executor,
+        ir,
+        config_options,
+        quent_query_worker_state=quent_query_worker_state,
+        query_id=query_id,
     )
     if deduplicate_replicated:
         gpu_df = drop_if_replicated(gpu_df, comm.rank, metadata)
@@ -473,6 +484,62 @@ class PersistedQueryResult:
     def __exit__(self, *exc: object) -> None:
         """Release the persisted partitions on scope exit."""
         self.release()
+
+    def take_local(self, rank: int) -> DataFrame:
+        """
+        Remove and return ``rank``'s GPU-resident partition.
+
+        The partition is returned as a GPU-resident
+        :class:`~cudf_polars.containers.DataFrame` without a host round-trip,
+        for handing query output to another GPU library in the same process.
+        Like :meth:`lazy`, this consumes the partition: it can be taken once,
+        and afterwards the result can no longer be collected.
+
+        Parameters
+        ----------
+        rank
+            Rank whose partition to take. This is the caller's own rank, since
+            a partition lives in the process that produced it.
+
+        Returns
+        -------
+        ``rank``'s partition.
+
+        Raises
+        ------
+        RuntimeError
+            If the partition has already been consumed, or the producing
+            engine has been reset or shut down.
+        """
+        return _PersistedLoader(PersistedHandle(self._uid, self._query_id, rank))()
+
+    def local_is_duplicated(self, rank: int) -> bool:
+        """
+        Whether ``rank``'s partition is duplicated, meaning replicated on every rank.
+
+        A result is either partitioned, each rank holding a disjoint subset of
+        the rows, or duplicated, every rank holding the same complete copy.
+        Duplicated is also called replicated, the term used by most distributed
+        frameworks, including PyTorch's ``Replicate()`` placement. Which layout
+        a query produces depends on how the engine partitioned it, so it cannot
+        be read off the query, and every rank gets the same answer.
+
+        Read-only, so it is safe to call before :meth:`take_local`, which
+        consumes the partition.
+
+        Parameters
+        ----------
+        rank
+            Rank whose partition to probe.
+
+        Returns
+        -------
+        ``True`` if the partition is duplicated (replicated): a complete copy held
+        on every rank.
+        """
+        return _PersistedLoader(
+            PersistedHandle(self._uid, self._query_id, rank)
+        ).is_duplicated()
 
     def lazy(self) -> pl.LazyFrame:
         """

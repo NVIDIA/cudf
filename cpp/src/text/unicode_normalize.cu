@@ -35,10 +35,8 @@
 #include <cuda/std/algorithm>
 #include <cuda/std/span>
 #include <cuda/stream>
-#include <thrust/execution_policy.h>
 #include <thrust/fill.h>
 #include <thrust/remove.h>
-#include <thrust/scatter.h>
 #include <thrust/sort.h>
 #include <thrust/transform.h>
 

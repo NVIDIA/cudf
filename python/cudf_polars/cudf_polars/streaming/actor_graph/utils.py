@@ -32,14 +32,12 @@ from cudf_streaming.table_chunk import (
     TableChunk,
     make_table_chunks_available_or_wait,
 )
-from rapidsmpf.memory.buffer import MemoryType
 from rapidsmpf.memory.memory_reservation import opaque_memory_usage
 from rapidsmpf.memory.packed_data import PackedData
 from rapidsmpf.streaming.coll.allgather import AllGather
 from rapidsmpf.streaming.core.message import Message
 
 import cudf_polars.dsl.tracing
-import cudf_polars.quent._types
 from cudf_polars.containers import DataFrame
 from cudf_polars.dsl.expr import Cast, Col, NamedExpr, TemporalFunction
 from cudf_polars.dsl.ir import (
@@ -71,6 +69,8 @@ if TYPE_CHECKING:
         Iterator,
         Sequence,
     )
+
+    import cudf_polars_quent as _quent
 
     from cudf_streaming import CardinalityEstimator
     from rapidsmpf.communicator.communicator import Communicator
@@ -276,6 +276,19 @@ async def shutdown_channels_on_error(
         raise
 
 
+@dataclass(frozen=True)
+class ActorScope:
+    """Tracing state and explicit execution context for one Actor lifetime."""
+
+    tracer: ActorTracer
+    ir_context: IRExecutionContext | None
+
+    def require_ir_context(self) -> IRExecutionContext:
+        """Return the Actor-bound context required by evaluation code."""
+        assert self.ir_context is not None
+        return self.ir_context
+
+
 @asynccontextmanager
 async def shutdown_on_error(
     context: Context,
@@ -285,7 +298,7 @@ async def shutdown_on_error(
     chs_aux: Sequence[Channel[Any]] = (),
     trace_ir: IR,
     ir_context: IRExecutionContext | None = None,
-) -> AsyncIterator[ActorTracer]:
+) -> AsyncIterator[ActorScope]:
     """
     Actor-level shutdown and tracing for rapidsmpf.
 
@@ -316,8 +329,8 @@ async def shutdown_on_error(
 
     Yields
     ------
-    ActorTracer | None
-        An actor tracer for collecting stats (if tracing enabled), else None.
+    ActorScope
+        Actor tracing state and the Actor-bound IR execution context.
     """
     channels = (*chs_in, *chs_out, *chs_aux)
     # Create tracer only if LOG_TRACES is enabled and IR is provided
@@ -330,11 +343,42 @@ async def shutdown_on_error(
         contextvars["cudf_polars_query_id"] = str(ir_context.query_id)
         ir_context = replace(ir_context, tracer=tracer)
 
+    # We might have nested calls to `shutdown_on_error` for a given actor.
+    # We always want to trace the outermost call, so record a little state here
+    # to know whether we're the outermost call and so created the quent actor.
+    created_quent_actor = False
+    if (
+        ir_context is not None
+        and (quent_execution := ir_context.quent_ir_execution_state) is not None
+        and quent_execution.actor_id is None
+    ):
+        import cudf_polars_quent as _quent
+
+        created_quent_actor = True
+        actor_id = _quent.now_v7()
+        quent_execution = replace(quent_execution, actor_id=actor_id)
+        ir_context = replace(
+            ir_context,
+            quent_ir_execution_state=quent_execution,
+        )
+        runtime = quent_execution.query_worker_state.runtime
+        started = (
+            runtime.session.binding_context.actor_observer()
+            .handle(actor_id)
+            .started(
+                operator=quent_execution.operator_id,
+                worker=runtime.worker_resources.worker_id,
+            )
+        )
+        runtime.session._actors[actor_id] = started.running()
+
+    actor_error: BaseException | None = None
     with cudf_polars.dsl.tracing.bound_contextvars(**contextvars):
         start = time.monotonic_ns()
         try:
-            yield tracer
-        except BaseException:
+            yield ActorScope(tracer=tracer, ir_context=ir_context)
+        except BaseException as caught:
+            actor_error = caught
             await shutdown_channels(context, *channels)
             raise
         finally:
@@ -360,75 +404,37 @@ async def shutdown_on_error(
             )
 
             if (
-                ir_context is not None
-                and (
-                    quent_ir_execution_context := ir_context.quent_ir_execution_context
-                )
+                created_quent_actor
+                and ir_context is not None
+                and (quent_ir_execution_state := ir_context.quent_ir_execution_state)
                 is not None
             ):
-                custom_attributes = []
-                if tracer is not None and tracer.chunk_count is not None:
-                    custom_attributes.append(
-                        cudf_polars.quent._types.StatisticsAttribute(
-                            key="chunk_count",
-                            value_type="U64",
-                            value=tracer.chunk_count,
-                        )
+                values: _quent.OperatorStatisticsDict = {
+                    "output_rows": tracer.row_count,
+                    "input_bytes": sum(tracer.input_bytes.values()),
+                    "output_bytes": sum(tracer.output_bytes.values()),
+                    "chunk_count": tracer.chunk_count,
+                    "duplicated": tracer.duplicated,
+                    "decision": tracer.decision,
+                }
+                assert quent_ir_execution_state.actor_id is not None
+                runtime = quent_ir_execution_state.query_worker_state.runtime
+                if actor_error is None:
+                    runtime.session._actors.pop(
+                        quent_ir_execution_state.actor_id
+                    ).completed(
+                        values=values,
                     )
-                if tracer is not None and tracer.duplicated is not None:
-                    custom_attributes.append(
-                        cudf_polars.quent._types.StatisticsAttribute(
-                            key="duplicated",
-                            value_type="U64",
-                            value=1 if tracer.duplicated else 0,
-                        )
-                    )
-                if tracer is not None and tracer.decision is not None:
-                    custom_attributes.append(
-                        cudf_polars.quent._types.StatisticsAttribute(
-                            key="decision",
-                            value_type="String",
-                            value=tracer.decision,
-                        )
-                    )
-                if tracer is not None:
-                    for mem_type in MemoryType:
-                        tier = mem_type.name.lower()
-                        custom_attributes.append(
-                            cudf_polars.quent._types.StatisticsAttribute(
-                                key=f"input_bytes_{tier}",
-                                value_type="U64",
-                                value=tracer.input_bytes[mem_type],
-                            )
-                        )
-                        custom_attributes.append(
-                            cudf_polars.quent._types.StatisticsAttribute(
-                                key=f"output_bytes_{tier}",
-                                value_type="U64",
-                                value=tracer.output_bytes[mem_type],
-                            )
-                        )
-                if tracer is None or tracer.row_count is None:
-                    # TODO: See if `output_rows` is nullable.
-                    output_rows = 0
                 else:
-                    output_rows = tracer.row_count
-                input_bytes = (
-                    sum(tracer.input_bytes.values()) if tracer is not None else 0
-                )
-                output_bytes = (
-                    sum(tracer.output_bytes.values()) if tracer is not None else 0
-                )
-                stats = quent_ir_execution_context.quent_operator.statistics(
-                    statistics=cudf_polars.quent._types.Statistics(
-                        output_rows=output_rows,
-                        input_bytes=input_bytes,
-                        output_bytes=output_bytes,
-                        custom_attributes=custom_attributes,
+                    runtime.session._actors.pop(
+                        quent_ir_execution_state.actor_id
+                    ).failed(
+                        error=str(actor_error),
+                        values=values,
                     )
-                )
-
-                quent_ir_execution_context.logger.emit(stats)
+                runtime.session.binding_context.operator_observer().handle(
+                    quent_ir_execution_state.operator_id
+                ).statistics(values=values)
 
 
 def _update_ordering_indices(

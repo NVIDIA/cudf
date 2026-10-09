@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime
 from operator import methodcaller
+from typing import Literal, cast
 
 import pytest
 
@@ -577,40 +578,232 @@ def test_datetime_round_unsupported(engine: pl.GPUEngine, every: str):
     assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
-@pytest.mark.parametrize(
-    "dtype", [pl.Datetime("ms"), pl.Datetime("us"), pl.Datetime("ns")]
-)
-@pytest.mark.parametrize("every", ["1ns", "1us", "1ms", "1s", "1m", "1h", "1d"])
-def test_datetime_truncate(engine: pl.GPUEngine, dtype, every):
-    ldf = pl.LazyFrame(
-        {
-            "datetimes": pl.datetime_range(
-                datetime.datetime(2020, 1, 1),
-                datetime.datetime(2020, 1, 2),
-                "3h14m15s11ms33us999ns",
+def _truncate_frame(dtype: pl.DataType) -> pl.LazyFrame:
+    # Irregular steps on both sides of the epoch, plus timestamps far from it,
+    # so that results are not trivially aligned to any tested ``every``.
+    datetimes = pl.concat(
+        [
+            pl.datetime_range(
+                datetime.datetime(1969, 12, 25),
+                datetime.datetime(1970, 1, 8),
+                "7h13m17s11ms33us999ns",
+                time_unit="ns",
                 eager=True,
-            ).cast(dtype)
-        }
+            ),
+            pl.datetime_range(
+                datetime.datetime(2026, 1, 5, 9, 30),
+                datetime.datetime(2026, 1, 5, 16, 0),
+                "1m7s131us",
+                time_unit="ns",
+                eager=True,
+            ),
+            pl.Series(
+                [
+                    datetime.datetime(1900, 2, 28, 23, 59, 59, 999999),
+                    datetime.datetime(2000, 2, 29, 12, 0),
+                    datetime.datetime(2199, 12, 31, 23, 59, 59),
+                    None,
+                ],
+                dtype=pl.Datetime("ns"),
+            ),
+        ]
     )
+    if isinstance(dtype, pl.Datetime) and dtype.time_zone is not None:
+        datetimes = datetimes.dt.replace_time_zone(dtype.time_zone)
+    return pl.LazyFrame({"datetimes": datetimes.cast(dtype)})
 
+
+_TRUNCATE_DTYPES = [
+    pl.Date(),
+    pl.Datetime("ms"),
+    pl.Datetime("us"),
+    pl.Datetime("ns"),
+    pl.Datetime("us", time_zone="UTC"),
+]
+_TRUNCATE_EVERY = [
+    # Durations finer than the storage unit, or zero, are a no-op.
+    "0m",
+    "1ns",
+    "7ns",
+    "1500ns",
+    "1us",
+    "3us",
+    "2500us",
+    "1ms",
+    "250ms",
+    "7s",
+    "90s",
+    "1m",
+    "5m",
+    "10m",
+    "1h30m",
+    "3h",
+    "25h",
+    "1d",
+    "3d",
+    "1d12h",
+    "1w",
+    "2w",
+    "1mo",
+    "7mo",
+    "1q",
+    "1y",
+    "3y",
+    "1y6mo",
+]
+# polars raises for these durations on a Date (see the unsupported test).
+_TRUNCATE_DATE_INVALID = {"0m", "1d12h"}
+
+
+@pytest.mark.parametrize(
+    "dtype, every",
+    [
+        (dtype, every)
+        for dtype in _TRUNCATE_DTYPES
+        for every in _TRUNCATE_EVERY
+        if not (dtype == pl.Date() and every in _TRUNCATE_DATE_INVALID)
+    ],
+)
+def test_datetime_truncate(engine: pl.GPUEngine, dtype: pl.DataType, every: str):
+    q = _truncate_frame(dtype).select(pl.col("datetimes").dt.truncate(every))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "dtype, every",
+    [
+        # polars truncates in local time for time zone aware datetimes.
+        (pl.Datetime("us", time_zone="America/New_York"), "10m"),
+        (pl.Datetime("us"), "1i"),
+        # polars raises for these.
+        (pl.Datetime("us"), "-1h"),
+        (pl.Datetime("us"), "1mo15d"),
+        (pl.Datetime("us"), "1w2d"),
+        (pl.Datetime("us"), "2w3h"),
+        (pl.Date(), "0d"),
+        (pl.Date(), "1d12h"),
+        # Too large to evaluate without overflow.
+        (pl.Datetime("ns"), "2000000000000h"),
+        (pl.Date(), "2000000000000h"),
+        (pl.Date(), "60000000000d"),
+        (pl.Datetime("us"), "1099511627777mo"),
+        (pl.Date(), "1099511627777mo"),
+    ],
+)
+def test_datetime_truncate_unsupported(
+    engine: pl.GPUEngine, dtype: pl.DataType, every: str
+):
+    q = _truncate_frame(dtype).select(pl.col("datetimes").dt.truncate(every))
+    assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+_TICKS_PER_DAY = {"ms": 86_400_000, "us": 86_400_000_000, "ns": 86_400_000_000_000}
+
+
+@pytest.mark.parametrize(
+    "time_unit, every",
+    [
+        (time_unit, every)
+        for time_unit in ["ms", "us", "ns"]
+        # libcudf's floor_datetimes ("1s", and "1m"/"1h"/"1d" for some units),
+        # fixed and weekly buckets; polars cannot compute calendar months at
+        # the limits of millisecond and microsecond timestamps.
+        for every in ["1s", "1m", "1h", "1d", "7s", "10m", "1w", "3w"]
+        + (["1mo", "7mo", "1y"] if time_unit == "ns" else [])
+    ],
+)
+def test_datetime_truncate_extreme_values(
+    engine: pl.GPUEngine, time_unit: Literal["ms", "us", "ns"], every: str
+):
+    # polars' arithmetic wraps around at the limits of INT64.
+    int64_min, int64_max = -(2**63), 2**63 - 1
+    four_days = 4 * _TICKS_PER_DAY[time_unit]
+    values = [
+        int64_min,
+        int64_min + 1,
+        int64_min + four_days - 1,
+        int64_min + four_days,
+        -1,
+        0,
+        None,
+        int64_max - 1,
+        int64_max,
+    ]
+    ldf = pl.LazyFrame(
+        {"datetimes": pl.Series(values, dtype=pl.Int64).cast(pl.Datetime(time_unit))}
+    )
     q = ldf.select(pl.col("datetimes").dt.truncate(every))
     assert_gpu_result_equal(q, engine=engine)
 
 
-@pytest.mark.parametrize("every", ["30m", "1mo"])
-def test_datetime_truncate_unsupported(engine: pl.GPUEngine, every: str):
+@pytest.mark.parametrize("every", ["1d", "3d", "1w", "25h", "2000000000d"])
+def test_date_truncate_extreme_values(engine: pl.GPUEngine, every: str):
+    # polars converts the result back to 32 bits with wrapping.
+    values = [-(2**31), -(2**31) + 1, None, 2**31 - 2, 2**31 - 1]
+    ldf = pl.LazyFrame({"dates": pl.Series(values, dtype=pl.Int32).cast(pl.Date())})
+    q = ldf.select(pl.col("dates").dt.truncate(every))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("dtype", [pl.Date(), pl.Datetime("ms"), pl.Datetime("us")])
+@pytest.mark.parametrize(
+    "every", ["1m", "1h", "1d", "1w", "1mo", "7mo", "1q", "1y", "3y"]
+)
+def test_datetime_truncate_far_from_epoch(
+    engine: pl.GPUEngine, dtype: pl.DataType, every: str
+):
+    # Calendar years on both sides of the INT16 range, up to the limits of
+    # polars' calendar (years -262144 to 262143); minutes, hours and days also
+    # overflow 32-bit counts here. The days since the epoch are approximate.
+    years = [-260_000, -40_000, -32_770, -32_767, 32_766, 32_769, 40_000, 260_000]
+    days = [round((year - 1970) * 365.2425) + 17 for year in years]
+    if dtype == pl.Date():
+        series = pl.Series(days, dtype=pl.Int32)
+    else:
+        ticks_per_day = _TICKS_PER_DAY[cast("pl.Datetime", dtype).time_unit]
+        series = pl.Series(
+            [d * ticks_per_day + ticks_per_day // 3 + 12_345 for d in days],
+            dtype=pl.Int64,
+        )
+    ldf = pl.LazyFrame({"datetimes": series.cast(dtype)})
+    q = ldf.select(pl.col("datetimes").dt.truncate(every))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("dtype", [pl.Date(), pl.Datetime("us")])
+@pytest.mark.parametrize(
+    "every, values",
+    [
+        # Around the INT32 range, before and after the epoch.
+        ("2147483647mo", [datetime.date(1969, 12, 1), datetime.date(2020, 1, 1)]),
+        ("2147483648mo", [datetime.date(1969, 12, 1), datetime.date(2020, 1, 1)]),
+        # The largest supported bucket. Before the epoch polars subtracts one
+        # month at a time, which would take too long here.
+        ("1099511627776mo", [datetime.date(1970, 1, 1), datetime.date(2020, 1, 1)]),
+    ],
+)
+def test_datetime_truncate_large_month_buckets(
+    engine: pl.GPUEngine,
+    dtype: pl.DataType,
+    every: str,
+    values: list[datetime.date],
+):
+    ldf = pl.LazyFrame({"datetimes": pl.Series(values).cast(dtype)})
+    q = ldf.select(pl.col("datetimes").dt.truncate(every))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("method", ["truncate", "round"])
+def test_datetime_truncate_round_column_every_unsupported(
+    engine: pl.GPUEngine, method: str
+):
     ldf = pl.LazyFrame(
         {
-            "datetimes": pl.datetime_range(
-                datetime.datetime(2020, 1, 1),
-                datetime.datetime(2020, 1, 2),
-                "30m",
-                eager=True,
-            )
+            "datetimes": [datetime.datetime(2020, 1, 1, 1, 7)],
+            "every": ["10m"],
         }
     )
-
-    q = ldf.select(pl.col("datetimes").dt.truncate(every))
+    q = ldf.select(methodcaller(method, pl.col("every"))(pl.col("datetimes").dt))
     assert_ir_translation_raises(q, engine, NotImplementedError)
 
 

@@ -254,6 +254,7 @@ rmm::device_uvector<size_type> inplace_segmented_bitmask_binop(
  * const, size_type, cudf::memory_resources)
  *
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used for temporary allocations
  */
 template <typename Binop>
 std::pair<cuda::device_buffer<std::byte>, size_type> bitmask_binop(
@@ -682,15 +683,18 @@ struct index_alternator {
  * count the number of set/unset bits within.
  * @param count_bits If SET_BITS, count set (1) bits. If UNSET_BITS, count unset (0) bits.
  * @param stream CUDA stream used for device memory operations and kernel launches.
+ * @param mr Memory resources used for temporary allocations
  *
  * @return A vector storing the number of non-zero bits in the specified ranges
  */
 template <typename IndexIterator>
-std::vector<size_type> segmented_count_bits(bitmask_type const* bitmask,
-                                            IndexIterator indices_begin,
-                                            IndexIterator indices_end,
-                                            count_bits_policy count_bits,
-                                            cuda::stream_ref stream)
+std::vector<size_type> segmented_count_bits(
+  bitmask_type const* bitmask,
+  IndexIterator indices_begin,
+  IndexIterator indices_end,
+  count_bits_policy count_bits,
+  cuda::stream_ref stream,
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref())
 {
   CUDF_EXPECTS(bitmask != nullptr, "Invalid bitmask.");
   auto const num_segments = validate_segmented_indices(indices_begin, indices_end);
@@ -702,7 +706,7 @@ std::vector<size_type> segmented_count_bits(bitmask_type const* bitmask,
   auto h_indices = make_empty_host_vector<typename std::iterator_traits<IndexIterator>::value_type>(
     std::distance(indices_begin, indices_end), stream);
   std::copy(indices_begin, indices_end, std::back_inserter(h_indices));
-  auto const temp_mr   = cudf::get_current_device_resource_ref();
+  auto const temp_mr   = mr.get_temporary_mr();
   auto const d_indices = make_device_uvector_async(h_indices, stream, temp_mr);
 
   // Compute the bit counts over each segment.
@@ -726,32 +730,38 @@ std::vector<size_type> segmented_count_bits(bitmask_type const* bitmask,
 
 // Count non-zero bits in the specified ranges.
 template <typename IndexIterator>
-std::vector<size_type> segmented_count_set_bits(bitmask_type const* bitmask,
-                                                IndexIterator indices_begin,
-                                                IndexIterator indices_end,
-                                                cuda::stream_ref stream)
+std::vector<size_type> segmented_count_set_bits(
+  bitmask_type const* bitmask,
+  IndexIterator indices_begin,
+  IndexIterator indices_end,
+  cuda::stream_ref stream,
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref())
 {
   return detail::segmented_count_bits(
-    bitmask, indices_begin, indices_end, count_bits_policy::SET_BITS, stream);
+    bitmask, indices_begin, indices_end, count_bits_policy::SET_BITS, stream, mr);
 }
 
 // Count zero bits in the specified ranges.
 template <typename IndexIterator>
-std::vector<size_type> segmented_count_unset_bits(bitmask_type const* bitmask,
-                                                  IndexIterator indices_begin,
-                                                  IndexIterator indices_end,
-                                                  cuda::stream_ref stream)
+std::vector<size_type> segmented_count_unset_bits(
+  bitmask_type const* bitmask,
+  IndexIterator indices_begin,
+  IndexIterator indices_end,
+  cuda::stream_ref stream,
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref())
 {
   return detail::segmented_count_bits(
-    bitmask, indices_begin, indices_end, count_bits_policy::UNSET_BITS, stream);
+    bitmask, indices_begin, indices_end, count_bits_policy::UNSET_BITS, stream, mr);
 }
 
 // Count valid elements in the specified ranges of a validity bitmask.
 template <typename IndexIterator>
-std::vector<size_type> segmented_valid_count(bitmask_type const* bitmask,
-                                             IndexIterator indices_begin,
-                                             IndexIterator indices_end,
-                                             cuda::stream_ref stream)
+std::vector<size_type> segmented_valid_count(
+  bitmask_type const* bitmask,
+  IndexIterator indices_begin,
+  IndexIterator indices_end,
+  cuda::stream_ref stream,
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref())
 {
   if (bitmask == nullptr) {
     // Return a vector of segment lengths.
@@ -763,22 +773,24 @@ std::vector<size_type> segmented_valid_count(bitmask_type const* bitmask,
     return ret;
   }
 
-  return detail::segmented_count_set_bits(bitmask, indices_begin, indices_end, stream);
+  return detail::segmented_count_set_bits(bitmask, indices_begin, indices_end, stream, mr);
 }
 
 // Count null elements in the specified ranges of a validity bitmask.
 template <typename IndexIterator>
-std::vector<size_type> segmented_null_count(bitmask_type const* bitmask,
-                                            IndexIterator indices_begin,
-                                            IndexIterator indices_end,
-                                            cuda::stream_ref stream)
+std::vector<size_type> segmented_null_count(
+  bitmask_type const* bitmask,
+  IndexIterator indices_begin,
+  IndexIterator indices_end,
+  cuda::stream_ref stream,
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref())
 {
   if (bitmask == nullptr) {
     // Return a vector of zeros.
     auto const num_segments = validate_segmented_indices(indices_begin, indices_end);
     return std::vector<size_type>(num_segments, 0);
   }
-  return detail::segmented_count_unset_bits(bitmask, indices_begin, indices_end, stream);
+  return detail::segmented_count_unset_bits(bitmask, indices_begin, indices_end, stream, mr);
 }
 
 /**

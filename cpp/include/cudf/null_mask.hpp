@@ -120,12 +120,14 @@ void set_null_mask(bitmask_type* bitmask,
  * @param end_bits Indices of the last bits to set (exclusive)
  * @param valids Booleans indicating if the corresponding bitmasks should be set to valid or null
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used for temporary allocations
  */
 void set_null_masks_safe(cudf::host_span<bitmask_type*> bitmasks,
                          cudf::host_span<size_type const> begin_bits,
                          cudf::host_span<size_type const> end_bits,
                          cudf::host_span<bool const> valids,
-                         cuda::stream_ref stream = cudf::get_default_stream());
+                         cuda::stream_ref stream   = cudf::get_default_stream(),
+                         cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Sets a vector of non-overlapping pre-allocated bitmask buffers to given states in the
@@ -141,12 +143,14 @@ void set_null_masks_safe(cudf::host_span<bitmask_type*> bitmasks,
  * @param end_bits Indices of the last bits to set (exclusive)
  * @param valids Booleans indicating if the corresponding bitmasks should be set to valid or null
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used for temporary allocations
  */
 void set_null_masks_unsafe(cudf::host_span<bitmask_type*> bitmasks,
                            cudf::host_span<size_type const> begin_bits,
                            cudf::host_span<size_type const> end_bits,
                            cudf::host_span<bool const> valids,
-                           cuda::stream_ref stream = cudf::get_default_stream());
+                           cuda::stream_ref stream   = cudf::get_default_stream(),
+                           cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Creates a `device_buffer` from a slice of bitmask defined by a range
@@ -317,12 +321,14 @@ std::pair<cuda::device_buffer<std::byte>, size_type> bitmask_or(
  * @param start Index of the first bit to count (inclusive)
  * @param stop Index of the last bit to count (exclusive)
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used for temporary allocations
  * @return The number of null elements in the specified range
  */
 size_type null_count(bitmask_type const* bitmask,
                      size_type start,
                      size_type stop,
-                     cuda::stream_ref stream = cudf::get_default_stream());
+                     cuda::stream_ref stream   = cudf::get_default_stream(),
+                     cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Given a list of validity bitmasks, counts the number of null elements (unset bits) in the
@@ -339,12 +345,15 @@ size_type null_count(bitmask_type const* bitmask,
  * @param start Index of the first bit to count (inclusive)
  * @param stop Index of the last bit to count (exclusive)
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used for temporary allocations
  * @return A vector of null counts for each bitmask
  */
-std::vector<size_type> batch_null_count(host_span<bitmask_type const* const> bitmasks,
-                                        size_type start,
-                                        size_type stop,
-                                        cuda::stream_ref stream = cudf::get_default_stream());
+std::vector<size_type> batch_null_count(
+  host_span<bitmask_type const* const> bitmasks,
+  size_type start,
+  size_type stop,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Given a validity bitmask, counts the number of valid elements (set
@@ -361,11 +370,14 @@ std::vector<size_type> batch_null_count(host_span<bitmask_type const* const> bit
  * @param[in] indices A span of indices specifying ranges to count the number of valid
  * elements.
  * @param[in] stream CUDA stream used for device memory operations and kernel launches.
+ * @param[in] mr Memory resources used for temporary allocations
  * @return A vector storing the number of valid elements in each specified range.
  */
-std::vector<size_type> segmented_valid_count(bitmask_type const* bitmask,
-                                             std::span<size_type const> indices,
-                                             cuda::stream_ref stream = cudf::get_default_stream());
+std::vector<size_type> segmented_valid_count(
+  bitmask_type const* bitmask,
+  std::span<size_type const> indices,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Given a validity bitmask, counts the number of null elements (unset
@@ -381,11 +393,14 @@ std::vector<size_type> segmented_valid_count(bitmask_type const* bitmask,
  * @param[in] bitmask Validity bitmask residing in device memory.
  * @param[in] indices A span of indices specifying ranges to count the number of null elements.
  * @param[in] stream CUDA stream used for device memory operations and kernel launches.
+ * @param[in] mr Memory resources used for temporary allocations
  * @return A vector storing the number of null elements in each specified range.
  */
-std::vector<size_type> segmented_null_count(bitmask_type const* bitmask,
-                                            std::span<size_type const> indices,
-                                            cuda::stream_ref stream = cudf::get_default_stream());
+std::vector<size_type> segmented_null_count(
+  bitmask_type const* bitmask,
+  std::span<size_type const> indices,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Given a validity bitmask, returns the index of the first set bit
@@ -395,13 +410,16 @@ std::vector<size_type> segmented_null_count(bitmask_type const* bitmask,
  * @param start Index of the first bit to check (inclusive)
  * @param stop Index of the last bit to check (exclusive)
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used for temporary allocations
  * @return The index of the first set bit in the specified range relative to start,
  *         or `stop-start` if no set bit is found (all nulls)
  */
-size_type index_of_first_set_bit(bitmask_type const* bitmask,
-                                 size_type start,
-                                 size_type stop,
-                                 cuda::stream_ref stream = cudf::get_default_stream());
+size_type index_of_first_set_bit(
+  bitmask_type const* bitmask,
+  size_type start,
+  size_type stop,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 }  // namespace CUDF_EXPORT cudf

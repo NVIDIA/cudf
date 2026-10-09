@@ -27,7 +27,6 @@
 #include <thrust/execution_policy.h>
 #include <thrust/for_each.h>
 #include <thrust/logical.h>
-#include <thrust/scan.h>
 #include <thrust/sequence.h>
 #include <thrust/transform.h>
 

@@ -51,6 +51,7 @@ files:
       - test_cpp
       - test_python_common
       - test_python_cudf
+      - depends_on_pytorch
       - test_python_cudf_common
       - test_python_pylibcudf
       - test_python_cudf_pandas
@@ -76,6 +77,7 @@ files:
       - test_python_common
       - test_python_cudf_common
       - test_python_cudf
+      - depends_on_pytorch
       - test_python_cudf_pandas
   test_python_cudf:
     output: none
@@ -85,6 +87,7 @@ files:
       - test_python_common
       - test_python_cudf_common
       - test_python_cudf
+      - depends_on_pytorch
       - test_python_s3
       - numpy_run
       - test_python_pylibcudf
@@ -130,6 +133,10 @@ files:
       - depends_on_cudf_polars
       - depends_on_ray
       - depends_on_cudf_streaming
+  test_python_pytorch:
+    output: none
+    includes:
+      - depends_on_pytorch
   build_cudf_polars_quent:
     output: none
     includes:
@@ -258,6 +265,7 @@ files:
       - test_python_common
       - test_python_cudf_common
       - test_python_cudf
+      - depends_on_pytorch
       - test_python_s3
   py_build_libcudf:
     output: pyproject
@@ -705,6 +713,7 @@ files:
       - test_python_common
       - test_python_cudf_common
       - test_python_cudf
+      - depends_on_pytorch
       - test_python_narwhals
       - depends_on_cudf
       - depends_on_cudf_polars
@@ -1282,18 +1291,6 @@ dependencies:
               - pyarrow==19.*
           - matrix:
             packages:
-      - output_types: conda
-        matrices:
-          - matrix:
-              cuda: "12.*"
-            packages:
-              - pytorch>=2.4.0
-          - matrix:
-              cuda: "13.*"
-            packages:
-              - pytorch>=2.10.0
-          - matrix:
-            packages:
   test_python_cudf_polars:
     common:
       - output_types: [conda, requirements, constraints, pyproject]
@@ -1737,6 +1734,20 @@ dependencies:
       - output_types: [requirements, constraints, pyproject]
         packages:
           - ray>=2.55.1
+  depends_on_pytorch:
+    specific:
+      - output_types: conda
+        matrices:
+          - matrix:
+              cuda: "12.*"
+            packages:
+              - pytorch>=2.4.0
+          - matrix:
+              cuda: "13.*"
+            packages:
+              - pytorch>=2.10.0
+          - matrix:
+            packages:
   depends_on_rapids_logger:
     common:
       - output_types: [conda, requirements, constraints, pyproject]

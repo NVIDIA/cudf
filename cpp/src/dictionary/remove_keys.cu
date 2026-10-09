@@ -27,7 +27,6 @@
 #include <thrust/fill.h>
 #include <thrust/scatter.h>
 #include <thrust/sequence.h>
-#include <thrust/transform.h>
 
 namespace cudf {
 namespace dictionary {

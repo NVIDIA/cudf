@@ -3,6 +3,7 @@
 import datetime
 import decimal
 import io
+import json
 import os
 import struct
 
@@ -995,6 +996,13 @@ def test_file_metadata_schema_elements() -> None:
     sink = io.BytesIO()
     write_table(table, sink)
     sink.seek(0)
+    parquet_schema = pq.ParquetFile(sink).metadata.schema
+    time_is_adjusted_to_utc = json.loads(
+        parquet_schema.column(
+            parquet_schema.names.index("time")
+        ).logical_type.to_json()
+    )["isAdjustedToUTC"]
+    sink.seek(0)
 
     file_metadata = plc.io.parquet_metadata.read_parquet_footers(
         plc.io.SourceInfo([sink])
@@ -1082,7 +1090,7 @@ def test_file_metadata_schema_elements() -> None:
                 None,
                 None,
                 TimeUnit.MILLIS,
-                False,
+                time_is_adjusted_to_utc,
                 None,
                 None,
             ),

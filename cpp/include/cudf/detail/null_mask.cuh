@@ -29,7 +29,6 @@
 #include <cuda/std/execution>
 #include <cuda/std/tuple>
 #include <cuda/stream>
-#include <thrust/for_each.h>
 #include <thrust/transform.h>
 
 #include <algorithm>

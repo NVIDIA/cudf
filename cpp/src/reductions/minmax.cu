@@ -25,7 +25,6 @@
 #include <cuda/std/iterator>
 #include <cuda/std/utility>
 #include <cuda/stream>
-#include <thrust/transform_reduce.h>
 
 #include <type_traits>
 

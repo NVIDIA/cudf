@@ -29,7 +29,7 @@ std::unique_ptr<column> search_ordered(table_view const& haystack,
                                        std::vector<order> const& column_order,
                                        std::vector<null_order> const& null_precedence,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cudf::memory_resources mr)
 {
   CUDF_EXPECTS(
     column_order.empty() or static_cast<std::size_t>(haystack.num_columns()) == column_order.size(),
@@ -38,11 +38,14 @@ std::unique_ptr<column> search_ordered(table_view const& haystack,
                  static_cast<std::size_t>(haystack.num_columns()) == null_precedence.size(),
                "Mismatch between number of columns and null precedence.");
 
-  auto const temp_mr = cudf::get_current_device_resource_ref();
+  auto const temp_mr = mr.get_temporary_mr();
 
   // Allocate result column
-  auto result = make_numeric_column(
-    data_type{type_to_id<size_type>()}, needles.num_rows(), mask_state::UNALLOCATED, stream, mr);
+  auto result       = make_numeric_column(data_type{type_to_id<size_type>()},
+                                    needles.num_rows(),
+                                    mask_state::UNALLOCATED,
+                                    stream,
+                                    mr.get_output_mr());
   auto const out_it = result->mutable_view().data<size_type>();
 
   // Handle empty inputs
@@ -58,7 +61,12 @@ std::unique_ptr<column> search_ordered(table_view const& haystack,
   auto const& matched_needles  = matched.second.back();
 
   auto const comparator = cudf::detail::row::lexicographic::two_table_comparator(
-    matched_haystack, matched_needles, column_order, null_precedence, stream, temp_mr);
+    matched_haystack,
+    matched_needles,
+    column_order,
+    null_precedence,
+    stream,
+    cudf::memory_resources{temp_mr, temp_mr});
   auto const has_nulls = has_nested_nulls(matched_haystack) or has_nested_nulls(matched_needles);
 
   auto const haystack_it = cudf::detail::row::lhs_iterator(0);

@@ -72,7 +72,7 @@ void apply_struct_binary_op(mutable_column_view& out,
   auto const tlhs             = table_view{{lhs}};
   auto const trhs             = table_view{{rhs}};
   auto const table_comparator = cudf::detail::row::lexicographic::two_table_comparator{
-    tlhs, trhs, compare_orders, {}, stream, temp_mr};
+    tlhs, trhs, compare_orders, {}, stream, cudf::memory_resources{temp_mr, temp_mr}};
   auto outd = column_device_view::create(out, stream, temp_mr);
   auto optional_iter =
     cudf::detail::make_optional_iterator<bool>(*outd, nullate::DYNAMIC{out.has_nulls()});

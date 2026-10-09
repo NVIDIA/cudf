@@ -202,10 +202,13 @@ struct group_reduction_functor<
         binop);
     };
 
-    auto const count_iter   = cuda::counting_iterator<ResultType>{0};
-    auto const result_begin = result->mutable_view().template begin<ResultType>();
-    auto const binop_generator =
-      cudf::reduction::detail::arg_minmax_binop_generator::create<K>(values, stream);
+    auto const count_iter      = cuda::counting_iterator<ResultType>{0};
+    auto const result_begin    = result->mutable_view().template begin<ResultType>();
+    auto const binop_generator = cudf::reduction::detail::arg_minmax_binop_generator::create<K>(
+      values,
+      stream,
+      cudf::memory_resources{cudf::get_current_device_resource_ref(),
+                             cudf::get_current_device_resource_ref()});
     do_reduction(count_iter, result_begin, binop_generator.binop());
 
     if (values.has_nulls()) {

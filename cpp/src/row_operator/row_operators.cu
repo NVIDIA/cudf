@@ -696,7 +696,7 @@ std::shared_ptr<preprocessed_table> preprocessed_table::create(
           lhs_col,
           null_precedence.empty() ? null_order::BEFORE : new_null_precedence[col_idx],
           stream,
-          mr.get_output_mr());
+          mr);
 
         transformed_cvs.emplace_back(std::move(transformed));
         transformed_columns.insert(transformed_columns.end(),

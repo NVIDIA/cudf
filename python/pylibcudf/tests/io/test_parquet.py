@@ -945,6 +945,26 @@ def test_file_metadata_schema_elements() -> None:
                 pa.binary(4),
                 metadata={b"PARQUET:field_id": b"40"},
             ),
+            pa.field("i8", pa.int8(), metadata={b"PARQUET:field_id": b"50"}),
+            pa.field(
+                "u16", pa.uint16(), metadata={b"PARQUET:field_id": b"51"}
+            ),
+            pa.field(
+                "date", pa.date32(), metadata={b"PARQUET:field_id": b"52"}
+            ),
+            pa.field(
+                "time", pa.time32("ms"), metadata={b"PARQUET:field_id": b"53"}
+            ),
+            pa.field(
+                "ts_utc",
+                pa.timestamp("ms", tz="UTC"),
+                metadata={b"PARQUET:field_id": b"54"},
+            ),
+            pa.field(
+                "ts_naive",
+                pa.timestamp("ns"),
+                metadata={b"PARQUET:field_id": b"55"},
+            ),
         ]
     )
     table = pa.table(
@@ -958,6 +978,17 @@ def test_file_metadata_schema_elements() -> None:
                 [decimal.Decimal("1.25")] * 3, type=schema.field("dec").type
             ),
             pa.array([b"abcd"] * 3, type=schema.field("fixed").type),
+            pa.array([1, 2, 3], type=pa.int8()),
+            pa.array([1, 2, 3], type=pa.uint16()),
+            pa.array([datetime.date(2020, 1, 1)] * 3, type=pa.date32()),
+            pa.array([datetime.time(1)] * 3, type=pa.time32("ms")),
+            pa.array(
+                [datetime.datetime(2020, 1, 1)] * 3,
+                type=pa.timestamp("ms", tz="UTC"),
+            ),
+            pa.array(
+                [datetime.datetime(2020, 1, 1)] * 3, type=pa.timestamp("ns")
+            ),
         ],
         schema=schema,
     )
@@ -970,6 +1001,8 @@ def test_file_metadata_schema_elements() -> None:
     )[0]
 
     PhysicalType = plc.io.parquet_metadata.PhysicalType
+    LogicalTypeId = plc.io.parquet_metadata.LogicalTypeId
+    TimeUnit = plc.io.parquet_metadata.TimeUnit
     result = [
         (
             element.name,
@@ -977,103 +1010,116 @@ def test_file_metadata_schema_elements() -> None:
             element.num_children,
             element.type,
             element.type_length,
+            None
+            if element.logical_type is None
+            else (
+                element.logical_type.type,
+                element.logical_type.decimal_scale,
+                element.logical_type.decimal_precision,
+                element.logical_type.time_unit,
+                element.logical_type.is_adjusted_to_utc,
+                element.logical_type.bit_width,
+                element.logical_type.is_signed,
+            ),
         )
         for element in file_metadata.schema
     ]
     # Depth-first, root first.
     assert result == [
-        ("schema", None, 4, PhysicalType.UNDEFINED, 0),
-        ("a", 10, 0, PhysicalType.INT64, 0),
-        ("s", 20, 2, PhysicalType.UNDEFINED, 0),
-        ("x", 21, 0, PhysicalType.INT32, 0),
-        ("y", 22, 0, PhysicalType.BYTE_ARRAY, 0),
-        ("dec", 30, 0, PhysicalType.FIXED_LEN_BYTE_ARRAY, 6),
-        ("fixed", 40, 0, PhysicalType.FIXED_LEN_BYTE_ARRAY, 4),
+        ("schema", None, 10, PhysicalType.UNDEFINED, 0, None),
+        ("a", 10, 0, PhysicalType.INT64, 0, None),
+        ("s", 20, 2, PhysicalType.UNDEFINED, 0, None),
+        ("x", 21, 0, PhysicalType.INT32, 0, None),
+        (
+            "y",
+            22,
+            0,
+            PhysicalType.BYTE_ARRAY,
+            0,
+            (LogicalTypeId.STRING, None, None, None, None, None, None),
+        ),
+        (
+            "dec",
+            30,
+            0,
+            PhysicalType.FIXED_LEN_BYTE_ARRAY,
+            6,
+            (LogicalTypeId.DECIMAL, 2, 12, None, None, None, None),
+        ),
+        ("fixed", 40, 0, PhysicalType.FIXED_LEN_BYTE_ARRAY, 4, None),
+        (
+            "i8",
+            50,
+            0,
+            PhysicalType.INT32,
+            0,
+            (LogicalTypeId.INTEGER, None, None, None, None, 8, True),
+        ),
+        (
+            "u16",
+            51,
+            0,
+            PhysicalType.INT32,
+            0,
+            (LogicalTypeId.INTEGER, None, None, None, None, 16, False),
+        ),
+        (
+            "date",
+            52,
+            0,
+            PhysicalType.INT32,
+            0,
+            (LogicalTypeId.DATE, None, None, None, None, None, None),
+        ),
+        (
+            "time",
+            53,
+            0,
+            PhysicalType.INT32,
+            0,
+            (
+                LogicalTypeId.TIME,
+                None,
+                None,
+                TimeUnit.MILLIS,
+                False,
+                None,
+                None,
+            ),
+        ),
+        (
+            "ts_utc",
+            54,
+            0,
+            PhysicalType.INT64,
+            0,
+            (
+                LogicalTypeId.TIMESTAMP,
+                None,
+                None,
+                TimeUnit.MILLIS,
+                True,
+                None,
+                None,
+            ),
+        ),
+        (
+            "ts_naive",
+            55,
+            0,
+            PhysicalType.INT64,
+            0,
+            (
+                LogicalTypeId.TIMESTAMP,
+                None,
+                None,
+                TimeUnit.NANOS,
+                False,
+                None,
+                None,
+            ),
+        ),
     ]
-
-
-def test_file_metadata_schema_logical_types() -> None:
-    table = pa.table(
-        {
-            "plain": pa.array([1], type=pa.int64()),
-            "i8": pa.array([1], type=pa.int8()),
-            "u16": pa.array([1], type=pa.uint16()),
-            "s": pa.array(["a"], type=pa.string()),
-            "dec": pa.array(
-                [decimal.Decimal("1.25")], type=pa.decimal128(12, 2)
-            ),
-            "date": pa.array([datetime.date(2020, 1, 1)], type=pa.date32()),
-            "time": pa.array([datetime.time(1)], type=pa.time32("ms")),
-            "ts_utc": pa.array(
-                [datetime.datetime(2020, 1, 1)],
-                type=pa.timestamp("ms", tz="UTC"),
-            ),
-            "ts_naive": pa.array(
-                [datetime.datetime(2020, 1, 1)], type=pa.timestamp("ns")
-            ),
-        }
-    )
-    sink = io.BytesIO()
-    write_table(table, sink)
-    sink.seek(0)
-
-    file_metadata = plc.io.parquet_metadata.read_parquet_footers(
-        plc.io.SourceInfo([sink])
-    )[0]
-
-    LogicalTypeId = plc.io.parquet_metadata.LogicalTypeId
-    TimeUnit = plc.io.parquet_metadata.TimeUnit
-    result = {}
-    for element in file_metadata.schema[1:]:
-        logical_type = element.logical_type
-        result[element.name] = (
-            None
-            if logical_type is None
-            else (
-                logical_type.type,
-                logical_type.decimal_scale,
-                logical_type.decimal_precision,
-                logical_type.time_unit,
-                logical_type.is_adjusted_to_utc,
-                logical_type.bit_width,
-                logical_type.is_signed,
-            )
-        )
-    assert result == {
-        "plain": None,
-        "i8": (LogicalTypeId.INTEGER, None, None, None, None, 8, True),
-        "u16": (LogicalTypeId.INTEGER, None, None, None, None, 16, False),
-        "s": (LogicalTypeId.STRING, None, None, None, None, None, None),
-        "dec": (LogicalTypeId.DECIMAL, 2, 12, None, None, None, None),
-        "date": (LogicalTypeId.DATE, None, None, None, None, None, None),
-        "time": (
-            LogicalTypeId.TIME,
-            None,
-            None,
-            TimeUnit.MILLIS,
-            False,
-            None,
-            None,
-        ),
-        "ts_utc": (
-            LogicalTypeId.TIMESTAMP,
-            None,
-            None,
-            TimeUnit.MILLIS,
-            True,
-            None,
-            None,
-        ),
-        "ts_naive": (
-            LogicalTypeId.TIMESTAMP,
-            None,
-            None,
-            TimeUnit.NANOS,
-            False,
-            None,
-            None,
-        ),
-    }
 
 
 def test_file_metadata_schema_without_field_ids() -> None:

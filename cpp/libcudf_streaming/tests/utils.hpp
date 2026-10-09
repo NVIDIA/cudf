@@ -147,7 +147,7 @@ template <std::integral T = std::int64_t>
 {
   std::vector<std::unique_ptr<cudf::column>> cols;
   for (std::size_t i = 0; i < ncols; ++i) {
-    cols.emplace_back(random_column(seed, nrows, min, max));
+    cols.emplace_back(random_column(seed++, nrows, min, max));
   }
   return cudf::table(std::move(cols), nrows);
 }

@@ -10,6 +10,7 @@
 #include <cudf_test/cudf_gtest.hpp>
 #include <cudf_test/table_utilities.hpp>
 
+#include <cudf/column/column.hpp>
 #include <cudf/contiguous_split.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
@@ -27,8 +28,10 @@
 
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <tuple>
 #include <utility>
+#include <vector>
 
 using namespace cudf_streaming;
 
@@ -345,7 +348,8 @@ TEST_P(StreamingTableChunk, RoundTripCopy)
     }
   }
 
-  // Disk-to-disk copies are unsupported; keep the disk chunk for the round trip.
+  // Disk-to-disk copies are unsupported (see DiskToDiskCopyUnsupported); keep the disk
+  // chunk for the round trip.
   auto const host_cost = host_copy.make_available_cost();
   auto host_copy2      = [&] {
     if (spill_mem_type == rapidsmpf::MemoryType::DISK) { return std::move(host_copy); }
@@ -400,6 +404,90 @@ TEST_P(StreamingTableChunk, RoundTripCopy)
   }
 }
 
+TEST_F(StreamingTableChunk, DiskToDiskCopyUnsupported)
+{
+  auto expect = random_table(2025, 100, 2, 0, 5);
+  table_chunk dev_chunk{std::make_unique<cudf::table>(expect), stream};
+
+  auto disk_res   = br->reserve_or_fail(dev_chunk.data_alloc_size(rapidsmpf::MemoryType::DEVICE),
+                                      rapidsmpf::MemoryType::DISK);
+  auto disk_chunk = dev_chunk.copy(disk_res);
+  ASSERT_GT(disk_chunk.data_alloc_size(rapidsmpf::MemoryType::DISK), 0);
+
+  // A disk chunk can't be copied into another disk reservation, a documented restriction.
+  auto disk_res2 = br->reserve_or_fail(disk_chunk.data_alloc_size(rapidsmpf::MemoryType::DISK),
+                                       rapidsmpf::MemoryType::DISK);
+  EXPECT_THROW(std::ignore = disk_chunk.copy(disk_res2), std::invalid_argument);
+}
+
+TEST_F(StreamingTableChunk, DiskMoveToHost)
+{
+  auto expect = random_table(2025, 100, 2, 0, 5);
+  table_chunk dev_chunk{std::make_unique<cudf::table>(expect), stream};
+  auto const size = dev_chunk.data_alloc_size(rapidsmpf::MemoryType::DEVICE);
+
+  auto disk_res   = br->reserve_or_fail(size, rapidsmpf::MemoryType::DISK);
+  auto disk_chunk = dev_chunk.copy(disk_res);
+  ASSERT_EQ(disk_chunk.data_alloc_size(rapidsmpf::MemoryType::DISK), size);
+
+  // DISK -> HOST
+  auto host_res   = br->reserve_or_fail(size, rapidsmpf::MemoryType::HOST);
+  auto host_chunk = disk_chunk.move(host_res);
+  EXPECT_FALSE(host_chunk.is_available());
+  EXPECT_EQ(host_chunk.data_alloc_size(rapidsmpf::MemoryType::HOST), size);
+  EXPECT_EQ(host_chunk.data_alloc_size(rapidsmpf::MemoryType::DISK), 0);
+  EXPECT_EQ(host_chunk.data_alloc_size(rapidsmpf::MemoryType::DEVICE), 0);
+
+  auto dev_back = host_chunk.make_available(
+    br->reserve_or_fail(host_chunk.make_available_cost(), rapidsmpf::MemoryType::DEVICE));
+  ASSERT_TRUE(dev_back.is_available());
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(dev_back.table_view(), expect);
+}
+
+TEST_F(StreamingTableChunk, DiskRoundTripStrings)
+{
+  // Variable-width strings of odd lengths with nulls, so the packed buffer has offsets,
+  // chars, a validity mask and non-trivial alignment padding.
+  constexpr int num_rows = 1001;
+  std::vector<std::string> strs;
+  std::vector<bool> valid;
+  std::vector<std::int32_t> ints;
+  for (int i = 0; i < num_rows; ++i) {
+    strs.emplace_back(static_cast<std::size_t>(i % 13), static_cast<char>('a' + i % 26));
+    valid.push_back(i % 7 != 0);
+    ints.push_back(i);
+  }
+  std::vector<std::unique_ptr<cudf::column>> cols;
+  cols.push_back(
+    cudf::test::strings_column_wrapper(strs.begin(), strs.end(), valid.begin()).release());
+  cols.push_back(cudf::test::fixed_width_column_wrapper<std::int32_t>(ints.begin(), ints.end())
+                   .release());
+  cudf::table expect{std::move(cols)};
+
+  table_chunk dev_chunk{std::make_unique<cudf::table>(expect), stream};
+  auto const size = dev_chunk.data_alloc_size(rapidsmpf::MemoryType::DEVICE);
+
+  auto disk_res   = br->reserve_or_fail(size, rapidsmpf::MemoryType::DISK);
+  auto disk_chunk = dev_chunk.copy(disk_res);
+  EXPECT_FALSE(disk_chunk.is_available());
+  EXPECT_EQ(disk_chunk.data_alloc_size(rapidsmpf::MemoryType::DISK), size);
+
+  // DISK -> HOST -> DEVICE.
+  auto host_res   = br->reserve_or_fail(size, rapidsmpf::MemoryType::HOST);
+  auto host_chunk = disk_chunk.move(host_res);
+  EXPECT_EQ(host_chunk.data_alloc_size(rapidsmpf::MemoryType::HOST), size);
+  auto from_host = host_chunk.make_available(
+    br->reserve_or_fail(host_chunk.make_available_cost(), rapidsmpf::MemoryType::DEVICE));
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(from_host.table_view(), expect);
+
+  // DISK -> DEVICE directly (the move above consumed the first disk chunk).
+  auto disk_res2   = br->reserve_or_fail(size, rapidsmpf::MemoryType::DISK);
+  auto disk_chunk2 = dev_chunk.copy(disk_res2);
+  auto from_disk   = disk_chunk2.make_available(
+    br->reserve_or_fail(disk_chunk2.make_available_cost(), rapidsmpf::MemoryType::DEVICE));
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(from_disk.table_view(), expect);
+}
+
 TEST_P(StreamingTableChunk, MoveThroughMessage)
 {
   auto const [spill_mem_type, ncols, nrows] = GetParam();
@@ -437,7 +525,7 @@ TEST_P(StreamingTableChunk, MoveThroughMessage)
     EXPECT_EQ(cd.content_size(rapidsmpf::MemoryType::DEVICE), packed_size);
     EXPECT_EQ(cd.content_size(spill_mem_type), 0);
   }
-  EXPECT_EQ(spill_samples(*stats), packed_size == 0 ? 0UL : 1UL);
+  EXPECT_EQ(spill_samples(*stats), (nrows > 0 && ncols > 0) ? 1UL : 0UL);
 
   // Packed data on device unpacks straight away, so the round trip can be compared.
   auto const& chunk = back.get<table_chunk>();

@@ -460,8 +460,8 @@ TEST_F(StreamingTableChunk, DiskRoundTripStrings)
   std::vector<std::unique_ptr<cudf::column>> cols;
   cols.push_back(
     cudf::test::strings_column_wrapper(strs.begin(), strs.end(), valid.begin()).release());
-  cols.push_back(cudf::test::fixed_width_column_wrapper<std::int32_t>(ints.begin(), ints.end())
-                   .release());
+  cols.push_back(
+    cudf::test::fixed_width_column_wrapper<std::int32_t>(ints.begin(), ints.end()).release());
   cudf::table expect{std::move(cols)};
 
   table_chunk dev_chunk{std::make_unique<cudf::table>(expect), stream};

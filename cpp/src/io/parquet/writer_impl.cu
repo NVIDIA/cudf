@@ -958,7 +958,8 @@ std::vector<schema_tree_node> construct_parquet_schema_tree(
 struct parquet_column_view {
   parquet_column_view(schema_tree_node const& schema_node,
                       std::vector<schema_tree_node> const& schema_tree,
-                      cuda::stream_ref stream);
+                      cuda::stream_ref stream,
+                      cudf::memory_resources mr);
 
   [[nodiscard]] parquet_column_device_view get_device_view(cuda::stream_ref stream) const;
 
@@ -1008,12 +1009,13 @@ struct parquet_column_view {
 
 parquet_column_view::parquet_column_view(schema_tree_node const& schema_node,
                                          std::vector<schema_tree_node> const& schema_tree,
-                                         cuda::stream_ref stream)
+                                         cuda::stream_ref stream,
+                                         cudf::memory_resources mr)
   : schema_node(schema_node),
-    _d_nullability(0, stream),
-    _dremel_offsets(0, stream),
-    _rep_level(0, stream),
-    _def_level(0, stream)
+    _d_nullability(0, stream, mr.get_output_mr()),
+    _dremel_offsets(0, stream, mr.get_output_mr()),
+    _rep_level(0, stream, mr.get_output_mr()),
+    _def_level(0, stream, mr.get_output_mr())
 {
   // Construct single inheritance column_view from linked_column_view
   auto curr_col                           = schema_node.leaf_column.get();
@@ -1082,8 +1084,8 @@ parquet_column_view::parquet_column_view(schema_tree_node const& schema_node,
   _nullability = std::vector<uint8_t>(r_nullability.crbegin(), r_nullability.crend());
   // TODO(cp): Explore doing this for all columns in a single go outside this ctor. Maybe using
   // hostdevice_vector. Currently this involves a separate async H2D copy for each column.
-  _d_nullability = cudf::detail::make_device_uvector_async(
-    _nullability, stream, cudf::get_current_device_resource_ref());
+  _d_nullability =
+    cudf::detail::make_device_uvector_async(_nullability, stream, mr.get_output_mr());
 
   _is_list = (_max_rep_level > 0);
 
@@ -1095,7 +1097,7 @@ parquet_column_view::parquet_column_view(schema_tree_node const& schema_node,
     // Calculate row offset into dremel data (repetition/definition values) and the respective
     // definition and repetition levels
     cudf::detail::dremel_data dremel =
-      get_dremel_data(cudf_col, _nullability, schema_node.output_as_byte_array, stream);
+      get_dremel_data(cudf_col, _nullability, schema_node.output_as_byte_array, stream, mr);
     _dremel_offsets = std::move(dremel.dremel_offsets);
     _rep_level      = std::move(dremel.rep_level);
     _def_level      = std::move(dremel.def_level);
@@ -1714,6 +1716,7 @@ size_t column_index_buffer_size(EncColumnChunk* ck,
  * @param out_sink Sink for checking if device write is supported, should not be used to write any
  *        data in this function
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used for the parquet column views
  * @return A tuple of the intermediate results containing the processed data
  */
 auto convert_table_to_parquet_data(table_input_metadata& table_meta,
@@ -1739,7 +1742,8 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
                                    bool page_level_compression,
                                    bool write_arrow_schema,
                                    host_span<std::unique_ptr<data_sink> const> out_sink,
-                                   cuda::stream_ref stream)
+                                   cuda::stream_ref stream,
+                                   cudf::memory_resources mr)
 {
   // initialize LinkedColVector
   auto vec = table_to_linked_columns(input);
@@ -1750,7 +1754,9 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
   std::vector<parquet_column_view> parquet_columns;
 
   for (schema_tree_node const& schema_node : schema_tree) {
-    if (schema_node.leaf_column) { parquet_columns.emplace_back(schema_node, schema_tree, stream); }
+    if (schema_node.leaf_column) {
+      parquet_columns.emplace_back(schema_node, schema_tree, stream, mr);
+    }
   }
 
   // Mass allocation of column_device_views for each parquet_column_view
@@ -2553,6 +2559,9 @@ void writer::impl::write(table_view const& input, std::vector<partition_info> co
   if (not _table_meta) { _table_meta = std::make_unique<table_input_metadata>(input); }
   fill_table_meta(*_table_meta);
 
+  // The writer has no caller-provided resource; everything it allocates is temporary.
+  auto const temp_mr = cudf::get_current_device_resource_ref();
+
   // All kinds of memory allocation and data compressions/encoding are performed here.
   // If any error occurs, such as out-of-memory exception, the internal state of the current
   // writer is still intact.
@@ -2590,7 +2599,8 @@ void writer::impl::write(table_view const& input, std::vector<partition_info> co
                                   _page_level_compression,
                                   _write_arrow_schema,
                                   _out_sink,
-                                  _stream);
+                                  _stream,
+                                  cudf::memory_resources{temp_mr, temp_mr});
 
   // Compression/encoding were all successful. Now write the intermediate results.
   write_parquet_data_to_sink(updated_agg_meta,

@@ -33,9 +33,12 @@ std::unique_ptr<column> scan_inclusive(column_view const& input,
                                        rmm::device_async_resource_ref mr)
 {
   // Create a gather map containing indices of the prefix min/max elements.
-  auto gather_map = rmm::device_uvector<size_type>(input.size(), stream);
-  auto const binop_generator =
-    cudf::reduction::detail::arg_minmax_binop_generator::create<Op>(input, stream);
+  auto gather_map            = rmm::device_uvector<size_type>(input.size(), stream);
+  auto const binop_generator = cudf::reduction::detail::arg_minmax_binop_generator::create<Op>(
+    input,
+    stream,
+    cudf::memory_resources{cudf::get_current_device_resource_ref(),
+                           cudf::get_current_device_resource_ref()});
   thrust::inclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                          cuda::counting_iterator<size_type>{0},
                          cuda::counting_iterator<size_type>{input.size()},

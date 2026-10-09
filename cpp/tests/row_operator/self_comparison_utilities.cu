@@ -25,7 +25,7 @@ std::unique_ptr<cudf::column> self_comparison(cudf::table_view input,
                                               cudf::memory_resources mr)
 {
   auto const table_comparator =
-    cudf::detail::row::lexicographic::self_comparator{input, column_order, {}, stream};
+    cudf::detail::row::lexicographic::self_comparator{input, column_order, {}, stream, mr};
 
   auto output = cudf::make_numeric_column(cudf::data_type(cudf::type_id::BOOL8),
                                           input.num_rows(),

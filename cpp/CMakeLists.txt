@@ -752,6 +752,7 @@ add_library(
   src/groupby/sort/aggregate.cpp
   src/groupby/sort/group_argmax.cu
   src/groupby/sort/group_argmin.cu
+  src/groupby/sort/group_argminmax.cu
   src/groupby/sort/group_argminmax_nested.cu
   src/groupby/sort/group_argminmax_primitives.cu
   src/groupby/sort/group_bitwise.cu
@@ -767,6 +768,7 @@ add_library(
   src/groupby/sort/group_merge_m2.cu
   src/groupby/sort/group_min.cu
   src/groupby/sort/group_min_scan.cu
+  src/groupby/sort/group_nested_minmax_scan.cu
   src/groupby/sort/group_nth_element.cu
   src/groupby/sort/group_nunique.cu
   src/groupby/sort/group_product.cu
@@ -777,6 +779,7 @@ add_library(
   src/groupby/sort/group_std.cu
   src/groupby/sort/group_sum.cu
   src/groupby/sort/group_sum_overflow.cu
+  src/groupby/sort/group_validity.cu
   src/groupby/sort/group_sum_scan.cu
   src/groupby/sort/group_topk.cu
   src/groupby/sort/host_udf_aggregation.cpp
@@ -1016,6 +1019,7 @@ add_library(
   src/reductions/mean.cu
   src/reductions/min.cu
   src/reductions/minmax.cu
+  src/reductions/nested_minmax.cu
   src/reductions/nth_element.cu
   src/reductions/nunique.cpp
   src/reductions/product.cu

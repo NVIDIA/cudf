@@ -5,10 +5,9 @@
 
 #pragma once
 
-#include "nested_types_extrema_utils.cuh"
+#include "nested_minmax.hpp"
 
 #include <cudf/detail/copy.hpp>
-#include <cudf/detail/utilities/cast_functor.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/dictionary/detail/iterator.cuh>
 #include <cudf/dictionary/dictionary_column_view.hpp>
@@ -20,9 +19,7 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <cuda/iterator>
 #include <cuda/stream>
-#include <thrust/reduce.h>
 
 namespace cudf {
 namespace reduction {
@@ -306,19 +303,8 @@ struct same_element_type_dispatcher {
     CUDF_EXPECTS(!init.has_value(), "Initial value not supported for nested type reductions");
 
     if (input.is_empty()) { return cudf::make_empty_scalar_like(input, stream, mr); }
-
-    // We will do reduction to find the ARGMIN/ARGMAX index, then return the element at that index.
-    auto const binop_generator =
-      cudf::reduction::detail::arg_minmax_binop_generator::create<Op>(input, stream);
-    auto const binary_op = cudf::detail::cast_functor<size_type>(binop_generator.binop());
-    auto const minmax_idx =
-      thrust::reduce(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                     cuda::counting_iterator<cudf::size_type>{0},
-                     cuda::counting_iterator{input.size()},
-                     size_type{0},
-                     binary_op);
-
-    return cudf::detail::get_element(input, minmax_idx, stream, mr);
+    return cudf::reduction::detail::nested_minmax(
+      input, std::is_same_v<Op, cudf::reduction::detail::op::min>, stream, mr);
   }
 
   template <typename ElementType>

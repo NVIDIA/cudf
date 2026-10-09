@@ -13,6 +13,8 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <memory>
+
 namespace cudf {
 namespace reduction {
 namespace detail {
@@ -153,21 +155,23 @@ class arg_minmax_binop_generator {
   template <typename BinOp>
   static auto create(column_view const& input, cuda::stream_ref stream)
   {
+    return create(input,
+                  std::is_same_v<BinOp, cudf::reduction::detail::op::min> ||
+                    std::is_same_v<BinOp, cudf::DeviceMin>,
+                  stream);
+  }
+
+  static auto create(column_view const& input, bool is_min_op, cuda::stream_ref stream)
+  {
     CUDF_EXPECTS(cudf::is_nested(input.type()),
                  "This utility class is designed exclusively for nested input types.");
-    return arg_minmax_binop_generator(input,
-                                      std::is_same_v<BinOp, cudf::reduction::detail::op::min> ||
-                                        std::is_same_v<BinOp, cudf::DeviceMin>,
-                                      stream);
+    return arg_minmax_binop_generator(input, is_min_op, stream);
   }
 
   template <cudf::aggregation::Kind K>
   static auto create(column_view const& input, cuda::stream_ref stream)
   {
-    CUDF_EXPECTS(cudf::is_nested(input.type()),
-                 "This utility class is designed exclusively for nested input types.");
-    return arg_minmax_binop_generator(
-      input, K == cudf::aggregation::MIN || K == cudf::aggregation::ARGMIN, stream);
+    return create(input, K == cudf::aggregation::MIN || K == cudf::aggregation::ARGMIN, stream);
   }
 };
 

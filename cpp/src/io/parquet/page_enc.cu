@@ -24,6 +24,7 @@
 #include <cub/block/block_reduce.cuh>
 #include <cub/block/block_scan.cuh>
 #include <cub/warp/warp_reduce.cuh>
+#include <cuda/cmath>
 #include <cuda/iterator>
 #include <cuda/std/chrono>
 #include <cuda/std/functional>
@@ -53,7 +54,7 @@ __device__ constexpr int rolling_idx(int pos) { return rolling_index<rle_buffer_
 
 // max V1 header size
 // also valid for dict page header (V1 or V2)
-constexpr int MAX_V1_HDR_SIZE = util::round_up_unsafe(27, 8);
+constexpr int MAX_V1_HDR_SIZE = cuda::round_up(27, 8);
 
 // do not truncate statistics
 constexpr int32_t NO_TRUNC_STATS = 0;
@@ -644,8 +645,7 @@ CUDF_KERNEL void __launch_bounds__(128)
         page_g.num_leaf_values = ck_g.num_dict_entries;
         page_g.num_values      = ck_g.num_dict_entries;  // TODO: shouldn't matter for dict page
         page_g.dict_rle_bits   = ck_g.dict_rle_bits;     // TODO: shouldn't matter for dict page
-        page_offset +=
-          util::round_up_unsafe(page_g.max_hdr_size + page_g.max_data_size, page_align);
+        page_offset += cuda::round_up(page_g.max_hdr_size + page_g.max_data_size, page_align);
         if (not comp_page_sizes.empty()) {
           comp_page_offset += page_g.max_hdr_size + comp_page_sizes[ck_g.first_page];
           page_g.comp_data_size = comp_page_sizes[ck_g.first_page + num_pages];
@@ -756,7 +756,7 @@ CUDF_KERNEL void __launch_bounds__(128)
             }
             page_g.max_hdr_size += stats_hdr_len;
           }
-          page_g.max_hdr_size = util::round_up_unsafe(page_g.max_hdr_size, page_align);
+          page_g.max_hdr_size = cuda::round_up(page_g.max_hdr_size, page_align);
           page_g.page_data    = ck_g.uncompressed_bfr + page_offset;
           if (not comp_page_sizes.empty()) {
             page_g.compressed_data = ck_g.compressed_bfr + comp_page_offset;
@@ -771,9 +771,9 @@ CUDF_KERNEL void __launch_bounds__(128)
           auto const rep_level_size = max_RLE_page_size(col_g.num_rep_level_bits(), values_in_page);
           // V2 headers keep the level data outside the page payload, so it is padded out to
           // `page_align`. Store in a local size_t until page size has been validated below.
-          size_t const lvl_size = write_v2_headers ? util::round_up_unsafe<size_t>(
-                                                       def_level_size + rep_level_size, page_align)
-                                                   : def_level_size + rep_level_size;
+          size_t const lvl_size =
+            write_v2_headers ? cuda::round_up<size_t>(def_level_size + rep_level_size, page_align)
+                             : def_level_size + rep_level_size;
           // get a different bound if using delta encoding
           if (is_use_delta) {
             auto const delta_len = delta_data_len(
@@ -798,8 +798,7 @@ CUDF_KERNEL void __launch_bounds__(128)
           page_g.max_data_size    = static_cast<uint32_t>(max_data_size);
           pagestats_g.start_chunk = ck_g.first_fragment + page_start;
           pagestats_g.num_chunks  = page_g.num_fragments;
-          page_offset +=
-            util::round_up_unsafe(page_g.max_hdr_size + page_g.max_data_size, page_align);
+          page_offset += cuda::round_up(page_g.max_hdr_size + page_g.max_data_size, page_align);
           // if encoding delta_byte_array, need to allocate some space for scratch data.
           // if there are leaf nulls, we need space for a mapping array:
           //   sizeof(size_type) * num_leaf_values
@@ -807,7 +806,7 @@ CUDF_KERNEL void __launch_bounds__(128)
           if (page_g.kernel_mask == encode_kernel_mask::DELTA_BYTE_ARRAY) {
             // scratch needs to be aligned to a size_type boundary
             auto const pg_end = reinterpret_cast<uintptr_t>(ck_g.uncompressed_bfr + page_offset);
-            auto scratch      = util::round_up_unsafe(pg_end, sizeof(size_type));
+            auto scratch      = cuda::round_up(pg_end, sizeof(size_type));
             if (page_g.num_valid != page_g.num_leaf_values) {
               scratch += sizeof(size_type) * page_g.num_leaf_values;
             }
@@ -872,7 +871,7 @@ CUDF_KERNEL void __launch_bounds__(128)
     __syncwarp();
     if (!t) {
       if (ck_g.ck_stat_size == 0 && ck_g.stats) {
-        uint32_t ck_stat_size = util::round_up_unsafe(48 + 2 * ck_max_stats_len, page_align);
+        uint32_t ck_stat_size = cuda::round_up(48 + 2 * ck_max_stats_len, page_align);
         page_offset += ck_stat_size;
         comp_page_offset += ck_stat_size;
         ck_g.ck_stat_size = ck_stat_size;
@@ -2274,7 +2273,7 @@ CUDF_KERNEL void __launch_bounds__(block_size, 8)
     // set pointer to beginning of scratch space (aligned to size_type boundary)
     auto scratch_start =
       reinterpret_cast<uintptr_t>(s->page.page_data + s->page.max_hdr_size + s->page.max_data_size);
-    scratch_start = util::round_up_unsafe(scratch_start, sizeof(size_type));
+    scratch_start = cuda::round_up(scratch_start, sizeof(size_type));
     scratch_data  = reinterpret_cast<uint8_t*>(scratch_start);
   }
   __syncthreads();

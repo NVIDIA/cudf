@@ -12,6 +12,7 @@
 #include <cudf/detail/utilities/cuda.cuh>
 
 #include <cooperative_groups.h>
+#include <cuda/cmath>
 #include <cuda/std/bit>
 #include <cuda/std/iterator>
 
@@ -1150,7 +1151,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size_t, 8)
 
   // shared buffer. all shared memory is suballocated out of here
   constexpr int rle_run_buffer_bytes =
-    cudf::util::round_up_unsafe(rle_run_buffer_size * sizeof(rle_run), size_t{16});
+    cuda::round_up(rle_run_buffer_size * sizeof(rle_run), size_t{16});
   constexpr int shared_buf_size = cuda::std::max(
     1, rle_run_buffer_bytes * (static_cast<int>(has_dict_t) + static_cast<int>(has_bools_t)));
   __shared__ __align__(16) uint8_t shared_buf[shared_buf_size];

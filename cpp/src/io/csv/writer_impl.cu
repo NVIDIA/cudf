@@ -40,6 +40,7 @@
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/cmath>
 #include <cuda/stream>
 #include <thrust/execution_policy.h>
 #include <thrust/fill.h>
@@ -89,7 +90,7 @@ size_t compression_block_size(compression_type compression, size_t requested_siz
   auto const size        = std::min(requested_size, codec_limit.value_or(requested_size));
 
   auto const alignment = io::detail::compress_required_chunk_alignment(compression);
-  return std::max(alignment, cudf::util::round_down_safe(size, alignment));
+  return std::max(alignment, cuda::round_down(size, alignment));
 }
 
 /**

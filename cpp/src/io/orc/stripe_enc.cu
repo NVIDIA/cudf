@@ -23,6 +23,7 @@
 
 #include <cub/block/block_reduce.cuh>
 #include <cub/block/block_scan.cuh>
+#include <cuda/cmath>
 #include <cuda/functional>
 #include <cuda/std/limits>
 #include <cuda/stream>
@@ -1162,8 +1163,8 @@ CUDF_KERNEL void __launch_bounds__(256)
   __shared__ __align__(16) stripe_stream ss;
   __shared__ uint8_t* uncomp_base_g;
 
-  auto const padded_block_header_size = util::round_up_unsafe(block_header_size, comp_block_align);
-  auto const padded_comp_block_size   = util::round_up_unsafe(max_comp_blk_size, comp_block_align);
+  auto const padded_block_header_size = cuda::round_up(block_header_size, comp_block_align);
+  auto const padded_comp_block_size   = cuda::round_up(max_comp_blk_size, comp_block_align);
 
   auto const stripe_id = blockIdx.x / strm_desc.size().second;
   auto const stream_id = blockIdx.x % strm_desc.size().second;

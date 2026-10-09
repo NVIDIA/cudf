@@ -110,6 +110,31 @@ std::vector<std::unique_ptr<column>> compute_single_pass_aggs(
   auto const num_groups = static_cast<size_type>(grouped.offsets.size() - 1);
   auto const num_aggs   = agg_kinds.size();
 
+  std::vector<std::unique_ptr<column>> results(num_aggs);
+  // M2 owns its valid count even if a COUNT/MEAN request placed that count earlier in the
+  // extracted list. Resolve these pairs first so no request order causes a redundant reduction.
+  for (std::size_t i = 0; i < num_aggs; ++i) {
+    if (agg_kinds[i] != aggregation::M2) { continue; }
+    auto const& col  = values.column(i);
+    auto count_index = num_aggs;
+    for (std::size_t j = 0; j < num_aggs; ++j) {
+      if (agg_kinds[j] == aggregation::COUNT_VALID &&
+          cudf::detail::is_shallow_equivalent(col, values.column(j))) {
+        count_index = j;
+        break;
+      }
+    }
+    CUDF_EXPECTS(count_index != num_aggs, "M2 requires a valid-count output");
+    auto d_col = column_device_view::create(col, stream, mr.get_temporary_mr());
+    auto const type =
+      is_dictionary(col.type()) ? dictionary_column_view(col).keys().type() : col.type();
+    auto const ctx   = reduction_context{col, *d_col, type, grouped, num_groups, false};
+    auto [m2, count] = compute_m2_and_count(
+      ctx, is_agg_intermediate[i], is_agg_intermediate[count_index], stream, mr);
+    results[i]           = std::move(m2);
+    results[count_index] = std::move(count);
+  }
+
   // Returns one past the last of the consecutive additive aggregations on the column of `begin`
   // that can be computed together with the aggregation at `begin`.
   auto const fused_end = [&](std::size_t begin, data_type values_type) {
@@ -119,7 +144,7 @@ std::vector<std::unique_ptr<column>> compute_single_pass_aggs(
       return begin + 1;
     }
     auto end = begin + 1;
-    while (end < num_aggs && is_fusable_sum(agg_kinds[end]) &&
+    while (end < num_aggs && !results[end] && is_fusable_sum(agg_kinds[end]) &&
            cudf::detail::is_shallow_equivalent(col, values.column(end)) &&
            std::find(agg_kinds.begin() + begin, agg_kinds.begin() + end, agg_kinds[end]) ==
              agg_kinds.begin() + end) {
@@ -136,7 +161,7 @@ std::vector<std::unique_ptr<column>> compute_single_pass_aggs(
       return begin + 1;
     }
     auto end = begin + 1;
-    while (end < num_aggs && is_fusable_minmax_sum(agg_kinds[end]) &&
+    while (end < num_aggs && !results[end] && is_fusable_minmax_sum(agg_kinds[end]) &&
            cudf::detail::is_shallow_equivalent(values.column(begin), values.column(end)) &&
            std::find(agg_kinds.begin() + begin, agg_kinds.begin() + end, agg_kinds[end]) ==
              agg_kinds.begin() + end) {
@@ -168,7 +193,7 @@ std::vector<std::unique_ptr<column>> compute_single_pass_aggs(
       return begin + 1;
     }
     auto end = begin + 1;
-    while (end < num_aggs && agg_kinds[end] == kind) {
+    while (end < num_aggs && !results[end] && agg_kinds[end] == kind) {
       auto const& col = values.column(end);
       auto const type =
         is_dictionary(col.type()) ? dictionary_column_view(col).keys().type() : col.type();
@@ -181,9 +206,11 @@ std::vector<std::unique_ptr<column>> compute_single_pass_aggs(
     return end;
   };
 
-  std::vector<std::unique_ptr<column>> results;
-  results.reserve(num_aggs);
   for (std::size_t i = 0; i < num_aggs;) {
+    if (results[i]) {
+      ++i;
+      continue;
+    }
     auto const& col = values.column(i);
     auto d_col      = column_device_view::create(col, stream, mr.get_temporary_mr());
     auto const values_type =
@@ -205,7 +232,7 @@ std::vector<std::unique_ptr<column>> compute_single_pass_aggs(
                                  is_agg_intermediate.subspan(i, end - i),
                                  stream,
                                  mr);
-      std::ranges::move(fused, std::back_inserter(results));
+      std::ranges::move(fused, results.begin() + i);
     } else if (end = batch_end(i, values_type, nullable); end > i + 1) {
       std::vector<decltype(d_col)> device_views;
       std::vector<reduction_context> contexts;
@@ -221,12 +248,12 @@ std::vector<std::unique_ptr<column>> compute_single_pass_aggs(
       }
       auto batch = cudf::detail::aggregation_dispatcher(
         kind, compute_reductions_fn{contexts, is_agg_intermediate.subspan(i, end - i)}, stream, mr);
-      std::ranges::move(batch, std::back_inserter(results));
+      std::ranges::move(batch, results.begin() + i);
     } else {
       auto const resources = is_agg_intermediate[i] ? cudf::memory_resources{mr.get_temporary_mr(),
                                                                              mr.get_temporary_mr()}
                                                     : mr;
-      results.push_back(compute_aggregation(kind, ctx, stream, resources));
+      results[i]           = compute_aggregation(kind, ctx, stream, resources);
     }
     i = end;
   }

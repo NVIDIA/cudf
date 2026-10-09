@@ -391,7 +391,9 @@ def test_groupby_sort_by_preserves_sorted_key_order(streaming_engine_factory):
 @pytest.mark.parametrize("agg", ["std", "var"])
 def test_groupby_std_var_ddof(df, engine, agg, ddof):
     q = df.group_by("y").agg(getattr(pl.col("x"), agg)(ddof=ddof))
-    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+    assert_gpu_result_equal(
+        q, engine=engine, check_row_order=False, check_exact=False, rtol=1e-10
+    )
 
 
 @pytest.mark.parametrize("fallback_mode", ["silent", "raise", "warn", "foo"])

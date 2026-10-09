@@ -45,9 +45,6 @@ template <>
 void hash_compound_agg_finalizer::operator()<aggregation::MEAN>(aggregation const& agg) const;
 
 template <>
-void hash_compound_agg_finalizer::operator()<aggregation::M2>(aggregation const& agg) const;
-
-template <>
 void hash_compound_agg_finalizer::operator()<aggregation::VARIANCE>(aggregation const& agg) const;
 
 template <>

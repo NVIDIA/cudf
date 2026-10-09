@@ -51,6 +51,14 @@ struct reduction_context {
   value_accessor<T> accessor() const;
 };
 
+// Statistical state reduction produces both outputs, with independent resource placement.
+std::pair<std::unique_ptr<column>, std::unique_ptr<column>> compute_m2_and_count(
+  reduction_context const& ctx,
+  bool m2_intermediate,
+  bool count_intermediate,
+  cuda::stream_ref stream,
+  cudf::memory_resources mr);
+
 // Shared host helpers are defined only in the frontend, keeping their reduction kernels unique.
 size_type count_group_nulls(bitmask_type const* mask,
                             size_type num_groups,

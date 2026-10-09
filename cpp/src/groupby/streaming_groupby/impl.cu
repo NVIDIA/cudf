@@ -9,6 +9,7 @@
 #include "groupby/hash/hash_compound_agg_finalizer.hpp"
 #include "groupby/hash/output_utils.hpp"
 
+#include <cudf/column/column_factories.hpp>
 #include <cudf/column/column_view.hpp>
 #include <cudf/concatenate.hpp>
 #include <cudf/copying.hpp>
@@ -25,11 +26,14 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.cuh>
+#include <cudf/utilities/type_dispatcher.hpp>
 
 #include <rmm/device_uvector.hpp>
+#include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
 #include <cuda/stream>
+#include <thrust/tabulate.h>
 
 #include <algorithm>
 #include <cstddef>
@@ -43,6 +47,81 @@
 namespace cudf::groupby {
 
 namespace {
+
+template <typename Source>
+constexpr bool is_m2_supported()
+{
+  return is_numeric<Source>() && !is_fixed_point<Source>();
+}
+
+struct m2_functor {
+  template <typename Source, typename... Args>
+  void operator()(Args&&...)  //
+    requires(!is_m2_supported<Source>())
+  {
+    CUDF_FAIL("Invalid source type for M2 aggregation.");
+  }
+
+  template <typename Target, typename SumSqrType, typename SumType, typename CountType>
+  void evaluate(Target* target,
+                SumSqrType const* sum_sqr,
+                SumType const* sum,
+                CountType const* count,
+                size_type size,
+                cuda::stream_ref stream) const noexcept
+  {
+    thrust::tabulate(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                     target,
+                     target + size,
+                     [sum_sqr, sum, count] __device__(size_type const idx) {
+                       auto const group_count = count[idx];
+                       if (group_count == 0) { return Target{}; }
+                       auto const group_sum_sqr = static_cast<Target>(sum_sqr[idx]);
+                       auto const group_sum     = static_cast<Target>(sum[idx]);
+                       auto const result = group_sum_sqr - group_sum * group_sum / group_count;
+                       return result;
+                     });
+  }
+
+  template <typename Source>
+  void operator()(mutable_column_view const& target,
+                  column_view const& sum_sqr,
+                  column_view const& sum,
+                  column_view const& count,
+                  cuda::stream_ref stream) const noexcept  //
+    requires(is_m2_supported<Source>())
+  {
+    using Target     = cudf::detail::target_type_t<Source, aggregation::M2>;
+    using SumSqrType = cudf::detail::target_type_t<Source, aggregation::SUM_OF_SQUARES>;
+    using SumType    = cudf::detail::target_type_t<Source, aggregation::SUM>;
+    using CountType  = cudf::detail::target_type_t<Source, aggregation::COUNT_VALID>;
+
+    // Separate the implementation into another function, which has fewer instantiations since
+    // the data types (target/sum/count etc) are mostly the same.
+    evaluate(target.begin<Target>(),
+             sum_sqr.begin<SumSqrType>(),
+             sum.begin<SumType>(),
+             count.begin<CountType>(),
+             target.size(),
+             stream);
+  }
+};
+
+std::unique_ptr<column> compute_raw_m2(data_type source_type,
+                                       column_view const& sum_sqr,
+                                       column_view const& sum,
+                                       column_view const& count,
+                                       cuda::stream_ref stream,
+                                       rmm::device_async_resource_ref mr)
+{
+  auto output = make_numeric_column(cudf::detail::target_type(source_type, aggregation::M2),
+                                    sum.size(),
+                                    mask_state::UNALLOCATED,
+                                    stream,
+                                    mr);
+  type_dispatcher(source_type, m2_functor{}, output->mutable_view(), sum_sqr, sum, count, stream);
+  return output;
+}
 
 // Streaming still uses element_aggregator, whose atomic requirements are independent of the
 // reductions used by ordinary hash groupby.
@@ -158,7 +237,8 @@ void streaming_groupby::impl::initialize(table_view const& data, cuda::stream_re
   auto agg_requests = build_aggregation_requests(_requests_clone, data);
 
   auto [values_view, agg_kinds_hv, agg_objects, is_intermediate, has_compound] =
-    detail::hash::extract_single_pass_aggs(agg_requests, stream);
+    detail::hash::extract_single_pass_aggs(
+      agg_requests, stream, detail::hash::aggregation_mode::STREAMING_ATOMIC);
 
   _agg_kinds.assign(agg_kinds_hv.begin(), agg_kinds_hv.end());
   _agg_objects         = std::move(agg_objects);
@@ -240,7 +320,9 @@ void streaming_groupby::impl::initialize(table_view const& data, cuda::stream_re
   for (auto const& req : _requests_clone) {
     auto const& target_col = data.column(req.column_index);
     auto const first_kind =
-      detail::hash::get_simple_aggregations(*req.aggregation, target_col.type()).front();
+      detail::hash::get_simple_aggregations(
+        *req.aggregation, target_col.type(), detail::hash::aggregation_mode::STREAMING_ATOMIC)
+        .front();
     bool found = false;
     for (size_type k = 0; k < static_cast<size_type>(_agg_kinds.size()); ++k) {
       if (_agg_kinds[k] == first_kind &&
@@ -347,7 +429,8 @@ streaming_groupby::impl::do_finalize(cuda::stream_ref stream,
   }
 
   auto [values_view_fin, agg_kinds_fin, agg_objects_fin, is_intermediate_fin, has_compound_fin] =
-    detail::hash::extract_single_pass_aggs(column_grouped, stream);
+    detail::hash::extract_single_pass_aggs(
+      column_grouped, stream, detail::hash::aggregation_mode::STREAMING_ATOMIC);
 
   cudf::detail::result_cache cache(_agg_kinds.size());
   detail::hash::finalize_output(values_view_fin, agg_objects_fin, agg_gathered, &cache, stream);
@@ -360,6 +443,21 @@ streaming_groupby::impl::do_finalize(cuda::stream_ref stream,
         detail::hash::hash_compound_agg_finalizer(req.values, &cache, stream, mr);
       for (auto const& agg : req.aggregations) {
         if (cache.has_result(req.values, *agg)) continue;
+        if (agg->kind == aggregation::M2 || agg->kind == aggregation::VARIANCE ||
+            agg->kind == aggregation::STD) {
+          auto const m2 = make_m2_aggregation();
+          if (!cache.has_result(req.values, *m2)) {
+            cache.add_result(
+              req.values,
+              *m2,
+              compute_raw_m2(req.values.type(),
+                             cache.get_result(req.values, *make_sum_of_squares_aggregation()),
+                             cache.get_result(req.values, *make_sum_aggregation()),
+                             cache.get_result(req.values, *make_count_aggregation()),
+                             stream,
+                             mr));
+          }
+        }
         cudf::detail::aggregation_dispatcher(agg->kind, finalizer, *agg);
       }
     }

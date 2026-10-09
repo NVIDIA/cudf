@@ -54,6 +54,6 @@ using Types = nvbench::type_list<int32_t, float, cudf::timestamp_s>;
 NVBENCH_BENCH_TYPES(bench_segmented_top_k, NVBENCH_TYPE_AXES(Types))
   .set_name("segmented_top_k")
   .add_int64_axis("num_rows", {262144, 2097152, 16777216, 67108864})
-  .add_int64_axis("segment", {1024, 2048})
+  .add_int64_axis("segment", {1024, 2048, 262144})
   .add_int64_axis("k", {100, 1000})
   .add_int64_axis("ordered", {0, 1});

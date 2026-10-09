@@ -54,21 +54,21 @@ struct page_stats_caster : public stats_caster_base {
    * @brief Computes host side data including page row offsets and host columns containing
    * page-level min, max, and all-null statistics for a column
    *
-   * @param schema_idx Column schema index
+   * @param schema_indices_per_source Column schema index in each source
    * @param dtype Column data type
    * @param stream CUDA stream
    * @return A tuple of page row offsets and host columns containing page-level min, max, and
    * all-null statistics
    */
   template <typename T>
-  [[nodiscard]] auto compute_host_data(cudf::size_type schema_idx,
+  [[nodiscard]] auto compute_host_data(std::span<size_type const> schema_indices_per_source,
                                        cudf::data_type dtype,
                                        cuda::stream_ref stream) const
   {
     // Compute column chunk level page count offsets and page level row offsets.
     auto const [page_row_offsets, col_chunk_page_offsets] =
       compute_page_row_offsets_and_colchunk_page_offsets(
-        per_file_metadata, row_group_indices, schema_idx, stream);
+        per_file_metadata, row_group_indices, schema_indices_per_source, stream);
 
     CUDF_EXPECTS(page_row_offsets.back() == total_rows,
                  "The number of rows must be equal across row groups and pages within row groups");
@@ -82,16 +82,6 @@ struct page_stats_caster : public stats_caster_base {
     host_column<T> max(total_pages, stream);
     host_column<bool> all_null(total_pages, stream);
 
-    // Compute timestamp scale factor for precision conversion
-    auto const ts_scale = [&] {
-      if constexpr (cudf::is_timestamp<T>()) {
-        auto const& schema = per_file_metadata[0].schema[schema_idx];
-        return parquet::detail::calc_timestamp_scale(schema.logical_type,
-                                                     static_cast<int32_t>(T::period::den));
-      }
-      return 0;
-    }();
-
     // Populate the host columns with page-level min, max statistics from the page index
     auto page_offset_idx = 0;
     // For all row data sources
@@ -99,16 +89,25 @@ struct page_stats_caster : public stats_caster_base {
       cuda::counting_iterator<std::size_t>{0},
       cuda::counting_iterator{row_group_indices.size()},
       [&](auto src_idx) {
+        auto const mapped_schema_idx = schema_indices_per_source[src_idx];
+        // Compute timestamp scale factor for precision conversion from the mapped source schema
+        auto const ts_scale = [&] {
+          if constexpr (cudf::is_timestamp<T>()) {
+            auto const& schema = per_file_metadata[src_idx].schema[mapped_schema_idx];
+            return parquet::detail::calc_timestamp_scale(schema.logical_type,
+                                                         static_cast<int32_t>(T::period::den));
+          }
+          return 0;
+        }();
+
         // For all column chunks in this source
         auto const& rg_indices = row_group_indices[src_idx];
         std::for_each(rg_indices.cbegin(), rg_indices.cend(), [&](auto rg_idx) {
           auto const& row_group = per_file_metadata[src_idx].row_groups[rg_idx];
           // Find colchunk_iter in row_group.columns. Guaranteed to be found as already verified
           // in compute_page_row_offsets_and_colchunk_page_offsets()
-          auto colchunk_iter = std::find_if(
-            row_group.columns.begin(),
-            row_group.columns.end(),
-            [schema_idx](ColumnChunk const& col) { return col.schema_idx == schema_idx; });
+          auto colchunk_iter =
+            std::ranges::find(row_group.columns, mapped_schema_idx, &ColumnChunk::schema_idx);
 
           auto const& colchunk               = *colchunk_iter;
           auto const& column_index           = colchunk.column_index.value();
@@ -180,7 +179,7 @@ struct page_stats_caster : public stats_caster_base {
    *
    * @tparam T Underlying type of the column
    * @param column_index Logical filter column index used by the stats expression
-   * @param schema_idx Input column schema index
+   * @param schema_indices_per_source Input column schema index in each source
    * @param dtype Input column data type
    * @param stream CUDA stream
    * @param mr Device memory resource used to allocate the returned columns' device memory
@@ -188,17 +187,19 @@ struct page_stats_caster : public stats_caster_base {
    * page-row offsets for this column
    */
   template <typename T>
-  [[nodiscard]] page_statistics_input operator()(size_type column_index,
-                                                 size_type schema_idx,
-                                                 data_type dtype,
-                                                 cuda::stream_ref stream,
-                                                 rmm::device_async_resource_ref mr) const
+  [[nodiscard]] page_statistics_input operator()(
+    size_type column_index,
+    std::span<size_type const> schema_indices_per_source,
+    data_type dtype,
+    cuda::stream_ref stream,
+    rmm::device_async_resource_ref mr) const
   {
     if constexpr (cudf::is_compound<T>() and not cuda::std::is_same_v<T, string_view>) {
       CUDF_FAIL("Compound types other than strings do not have statistics");
     } else {
       // Compute page row offsets, and page-statistics (min, max and all-null) host columns.
-      auto [page_row_offsets, min, max, all_null] = compute_host_data<T>(schema_idx, dtype, stream);
+      auto [page_row_offsets, min, max, all_null] =
+        compute_host_data<T>(schema_indices_per_source, dtype, stream);
 
       std::vector<std::unique_ptr<column>> columns;
       columns.reserve(parquet::detail::stats_cols_per_column);
@@ -234,12 +235,6 @@ std::unique_ptr<cudf::column> aggregate_reader_metadata::build_row_mask_with_pag
   // Total number of rows
   auto const total_rows = total_rows_in_row_groups(row_group_indices);
   if (total_rows == 0) { return cudf::make_empty_column(cudf::type_id::BOOL8); }
-
-  // TODO(#22900): remove this guard once this path maps schema indices per source. It currently
-  // reuses one source's schema index for every source, so it is correct only when schemas match.
-  CUDF_EXPECTS(schema_idx_maps.empty(),
-               "Page index statistics filtering does not support mismatched Parquet schemas yet",
-               std::invalid_argument);
 
   CUDF_EXPECTS(std::cmp_less_equal(total_rows, std::numeric_limits<size_type>::max()),
                "Total rows in row groups exceed the cudf's column size limit. Retry with a smaller "
@@ -307,7 +302,7 @@ std::unique_ptr<cudf::column> aggregate_reader_metadata::build_row_mask_with_pag
                       dtype,
                       stats_col,
                       static_cast<size_type>(col_idx),
-                      output_column_schemas[col_idx],
+                      map_schema_index_to_sources(output_column_schemas[col_idx]),
                       dtype,
                       stream,
                       cudf::get_current_device_resource_ref()));
@@ -368,12 +363,6 @@ thrust::host_vector<bool> aggregate_reader_metadata::compute_data_page_mask(
     return thrust::host_vector<bool>(0);
   }
 
-  // TODO(#22900): remove this guard once this path maps schema indices per source. It currently
-  // reuses one source's schema index for every source, so it is correct only when schemas match.
-  CUDF_EXPECTS(schema_idx_maps.empty(),
-               "Data page masking does not support mismatched Parquet schemas yet",
-               std::invalid_argument);
-
   // Compute page row offsets and column chunk page offsets for each column
   auto const num_columns = input_columns.size();
   std::vector<size_type> page_row_offsets;
@@ -386,8 +375,8 @@ thrust::host_vector<bool> aggregate_reader_metadata::compute_data_page_mask(
   if (num_columns <= 2) {
     std::for_each(
       column_schema_indices.begin(), column_schema_indices.end(), [&](auto const schema_idx) {
-        auto [col_page_row_offsets, col_max_page_size] =
-          compute_page_row_offsets(per_file_metadata, row_group_indices, schema_idx);
+        auto [col_page_row_offsets, col_max_page_size] = compute_page_row_offsets(
+          per_file_metadata, row_group_indices, map_schema_index_to_sources(schema_idx));
         page_row_offsets.insert(page_row_offsets.end(),
                                 std::make_move_iterator(col_page_row_offsets.begin()),
                                 std::make_move_iterator(col_page_row_offsets.end()));
@@ -420,7 +409,9 @@ thrust::host_vector<bool> aggregate_reader_metadata::compute_data_page_mask(
                          std::back_inserter(task_page_row_offsets),
                          [&](auto const col_idx) {
                            return compute_page_row_offsets(
-                             per_file_metadata, row_group_indices, column_schema_indices[col_idx]);
+                             per_file_metadata,
+                             row_group_indices,
+                             map_schema_index_to_sources(column_schema_indices[col_idx]));
                          });
                        return task_page_row_offsets;
                      });

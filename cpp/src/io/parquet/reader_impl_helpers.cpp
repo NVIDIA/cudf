@@ -1489,7 +1489,7 @@ std::unique_ptr<table> aggregate_reader_metadata::read_column_chunk_bounds(
                                          .has_is_null_operator = false};
 
   for (auto const& column_name : column_names) {
-    auto per_source_schema_indices = std::vector<int>(per_file_metadata.size());
+    auto schema_indices_per_source = std::vector<int>(per_file_metadata.size());
     auto dtype                     = data_type{type_id::EMPTY};
 
     for (auto src_idx = size_type{0}; std::cmp_less(src_idx, per_file_metadata.size()); ++src_idx) {
@@ -1506,11 +1506,11 @@ std::unique_ptr<table> aggregate_reader_metadata::read_column_chunk_bounds(
             column_name,
           std::invalid_argument);
       }
-      per_source_schema_indices[src_idx] = schema_idx;
+      schema_indices_per_source[src_idx] = schema_idx;
     }
 
     auto [min_col, max_col, _] = cudf::type_dispatcher<dispatch_storage_type>(
-      dtype, stats_col, per_source_schema_indices, dtype, stream, mr);
+      dtype, stats_col, schema_indices_per_source, dtype, stream, mr);
     columns.push_back(std::move(min_col));
     columns.push_back(std::move(max_col));
   }
@@ -1556,6 +1556,15 @@ int aggregate_reader_metadata::map_schema_index(int schema_idx, int src_idx) con
 
   // Return the mapped schema idx.
   return schema_idx_map.at(schema_idx);
+}
+
+std::vector<int> aggregate_reader_metadata::map_schema_index_to_sources(int schema_idx) const
+{
+  auto schema_indices_per_source = std::vector<int>(per_file_metadata.size());
+  std::ranges::transform(std::views::iota(0, static_cast<int>(per_file_metadata.size())),
+                         schema_indices_per_source.begin(),
+                         [&](auto const src_idx) { return map_schema_index(schema_idx, src_idx); });
+  return schema_indices_per_source;
 }
 
 std::string aggregate_reader_metadata::get_pandas_index() const

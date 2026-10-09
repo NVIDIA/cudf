@@ -20,6 +20,7 @@
 #include <cstddef>
 #include <memory>
 #include <optional>
+#include <span>
 #include <tuple>
 #include <type_traits>
 #include <vector>
@@ -53,7 +54,7 @@ struct row_group_stats_caster : public stats_caster_base {
   bool has_is_null_operator;
 
   template <typename T>
-  result_type operator()(host_span<int const> per_source_schema_indices,
+  result_type operator()(std::span<int const> schema_indices_per_source,
                          cudf::data_type dtype,
                          cuda::stream_ref stream,
                          rmm::device_async_resource_ref mr) const
@@ -61,7 +62,7 @@ struct row_group_stats_caster : public stats_caster_base {
     CUDF_EXPECTS(row_group_indices.size() == per_file_metadata.size(),
                  "Row-group indices must match parquet metadata sources",
                  std::invalid_argument);
-    CUDF_EXPECTS(per_source_schema_indices.size() == per_file_metadata.size(),
+    CUDF_EXPECTS(schema_indices_per_source.size() == per_file_metadata.size(),
                  "Per-source schema indices must match parquet metadata sources",
                  std::invalid_argument);
     auto const computed_total_row_groups =
@@ -85,7 +86,7 @@ struct row_group_stats_caster : public stats_caster_base {
 
       size_type stats_idx = 0;
       for (size_t src_idx = 0; src_idx < row_group_indices.size(); ++src_idx) {
-        auto const mapped_schema_idx = per_source_schema_indices[src_idx];
+        auto const mapped_schema_idx = schema_indices_per_source[src_idx];
         auto const& source_metadata  = per_file_metadata[src_idx];
         CUDF_EXPECTS(mapped_schema_idx >= 0 and
                        static_cast<size_t>(mapped_schema_idx) < source_metadata.schema.size(),

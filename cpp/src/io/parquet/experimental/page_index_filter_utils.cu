@@ -463,7 +463,7 @@ std::pair<cudf::detail::host_vector<size_type>, cudf::detail::host_vector<size_t
 compute_page_row_offsets_and_colchunk_page_offsets(
   std::span<metadata_base const> per_file_metadata,
   std::span<std::vector<size_type> const> row_group_indices,
-  size_type schema_idx,
+  std::span<size_type const> schema_indices_per_source,
   cuda::stream_ref stream)
 {
   // Compute total number of row groups
@@ -494,8 +494,8 @@ compute_page_row_offsets_and_colchunk_page_offsets(
       std::optional<size_type> colchunk_iter_offset{};
       std::for_each(rg_indices.cbegin(), rg_indices.cend(), [&](auto rg_idx) {
         auto const& row_group = per_file_metadata[src_idx].row_groups[rg_idx];
-        colchunk_iter_offset =
-          parquet::detail::find_colchunk_iter_offset(row_group, schema_idx, colchunk_iter_offset);
+        colchunk_iter_offset  = parquet::detail::find_colchunk_iter_offset(
+          row_group, schema_indices_per_source[src_idx], colchunk_iter_offset);
         auto const& colchunk_iter = row_group.columns.begin() + colchunk_iter_offset.value();
 
         CUDF_EXPECTS(colchunk_iter->offset_index.has_value(),
@@ -531,7 +531,7 @@ compute_page_row_offsets_and_colchunk_page_offsets(
 std::pair<std::vector<size_type>, size_type> compute_page_row_offsets(
   std::span<metadata_base const> per_file_metadata,
   std::span<std::vector<size_type> const> row_group_indices,
-  cudf::size_type schema_idx)
+  std::span<size_type const> schema_indices_per_source)
 {
   // Compute total number of row groups
   auto const total_row_groups =
@@ -553,7 +553,7 @@ std::pair<std::vector<size_type>, size_type> compute_page_row_offsets(
                   std::for_each(rg_indices.begin(), rg_indices.end(), [&](auto const& rg_idx) {
                     auto const& row_group = per_file_metadata[src_idx].row_groups[rg_idx];
                     colchunk_iter_offset  = parquet::detail::find_colchunk_iter_offset(
-                      row_group, schema_idx, colchunk_iter_offset);
+                      row_group, schema_indices_per_source[src_idx], colchunk_iter_offset);
                     auto const& colchunk_iter =
                       row_group.columns.begin() + colchunk_iter_offset.value();
                     CUDF_EXPECTS(colchunk_iter->offset_index.has_value(),

@@ -17,8 +17,6 @@
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <cuda/iterator>
-
 #include <algorithm>
 #include <functional>
 #include <numeric>
@@ -130,15 +128,9 @@ std::optional<std::vector<std::vector<size_type>>> aggregate_reader_metadata::ap
       continue;
     }
     // Map each filter column's zeroth-source schema index into every source's schema tree.
-    auto const num_sources         = input_row_group_indices.size();
-    auto per_source_schema_indices = std::vector<int>(num_sources);
-    auto const src_iter            = cuda::counting_iterator<size_t>{0};
-    std::transform(
-      src_iter, src_iter + num_sources, per_source_schema_indices.begin(), [&](size_t src_idx) {
-        return map_schema_index(schema_idx, static_cast<int>(src_idx));
-      });
+    auto const schema_indices_per_source = map_schema_index_to_sources(schema_idx);
     auto [min_col, max_col, is_null_col] = cudf::type_dispatcher<dispatch_storage_type>(
-      dtype, stats_col, per_source_schema_indices, dtype, stream, mr);
+      dtype, stats_col, schema_indices_per_source, dtype, stream, mr);
     columns.push_back(std::move(min_col));
     columns.push_back(std::move(max_col));
     CUDF_EXPECTS(is_null_col.has_value(), "is_null column must be present");

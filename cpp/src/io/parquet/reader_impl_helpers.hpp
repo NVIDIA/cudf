@@ -683,6 +683,19 @@ class aggregate_reader_metadata {
   [[nodiscard]] int map_schema_index(int schema_idx, int pfm_idx) const;
 
   /**
+   * @brief Maps schema index from 0th source file to every source file
+   *
+   * @note Only columns selected by `select_columns` are mapped.
+   *
+   * @throws std::out_of_range if `schema_idx` is not mapped to some source
+   *
+   * @param schema_idx The index of the SchemaElement in the zeroth file.
+   *
+   * @return Mapped schema indices, one per source
+   */
+  [[nodiscard]] std::vector<int> map_schema_index_to_sources(int schema_idx) const;
+
+  /**
    * @brief Checks if a field that is REQUIRED in the zeroth source is nullable in another source
    *
    * @note Only columns selected by `select_columns` are tracked.

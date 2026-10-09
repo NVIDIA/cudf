@@ -38,8 +38,10 @@
 #include <functional>
 #include <future>
 #include <iterator>
+#include <limits>
 #include <numeric>
 #include <optional>
+#include <ranges>
 #include <regex>
 #include <span>
 #include <string_view>
@@ -534,23 +536,65 @@ metadata::metadata(datasource* source, bool read_page_indexes)
   auto const has_strings =
     std::ranges::any_of(schema, [](auto const& elem) { return elem.type == Type::BYTE_ARRAY; });
 
-  if (read_page_indexes and has_strings and not row_groups.empty() and
-      not row_groups.front().columns.empty()) {
-    // column index and offset index are encoded back to back.
-    // the first column of the first row group will have the first column index, the last
-    // column of the last row group will have the final offset index.
-    int64_t const min_offset = row_groups.front().columns.front().column_index_offset;
-    auto const& last_col     = row_groups.back().columns.back();
-    int64_t const max_offset = last_col.offset_index_offset + last_col.offset_index_length;
+  // Column indexes are only used alongside offset indexes, skip if there are no offset indexes
+  auto const has_offset_index = [this] {
+    return std::ranges::any_of(
+      row_groups | std::views::transform(&RowGroup::columns) | std::views::join,
+      [](auto const& col) { return col.offset_index_offset > 0 and col.offset_index_length > 0; });
+  };
 
-    if (max_offset > min_offset) {
-      size_t const length     = max_offset - min_offset;
-      auto const page_idx_buf = source->host_read(min_offset, length);
-      setup_page_index({page_idx_buf->data(), length}, min_offset);
+  // Gather page index byte range info
+  auto const page_index_range = [&]() -> text::byte_range_info {
+    // Don't read page index if not required or if we don't have strings or only have column indexes
+    if (not read_page_indexes or not has_strings or not has_offset_index()) { return {}; }
+    try {
+      auto const range = page_index_byte_range();
+      if (std::cmp_less_equal(range.offset() + range.size(), source->size())) { return range; }
+    } catch (std::overflow_error const&) {
+      // Page indexes are optional so skip them if their byte range is invalid
     }
+    return {};
+  }();
+
+  // Setup page indexes if available
+  if (not page_index_range.is_empty()) {
+    auto const page_idx_buf = source->host_read(page_index_range.offset(), page_index_range.size());
+    setup_page_index({page_idx_buf->data(), page_idx_buf->size()}, page_index_range.offset());
   }
 
   sanitize_schema();
+}
+
+text::byte_range_info metadata::page_index_byte_range() const
+{
+  if (is_page_index_setup_) { return {}; }
+
+  if (row_groups.empty() or row_groups.front().columns.empty()) { return {}; }
+
+  // Scan all column chunks to compute the page index extent
+  int64_t min_offset = std::numeric_limits<int64_t>::max();
+  int64_t max_offset = 0;
+
+  // Helper to update the current page index extent
+  auto const update_extent = [&](int64_t offset, int32_t length) {
+    if (offset <= 0 or length <= 0) { return; }
+    auto const sum = cuda::add_overflow<int64_t>(offset, length);
+    CUDF_EXPECTS(not sum.overflow,
+                 "Encountered an invalid Parquet page index byte range",
+                 std::overflow_error);
+    min_offset = std::min(min_offset, offset);
+    max_offset = std::max(max_offset, sum.value);
+  };
+
+  for (auto const& row_group : row_groups) {
+    for (auto const& column : row_group.columns) {
+      update_extent(column.column_index_offset, column.column_index_length);
+      update_extent(column.offset_index_offset, column.offset_index_length);
+    }
+  }
+
+  if (max_offset <= min_offset) { return {}; }
+  return {min_offset, max_offset - min_offset};
 }
 
 void metadata::setup_page_index(cudf::host_span<uint8_t const> page_index_bytes, int64_t min_offset)

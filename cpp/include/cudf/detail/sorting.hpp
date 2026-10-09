@@ -160,7 +160,7 @@ std::unique_ptr<column> segmented_top_k(column_view const& col,
                                         size_type k,
                                         order topk_order,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr);
+                                        cudf::memory_resources mr);
 
 }  // namespace detail
 }  // namespace cudf

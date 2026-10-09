@@ -27,7 +27,7 @@ namespace {
 
 // # of threads we're decoding with
 constexpr int preprocess_block_size   = 512;
-constexpr int level_decode_block_size = 128;
+constexpr int level_decode_block_size = 256;
 
 using unused_state_buf = page_state_buffers_s<0, 0, 0>;
 
@@ -402,17 +402,43 @@ CUDF_KERNEL void __launch_bounds__(level_decode_block_size)
   // Return early if this page is pruned
   if (not page_mask.empty() and not page_mask[page_idx]) { return; }
 
-  // setup page info - use all_types_filter since we need to preprocess levels for all page types
-  if (!setup_local_page_info(
-        s, pp, chunks, min_row, num_rows, all_types_filter{}, page_processing_stage::PREPROCESS)) {
+  // Each page has one block per level stream. Reject absent streams before page setup.
+  int const stream_id = blockIdx.y;
+  if ((pp->flags & PAGEINFO_FLAGS_DICTIONARY) != 0) { return; }
+  auto const& chunk = chunks[pp->chunk_idx];
+  if (chunk.max_level[stream_id] == 0) { return; }
+
+  size_t const num_to_decode = precompute_page_num_values_in_range(*pp, chunk, min_row, num_rows);
+  if (num_to_decode == 0) { return; }
+
+  // Only level metadata is needed here; consumers initialize value and dictionary state.
+  if (t == 0) {
+    s->setup.page = *pp;
+    s->setup.col  = chunk;
+    s->reset_error_code();
+    auto const* cur = pp->page_data;
+    auto const* end = cur + pp->uncompressed_page_size;
+    // Consume both sections in order, including V2 files that encode zero-width levels.
+    cur += InitLevelSection(s, cur, end, level_type::REPETITION);
+    InitLevelSection(s, cur, end, level_type::DEFINITION);
+  }
+  block.sync();
+
+  // All-valid definition streams need no decoded buffer.
+  if (stream_id == level_type::DEFINITION && !should_process_nulls(s)) { return; }
+
+  auto* const out = reinterpret_cast<level_t*>(pp->lvl_decode_buf[stream_id]);
+
+  // Setup already parsed the first run. If it covers the requested prefix, fill it directly
+  // without staging the stream or constructing run tables. Clamp writes for partial reads.
+  auto const initial_run = s->stream.initial_rle_run[stream_id];
+  if (is_repeated_run(initial_run) && static_cast<size_t>(initial_run >> 1) >= num_to_decode) {
+    auto const value = static_cast<level_t>(s->stream.initial_rle_value[stream_id]);
+    for (size_t i = t; i < num_to_decode; i += level_decode_block_size) {
+      out[i] = value;
+    }
     return;
   }
-
-  // whether or not we have repetition levels (lists)
-  bool const has_repetition = chunks[pp->chunk_idx].max_level[level_type::REPETITION] > 0;
-
-  // Each page is decoded by two blocks where blockIdx.y maps to def/rep level
-  int const stream_id = blockIdx.y;
 
   // The chunked-expand rle_stream does not need a shared-memory ring buffer of
   // run headers; it parses runs directly into per-chunk tables, so we
@@ -428,19 +454,6 @@ CUDF_KERNEL void __launch_bounds__(level_decode_block_size)
   // budget fall back to parsing from global with no behavior change.
   __shared__ __align__(16) uint8_t stage[decoder_stream_t::smem_stage_size];
   __shared__ cuda::barrier<cuda::thread_scope_block> copy_barrier;
-
-  // Determine how many values need to be decoded
-  size_t const num_to_decode =
-    precompute_page_num_values_in_range(*pp, chunks[pp->chunk_idx], min_row, num_rows);
-  if (num_to_decode == 0) { return; }
-
-  // Skip if this block's stream is absent for this page.
-  bool const process_nulls = should_process_nulls(s);
-  if (stream_id == level_type::REPETITION && !has_repetition) { return; }
-  if (stream_id == level_type::DEFINITION && !process_nulls) { return; }
-
-  // Dispatch to the level stream this block owns.
-  auto* const out = reinterpret_cast<level_t*>(pp->lvl_decode_buf[stream_id]);
 
   decoder_stream_t decoder{};
   cg::invoke_one(block, [&]() { init(&copy_barrier, block.size()); });

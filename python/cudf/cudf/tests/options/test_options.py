@@ -67,6 +67,10 @@ class TestCleanOptions:
         )
         assert expected == s.read()
 
+    def test_option_context_invalid_name_raises_on_construction(self):
+        with pytest.raises(KeyError, match="unregistered_option"):
+            cudf.option_context("unregistered_option", True)
+
     def test_option_context_delayed_entry_and_reuse(self):
         context = cudf.option_context("odd_option", 3, "even_option", 2)
         for odd, even in [(5, 4), (7, 6)]:

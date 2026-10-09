@@ -377,6 +377,9 @@ class option_context(ContextDecorator):
             )
 
         self.ops = tuple(zip(args[::2], args[1::2], strict=True))
+        # Validate names eagerly so cudf.pandas can fall back on unknown options.
+        for pat, _ in self.ops:
+            get_option(pat)
         self.undo: list[tuple[tuple[str, Any], ...]] = []
 
     def __enter__(self) -> None:

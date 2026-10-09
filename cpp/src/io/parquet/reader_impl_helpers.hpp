@@ -12,6 +12,7 @@
 #include <cudf/io/datasource.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/io/parquet_schema.hpp>
+#include <cudf/io/text/byte_range_info.hpp>
 #include <cudf/types.hpp>
 
 #include <cuda/buffer>
@@ -203,8 +204,22 @@ struct metadata : public FileMetaData {
   metadata& operator=(metadata&& other)      = default;
   ~metadata();
 
+  /**
+   * @brief Computes the byte range of the page index, or an empty range if
+   *  it is not available or already set up
+   *
+   * @throws std::overflow_error if the byte ranges overflow int64_t
+   */
+  [[nodiscard]] text::byte_range_info page_index_byte_range() const;
+
+  /**
+   * @brief Parses column and offset indexes from the page index bytes starting at `min_offset`
+   */
   void setup_page_index(cudf::host_span<uint8_t const> page_index_bytes, int64_t min_offset);
 
+  /**
+   * @brief Returns whether the page index has been set up
+   */
   [[nodiscard]] bool is_page_index_setup() const { return is_page_index_setup_; }
 
  protected:

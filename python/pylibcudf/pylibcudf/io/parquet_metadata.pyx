@@ -476,7 +476,7 @@ cdef class SchemaElement:
 
     @property
     def name(self) -> str:
-        """Name of the field; empty for the root element."""
+        """Name of the field, as recorded by the writer."""
         return self.c_obj.name.decode("utf-8")
 
     @property
@@ -557,7 +557,7 @@ cdef class SchemaElement:
         """
         return self.c_obj.is_stub()
 
-    def is_one_level_list(self, SchemaElement parent) -> bool:
+    def is_one_level_list(self, SchemaElement parent not None) -> bool:
         """
         Whether the element is a list in the one-level list encoding.
 

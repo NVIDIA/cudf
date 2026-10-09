@@ -1154,6 +1154,17 @@ def test_file_metadata_schema_elements() -> None:
     ]
 
 
+def test_schema_element_is_one_level_list_rejects_none() -> None:
+    sink = io.BytesIO()
+    write_table(pa.table({"a": [1]}), sink)
+    sink.seek(0)
+    element = plc.io.parquet_metadata.read_parquet_footers(
+        plc.io.SourceInfo([sink])
+    )[0].schema[1]
+    with pytest.raises(TypeError, match="parent"):
+        element.is_one_level_list(None)
+
+
 def test_file_metadata_schema_element_nesting() -> None:
     schema = pa.schema(
         [

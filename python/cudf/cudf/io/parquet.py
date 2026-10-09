@@ -2545,11 +2545,13 @@ def _process_metadata(
                 return df
 
             if len(per_file_user_data) > 1:
+                # Rows before skip_rows were not read, so the range covers
+                # them too before it is sliced below
                 range_index_meta = {
                     "kind": "range",
                     "name": None,
                     "start": 0,
-                    "stop": len(df),
+                    "stop": skip_rows + len(df),
                     "step": 1,
                 }
             else:
@@ -2575,12 +2577,13 @@ def _process_metadata(
                         row_groups_i.append((start, stop))
                         start = stop
 
+                    # Index the selected row groups by their row
+                    # positions in the file
                     for rg in row_groups[i]:
                         filtered_idx.append(
                             RangeIndex(
                                 start=row_groups_i[rg][0],
                                 stop=row_groups_i[rg][1],
-                                step=range_index_meta["step"],
                             )
                         )
 
@@ -2589,16 +2592,16 @@ def _process_metadata(
                 else:
                     idx = Index._from_column(column_empty(0))
             else:
-                start = range_index_meta["start"] + skip_rows  # type: ignore[operator]
-                stop = int(range_index_meta["stop"])  # type: ignore[arg-type]
-                if nrows > -1:
-                    stop = start + nrows
                 idx = RangeIndex(
-                    start=start,
-                    stop=stop,
+                    start=range_index_meta["start"],
+                    stop=range_index_meta["stop"],
                     step=range_index_meta["step"],
                     name=range_index_meta["name"],
                 )
+                # skip_rows and nrows count rows, not index values
+                idx = idx[
+                    skip_rows : skip_rows + nrows if nrows > -1 else None
+                ]
 
             df.index = idx
         elif set(index_col).issubset(names):

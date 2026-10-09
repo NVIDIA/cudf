@@ -49,14 +49,14 @@ namespace CUDF_EXPORT cudf {
  * @param keys_column Column of non-null values to use as the new dictionary column's keys.
  * @param indices_column Indices to use for the new dictionary column.
  * @param stream CUDA stream used for device memory operations and kernel launches.
- * @param mr Device memory resource used to allocate the returned column's device memory.
+ * @param mr Memory resources used for temporary allocations and the returned column
  * @return New dictionary column.
  */
 std::unique_ptr<column> make_dictionary_column(
   column_view const& keys_column,
   column_view const& indices_column,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Construct a dictionary column by taking ownership of the provided keys
@@ -97,14 +97,14 @@ std::unique_ptr<column> make_dictionary_column(std::unique_ptr<column> keys_colu
  * @param keys_column Column of non-null values to use as the new dictionary column's keys.
  * @param indices_column Indices values and null-mask to use for the new dictionary column.
  * @param stream CUDA stream used for device memory operations and kernel launches.
- * @param mr Device memory resource used to allocate the returned column's device memory.
+ * @param mr Memory resources used for temporary allocations and the returned column
  * @return New dictionary column.
  */
 std::unique_ptr<column> make_dictionary_column(
   std::unique_ptr<column> keys_column,
   std::unique_ptr<column> indices_column,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 }  // namespace CUDF_EXPORT cudf

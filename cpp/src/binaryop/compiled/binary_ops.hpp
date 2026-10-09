@@ -27,21 +27,21 @@ std::unique_ptr<column> string_null_min_max(scalar const& lhs,
                                             binary_operator op,
                                             data_type output_type,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr);
+                                            cudf::memory_resources mr);
 
 std::unique_ptr<column> string_null_min_max(column_view const& lhs,
                                             scalar const& rhs,
                                             binary_operator op,
                                             data_type output_type,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr);
+                                            cudf::memory_resources mr);
 
 std::unique_ptr<column> string_null_min_max(column_view const& lhs,
                                             column_view const& rhs,
                                             binary_operator op,
                                             data_type output_type,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr);
+                                            cudf::memory_resources mr);
 
 /**
  * @brief Performs a binary operation between a string scalar and a string
@@ -59,7 +59,7 @@ std::unique_ptr<column> string_null_min_max(column_view const& lhs,
  * @param op          The binary operator
  * @param output_type The desired data type of the output column
  * @param stream      CUDA stream used for device memory operations and kernel launches.
- * @param mr          Device memory resource used to allocate the returned column's device memory
+ * @param mr          Memory resources used for temporary allocations and the returned column
  * @return std::unique_ptr<column> Output column
  */
 std::unique_ptr<column> binary_operation(scalar const& lhs,
@@ -67,7 +67,7 @@ std::unique_ptr<column> binary_operation(scalar const& lhs,
                                          binary_operator op,
                                          data_type output_type,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr);
+                                         cudf::memory_resources mr);
 
 /**
  * @brief Performs a binary operation between a string column and a string
@@ -85,7 +85,7 @@ std::unique_ptr<column> binary_operation(scalar const& lhs,
  * @param op          The binary operator
  * @param output_type The desired data type of the output column
  * @param stream      CUDA stream used for device memory operations and kernel launches.
- * @param mr          Device memory resource used to allocate the returned column's device memory
+ * @param mr          Memory resources used for temporary allocations and the returned column
  * @return std::unique_ptr<column> Output column
  */
 std::unique_ptr<column> binary_operation(column_view const& lhs,
@@ -93,7 +93,7 @@ std::unique_ptr<column> binary_operation(column_view const& lhs,
                                          binary_operator op,
                                          data_type output_type,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr);
+                                         cudf::memory_resources mr);
 
 /**
  * @brief Performs a binary operation between two string columns.
@@ -110,7 +110,7 @@ std::unique_ptr<column> binary_operation(column_view const& lhs,
  * @param op          The binary operator enum
  * @param output_type The desired data type of the output column
  * @param stream      CUDA stream used for device memory operations and kernel launches.
- * @param mr          Device memory resource used to allocate the returned column's device memory
+ * @param mr          Memory resources used for temporary allocations and the returned column
  * @return std::unique_ptr<column> Output column
  */
 std::unique_ptr<column> binary_operation(column_view const& lhs,
@@ -118,23 +118,26 @@ std::unique_ptr<column> binary_operation(column_view const& lhs,
                                          binary_operator op,
                                          data_type output_type,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr);
+                                         cudf::memory_resources mr);
 
 void binary_operation(mutable_column_view& out,
                       scalar const& lhs,
                       column_view const& rhs,
                       binary_operator op,
-                      cuda::stream_ref stream);
+                      cuda::stream_ref stream,
+                      cudf::memory_resources mr);
 void binary_operation(mutable_column_view& out,
                       column_view const& lhs,
                       scalar const& rhs,
                       binary_operator op,
-                      cuda::stream_ref stream);
+                      cuda::stream_ref stream,
+                      cudf::memory_resources mr);
 void binary_operation(mutable_column_view& out,
                       column_view const& lhs,
                       column_view const& rhs,
                       binary_operator op,
-                      cuda::stream_ref stream);
+                      cuda::stream_ref stream,
+                      cudf::memory_resources mr);
 
 // Defined in util.cpp
 /**

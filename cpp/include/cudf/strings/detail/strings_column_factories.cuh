@@ -38,14 +38,14 @@ using string_index_pair = cuda::std::pair<char const*, size_type>;
  * @param begin First string row (inclusive)
  * @param end Last string row (exclusive)
  * @param stream CUDA stream used for device memory operations
- * @param mr  Device memory resource used to allocate the returned column's device memory
+ * @param mr  Memory resources used for temporary allocations and the returned column
  * @return New strings column
  */
 template <typename IndexPairIterator>
 std::unique_ptr<column> make_strings_column(IndexPairIterator begin,
                                             IndexPairIterator end,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   size_type strings_count = cuda::std::distance(begin, end);

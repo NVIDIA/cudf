@@ -36,11 +36,12 @@ template <typename OutputType>
 std::pair<std::vector<std::unique_ptr<column>>, rmm::device_uvector<int64_t>>
 make_offsets_child_column_batch_async(std::vector<column_string_pairs> const& input,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cudf::memory_resources mr)
 {
+  auto const temp_mr     = mr.get_temporary_mr();
   auto const num_columns = input.size();
   std::vector<std::unique_ptr<column>> offsets_columns(num_columns);
-  rmm::device_uvector<int64_t> chars_sizes(num_columns, stream);
+  rmm::device_uvector<int64_t> chars_sizes(num_columns, stream, temp_mr);
   for (std::size_t idx = 0; idx < num_columns; ++idx) {
     auto const string_pairs = input[idx];
     auto const string_count = static_cast<size_type>(string_pairs.size());
@@ -55,7 +56,7 @@ make_offsets_child_column_batch_async(std::vector<column_string_pairs> const& in
     auto const d_offsets = offsets->mutable_view().template data<OutputType>();
     auto const output_it = cudf::detail::make_sizes_to_offsets_iterator(
       d_offsets, d_offsets + string_count + 1, chars_sizes.data() + idx);
-    thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::exclusive_scan(rmm::exec_policy_nosync(stream, temp_mr),
                            input_it,
                            input_it + string_count + 1,
                            output_it,
@@ -69,16 +70,15 @@ make_offsets_child_column_batch_async(std::vector<column_string_pairs> const& in
 }  // namespace
 
 CUDF_EXPORT std::pair<std::unique_ptr<column>, int64_t> make_offsets_child_column(
-  device_span<size_type const> sizes, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
+  device_span<size_type const> sizes, cuda::stream_ref stream, cudf::memory_resources mr)
 {
   return make_offsets_child_column(sizes.begin(), sizes.end(), stream, mr);
 }
 
 std::vector<std::unique_ptr<column>> make_strings_column_batch(
-  std::vector<column_string_pairs> const& input,
-  cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  std::vector<column_string_pairs> const& input, cuda::stream_ref stream, cudf::memory_resources mr)
 {
+  auto const temp_mr     = mr.get_temporary_mr();
   auto const num_columns = input.size();
 
   auto [offsets_cols, d_chars_sizes] =
@@ -87,12 +87,9 @@ std::vector<std::unique_ptr<column>> make_strings_column_batch(
   std::vector<cuda::device_buffer<std::byte>> null_masks;
   null_masks.reserve(num_columns);
 
-  rmm::device_uvector<size_type> d_valid_counts(num_columns, stream, mr);
+  rmm::device_uvector<size_type> d_valid_counts(num_columns, stream, temp_mr);
   thrust::uninitialized_fill(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-    d_valid_counts.begin(),
-    d_valid_counts.end(),
-    0);
+    rmm::exec_policy_nosync(stream, temp_mr), d_valid_counts.begin(), d_valid_counts.end(), 0);
 
   for (std::size_t idx = 0; idx < num_columns; ++idx) {
     auto const& string_pairs = input[idx];
@@ -186,7 +183,7 @@ std::vector<std::unique_ptr<column>> make_strings_column_batch(
 std::unique_ptr<column> make_strings_column(
   device_span<cuda::std::pair<char const*, size_type> const> strings,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return cudf::strings::detail::make_strings_column(strings.begin(), strings.end(), stream, mr);
@@ -195,7 +192,7 @@ std::unique_ptr<column> make_strings_column(
 std::vector<std::unique_ptr<column>> make_strings_column_batch(
   std::vector<cudf::device_span<cuda::std::pair<char const*, size_type> const>> const& input,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return cudf::strings::detail::make_strings_column_batch(input, stream, mr);
@@ -218,7 +215,7 @@ struct string_view_to_pair {
 std::unique_ptr<column> make_strings_column(device_span<string_view const> string_views,
                                             string_view null_placeholder,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 

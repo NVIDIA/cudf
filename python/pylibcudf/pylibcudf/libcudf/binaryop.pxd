@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from libc.stdint cimport int32_t
 from libcpp cimport bool
@@ -44,12 +44,17 @@ cdef extern from "cudf/binaryop.hpp" namespace "cudf" nogil:
         LESS_EQUAL
         GREATER_EQUAL
         NULL_EQUALS
+        NULL_NOT_EQUALS
         NULL_MAX
         NULL_MIN
-        NULL_NOT_EQUALS
         GENERIC_BINARY
         NULL_LOGICAL_AND
         NULL_LOGICAL_OR
+        ADD_OVERFLOW
+        SUB_OVERFLOW
+        MUL_OVERFLOW
+        DIV_OVERFLOW
+        MOD_OVERFLOW
         INVALID_BINARY
 
     cdef unique_ptr[column] binary_operation (

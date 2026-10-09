@@ -21,12 +21,12 @@
 
 #include <rmm/exec_policy.hpp>
 
-#include <cub/cub.cuh>
+#include <cub/block/block_reduce.cuh>
+#include <cub/block/block_scan.cuh>
+#include <cuda/cmath>
 #include <cuda/functional>
 #include <cuda/std/limits>
 #include <cuda/stream>
-#include <thrust/for_each.h>
-#include <thrust/transform.h>
 
 namespace cudf::io::orc::detail {
 
@@ -1354,8 +1354,7 @@ void compact_orc_data_streams(device_2dspan<stripe_stream> strm_desc,
     num_chunks, stream, cudf::get_current_device_resource_ref());
 
   auto const num_blocks =
-    cudf::util::div_rounding_up_unsafe(num_stripes, compact_streams_block_size) *
-    strm_desc.size().second;
+    cuda::ceil_div(num_stripes, compact_streams_block_size) * strm_desc.size().second;
   init_batched_memcpy_kernel<<<num_blocks, compact_streams_block_size, 0, stream.get()>>>(
     strm_desc, enc_streams, srcs, dsts, lengths);
   CUDF_CUDA_TRY(cudaGetLastError());
@@ -1393,7 +1392,8 @@ std::optional<writer_compression_statistics> compress_orc_data_streams(
                                                                        comp_block_align);
   CUDF_CUDA_TRY(cudaGetLastError());
 
-  cudf::io::detail::compress(compression, comp_in, comp_out, comp_res, stream);
+  cudf::io::detail::compress(
+    compression, comp_in, comp_out, comp_res, stream, cudf::get_current_device_resource_ref());
 
   compact_compressed_blocks_kernel<<<num_blocks, 1024, 0, stream.get()>>>(
     strm_desc, comp_in, comp_out, comp_res, compressed_data, comp_blk_size, max_comp_blk_size);

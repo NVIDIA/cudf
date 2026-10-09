@@ -26,6 +26,7 @@
 
 #include <rmm/device_buffer.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 
 #include <array>
@@ -748,8 +749,8 @@ void split_lists(SplitFunc Split, CompareFunc Compare, bool split = true)
                                              {6},
                                              {7, 8},
                                              {9, 10, 11},
-                                             LCW{},
-                                             LCW{},
+                                             {},
+                                             {},
                                              {-1, -2, -3, -4, -5},
                                              {-10},
                                              {-100, -200}};
@@ -762,8 +763,8 @@ void split_lists(SplitFunc Split, CompareFunc Compare, bool split = true)
       expected.push_back(LCW{{1, 2, 3}});
       expected.push_back(LCW{{4, 5}, {6}, {7, 8}});
       expected.push_back(LCW{{9, 10, 11}});
-      expected.push_back(LCW{LCW{}});
-      expected.push_back(LCW{LCW{}, {-1, -2, -3, -4, -5}, {-10}});
+      expected.push_back(LCW{{}});
+      expected.push_back(LCW{{}, {-1, -2, -3, -4, -5}, {-10}});
       expected.push_back(LCW{{-100, -200}});
 
       auto result = Split(list, splits);
@@ -781,11 +782,11 @@ void split_lists(SplitFunc Split, CompareFunc Compare, bool split = true)
 
   {
     cudf::test::lists_column_wrapper<T> list{{{1, 2, 3}, {4, 5}},
-                                             {LCW{}, LCW{}, {7, 8}, LCW{}},
-                                             {LCW{6}},
-                                             {{7, 8}, {9, 10, 11}, LCW{}},
-                                             {LCW{}, {-1, -2, -3, -4, -5}},
-                                             {LCW{}},
+                                             {{}, {}, {7, 8}, {}},
+                                             {{6}},
+                                             {{7, 8}, {9, 10, 11}, {}},
+                                             {{}, {-1, -2, -3, -4, -5}},
+                                             {{}},
                                              {{-10}, {-100, -200}}};
 
     if (split) {
@@ -793,9 +794,9 @@ void split_lists(SplitFunc Split, CompareFunc Compare, bool split = true)
 
       std::vector<cudf::test::lists_column_wrapper<T>> expected;
       expected.push_back(LCW{{{1, 2, 3}, {4, 5}}});
-      expected.push_back(LCW{{LCW{}, LCW{}, {7, 8}, LCW{}}, {LCW{6}}});
-      expected.push_back(LCW{{{7, 8}, {9, 10, 11}, LCW{}}});
-      expected.push_back(LCW{{LCW{}, {-1, -2, -3, -4, -5}}, {LCW{}}, {{-10}, {-100, -200}}});
+      expected.push_back(LCW{{{}, {}, {7, 8}, {}}, {{6}}});
+      expected.push_back(LCW{{{7, 8}, {9, 10, 11}, {}}});
+      expected.push_back(LCW{{{}, {-1, -2, -3, -4, -5}}, {{}}, {{-10}, {-100, -200}}});
 
       auto result = Split(list, splits);
       EXPECT_EQ(expected.size(), result.size());
@@ -824,8 +825,8 @@ void split_lists_with_nulls(SplitFunc Split, CompareFunc Compare, bool split = t
                                              {6},
                                              {{7, 8}, valids},
                                              {9, 10, 11},
-                                             LCW{},
-                                             LCW{},
+                                             {},
+                                             {},
                                              {{-1, -2, -3, -4, -5}, valids},
                                              {-10},
                                              {{-100, -200}, valids}};
@@ -838,8 +839,8 @@ void split_lists_with_nulls(SplitFunc Split, CompareFunc Compare, bool split = t
       expected.push_back(LCW{{1, 2, 3}});
       expected.push_back(LCW{{4, 5}, {6}, {{7, 8}, valids}});
       expected.push_back(LCW{{9, 10, 11}});
-      expected.push_back(LCW{LCW{}});
-      expected.push_back(LCW{LCW{}, {{-1, -2, -3, -4, -5}, valids}, {-10}});
+      expected.push_back(LCW{{}});
+      expected.push_back(LCW{{}, {{-1, -2, -3, -4, -5}, valids}, {-10}});
       expected.push_back(LCW{{{-100, -200}, valids}});
 
       auto result = Split(list, splits);
@@ -857,11 +858,11 @@ void split_lists_with_nulls(SplitFunc Split, CompareFunc Compare, bool split = t
 
   {
     cudf::test::lists_column_wrapper<T> list{{{{1, 2, 3}, valids}, {4, 5}},
-                                             {{LCW{}, LCW{}, {7, 8}, LCW{}}, valids},
-                                             {{{6}}},
-                                             {{{7, 8}, {{9, 10, 11}, valids}, LCW{}}, valids},
-                                             {{LCW{}, {-1, -2, -3, -4, -5}}, valids},
-                                             {LCW{}},
+                                             {{{}, {}, {7, 8}, {}}, valids},
+                                             {{6}},
+                                             {{{7, 8}, {{9, 10, 11}, valids}, {}}, valids},
+                                             {{{}, {-1, -2, -3, -4, -5}}, valids},
+                                             {{}},
                                              {{-10}, {-100, -200}}};
 
     if (split) {
@@ -869,10 +870,9 @@ void split_lists_with_nulls(SplitFunc Split, CompareFunc Compare, bool split = t
 
       std::vector<cudf::test::lists_column_wrapper<T>> expected;
       expected.push_back(LCW{{{{1, 2, 3}, valids}, {4, 5}}});
-      expected.push_back(LCW{{{LCW{}, LCW{}, {7, 8}, LCW{}}, valids}, {{{6}}}});
-      expected.push_back(LCW{{{{7, 8}, {{9, 10, 11}, valids}, LCW{}}, valids}});
-      expected.push_back(
-        LCW{{{LCW{}, {-1, -2, -3, -4, -5}}, valids}, {LCW{}}, {{-10}, {-100, -200}}});
+      expected.push_back(LCW{{{{}, {}, {7, 8}, {}}, valids}, {{6}}});
+      expected.push_back(LCW{{{{7, 8}, {{9, 10, 11}, valids}, {}}, valids}});
+      expected.push_back(LCW{{{{}, {-1, -2, -3, -4, -5}}, valids}, {{}}, {{-10}, {-100, -200}}});
 
       auto result = Split(list, splits);
       EXPECT_EQ(expected.size(), result.size());
@@ -1083,14 +1083,14 @@ void split_nested_struct_of_list(SplitFunc Split, CompareFunc Compare, bool spli
   // 3. List column
   std::vector<bool> list_validity{true, true, true, true, true, false, true, false, true};
   cudf::test::lists_column_wrapper<float> list({{{1, 2, 3}, {4}},
-                                                {{-1, -2}, LCW{}},
-                                                LCW{},
+                                                {{-1, -2}, {}},
+                                                {},
                                                 {{10}, {20, 30, 40}, {100, -100}},
-                                                {LCW{}, LCW{}, {8, 9}},
-                                                LCW{},
+                                                {{}, {}, {8, 9}},
+                                                {},
                                                 {{8}, {10, 9, 8, 7, 6, 5}},
-                                                {{5, 6}, LCW{}, {8}},
-                                                {LCW{-3, 4, -5}}},
+                                                {{5, 6}, {}, {8}},
+                                                {{-3, 4, -5}}},
                                                list_validity.begin());
 
   // Assemble struct column.
@@ -1107,15 +1107,15 @@ void split_nested_struct_of_list(SplitFunc Split, CompareFunc Compare, bool spli
     auto expected_ages  = create_expected_columns_for_splits<int>(splits, ages, ages_validity);
     std::vector<cudf::test::lists_column_wrapper<float>> expected_lists;
     expected_lists.push_back(LCW({{{1, 2, 3}, {4}}}));
-    expected_lists.push_back(LCW({{{-1, -2}, LCW{}}, LCW{}}));
+    expected_lists.push_back(LCW({{{-1, -2}, {}}, {}}));
     std::vector<bool> ex_v{true, true, false, true, false};
     expected_lists.push_back(LCW({{{10}, {20, 30, 40}, {100, -100}},
-                                  {LCW{}, LCW{}, {8, 9}},
-                                  LCW{},
+                                  {{}, {}, {8, 9}},
+                                  {},
                                   {{8}, {10, 9, 8, 7, 6, 5}},
-                                  {{5, 6}, LCW{}, {8}}},
+                                  {{5, 6}, {}, {8}}},
                                  ex_v.begin()));
-    expected_lists.push_back(LCW({{LCW{-3, 4, -5}}}));
+    expected_lists.push_back(LCW({{{-3, 4, -5}}}));
 
     auto expected_struct_validity = create_expected_validity(splits, struct_validity);
     EXPECT_EQ(expected_names.size(), result.size());
@@ -1136,7 +1136,6 @@ template <typename SplitFunc, typename CompareFunc>
 void split_nested_list_of_structs(SplitFunc Split, CompareFunc Compare, bool split = true)
 {
   // List<Struct<List<>>
-  using LCW = cudf::test::lists_column_wrapper<cudf::string_view>;
 
   // 1. String "names" column.
   std::vector<std::string> names{"Vimes",
@@ -1221,22 +1220,22 @@ void split_nested_list_of_structs(SplitFunc Split, CompareFunc Compare, bool spl
                                   true};
   cudf::test::lists_column_wrapper<cudf::string_view> list(
     {{"ab", "cd", "ef"},
-     LCW{"gh"},
+     {"gh"},
      {"ijk", "lmn"},
-     LCW{},
-     LCW{"o"},
+     {},
+     {"o"},
      {"pqr", "stu", "vwx"},
      {"yz", "aaaa"},
-     LCW{"bbbb"},
+     {"bbbb"},
      {"cccc", "ddd", "eee", "fff", "ggg", "hh"},
      {"b", "cdr", "efh", "um"},
-     LCW{"gh", "iu"},
+     {"gh", "iu"},
      {"lmn"},
-     LCW{"org"},
-     LCW{},
+     {"org"},
+     {},
      {"stu", "vwx"},
      {"yz", "aaaa", "kem"},
-     LCW{"bbbb"},
+     {"bbbb"},
      {"cccc", "eee", "faff", "jiea", "fff", "ggg", "hh"}},
     list_validity.begin());
 
@@ -1375,9 +1374,10 @@ std::vector<cudf::packed_table> do_chunked_pack(cudf::table_view const& input)
 {
   auto mr = cudf::get_current_device_resource_ref();
 
-  rmm::device_buffer bounce_buff(1 * 1024 * 1024, cudf::get_default_stream(), mr);
+  cuda::device_buffer<std::byte> bounce_buff(
+    cudf::get_default_stream(), mr, 1 * 1024 * 1024, cuda::no_init);
   auto bounce_buff_span =
-    cudf::device_span<uint8_t>(static_cast<uint8_t*>(bounce_buff.data()), bounce_buff.size());
+    cudf::device_span<uint8_t>(reinterpret_cast<uint8_t*>(bounce_buff.data()), bounce_buff.size());
 
   auto chunked_pack =
     cudf::chunked_pack::create(input, bounce_buff_span.size(), cudf::get_default_stream(), mr);
@@ -1821,9 +1821,10 @@ TEST_F(ContiguousSplitUntypedTest, DISABLED_ChunkedPackNextReturnValueOver2GB)
   EXPECT_EQ(chunked_packer->get_total_contiguous_size(), expected_total_size);
   EXPECT_TRUE(chunked_packer->has_next());
 
-  rmm::device_buffer bounce_buff(bounce_size, cudf::get_default_stream(), mr);
+  cuda::device_buffer<std::byte> bounce_buff(
+    cudf::get_default_stream(), mr, bounce_size, cuda::no_init);
   auto const bounce_span =
-    cudf::device_span<uint8_t>(static_cast<uint8_t*>(bounce_buff.data()), bounce_buff.size());
+    cudf::device_span<uint8_t>(reinterpret_cast<uint8_t*>(bounce_buff.data()), bounce_buff.size());
 
   auto const bytes_copied = chunked_packer->next(bounce_span);
   EXPECT_EQ(bytes_copied, expected_total_size);
@@ -2183,14 +2184,12 @@ TEST_F(ContiguousSplitTableCornerCases, PreSplitTable)
 {
   auto valids = cudf::test::iterators::valids_at_multiples_of(2);
 
-  using LCW = cudf::test::lists_column_wrapper<int>;
-
   cudf::test::lists_column_wrapper<int> col0{{{1, 2, 3}, {4, 5}},
-                                             {{LCW{}, LCW{}, {7, 8}, LCW{}}, valids},
-                                             {{{6}}},  // NOLINT
-                                             {{{7, 8}, LCW{}, {{9, 10, 11}, valids}}, valids},
-                                             {{{-1, -2, -3, -4, -5}, LCW{}}, valids},
-                                             {LCW{}},
+                                             {{{}, {}, {7, 8}, {}}, valids},
+                                             {{6}},
+                                             {{{7, 8}, {}, {{9, 10, 11}, valids}}, valids},
+                                             {{{-1, -2, -3, -4, -5}, {}}, valids},
+                                             {{}},
                                              {{-10}, {-100, -200}}};
 
   cudf::test::strings_column_wrapper col1{
@@ -2571,9 +2570,11 @@ TEST_F(ContiguousSplitTableCornerCases, OutBufferToSmall)
 TEST_F(ContiguousSplitTableCornerCases, ChunkSpanTooSmall)
 {
   auto chunked_pack = cudf::chunked_pack::create({}, 1 * 1024 * 1024);
-  rmm::device_buffer buff(
-    1 * 1024, cudf::test::get_default_stream(), cudf::get_current_device_resource_ref());
-  cudf::device_span<uint8_t> too_small(static_cast<uint8_t*>(buff.data()), buff.size());
+  cuda::device_buffer<std::byte> buff(cudf::test::get_default_stream(),
+                                      cudf::get_current_device_resource_ref(),
+                                      1 * 1024,
+                                      cuda::no_init);
+  cudf::device_span<uint8_t> too_small(reinterpret_cast<uint8_t*>(buff.data()), buff.size());
   std::size_t copied = 0;
   // throws because we created chunked_contig_split with 1MB, but we are giving
   // it a 1KB span here
@@ -2584,9 +2585,11 @@ TEST_F(ContiguousSplitTableCornerCases, ChunkSpanTooSmall)
 TEST_F(ContiguousSplitTableCornerCases, EmptyTableHasNextFalse)
 {
   auto chunked_pack = cudf::chunked_pack::create({}, 1 * 1024 * 1024);
-  rmm::device_buffer buff(
-    1 * 1024 * 1024, cudf::test::get_default_stream(), cudf::get_current_device_resource_ref());
-  cudf::device_span<uint8_t> bounce_buff(static_cast<uint8_t*>(buff.data()), buff.size());
+  cuda::device_buffer<std::byte> buff(cudf::test::get_default_stream(),
+                                      cudf::get_current_device_resource_ref(),
+                                      1 * 1024 * 1024,
+                                      cuda::no_init);
+  cudf::device_span<uint8_t> bounce_buff(reinterpret_cast<uint8_t*>(buff.data()), buff.size());
   EXPECT_EQ(chunked_pack->has_next(), false);  // empty input table
   std::size_t copied = 0;
   EXPECT_THROW(copied = chunked_pack->next(bounce_buff), cudf::logic_error);
@@ -2597,9 +2600,11 @@ TEST_F(ContiguousSplitTableCornerCases, ExhaustedHasNextFalse)
 {
   cudf::test::strings_column_wrapper a{"abc", "def", "ghi", "jkl", "mno", "", "st", "uvwx"};
   cudf::table_view t({a});
-  rmm::device_buffer buff(
-    1 * 1024 * 1024, cudf::test::get_default_stream(), cudf::get_current_device_resource_ref());
-  cudf::device_span<uint8_t> bounce_buff(static_cast<uint8_t*>(buff.data()), buff.size());
+  cuda::device_buffer<std::byte> buff(cudf::test::get_default_stream(),
+                                      cudf::get_current_device_resource_ref(),
+                                      1 * 1024 * 1024,
+                                      cuda::no_init);
+  cudf::device_span<uint8_t> bounce_buff(reinterpret_cast<uint8_t*>(buff.data()), buff.size());
   auto chunked_pack = cudf::chunked_pack::create(t, buff.size());
   EXPECT_EQ(chunked_pack->has_next(), true);
   std::size_t copied = chunked_pack->next(bounce_buff);

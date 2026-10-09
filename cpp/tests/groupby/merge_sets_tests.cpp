@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -75,7 +75,7 @@ TYPED_TEST(GroupbyMergeSetsTypedTest, InvalidInput)
   auto const keys = keys_col{1, 2, 3};
 
   // The input lists column must NOT be nullable.
-  auto const lists = lists_col{{lists_col{1}, lists_col{} /*NULL*/, lists_col{2}}, null_at(1)};
+  auto const lists = lists_col{{{1}, {} /*NULL*/, {2}}, null_at(1)};
   EXPECT_THROW(merge_sets({keys}, {lists}), cudf::logic_error);
 
   // The input column must be a lists column.
@@ -148,27 +148,27 @@ TYPED_TEST(GroupbyMergeSetsTypedTest, InputHasNulls)
   auto const keys3 = keys_col{2, 3, 4};
 
   auto const lists1 = lists_col{
-    lists_col{{1, null, null, null, 5, 6}, nulls_at({1, 2, 3})},  // key = 1
-    lists_col{10, 11, 12, 13, 14, 15}                             // key = 2
+    {{1, null, null, null, 5, 6}, nulls_at({1, 2, 3})},  // key = 1
+    {10, 11, 12, 13, 14, 15}                             // key = 2
   };
   auto const lists2 = lists_col{
-    lists_col{{null, null, 6, 7, 8, 9}, nulls_at({0, 1})},  // key = 1
-    lists_col{{null, 21, 22, 23, 24, 25}, null_at(0)}       // key = 3
+    {{null, null, 6, 7, 8, 9}, nulls_at({0, 1})},  // key = 1
+    {{null, 21, 22, 23, 24, 25}, null_at(0)}       // key = 3
   };
   auto const lists3 = lists_col{
-    lists_col{11, 12},                     // key = 2
-    lists_col{23, 24, 25, 26, 27, 28},     // key = 3
-    lists_col{{30, null, 32}, null_at(1)}  // key = 4
+    {11, 12},                     // key = 2
+    {23, 24, 25, 26, 27, 28},     // key = 3
+    {{30, null, 32}, null_at(1)}  // key = 4
   };
 
   auto const [out_keys, out_lists] =
     merge_sets(vcol_views{keys1, keys2, keys3}, vcol_views{lists1, lists2, lists3});
   auto const expected_keys  = keys_col{1, 2, 3, 4};
   auto const expected_lists = lists_col{
-    lists_col{{1, 5, 6, 7, 8, 9, null}, null_at(6)},                // key = 1
-    lists_col{10, 11, 12, 13, 14, 15},                              // key = 2
-    lists_col{{21, 22, 23, 24, 25, 26, 27, 28, null}, null_at(8)},  // key = 3
-    lists_col{{30, 32, null}, null_at(2)}                           // key = 4
+    {{1, 5, 6, 7, 8, 9, null}, null_at(6)},                // key = 1
+    {10, 11, 12, 13, 14, 15},                              // key = 2
+    {{21, 22, 23, 24, 25, 26, 27, 28, null}, null_at(8)},  // key = 3
+    {{30, 32, null}, null_at(2)}                           // key = 4
   };
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_keys, *out_keys, verbosity);
@@ -222,29 +222,29 @@ TYPED_TEST(GroupbyMergeSetsTypedTest, InputHasNullsAndEmptyLists)
   auto const keys3 = keys_col{2, 3, 4};
 
   auto const lists1 = lists_col{
-    lists_col{{null, 1, 2, 3}, null_at(0)},  // key = 1
-    lists_col{},                             // key = 2
-    lists_col{}                              // key = 3
+    {{null, 1, 2, 3}, null_at(0)},  // key = 1
+    {},                             // key = 2
+    {}                              // key = 3
   };
   auto const lists2 = lists_col{
-    lists_col{0, 1, 2, 3, 4, 5},                                        // key = 1
-    lists_col{{null, 11, null, 12, 12, 12, 12, 12}, nulls_at({0, 2})},  // key = 3
-    lists_col{20}                                                       // key = 4
+    {0, 1, 2, 3, 4, 5},                                        // key = 1
+    {{null, 11, null, 12, 12, 12, 12, 12}, nulls_at({0, 2})},  // key = 3
+    {20}                                                       // key = 4
   };
   auto const lists3 = lists_col{
-    lists_col{},                                                    // key = 2
-    lists_col{},                                                    // key = 3
-    lists_col{{24, 25, null, null, null, 26}, nulls_at({2, 3, 4})}  // key = 4
+    {},                                                    // key = 2
+    {},                                                    // key = 3
+    {{24, 25, null, null, null, 26}, nulls_at({2, 3, 4})}  // key = 4
   };
 
   auto const [out_keys, out_lists] =
     merge_sets(vcol_views{keys1, keys2, keys3}, vcol_views{lists1, lists2, lists3});
   auto const expected_keys  = keys_col{1, 2, 3, 4};
   auto const expected_lists = lists_col{
-    lists_col{{0, 1, 2, 3, 4, 5, null}, null_at(6)},  // key = 1
-    lists_col{},                                      // key = 2
-    lists_col{{11, 12, null}, null_at(2)},            // key = 3
-    lists_col{{20, 24, 25, 26, null}, null_at(4)}     // key = 4
+    {{0, 1, 2, 3, 4, 5, null}, null_at(6)},  // key = 1
+    {},                                      // key = 2
+    {{11, 12, null}, null_at(2)},            // key = 3
+    {{20, 24, 25, 26, null}, null_at(4)}     // key = 4
   };
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_keys, *out_keys, verbosity);
@@ -311,34 +311,34 @@ TEST_F(GroupbyMergeSetsTest, StringsColumnInput)
   auto const keys3 = strings_col{"apple", "dog", "water melon"};
 
   auto const lists1 = lists_col{
-    lists_col{"Fuji", "Honey Bee"},                              // key = "apple"
-    lists_col{"Poodle", "Golden Retriever", "Corgi"},            // key = "dog"
-    lists_col{{"Whale", "" /*NULL*/, "Polar Bear"}, null_at(1)}  // key = "unknown"
+    {"Fuji", "Honey Bee"},                              // key = "apple"
+    {"Poodle", "Golden Retriever", "Corgi"},            // key = "dog"
+    {{"Whale", "" /*NULL*/, "Polar Bear"}, null_at(1)}  // key = "unknown"
   };
   auto const lists2 = lists_col{
-    lists_col{"Green", "Yellow"},                                    // key = "banana"
-    lists_col{},                                                     // key = "unknown"
-    lists_col{{"" /*NULL*/, "" /*NULL*/, "" /*NULL*/}, all_nulls()}  // key = "dog"
+    {"Green", "Yellow"},                                    // key = "banana"
+    {},                                                     // key = "unknown"
+    {{"" /*NULL*/, "" /*NULL*/, "" /*NULL*/}, all_nulls()}  // key = "dog"
   };
   auto const lists3 = lists_col{
-    lists_col{"Fuji", "Red Delicious"},  // key = "apple"
-    lists_col{{"" /*NULL*/, "Corgi", "German Shepherd", "" /*NULL*/, "Golden Retriever"},
-              nulls_at({0, 3})},                  // key = "dog"
-    lists_col{{"Seeedless", "Mini"}, no_nulls()}  // key = "water melon"
+    {"Fuji", "Red Delicious"},  // key = "apple"
+    {{"" /*NULL*/, "Corgi", "German Shepherd", "" /*NULL*/, "Golden Retriever"},
+     nulls_at({0, 3})},                  // key = "dog"
+    {{"Seeedless", "Mini"}, no_nulls()}  // key = "water melon"
   };
 
   auto const [out_keys, out_lists] =
     merge_sets(vcol_views{keys1, keys2, keys3}, vcol_views{lists1, lists2, lists3});
   auto const expected_keys  = strings_col{"apple", "banana", "dog", "unknown", "water melon"};
   auto const expected_lists = lists_col{
-    lists_col{"Fuji", "Honey Bee", "Red Delicious"},  // key = "apple"
-    lists_col{"Green", "Yellow"},                     // key = "banana"
-    lists_col{{
-                "Corgi", "German Shepherd", "Golden Retriever", "Poodle", "" /*NULL*/
-              },
-              null_at(4)},                                        // key = "dog"
-    lists_col{{"Polar Bear", "Whale", "" /*NULL*/}, null_at(2)},  // key = "unknown"
-    lists_col{{"Mini", "Seeedless"}, no_nulls()}                  // key = "water melon"
+    {"Fuji", "Honey Bee", "Red Delicious"},  // key = "apple"
+    {"Green", "Yellow"},                     // key = "banana"
+    {{
+       "Corgi", "German Shepherd", "Golden Retriever", "Poodle", "" /*NULL*/
+     },
+     null_at(4)},                                        // key = "dog"
+    {{"Polar Bear", "Whale", "" /*NULL*/}, null_at(2)},  // key = "unknown"
+    {{"Mini", "Seeedless"}, no_nulls()}                  // key = "water melon"
   };
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_keys, *out_keys, verbosity);

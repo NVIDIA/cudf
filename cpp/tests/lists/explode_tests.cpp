@@ -63,7 +63,7 @@ TEST_F(ExplodeTest, Basics)
   //    300                [0, 3]              string2
 
   FCW a{100, 200, 300};
-  LCW b{LCW{1, 2, 7}, LCW{5, 6}, LCW{0, 3}};
+  LCW b{{1, 2, 7}, {5, 6}, {0, 3}};
   cudf::test::strings_column_wrapper c{"string0", "string1", "string2"};
 
   FCW expected_a{100, 100, 100, 200, 200, 300, 300};
@@ -97,7 +97,7 @@ TEST_F(ExplodeTest, SingleNull)
 
   auto first_invalid = cudf::test::iterators::null_at(0);
 
-  LCW a({LCW{null}, LCW{5, 6}, LCW{}, LCW{0, 3}}, first_invalid);
+  LCW a({{null}, {5, 6}, {}, {0, 3}}, first_invalid);
   FCW b({100, 200, 300, 400});
 
   FCW expected_a{5, 6, 0, 3};
@@ -129,7 +129,7 @@ TEST_F(ExplodeTest, Nulls)
   auto valids       = cudf::test::iterators::valids_at_multiples_of(2);
   auto always_valid = cudf::test::iterators::no_nulls();
 
-  LCW a({LCW{1, 2, 7}, LCW{null}, LCW{0, 3}}, valids);
+  LCW a({{1, 2, 7}, {null}, {0, 3}}, valids);
   FCW b({100, 200, 300}, valids);
 
   FCW expected_a({1, 2, 7, 0, 3});
@@ -161,8 +161,7 @@ TEST_F(ExplodeTest, NullsInList)
 
   auto valids = cudf::test::iterators::valids_at_multiples_of(2);
 
-  LCW a{
-    LCW({1, null, 7}, valids), LCW({5, null, 0, null}, valids), LCW{}, LCW({0, null, 8}, valids)};
+  LCW a{{{1, null, 7}, valids}, {{5, null, 0, null}, valids}, {}, {{0, null, 8}, valids}};
   FCW b{100, 200, 300, 400};
 
   FCW expected_a({1, null, 7, 5, null, 0, null, 0, null, 8},
@@ -190,10 +189,10 @@ TEST_F(ExplodeTest, Nested)
   //    [[5, 6]]               200
   //    [[0, 3],[],[5],[2, 1]] 300
 
-  LCW a{LCW{LCW{1, 2}, LCW{7, 6, 5}}, LCW{LCW{5, 6}}, LCW{LCW{0, 3}, LCW{}, LCW{5}, LCW{2, 1}}};
+  LCW a{{{1, 2}, {7, 6, 5}}, {{5, 6}}, {{0, 3}, {}, {5}, {2, 1}}};
   FCW b{100, 200, 300};
 
-  LCW expected_a{LCW{1, 2}, LCW{7, 6, 5}, LCW{5, 6}, LCW{0, 3}, LCW{}, LCW{5}, LCW{2, 1}};
+  LCW expected_a{{1, 2}, {7, 6, 5}, {5, 6}, {0, 3}, {}, {5}, {2, 1}};
   FCW expected_b{100, 100, 200, 300, 300, 300, 300};
 
   cudf::table_view t({a, b});
@@ -222,10 +221,10 @@ TEST_F(ExplodeTest, NestedNulls)
   auto valids       = cudf::test::iterators::valids_at_multiples_of(2);
   auto always_valid = cudf::test::iterators::no_nulls();
 
-  LCW a({LCW{LCW{1, 2}, LCW{7, 6, 5}}, LCW{LCW{null}}, LCW{LCW{0, 3}, LCW{5}, LCW{2, 1}}}, valids);
+  LCW a({{{1, 2}, {7, 6, 5}}, {{null}}, {{0, 3}, {5}, {2, 1}}}, valids);
   FCW b({100, null, 300}, valids);
 
-  LCW expected_a{LCW{1, 2}, LCW{7, 6, 5}, LCW{0, 3}, LCW{5}, LCW{2, 1}};
+  LCW expected_a{{1, 2}, {7, 6, 5}, {0, 3}, {5}, {2, 1}};
   FCW expected_b({100, 100, 300, 300, 300}, always_valid);
 
   cudf::table_view t({a, b});
@@ -253,13 +252,10 @@ TEST_F(ExplodeTest, NullsInNested)
 
   auto valids = cudf::test::iterators::valids_at_multiples_of(2);
 
-  LCW a({LCW{LCW({1, null}, valids), LCW{7, 6, 5}},
-         LCW{LCW{5, 6}},
-         LCW{LCW{0, 3}, LCW{5}, LCW({2, null}, valids)}});
+  LCW a({{{{1, null}, valids}, {7, 6, 5}}, {{5, 6}}, {{0, 3}, {5}, {{2, null}, valids}}});
   FCW b({100, 200, 300});
 
-  LCW expected_a{
-    LCW({1, null}, valids), LCW{7, 6, 5}, LCW{5, 6}, LCW{0, 3}, LCW{5}, LCW({2, null}, valids)};
+  LCW expected_a{{{1, null}, valids}, {7, 6, 5}, {5, 6}, {0, 3}, {5}, {{2, null}, valids}};
   FCW expected_b{100, 100, 200, 300, 300, 300};
 
   cudf::table_view t({a, b});
@@ -287,9 +283,7 @@ TEST_F(ExplodeTest, NullsInNestedDoubleExplode)
 
   auto valids = cudf::test::iterators::valids_at_multiples_of(2);
 
-  LCW a{LCW{LCW({1, null}, valids), LCW{}, LCW{7, 6, 5}},
-        LCW{LCW{5, 6}},
-        LCW{LCW{0, 3}, LCW{5}, LCW({2, null}, valids)}};
+  LCW a{{{{1, null}, valids}, {}, {7, 6, 5}}, {{5, 6}}, {{0, 3}, {5}, {{2, null}, valids}}};
   FCW b{100, 200, 300};
 
   FCW expected_a({1, null, 7, 6, 5, 5, 6, 0, 3, 5, 2, null},
@@ -322,15 +316,12 @@ TEST_F(ExplodeTest, NestedStructs)
 
   auto valids = cudf::test::iterators::valids_at_multiples_of(2);
 
-  LCW a({LCW{LCW({1, null}, valids), LCW{7, 6, 5}},
-         LCW{LCW{5, 6}},
-         LCW{LCW{0, 3}, LCW{5}, LCW({2, null}, valids)}});
+  LCW a({{{{1, null}, valids}, {7, 6, 5}}, {{5, 6}}, {{0, 3}, {5}, {{2, null}, valids}}});
   FCW b1({100, 200, 300});
   cudf::test::strings_column_wrapper b2{"100", "200", "300"};
   cudf::test::structs_column_wrapper b({b1, b2});
 
-  LCW expected_a{
-    LCW({1, null}, valids), LCW{7, 6, 5}, LCW{5, 6}, LCW{0, 3}, LCW{5}, LCW({2, null}, valids)};
+  LCW expected_a{{{1, null}, valids}, {7, 6, 5}, {5, 6}, {0, 3}, {5}, {{2, null}, valids}};
   FCW expected_b1{100, 100, 200, 300, 300, 300};
   cudf::test::strings_column_wrapper expected_b2{"100", "100", "200", "300", "300", "300"};
   cudf::test::structs_column_wrapper expected_b({expected_b1, expected_b2});
@@ -498,15 +489,14 @@ TEST_F(ExplodeTest, SlicedList)
 
   auto valids = cudf::test::iterators::valids_at_multiples_of(2);
 
-  LCW a({LCW{LCW({1, 2}, valids), LCW{7, 6, 5}},
-         LCW{LCW{5, 6}},
-         LCW{LCW{0, 3}, LCW{5}, LCW({2, 1}, valids)},
-         LCW{LCW{8, 3}, LCW{}, LCW({4, 3, 1, 2}, valids)},
-         LCW{LCW{2, 3, 4}, LCW{9, 8}}});
+  LCW a({{{{1, 2}, valids}, {7, 6, 5}},
+         {{5, 6}},
+         {{0, 3}, {5}, {{2, 1}, valids}},
+         {{8, 3}, {}, {{4, 3, 1, 2}, valids}},
+         {{2, 3, 4}, {9, 8}}});
   FCW b({100, 200, 300, 400, 500});
 
-  LCW expected_a{
-    LCW{0, 3}, LCW{5}, LCW({2, null}, valids), LCW{8, 3}, LCW{}, LCW({4, null, 1, null}, valids)};
+  LCW expected_a{{0, 3}, {5}, {{2, null}, valids}, {8, 3}, {}, {{4, null, 1, null}, valids}};
   FCW expected_b{300, 300, 300, 400, 400, 400};
 
   cudf::table_view t({a, b});
@@ -556,7 +546,7 @@ TEST_F(ExplodeOuterTest, Basics)
   //    300                [0, 3]              string2
 
   FCW a{100, 200, 300};
-  LCW b{LCW{1, 2, 7}, LCW{5, 6}, LCW{0, 3}};
+  LCW b{{1, 2, 7}, {5, 6}, {0, 3}};
   cudf::test::strings_column_wrapper c{"string0", "string1", "string2"};
 
   FCW expected_a{100, 100, 100, 200, 200, 300, 300};
@@ -589,7 +579,7 @@ TEST_F(ExplodeOuterTest, SingleNull)
 
   auto first_invalid = cudf::test::iterators::null_at(0);
 
-  LCW a({LCW{null}, LCW{5, 6}, LCW{}, LCW{0, 3}}, first_invalid);
+  LCW a({{null}, {5, 6}, {}, {0, 3}}, first_invalid);
   FCW b({100, 200, 300, 400});
 
   FCW expected_a{{null, 5, 6, 0, 0, 3}, {false, true, true, false, true, true}};
@@ -618,7 +608,7 @@ TEST_F(ExplodeOuterTest, Nulls)
 
   auto valids = cudf::test::iterators::valids_at_multiples_of(2);
 
-  LCW a({LCW{1, 2, 7}, LCW{null}, LCW{0, 3}}, valids);
+  LCW a({{1, 2, 7}, {null}, {0, 3}}, valids);
   FCW b({100, null, 300}, valids);
 
   FCW expected_a({1, 2, 7, null, 0, 3}, {true, true, true, false, true, true});
@@ -648,7 +638,7 @@ TEST_F(ExplodeOuterTest, AllNulls)
 
   auto non_valid = cudf::test::iterators::all_nulls();
 
-  LCW a({LCW{null}, LCW{null}, LCW{null}}, non_valid);
+  LCW a({{null}, {null}, {null}}, non_valid);
   FCW b({100, 200, 300});
 
   FCW expected_a({null, null, null}, {false, false, false});
@@ -680,7 +670,7 @@ TEST_F(ExplodeOuterTest, SequentialNulls)
 
   auto third_invalid = cudf::test::iterators::null_at(2);
 
-  LCW a{LCW({1, 2, null}, third_invalid), LCW{3, 4}, LCW{}, LCW{}, LCW{5, 6, 7}};
+  LCW a{{{1, 2, null}, third_invalid}, {3, 4}, {}, {}, {5, 6, 7}};
   FCW b{100, 200, 300, 400, 500};
 
   FCW expected_a({1, 2, null, 3, 4, null, null, 5, 6, 7},
@@ -713,7 +703,7 @@ TEST_F(ExplodeOuterTest, MoreEmptyThanData)
 
   constexpr auto null = 0;
 
-  LCW a{LCW{1, 2}, LCW{}, LCW{}, LCW{}, LCW{}, LCW{3}};
+  LCW a{{1, 2}, {}, {}, {}, {}, {3}};
   FCW b{100, 200, 300, 400, 500, 600};
 
   FCW expected_a({1, 2, null, null, null, null, 3}, {true, true, false, false, false, false, true});
@@ -743,7 +733,7 @@ TEST_F(ExplodeOuterTest, TrailingEmptys)
 
   constexpr auto null = 0;
 
-  LCW a{LCW{1, 2}, LCW{}, LCW{}, LCW{}, LCW{}};
+  LCW a{{1, 2}, {}, {}, {}, {}};
   FCW b{100, 200, 300, 400, 500};
 
   FCW expected_a({1, 2, null, null, null, null}, {true, true, false, false, false, false});
@@ -775,7 +765,7 @@ TEST_F(ExplodeOuterTest, LeadingNulls)
 
   auto valids = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i == 4; });
 
-  LCW a({LCW{null}, LCW{null}, LCW{null}, LCW{null}, LCW{1, 2}}, valids);
+  LCW a({{null}, {null}, {null}, {null}, {1, 2}}, valids);
   FCW b{100, 200, 300, 400, 500};
 
   FCW expected_a({null, null, null, null, 1, 2}, {false, false, false, false, true, true});
@@ -806,8 +796,7 @@ TEST_F(ExplodeOuterTest, NullsInList)
 
   auto valids = cudf::test::iterators::valids_at_multiples_of(2);
 
-  LCW a{
-    LCW({1, null, 7}, valids), LCW({5, null, 0, null}, valids), LCW{}, LCW({0, null, 8}, valids)};
+  LCW a{{{1, null, 7}, valids}, {{5, null, 0, null}, valids}, {}, {{0, null, 8}, valids}};
   FCW b{100, 200, 300, 400};
 
   FCW expected_a({1, null, 7, 5, null, 0, null, null, 0, null, 8},
@@ -836,10 +825,10 @@ TEST_F(ExplodeOuterTest, Nested)
   //    [[5, 6]]               200
   //    [[0, 3],[],[5],[2, 1]] 300
 
-  LCW a{LCW{LCW{1, 2}, LCW{7, 6, 5}}, LCW{LCW{5, 6}}, LCW{LCW{0, 3}, LCW{}, LCW{5}, LCW{2, 1}}};
+  LCW a{{{1, 2}, {7, 6, 5}}, {{5, 6}}, {{0, 3}, {}, {5}, {2, 1}}};
   FCW b{100, 200, 300};
 
-  LCW expected_a{LCW{1, 2}, LCW{7, 6, 5}, LCW{5, 6}, LCW{0, 3}, LCW{}, LCW{5}, LCW{2, 1}};
+  LCW expected_a{{1, 2}, {7, 6, 5}, {5, 6}, {0, 3}, {}, {5}, {2, 1}};
   FCW expected_b{100, 100, 200, 300, 300, 300, 300};
 
   cudf::table_view t({a, b});
@@ -867,12 +856,11 @@ TEST_F(ExplodeOuterTest, NestedNulls)
 
   auto valids = cudf::test::iterators::valids_at_multiples_of(2);
 
-  LCW a({LCW{LCW{1, 2}, LCW{7, 6, 5}}, LCW{LCW{null}}, LCW{LCW{0, 3}, LCW{5}, LCW{2, 1}}}, valids);
+  LCW a({{{1, 2}, {7, 6, 5}}, {{null}}, {{0, 3}, {5}, {2, 1}}}, valids);
   FCW b({100, 200, 300});
 
   auto expected_valids = cudf::test::iterators::null_at(2);
-  LCW expected_a({LCW{1, 2}, LCW{7, 6, 5}, LCW{null}, LCW{0, 3}, LCW{5}, LCW{2, 1}},
-                 expected_valids);
+  LCW expected_a({{1, 2}, {7, 6, 5}, {null}, {0, 3}, {5}, {2, 1}}, expected_valids);
   FCW expected_b({100, 100, 200, 300, 300, 300});
   cudf::table_view t({a, b});
   cudf::table_view expected({expected_a, expected_b});
@@ -898,13 +886,10 @@ TEST_F(ExplodeOuterTest, NullsInNested)
 
   auto valids = cudf::test::iterators::valids_at_multiples_of(2);
 
-  LCW a({LCW{LCW({1, null}, valids), LCW{7, 6, 5}},
-         LCW{LCW{5, 6}},
-         LCW{LCW{0, 3}, LCW{5}, LCW({2, null}, valids)}});
+  LCW a({{{{1, null}, valids}, {7, 6, 5}}, {{5, 6}}, {{0, 3}, {5}, {{2, null}, valids}}});
   FCW b({100, 200, 300});
 
-  LCW expected_a{
-    LCW({1, null}, valids), LCW{7, 6, 5}, LCW{5, 6}, LCW{0, 3}, LCW{5}, LCW({2, null}, valids)};
+  LCW expected_a{{{1, null}, valids}, {7, 6, 5}, {5, 6}, {0, 3}, {5}, {{2, null}, valids}};
   FCW expected_b{100, 100, 200, 300, 300, 300};
 
   cudf::table_view t({a, b});
@@ -932,9 +917,7 @@ TEST_F(ExplodeOuterTest, NullsInNestedDoubleExplode)
 
   auto valids = cudf::test::iterators::valids_at_multiples_of(2);
 
-  LCW a{LCW{LCW({1, null}, valids), LCW{}, LCW{7, 6, 5}},
-        LCW{LCW{5, 6}},
-        LCW{LCW{0, 3}, LCW{5}, LCW({2, null}, valids)}};
+  LCW a{{{{1, null}, valids}, {}, {7, 6, 5}}, {{5, 6}}, {{0, 3}, {5}, {{2, null}, valids}}};
   FCW b{100, 200, 300};
 
   FCW expected_a({1, null, null, 7, 6, 5, 5, 6, 0, 3, 5, 2, null},
@@ -969,15 +952,12 @@ TEST_F(ExplodeOuterTest, NestedStructs)
 
   auto valids = cudf::test::iterators::valids_at_multiples_of(2);
 
-  LCW a({LCW{LCW({1, null}, valids), LCW{7, 6, 5}},
-         LCW{LCW{5, 6}},
-         LCW{LCW{0, 3}, LCW{5}, LCW({2, null}, valids)}});
+  LCW a({{{{1, null}, valids}, {7, 6, 5}}, {{5, 6}}, {{0, 3}, {5}, {{2, null}, valids}}});
   FCW b1({100, 200, 300});
   cudf::test::strings_column_wrapper b2{"100", "200", "300"};
   cudf::test::structs_column_wrapper b({b1, b2});
 
-  LCW expected_a{
-    LCW({1, null}, valids), LCW{7, 6, 5}, LCW{5, 6}, LCW{0, 3}, LCW{5}, LCW({2, null}, valids)};
+  LCW expected_a{{{1, null}, valids}, {7, 6, 5}, {5, 6}, {0, 3}, {5}, {{2, null}, valids}};
   FCW expected_b1{100, 100, 200, 300, 300, 300};
   cudf::test::strings_column_wrapper expected_b2{"100", "100", "200", "300", "300", "300"};
   cudf::test::structs_column_wrapper expected_b({expected_b1, expected_b2});
@@ -1147,15 +1127,14 @@ TEST_F(ExplodeOuterTest, SlicedList)
 
   auto valids = cudf::test::iterators::valids_at_multiples_of(2);
 
-  LCW a({LCW{LCW({1, null}, valids), LCW{7, 6, 5}},
-         LCW{LCW{5, 6}},
-         LCW{LCW{0, 3}, LCW{5}, LCW({2, null}, valids)},
-         LCW{LCW{8, 3}, LCW{}, LCW({4, null, 1, null}, valids)},
-         LCW{LCW{2, 3, 4}, LCW{9, 8}}});
+  LCW a({{{{1, null}, valids}, {7, 6, 5}},
+         {{5, 6}},
+         {{0, 3}, {5}, {{2, null}, valids}},
+         {{8, 3}, {}, {{4, null, 1, null}, valids}},
+         {{2, 3, 4}, {9, 8}}});
   FCW b({100, 200, 300, 400, 500});
 
-  LCW expected_a{
-    LCW{0, 3}, LCW{5}, LCW({2, null}, valids), LCW{8, 3}, LCW{}, LCW({4, null, 1, null}, valids)};
+  LCW expected_a{{0, 3}, {5}, {{2, null}, valids}, {8, 3}, {}, {{4, null, 1, null}, valids}};
   FCW expected_b{300, 300, 300, 400, 400, 400};
 
   cudf::table_view t({a, b});

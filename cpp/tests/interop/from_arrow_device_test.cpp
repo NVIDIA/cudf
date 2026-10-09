@@ -223,8 +223,8 @@ TYPED_TEST(FromArrowDeviceTestDurationsTest, DurationTable)
 TEST_F(FromArrowDeviceTest, NestedList)
 {
   auto valids = cudf::test::iterators::nulls_at_multiples_of(3);
-  auto col    = cudf::test::lists_column_wrapper<int64_t>(
-    {{{{{1, 2}, valids}, {{3, 4}, valids}, {5}}, {{6}, {{7, 8, 9}, valids}}}, valids});
+  using LCW   = cudf::test::lists_column_wrapper<int64_t>;
+  auto col = LCW({{{{1, 2}, valids}, {{3, 4}, valids}, {5}}, {{6}, {{7, 8, 9}, valids}}}, valids);
   cudf::table_view expected_table_view({col});
 
   nanoarrow::UniqueSchema input_schema;
@@ -275,7 +275,6 @@ TEST_F(FromArrowDeviceTest, NestedList)
 }
 
 namespace {
-
 // A fixed_size_list array has only a validity buffer; there is no offsets buffer to wire up.
 void populate_fixed_size_list_from_col(ArrowArray* arr, cudf::lists_column_view view)
 {
@@ -539,9 +538,8 @@ TEST_F(FromArrowDeviceTest, StructColumn)
   auto int_col2 =
     cudf::test::fixed_width_column_wrapper<int32_t, int32_t>{{12, 24, 47}, {1, 0, 1}}.release();
   auto bool_col = cudf::test::fixed_width_column_wrapper<bool>{{true, true, false}}.release();
-  auto list_col = cudf::test::lists_column_wrapper<int64_t>(
-                    {{{1, 2}, {3, 4}, {5}}, {{{6}}}, {{7}, {8, 9}}})  // NOLINT
-                    .release();
+  using LCW     = cudf::test::lists_column_wrapper<int64_t>;
+  auto list_col = LCW{{{1, 2}, {3, 4}, {5}}, {{6}}, {{7}, {8, 9}}}.release();
   vector_of_columns cols2;
   cols2.push_back(std::move(str_col2));
   cols2.push_back(std::move(int_col2));
@@ -804,11 +802,19 @@ TEST_F(FromArrowDeviceTest, StringViewType)
                                 input.length * sizeof(ArrowBinaryView),
                                 cudaMemcpyDefault,
                                 stream.get()));
-  auto variadics     = std::vector<rmm::device_buffer>();
+  auto variadics     = std::vector<cuda::device_buffer<char>>();
   auto variadic_ptrs = std::vector<char*>();
   for (auto i = 0L; i < view.n_variadic_buffers; ++i) {
-    variadics.emplace_back(view.variadic_buffers[i], view.variadic_buffer_sizes[i], stream);
-    variadic_ptrs.push_back(static_cast<char*>(variadics.back().data()));
+    auto const* const data = static_cast<char const*>(view.variadic_buffers[i]);
+    if (view.variadic_buffer_sizes[i] == 0) {
+      variadics.emplace_back(stream, cudf::get_current_device_resource_ref());
+    } else {
+      variadics.emplace_back(stream,
+                             cudf::get_current_device_resource_ref(),
+                             data,
+                             data + view.variadic_buffer_sizes[i]);
+    }
+    variadic_ptrs.push_back(variadics.back().data());
   }
 
   stream.sync();
@@ -906,11 +912,19 @@ TEST_F(FromArrowDeviceTest, StringViewTypeWithProducerOwnedPrivateData)
                                 input->length * sizeof(ArrowBinaryView),
                                 cudaMemcpyDefault,
                                 stream.get()));
-  auto variadics     = std::vector<rmm::device_buffer>();
+  auto variadics     = std::vector<cuda::device_buffer<char>>();
   auto variadic_ptrs = std::vector<char*>();
   for (auto i = 0L; i < view.n_variadic_buffers; ++i) {
-    variadics.emplace_back(view.variadic_buffers[i], view.variadic_buffer_sizes[i], stream);
-    variadic_ptrs.push_back(static_cast<char*>(variadics.back().data()));
+    auto const* const data = static_cast<char const*>(view.variadic_buffers[i]);
+    if (view.variadic_buffer_sizes[i] == 0) {
+      variadics.emplace_back(stream, cudf::get_current_device_resource_ref());
+    } else {
+      variadics.emplace_back(stream,
+                             cudf::get_current_device_resource_ref(),
+                             data,
+                             data + view.variadic_buffer_sizes[i]);
+    }
+    variadic_ptrs.push_back(variadics.back().data());
   }
   stream.sync();
 

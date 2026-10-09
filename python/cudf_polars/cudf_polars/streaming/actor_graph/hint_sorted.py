@@ -167,7 +167,8 @@ async def hint_sorted_actor(
         chs_aux=(ch_replay,),
         trace_ir=ir,
         ir_context=ir_context,
-    ):
+    ) as actor_scope:
+        ir_context = actor_scope.require_ir_context()
         metadata = await recv_metadata(ch_in, context)
         metadata, ch_forward = await extract_hint_sorted_metadata(
             context,

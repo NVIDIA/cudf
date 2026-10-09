@@ -520,8 +520,12 @@ class data_profile_builder {
    *
    * Characters are uniformly distributed in the range [lower, upper].
    * Values > 126 will produce multi-byte UTF-8 characters.
+   * The `create_ascii_string_column` function limits the upper bound to 126.
+   * Generating distinct strings (cardinality >= number of rows) appends the row index as
+   * decimal digits, so the range must include '0'-'9' in that case.
    *
-   * @param lower Lower bound of character range (inclusive, must be >= 32)
+   * @param lower Lower bound of character range (inclusive, must be >= 32 and < 127 so that
+   *              strings can always end with a single-byte character)
    * @param upper Upper bound of character range (inclusive)
    * @return this for chaining
    */
@@ -605,7 +609,11 @@ std::unique_ptr<cudf::column> create_string_column(cudf::size_type num_rows,
                                                    int32_t hit_rate);
 
 /**
- * @brief Generates an string column filled with ASCII characters only
+ * @brief Generates a string column filled with ASCII characters only
+ *
+ * Only the string length distribution and null probability of the profile are used.
+ * The cardinality and average run length settings are ignored, so every row is
+ * generated independently.
  *
  * @param profile Data profile for the output column
  * @param num_rows Number of rows in the output column

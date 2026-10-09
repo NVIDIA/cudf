@@ -180,7 +180,7 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_ParquetChunkedReader_close(JNIEnv* en
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    delete reinterpret_cast<cudf::io::chunked_parquet_reader*>(handle);
+    cudf::jni::safe_delete<cudf::io::chunked_parquet_reader>(handle);
   }
   JNI_CATCH(env, );
 }
@@ -190,7 +190,7 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_ParquetChunkedReader_destroyMultiHost
 {
   JNI_NULL_CHECK(env, handle, "handle is null", );
 
-  JNI_TRY { delete reinterpret_cast<cudf::jni::multi_host_buffer_source*>(handle); }
+  JNI_TRY { cudf::jni::safe_delete<cudf::jni::multi_host_buffer_source>(handle); }
   JNI_CATCH(env, );
 }
 
@@ -346,7 +346,7 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_ORCChunkedReader_close(JNIEnv* env, j
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    delete reinterpret_cast<cudf::io::chunked_orc_reader*>(handle);
+    cudf::jni::safe_delete<cudf::io::chunked_orc_reader>(handle);
   }
   JNI_CATCH(env, );
 }

@@ -25,7 +25,6 @@
 #include <cuda/iterator>
 #include <cuda/std/tuple>
 #include <cuda/stream>
-#include <thrust/host_vector.h>
 #include <thrust/transform.h>
 
 #include <fstream>
@@ -153,7 +152,8 @@ class bgzip_data_chunk_reader : public data_chunk_reader {
                                    d_decompression_results,
                                    max_decompressed_size,
                                    decompressed_size(),
-                                   stream);
+                                   stream,
+                                   cudf::get_current_device_resource_ref());
       is_decompressed = true;
     }
 

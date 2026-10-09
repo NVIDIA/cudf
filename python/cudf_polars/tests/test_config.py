@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import kvikio
 import kvikio.defaults
@@ -48,8 +48,12 @@ from cudf_polars.utils.config import (
     resolve_kvikio_reactor_dispatch,
     resolve_kvikio_remote_io_backend,
     resolve_kvikio_task_size,
+    resolve_quent_context,
 )
 from cudf_polars.utils.cuda_stream import get_cuda_stream
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def test_polars_verbose_warns(engine: pl.GPUEngine, monkeypatch: pytest.MonkeyPatch):
@@ -622,6 +626,26 @@ def test_quent_context_from_env_disabled(monkeypatch: pytest.MonkeyPatch) -> Non
         assert config.executor.quent_context is None
 
 
+def test_resolve_quent_context_preserves_explicit_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CUDF_POLARS__EXECUTOR__QUENT_CONTEXT", "1")
+    assert resolve_quent_context({}) is not None
+    assert resolve_quent_context({"quent_context": None}) is None
+
+
+def test_quent_output_root_from_env(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    output_root = tmp_path / "quent"
+    with monkeypatch.context() as m:
+        m.setenv("CUDF_POLARS__EXECUTOR__QUENT_CONTEXT", "1")
+        m.setenv("CUDF_POLARS__EXECUTOR__QUENT_OUTPUT_ROOT", str(output_root))
+        config = ConfigOptions.from_polars_engine(pl.GPUEngine())
+        assert config.executor.quent_context is not None
+        assert config.executor.quent_context.output_root == str(output_root)
+
+
 def test_quent_context_from_env_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     with monkeypatch.context() as m:
         m.setenv("CUDF_POLARS__EXECUTOR__QUENT_CONTEXT", "foo")
@@ -634,7 +658,7 @@ def test_hash_streaming_executor() -> None:
     config = ConfigOptions.from_polars_engine(
         pl.GPUEngine(
             executor="streaming",
-            executor_options={"quent_context": cudf_polars.quent.QuentContext()},
+            executor_options={"quent_context": cudf_polars.quent.QuentConfig()},
         )
     )
     assert hash(config.executor) == hash(config.executor)
@@ -891,6 +915,13 @@ def test_validate_dynamic_planning() -> None:
                 executor_options={"dynamic_planning": {"sample_chunk_count": object()}},
             )
         )
+    with pytest.raises(TypeError, match="infer_ordering must be"):
+        ConfigOptions.from_polars_engine(
+            pl.GPUEngine(
+                executor="streaming",
+                executor_options={"dynamic_planning": {"infer_ordering": object()}},
+            )
+        )
 
 
 def test_dynamic_planning_sample_chunk_count_min() -> None:
@@ -909,6 +940,7 @@ def test_dynamic_planning_defaults() -> None:
     # Dynamic planning is enabled by default
     assert config.executor.dynamic_planning is not None
     assert config.executor.dynamic_planning.sample_chunk_count == 2
+    assert config.executor.dynamic_planning.infer_ordering is True
     assert config.executor.join_filter_pushdown is None
 
 
@@ -931,6 +963,26 @@ def test_dynamic_planning_sample_chunk_count_from_env(
     assert config.executor.name == "streaming"
     assert config.executor.dynamic_planning is not None
     assert config.executor.dynamic_planning.sample_chunk_count == 3
+
+
+def test_dynamic_planning_infer_ordering_from_options() -> None:
+    config = ConfigOptions.from_polars_engine(
+        pl.GPUEngine(
+            executor="streaming",
+            executor_options={"dynamic_planning": {"infer_ordering": False}},
+        )
+    )
+    assert config.executor.dynamic_planning is not None
+    assert config.executor.dynamic_planning.infer_ordering is False
+
+
+def test_dynamic_planning_infer_ordering_from_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CUDF_POLARS__EXECUTOR__DYNAMIC_PLANNING__INFER_ORDERING", "0")
+    config = ConfigOptions.from_polars_engine(pl.GPUEngine())
+    assert config.executor.dynamic_planning is not None
+    assert config.executor.dynamic_planning.infer_ordering is False
 
 
 def test_join_filter_pushdown_options_from_env(

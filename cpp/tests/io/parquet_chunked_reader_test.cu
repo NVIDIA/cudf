@@ -26,6 +26,7 @@
 #include <cudf/io/data_sink.hpp>
 #include <cudf/io/datasource.hpp>
 #include <cudf/io/parquet.hpp>
+#include <cudf/io/parquet_metadata.hpp>
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/table/table.hpp>
@@ -42,6 +43,7 @@
 #include <fstream>
 #include <numeric>
 #include <optional>
+#include <random>
 #include <ranges>
 #include <type_traits>
 
@@ -749,8 +751,7 @@ TEST_F(ParquetChunkedReaderTest, TestChunkedReadWithListsNoNulls)
     // 20001 offsets :   80004  bytes
     // 30000 ints    :   120000 bytes
     // total         :   200004 bytes
-    auto const template_lists = int32s_lists_col{
-      int32s_lists_col{}, int32s_lists_col{0}, int32s_lists_col{1, 2}, int32s_lists_col{3, 4, 5}};
+    auto const template_lists = int32s_lists_col{{}, {0}, {1, 2}, {3, 4, 5}};
 
     auto const gather_values =
       std::views::iota(int32_t{0}) | std::views::transform([&](int32_t i) { return i % 4; });
@@ -759,10 +760,7 @@ TEST_F(ParquetChunkedReaderTest, TestChunkedReadWithListsNoNulls)
     input_columns.emplace_back(
       std::move(cudf::gather(cudf::table_view{{template_lists}}, gather_map)->release().front()));
 
-    auto const bools_lists = bools_lists_col{bools_lists_col{},
-                                             bools_lists_col{false},
-                                             bools_lists_col{false, true},
-                                             bools_lists_col{true, true, false}};
+    auto const bools_lists = bools_lists_col{{}, {false}, {false, true}, {true, true, false}};
     input_columns.emplace_back(
       std::move(cudf::gather(cudf::table_view{{bools_lists}}, gather_map)->release().front()));
 
@@ -839,10 +837,10 @@ TEST_F(ParquetChunkedReaderTest, TestChunkedReadWithListsHavingNulls)
     // total              :   142504 bytes
     auto const template_lists =
       int32s_lists_col{// these will all be null
-                       int32s_lists_col{},
-                       int32s_lists_col{0},
-                       int32s_lists_col{1, 2},
-                       int32s_lists_col{3, 4, 5, 6, 7, 8, 9} /* this list will be nullified out */};
+                       {},
+                       {0},
+                       {1, 2},
+                       {3, 4, 5, 6, 7, 8, 9} /* this list will be nullified out */};
     auto const gather_values =
       std::views::iota(int32_t{0}) | std::views::transform([&](int32_t i) { return i % 4; });
     auto const gather_iter = gather_values.begin();
@@ -852,11 +850,10 @@ TEST_F(ParquetChunkedReaderTest, TestChunkedReadWithListsHavingNulls)
 
     auto const bools_lists = bools_lists_col{
       // these will all be null
-      bools_lists_col{},
-      bools_lists_col{false},
-      bools_lists_col{false, true},
-      bools_lists_col{
-        true, true, false, true, true, false, false} /* this list will be nullified out */};
+      {},
+      {false},
+      {false, true},
+      {true, true, false, true, true, false, false} /* this list will be nullified out */};
     input_columns.emplace_back(
       std::move(cudf::gather(cudf::table_view{{bools_lists}}, gather_map)->release().front()));
 
@@ -940,8 +937,7 @@ TEST_F(ParquetChunkedReaderTest, TestChunkedReadWithStructsOfLists)
       auto const str_iter = str_values.begin();
       child_columns.emplace_back(strings_col{str_iter, str_iter + num_rows}.release());
 
-      auto const template_lists = int32s_lists_col{
-        int32s_lists_col{}, int32s_lists_col{0}, int32s_lists_col{0, 1}, int32s_lists_col{0, 1, 2}};
+      auto const template_lists = int32s_lists_col{{}, {0}, {0, 1}, {0, 1, 2}};
       auto const gather_values =
         std::views::iota(int32_t{0}) | std::views::transform([&](int32_t i) { return i % 4; });
       auto const gather_iter = gather_values.begin();
@@ -1349,6 +1345,55 @@ TEST_F(ParquetChunkedReaderInputLimitConstrainedTest, MixedColumns)
 }
 
 struct ParquetChunkedReaderInputLimitTest : public cudf::test::BaseFixture {};
+
+TEST_F(ParquetChunkedReaderInputLimitTest, V2PagesWithLevels)
+{
+  tmp_env_var const nvcomp{nvcomp_policy_env_var, "ALWAYS"};
+  tmp_env_var const host_decomp{host_decomp_env_var, "OFF"};
+  constexpr cudf::size_type num_rows    = 20'000;
+  constexpr cudf::size_type page_rows   = 5'000;
+  constexpr cudf::size_type rows_per_rg = 10'000;
+  auto values = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 25; });
+  auto valid =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 10 != 0; });
+  auto const mixed_valid = cudf::detail::make_counting_transform_iterator(0, [](auto i) {
+    auto const page = i / page_rows;
+    return (page % 2 == 1) && (i % 10 != 0);
+  });
+  int64s_col mixed(values, values + num_rows, mixed_valid);
+  int64s_col flat(values, values + num_rows, valid);
+  int64s_col all_null(values, values + num_rows, cuda::make_constant_iterator(false));
+  int32s_col child(values, values + 2 * num_rows, valid);
+  auto offsets = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return 2 * i; });
+  int32s_col list_offsets(offsets, offsets + num_rows + 1);
+  auto const lists =
+    cudf::make_lists_column(num_rows,
+                            list_offsets.release(),
+                            child.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+  auto const expected = cudf::table_view{{flat, all_null, mixed, lists->view()}};
+  auto const filepath = temp_env->get_temp_filepath("ScratchLevels.parquet");
+  auto const options =
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
+      .compression(cudf::io::compression_type::ZSTD)
+      .write_v2_headers(true)
+      // Per-page compression decisions: lets an all-null page in a ZSTD chunk stay uncompressed.
+      .page_level_compression(true)
+      .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+      .max_page_size_rows(page_rows)
+      .max_page_fragment_size(page_rows)
+      .row_group_size_rows(rows_per_rg)
+      .build();
+  cudf::io::write_parquet(options);
+
+  auto const [result, num_chunks] = chunked_read(filepath, 0, 32'768);
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected, result->view());
+  // With a 32 KiB input pass limit and two row groups of mixed-compression V2 pages, the reader
+  // must break the file into more than one limited pass; a single chunk would mean the pass
+  // limit was ignored (previously masked by the scratch-cost bug).
+  EXPECT_GT(num_chunks, 1);
+}
 
 TEST_F(ParquetChunkedReaderInputLimitTest, ProjectedColumnsReducePasses)
 {

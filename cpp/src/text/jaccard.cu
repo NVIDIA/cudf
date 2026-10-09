@@ -24,15 +24,15 @@
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
-#include <cub/cub.cuh>
+#include <cub/device/device_segmented_sort.cuh>
+#include <cub/warp/warp_reduce.cuh>
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/functional>
 #include <cuda/std/iterator>
 #include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
-#include <thrust/reduce.h>
-#include <thrust/scan.h>
 #include <thrust/sequence.h>
 #include <thrust/transform.h>
 
@@ -307,11 +307,12 @@ void segmented_sort(uint32_t const* input,
                     int64_t const* offsets,
                     cuda::stream_ref stream)
 {
-  rmm::device_buffer temp;
+  cuda::device_buffer<std::byte> temp{stream, cudf::get_current_device_resource_ref()};
   std::size_t temp_bytes = 0;
   cub::DeviceSegmentedSort::SortKeys(
     temp.data(), temp_bytes, input, output, items, segments, offsets, offsets + 1, stream.get());
-  temp = rmm::device_buffer(temp_bytes, stream);
+  temp = cuda::device_buffer<std::byte>(
+    stream, cudf::get_current_device_resource_ref(), temp_bytes, cuda::no_init);
   cub::DeviceSegmentedSort::SortKeys(
     temp.data(), temp_bytes, input, output, items, segments, offsets, offsets + 1, stream.get());
 }

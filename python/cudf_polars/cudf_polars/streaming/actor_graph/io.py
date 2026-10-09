@@ -32,6 +32,9 @@ from cudf_polars.streaming.actor_graph.dispatch import (
     ir_context_for_node,
 )
 from cudf_polars.streaming.actor_graph.nodes import define_actor, shutdown_on_error
+from cudf_polars.streaming.actor_graph.scan_ordering import (
+    parquet_metadata_ordering,
+)
 from cudf_polars.streaming.actor_graph.tracing import send_chunk
 from cudf_polars.streaming.actor_graph.utils import (
     ChannelManager,
@@ -65,6 +68,7 @@ if TYPE_CHECKING:
         PartitionInfo,
     )
     from cudf_polars.streaming.io import ScanTask
+    from cudf_polars.streaming.partitioning_requests import PartitioningRequest
     from cudf_polars.utils.config import MaxConcurrentIOTasks
 
 
@@ -203,7 +207,9 @@ async def dataframescan_node(
         chs_out=(ch_out,),
         trace_ir=ir,
         ir_context=ir_context,
-    ) as tracer:
+    ) as actor_scope:
+        tracer = actor_scope.tracer
+        ir_context = actor_scope.require_ir_context()
         # Find local partition count.
         nrows = ir.df.shape()[0]
         global_count = math.ceil(nrows / rows_per_partition) if nrows > 0 else 0
@@ -310,14 +316,13 @@ async def dataframescan_node(
                 )
             await ch_out.drain(context)
 
-        async with (
-            shutdown_on_error(
-                context,
-                chs_aux=lineariser.input_channels,
-                trace_ir=ir,
-                ir_context=ir_context,
-            ),
-        ):
+        async with shutdown_on_error(
+            context,
+            chs_aux=lineariser.input_channels,
+            trace_ir=ir,
+            ir_context=ir_context,
+        ) as inner_actor_scope:
+            ir_context = inner_actor_scope.require_ir_context()
             await gather_in_task_group(
                 lineariser.drain(),
                 *(_producer(i) for i in range(num_producers)),
@@ -459,7 +464,9 @@ async def python_scan_node(
         chs_out=(ch_out,),
         trace_ir=ir,
         ir_context=ir_context,
-    ) as tracer:
+    ) as actor_scope:
+        tracer = actor_scope.tracer
+        ir_context = actor_scope.require_ir_context()
         rank_aware_source = _find_rank_aware_source(ir.options[0])
         if rank_aware_source is None and comm.nranks > 1 and comm.rank != 0:
             # A plain (rank-unaware) source runs on rank 0 only; other ranks
@@ -625,10 +632,15 @@ async def read_chunk(
 @define_actor()
 async def scan_node(
     context: Context,
+    comm: Communicator,
     ir: StreamingScan,
     ir_context: IRExecutionContext,
     ch_out: Channel[TableChunk],
     *,
+    global_chunk_count: int,
+    partitioning_requests: tuple[PartitioningRequest, ...],
+    collective_id: int,
+    infer_ordering: bool,
     num_producers: int,
     estimated_chunk_bytes: int,
 ) -> None:
@@ -639,12 +651,22 @@ async def scan_node(
     ----------
     context
         The rapidsmpf context.
+    comm
+        The communicator.
     ir
         The Scan node.
     ir_context
         The execution context for the IR node.
     ch_out
         The output Channel[TableChunk].
+    global_chunk_count
+        Global number of scan chunks.
+    partitioning_requests
+        Downstream partitioning requests for this scan node.
+    collective_id
+        Collective ID for the Parquet bounds all-gather.
+    infer_ordering
+        Whether to infer scan ordering from input metadata when possible.
     num_producers
         The number of producers to use for the scan node.
     estimated_chunk_bytes
@@ -658,13 +680,30 @@ async def scan_node(
         chs_out=(ch_out,),
         trace_ir=ir,
         ir_context=ir_context,
-    ) as tracer:
+    ) as actor_scope:
+        tracer = actor_scope.tracer
+        ir_context = actor_scope.require_ir_context()
         # Send basic metadata
         ir_context = dataclasses.replace(ir_context, tracer=tracer)
+        partitioning = (
+            await parquet_metadata_ordering(
+                context,
+                comm,
+                ir,
+                global_chunk_count,
+                partitioning_requests,
+                ir_context,
+                collective_id,
+            )
+            if infer_ordering and ir.base_scan.typ == "parquet"
+            else None
+        )
+        if partitioning is not None and tracer is not None:
+            tracer.decision = "parquet_ordering"
         await send_metadata(
             ch_out,
             context,
-            ChannelMetadata(local_count=len(tasks)),
+            ChannelMetadata(local_count=len(tasks), partitioning=partitioning),
         )
 
         # If there is nothing to scan, drain the channel and return
@@ -714,14 +753,13 @@ async def scan_node(
                 )
             await ch_out.drain(context)
 
-        async with (
-            shutdown_on_error(
-                context,
-                chs_aux=lineariser.input_channels,
-                trace_ir=ir,
-                ir_context=ir_context,
-            ),
-        ):
+        async with shutdown_on_error(
+            context,
+            chs_aux=lineariser.input_channels,
+            trace_ir=ir,
+            ir_context=ir_context,
+        ) as inner_actor_scope:
+            ir_context = inner_actor_scope.require_ir_context()
             await gather_in_task_group(
                 lineariser.drain(),
                 *(_producer(i) for i in range(num_producers)),
@@ -744,6 +782,7 @@ def _(
 
     assert partition_info.io_plan is not None, "Scan node must have a partition plan"
     plan: IOPartitionPlan = partition_info.io_plan
+    dynamic_planning = executor.dynamic_planning
 
     ch_out = channels[ir].reserve_input_slot()
     nodes: dict[IR, list[Any]] = {}
@@ -751,9 +790,16 @@ def _(
     nodes[ir] = [
         scan_node(
             rec.state["context"],
+            rec.state["comm"],
             ir,
             ir_context,
             ch_out,
+            global_chunk_count=partition_info.count,
+            partitioning_requests=rec.state["partitioning_requests"].get(ir, ()),
+            collective_id=rec.state["collective_id_map"][ir][0],
+            infer_ordering=(
+                dynamic_planning is not None and dynamic_planning.infer_ordering
+            ),
             num_producers=num_producers,
             estimated_chunk_bytes=(
                 plan.estimated_chunk_bytes or executor.target_partition_size
@@ -809,7 +855,8 @@ async def sink_node(
         chs_out=(ch_out,),
         ir_context=ir_context,
         trace_ir=ir,
-    ):
+    ) as actor_scope:
+        ir_context = actor_scope.require_ir_context()
         metadata = await recv_metadata(ch_in, context)
         await send_metadata(
             ch_out, context, ChannelMetadata(local_count=1, duplicated=True)

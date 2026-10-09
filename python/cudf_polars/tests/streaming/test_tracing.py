@@ -11,6 +11,7 @@ import subprocess
 import sys
 import textwrap
 from typing import TYPE_CHECKING
+from unittest.mock import Mock
 
 import pytest
 
@@ -24,7 +25,11 @@ from rapidsmpf.streaming.core.message import Message
 from cudf_polars.containers import DataFrame
 from cudf_polars.dsl.ir import Empty
 from cudf_polars.streaming.actor_graph.io import Lineariser
-from cudf_polars.streaming.actor_graph.tracing import ActorTracer, send_chunk
+from cudf_polars.streaming.actor_graph.tracing import (
+    ActorTracer,
+    record_channel_metrics,
+    send_chunk,
+)
 from cudf_polars.streaming.actor_graph.utils import shutdown_on_error
 from cudf_polars.utils.versions import POLARS_VERSION_LT_138
 
@@ -52,6 +57,25 @@ def test_actor_tracer_counts_table_chunk_without_table_view(chunk: TableChunk) -
     assert tracer.row_count == 3
 
 
+def test_record_channel_metrics_sums_all_memory_types() -> None:
+    input_channel = Mock()
+    input_channel.metrics.return_value.recv_bytes = {
+        MemoryType.DEVICE: 10,
+        MemoryType.HOST: 4,
+    }
+    output_channel = Mock()
+    output_channel.metrics.return_value.send_bytes = {
+        MemoryType.DEVICE: 7,
+        MemoryType.HOST: 3,
+    }
+    tracer = ActorTracer()
+
+    record_channel_metrics(tracer, chs_in=(input_channel,), chs_out=(output_channel,))
+
+    assert sum(tracer.input_bytes.values()) == 14
+    assert sum(tracer.output_bytes.values()) == 10
+
+
 @pytest.mark.spmd
 def test_send_and_recv_bytes(spmd_engine: SPMDEngine, chunk: TableChunk) -> None:
     context = spmd_engine.context
@@ -61,16 +85,20 @@ def test_send_and_recv_bytes(spmd_engine: SPMDEngine, chunk: TableChunk) -> None
     async def run() -> tuple[ActorTracer, ActorTracer]:
 
         async def producer() -> ActorTracer:
-            async with shutdown_on_error(context, chs_out=(ch,), trace_ir=ir) as tracer:
-                await send_chunk(context, ch, chunk, 11, tracer=tracer)
+            async with shutdown_on_error(
+                context, chs_out=(ch,), trace_ir=ir
+            ) as actor_scope:
+                await send_chunk(context, ch, chunk, 11, tracer=actor_scope.tracer)
                 await ch.drain(context)
-            return tracer
+            return actor_scope.tracer
 
         async def consumer() -> ActorTracer:
-            async with shutdown_on_error(context, chs_in=(ch,), trace_ir=ir) as tracer:
+            async with shutdown_on_error(
+                context, chs_in=(ch,), trace_ir=ir
+            ) as actor_scope:
                 msg = await ch.recv(context)
                 assert msg is not None
-            return tracer
+            return actor_scope.tracer
 
         async with asyncio.TaskGroup() as tg:
             producer_tracer_task = tg.create_task(producer())
@@ -166,6 +194,7 @@ def test_lineariser_backpressures_each_producer(spmd_engine: SPMDEngine) -> None
 def test_structlog_streaming_actor_events_and_ir_types(timeout_seconds: int):
     """Test actor tracing and IR-type logging in one isolated process."""
     pytest.importorskip("structlog")
+    pytest.importorskip("cudf_polars_quent")
     code = textwrap.dedent("""\
     import polars as pl
 
@@ -202,6 +231,7 @@ def test_io_tasks_wait_for_memory_admission(
     tmp_path: pathlib.Path, timeout_seconds: int
 ) -> None:
     pytest.importorskip("structlog")
+    pytest.importorskip("cudf_polars_quent")
 
     source = tmp_path / "data.parquet"
     pl.DataFrame({"x": range(5_000)}).write_parquet(
@@ -272,11 +302,83 @@ def test_io_tasks_wait_for_memory_admission(
     assert second["admitted"] >= first["stop"]
 
 
+@pytest.mark.skipif(
+    POLARS_VERSION_LT_138, reason="set_sorted lowers to unsupported hint ir"
+)
+def test_parquet_scan_ordering_trace_from_set_sorted(
+    tmp_path: pathlib.Path, timeout_seconds: int
+) -> None:
+    pytest.importorskip("structlog")
+    pytest.importorskip("cudf_polars_quent")
+
+    source = tmp_path / "data.parquet"
+    pl.DataFrame({"x": range(100), "y": range(100)}).write_parquet(
+        source,
+        row_group_size=10,
+    )
+
+    code = textwrap.dedent(f"""\
+    import structlog
+    import polars as pl
+
+    structlog.configure(
+        processors=[
+            structlog.contextvars.merge_contextvars,
+            structlog.processors.JSONRenderer(),
+        ]
+    )
+    engine = pl.GPUEngine(
+        executor="streaming",
+        executor_options={{
+            "dynamic_planning": {{"infer_ordering": True}},
+            "target_partition_size": 1024,
+        }},
+        raise_on_fail=True,
+    )
+    result = (
+        pl.scan_parquet({str(source)!r})
+        .set_sorted("x")
+        .select("x")
+        .collect(engine=engine)
+    )
+    print("RESULT_ROWS=" + str(result.height))
+    """)
+
+    env = os.environ.copy()
+    env["CUDF_POLARS_LOG_TRACES"] = "1"
+
+    with subprocess.Popen(
+        [sys.executable, "-c", code],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    ) as proc:
+        result, _ = proc.communicate(timeout=timeout_seconds)
+        returncode = proc.returncode
+
+    assert returncode == 0, result.decode(errors="replace")
+    assert b"RESULT_ROWS=100" in result
+
+    decisions = set()
+    for line in result.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if event.get("event") == "Streaming Actor":
+            decisions.add((event.get("actor_ir_type"), event.get("decision")))
+
+    assert ("StreamingScan", "parquet_ordering") in decisions, result.decode(
+        errors="replace"
+    )
+
+
 def test_local_join_prefilter_trace_records_decision_and_effect(
     tmp_path: pathlib.Path, timeout_seconds: int
 ) -> None:
     """Trace a direct-input join prefilter selected through the public engine."""
     pytest.importorskip("structlog")
+    pytest.importorskip("cudf_polars_quent")
     cases: list[tuple[str, bool, int, int, str, str, str, int | None, int | None]] = [
         ("bloom", False, 1, 32 * 1024 * 1024, "shuffle", "bloom", "bloom_fits", 1, 10),
         (
@@ -420,6 +522,7 @@ def test_standalone_prefilter_trace_records_decision_and_effect(
 ) -> None:
     """Trace a prefilter pushed below an intervening join."""
     pytest.importorskip("structlog")
+    pytest.importorskip("cudf_polars_quent")
     cases = [
         ("bloom", 1, 32 * 1024 * 1024, "bloom", "bloom_fits", 20),
         ("exact", 64, 0, "broadcast_semi_join", "exact_domain_fits", 20),
@@ -490,6 +593,7 @@ def test_indirect_prefilter_trace_records_decision_and_effect(
 ) -> None:
     """Trace a composite prefilter pushed below an intervening join."""
     pytest.importorskip("structlog")
+    pytest.importorskip("cudf_polars_quent")
     cases = [
         ("bloom", 1, 32 * 1024 * 1024, "bloom", "bloom_fits", 15),
         ("exact", 512, 0, "broadcast_semi_join", "exact_domain_fits", 15),

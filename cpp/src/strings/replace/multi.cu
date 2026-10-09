@@ -13,7 +13,6 @@
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
-#include <cudf/strings/detail/replace.hpp>
 #include <cudf/strings/detail/strings_children.cuh>
 #include <cudf/strings/detail/strings_column_factories.cuh>
 #include <cudf/strings/detail/utilities.cuh>
@@ -32,7 +31,6 @@
 #include <cuda/std/tuple>
 #include <cuda/stream>
 #include <thrust/binary_search.h>
-#include <thrust/copy.h>
 #include <thrust/execution_policy.h>
 #include <thrust/for_each.h>
 #include <thrust/transform.h>
@@ -493,6 +491,9 @@ std::unique_ptr<column> replace_string_parallel(strings_column_view const& input
 }
 
 }  // namespace
+}  // namespace detail
+
+// external API
 
 std::unique_ptr<column> replace_multiple(strings_column_view const& input,
                                          strings_column_view const& targets,
@@ -500,6 +501,7 @@ std::unique_ptr<column> replace_multiple(strings_column_view const& input,
                                          cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
+  CUDF_FUNC_RANGE();
   if (input.is_empty()) { return make_empty_column(type_id::STRING); }
   CUDF_EXPECTS(((targets.size() > 0) && (targets.null_count() == 0)),
                "Parameters targets must not be empty and must not have nulls");
@@ -510,23 +512,9 @@ std::unique_ptr<column> replace_multiple(strings_column_view const& input,
 
   return (input.size() == input.null_count() ||
           ((input.chars_size(stream) / (input.size() - input.null_count())) <
-           AVG_CHAR_BYTES_THRESHOLD))
-           ? replace_string_parallel(input, targets, repls, stream, mr)
-           : replace_character_parallel(input, targets, repls, stream, mr);
-}
-
-}  // namespace detail
-
-// external API
-
-std::unique_ptr<column> replace_multiple(strings_column_view const& strings,
-                                         strings_column_view const& targets,
-                                         strings_column_view const& repls,
-                                         cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
-{
-  CUDF_FUNC_RANGE();
-  return detail::replace_multiple(strings, targets, repls, stream, mr);
+           detail::AVG_CHAR_BYTES_THRESHOLD))
+           ? detail::replace_string_parallel(input, targets, repls, stream, mr)
+           : detail::replace_character_parallel(input, targets, repls, stream, mr);
 }
 
 }  // namespace strings

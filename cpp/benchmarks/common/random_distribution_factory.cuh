@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,15 +8,15 @@
 #include "generate_input.hpp"
 
 #include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/buffer>
 #include <cuda/std/algorithm>
 #include <cuda/std/cmath>
+#include <cuda/std/random>
 #include <thrust/execution_policy.h>
-#include <thrust/random.h>
-#include <thrust/random/normal_distribution.h>
-#include <thrust/random/uniform_int_distribution.h>
 #include <thrust/tabulate.h>
 
 #include <algorithm>
@@ -55,19 +55,19 @@ auto make_normal_dist(T lower_bound, T upper_bound)
   using realT        = integral_to_realType<T>;
   realT const mean   = lower_bound / 2. + upper_bound / 2.;
   realT const stddev = std_dev_from_range(lower_bound, upper_bound);
-  return thrust::random::normal_distribution<realT>(mean, stddev);
+  return cuda::std::normal_distribution<realT>(mean, stddev);
 }
 
 template <typename T, std::enable_if_t<cuda::std::is_integral_v<T>, T>* = nullptr>
 auto make_uniform_dist(T range_start, T range_end)
 {
-  return thrust::uniform_int_distribution<T>(range_start, range_end);
+  return cuda::std::uniform_int_distribution<T>(range_start, range_end);
 }
 
 template <typename T, std::enable_if_t<cudf::is_floating_point<T>()>* = nullptr>
 auto make_uniform_dist(T range_start, T range_end)
 {
-  return thrust::uniform_real_distribution<T>(range_start, range_end);
+  return cuda::std::uniform_real_distribution<T>(range_start, range_end);
 }
 
 /**
@@ -77,9 +77,9 @@ auto make_uniform_dist(T range_start, T range_end)
  * @tparam T Result type of the number to produce.
  */
 template <typename T>
-class geometric_distribution : public thrust::random::normal_distribution<integral_to_realType<T>> {
+class geometric_distribution : public cuda::std::normal_distribution<integral_to_realType<T>> {
   using realType = integral_to_realType<T>;
-  using super_t  = thrust::random::normal_distribution<realType>;
+  using super_t  = cuda::std::normal_distribution<realType>;
   T _lower_bound;
   T _upper_bound;
 
@@ -104,9 +104,9 @@ class geometric_distribution : public thrust::random::normal_distribution<integr
   {
     // Distribution always biases towards lower_bound
     realType const result = _lower_bound < _upper_bound
-                              ? std::abs(super_t::operator()(urng)) + _lower_bound
-                              : _lower_bound - std::abs(super_t::operator()(urng));
-    return std::round(result);
+                              ? cuda::std::abs(super_t::operator()(urng)) + _lower_bound
+                              : _lower_bound - cuda::std::abs(super_t::operator()(urng));
+    return cuda::std::round(result);
   }
 };
 
@@ -114,7 +114,7 @@ template <typename T, typename Generator>
 struct value_generator {
   using result_type = T;
 
-  value_generator(T lower_bound, T upper_bound, thrust::minstd_rand& engine, Generator gen)
+  value_generator(T lower_bound, T upper_bound, cuda::std::philox4x32& engine, Generator gen)
     : lower_bound(std::min(lower_bound, upper_bound)),
       upper_bound(std::max(lower_bound, upper_bound)),
       engine(engine),
@@ -137,47 +137,61 @@ struct value_generator {
 
   T lower_bound;
   T upper_bound;
-  thrust::minstd_rand engine;
+  cuda::std::philox4x32 engine;
   Generator dist;
 };
 
-template <typename T>
-using distribution_fn = std::function<rmm::device_uvector<T>(thrust::minstd_rand&, size_t)>;
+// Column data uses RMM storage; scratch generators can allocate CUDA buffers directly.
+template <typename T, typename Buffer>
+Buffer make_distribution_buffer(size_t size)
+{
+  if constexpr (std::is_same_v<Buffer, cuda::device_buffer<T>>) {
+    return Buffer(
+      cudf::get_default_stream(), cudf::get_current_device_resource_ref(), size, cuda::no_init);
+  } else {
+    static_assert(std::is_same_v<Buffer, rmm::device_uvector<T>>);
+    return Buffer(size, cudf::get_default_stream());
+  }
+}
+
+template <typename T, typename Buffer = rmm::device_uvector<T>>
+using distribution_fn = std::function<Buffer(cuda::std::philox4x32&, size_t)>;
 
 template <
   typename T,
+  typename Buffer = rmm::device_uvector<T>,
   std::enable_if_t<cuda::std::is_integral_v<T> or cuda::std::is_floating_point_v<T>, T>* = nullptr>
-distribution_fn<T> make_distribution(distribution_id dist_id, T lower_bound, T upper_bound)
+distribution_fn<T, Buffer> make_distribution(distribution_id dist_id, T lower_bound, T upper_bound)
 {
   switch (dist_id) {
     case distribution_id::NORMAL:
       return [lower_bound, upper_bound, dist = make_normal_dist(lower_bound, upper_bound)](
-               thrust::minstd_rand& engine, size_t size) -> rmm::device_uvector<T> {
-        rmm::device_uvector<T> result(size, cudf::get_default_stream());
+               cuda::std::philox4x32& engine, size_t size) -> Buffer {
+        auto result = make_distribution_buffer<T, Buffer>(size);
         thrust::tabulate(thrust::device,
-                         result.begin(),
-                         result.end(),
+                         result.data(),
+                         result.data() + result.size(),
                          value_generator{lower_bound, upper_bound, engine, dist});
         return result;
       };
     case distribution_id::UNIFORM:
       return [lower_bound, upper_bound, dist = make_uniform_dist(lower_bound, upper_bound)](
-               thrust::minstd_rand& engine, size_t size) -> rmm::device_uvector<T> {
-        rmm::device_uvector<T> result(size, cudf::get_default_stream());
+               cuda::std::philox4x32& engine, size_t size) -> Buffer {
+        auto result = make_distribution_buffer<T, Buffer>(size);
         thrust::tabulate(thrust::device,
-                         result.begin(),
-                         result.end(),
+                         result.data(),
+                         result.data() + result.size(),
                          value_generator{lower_bound, upper_bound, engine, dist});
         return result;
       };
     case distribution_id::GEOMETRIC:
       // kind of exponential distribution from lower_bound to upper_bound.
       return [lower_bound, upper_bound, dist = geometric_distribution<T>(lower_bound, upper_bound)](
-               thrust::minstd_rand& engine, size_t size) -> rmm::device_uvector<T> {
-        rmm::device_uvector<T> result(size, cudf::get_default_stream());
+               cuda::std::philox4x32& engine, size_t size) -> Buffer {
+        auto result = make_distribution_buffer<T, Buffer>(size);
         thrust::tabulate(thrust::device,
-                         result.begin(),
-                         result.end(),
+                         result.data(),
+                         result.data() + result.size(),
                          value_generator{lower_bound, upper_bound, engine, dist});
         return result;
       };

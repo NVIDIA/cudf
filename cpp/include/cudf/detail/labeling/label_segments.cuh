@@ -179,7 +179,7 @@ void labels_to_offsets(InputIterator labels_begin,
                                                list_sizes.begin(),    // count for each label
                                                cuda::std::plus<OutputType>(),
                                                stream,
-                                               cudf::memory_resources{temp_mr, temp_mr});
+                                               temp_mr);
 
   auto const num_non_empty_segments = cuda::std::distance(list_indices.begin(), end.first);
 

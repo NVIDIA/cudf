@@ -342,7 +342,11 @@ fetch_byte_ranges_to_device_async_impl(
         stream,
         mr);
 
-      auto buffer_data = static_cast<uint8_t*>(column_chunk_buffers.back().data());
+      auto buffer_data        = static_cast<uint8_t*>(column_chunk_buffers.back().data());
+      auto const padding_size = column_chunk_buffers.back().size() - buffer_size;
+      if (padding_size != 0) {
+        CUDF_CUDA_TRY(cudaMemsetAsync(buffer_data + buffer_size, 0, padding_size, stream.value()));
+      }
 
       // Build device spans for each byte range in this source
       auto& column_chunk_data = column_chunk_data_per_source[source_idx];

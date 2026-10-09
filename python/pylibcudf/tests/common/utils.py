@@ -16,7 +16,9 @@ import pylibcudf as plc
 from pylibcudf.io.types import CompressionType
 
 
-def write_hybrid_scan_parquet_bytes(table, row_group_size):
+def write_hybrid_scan_parquet_bytes(
+    table, row_group_size, write_statistics=True
+):
     """Write a PyArrow table to parquet bytes with hybrid-scan-friendly settings
     (dictionary encoding, statistics, page index).
     """
@@ -26,7 +28,7 @@ def write_hybrid_scan_parquet_bytes(table, row_group_size):
         buf,
         row_group_size=row_group_size,
         use_dictionary=True,
-        write_statistics=True,
+        write_statistics=write_statistics,
         write_page_index=True,
     )
     return buf.getvalue()

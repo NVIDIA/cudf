@@ -218,7 +218,7 @@ class alignas(16) column_device_view : public column_device_view_core {
   template <typename T>
   CUDF_HOST_DEVICE static constexpr bool has_element_accessor()
   {
-    return has_element_accessor_impl<column_device_view, T>::value;
+    return has_element_accessor_impl<column_device_view, T>;
   }
 
   /// Counting iterator
@@ -691,7 +691,7 @@ class alignas(16) mutable_column_device_view : public mutable_column_device_view
   template <typename T>
   CUDF_HOST_DEVICE static constexpr bool has_element_accessor()
   {
-    return has_element_accessor_impl<mutable_column_device_view, T>::value;
+    return has_element_accessor_impl<mutable_column_device_view, T>;
   }
 
   /// Counting iterator

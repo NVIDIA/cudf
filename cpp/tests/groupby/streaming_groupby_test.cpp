@@ -26,6 +26,7 @@
 #include <cuda_runtime_api.h>
 
 #include <atomic>
+#include <cstddef>
 #include <thread>
 #include <tuple>
 #include <vector>
@@ -1601,4 +1602,62 @@ TEST_F(StreamingGroupbyTest, StructKeySumTwoBatches)
   auto [keys, results] = streaming_agg.finalize();
 
   verify_against_groupby(keys, results, {batch1, batch2}, KEY_COL, reqs);
+}
+
+TEST_F(StreamingGroupbyTest, DenseAggregationsNullableFlatAndNestedKeys)
+{
+  // Stable key nullability layouts isolate launcher delegation from cross-batch key schema
+  // transitions.
+  cudf::test::fixed_width_column_wrapper<int32_t> keys1{{1, 2, 1}, {true, true, true}};
+  cudf::test::fixed_width_column_wrapper<int32_t> keys2{{2, 3, 0}, {true, true, false}};
+  cudf::test::fixed_width_column_wrapper<int32_t> values1{{10, 0, 30}, {true, false, true}};
+  cudf::test::fixed_width_column_wrapper<int32_t> values2{40, 50, 60};
+  cudf::test::structs_column_wrapper nested_keys1{{keys1}, {true, true, true}};
+  cudf::test::structs_column_wrapper nested_keys2{{keys2}, {true, true, false}};
+
+  cudf::test::fixed_width_column_wrapper<int32_t> expected_keys{1, 2, 3};
+  cudf::test::structs_column_wrapper expected_nested_keys{{expected_keys}};
+  cudf::test::fixed_width_column_wrapper<int64_t> expected_sum{40, 40, 50};
+  cudf::test::fixed_width_column_wrapper<int32_t> expected_min{10, 40, 50};
+  cudf::test::fixed_width_column_wrapper<int32_t> expected_max{30, 40, 50};
+  cudf::test::fixed_width_column_wrapper<int32_t> expected_count{2, 1, 1};
+
+  std::vector<cudf::groupby::streaming_aggregation_request> requests;
+  requests.push_back(make_req(1, cudf::make_sum_aggregation<cudf::groupby_aggregation>()));
+  requests.push_back(make_req(1, cudf::make_min_aggregation<cudf::groupby_aggregation>()));
+  requests.push_back(make_req(1, cudf::make_max_aggregation<cudf::groupby_aggregation>()));
+  requests.push_back(make_req(
+    1, cudf::make_count_aggregation<cudf::groupby_aggregation>(cudf::null_policy::EXCLUDE)));
+
+  // Multiple kinds exercise concurrent updates by streaming's dense-output kernel.
+  // Explicit expectations make the regression independent of the reference implementation.
+  struct {
+    char const* name;
+    cudf::column_view first_keys;
+    cudf::column_view second_keys;
+    cudf::column_view expected_keys;
+  } const key_parameters[] = {
+    {"top-level", keys1, keys2, expected_keys},
+    {"nested", nested_keys1, nested_keys2, expected_nested_keys},
+  };
+  for (auto const& [name, first_keys, second_keys, expected_key_view] : key_parameters) {
+    SCOPED_TRACE(name);
+    cudf::table_view const batch1{{first_keys, values1}};
+    cudf::table_view const batch2{{second_keys, values2}};
+    // The null-key row must contribute to none of the expected aggregates.
+    cudf::groupby::streaming_groupby streaming_agg(
+      KEY_COL, requests, DEFAULT_MAX_DISTINCT_KEYS, cudf::null_policy::EXCLUDE);
+    streaming_agg.aggregate(batch1);
+    streaming_agg.aggregate(batch2);
+    auto [keys, results] = streaming_agg.finalize();
+
+    ASSERT_EQ(results.size(), requests.size());
+    for (std::size_t i = 0; i < results.size(); ++i) {
+      ASSERT_EQ(results[i].results.size(), 1) << "aggregation request " << i;
+    }
+    check(keys,
+          results,
+          cudf::table_view{{expected_key_view}},
+          {expected_sum, expected_min, expected_max, expected_count});
+  }
 }

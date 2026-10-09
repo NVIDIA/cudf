@@ -474,6 +474,62 @@ class PersistedQueryResult:
         """Release the persisted partitions on scope exit."""
         self.release()
 
+    def take_local(self, rank: int) -> DataFrame:
+        """
+        Remove and return ``rank``'s GPU-resident partition.
+
+        The partition is returned as a GPU-resident
+        :class:`~cudf_polars.containers.DataFrame` without a host round-trip,
+        for handing query output to another GPU library in the same process.
+        Like :meth:`lazy`, this consumes the partition: it can be taken once,
+        and afterwards the result can no longer be collected.
+
+        Parameters
+        ----------
+        rank
+            Rank whose partition to take. This is the caller's own rank, since
+            a partition lives in the process that produced it.
+
+        Returns
+        -------
+        ``rank``'s partition.
+
+        Raises
+        ------
+        RuntimeError
+            If the partition has already been consumed, or the producing
+            engine has been reset or shut down.
+        """
+        return _PersistedLoader(PersistedHandle(self._uid, self._query_id, rank))()
+
+    def local_is_duplicated(self, rank: int) -> bool:
+        """
+        Whether ``rank``'s partition is duplicated, meaning replicated on every rank.
+
+        A result is either partitioned, each rank holding a disjoint subset of
+        the rows, or duplicated, every rank holding the same complete copy.
+        Duplicated is also called replicated, the term used by most distributed
+        frameworks, including PyTorch's ``Replicate()`` placement. Which layout
+        a query produces depends on how the engine partitioned it, so it cannot
+        be read off the query, and every rank gets the same answer.
+
+        Read-only, so it is safe to call before :meth:`take_local`, which
+        consumes the partition.
+
+        Parameters
+        ----------
+        rank
+            Rank whose partition to probe.
+
+        Returns
+        -------
+        ``True`` if the partition is duplicated (replicated): a complete copy held
+        on every rank.
+        """
+        return _PersistedLoader(
+            PersistedHandle(self._uid, self._query_id, rank)
+        ).is_duplicated()
+
     def lazy(self) -> pl.LazyFrame:
         """
         Return a :class:`~polars.LazyFrame` backed by the persisted partitions.

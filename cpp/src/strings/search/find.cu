@@ -28,9 +28,7 @@
 #include <cuda/std/limits>
 #include <cuda/std/utility>
 #include <cuda/stream>
-#include <thrust/binary_search.h>
 #include <thrust/fill.h>
-#include <thrust/for_each.h>
 #include <thrust/transform.h>
 
 namespace cudf {

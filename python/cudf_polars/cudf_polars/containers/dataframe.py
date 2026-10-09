@@ -14,7 +14,7 @@ import pylibcudf as plc
 
 from cudf_polars.containers import Column, DataType
 from cudf_polars.utils import conversion
-from cudf_polars.utils.versions import POLARS_VERSION_LT_138
+from cudf_polars.utils.versions import POLARS_VERSION_LT_138, POLARS_VERSION_LT_143
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence, Set
@@ -26,7 +26,28 @@ if TYPE_CHECKING:
 
     from cudf_polars.typing import ColumnOptions, DataFrameHeader, PolarsDataType, Slice
 
-__all__: list[str] = ["DataFrame"]
+__all__: list[str] = ["DataFrame", "categoricals_to_physical"]
+
+
+def categoricals_to_physical(df: pl.DataFrame) -> pl.DataFrame:
+    """
+    Replace Categorical and Enum columns with their physical codes.
+
+    Parameters
+    ----------
+    df
+        Polars dataframe
+
+    Returns
+    -------
+    Polars dataframe
+    """
+    names = [
+        name for name, dtype in df.schema.items() if DataType(dtype).is_categorical
+    ]
+    if not names:
+        return df
+    return df.with_columns(pl.col(names).to_physical())
 
 
 def _create_polars_column_metadata(
@@ -134,9 +155,21 @@ class DataFrame:
             _create_polars_column_metadata(name, dtype.polars_type)
             for name, dtype in zip(name_map, self.dtypes, strict=True)
         ]
-        table_with_metadata = _ObjectWithArrowMetadata(
-            self.table, metadata, self.stream
-        )
+        table_columns = list(self.table.columns())
+        for i, c in enumerate(self.columns):
+            if c.dtype.is_categorical and c.null_count > 0:
+                # Polars requires non-null codes.
+                filled = plc.replace.replace_nulls(
+                    c.obj,
+                    plc.Scalar.from_py(0, c.obj.type(), stream=self.stream),
+                    stream=self.stream,
+                )
+                table_columns[i] = filled.with_mask(
+                    plc.null_mask.copy_bitmask(c.obj, stream=self.stream),
+                    c.null_count,
+                )
+        table = plc.Table(table_columns)
+        table_with_metadata = _ObjectWithArrowMetadata(table, metadata, self.stream)
         df = pl.DataFrame(table_with_metadata).rename(name_map)
         array_dtypes: dict[str, PolarsDataType] = {
             column.name: column.dtype.polars_type
@@ -146,9 +179,17 @@ class DataFrame:
         if array_dtypes:
             # TODO: Remove this cast when libcudf can export Arrow fixed-size lists.
             df = df.cast(pl.Schema(array_dtypes), strict=True)
+        categorical_columns = [c for c in self.columns if c.dtype.is_categorical]
+        if categorical_columns:
+            df = df.with_columns(
+                pl.col(c.name).cast(c.dtype.polars_type)
+                if POLARS_VERSION_LT_143
+                else pl.col(c.name).cat.to(c.dtype.polars_type, strict=True)
+                for c in categorical_columns
+            )
         return df.with_columns(
             pl.col(c.name).set_sorted(descending=c.order == plc.types.Order.DESCENDING)
-            if c.is_sorted
+            if c.is_sorted and not isinstance(c.dtype.polars_type, pl.Categorical)
             else pl.col(c.name)
             for c in self.columns
         )
@@ -195,7 +236,7 @@ class DataFrame:
         -------
         New dataframe representing the input.
         """
-        plc_table = plc.Table.from_arrow(df, stream=stream)
+        plc_table = plc.Table.from_arrow(categoricals_to_physical(df), stream=stream)
         return cls(
             (
                 Column(d_col, name=name, dtype=DataType(h_col.dtype)).copy_metadata(

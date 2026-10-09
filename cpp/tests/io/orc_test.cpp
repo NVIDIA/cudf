@@ -12,6 +12,7 @@
 #include <cudf_test/cudf_gtest.hpp>
 #include <cudf_test/io_metadata_utilities.hpp>
 #include <cudf_test/iterator_utilities.hpp>
+#include <cudf_test/memory_resource_utilities.hpp>
 #include <cudf_test/random.hpp>
 #include <cudf_test/table_utilities.hpp>
 #include <cudf_test/testing_main.hpp>
@@ -27,6 +28,10 @@
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/span.hpp>
+
+#include <rmm/error.hpp>
+#include <rmm/mr/callback_memory_resource.hpp>
+#include <rmm/mr/cuda_memory_resource.hpp>
 
 #include <cuda/iterator>
 
@@ -2728,13 +2733,55 @@ TEST_F(OrcChunkedWriterTest, FailedWriteCloseNotThrow)
     cudf::io::chunked_orc_writer_options::builder(cudf::io::sink_info{&sink});
   auto writer = cudf::io::orc_chunked_writer(write_opts);
 
-  try {
-    writer.write(table);
-  } catch (...) {
-    // ignore the exception; we're testing that close() doesn't throw when the only write() fails
+  EXPECT_THROW(writer.write(table), std::runtime_error);
+  EXPECT_THROW(writer.write(table), cudf::logic_error);
+  EXPECT_NO_THROW(writer.close());
+}
+
+TEST_F(OrcChunkedWriterTest, OutOfMemoryRetry)
+{
+  int32_col ints{1, 2, 3};
+  str_col strings{"a", "bb", "ccc"};  // persisting string statistics allocates
+  table_view input{{ints, strings}};
+
+  std::vector<char> out_buffer;
+  std::size_t output_start = 0;
+  bool fail_allocation     = false;
+  // Not the current resource, which is replaced below
+  rmm::mr::cuda_memory_resource upstream;
+  rmm::mr::callback_memory_resource mr{
+    [&](std::size_t bytes, auto stream, void*) -> void* {
+      // An allocation after output starts could fail when the write can no longer be retried
+      EXPECT_EQ(out_buffer.size(), output_start);
+      if (fail_allocation) { throw rmm::bad_alloc{"Injected ORC OOM"}; }
+      return upstream.allocate(stream, bytes, cuda::mr::default_cuda_malloc_alignment);
+    },
+    [&](void* ptr, std::size_t bytes, auto stream, void*) {
+      upstream.deallocate(stream, ptr, bytes, cuda::mr::default_cuda_malloc_alignment);
+    }};
+  {
+    cudf::test::scoped_current_device_resource resource_scope{mr};
+    cudf::io::orc_chunked_writer writer{
+      cudf::io::chunked_orc_writer_options::builder(cudf::io::sink_info{&out_buffer})
+        .enable_statistics(cudf::io::statistics_freq::STATISTICS_ROWGROUP)};
+    writer.write(input);
+    output_start = out_buffer.size();
+
+    fail_allocation = true;
+    EXPECT_THROW(writer.write(input), rmm::bad_alloc);
+    EXPECT_THROW(writer.close(), rmm::bad_alloc);
+    fail_allocation = false;
+    EXPECT_EQ(out_buffer.size(), output_start);
+
+    writer.write(input);
+    output_start = out_buffer.size();
+    writer.close();
   }
 
-  EXPECT_NO_THROW(writer.close());
+  auto const result   = cudf::io::read_orc(cudf::io::orc_reader_options::builder(
+    cudf::io::source_info{cudf::host_span<char const>{out_buffer.data(), out_buffer.size()}}));
+  auto const expected = cudf::concatenate(std::vector<table_view>{input, input});
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected->view(), result.tbl->view());
 }
 
 TEST_F(OrcChunkedWriterTest, NoDataInSinkWhenNoWrite)

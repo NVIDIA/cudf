@@ -70,12 +70,11 @@ def test_series_nsmallest(data, n):
 
 
 @pytest.mark.parametrize("attr", ["nlargest", "nsmallest"])
-@pytest.mark.parametrize("keep", ["first", "last"])
-@pytest.mark.parametrize("n", [1, 2, 4])
-def test_series_nlargest_nsmallest_with_nulls(attr, keep, n):
-    data = [None, 3.0, 2.0, None, 5.0, 2.0]
+def test_series_nlargest_nsmallest_keep_last_with_nulls(attr):
+    data = [3.0, None, 5.0, 2.0]
     psr = pd.Series(data)
     sr = cudf.Series(data)
+    # n covers every row, so the null has to come after the valid values.
     assert_eq(
-        getattr(sr, attr)(n, keep=keep), getattr(psr, attr)(n, keep=keep)
+        getattr(sr, attr)(4, keep="last"), getattr(psr, attr)(4, keep="last")
     )

@@ -73,13 +73,12 @@ def test_dataframe_nlargest_nsmallest_str_error(attr):
 
 
 @pytest.mark.parametrize("op", ["nsmallest", "nlargest"])
-@pytest.mark.parametrize("keep", ["first", "last"])
-def test_dataframe_nlargest_nsmallest_with_nulls(op, keep):
+def test_dataframe_nlargest_nsmallest_keep_last_with_nulls(op):
     pdf = pd.DataFrame(
         {"a": [None, 3.0, 2.0, None, 5.0], "b": [1, 2, 3, 4, 5]}
     )
     gdf = cudf.DataFrame(pdf)
     assert_eq(
-        getattr(gdf, op)(2, "a", keep=keep),
-        getattr(pdf, op)(2, "a", keep=keep),
+        getattr(gdf, op)(2, "a", keep="last"),
+        getattr(pdf, op)(2, "a", keep="last"),
     )

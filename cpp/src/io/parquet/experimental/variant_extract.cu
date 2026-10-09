@@ -522,12 +522,15 @@ template <typename T>
 constexpr bool is_variant_int =
   cudf::is_integral_not_bool<T>() && cudf::is_signed<T>() && !cuda::std::is_same_v<T, __int128_t>;
 
-// The fixed-width primitive types (signed integers and floats) a VARIANT value can be decoded into.
+// The fixed-width primitive types (signed integers, floats, and microsecond/nanosecond timestamps)
+// a VARIANT value can be decoded into.
 template <typename T>
-constexpr bool is_variant_numerical = is_variant_int<T> || cudf::is_floating_point<T>();
+constexpr bool is_variant_numerical =
+  is_variant_int<T> || cudf::is_floating_point<T>() ||
+  cuda::std::is_same_v<T, cudf::timestamp_us> || cuda::std::is_same_v<T, cudf::timestamp_ns>;
 
 // The output types a VARIANT value can be cast to: the fixed-width signed integers, floats,
-// decimals, bool, and strings.
+// timestamps, decimals, bool, and strings.
 template <typename T>
 constexpr bool is_variant_castable =
   is_variant_numerical<T> || cudf::is_fixed_point<T>() || cuda::std::is_same_v<T, bool> ||
@@ -556,6 +559,22 @@ __device__ constexpr primitive_type primitive_type_for()
   }
 }
 
+// cuDF timestamps carry no timezone, so a timestamp target also accepts the matching NTZ encoding;
+// Spark's TIMESTAMP and TIMESTAMP_NTZ both map to TIMESTAMP_MICROSECONDS.
+template <typename T>
+  requires(is_variant_numerical<T>)
+__device__ constexpr bool matches_primitive_type(primitive_type ptype)
+{
+  if constexpr (cuda::std::is_same_v<T, cudf::timestamp_us>) {
+    return ptype == primitive_type::TIMESTAMP_MICROS ||
+           ptype == primitive_type::TIMESTAMP_NTZ_MICROS;
+  } else if constexpr (cuda::std::is_same_v<T, cudf::timestamp_ns>) {
+    return ptype == primitive_type::TIMESTAMP_NANOS || ptype == primitive_type::TIMESTAMP_NTZ_NANOS;
+  } else {
+    return ptype == primitive_type_for<T>();
+  }
+}
+
 /**
  * @brief Decode a single VARIANT value blob into a fixed-width primitive of type `T`.
  *
@@ -568,7 +587,8 @@ __device__ inline cuda::std::optional<T> decode_primitive(device_span<uint8_t co
 
   uint8_t const value_metadata = enc[0];
   if (decode_basic_type(value_metadata) != basic_type::PRIMITIVE ||
-      variant_value_header(value_metadata) != static_cast<uint8_t>(primitive_type_for<T>())) {
+      !matches_primitive_type<T>(
+        static_cast<primitive_type>(variant_value_header(value_metadata)))) {
     return cuda::std::nullopt;
   }
   return cudf::io::unaligned_load<T>(enc.data() + 1);
@@ -795,7 +815,7 @@ __device__ op_status cast_status_for_primitive(device_span<uint8_t const> val)
   if (decode_primitive<T>(val).has_value()) { return op_status::SUCCESS; }
   if (decode_basic_type(val[0]) != basic_type::PRIMITIVE) { return op_status::TYPE_MISMATCH; }
   auto const ptype = static_cast<primitive_type>(variant_value_header(val[0]));
-  if (ptype == primitive_type_for<T>()) { return op_status::MALFORMED_VARIANT; }
+  if (matches_primitive_type<T>(ptype)) { return op_status::MALFORMED_VARIANT; }
   return is_recognized_primitive_type(ptype) ? op_status::TYPE_MISMATCH
                                              : op_status::MALFORMED_VARIANT;
 }
@@ -1465,6 +1485,8 @@ std::unique_ptr<column> cast_variant(column_view const& values,
     case type_id::INT64:
     case type_id::FLOAT32:
     case type_id::FLOAT64:
+    case type_id::TIMESTAMP_MICROSECONDS:
+    case type_id::TIMESTAMP_NANOSECONDS:
     case type_id::BOOL8:
     case type_id::STRING:
     case type_id::DECIMAL32:

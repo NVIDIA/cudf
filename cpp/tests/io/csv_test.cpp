@@ -1090,6 +1090,38 @@ TEST_F(CsvReaderTest, SkiprowsNrows)
   expect_column_data_equal(std::vector<int32_t>{5, 6}, view.column(0));
 }
 
+TEST_F(CsvReaderTest, SkiprowsPastEndOfFileWithNrows)
+{
+  std::string const buffer = "a,b\n1,2\n3,4\n";
+  auto const source        = cudf::io::source_info{cudf::host_span<std::byte const>{
+    reinterpret_cast<std::byte const*>(buffer.c_str()), buffer.size()}};
+
+  // Every row is discarded by skiprows, so there are no row offsets left to clamp.
+  // This used to throw "New size must be smaller" from the num_rows bounds check.
+  {
+    cudf::io::csv_reader_options in_opts =
+      cudf::io::csv_reader_options::builder(source).skiprows(5).nrows(10);
+
+    auto const result = cudf::io::read_csv(in_opts);
+    EXPECT_EQ(0, result.tbl->view().num_rows());
+  }
+
+  // With an explicit schema the empty table still carries the requested column and type.
+  {
+    cudf::io::csv_reader_options in_opts = cudf::io::csv_reader_options::builder(source)
+                                             .names({"A"})
+                                             .dtypes({dtype<int32_t>()})
+                                             .skiprows(5)
+                                             .nrows(10);
+
+    auto const result = cudf::io::read_csv(in_opts);
+    auto const view   = result.tbl->view();
+    EXPECT_EQ(1, view.num_columns());
+    EXPECT_EQ(0, view.num_rows());
+    ASSERT_EQ(type_id::INT32, view.column(0).type().id());
+  }
+}
+
 TEST_F(CsvReaderTest, ByteRange)
 {
   auto filepath = temp_env->get_temp_dir() + "ByteRange.csv";

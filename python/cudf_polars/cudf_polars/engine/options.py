@@ -308,6 +308,12 @@ class StreamingOptions:
         Env: ``CUDF_POLARS__EXECUTOR__SINK_TO_DIRECTORY``.
         Default: ``True`` (forced by the streaming engines).
         Category: executor.
+    parallel_sink_batches
+        Run callbacks on each rank for ``sink_batches(maintain_order=False)``.
+        Enable only for callbacks safe to invoke concurrently across ranks.
+        Env: ``CUDF_POLARS__EXECUTOR__PARALLEL_SINK_BATCHES``.
+        Default: ``False``.
+        Category: executor.
     quent_context
         Quent tracing context, or ``None`` to disable tracing.
         Env: ``CUDF_POLARS__EXECUTOR__QUENT_CONTEXT`` (``true``/``false``).
@@ -440,6 +446,9 @@ class StreamingOptions:
     ) = _opt("executor")
     sink_to_directory: bool | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__SINK_TO_DIRECTORY", parse_boolean
+    )
+    parallel_sink_batches: bool | Unspecified = _opt(
+        "executor", "CUDF_POLARS__EXECUTOR__PARALLEL_SINK_BATCHES", parse_boolean
     )
     quent_context: QuentContext | None | Unspecified = _opt(
         "executor",

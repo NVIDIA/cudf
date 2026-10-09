@@ -123,6 +123,19 @@ def test_executor_options_sink_to_directory_absent_when_unspecified() -> None:
     assert "sink_to_directory" not in StreamingOptions().to_executor_options()
 
 
+def test_executor_options_parallel_sink_batches_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CUDF_POLARS__EXECUTOR__PARALLEL_SINK_BATCHES", "1")
+    assert StreamingOptions().to_executor_options()["parallel_sink_batches"] is True
+    assert (
+        StreamingOptions(parallel_sink_batches=False).to_executor_options()[
+            "parallel_sink_batches"
+        ]
+        is False
+    )
+
+
 def test_executor_options_join_filter_pushdown_disabled() -> None:
     result = StreamingOptions(join_filter_pushdown=None).to_executor_options()
     assert result["join_filter_pushdown"] is None

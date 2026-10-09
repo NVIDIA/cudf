@@ -1108,6 +1108,10 @@ class StreamingExecutor:
         Whether multi-partition sink operations write to a directory rather
         than a single file. For the spmd, ray, and dask clusters this is
         always True; setting it to False raises a ValueError.
+    parallel_sink_batches
+        Run ``sink_batches`` callbacks on each rank when ``maintain_order=False``.
+        Enable only when all callbacks are safe to invoke concurrently across
+        ranks. Disabled by default.
     dynamic_planning
         Options controlling dynamic shuffle planning. See
         :class:`~cudf_polars.utils.config.DynamicPlanningOptions` for more.
@@ -1270,6 +1274,11 @@ class StreamingExecutor:
             f"{_env_prefix}__SINK_TO_DIRECTORY", _bool_converter, default=None
         )
     )
+    parallel_sink_batches: bool = dataclasses.field(
+        default_factory=_make_default_factory(
+            f"{_env_prefix}__PARALLEL_SINK_BATCHES", _bool_converter, default=False
+        )
+    )
     dynamic_planning: DynamicPlanningOptions | None = dataclasses.field(
         default_factory=DynamicPlanningOptions
     )
@@ -1396,6 +1405,8 @@ class StreamingExecutor:
             raise TypeError("broadcast_limit must be an int")
         if not isinstance(self.sink_to_directory, bool):
             raise TypeError("sink_to_directory must be bool")
+        if not isinstance(self.parallel_sink_batches, bool):
+            raise TypeError("parallel_sink_batches must be bool")
         if not isinstance(self.client_device_threshold, float):
             raise TypeError("client_device_threshold must be a float")
         if not isinstance(self.num_py_executors, int):

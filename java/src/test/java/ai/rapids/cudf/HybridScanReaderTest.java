@@ -12,6 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
+import ai.rapids.cudf.ast.AstExpression;
 import ai.rapids.cudf.ast.BinaryOperation;
 import ai.rapids.cudf.ast.BinaryOperator;
 import ai.rapids.cudf.ast.ColumnNameReference;
@@ -163,8 +164,9 @@ public class HybridScanReaderTest extends CudfTestBase {
       DeviceMemoryBuffer[] filterCols = copyRangesToDevice(
           open.file, reader.filterColumnChunksByteRanges(survived));
       try (HybridScanReader.FilterMaterializationResult fr =
-               reader.materializeFilterColumns(survived, filterCols, true)) {
-        assertEquals(5000L, fr.table().getRowCount(),
+               reader.materializeFilterColumns(survived, filterCols, true);
+           Table filterTable = fr.tableWithMeta().releaseTable()) {
+        assertEquals(5000L, filterTable.getRowCount(),
             "Group 2 (zip_code 100,000–104,999) entirely satisfies zip_code > 99,999");
       } finally {
         closeAll(filterCols);
@@ -554,8 +556,52 @@ public class HybridScanReaderTest extends CudfTestBase {
           open.file, reader.filterColumnChunksByteRanges(survived));
       try (HybridScanReader.FilterMaterializationResult fr =
                reader.materializeFilterColumns(survived, filterCols, false)) {
-        assertEquals(1599L, fr.table().getRowCount());
-        assertEquals(1, fr.table().getNumberOfColumns(), "filter table contains only zip_code");
+        assertArrayEquals(new String[]{"zip_code"}, fr.tableWithMeta().getColumnNames());
+        try (Table filterTable = fr.tableWithMeta().releaseTable()) {
+          assertEquals(1599L, filterTable.getRowCount());
+          assertEquals(1, filterTable.getNumberOfColumns(), "filter table contains only zip_code");
+        }
+      } finally {
+        closeAll(filterCols);
+      }
+    }
+  }
+
+  /**
+   * Verifies materializeFilterColumns() names each filter column correctly when the filter reads
+   * a column outside the selection, without assuming an order for the filter columns: the
+   * selection omits num_units, and num_units == 2 && zip_code > 150,000 keeps the 533 rows with
+   * id 1,402–2,998 and id % 3 == 1.
+   */
+  @Test
+  void testMaterializeFilterColumnsNamesFilterOnlyColumn(@TempDir Path tmp) throws IOException {
+    AstExpression expr = new BinaryOperation(BinaryOperator.LOGICAL_AND,
+        new BinaryOperation(BinaryOperator.EQUAL, new ColumnNameReference("num_units"),
+            Literal.ofInt(2)),
+        new BinaryOperation(BinaryOperator.GREATER, new ColumnNameReference("zip_code"),
+            Literal.ofInt(150000)));
+    try (OpenReader open = OpenReader.standard(tmp, "id", "zip_code").withFilter(expr)) {
+      HybridScanReader reader = open.reader;
+      int[] survived = reader.filterRowGroupsWithStats(reader.allRowGroups());
+      int[] ids = IntStream.rangeClosed(1402, 2998).filter(i -> i % 3 == 1).toArray();
+      DeviceMemoryBuffer[] filterCols = copyRangesToDevice(
+          open.file, reader.filterColumnChunksByteRanges(survived));
+      try (HybridScanReader.FilterMaterializationResult fr =
+               reader.materializeFilterColumns(survived, filterCols, false);
+           Table filterTable = fr.tableWithMeta().releaseTable();
+           ColumnVector expectedZip = ColumnVector.fromInts(
+               Arrays.stream(ids).map(i -> 10000 + i * 100).toArray());
+           ColumnVector expectedUnits = ColumnVector.fromInts(
+               IntStream.generate(() -> 2).limit(ids.length).toArray())) {
+        List<String> names = Arrays.asList(fr.tableWithMeta().getColumnNames());
+        String[] sortedNames = names.toArray(new String[0]);
+        Arrays.sort(sortedNames);
+        assertArrayEquals(new String[]{"num_units", "zip_code"}, sortedNames,
+            "filter table holds both filter columns, including num_units outside the selection");
+        AssertUtils.assertColumnsAreEqual(expectedZip,
+            filterTable.getColumn(names.indexOf("zip_code")), "zip_code");
+        AssertUtils.assertColumnsAreEqual(expectedUnits,
+            filterTable.getColumn(names.indexOf("num_units")), "num_units");
       } finally {
         closeAll(filterCols);
       }
@@ -568,8 +614,9 @@ public class HybridScanReaderTest extends CudfTestBase {
 
   /**
    * Verifies materializePayloadColumns() produces a payload table with the exact expected
-   * row count and column count: 1599 rows survive the filter; the payload table contains
-   * the two non-filter columns ("id", "num_units").
+   * rows and column names: the 1599 rows with id 1,401–2,999 survive the filter; the payload
+   * table contains the two non-filter columns ("id", "num_units"), and each name labels the
+   * column holding that data.
    */
   @Test
   void testMaterializePayloadColumnsExactRowCount(@TempDir Path tmp) throws IOException {
@@ -578,14 +625,25 @@ public class HybridScanReaderTest extends CudfTestBase {
       int[] survived = reader.filterRowGroupsWithStats(reader.allRowGroups());
       DeviceMemoryBuffer[] filterCols = copyRangesToDevice(
           open.file, reader.filterColumnChunksByteRanges(survived));
-      DeviceMemoryBuffer[] payloadCols = copyRangesToDevice(
-          open.file, reader.payloadColumnChunksByteRanges(survived));
-      try (HybridScanReader.FilterMaterializationResult fr =
-               reader.materializeFilterColumns(survived, filterCols, false);
-           Table payload = reader.materializePayloadColumns(survived, payloadCols,
-               fr.rowMask(), false)) {
-        assertEquals(1599L, payload.getRowCount());
-        assertEquals(2, payload.getNumberOfColumns(), "payload table contains id + num_units");
+      DeviceMemoryBuffer[] payloadCols = null;
+      try {
+        payloadCols = copyRangesToDevice(
+            open.file, reader.payloadColumnChunksByteRanges(survived));
+        try (HybridScanReader.FilterMaterializationResult fr =
+                 reader.materializeFilterColumns(survived, filterCols, false);
+             TableWithMeta payload = reader.materializePayloadColumns(survived, payloadCols,
+                 fr.rowMask(), false);
+             ColumnVector expectedIds = ColumnVector.fromInts(
+                 IntStream.rangeClosed(1401, 2999).toArray());
+             ColumnVector expectedUnits = ColumnVector.fromInts(
+                 IntStream.rangeClosed(1401, 2999).map(i -> 1 + (i % 3)).toArray())) {
+          assertArrayEquals(new String[]{"id", "num_units"}, payload.getColumnNames());
+          try (Table table = payload.releaseTable()) {
+            assertEquals(2, table.getNumberOfColumns(), "payload table contains id + num_units");
+            AssertUtils.assertColumnsAreEqual(expectedIds, table.getColumn(0), "id");
+            AssertUtils.assertColumnsAreEqual(expectedUnits, table.getColumn(1), "num_units");
+          }
+        }
       } finally {
         closeAll(filterCols);
         closeAll(payloadCols);
@@ -611,17 +669,21 @@ public class HybridScanReaderTest extends CudfTestBase {
           "Group 0 (zip_code 0-59,999) cannot satisfy zip_code > 100,000");
       DeviceMemoryBuffer[] filterCols = copyRangesToDevice(
           open.file, reader.filterColumnChunksByteRanges(survived));
-      DeviceMemoryBuffer[] payloadCols = copyRangesToDevice(
-          open.file, reader.payloadColumnChunksByteRanges(survived));
-      try (HybridScanReader.FilterMaterializationResult fr =
-               reader.materializeFilterColumns(survived, filterCols, false);
-           Table payload = reader.materializePayloadColumns(survived, payloadCols,
-               fr.rowMask(), true);
-           ColumnVector expectedIds = ColumnVector.fromInts(
-               IntStream.rangeClosed(100001, 119999).toArray())) {
-        assertEquals(2, payload.getNumberOfColumns(), "payload table contains id + num_units");
-        assertEquals(19999L, payload.getRowCount());
-        AssertUtils.assertColumnsAreEqual(expectedIds, payload.getColumn(0), "id");
+      DeviceMemoryBuffer[] payloadCols = null;
+      try {
+        payloadCols = copyRangesToDevice(
+            open.file, reader.payloadColumnChunksByteRanges(survived));
+        try (HybridScanReader.FilterMaterializationResult fr =
+                 reader.materializeFilterColumns(survived, filterCols, false);
+             TableWithMeta payloadWithMeta = reader.materializePayloadColumns(survived,
+                 payloadCols, fr.rowMask(), true);
+             Table payload = payloadWithMeta.releaseTable();
+             ColumnVector expectedIds = ColumnVector.fromInts(
+                 IntStream.rangeClosed(100001, 119999).toArray())) {
+          assertEquals(2, payload.getNumberOfColumns(), "payload table contains id + num_units");
+          assertEquals(19999L, payload.getRowCount());
+          AssertUtils.assertColumnsAreEqual(expectedIds, payload.getColumn(0), "id");
+        }
       } finally {
         closeAll(filterCols);
         closeAll(payloadCols);
@@ -806,9 +868,10 @@ public class HybridScanReaderTest extends CudfTestBase {
       int[] survived = reader.filterRowGroupsWithStats(reader.allRowGroups());
       DeviceMemoryBuffer[] filterCols = copyRangesToDevice(
           open.file, reader.filterColumnChunksByteRanges(survived));
-      DeviceMemoryBuffer[] payloadCols = copyRangesToDevice(
-          open.file, reader.payloadColumnChunksByteRanges(survived));
+      DeviceMemoryBuffer[] payloadCols = null;
       try {
+        payloadCols = copyRangesToDevice(
+            open.file, reader.payloadColumnChunksByteRanges(survived));
         reader.setupChunkingForFilterColumns(0L, 0L, survived, false, filterCols);
         try (ColumnVector rowMask = reader.takeFilterRowMask()) {
           reader.setupChunkingForPayloadColumns(0L, 0L, survived, rowMask, false, payloadCols);
@@ -837,9 +900,10 @@ public class HybridScanReaderTest extends CudfTestBase {
       int[] survived = reader.filterRowGroupsWithStats(reader.allRowGroups());
       DeviceMemoryBuffer[] filterCols = copyRangesToDevice(
           open.file, reader.filterColumnChunksByteRanges(survived));
-      DeviceMemoryBuffer[] payloadCols = copyRangesToDevice(
-          open.file, reader.payloadColumnChunksByteRanges(survived));
+      DeviceMemoryBuffer[] payloadCols = null;
       try {
+        payloadCols = copyRangesToDevice(
+            open.file, reader.payloadColumnChunksByteRanges(survived));
         reader.setupChunkingForFilterColumns(0L, 0L, survived, false, filterCols);
         while (reader.hasNextTableChunk()) {
           reader.materializeFilterColumnsChunk().close();
@@ -876,9 +940,10 @@ public class HybridScanReaderTest extends CudfTestBase {
       int[] survived = reader.filterRowGroupsWithStats(reader.allRowGroups());
       DeviceMemoryBuffer[] filterCols = copyRangesToDevice(
           open.file, reader.filterColumnChunksByteRanges(survived));
-      DeviceMemoryBuffer[] payloadCols = copyRangesToDevice(
-          open.file, reader.payloadColumnChunksByteRanges(survived));
+      DeviceMemoryBuffer[] payloadCols = null;
       try {
+        payloadCols = copyRangesToDevice(
+            open.file, reader.payloadColumnChunksByteRanges(survived));
         reader.setupChunkingForFilterColumns(0L, 0L, survived, false, filterCols);
         while (reader.hasNextTableChunk()) {
           reader.materializeFilterColumnsChunk().close();
@@ -919,9 +984,10 @@ public class HybridScanReaderTest extends CudfTestBase {
       int[] survived = reader.filterRowGroupsWithStats(reader.allRowGroups());
       DeviceMemoryBuffer[] filterCols = copyRangesToDevice(
           open.file, reader.filterColumnChunksByteRanges(survived));
-      DeviceMemoryBuffer[] payloadCols = copyRangesToDevice(
-          open.file, reader.payloadColumnChunksByteRanges(survived));
+      DeviceMemoryBuffer[] payloadCols = null;
       try {
+        payloadCols = copyRangesToDevice(
+            open.file, reader.payloadColumnChunksByteRanges(survived));
         reader.setupChunkingForFilterColumns(0L, 0L, survived, false, filterCols);
         while (reader.hasNextTableChunk()) {
           reader.materializeFilterColumnsChunk().close();
@@ -1332,9 +1398,14 @@ public class HybridScanReaderTest extends CudfTestBase {
     }
 
     static OpenReader standard(Path tmp) throws IOException {
+      return standard(tmp, DEFAULT_COLS);
+    }
+
+    /** The {@link #standard(Path)} fixture, selecting only {@code cols}. */
+    static OpenReader standard(Path tmp, String... cols) throws IOException {
       File pq = tmp.resolve("fixture.parquet").toFile();
       writeFixtureParquet(pq);
-      return openFromFile(pq, DEFAULT_COLS);
+      return openFromFile(pq, cols);
     }
 
     static OpenReader pageIndex(Path tmp) throws IOException {
@@ -1395,8 +1466,12 @@ public class HybridScanReaderTest extends CudfTestBase {
      * live filter at any time.
      */
     OpenReader withFilter(String col, BinaryOperator op, int literal) {
-      CompiledExpression newFilter = new BinaryOperation(op, new ColumnNameReference(col),
-          Literal.ofInt(literal)).compile();
+      return withFilter(new BinaryOperation(op, new ColumnNameReference(col),
+          Literal.ofInt(literal)));
+    }
+
+    OpenReader withFilter(AstExpression expr) {
+      CompiledExpression newFilter = expr.compile();
       try {
         reader.setFilter(newFilter);
       } catch (Throwable t) {

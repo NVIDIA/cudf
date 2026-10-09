@@ -546,6 +546,7 @@ _all_namespaces = _generate_namespaces(
             "io",
             "io::datasource",
             "io::experimental",
+            "io::protobuf",
             "strings",
             "ast",
             "ast::expression",

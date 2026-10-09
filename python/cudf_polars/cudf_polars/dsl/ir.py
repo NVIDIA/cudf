@@ -1778,6 +1778,73 @@ class Sink(IR):
         context: IRExecutionContext,
     ) -> DataFrame:
         """Write the dataframe to a file."""
+        import os as _os
+
+        _s3_prefix = _os.environ.get("CUDF_POLARS_CPU_S3_SINK_PREFIX")
+        if _s3_prefix and kind == "Parquet":
+            # Experimental: cudf-polars' GPU/KvikIO Parquet sink cannot write
+            # to cloud storage or FUSE mounts (see Sink.__init__'s cloud
+            # guard). As a workaround, bring the chunk back to host memory
+            # via DataFrame.to_polars() and let CPU polars encode + boto3
+            # upload it (multipart) to S3 instead. Gated behind an env var
+            # so normal local-file writes are unaffected.
+            import io as _io
+            import json as _json
+            import time as _time
+            from pathlib import PurePosixPath as _PurePosixPath
+
+            import boto3 as _boto3
+
+            global _CPU_S3_SINK_CLIENT
+            try:
+                _client = _CPU_S3_SINK_CLIENT
+            except NameError:
+                _client = None
+            if _client is None:
+                _client = _boto3.client("s3")
+                _CPU_S3_SINK_CLIENT = _client
+
+            _filename = _PurePosixPath(path).name
+            _s3_path = f"{_s3_prefix.rstrip('/')}/{_filename}"
+            # s3://bucket/key...
+            _no_scheme = _s3_path[len("s3://") :]
+            _bucket, _key = _no_scheme.split("/", 1)
+
+            _t0 = _time.perf_counter()
+            _pl_df = df.to_polars()
+            _t1 = _time.perf_counter()
+
+            _buf = _io.BytesIO()
+            _pl_df.write_parquet(_buf)
+            _nbytes = _buf.tell()
+            _buf.seek(0)
+            _t2 = _time.perf_counter()
+
+            _client.upload_fileobj(_buf, _bucket, _key)
+            _t3 = _time.perf_counter()
+
+            _timings_log = _os.environ.get(
+                "CUDF_POLARS_CPU_S3_SINK_TIMINGS_LOG",
+                _os.path.expanduser("~/cpu_s3_sink_timings.jsonl"),
+            )
+            with open(_timings_log, "a") as _f:
+                _f.write(
+                    _json.dumps(
+                        {
+                            "local_path": path,
+                            "s3_path": _s3_path,
+                            "num_rows": _pl_df.height,
+                            "num_bytes": _nbytes,
+                            "to_polars_s": _t1 - _t0,
+                            "encode_s": _t2 - _t1,
+                            "s3_upload_s": _t3 - _t2,
+                            "total_s": _t3 - _t0,
+                        }
+                    )
+                    + "\n"
+                )
+            return DataFrame([], stream=df.stream)
+
         target = plc.io.SinkInfo([path])
 
         if POLARS_VERSION_LT_136 and options.get("mkdir", False):

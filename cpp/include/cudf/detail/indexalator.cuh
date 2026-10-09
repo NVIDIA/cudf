@@ -15,7 +15,6 @@
 #include <cuda/std/optional>
 #include <cuda/std/utility>
 #include <cuda/stream>
-#include <thrust/iterator/transform_iterator.h>
 
 namespace cudf {
 namespace detail {

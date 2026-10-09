@@ -21,7 +21,6 @@
 
 #include <cuda/buffer>
 #include <cuda/stream>
-#include <thrust/scan.h>
 
 #include <stdexcept>
 

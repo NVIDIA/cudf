@@ -25,7 +25,6 @@
 #include <cuda/std/iterator>
 #include <cuda/stream>
 #include <thrust/binary_search.h>
-#include <thrust/gather.h>
 #include <thrust/reduce.h>
 #include <thrust/remove.h>
 

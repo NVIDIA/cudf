@@ -5,7 +5,12 @@ import io
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
-from utils import synchronize_stream
+from utils import (
+    assert_table_and_meta_eq,
+    extract_parquet_footer,
+    synchronize_stream,
+    write_hybrid_scan_parquet_bytes,
+)
 
 import rmm
 from rmm.pylibrmm.stream import Stream
@@ -58,16 +63,9 @@ def simple_parquet_bytes(
     simple_parquet_table: pa.Table, row_group_size: int
 ) -> bytes:
     """Create parquet bytes from the simple table."""
-    buf = io.BytesIO()
-    pq.write_table(
-        simple_parquet_table,
-        buf,
-        row_group_size=row_group_size,
-        use_dictionary=True,
-        write_statistics=True,
-        write_page_index=True,
+    return write_hybrid_scan_parquet_bytes(
+        simple_parquet_table, row_group_size
     )
-    return buf.getvalue()
 
 
 @pytest.fixture
@@ -92,23 +90,7 @@ def simple_hybrid_scan_reader(
     Note: This is function-scoped (not module-scoped) because it depends on
     the function-scoped simple_parquet_options fixture.
     """
-    # Extract footer bytes from the parquet file
-    # According to Parquet file format specification:
-    # https://parquet.apache.org/docs/file-format/
-    PARQUET_FOOTER_SIZE_BYTES = 4  # Number of bytes encoding footer length
-    PARQUET_MAGIC_BYTES = 4  # Number of bytes for "PAR1" magic number
-    PARQUET_SUFFIX_BYTES = PARQUET_FOOTER_SIZE_BYTES + PARQUET_MAGIC_BYTES
-
-    simple_parquet_mv = memoryview(simple_parquet_bytes)
-
-    footer_size = int.from_bytes(
-        simple_parquet_mv[-PARQUET_SUFFIX_BYTES:-PARQUET_MAGIC_BYTES],
-        byteorder="little",
-    )
-    footer_start = len(simple_parquet_mv) - PARQUET_SUFFIX_BYTES - footer_size
-    footer_end = len(simple_parquet_mv) - PARQUET_SUFFIX_BYTES
-    footer_mv = simple_parquet_mv[footer_start:footer_end]
-
+    footer_mv = extract_parquet_footer(simple_parquet_bytes)
     return HybridScanReader(footer_mv, simple_parquet_options)
 
 
@@ -1049,6 +1031,57 @@ def test_hybrid_scan_metadata_with_page_index(
     assert row_mask is not None
     assert row_mask.size() > 0
     assert row_mask.type().id() == plc.types.TypeId.BOOL8
+
+
+@pytest.mark.parametrize(
+    "write_statistics",
+    [True, False, ["col1"]],
+    ids=["column_and_offset_index", "offset_index_only", "mixed"],
+)
+def test_page_index_byte_range_optional_indexes(
+    simple_parquet_table: pa.Table,
+    row_group_size: int,
+    simple_parquet_options: plc.io.parquet.ParquetReaderOptions,
+    write_statistics: bool | list[str],
+) -> None:
+    """Page index byte range must span exactly the indexes written between the
+    last column chunk and the footer, even when column indexes are missing.
+    """
+    data = memoryview(
+        write_hybrid_scan_parquet_bytes(
+            simple_parquet_table, row_group_size, write_statistics
+        )
+    )
+
+    # Page indexes are written right after the last column chunk and before the footer
+    pa_metadata = pq.read_metadata(io.BytesIO(data))
+    data_end = max(
+        (col.dictionary_page_offset or col.data_page_offset)
+        + col.total_compressed_size
+        for rg in range(pa_metadata.num_row_groups)
+        for col in map(
+            pa_metadata.row_group(rg).column, range(pa_metadata.num_columns)
+        )
+    )
+    footer = extract_parquet_footer(data)
+    footer_start = len(data) - 8 - len(footer)
+
+    reader = HybridScanReader(footer, simple_parquet_options)
+    page_index = reader.page_index_byte_range()
+    assert page_index.offset == data_end
+    assert page_index.offset + page_index.size == footer_start
+    reader.setup_page_index(
+        data[page_index.offset : page_index.offset + page_index.size]
+    )
+
+    # Keep the source alive for the main parquet reader
+    source = io.BytesIO(data)
+    options = plc.io.parquet.ParquetReaderOptions.builder(
+        plc.io.SourceInfo([source])
+    ).build()
+    assert_table_and_meta_eq(
+        simple_parquet_table, plc.io.parquet.read_parquet(options)
+    )
 
 
 @pytest.mark.parametrize("total_rows", [1_000, 20_000])

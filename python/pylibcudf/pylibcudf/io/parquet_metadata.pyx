@@ -39,6 +39,10 @@ from rmm.pylibrmm.stream cimport Stream
 
 from typing import TYPE_CHECKING
 
+from pylibcudf.libcudf.io.parquet_schema import (
+    Type as PhysicalType,  # no-cython-lint
+)
+
 if TYPE_CHECKING:
     from typing_extensions import Buffer
     from pylibcudf.typing import CudaStreamLike
@@ -56,6 +60,7 @@ __all__ = [
     "ParquetColumnSchema",
     "ParquetMetadata",
     "ParquetSchema",
+    "PhysicalType",
     "RowGroup",
     "SchemaElement",
     "SortingColumn",
@@ -329,6 +334,16 @@ cdef class SchemaElement:
         if not self.c_obj.field_id.has_value():
             return None
         return self.c_obj.field_id.value()
+
+    @property
+    def type(self) -> PhysicalType:
+        """Physical type of the field; ``UNDEFINED`` for non-leaf elements."""
+        return PhysicalType(<int>self.c_obj.type)
+
+    @property
+    def type_length(self) -> int:
+        """Byte length of ``FIXED_LEN_BYTE_ARRAY`` values, or the bit length."""
+        return self.c_obj.type_length
 
 
 cdef class SortingColumn:

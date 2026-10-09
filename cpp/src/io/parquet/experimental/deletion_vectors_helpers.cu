@@ -22,7 +22,6 @@
 #include <thrust/fill.h>
 #include <thrust/scatter.h>
 #include <thrust/sequence.h>
-#include <thrust/transform.h>
 
 #include <algorithm>
 #include <functional>

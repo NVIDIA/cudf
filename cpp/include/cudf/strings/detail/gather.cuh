@@ -18,12 +18,12 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/prefetch.hpp>
 
-#include <rmm/device_buffer.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_memcpy.cuh>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/std/execution>
 #include <cuda/std/iterator>
 #include <cuda/stream>
 #include <thrust/binary_search.h>
@@ -310,27 +310,11 @@ std::unique_ptr<cudf::column> gather(strings_column_view const& strings,
             return d_out_chars + offsets_view[idx];
           }));
 
-      // Determine temporary device storage requirements
-      size_t temp_storage_bytes = 0;
-      cub::DeviceMemcpy::Batched(nullptr,
-                                 temp_storage_bytes,
-                                 in_chars_itr,
-                                 out_chars_itr,
-                                 sizes_itr,
-                                 output_count,
-                                 stream.get());
-
-      // Allocate temporary storage
-      auto d_temp_storage = rmm::device_buffer(temp_storage_bytes, stream, temp_mr);
-
-      // Run batched copy algorithm
-      cub::DeviceMemcpy::Batched(d_temp_storage.data(),
-                                 temp_storage_bytes,
-                                 in_chars_itr,
-                                 out_chars_itr,
-                                 sizes_itr,
-                                 output_count,
-                                 stream.get());
+      auto env = cuda::std::execution::env{
+        cuda::std::execution::prop{cuda::get_stream_t{}, stream},
+        cuda::std::execution::prop{cuda::mr::get_memory_resource_t{}, temp_mr}};
+      CUDF_CUDA_TRY(
+        cub::DeviceMemcpy::Batched(in_chars_itr, out_chars_itr, sizes_itr, output_count, env));
     }
   }
 

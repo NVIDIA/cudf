@@ -12,7 +12,10 @@
 #include <cudf/io/datasource.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/io/parquet_schema.hpp>
+#include <cudf/io/text/byte_range_info.hpp>
 #include <cudf/types.hpp>
+
+#include <cuda/buffer>
 
 #include <algorithm>
 #include <exception>
@@ -46,7 +49,7 @@ namespace cudf::io::parquet::detail {
  * @return Constructed metadata objects, in input order
  */
 template <typename T, typename UnaryOp>
-[[nodiscard]] auto parallel_construct_metadatas(cudf::host_span<T const> inputs, UnaryOp op)
+[[nodiscard]] auto parallel_construct_metadatas(std::span<T const> inputs, UnaryOp op)
 {
   using result_type = std::invoke_result_t<UnaryOp, T const&>;
 
@@ -201,8 +204,22 @@ struct metadata : public FileMetaData {
   metadata& operator=(metadata&& other)      = default;
   ~metadata();
 
+  /**
+   * @brief Computes the byte range of the page index, or an empty range if
+   *  it is not available or already set up
+   *
+   * @throws std::overflow_error if the byte ranges overflow int64_t
+   */
+  [[nodiscard]] text::byte_range_info page_index_byte_range() const;
+
+  /**
+   * @brief Parses column and offset indexes from the page index bytes starting at `min_offset`
+   */
   void setup_page_index(cudf::host_span<uint8_t const> page_index_bytes, int64_t min_offset);
 
+  /**
+   * @brief Returns whether the page index has been set up
+   */
   [[nodiscard]] bool is_page_index_setup() const { return is_page_index_setup_; }
 
  protected:
@@ -283,7 +300,7 @@ class aggregate_reader_metadata {
    * @brief Create a metadata object from each element in the source vector
    */
   static std::vector<metadata> metadatas_from_sources(
-    host_span<std::unique_ptr<datasource> const> sources, bool read_page_indexes = true);
+    std::span<std::unique_ptr<datasource> const> sources, bool read_page_indexes = true);
 
   /**
    * @brief Collect the keyvalue maps from each per-file metadata object into a vector of maps.
@@ -364,7 +381,7 @@ class aggregate_reader_metadata {
    * @return A pair of the device buffers backing the bloom filter bitsets and a flattened,
    * per-chunk list of bitset device spans (empty spans for chunks without a bloom filter)
    */
-  [[nodiscard]] std::pair<std::vector<rmm::device_buffer>,
+  [[nodiscard]] std::pair<std::vector<cuda::device_buffer<uint8_t>>,
                           std::vector<cudf::device_span<cuda::std::byte const>>>
   read_bloom_filters(host_span<std::unique_ptr<datasource> const> sources,
                      host_span<std::vector<size_type> const> row_group_indices,

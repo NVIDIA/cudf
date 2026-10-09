@@ -15,6 +15,9 @@ jobs:
       - check-nightly-ci
       - changed-files
       - checks
+      - wheel-test-matrix
+      - conda-python-test-matrix
+      - python-test-coverage
       - cmake-tests
       - cudf-polars-quent
       - conda-cpp-build
@@ -152,6 +155,9 @@ jobs:
           - 'cpp/scripts/parse_iwyu_output.py'
           - 'ci/cpp_linters.sh'
         unit_tests_cudf_pandas:
+          - 'ci/utils/plan_python_test_coverage.py'
+          - 'ci/utils/test_plan_python_test_coverage.py'
+          - '.github/workflows/pr.yaml'
           - 'python/cudf/cudf/pandas/**'
           - 'ci/cudf_pandas_scripts/run_tests.sh'
           - 'ci/utils/get_matrix_values.py'
@@ -173,6 +179,8 @@ jobs:
           - 'ci/test_notebooks.sh'
           - 'ci/utils/nbtest.sh'
         test_python_all:
+          - 'ci/utils/plan_python_test_coverage.py'
+          - 'ci/utils/test_plan_python_test_coverage.py'
           - 'python/libcudf/**'
           - 'python/pylibcudf/**'
           - 'RAPIDS_BRANCH'
@@ -263,6 +271,50 @@ jobs:
           - 'python/cudf/**'
           - '!python/cudf/cudf/pandas/**'
           - 'python/dask_cudf/**'
+  wheel-test-matrix:
+    permissions:
+      contents: read
+    uses: rapidsai/shared-workflows/.github/workflows/compute-matrix.yaml@main
+    with:
+      build_type: pull-request
+      matrix_name: wheels-test
+  conda-python-test-matrix:
+    permissions:
+      contents: read
+    uses: rapidsai/shared-workflows/.github/workflows/compute-matrix.yaml@main
+    with:
+      build_type: pull-request
+      matrix_name: conda-python-tests
+  python-test-coverage:
+    needs: [wheel-test-matrix, conda-python-test-matrix, changed-files]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      run-pandas: ${{ steps.plan.outputs.run-pandas }}
+      run-polars: ${{ steps.plan.outputs.run-polars }}
+      upstream-container: ${{ steps.plan.outputs.upstream-container }}
+      wheel-tests-cudf: ${{ steps.plan.outputs.wheel-tests-cudf }}
+      conda-python-cudf-tests: ${{ steps.plan.outputs.conda-python-cudf-tests }}
+      unit-tests-cudf-pandas: ${{ steps.plan.outputs.unit-tests-cudf-pandas }}
+      wheel-tests-cudf-polars: ${{ steps.plan.outputs.wheel-tests-cudf-polars }}
+      conda-python-cudf-polars-tests: ${{ steps.plan.outputs.conda-python-cudf-polars-tests }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check coverage policy
+        run: python3 -m unittest discover -s ci/utils -p test_plan_python_test_coverage.py
+      - name: Plan complementary CUDA coverage
+        id: plan
+        env:
+          WHEELS_MATRIX: ${{ needs.wheel-test-matrix.outputs.matrix }}
+          CONDA_MATRIX: ${{ needs.conda-python-test-matrix.outputs.matrix }}
+          RUN_PANDAS: >-
+            ${{ fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_all || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheels || fromJSON(needs.changed-files.outputs.changed_file_groups).test_cudf_pandas_pandas_tests }}
+          RUN_POLARS: >-
+            ${{ fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_all || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf_polars || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheels || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheel_cudf_polars || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf_polars_polars }}
+        run: python3 ci/utils/plan_python_test_coverage.py
   checks:
     permissions:
       contents: read
@@ -439,7 +491,7 @@ jobs:
       script: ci/build_python_noarch.sh
       pure-conda: cuda_major
   conda-python-cudf-tests:
-    needs: [conda-python-build, conda-python-build-noarch, changed-files]
+    needs: [conda-python-build, conda-python-build-noarch, changed-files, python-test-coverage]
     permissions:
       actions: read
       contents: read
@@ -458,6 +510,7 @@ jobs:
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda_pylibcudf ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda_cudf_tests
     with:
+      matrix_filter: ${{ needs.python-test-coverage.outputs.conda-python-cudf-tests }}
       build_type: pull-request
       script: >-
         env
@@ -465,10 +518,8 @@ jobs:
         RUN_CUDF_TESTS=${{ fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_all || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda_builds || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda_common || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda_cudf || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda_cudf_tests }}
         RUN_CUDF_BENCHMARK_TESTS=false
         ci/test_python_cudf.sh
-      # https://github.com/NVIDIA/cudf/issues/23498
-      matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
   conda-python-cudf-polars-tests:
-    needs: [conda-python-build, conda-python-build-noarch, changed-files]
+    needs: [conda-python-build, conda-python-build-noarch, changed-files, python-test-coverage]
     permissions:
       actions: read
       contents: read
@@ -485,12 +536,11 @@ jobs:
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda_common ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf_polars_runner
     with:
+      matrix_filter: ${{ needs.python-test-coverage.outputs.conda-python-cudf-polars-tests }}
       build_type: pull-request
       # https://github.com/NVIDIA/cudf/pull/22381/changes#r3196736965
       container-options: "--cap-add CAP_SYS_PTRACE --shm-size=8g --ulimit=nofile=1000000:1000000"
       script: "env POLARS_VERSIONS=latest ci/test_python_cudf_polars.sh"
-      # https://github.com/NVIDIA/cudf/issues/23498
-      matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
   conda-python-cudf-polars-tests-integration-optional:
     needs: [conda-python-build, conda-python-build-noarch, changed-files]
     permissions:
@@ -702,7 +752,7 @@ jobs:
       node_type: cpu8
       pure-wheel: true
   wheel-tests-cudf:
-    needs: [wheel-build, changed-files]
+    needs: [wheel-build, changed-files, python-test-coverage]
     permissions:
       actions: read
       contents: read
@@ -719,6 +769,7 @@ jobs:
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheels ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheel_cudf
     with:
+      matrix_filter: ${{ needs.python-test-coverage.outputs.wheel-tests-cudf }}
       build_type: pull-request
       script: >-
         env
@@ -726,10 +777,8 @@ jobs:
         RUN_CUDF_TESTS=${{ fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_all || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheels || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheel_cudf }}
         RUN_CUDF_STREAMING_TESTS=${{ fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_all || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf_streaming || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheels || fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheel_cudf }}
         ci/test_wheel_cudf.sh
-      # https://github.com/NVIDIA/cudf/issues/23498
-      matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
   wheel-tests-cudf-polars:
-    needs: [wheel-build, wheel-python-build-noarch, changed-files]
+    needs: [wheel-build, wheel-python-build-noarch, changed-files, python-test-coverage]
     permissions:
       actions: read
       contents: read
@@ -746,13 +795,12 @@ jobs:
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheel_cudf_polars ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf_polars_runner
     with:
-      # This selects "ARCH=amd64 + the latest supported Python + CUDA".
-      matrix_filter: map(select(.ARCH == "amd64")) | group_by(.CUDA_VER|split(".")|map(tonumber)|.[0]) | map(max_by([(.PY_VER|split(".")|map(tonumber)), (.CUDA_VER|split(".")|map(tonumber))]))
+      matrix_filter: ${{ needs.python-test-coverage.outputs.wheel-tests-cudf-polars }}
       build_type: pull-request
       container-options: "--cap-add CAP_SYS_PTRACE --shm-size=8g --ulimit=nofile=1000000:1000000"
       script: "env POLARS_VERSIONS=earliest ci/test_wheel_cudf_polars.sh"
   cudf-polars-polars-tests:
-    needs: [wheel-build, wheel-python-build-noarch, changed-files]
+    needs: [wheel-build, wheel-python-build-noarch, changed-files, python-test-coverage]
     strategy:
       fail-fast: false
       matrix:
@@ -771,13 +819,7 @@ jobs:
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
-    if: >
-      fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs ||
-      fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_all ||
-      fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf_polars ||
-      fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheels ||
-      fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheel_cudf_polars ||
-      fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf_polars_polars
+    if: needs.python-test-coverage.outputs.run-polars == 'true'
     with:
       build_type: pull-request
       branch: ${{ inputs.branch }}
@@ -785,9 +827,9 @@ jobs:
       sha: ${{ inputs.sha }}
       arch: amd64
       node_type: gpu-rtxpro6000-latest-1
-      container_image: rapidsai/citestwheel:26.12-latest
+      container_image: ${{ needs.python-test-coverage.outputs.upstream-container }}
       script: >-
-        ci/test_cudf_polars_polars_tests.sh --engine ${{ matrix.engine }}
+        env RAPIDS_DEPENDENCIES=latest ci/test_cudf_polars_polars_tests.sh --engine ${{ matrix.engine }}
         --inject-gpu-engine-blocksize default
         --cudf-polars-shard-id ${{ matrix.shard_id }}
         --cudf-polars-num-shards ${{ matrix.num_shards }}
@@ -836,7 +878,7 @@ jobs:
         build-all -j0 --verbose -DBUILD_BENCHMARKS=ON 2>&1 | tee telemetry-artifacts/build.log;
         sccache --show-adv-stats | tee telemetry-artifacts/sccache-stats.txt;
   unit-tests-cudf-pandas:
-    needs: [wheel-build, changed-files]
+    needs: [wheel-build, changed-files, python-test-coverage]
     permissions:
       actions: read
       contents: read
@@ -847,9 +889,7 @@ jobs:
     uses: rapidsai/shared-workflows/.github/workflows/wheels-test.yaml@main
     if: fromJSON(needs.changed-files.outputs.changed_file_groups).unit_tests_cudf_pandas
     with:
-      # This selects the latest supported Python + CUDA minor versions for each ARCH/CUDA major version combo
-      # Filter out GB300 due to https://github.com/NVIDIA/cudf/issues/23498
-      matrix_filter: group_by([(.ARCH), (.CUDA_VER|split(".")|map(tonumber)|.[0])]) | map(max_by([(.PY_VER|split(".")|map(tonumber)), (.CUDA_VER|split(".")|map(tonumber))])) | map(select(.GPU != "gb300" and .GPU != "gh200"))
+      matrix_filter: ${{ needs.python-test-coverage.outputs.unit-tests-cudf-pandas }}
       build_type: pull-request
       script: ci/cudf_pandas_scripts/run_tests.sh
   third-party-integration-tests-cudf-pandas:
@@ -922,7 +962,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
   pandas-tests:
     # run the Pandas unit tests using PR branch, sharded across runners.
-    needs: [wheel-build, changed-files, pandas-tests-shards]
+    needs: [wheel-build, changed-files, pandas-tests-shards, python-test-coverage]
     strategy:
       fail-fast: false
       matrix:
@@ -934,19 +974,15 @@ jobs:
       packages: read
       pull-requests: read
     uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
-    if: >
-      fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_all ||
-      fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf ||
-      fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheels ||
-      fromJSON(needs.changed-files.outputs.changed_file_groups).test_cudf_pandas_pandas_tests
+    if: needs.python-test-coverage.outputs.run-pandas == 'true'
     with:
       build_type: pull-request
       branch: ${{ inputs.branch }}
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
       node_type: "gpu-rtxpro6000-latest-1"
-      container_image: "rapidsai/citestwheel:26.12-latest"
-      script: "ci/cudf_pandas_scripts/pandas-tests/run.sh pr ${{ matrix.shard_id }} ${{ needs.pandas-tests-shards.outputs.num_shards }}"
+      container_image: ${{ needs.python-test-coverage.outputs.upstream-container }}
+      script: "env RAPIDS_DEPENDENCIES=latest ci/cudf_pandas_scripts/pandas-tests/run.sh pr ${{ matrix.shard_id }} ${{ needs.pandas-tests-shards.outputs.num_shards }}"
       file_to_upload: ./pr-results.json
       artifact-name: "pandas-test-pr-results-${{ matrix.shard_id }}"
   pandas-tests-summary:

@@ -27,6 +27,7 @@
 #include <cuco/detail/open_addressing/kernels.cuh>
 #include <cuco/static_multiset_ref.cuh>
 #include <cuda/atomic>
+#include <cuda/cmath>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <thrust/copy.h>
@@ -389,7 +390,7 @@ void mark_join::clear_marks(cuda::stream_ref stream)
   auto const num_buckets = static_cast<cudf::thread_index_type>(storage_ref.num_buckets());
   if (num_buckets == 0) return;
 
-  auto const grid_size = cudf::util::div_rounding_up_unsafe(num_buckets, mark_block_size);
+  auto const grid_size = cuda::ceil_div(num_buckets, mark_block_size);
   clear_marks_kernel<mark_block_size><<<grid_size, mark_block_size, 0, stream.get()>>>(
     storage_ref, static_cast<slot_type>(masked_empty_sentinel), num_buckets);
   CUDF_CUDA_TRY(cudaGetLastError());

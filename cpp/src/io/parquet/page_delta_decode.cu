@@ -13,8 +13,6 @@
 
 #include <rmm/exec_policy.hpp>
 
-#include <thrust/transform_scan.h>
-
 namespace cudf::io::parquet::detail {
 
 namespace {

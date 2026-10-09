@@ -582,6 +582,30 @@ kernel get_kernel(bool is_null_aware,
                      source_type);
 }
 
+// The kernel for code that row IR generated from AST expressions. The code is compiled as it is,
+// called by the name of its generated function, and linked with the LTO callees it calls.
+kernel get_ast_kernel(bool is_null_aware,
+                      bool has_user_data,
+                      std::span<transform_input_spec const> inputs,
+                      std::span<transform_output_spec const> outputs,
+                      std::string const& udf,
+                      std::string_view udf_expression,
+                      std::span<detail::row_ir::udf_fragment const> udf_fragments)
+{
+  CUDF_FUNC_RANGE();
+  auto [in_types, out_types, ptx_in_types, ptx_out_types] =
+    reflect(udf_source_type::CUDA, inputs, outputs);
+  auto kernel_name = rtcx::reflect_template("cudf::jit::transform_kernel",
+                                            rtcx::reflect(is_null_aware),
+                                            rtcx::reflect(has_user_data),
+                                            in_types,
+                                            out_types);
+  return jit::get_udf_kernel("cudf/cpp/src/transform/jit/kernel.cu",
+                             kernel_name,
+                             jit::define_operation(udf, "GENERIC_TRANSFORM_OP", udf_expression),
+                             udf_fragments);
+}
+
 void run(bool is_null_aware,
          bool has_user_data,
          size_type row_size,
@@ -1210,6 +1234,39 @@ std::unique_ptr<table> execute_transform(std::string const& udf,
   return std::make_unique<table>(std::move(finalized));
 }
 
+// Runs the transform that row IR generated for AST expressions.
+std::unique_ptr<table> execute_ast_transform(detail::row_ir::transform_args&& args,
+                                             cuda::stream_ref stream,
+                                             rmm::device_async_resource_ref mr)
+{
+  perform_checks(args.source_type,
+                 args.is_null_aware,
+                 args.row_size,
+                 args.inputs,
+                 args.outputs,
+                 args.string_offsets);
+  auto input_specs  = jit_transform::make_input_specs(args.inputs);
+  auto output_specs = jit_transform::make_output_specs(args.outputs, args.string_offsets);
+  auto kernel       = jit_transform::get_ast_kernel(args.is_null_aware == null_aware::YES,
+                                              args.user_data.has_value(),
+                                              input_specs,
+                                              output_specs,
+                                              args.udf,
+                                              args.udf_expression,
+                                              args.udf_fragments);
+  return execute_transform(args.udf,
+                           args.source_type,
+                           args.is_null_aware,
+                           args.row_size,
+                           args.user_data,
+                           args.inputs,
+                           args.outputs,
+                           std::move(args.string_offsets),
+                           &kernel,
+                           stream,
+                           mr);
+}
+
 }  // namespace
 
 std::unique_ptr<table> transform(std::string const& udf,
@@ -1289,17 +1346,7 @@ std::unique_ptr<column> compute_column_jit(table_view const& table,
   std::array<std::reference_wrapper<ast::expression const>, 1> expressions{expr};
   auto args = detail::row_ir::ast_converter::compute_table(
     detail::row_ir::target::CUDA, expressions, table, {}, "compute_operation", stream, mr);
-  auto result = transform(args.udf,
-                          args.source_type,
-                          args.is_null_aware,
-                          args.user_data,
-                          args.inputs,
-                          args.outputs,
-                          std::move(args.string_offsets),
-                          args.row_size,
-                          stream,
-                          mr);
-  auto cols   = result->release();
+  auto cols = execute_ast_transform(std::move(args), stream, mr)->release();
   return std::move(cols[0]);
 }
 
@@ -1312,16 +1359,7 @@ std::unique_ptr<table> compute_table_jit(
   CUDF_FUNC_RANGE();
   auto args = detail::row_ir::ast_converter::compute_table(
     detail::row_ir::target::CUDA, expressions, table, {}, "compute_operation", stream, mr);
-  return transform(args.udf,
-                   args.source_type,
-                   args.is_null_aware,
-                   args.user_data,
-                   args.inputs,
-                   args.outputs,
-                   std::move(args.string_offsets),
-                   args.row_size,
-                   stream,
-                   mr);
+  return execute_ast_transform(std::move(args), stream, mr);
 }
 
 // if we have a matching pre-compiled kernel fragment for the given transform configuration, return
@@ -1446,17 +1484,27 @@ struct transform_program::impl {
        null_aware is_null_aware,
        std::optional<void*> user_data,
        std::vector<transform_input_spec> inputs,
-       std::vector<transform_output_spec> outputs)
+       std::vector<transform_output_spec> outputs,
+       std::string_view udf_expression                             = {},
+       std::span<detail::row_ir::udf_fragment const> udf_fragments = {})
     : reflection_{jit_transform::reflect(source_type, inputs, outputs)},
       source_type_{source_type},
       is_null_aware_{is_null_aware},
       user_data_{user_data},
-      kernel_{jit_transform::get_kernel(is_null_aware_ == null_aware::YES,
-                                        user_data_.has_value(),
-                                        inputs,
-                                        outputs,
-                                        udf,
-                                        source_type_)}
+      kernel_{udf_expression.empty()
+                ? jit_transform::get_kernel(is_null_aware_ == null_aware::YES,
+                                            user_data_.has_value(),
+                                            inputs,
+                                            outputs,
+                                            udf,
+                                            source_type_)
+                : jit_transform::get_ast_kernel(is_null_aware_ == null_aware::YES,
+                                                user_data_.has_value(),
+                                                inputs,
+                                                outputs,
+                                                udf,
+                                                udf_expression,
+                                                udf_fragments)}
   {
   }
 
@@ -1521,7 +1569,9 @@ transform_program::transform_program(
                            args.is_null_aware,
                            args.user_data,
                            jit_transform::make_input_specs(args.inputs),
-                           jit_transform::make_output_specs(args.outputs, args.string_offsets));
+                           jit_transform::make_output_specs(args.outputs, args.string_offsets),
+                           args.udf_expression,
+                           args.udf_fragments);
   CUDF_EXPECTS(args.inputs.size() == args.input_column_indices.size(),
                "AST transform input metadata size mismatch");
   for (auto i = std::size_t{0}; i < args.inputs.size(); ++i) {

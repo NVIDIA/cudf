@@ -470,12 +470,15 @@ filter_join_indices_jit(cudf::table_view const& left,
                                       filter_result.user_data.has_value(),
                                       filter_result.is_null_aware == null_aware::YES);
 
-  auto const cuda_source =
-    cudf::jit::parse_single_function_cuda(filter_result.udf, "GENERIC_JOIN_FILTER_OP");
+  // The generated code is compiled as it is, linked with the LTO callees it calls.
+  auto const cuda_source = cudf::jit::define_operation(
+    filter_result.udf, "GENERIC_JOIN_FILTER_OP", filter_result.udf_expression);
 
   auto kernel_name = rtcx::reflect_template("cudf::join::jit::filter_join_kernel", template_args);
-  auto kernel      = cudf::jit::get_udf_kernel(
-    "cudf/cpp/src/join/jit/filter_join_kernel.cu", kernel_name, cuda_source);
+  auto kernel      = cudf::jit::get_udf_kernel("cudf/cpp/src/join/jit/filter_join_kernel.cu",
+                                          kernel_name,
+                                          cuda_source,
+                                          filter_result.udf_fragments);
 
   // Allocate and compute predicate results
   auto predicate_results = rmm::device_uvector<bool>(left_indices.size(), stream);

@@ -5,6 +5,7 @@
 #pragma once
 
 #include <cudf/ast/expressions.hpp>
+#include <cudf/ast/jit/udf.hpp>
 #include <cudf/detail/row_ir/opcode.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
@@ -104,6 +105,93 @@ struct operation : public ast::expression {
   std::vector<std::reference_wrapper<expression const>> args_;
   cudf::error_policy error_policy_     = cudf::error_policy::PROPAGATE;
   std::optional<int32_t> target_scale_ = std::nullopt;
+};
+
+/**
+ * @brief A call of a consumer-supplied device function, created by `cudf::ast::jit::call`.
+ */
+struct udf_call : public ast::expression {
+  /**
+   * @brief Construct a new udf_call object.
+   * @param function The device function to call
+   * @param output_type The type of the value the function writes
+   * @param args The arguments for this call
+   * @param error_policy How a row whose call fails is handled
+   */
+  udf_call(device_binary function,
+           data_type output_type,
+           std::vector<std::reference_wrapper<expression const>> args,
+           cudf::error_policy error_policy)
+    : function_{std::move(function)},
+      output_type_{output_type},
+      args_{std::move(args)},
+      error_policy_{error_policy}
+  {
+  }
+
+  udf_call(udf_call const&)            = default;  //< Copy constructor
+  udf_call(udf_call&&)                 = default;  //< Move constructor
+  udf_call& operator=(udf_call const&) = default;  //< Copy assignment
+  udf_call& operator=(udf_call&&)      = default;  //< Move assignment
+  ~udf_call() override                 = default;  //< Destructor
+
+  /**
+   * @brief Get the device function this expression calls.
+   *
+   * @return The device function
+   */
+  [[nodiscard]] device_binary const& get_function() const { return function_; }
+
+  /**
+   * @brief Get the type of the value the function writes.
+   *
+   * @return The output type
+   */
+  [[nodiscard]] data_type get_output_type() const { return output_type_; }
+
+  /**
+   * @brief Get the arguments.
+   *
+   * @return Span of arguments
+   */
+  [[nodiscard]] std::span<std::reference_wrapper<expression const> const> get_arguments() const
+  {
+    return args_;
+  }
+
+  /**
+   * @brief How a row whose call fails is handled.
+   *
+   * @return The error policy for this call
+   */
+  [[nodiscard]] cudf::error_policy get_error_policy() const { return error_policy_; }
+
+  /**
+   * @copydoc expression::accept
+   */
+  cudf::size_type accept(cudf::ast::detail::expression_parser& visitor) const override;
+
+  /**
+   * @copydoc expression::accept
+   */
+  std::reference_wrapper<expression const> accept(
+    cudf::ast::detail::expression_transformer& visitor) const override;
+
+  [[nodiscard]] bool may_evaluate_null(table_view const& left,
+                                       table_view const& right,
+                                       cuda::stream_ref stream) const override;
+
+  /**
+   * @copydoc expression::accept
+   */
+  [[nodiscard]] std::unique_ptr<cudf::detail::row_ir::node> accept(
+    cudf::detail::row_ir::ast_converter& visitor) const override;
+
+ private:
+  device_binary function_;
+  data_type output_type_;
+  std::vector<std::reference_wrapper<expression const>> args_;
+  cudf::error_policy error_policy_ = cudf::error_policy::PROPAGATE;
 };
 
 }  // namespace cudf::ast::jit::detail

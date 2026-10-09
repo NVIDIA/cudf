@@ -59,9 +59,11 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <variant>
 #include <vector>
 
 using std::string;
@@ -647,20 +649,20 @@ void infer_column_types(parse_options const& parse_opts,
  *
  * @param size Number of entries
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @return Untyped buffer of `size` null `StringOffsetPair` entries
+ * @return Typed buffer of `size` null string staging entries
  */
-template <typename StringOffsetPair>
-std::unique_ptr<rmm::device_buffer> make_null_string_indices(size_type size,
-                                                             cuda::stream_ref stream)
+template <typename OffsetT>
+rmm::device_uvector<string_offset_pair<OffsetT>> make_null_string_indices(size_type size,
+                                                                          cuda::stream_ref stream)
 {
-  rmm::device_uvector<StringOffsetPair> indices(
+  rmm::device_uvector<string_offset_pair<OffsetT>> indices(
     size, stream, cudf::get_current_device_resource_ref());
   // Short rows leave missing fields untouched; zero is a valid offset, not a null.
   thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                indices.begin(),
                indices.end(),
-               StringOffsetPair{});
-  return std::make_unique<rmm::device_buffer>(indices.release());
+               string_offset_pair<OffsetT>{});
+  return indices;
 }
 
 /**
@@ -682,10 +684,10 @@ struct doublequote_unescape {
  * @param mr Device memory resource used to allocate the returned column's device memory
  * @return The strings column
  */
-template <typename StringOffsetPair>
+template <typename OffsetT>
 std::unique_ptr<column> materialize_string_column(
   device_span<char const> data,
-  device_span<StringOffsetPair const> indices,
+  device_span<string_offset_pair<OffsetT> const> indices,
   std::optional<doublequote_unescape> const& unescape,
   cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
@@ -694,8 +696,8 @@ std::unique_ptr<column> materialize_string_column(
   auto const original_pairs = cuda::transform_iterator(
     indices.begin(),
     cuda::proclaim_return_type<cudf::strings::detail::string_index_pair>(
-      [raw_csv = data.data()] __device__(StringOffsetPair const& pair) {
-        return pair.offset == StringOffsetPair::null_offset
+      [raw_csv = data.data()] __device__(string_offset_pair<OffsetT> const& pair) {
+        return pair.offset == string_offset_pair<OffsetT>::null_offset
                  ? cudf::strings::detail::string_index_pair{nullptr, 0}
                  : cudf::strings::detail::string_index_pair{raw_csv + pair.offset,
                                                             static_cast<size_type>(pair.length)};
@@ -750,30 +752,25 @@ std::unique_ptr<column> materialize_string_column(
 }
 
 /**
- * @brief Views an untyped staging buffer as a span of `T`
- *
- * @param buffer Buffer holding `T` elements
- * @return Span over the elements of `buffer`
- */
-template <typename T>
-device_span<T const> typed_span(rmm::device_buffer const& buffer)
-{
-  return {static_cast<T const*>(buffer.data()), buffer.size() / sizeof(T)};
-}
-
-/**
  * @brief Result of decode_data containing column buffers and string staging
  *
- * String columns are staged outside `buffers`, which only carry their names. Staging vectors are
+ * String columns are staged outside `buffers`, which only carry their names. Staging entries are
  * indexed by active column and hold null entries for non-string columns.
  */
 struct decode_result {
+  template <typename OffsetT>
+  struct string_staging {
+    std::optional<rmm::device_uvector<bool>> is_quoted;
+    rmm::device_uvector<string_offset_pair<OffsetT>> indices;
+  };
+  template <typename OffsetT>
+  using staging_vector = std::vector<std::optional<string_staging<OffsetT>>>;
+
   std::vector<column_buffer> buffers;
-  std::vector<std::unique_ptr<rmm::device_uvector<bool>>> is_quoted_flags;
-  std::vector<std::unique_ptr<rmm::device_buffer>> string_indices;
-  bool compact_strings{};
+  std::variant<staging_vector<uint32_t>, staging_vector<uint64_t>> staging;
 };
 
+template <typename OffsetT>
 decode_result decode_data(parse_options const& parse_opts,
                           host_span<column_parse::flags const> column_flags,
                           std::vector<std::string> const& column_names,
@@ -790,8 +787,7 @@ decode_result decode_data(parse_options const& parse_opts,
   // Alloc output; columns' data memory is still expected for empty dataframe
   std::vector<column_buffer> out_buffers;
   out_buffers.reserve(column_types.size());
-  std::vector<std::unique_ptr<rmm::device_buffer>> string_indices(num_active_columns);
-  auto const use_compact_strings = use_compact_string_offsets(data.size());
+  decode_result::staging_vector<OffsetT> staging(num_active_columns);
 
   for (int col = 0, active_col = 0; col < num_actual_columns; ++col) {
     if (column_flags[col] & column_parse::enabled) {
@@ -800,10 +796,8 @@ decode_result decode_data(parse_options const& parse_opts,
                                ? column_buffer(column_types[active_col], true)
                                : column_buffer(column_types[active_col], num_records, true, stream, mr);
       if (is_string) {
-        string_indices[active_col] =
-          use_compact_strings
-            ? make_null_string_indices<compact_string_offset_pair>(num_records, stream)
-            : make_null_string_indices<wide_string_offset_pair>(num_records, stream);
+        staging[active_col].emplace(decode_result::string_staging<OffsetT>{
+          std::nullopt, make_null_string_indices<OffsetT>(num_records, stream)});
       }
 
       out_buffer.name = column_names[col];
@@ -816,25 +810,28 @@ decode_result decode_data(parse_options const& parse_opts,
   auto h_valid = cudf::detail::make_host_vector<bitmask_type*>(num_active_columns, stream);
 
   for (int i = 0; i < num_active_columns; ++i) {
-    h_data[i]  = string_indices[i] ? string_indices[i]->data() : out_buffers[i].data();
-    h_valid[i] = string_indices[i] ? nullptr : out_buffers[i].null_mask();
+    h_data[i]  = staging[i] ? staging[i]->indices.data() : out_buffers[i].data();
+    h_valid[i] = staging[i] ? nullptr : out_buffers[i].null_mask();
   }
 
   // Quoted flags are only consumed by doublequote unescaping, so skip them otherwise.
-  std::vector<std::unique_ptr<rmm::device_uvector<bool>>> is_quoted_flags(num_active_columns);
   auto h_is_quoted_flags = cudf::detail::make_host_vector<bool*>(num_active_columns, stream);
   for (int i = 0; i < num_active_columns; ++i) {
     if (track_quoted_fields && column_types[i].id() == type_id::STRING) {
-      is_quoted_flags[i] = std::make_unique<rmm::device_uvector<bool>>(
-        cudf::detail::make_zeroed_device_uvector_async<bool>(
-          num_records, stream, cudf::get_current_device_resource_ref()));
-      h_is_quoted_flags[i] = is_quoted_flags[i]->data();
+      staging[i]->is_quoted.emplace(cudf::detail::make_zeroed_device_uvector_async<bool>(
+        num_records, stream, cudf::get_current_device_resource_ref()));
+      h_is_quoted_flags[i] = staging[i]->is_quoted->data();
     }
   }
 
   auto d_valid_counts = cudf::detail::make_zeroed_device_uvector_async<size_type>(
     num_active_columns, stream, cudf::get_current_device_resource_ref());
 
+  auto const d_is_quoted_flags =
+    track_quoted_fields
+      ? make_device_uvector_async(
+          h_is_quoted_flags, stream, cudf::get_current_device_resource_ref())
+      : rmm::device_uvector<bool*>{0, stream, cudf::get_current_device_resource_ref()};
   cudf::io::csv::gpu::decode_row_column_data(
     parse_opts.view(),
     data,
@@ -844,10 +841,8 @@ decode_result decode_data(parse_options const& parse_opts,
     make_device_uvector_async(h_data, stream, cudf::get_current_device_resource_ref()),
     make_device_uvector_async(h_valid, stream, cudf::get_current_device_resource_ref()),
     d_valid_counts,
-    track_quoted_fields ? device_span<bool* const>{make_device_uvector_async(
-                            h_is_quoted_flags, stream, cudf::get_current_device_resource_ref())}
-                        : device_span<bool* const>{},
-    use_compact_strings,
+    d_is_quoted_flags,
+    std::is_same_v<OffsetT, uint32_t>,
     stream);
 
   auto const h_valid_counts = cudf::detail::make_host_vector(d_valid_counts, stream);
@@ -855,10 +850,7 @@ decode_result decode_data(parse_options const& parse_opts,
     out_buffers[i].null_count() = num_records - h_valid_counts[i];
   }
 
-  return {std::move(out_buffers),
-          std::move(is_quoted_flags),
-          std::move(string_indices),
-          use_compact_strings};
+  return {std::move(out_buffers), std::move(staging)};
 }
 
 cudf::detail::host_vector<data_type> determine_column_types(
@@ -1101,7 +1093,9 @@ table_with_metadata read_csv(cudf::io::datasource* source,
   out_columns.reserve(column_types.size());
   if (num_records != 0) {
     bool const doublequote_enabled = (parse_opts.quotechar != '\0' && parse_opts.doublequote);
-    auto decode_result             = decode_data(  //
+    auto const decode =
+      use_compact_string_offsets(data.size()) ? decode_data<uint32_t> : decode_data<uint64_t>;
+    auto decode_result = decode(  //
       parse_opts,
       column_flags,
       column_names,
@@ -1117,9 +1111,7 @@ table_with_metadata read_csv(cudf::io::datasource* source,
 
     out_columns.resize(column_types.size());
 
-    auto& out_buffers     = decode_result.buffers;
-    auto& is_quoted_flags = decode_result.is_quoted_flags;
-    auto& string_indices  = decode_result.string_indices;
+    auto& out_buffers = decode_result.buffers;
 
     std::vector<size_t> string_col_indices;
     for (size_t i = 0; i < column_types.size(); ++i) {
@@ -1129,11 +1121,11 @@ table_with_metadata read_csv(cudf::io::datasource* source,
     // Materialize string columns from their staged indices in parallel using the thread pool
     auto const num_string_cols = string_col_indices.size();
     if (num_string_cols > 0) {
-      auto const quotechar = parse_opts.quotechar;
       std::unique_ptr<cudf::string_scalar> quotechar_scalar;
       std::unique_ptr<cudf::string_scalar> dblquotechar_scalar;
       if (doublequote_enabled) {
-        quotechar_scalar = std::make_unique<cudf::string_scalar>(
+        auto const quotechar = parse_opts.quotechar;
+        quotechar_scalar     = std::make_unique<cudf::string_scalar>(
           std::string(1, quotechar), true, stream, cudf::get_current_device_resource_ref());
         dblquotechar_scalar = std::make_unique<cudf::string_scalar>(
           std::string(2, quotechar), true, stream, cudf::get_current_device_resource_ref());
@@ -1145,24 +1137,24 @@ table_with_metadata read_csv(cudf::io::datasource* source,
 
       auto process_string_column = [&](size_t str_col_idx, cuda::stream_ref col_stream) {
         auto const col_idx = string_col_indices[str_col_idx];
-        auto& indices      = string_indices[col_idx];
-        auto& is_quoted    = is_quoted_flags[col_idx];
-        // Also bind exceptional cleanup to the stream consuming the staging buffers.
-        indices->set_stream(col_stream);
-        if (is_quoted) { is_quoted->set_stream(col_stream); }
-        auto const unescape =
-          is_quoted
-            ? std::optional<doublequote_unescape>{doublequote_unescape{
-                device_span<bool const>{*is_quoted}, *quotechar_scalar, *dblquotechar_scalar}}
-            : std::nullopt;
-        auto const materialize = [&](auto typed_indices) {
-          return materialize_string_column(data, typed_indices, unescape, col_stream, mr);
-        };
-        out_columns[col_idx] = decode_result.compact_strings
-                                 ? materialize(typed_span<compact_string_offset_pair>(*indices))
-                                 : materialize(typed_span<wide_string_offset_pair>(*indices));
-        indices.reset();
-        is_quoted.reset();
+        std::visit(
+          [&]<typename OffsetT>(decode_result::staging_vector<OffsetT>& staging) {
+            auto& entry     = staging[col_idx];
+            auto& indices   = entry->indices;
+            auto& is_quoted = entry->is_quoted;
+            // Also bind exceptional cleanup to the stream consuming the staging buffers.
+            indices.set_stream(col_stream);
+            if (is_quoted) { is_quoted->set_stream(col_stream); }
+            auto const unescape =
+              is_quoted
+                ? std::optional<doublequote_unescape>{doublequote_unescape{
+                    device_span<bool const>{*is_quoted}, *quotechar_scalar, *dblquotechar_scalar}}
+                : std::nullopt;
+            out_columns[col_idx] =
+              materialize_string_column<OffsetT>(data, indices, unescape, col_stream, mr);
+            entry.reset();
+          },
+          decode_result.staging);
       };
 
       std::vector<std::future<void>> tasks;

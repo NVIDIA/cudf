@@ -129,7 +129,7 @@ hierarchical_thread_pool& host_worker_pool();
  * @return The first exception thrown by a task, or null if all tasks succeeded
  */
 template <typename T>
-[[nodiscard]] std::exception_ptr wait_for_all_tasks(std::vector<std::future<T>>& tasks)
+[[nodiscard]] std::exception_ptr wait_for_all_tasks(std::vector<std::future<T>>& tasks) noexcept
 {
   std::exception_ptr first_error;
   for (auto& task : tasks) {

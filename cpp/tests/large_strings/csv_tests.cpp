@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "io/csv/csv_common.hpp"
 #include "large_strings_fixture.hpp"
 
 #include <cudf_test/column_wrapper.hpp>
@@ -12,6 +13,8 @@
 #include <cudf/io/csv.hpp>
 #include <cudf/table/table.hpp>
 
+#include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -20,6 +23,8 @@ struct CsvLargeReaderTest : public cudf::test::StringsLargeTest {};
 
 TEST_F(CsvLargeReaderTest, InputExceedsCompactOffsets)
 {
+  if (getenv("LIBCUDF_RACECHECK_ENABLED")) { GTEST_SKIP(); }
+
   // Scoped so the >4 GiB input is removed as soon as the test ends.
   temp_directory const temp_dir{"csv_large"};
   auto const path = temp_dir.path() + "wide_offsets.csv";
@@ -33,8 +38,12 @@ TEST_F(CsvLargeReaderTest, InputExceedsCompactOffsets)
       output << padding;
       output << ",\"v\"\"" << row % 10 << "\"\n";
     }
+    output.flush();
     ASSERT_TRUE(output.good());
   }
+  ASSERT_GT(std::filesystem::file_size(path),
+            cudf::io::csv::compact_string_offset_pair::null_offset);
+
   auto const options =
     cudf::io::csv_reader_options::builder(cudf::io::source_info{path})
       .header(0)

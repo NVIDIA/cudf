@@ -21,6 +21,12 @@ struct string_offset_pair {
   using offset_type                        = OffsetT;
   static constexpr offset_type null_offset = cuda::std::numeric_limits<offset_type>::max();
 
+  // Offsets are at most data_size (an empty trailing field), so the sentinel stays unreachable.
+  [[nodiscard]] static constexpr bool can_represent(size_t data_size)
+  {
+    return data_size < null_offset;
+  }
+
   offset_type offset{null_offset};
   uint32_t length{0};
 };
@@ -29,12 +35,15 @@ using compact_string_offset_pair = string_offset_pair<uint32_t>;
 using wide_string_offset_pair    = string_offset_pair<uint64_t>;
 
 static_assert(sizeof(compact_string_offset_pair) == 8);
+static_assert(sizeof(wide_string_offset_pair) == 16);
 
-// Offsets are at most data_size (an empty trailing field), so the sentinel stays unreachable.
 [[nodiscard]] constexpr bool use_compact_string_offsets(size_t data_size)
 {
-  return data_size < compact_string_offset_pair::null_offset;
+  return compact_string_offset_pair::can_represent(data_size);
 }
+
+static_assert(use_compact_string_offsets(compact_string_offset_pair::null_offset - 1));
+static_assert(!use_compact_string_offsets(compact_string_offset_pair::null_offset));
 
 namespace column_parse {
 /**

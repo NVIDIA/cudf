@@ -38,7 +38,6 @@
 #include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
-#include <thrust/fill.h>
 #include <thrust/sequence.h>
 #include <thrust/sort.h>
 

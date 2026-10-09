@@ -17,7 +17,6 @@
 
 #include <cuda/iterator>
 #include <cuda/stream>
-#include <thrust/iterator/transform_iterator.h>
 
 namespace cudf {
 namespace detail {

@@ -16,7 +16,6 @@
 
 #include <cuda/iterator>
 #include <cuda/stream>
-#include <thrust/sequence.h>
 
 namespace cudf {
 namespace lists {

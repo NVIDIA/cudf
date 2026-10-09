@@ -450,7 +450,7 @@ TEST_F(NestedListTest, MultipleListsColumnsWithNulls)
 {
   // A STRUCT<LIST<INT>> column with all nulls.
   auto const col0 = [] {
-    auto child = int32s_lists{{int32s_lists{}, int32s_lists{}}, all_nulls()};
+    auto child = int32s_lists{{{}, {}}, all_nulls()};
     return structs_col{{child}, all_nulls()};
   }();
 

@@ -431,6 +431,8 @@ class hybrid_scan_reader {
   /**
    * @brief Get the byte range of the page index in the Parquet file
    *
+   * @throws std::overflow_error if the page index byte ranges in the metadata overflow int64_t
+   *
    * @return Byte range of the page index
    */
   [[nodiscard]] byte_range_info page_index_byte_range() const;
@@ -441,6 +443,8 @@ class hybrid_scan_reader {
    * Materialize the `ColumnIndex` and `OffsetIndex` structs (collectively called the page index)
    * within the Parquet file metadata struct (returned by `parquet_metadata()`). The statistics
    * contained in page index can be used to prune data pages before decoding.
+   *
+   * @throws std::invalid_argument if the page index buffer or byte range in the metadata is invalid
    *
    * @param page_index_bytes Host span of Parquet page index buffer bytes
    */

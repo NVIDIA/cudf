@@ -20,6 +20,7 @@ def read_text(
     compression=None,
     compression_offsets=None,
     storage_options=None,
+    filesystem=None,
 ) -> Series:
     """{docstring}"""
 
@@ -30,6 +31,7 @@ def read_text(
         path_or_data=filepath_or_buffer,
         iotypes=(BytesIO, StringIO),
         storage_options=storage_options,
+        filesystem=filesystem,
     )
     filepath_or_buffer = ioutils._select_single_source(
         filepath_or_buffer, "read_text"

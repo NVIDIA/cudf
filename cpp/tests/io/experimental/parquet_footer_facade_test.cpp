@@ -22,6 +22,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <string>
 #include <vector>
 
 using namespace cudf::io::parquet;
@@ -664,6 +665,378 @@ TEST_F(ParquetFooterFacadeTest, StructListWithWrongElementTypeIsSkippedInCompat)
   EXPECT_EQ(parsed.version, 1);
   EXPECT_TRUE(parsed.key_value_metadata.empty());
   EXPECT_EQ(parsed.num_rows, 1);
+}
+
+// ---- ColumnOrder / LogicalType union-arm regressions (issue #16120) ----
+// Parquet's ColumnOrder union defines arms 1-3 and LogicalType arms 1-8, 10-19 (9 reserved).
+// Parquet-java >= 1.18.1 (Spark master since SPARK-58869) writes
+// ColumnOrder.IEEE_754_TOTAL_ORDER for FLOAT/DOUBLE/FLOAT16 columns, which used to crash the
+// native read -> prune -> write footer path with CUDF_FAIL on the unmodeled arm.
+
+namespace {
+
+// Builds a minimal footer whose schema is a root with one leaf per given logical type.
+FileMetaData make_logical_type_footer(std::vector<LogicalType> const& types)
+{
+  FileMetaData meta;
+  meta.version  = 1;
+  meta.num_rows = 0;
+
+  meta.schema.push_back({.type            = Type::UNDEFINED,
+                         .repetition_type = FieldRepetitionType::REQUIRED,
+                         .name            = "schema",
+                         .num_children    = static_cast<int32_t>(types.size())});
+  for (size_t i = 0; i < types.size(); ++i) {
+    meta.schema.push_back({.type            = Type::BYTE_ARRAY,
+                           .repetition_type = FieldRepetitionType::REQUIRED,
+                           .name            = "col" + std::to_string(i),
+                           .logical_type    = types[i]});
+  }
+  return meta;
+}
+
+}  // namespace
+
+// All three ColumnOrder arms survive a write -> read -> write round-trip in order.
+TEST_F(ParquetFooterFacadeTest, MixedColumnOrdersRoundTrip)
+{
+  FileMetaData meta;
+  meta.version       = 2;
+  meta.num_rows      = 4;
+  meta.column_orders = std::vector<ColumnOrder>{{ColumnOrder::TYPE_ORDER},
+                                                {ColumnOrder::IEEE_754_TOTAL_ORDER},
+                                                {ColumnOrder::INT96_TIMESTAMP_ORDER},
+                                                {ColumnOrder::TYPE_ORDER}};
+
+  auto const bytes    = experimental::write_parquet_footer_bytes(meta);
+  auto const reparsed = experimental::read_parquet_footer_bytes(bytes);
+  ASSERT_TRUE(reparsed.column_orders.has_value());
+  ASSERT_EQ(reparsed.column_orders->size(), 4);
+  EXPECT_EQ(reparsed.column_orders.value()[0].type, ColumnOrder::TYPE_ORDER);
+  EXPECT_EQ(reparsed.column_orders.value()[1].type, ColumnOrder::IEEE_754_TOTAL_ORDER);
+  EXPECT_EQ(reparsed.column_orders.value()[2].type, ColumnOrder::INT96_TIMESTAMP_ORDER);
+  EXPECT_EQ(reparsed.column_orders.value()[3].type, ColumnOrder::TYPE_ORDER);
+
+  EXPECT_EQ(experimental::write_parquet_footer_bytes(reparsed), bytes);
+}
+
+// Regression for issue #16120: a footer written by parquet-java >= 1.18.1 carries the
+// IEEE_754_TOTAL_ORDER (union field id 2) that previously parsed to UNDEFINED and crashed the
+// writer. The bytes below are the exact canonical compact-protocol output of
+// write_parquet_footer_bytes for this metadata (empty schema/row-groups are emitted
+// unconditionally, so the literal includes them); parse and byte-identity must both hold.
+TEST_F(ParquetFooterFacadeTest, IEEEColumnOrderBytesRoundTrip)
+{
+  // clang-format off
+  std::vector<uint8_t> const footer{
+    0x15, 0x02,        // field 1 (version) i32 = 1
+    0x19, 0x0c,        // field 2 (schema): empty LIST<STRUCT>
+    0x16, 0x00,        // field 3 (num_rows) i64 = 0
+    0x19, 0x0c,        // field 4 (row_groups): empty LIST<STRUCT>
+    0x39, 0x1c,        // field 7 (column_orders): LIST, 1 element, STRUCT
+    0x2c, 0x00, 0x00,  //   ColumnOrder field 2 (IEEE_754_TOTAL_ORDER) empty STRUCT + STOP
+    0x00};             // FileMetaData STOP
+  // clang-format on
+  auto const parsed = experimental::read_parquet_footer_bytes(footer);
+  EXPECT_EQ(parsed.version, 1);
+  ASSERT_TRUE(parsed.column_orders.has_value());
+  ASSERT_EQ(parsed.column_orders->size(), 1);
+  EXPECT_EQ(parsed.column_orders.value()[0].type, ColumnOrder::IEEE_754_TOTAL_ORDER);
+
+  // The canonical writer output for the parsed footer is byte-identical to the input.
+  auto const rewritten = experimental::write_parquet_footer_bytes(parsed);
+  EXPECT_EQ(rewritten, footer);
+}
+
+// INT96_TIMESTAMP_ORDER (field id 3) is likewise unmodeled upstream of this change: parsing and
+// byte-identity must hold independently of the IEEE arm, guarding a one-arm-only fix. Canonical
+// writer output, same shape as the IEEE literal above.
+TEST_F(ParquetFooterFacadeTest, Int96ColumnOrderBytesRoundTrip)
+{
+  // clang-format off
+  std::vector<uint8_t> const footer{
+    0x15, 0x02,        // field 1 (version) i32 = 1
+    0x19, 0x0c,        // field 2 (schema): empty LIST<STRUCT>
+    0x16, 0x00,        // field 3 (num_rows) i64 = 0
+    0x19, 0x0c,        // field 4 (row_groups): empty LIST<STRUCT>
+    0x39, 0x1c,        // field 7 (column_orders): LIST, 1 element, STRUCT
+    0x3c, 0x00, 0x00,  //   ColumnOrder field 3 (INT96_TIMESTAMP_ORDER) empty STRUCT + STOP
+    0x00};             // FileMetaData STOP
+  // clang-format on
+  auto const parsed = experimental::read_parquet_footer_bytes(footer);
+  ASSERT_TRUE(parsed.column_orders.has_value());
+  ASSERT_EQ(parsed.column_orders->size(), 1);
+  EXPECT_EQ(parsed.column_orders.value()[0].type, ColumnOrder::INT96_TIMESTAMP_ORDER);
+
+  auto const rewritten = experimental::write_parquet_footer_bytes(parsed);
+  EXPECT_EQ(rewritten, footer);
+}
+
+// An UNDEFINED (or unknown future) ColumnOrder arm is a valid parse result in COMPAT but the
+// writer must reject it with cudf::logic_error -- never emit an empty union for a meaningless arm.
+TEST_F(ParquetFooterFacadeTest, InvalidColumnOrderFails)
+{
+  FileMetaData meta;
+  meta.version       = 1;
+  meta.column_orders = std::vector<ColumnOrder>{{ColumnOrder::UNDEFINED}};
+  EXPECT_THROW((void)experimental::write_parquet_footer_bytes(meta), cudf::logic_error);
+
+  // clang-format off
+  std::vector<uint8_t> const future_footer{
+    0x15, 0x02,        // field 1 (version) i32 = 1
+    0x19, 0x0c,        // field 2 (schema): empty LIST<STRUCT>
+    0x16, 0x00,        // field 3 (num_rows) i64 = 0
+    0x19, 0x0c,        // field 4 (row_groups): empty LIST<STRUCT>
+    0x39, 0x1c,        // field 7 (column_orders): LIST, 1 element, STRUCT
+    0x4c, 0x00, 0x00,  //   ColumnOrder field 4 (unknown future arm) empty STRUCT + STOP -> unbound
+    0x00};             // FileMetaData STOP
+  // clang-format on
+  auto const parsed = experimental::read_parquet_footer_bytes(
+    future_footer, experimental::thrift_mismatch_policy::COMPAT);
+  ASSERT_TRUE(parsed.column_orders.has_value());
+  ASSERT_EQ(parsed.column_orders->size(), 1);
+  EXPECT_EQ(parsed.column_orders.value()[0].type, ColumnOrder::UNDEFINED);
+  EXPECT_THROW((void)experimental::write_parquet_footer_bytes(parsed), cudf::logic_error);
+}
+
+// The payloadless LogicalType arms UUID, FLOAT16, GEOMETRY (tag-only: its string `crs` payload
+// cannot live in the device-embedded trivially-copyable LogicalType) and FILE round-trip with
+// their tags intact.
+TEST_F(ParquetFooterFacadeTest, EmptyLogicalTypeArmsRoundTrip)
+{
+  auto const meta = make_logical_type_footer({LogicalType{LogicalType::UUID},
+                                              LogicalType{LogicalType::FLOAT16},
+                                              LogicalType{LogicalType::GEOMETRY},
+                                              LogicalType{LogicalType::FILE}});
+
+  auto const bytes    = experimental::write_parquet_footer_bytes(meta);
+  auto const reparsed = experimental::read_parquet_footer_bytes(bytes);
+  ASSERT_EQ(reparsed.schema.size(), 5);
+  for (size_t i = 1; i < reparsed.schema.size(); ++i) {
+    SCOPED_TRACE(std::format("schema index {}", i));
+    ASSERT_TRUE(reparsed.schema[i].logical_type.has_value());
+    EXPECT_EQ(reparsed.schema[i].logical_type->type, meta.schema[i].logical_type->type);
+  }
+
+  EXPECT_EQ(experimental::write_parquet_footer_bytes(reparsed), bytes);
+}
+
+// The payload-carrying arms keep their payloads: VARIANT's `specification_version` i8 and
+// GEOGRAPHY's `algorithm` i32.
+TEST_F(ParquetFooterFacadeTest, PayloadLogicalTypeArmsRoundTrip)
+{
+  VariantType variant;
+  variant.specification_version = 1;
+  GeographyType geography;
+  geography.algorithm = EdgeInterpolationAlgorithm::KARNEY;
+
+  LogicalType variant_type{LogicalType::VARIANT};
+  variant_type.variant_type = variant;
+  LogicalType geography_type{LogicalType::GEOGRAPHY};
+  geography_type.geography_type = geography;
+
+  auto const meta     = make_logical_type_footer({variant_type, geography_type});
+  auto const bytes    = experimental::write_parquet_footer_bytes(meta);
+  auto const reparsed = experimental::read_parquet_footer_bytes(bytes);
+  ASSERT_EQ(reparsed.schema.size(), 3);
+  ASSERT_TRUE(reparsed.schema[1].logical_type.has_value());
+  ASSERT_TRUE(reparsed.schema[2].logical_type.has_value());
+  EXPECT_EQ(reparsed.schema[1].logical_type->type, LogicalType::VARIANT);
+  EXPECT_EQ(reparsed.schema[2].logical_type->type, LogicalType::GEOGRAPHY);
+  ASSERT_TRUE(reparsed.schema[1].logical_type->variant_type.has_value());
+  ASSERT_TRUE(reparsed.schema[1].logical_type->variant_type->specification_version.has_value());
+  EXPECT_EQ(reparsed.schema[1].logical_type->variant_type->specification_version.value(), 1);
+  ASSERT_TRUE(reparsed.schema[2].logical_type->geography_type.has_value());
+  ASSERT_TRUE(reparsed.schema[2].logical_type->geography_type->algorithm.has_value());
+  EXPECT_EQ(reparsed.schema[2].logical_type->geography_type->algorithm.value(),
+            EdgeInterpolationAlgorithm::KARNEY);
+
+  EXPECT_EQ(experimental::write_parquet_footer_bytes(reparsed), bytes);
+
+  // A conforming external writer emits `crs` (thrift id 1) before `algorithm` (id 2); cudf
+  // skips the unbound string field on read (documented lossy) and preserves the arm + algorithm.
+  GeographyType geography_with_crs;
+  geography_with_crs.algorithm = EdgeInterpolationAlgorithm::SPHERICAL;
+  LogicalType geography_crs{LogicalType::GEOGRAPHY};
+  geography_crs.geography_type = geography_with_crs;
+  // Hand-built leaf carrying GeographyType field 1 (BINARY "EPSG:4326") then field 2
+  // (i32 algorithm 0), as a conforming external writer emits them. Field 18 needs the long-form
+  // id encoding (delta 0 + zigzag varint 36) inside LogicalType.
+  // clang-format off
+  std::vector<uint8_t> const crs_footer{
+    0x15, 0x02,        // field 1 (version) i32 = 1
+    0x19, 0x1c,        // field 2 (schema): LIST, 1 element, STRUCT
+    0x48, 0x01, 0x61,  //   SchemaElement field 4 (name): BINARY len 1 "a"
+    0x6c,              //   field 10 (logical_type): STRUCT
+    0x0c, 0x24,        //     field 18 (GEOGRAPHY) STRUCT: long-form id, GeographyType body
+    0x18, 0x09, 'E', 'P', 'S', 'G', ':', '4', '3', '2', '6',  // field 1 (crs) BINARY len 9
+    0x15, 0x00,        // field 2 (algorithm) i32 = 0 (SPHERICAL)
+    0x00,              //   GeographyType STOP
+    0x00,              //   LogicalType STOP
+    0x00,              //   SchemaElement STOP
+    0x00};             // FileMetaData STOP
+  // clang-format on
+  auto const crs_parsed = experimental::read_parquet_footer_bytes(crs_footer);
+  ASSERT_TRUE(crs_parsed.schema[0].logical_type.has_value());
+  EXPECT_EQ(crs_parsed.schema[0].logical_type->type, LogicalType::GEOGRAPHY);
+  ASSERT_TRUE(crs_parsed.schema[0].logical_type->geography_type.has_value());
+  ASSERT_TRUE(crs_parsed.schema[0].logical_type->geography_type->algorithm.has_value());
+  EXPECT_EQ(crs_parsed.schema[0].logical_type->geography_type->algorithm.value(),
+            EdgeInterpolationAlgorithm::SPHERICAL);
+
+  // The dropped `crs` value must not be silently rewritten (absent crs means OGC:CRS84): the
+  // writer refuses rather than emitting a footer with altered CRS semantics.
+  EXPECT_THROW((void)experimental::write_parquet_footer_bytes(crs_parsed), cudf::logic_error);
+}
+
+// Mirror of the GEOGRAPHY crs test for arm 17: a conforming external footer carrying a GEOMETRY
+// `crs` string parses with `has_crs` set and the writer refuses the rewrite.
+TEST_F(ParquetFooterFacadeTest, GeometryCrsRefusesRewrite)
+{
+  // Hand-built leaf carrying a GeometryType field 1 (BINARY "EPSG:4326"); field 17 uses the
+  // long-form id encoding (delta 0 + zigzag varint 34) inside LogicalType.
+  // clang-format off
+  std::vector<uint8_t> const crs_footer{
+    0x15, 0x02,        // field 1 (version) i32 = 1
+    0x19, 0x1c,        // field 2 (schema): LIST, 1 element, STRUCT
+    0x48, 0x01, 0x61,  //   SchemaElement field 4 (name): BINARY len 1 "a"
+    0x6c,              //   field 10 (logical_type): STRUCT
+    0x0c, 0x22,        //     field 17 (GEOMETRY) STRUCT: long-form id, GeometryType body
+    0x18, 0x09, 'E', 'P', 'S', 'G', ':', '4', '3', '2', '6',  // field 1 (crs) BINARY len 9
+    0x00,              //   GeometryType STOP
+    0x00,              //   LogicalType STOP
+    0x00,              //   SchemaElement STOP
+    0x00};             // FileMetaData STOP
+  // clang-format on
+  auto const crs_parsed = experimental::read_parquet_footer_bytes(crs_footer);
+  ASSERT_TRUE(crs_parsed.schema[0].logical_type.has_value());
+  EXPECT_EQ(crs_parsed.schema[0].logical_type->type, LogicalType::GEOMETRY);
+  ASSERT_TRUE(crs_parsed.schema[0].logical_type->geometry_type.has_value());
+  EXPECT_TRUE(crs_parsed.schema[0].logical_type->geometry_type->has_crs);
+
+  EXPECT_THROW((void)experimental::write_parquet_footer_bytes(crs_parsed), cudf::logic_error);
+}
+
+// Optional payloads keep presence exactly: an absent field stays absent, and a zero value stays
+// present (not conflated with absence). An out-of-range algorithm value round-trips numerically --
+// the enum binding reads the raw i32 with no validation, by design.
+TEST_F(ParquetFooterFacadeTest, OptionalLogicalTypePayloadsRoundTrip)
+{
+  // Absent payloads and zero payloads on separate leaves.
+  LogicalType variant_absent{LogicalType::VARIANT};
+  LogicalType variant_zero{LogicalType::VARIANT};
+  variant_zero.variant_type                        = VariantType{};
+  variant_zero.variant_type->specification_version = 0;
+  LogicalType geography_spherical{LogicalType::GEOGRAPHY};
+  geography_spherical.geography_type            = GeographyType{};
+  geography_spherical.geography_type->algorithm = EdgeInterpolationAlgorithm::SPHERICAL;
+
+  auto const meta  = make_logical_type_footer({variant_absent, variant_zero, geography_spherical});
+  auto const bytes = experimental::write_parquet_footer_bytes(meta);
+  auto const reparsed = experimental::read_parquet_footer_bytes(bytes);
+  ASSERT_EQ(reparsed.schema.size(), 4);
+  // Absent stays absent.
+  ASSERT_TRUE(reparsed.schema[1].logical_type->variant_type.has_value());
+  EXPECT_FALSE(reparsed.schema[1].logical_type->variant_type->specification_version.has_value());
+  // Zero version stays present.
+  ASSERT_TRUE(reparsed.schema[2].logical_type->variant_type->specification_version.has_value());
+  EXPECT_EQ(reparsed.schema[2].logical_type->variant_type->specification_version.value(), 0);
+  // SPHERICAL (0) stays present.
+  ASSERT_TRUE(reparsed.schema[3].logical_type->geography_type->algorithm.has_value());
+  EXPECT_EQ(reparsed.schema[3].logical_type->geography_type->algorithm.value(),
+            EdgeInterpolationAlgorithm::SPHERICAL);
+  EXPECT_EQ(experimental::write_parquet_footer_bytes(reparsed), bytes);
+
+  // An out-of-range algorithm value (7) survives numerically in both strict and COMPAT modes.
+  LogicalType geography_unknown{LogicalType::GEOGRAPHY};
+  geography_unknown.geography_type            = GeographyType{};
+  geography_unknown.geography_type->algorithm = static_cast<EdgeInterpolationAlgorithm>(7);
+  auto const unknown_meta                     = make_logical_type_footer({geography_unknown});
+  auto const unknown_bytes = experimental::write_parquet_footer_bytes(unknown_meta);
+  for (auto const mode : {experimental::thrift_mismatch_policy::THROW,
+                          experimental::thrift_mismatch_policy::COMPAT}) {
+    SCOPED_TRACE(std::format("mismatch policy {}", static_cast<int>(mode)));
+    auto const parsed = experimental::read_parquet_footer_bytes(unknown_bytes, mode);
+    ASSERT_TRUE(parsed.schema[1].logical_type.has_value());
+    ASSERT_TRUE(parsed.schema[1].logical_type->geography_type.has_value());
+    ASSERT_TRUE(parsed.schema[1].logical_type->geography_type->algorithm.has_value());
+    EXPECT_EQ(
+      static_cast<int32_t>(parsed.schema[1].logical_type->geography_type->algorithm.value()), 7);
+  }
+}
+
+// An UNDEFINED, reserved (9), or unknown future LogicalType arm is rejected by the writer with
+// cudf::logic_error; an absent logical_type stays absent and writable. The bare-constructor forms
+// `LogicalType{VARIANT}` / `LogicalType{GEOGRAPHY}` (disengaged payloads) are VALID thrift values
+// -- all payload fields are optional -- so the writer emits an empty struct rather than throwing
+// bad_optional_access, and they round-trip as the same tag with absent payload.
+TEST_F(ParquetFooterFacadeTest, InvalidLogicalTypeFails)
+{
+  for (auto const bad_type : {
+         LogicalType::UNDEFINED,
+         static_cast<LogicalType::Type>(9),  // reserved
+         static_cast<LogicalType::Type>(20)  // unknown future arm
+       }) {
+    SCOPED_TRACE(std::format("logical type {}", static_cast<int>(bad_type)));
+    auto const meta = make_logical_type_footer({LogicalType{bad_type}});
+    EXPECT_THROW((void)experimental::write_parquet_footer_bytes(meta), cudf::logic_error);
+  }
+
+  // A leaf with no logical_type is unaffected.
+  FileMetaData meta;
+  meta.version = 1;
+  meta.schema  = {
+    {.type            = Type::UNDEFINED,
+      .repetition_type = FieldRepetitionType::REQUIRED,
+      .name            = "schema",
+      .num_children    = 1},
+    {.type = Type::BYTE_ARRAY, .repetition_type = FieldRepetitionType::REQUIRED, .name = "plain"}};
+  auto const bytes    = experimental::write_parquet_footer_bytes(meta);
+  auto const reparsed = experimental::read_parquet_footer_bytes(bytes);
+  EXPECT_FALSE(reparsed.schema[1].logical_type.has_value());
+  EXPECT_EQ(experimental::write_parquet_footer_bytes(reparsed), bytes);
+
+  // Disengaged payloads write empty structs and round-trip as the same tag.
+  for (auto const tag : {LogicalType::VARIANT, LogicalType::GEOGRAPHY}) {
+    SCOPED_TRACE(std::format("logical type {}", static_cast<int>(tag)));
+    auto const payload_meta  = make_logical_type_footer({LogicalType{tag}});
+    auto const payload_bytes = experimental::write_parquet_footer_bytes(payload_meta);
+    auto const parsed        = experimental::read_parquet_footer_bytes(payload_bytes);
+    ASSERT_TRUE(parsed.schema[1].logical_type.has_value());
+    EXPECT_EQ(parsed.schema[1].logical_type->type, tag);
+    if (tag == LogicalType::VARIANT) {
+      ASSERT_TRUE(parsed.schema[1].logical_type->variant_type.has_value());
+      EXPECT_FALSE(parsed.schema[1].logical_type->variant_type->specification_version.has_value());
+    } else {
+      ASSERT_TRUE(parsed.schema[1].logical_type->geography_type.has_value());
+      EXPECT_FALSE(parsed.schema[1].logical_type->geography_type->algorithm.has_value());
+    }
+    EXPECT_EQ(experimental::write_parquet_footer_bytes(parsed), payload_bytes);
+  }
+}
+
+// A malformed known LogicalType arm (GEOMETRY, id 17, expected STRUCT) encoded as i32 keeps the
+// mismatch policy: COMPAT skips the arm (the inner type stays UNDEFINED and the writer rejects
+// it), strict mode throws on parse. Malformed input must not be silently reinterpreted.
+TEST_F(ParquetFooterFacadeTest, LogicalTypeWrongWireTypeInCompatRemainsInvalid)
+{
+  // clang-format off
+  std::vector<uint8_t> const footer{
+    0x29, 0x1c,        // FileMetaData field 2 (schema): LIST, 1 element, STRUCT
+    0x48, 0x01, 0x61,  //   SchemaElement field 4 (name): BINARY len 1 "a"
+    0x6c,              //   field 10 (logical_type): STRUCT
+    0x05, 0x22, 0x00,  //     field 17 (GEOMETRY) as i32: long-form id 17, value 0 -> mismatch
+    0x00,              //   LogicalType STOP
+    0x00,              //   SchemaElement STOP
+    0x00};             // FileMetaData STOP
+  // clang-format on
+  auto const parsed =
+    experimental::read_parquet_footer_bytes(footer, experimental::thrift_mismatch_policy::COMPAT);
+  ASSERT_EQ(parsed.schema.size(), 1);
+  ASSERT_TRUE(parsed.schema[0].logical_type.has_value());
+  EXPECT_EQ(parsed.schema[0].logical_type->type, LogicalType::UNDEFINED);
+  EXPECT_THROW((void)experimental::write_parquet_footer_bytes(parsed), cudf::logic_error);
+  EXPECT_THROW((void)experimental::read_parquet_footer_bytes(footer), cudf::logic_error);
 }
 
 CUDF_TEST_PROGRAM_MAIN()

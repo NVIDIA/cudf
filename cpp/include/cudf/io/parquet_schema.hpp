@@ -102,9 +102,9 @@ enum class Compression : uint8_t {
   SNAPPY       = 1,
   GZIP         = 2,
   LZO          = 3,
-  BROTLI       = 4,  // Added in 2.3.2
+  BROTLI       = 4,  // Added in 2.4
   LZ4          = 5,  // deprecated; based on LZ4, but with an additional undocumented framing scheme
-  ZSTD         = 6,  // Added in 2.3.2
+  ZSTD         = 6,  // Added in 2.4
   LZ4_RAW      = 7,  // "standard" LZ4 block format
 };
 
@@ -236,26 +236,78 @@ struct IntType {
 };
 
 /**
+ * @brief Struct that describes the variant logical type annotation
+ *
+ * The optional `specification_version` field is kept so a round-tripped footer preserves the
+ * variant's declared logical-type version; it must stay trivially copyable for device use.
+ */
+struct VariantType {
+  /// Version of the Variant logical type specification
+  cuda::std::optional<int8_t> specification_version;
+};
+
+/**
+ * @brief Algorithms for the interpolation between references of geographical coordinates
+ *
+ * Uses an explicit `int32_t` base so an out-of-range wire value round-trips numerically instead
+ * of being truncated into a different enumerator.
+ */
+enum class EdgeInterpolationAlgorithm : int32_t {
+  SPHERICAL = 0,
+  VINCENTY  = 1,
+  THOMAS    = 2,
+  ANDOYER   = 3,
+  KARNEY    = 4,
+};
+
+/**
+ * @brief Struct that describes the geometry logical type annotation
+ *
+ * Only the presence of the thrift `crs` string is kept since `LogicalType` must stay trivially
+ * copyable.
+ */
+struct GeometryType {
+  bool has_crs{false};  ///< Whether the thrift `crs` string (field id 1) was present
+};
+
+/**
+ * @brief Struct that describes the geography logical type annotation
+ *
+ * Only the presence of the thrift `crs` string is kept since `LogicalType` must stay trivially
+ * copyable.
+ */
+struct GeographyType {
+  bool has_crs{false};  ///< Whether the thrift `crs` string (field id 1) was present
+  /// Edge interpolation algorithm (thrift id 2); SPHERICAL if unset
+  cuda::std::optional<EdgeInterpolationAlgorithm> algorithm;
+};
+
+/**
  * @brief Struct that describes the logical type annotation
  */
 struct LogicalType {
   /// Logical type annotations to replace ConvertedType.
   enum Type : uint8_t {
-    UNDEFINED,
-    STRING,
-    MAP,
-    LIST,
-    ENUM,
-    DECIMAL,
-    DATE,
-    TIME,
-    TIMESTAMP,
+    UNDEFINED = 0,
+    STRING    = 1,
+    MAP       = 2,
+    LIST      = 3,
+    ENUM      = 4,
+    DECIMAL   = 5,
+    DATE      = 6,
+    TIME      = 7,
+    TIMESTAMP = 8,
     // 9 is reserved
-    INTEGER = 10,
-    UNKNOWN,
-    JSON,
-    BSON,
-    VARIANT = 16,
+    INTEGER   = 10,
+    UNKNOWN   = 11,
+    JSON      = 12,
+    BSON      = 13,
+    UUID      = 14,
+    FLOAT16   = 15,
+    VARIANT   = 16,
+    GEOMETRY  = 17,
+    GEOGRAPHY = 18,
+    FILE      = 19,
   };
 
   /// Logical type
@@ -268,6 +320,12 @@ struct LogicalType {
   cuda::std::optional<TimestampType> timestamp_type;
   /// Integer type
   cuda::std::optional<IntType> int_type;
+  /// Variant type (VARIANT only)
+  cuda::std::optional<VariantType> variant_type;
+  /// Geography type (GEOGRAPHY only)
+  cuda::std::optional<GeographyType> geography_type;
+  /// Geometry type (GEOMETRY only)
+  cuda::std::optional<GeometryType> geometry_type;
 
   /**
    * @brief Default constructor
@@ -407,7 +465,12 @@ struct LogicalType {
  */
 struct ColumnOrder {
   /// Available column order types
-  enum Type : uint8_t { UNDEFINED, TYPE_ORDER };
+  enum Type : uint8_t {
+    UNDEFINED             = 0,
+    TYPE_ORDER            = 1,
+    IEEE_754_TOTAL_ORDER  = 2,
+    INT96_TIMESTAMP_ORDER = 3,
+  };
   /// Column order type
   Type type;
 };

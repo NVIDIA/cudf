@@ -773,8 +773,50 @@ void CompactProtocolReader::read(LogicalType* l)
     parquet_field_union_enumerator(11, l->type),
     parquet_field_union_enumerator(12, l->type),
     parquet_field_union_enumerator(13, l->type),
-    parquet_field_union_enumerator(16, l->type));
+    parquet_field_union_enumerator(14, l->type),  // UUID
+    parquet_field_union_enumerator(15, l->type),  // FLOAT16
+    parquet_field_union_struct<LogicalType::Type, VariantType>(16, l->type, l->variant_type),
+    parquet_field_union_struct<LogicalType::Type, GeometryType>(17, l->type, l->geometry_type),
+    parquet_field_union_struct<LogicalType::Type, GeographyType>(18, l->type, l->geography_type),
+    parquet_field_union_enumerator(19, l->type));  // FILE
   function_builder(this, op);
+}
+
+void CompactProtocolReader::read(GeometryType* g)
+{
+  // Thrift field 1 is the `crs` string; the trivially-copyable LogicalType cannot hold it, so
+  // only its PRESENCE is recorded (lossy) — mirroring GeographyType.
+  cuda::std::optional<std::string> crs;
+  auto op = std::make_tuple(
+    parquet_field_optional<std::string, parquet_field_string, cuda::std::optional<std::string>>(
+      1, crs));
+  function_builder(this, op);
+  g->has_crs = crs.has_value();
+}
+
+void CompactProtocolReader::read(VariantType* v)
+{
+  using optional_version =
+    parquet_field_optional<int8_t, parquet_field_int8, cuda::std::optional<int8_t>>;
+  auto op = std::make_tuple(optional_version(1, v->specification_version));
+  function_builder(this, op);
+}
+
+void CompactProtocolReader::read(GeographyType* g)
+{
+  using optional_algorithm =
+    parquet_field_optional<EdgeInterpolationAlgorithm,
+                           parquet_field_enum<EdgeInterpolationAlgorithm>,
+                           cuda::std::optional<EdgeInterpolationAlgorithm>>;
+  // Thrift field 1 is the `crs` string; the trivially-copyable LogicalType cannot hold it, so
+  // only its PRESENCE is recorded (lossy) while `algorithm` (id 2) round-trips.
+  cuda::std::optional<std::string> crs;
+  auto op = std::make_tuple(
+    parquet_field_optional<std::string, parquet_field_string, cuda::std::optional<std::string>>(
+      1, crs),
+    optional_algorithm(2, g->algorithm));
+  function_builder(this, op);
+  g->has_crs = crs.has_value();
 }
 
 void CompactProtocolReader::read(DecimalType* d)
@@ -1000,7 +1042,9 @@ void CompactProtocolReader::read(Statistics* s)
 
 void CompactProtocolReader::read(ColumnOrder* c)
 {
-  auto op = std::make_tuple(parquet_field_union_enumerator<ColumnOrder::Type>(1, c->type));
+  auto op = std::make_tuple(parquet_field_union_enumerator(1, c->type),
+                            parquet_field_union_enumerator(2, c->type),
+                            parquet_field_union_enumerator(3, c->type));
   function_builder(this, op);
 }
 

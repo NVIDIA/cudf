@@ -38,6 +38,7 @@ struct bitwise_group_reduction_functor {
       make_fixed_width_column(values.type(), num_groups, mask_state::UNALLOCATED, stream, mr);
     if (values.is_empty()) { return result; }
 
+    auto const temp_mr      = cudf::get_current_device_resource_ref();
     auto const do_reduction = [&](auto const& inp_iter, auto const& out_iter, auto const& binop) {
       cudf::detail::reduce_by_key_async(group_labels.data(),
                                         group_labels.data() + group_labels.size(),
@@ -45,7 +46,8 @@ struct bitwise_group_reduction_functor {
                                         cuda::make_discard_iterator(),
                                         out_iter,
                                         binop,
-                                        stream);
+                                        stream,
+                                        cudf::memory_resources{temp_mr, temp_mr});
     };
 
     auto const d_values_ptr       = column_device_view::create(values, stream);

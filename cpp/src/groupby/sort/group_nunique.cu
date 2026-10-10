@@ -118,7 +118,8 @@ std::unique_ptr<column> group_nunique(column_view const& values,
                                     cuda::make_discard_iterator(),
                                     result->mutable_view().begin<size_type>(),
                                     cuda::std::plus<size_type>(),
-                                    stream);
+                                    stream,
+                                    cudf::memory_resources{temp_mr, temp_mr});
 
   return result;
 }

@@ -501,12 +501,15 @@ uint32_t get_aggregated_decode_kernel_mask(cudf::detail::hostdevice_span<PageInf
                                            cuda::stream_ref stream)
 {
   // determine which kernels to invoke
-  return cudf::detail::transform_reduce(pages.device_begin(),
-                                        pages.device_end(),
-                                        mask_tform{},
-                                        uint32_t{0},
-                                        cuda::std::bit_or<uint32_t>{},
-                                        stream);
+  return cudf::detail::transform_reduce(
+    pages.device_begin(),
+    pages.device_end(),
+    mask_tform{},
+    uint32_t{0},
+    cuda::std::bit_or<uint32_t>{},
+    stream,
+    cudf::memory_resources{cudf::get_current_device_resource_ref(),
+                           cudf::get_current_device_resource_ref()});
 }
 
 /**

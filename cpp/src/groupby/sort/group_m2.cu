@@ -67,13 +67,16 @@ void compute_m2_fn(column_device_view const& values,
                     m2_vals.begin(),
                     m2_fn);
 
-  cudf::detail::reduce_by_key_async(group_labels.begin(),
-                                    group_labels.end(),
-                                    m2_vals.begin(),
-                                    cuda::make_discard_iterator(),
-                                    d_result,
-                                    cuda::std::plus<ResultType>(),
-                                    stream);
+  cudf::detail::reduce_by_key_async(
+    group_labels.begin(),
+    group_labels.end(),
+    m2_vals.begin(),
+    cuda::make_discard_iterator(),
+    d_result,
+    cuda::std::plus<ResultType>(),
+    stream,
+    cudf::memory_resources{cudf::get_current_device_resource_ref(),
+                           cudf::get_current_device_resource_ref()});
 }
 
 struct m2_functor {

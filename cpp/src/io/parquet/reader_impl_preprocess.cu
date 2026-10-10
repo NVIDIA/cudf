@@ -102,11 +102,14 @@ void reader_impl::build_string_dict_indices()
                    pass.pages.d_end(),
                    set_str_dict_index_count{str_dict_index_count, pass.chunks});
 
-  auto const total_str_dict_indexes = cudf::detail::reduce(str_dict_index_count.begin(),
-                                                           str_dict_index_count.end(),
-                                                           size_t{0},
-                                                           cuda::std::plus<size_t>{},
-                                                           _stream);
+  auto const total_str_dict_indexes =
+    cudf::detail::reduce(str_dict_index_count.begin(),
+                         str_dict_index_count.end(),
+                         size_t{0},
+                         cuda::std::plus<size_t>{},
+                         _stream,
+                         cudf::memory_resources{cudf::get_current_device_resource_ref(),
+                                                cudf::get_current_device_resource_ref()});
 
   if (total_str_dict_indexes == 0) { return; }
 
@@ -548,11 +551,14 @@ void reader_impl::compute_page_string_offset_indices(size_t skip_rows, size_t nu
                          subpass.page_string_offset_indices.begin());
 
   // Compute the total number of offsets needed
-  auto const total_num_offsets = cudf::detail::reduce(d_page_offset_counts.begin(),
-                                                      d_page_offset_counts.end(),
-                                                      size_t{0},
-                                                      cuda::std::plus<size_t>{},
-                                                      _stream);
+  auto const total_num_offsets =
+    cudf::detail::reduce(d_page_offset_counts.begin(),
+                         d_page_offset_counts.end(),
+                         size_t{0},
+                         cuda::std::plus<size_t>{},
+                         _stream,
+                         cudf::memory_resources{cudf::get_current_device_resource_ref(),
+                                                cudf::get_current_device_resource_ref()});
 
   // Allocate the string offset buffer
   subpass.string_offset_buffer = rmm::device_uvector<uint32_t>(total_num_offsets, _stream, _mr);
@@ -1181,7 +1187,9 @@ void reader_impl::allocate_columns(read_mode mode, size_t skip_rows, size_t num_
                                   cuda::make_discard_iterator(),
                                   sizes.d_begin() + (key_start / subpass.pages.size()),
                                   cuda::std::plus<>{},
-                                  _stream);
+                                  _stream,
+                                  cudf::memory_resources{cudf::get_current_device_resource_ref(),
+                                                         cudf::get_current_device_resource_ref()});
 
       // For nested hierarchies, compute per-page start offset
       thrust::exclusive_scan_by_key(
@@ -1314,7 +1322,9 @@ cudf::detail::host_vector<size_t> reader_impl::calculate_page_string_offsets()
                               reduce_keys.begin(),
                               d_col_sizes.begin(),
                               cuda::std::plus<>{},
-                              _stream);
+                              _stream,
+                              cudf::memory_resources{cudf::get_current_device_resource_ref(),
+                                                     cudf::get_current_device_resource_ref()});
 
   return cudf::detail::make_pinned_vector(d_col_sizes, _stream);
 }

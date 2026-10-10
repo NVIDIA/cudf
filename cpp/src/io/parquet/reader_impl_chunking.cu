@@ -171,8 +171,13 @@ void reader_impl::setup_next_pass(read_mode mode)
     auto chunk_iter = cuda::transform_iterator(pass.chunks.d_begin(), get_chunk_compressed_size{});
     pass.base_mem_size =
       decomp_dict_data_size +
-      cudf::detail::reduce(
-        chunk_iter, chunk_iter + pass.chunks.size(), size_t{0}, cuda::std::plus<size_t>{}, _stream);
+      cudf::detail::reduce(chunk_iter,
+                           chunk_iter + pass.chunks.size(),
+                           size_t{0},
+                           cuda::std::plus<size_t>{},
+                           _stream,
+                           cudf::memory_resources{cudf::get_current_device_resource_ref(),
+                                                  cudf::get_current_device_resource_ref()});
 
     // if we are doing subpass reading, generate more accurate num_row estimates for list columns.
     // this helps us to generate more accurate subpass splits.

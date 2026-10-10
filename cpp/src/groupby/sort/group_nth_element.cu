@@ -92,7 +92,8 @@ std::unique_ptr<column> group_nth_element(column_view const& values,
                                           cuda::make_discard_iterator(),
                                           group_count.begin(),
                                           cuda::std::plus<size_type>(),
-                                          stream);
+                                          stream,
+                                          mr);
         return group_count;
       } else {
         return rmm::device_uvector<size_type>(0, stream);

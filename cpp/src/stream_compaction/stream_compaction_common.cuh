@@ -67,7 +67,8 @@ OutputIterator unique_copy(InputIterator first,
                            OutputIterator output,
                            BinaryPredicate comp,
                            duplicate_keep_option const keep,
-                           cuda::stream_ref stream)
+                           cuda::stream_ref stream,
+                           cudf::memory_resources mr)
 {
   size_type const last_index = cuda::std::distance(first, last) - 1;
   return cudf::detail::copy_if(
@@ -76,7 +77,8 @@ OutputIterator unique_copy(InputIterator first,
     cuda::counting_iterator<size_type>{0},
     output,
     unique_copy_fn<InputIterator, BinaryPredicate>{first, keep, comp, last_index},
-    stream);
+    stream,
+    mr);
 }
 }  // namespace detail
 }  // namespace cudf

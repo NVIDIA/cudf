@@ -300,7 +300,8 @@ distinct_hash_join::inner_join(cudf::table_view const& left,
                           output_begin,
                           cuda::proclaim_return_type<bool>(
                             [] __device__(size_type idx) { return idx != cudf::JoinNoMatch; }),
-                          stream);
+                          stream,
+                          mr);
   auto const actual_size = std::distance(output_begin, output_end);
 
   right_indices->resize(actual_size, stream);

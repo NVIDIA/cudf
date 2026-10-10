@@ -161,7 +161,8 @@ std::unique_ptr<column> scatter_gather_based_if_else(cudf::column_view const& lh
                                                     cuda::counting_iterator<size_type>{size},
                                                     gather_map.begin(),
                                                     is_left,
-                                                    stream);
+                                                    stream,
+                                                    mr);
 
   gather_map.resize(cuda::std::distance(gather_map.begin(), gather_map_end), stream);
 
@@ -195,7 +196,8 @@ std::unique_ptr<column> scatter_gather_based_if_else(cudf::scalar const& lhs,
                                                      cuda::counting_iterator<size_type>{size},
                                                      scatter_map.begin(),
                                                      is_left,
-                                                     stream);
+                                                     stream,
+                                                     mr);
 
   auto const scatter_map_size  = std::distance(scatter_map.begin(), scatter_map_end);
   auto scatter_source          = std::vector<std::reference_wrapper<scalar const>>{std::ref(lhs)};

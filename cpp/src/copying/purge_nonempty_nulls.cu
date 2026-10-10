@@ -45,7 +45,9 @@ bool has_nonempty_null_rows(cudf::column_view const& input, cuda::stream_ref str
 
   auto const row_begin = cuda::counting_iterator<cudf::size_type>{0};
   auto const row_end   = row_begin + input.size();
-  return cudf::detail::count_if(row_begin, row_end, is_dirty_row, stream) > 0;
+  auto const temp_mr   = cudf::get_current_device_resource_ref();
+  return cudf::detail::count_if(
+           row_begin, row_end, is_dirty_row, stream, cudf::memory_resources{temp_mr, temp_mr}) > 0;
 }
 
 }  // namespace

@@ -44,8 +44,12 @@ template <bool has_nested_columns>
       return rows_equal(detail::row::lhs_index_type{i}, detail::row::rhs_index_type{i});
     },
     stream.get()));
-  return cudf::detail::reduce(
-    eq_rows.begin(), eq_rows.end(), true, cuda::std::logical_and<bool>{}, stream);
+  return cudf::detail::reduce(eq_rows.begin(),
+                              eq_rows.end(),
+                              true,
+                              cuda::std::logical_and<bool>{},
+                              stream,
+                              cudf::memory_resources{temp_mr, temp_mr});
 }
 
 }  // namespace

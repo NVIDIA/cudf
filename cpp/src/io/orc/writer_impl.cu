@@ -16,6 +16,7 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/null_mask.cuh>
 #include <cudf/detail/null_mask.hpp>
+#include <cudf/detail/timezone.cuh>
 #include <cudf/detail/timezone.hpp>
 #include <cudf/detail/utilities/batched_memcpy.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
@@ -263,6 +264,7 @@ class orc_column_view {
 
   [[nodiscard]] auto type_width() const noexcept { return _type_width; }
   auto size() const noexcept { return cudf_column.size(); }
+  [[nodiscard]] column_view const& cudf_view() const noexcept { return cudf_column; }
 
   auto null_count() const noexcept { return cudf_column.null_count(); }
   auto null_mask() const noexcept { return cudf_column.null_mask(); }
@@ -1278,14 +1280,107 @@ std::vector<StripeInformation> gather_stripes(size_t num_index_streams,
   return stripes;
 }
 
+/**
+ * @brief Timestamp columns put on the writer's wall clock, for the statistics to be gathered from.
+ *
+ * Apache shifts each timestamp into the writer's timezone before updating the statistics, while
+ * the data stream stays relative to the epoch; see `gather_statistic_blobs`. Columns of other
+ * types are absent, and the statistics read them from the table itself.
+ */
+struct wall_clock_columns {
+  std::vector<rmm::device_uvector<int64_t>> data;  // shifted values, one per timestamp column
+  std::unique_ptr<table_device_view, std::function<void(table_device_view*)>> columns;
+  rmm::device_uvector<size_type> indices;  // index into `columns` per ORC column, or `absent`
+
+  static constexpr size_type absent = -1;
+};
+
+// `scale()` counts the decimal digits between the column's resolution and nanoseconds
+constexpr std::array<int64_t, 10> ticks_per_second{
+  1'000'000'000, 100'000'000, 10'000'000, 1'000'000, 100'000, 10'000, 1'000, 100, 10, 1};
+
+/**
+ * @brief Shifts the timestamp columns of a table onto the writer's wall clock.
+ *
+ * @param orc_table Table being written
+ * @param timezone Timezone the file is written in
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @return The shifted columns; holds no column when writing UTC, or without timestamps
+ */
+wall_clock_columns make_wall_clock_columns(orc_table_view const& orc_table,
+                                           writer_timezone const& timezone,
+                                           cuda::stream_ref stream)
+{
+  auto const mr = cudf::get_current_device_resource_ref();
+
+  auto host_indices = std::vector<size_type>(orc_table.num_columns(), wall_clock_columns::absent);
+  auto data         = std::vector<rmm::device_uvector<int64_t>>{};
+  auto views        = std::vector<column_view>{};
+
+  // Writing UTC leaves the input instants on the wall clock already
+  if (timezone.transitions->num_rows() != 0) {
+    auto const d_transitions = table_device_view::create(timezone.transitions->view(), stream);
+
+    for (auto const& column : orc_table.columns) {
+      if (column.orc_kind() != TypeKind::TIMESTAMP) { continue; }
+
+      auto const& input = column.cudf_view();
+      // The null mask is shared with the input, so the shifted values keep its row offset
+      auto shifted       = rmm::device_uvector<int64_t>(input.offset() + input.size(), stream, mr);
+      auto const d_input = column_device_view::create(input, stream);
+      auto const ticks_per_s = ticks_per_second[column.scale()];
+
+      thrust::transform(rmm::exec_policy_nosync(stream, mr),
+                        cuda::counting_iterator<size_type>{0},
+                        cuda::counting_iterator{input.size()},
+                        shifted.begin() + input.offset(),
+                        [input = *d_input, transitions = *d_transitions, ticks_per_s] __device__(
+                          size_type idx) -> int64_t {
+                          if (not input.is_valid(idx)) { return 0; }
+
+                          auto const value = input.element<int64_t>(idx);
+                          // Floor, so that the offset is the one in effect in the second the value
+                          // falls in
+                          auto const seconds =
+                            value / ticks_per_s - ((value % ticks_per_s < 0) ? 1 : 0);
+                          auto const offset = cudf::detail::get_ut_offset(
+                            transitions, timestamp_s{duration_s{seconds}});
+                          return value + offset.count() * ticks_per_s;
+                        });
+
+      host_indices[column.index()] = views.size();
+      views.emplace_back(input.type(),
+                         input.size(),
+                         shifted.data(),
+                         input.null_mask(),
+                         input.null_count(),
+                         input.offset());
+      data.emplace_back(std::move(shifted));
+    }
+  }
+
+  return {std::move(data),
+          table_device_view::create(cudf::table_view{views}, stream),
+          cudf::detail::make_device_uvector_async(host_indices, stream, mr)};
+}
+
 void set_stat_desc_leaf_cols(device_span<orc_column_device_view const> columns,
                              device_span<stats_column_desc> stat_desc,
+                             wall_clock_columns const& wall_clock,
                              cuda::stream_ref stream)
 {
+  auto const indices         = device_span<size_type const>{wall_clock.indices};
+  auto const wall_clock_cols = *wall_clock.columns;
   thrust::for_each(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                    cuda::counting_iterator<size_t>{0},
                    cuda::counting_iterator{stat_desc.size()},
-                   [=] __device__(auto idx) { stat_desc[idx].leaf_column = &columns[idx]; });
+                   [=] __device__(auto idx) {
+                     auto const wall_clock_idx = indices[idx];
+                     stat_desc[idx].leaf_column =
+                       (wall_clock_idx == wall_clock_columns::absent)
+                         ? static_cast<column_device_view const*>(&columns[idx])
+                         : &wall_clock_cols.column(wall_clock_idx);
+                   });
 }
 
 cudf::detail::hostdevice_vector<uint8_t> allocate_and_encode_blobs(
@@ -1340,15 +1435,24 @@ cudf::detail::hostdevice_vector<uint8_t> allocate_and_encode_blobs(
 /**
  * @brief Returns column statistics in an intermediate format.
  *
+ * Timestamp statistics are gathered from the values put on the writer's wall clock, which is the
+ * frame readers compare the bounds in; the data stream itself is stored relative to the epoch.
+ * Apache shifts each value the same way before updating its statistics (`TimestampTreeWriter`,
+ * through `SerializationUtils.convertToUtc`). Shifting the reduced bounds instead would not do:
+ * daylight saving makes the offset vary between the values of one column, and wall-clock order
+ * differs from instant order across a fold.
+ *
  * @param stats_freq Frequency of statistics to be included in the output file
  * @param orc_table Table information to be written
  * @param segmentation stripe and rowgroup ranges
+ * @param timezone Timezone the file is written in
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @return The statistic information
  */
 intermediate_statistics gather_statistic_blobs(statistics_freq const stats_freq,
                                                orc_table_view const& orc_table,
                                                file_segmentation const& segmentation,
+                                               writer_timezone const& timezone,
                                                cuda::stream_ref stream)
 {
   auto const num_rowgroup_blobs     = segmentation.rowgroups.count();
@@ -1406,7 +1510,8 @@ intermediate_statistics gather_statistic_blobs(statistics_freq const stats_freq,
   stat_desc.host_to_device_async(stream);
   rowgroup_merge.host_to_device_async(stream);
   stripe_merge.host_to_device_async(stream);
-  set_stat_desc_leaf_cols(orc_table.d_columns, stat_desc, stream);
+  auto const wall_clock = make_wall_clock_columns(orc_table, timezone, stream);
+  set_stat_desc_leaf_cols(orc_table.d_columns, stat_desc, wall_clock, stream);
 
   // The rowgroup stat chunks are written out in each stripe. The stripe and file-level chunks are
   // written in the footer. To prevent persisting the rowgroup stat chunks across multiple write
@@ -2631,7 +2736,8 @@ auto convert_table_to_orc_data(table_view const& input,
 
   auto bounce_buffer = cudf::detail::make_pinned_vector_async<uint8_t>(max_out_stream_size, stream);
 
-  auto intermediate_stats = gather_statistic_blobs(stats_freq, orc_table, segmentation, stream);
+  auto intermediate_stats =
+    gather_statistic_blobs(stats_freq, orc_table, segmentation, timezone, stream);
 
   return std::tuple{std::move(enc_data),
                     std::move(segmentation),
@@ -2658,8 +2764,19 @@ duration_s writer_timezone::compute_base_epoch(std::string_view timezone)
   return base_epoch_in_timezone(timezone);
 }
 
-writer_timezone::writer_timezone(std::string timezone)
-  : name{std::move(timezone)}, base_epoch{compute_base_epoch(name)}
+std::unique_ptr<cudf::table> writer_timezone::make_transitions(std::string_view timezone,
+                                                               cuda::stream_ref stream)
+{
+  if (timezone == "UTC") { return std::make_unique<cudf::table>(); }
+
+  return cudf::detail::make_timezone_transition_table(
+    {}, timezone, stream, cudf::get_current_device_resource_ref());
+}
+
+writer_timezone::writer_timezone(std::string timezone, cuda::stream_ref stream)
+  : name{std::move(timezone)},
+    base_epoch{compute_base_epoch(name)},
+    transitions{make_transitions(name, stream)}
 {
 }
 
@@ -2677,7 +2794,7 @@ writer::impl::impl(std::unique_ptr<data_sink> sink,
     _sort_dictionaries{options.get_enable_dictionary_sort()},
     _single_write_mode(mode),
     _kv_meta(options.get_key_value_metadata()),
-    _timezone(options.get_writer_timezone()),
+    _timezone(options.get_writer_timezone(), stream),
     _out_sink(std::move(sink))
 {
   if (options.get_metadata()) {
@@ -2701,7 +2818,7 @@ writer::impl::impl(std::unique_ptr<data_sink> sink,
     _sort_dictionaries{options.get_enable_dictionary_sort()},
     _single_write_mode(mode),
     _kv_meta(options.get_key_value_metadata()),
-    _timezone(options.get_writer_timezone()),
+    _timezone(options.get_writer_timezone(), stream),
     _out_sink(std::move(sink))
 {
   if (options.get_metadata()) {

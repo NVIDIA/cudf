@@ -833,25 +833,52 @@ TEST_F(OrcWriterTest, WriterTimezoneNegativeTimestampsNano)
 
 TEST_F(OrcWriterTest, WriterTimezoneStatistics)
 {
-  auto const timestamps = column_wrapper<cudf::timestamp_s, cudf::timestamp_s::rep>{0, 1421323200};
-  table_view input({timestamps});
-
-  // Statistics stay on the input instants regardless of the timezone; only the stream is re-based
-  for (auto const& timezone : std::vector<std::optional<std::string>>{
-         std::nullopt, "UTC", "Asia/Shanghai", "America/New_York"}) {
+  // Statistics are on the writer's wall clock, the frame the values are read back in, so the
+  // bounds match what a reader decodes. Apache stores them the same way.
+  auto const bounds_shift_with_the_values = [](std::optional<std::string> const& timezone,
+                                               int64_t offset_s) {
     SCOPED_TRACE(timezone.value_or("default"));
 
-    auto const stats = timestamp_stats(write_orc_with_timezone(input, timezone));
+    auto const timestamps =
+      column_wrapper<cudf::timestamp_s, cudf::timestamp_s::rep>{0, 1421323200};
+    auto const stats = timestamp_stats(write_orc_with_timezone(table_view({timestamps}), timezone));
     ASSERT_TRUE(stats.minimum.has_value());
     ASSERT_TRUE(stats.maximum.has_value());
     ASSERT_TRUE(stats.minimum_utc.has_value());
     ASSERT_TRUE(stats.maximum_utc.has_value());
-    EXPECT_EQ(*stats.minimum, 0);
-    EXPECT_EQ(*stats.maximum, 1421323200L * 1000);
+    EXPECT_EQ(*stats.minimum, offset_s * 1000);
+    EXPECT_EQ(*stats.maximum, (1421323200L + offset_s) * 1000);
     // Unlike Apache, which omits the legacy pair, both are written in the same frame
     EXPECT_EQ(*stats.minimum_utc, *stats.minimum);
     EXPECT_EQ(*stats.maximum_utc, *stats.maximum);
-  }
+  };
+
+  bounds_shift_with_the_values(std::nullopt, 0);
+  bounds_shift_with_the_values("UTC", 0);
+  bounds_shift_with_the_values("Asia/Shanghai", shanghai_offset);
+  bounds_shift_with_the_values("America/New_York", new_york_offset);
+}
+
+TEST_F(OrcWriterTest, WriterTimezoneStatisticsAcrossDst)
+{
+  // One value on each side of a daylight saving transition, so the two bounds shift by different
+  // amounts. This is what a single offset applied to the reduced bounds would get wrong.
+  auto constexpr standard_time = 1421323200L;  // 2015-01-15T12:00:00Z
+  auto constexpr summer_time   = 1435752000L;  // 2015-07-01T12:00:00Z
+  auto const timestamps =
+    column_wrapper<cudf::timestamp_s, cudf::timestamp_s::rep>{standard_time, summer_time};
+
+  auto const stats =
+    timestamp_stats(write_orc_with_timezone(table_view({timestamps}), "America/New_York"));
+  EXPECT_EQ(*stats.minimum_utc, (standard_time + new_york_offset) * 1000);
+  EXPECT_EQ(*stats.maximum_utc, (summer_time + new_york_dst_offset) * 1000);
+
+  // The bounds hold the values that come back out of the file
+  auto const read_back =
+    read_orc_buffer(write_orc_with_timezone(table_view({timestamps}), "America/New_York"));
+  auto const expected = column_wrapper<cudf::timestamp_s, cudf::timestamp_s::rep>{
+    standard_time + new_york_offset, summer_time + new_york_dst_offset};
+  CUDF_TEST_EXPECT_TABLES_EQUAL(table_view({expected}), read_back.tbl->view());
 }
 
 TEST_F(OrcWriterTest, WriterTimezoneInvalid)

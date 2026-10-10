@@ -528,6 +528,24 @@ def test_empty_dataframe_setitem_df():
     assert_eq(gdf1, gdf2)
 
 
+def test_empty_dataframe_setitem_empty_column_keeps_other_columns():
+    # Assigning a 0-length column to a 0-row frame has no rows to add to the
+    # other columns, so they must not be rebuilt (O(ncols**2) in a loop).
+    gdf = cudf.DataFrame(
+        {
+            "a": cudf.Series([], dtype="str"),
+            "b": cudf.Series([], dtype="int8"),
+        },
+        index=cudf.Index([], dtype="int64", name="idx"),
+    )
+    pdf = gdf.to_pandas()
+    b = gdf._data["b"]
+    gdf["a"] = gdf["a"].str.strip()
+    pdf["a"] = pdf["a"].str.strip()
+    assert gdf._data["b"] is b
+    assert_eq(pdf, gdf)
+
+
 @pytest.mark.parametrize("nrows", [0, 3])
 def test_nonmatching_index_setitem(nrows):
     rng = np.random.default_rng(seed=0)

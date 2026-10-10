@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -125,9 +125,7 @@ int main(int argc, char const** argv)
     default: print_usage(); throw std::runtime_error("");
   }
 
-  // Create and use a memory pool
-  bool constexpr is_pool_used = true;
-  auto resource               = create_memory_resource(is_pool_used);
+  auto resource = create_memory_resource();
   cudf::set_current_device_resource(resource);
 
   // Read input parquet file

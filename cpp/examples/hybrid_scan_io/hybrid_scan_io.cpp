@@ -108,10 +108,9 @@ int main(int argc, char const** argv)
   }
 
   // Initialize mr, default stream and stream pool
-  auto constexpr is_pool_used = false;
-  auto stream                 = cudf::get_default_stream();
-  auto resource               = create_memory_resource(is_pool_used);
-  auto stats_mr               = rmm::mr::statistics_resource_adaptor{resource};
+  auto stream   = cudf::get_default_stream();
+  auto resource = create_memory_resource();
+  auto stats_mr = rmm::mr::statistics_resource_adaptor{resource};
   rmm::mr::set_current_device_resource(stats_mr);
 
   // Create filter expression
@@ -142,24 +141,36 @@ int main(int argc, char const** argv)
 
   auto const filter_expression_opt =
     std::make_optional<cudf::ast::operation const>(filter_expression);
+  std::unique_ptr<cudf::table> table_next_gen_reader;
+  std::unique_ptr<cudf::table> table_main_reader;
   {
     std::cout << "Benchmarking " << input_filepath << "read with next-gen parquet reader...\n";
     benchmark(
       [&] {
-        std::ignore = hybrid_scan<single_step_read, use_page_index>(
+        table_next_gen_reader.reset();
+        table_next_gen_reader = hybrid_scan<single_step_read, use_page_index>(
           data_source, filter_expression_opt, filters, false, stream, stats_mr);
       },
       iterations);
 
     std::cout << "Benchmarking " << input_filepath << "read with main parquet reader...\n";
-    benchmark([&] { std::ignore = read_parquet(data_source, filter_expression, stream); },
-              iterations);
+    benchmark(
+      [&] {
+        table_main_reader.reset();
+        table_main_reader = read_parquet(data_source, filter_expression, stream).tbl;
+      },
+      iterations);
   }
 
-  // Check for validity
-  auto table_next_gen_reader = hybrid_scan<single_step_read, use_page_index>(
-    data_source, filter_expression_opt, filters, verbose, stream, stats_mr);
-  auto table_main_reader = std::move(read_parquet(data_source, filter_expression, stream).tbl);
+  // Reuse timed results unless diagnostics or zero iterations require a separate read.
+  if (verbose || !table_next_gen_reader) {
+    table_next_gen_reader.reset();
+    table_next_gen_reader = hybrid_scan<single_step_read, use_page_index>(
+      data_source, filter_expression_opt, filters, verbose, stream, stats_mr);
+  }
+  if (!table_main_reader) {
+    table_main_reader = read_parquet(data_source, filter_expression, stream).tbl;
+  }
   check_tables_equal(table_next_gen_reader->view(), table_main_reader->view(), stream);
 
   return 0;

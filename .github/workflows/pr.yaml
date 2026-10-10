@@ -392,6 +392,7 @@ jobs:
         cpp/src/transform/jit/**
         cpp/tests/**
         dependencies.yaml
+        ci/run_cudf_examples.sh
       # The JIT cache is independent of the Python interpreter used to run C++ tests.
       cache-key-matrix-fields: |
         CUDA_VER
@@ -400,8 +401,7 @@ jobs:
         GPU
         DRIVER
         DEPENDENCIES
-      # PRs restore a compatible main cache but do not create merge-ref-scoped entries.
-      cache-read-only: true
+      cache-read-only: false
       cache-environment: |
         LIBCUDF_KERNEL_CACHE_PATH=.cache/libcudf
         LIBCUDF_KERNEL_CACHE_PRELOAD=1

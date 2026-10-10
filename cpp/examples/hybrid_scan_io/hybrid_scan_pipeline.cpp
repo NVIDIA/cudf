@@ -357,11 +357,10 @@ int main(int argc, char const** argv)
   }
 
   // Initialize mr, default stream and stream pool
-  auto constexpr is_pool_used = false;
   auto stream_pool =
     rmm::cuda_stream_pool(1 + num_partitions, rmm::cuda_stream::flags::non_blocking);
   auto default_stream = stream_pool.get_stream();
-  auto mr             = create_memory_resource(is_pool_used);
+  auto mr             = create_memory_resource();
   auto stats_mr       = rmm::mr::statistics_resource_adaptor{mr};
   rmm::mr::set_current_device_resource(stats_mr);
 
@@ -369,31 +368,40 @@ int main(int argc, char const** argv)
   auto const data_source = io_source{input_filepath, io_source_type, default_stream};
 
   constexpr bool use_page_index = false;
+  std::unique_ptr<cudf::table> pipeline_table;
+  std::unique_ptr<cudf::table> main_table;
   {
     std::cout << "Reading " << input_filepath
               << " with next-gen parquet reader and no page index...\n";
     benchmark(
       [&] {
-        std::ignore = hybrid_scan_pipelined<false>(
+        pipeline_table.reset();
+        pipeline_table = hybrid_scan_pipelined<false>(
           data_source, num_partitions, split_strategy, use_page_index, stream_pool, stats_mr);
       },
       iterations);
 
     std::cout << "Reading " << input_filepath << " with main parquet reader...\n";
-    benchmark([&] { std::ignore = read_parquet(data_source, default_stream); }, iterations);
+    benchmark(
+      [&] {
+        main_table.reset();
+        main_table = read_parquet(data_source, default_stream).tbl;
+      },
+      iterations);
   }
 
-  // Check for validity
-  auto pipeline_table = [&] {
+  // Reuse timed results unless diagnostics or zero iterations require a separate read.
+  if (verbose || !pipeline_table) {
+    pipeline_table.reset();
     if (verbose) {
-      return hybrid_scan_pipelined<true>(
+      pipeline_table = hybrid_scan_pipelined<true>(
         data_source, num_partitions, split_strategy, use_page_index, stream_pool, stats_mr);
     } else {
-      return hybrid_scan_pipelined<false>(
+      pipeline_table = hybrid_scan_pipelined<false>(
         data_source, num_partitions, split_strategy, use_page_index, stream_pool, stats_mr);
     }
-  }();
-  auto main_table = std::move(read_parquet(data_source, default_stream).tbl);
+  }
+  if (!main_table) { main_table = read_parquet(data_source, default_stream).tbl; }
   check_tables_equal(pipeline_table->view(), main_table->view(), default_stream);
 
   return 0;

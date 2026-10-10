@@ -374,11 +374,10 @@ int32_t main(int argc, char const** argv)
   }
 
   // Initialize mr, default stream and stream pool
-  bool constexpr is_pool_used = true;
-  auto resource               = create_memory_resource(is_pool_used);
-  auto default_stream         = cudf::get_default_stream();
-  auto stream_pool = rmm::cuda_stream_pool(thread_count, rmm::cuda_stream::flags::non_blocking);
-  auto stats_mr    = rmm::mr::statistics_resource_adaptor{resource};
+  auto resource       = create_memory_resource();
+  auto default_stream = cudf::get_default_stream();
+  auto stream_pool    = rmm::cuda_stream_pool(thread_count, rmm::cuda_stream::flags::non_blocking);
+  auto stats_mr       = rmm::mr::statistics_resource_adaptor{resource};
   rmm::mr::set_current_device_resource(stats_mr);
 
   // List of input sources from the input_paths string.

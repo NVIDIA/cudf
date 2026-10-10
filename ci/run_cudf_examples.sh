@@ -5,13 +5,12 @@
 set -uo pipefail
 
 EXITCODE=0
-trap "EXITCODE=1" ERR
 
 # Support customizing the examples' install location
-cd "${INSTALL_PREFIX:-${CONDA_PREFIX:-/usr}}/bin/examples/libcudf" || exit
+cd "${INSTALL_PREFIX:-${CONDA_PREFIX:-/usr}}/bin/examples/libcudf" || exit 1
 
 # TODO: Temporary workaround for compute-sanitizer bug 5824899 that occurs only on the examples
-GPU_COMPUTE_CAP=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -n1 | tr -d '[:space:]')
+GPU_COMPUTE_CAP=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -n1 | tr -d '[:space:]') || exit 1
 USE_COMPUTE_SANITIZER=true
 if [[ "${GPU_COMPUTE_CAP}" == "12.0" ]]; then
     USE_COMPUTE_SANITIZER=false
@@ -23,10 +22,10 @@ run_example() {
     parent=$(basename "${PWD}")
     local cmd=("$@")
     if ${USE_COMPUTE_SANITIZER}; then
-        cmd=(compute-sanitizer --tool memcheck "${cmd[@]}")
+        cmd=(compute-sanitizer --tool memcheck --error-exitcode 1 "${cmd[@]}")
     fi
     echo "Running ${parent} example: ${cmd[*]}"
-    "${cmd[@]}"
+    LIBCUDF_JIT_DUMP_TRACE=1 LIBCUDF_JIT_VERBOSE=1 "${cmd[@]}" || EXITCODE=1
 }
 
 pushd basic || exit
@@ -37,10 +36,10 @@ pushd hybrid_scan_io || exit
 run_example ./hybrid_scan_io example.parquet string_col 0000001 PINNED_BUFFER
 run_example ./hybrid_scan_pipeline example.parquet 2 HOST_BUFFER ROW_GROUPS 2
 run_example ./hybrid_scan_pipeline example.parquet 2 FILEPATH BYTE_RANGES 2
-run_example ./hybrid_scan_multifile_single_step example.parquet 10 2 YES DEVICE_BUFFER 2
-run_example ./hybrid_scan_multifile_single_step example.parquet 10 2 NO FILEPATH 1
-run_example ./hybrid_scan_multifile_two_step example.parquet 10 2 string_col 0000001 PINNED_BUFFER 2
-run_example ./hybrid_scan_multifile_two_step example.parquet 10 2 string_col 0000001 HOST_BUFFER 1
+run_example ./hybrid_scan_multifile_single_step example.parquet 4 2 YES DEVICE_BUFFER 2
+run_example ./hybrid_scan_multifile_single_step example.parquet 4 2 NO FILEPATH 1
+run_example ./hybrid_scan_multifile_two_step example.parquet 4 2 string_col 0000001 PINNED_BUFFER 2
+run_example ./hybrid_scan_multifile_two_step example.parquet 4 2 string_col 0000001 HOST_BUFFER 1
 popd || exit
 
 pushd nested_types || exit

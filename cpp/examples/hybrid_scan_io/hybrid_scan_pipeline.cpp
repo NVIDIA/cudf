@@ -357,11 +357,10 @@ int main(int argc, char const** argv)
   }
 
   // Initialize mr, default stream and stream pool
-  auto constexpr is_pool_used = false;
   auto stream_pool =
     rmm::cuda_stream_pool(1 + num_partitions, rmm::cuda_stream::flags::non_blocking);
   auto default_stream = stream_pool.get_stream();
-  auto mr             = create_memory_resource(is_pool_used);
+  auto mr             = create_memory_resource();
   auto stats_mr       = rmm::mr::statistics_resource_adaptor{mr};
   rmm::mr::set_current_device_resource(stats_mr);
 

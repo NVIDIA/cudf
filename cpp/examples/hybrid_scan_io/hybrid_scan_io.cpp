@@ -108,10 +108,9 @@ int main(int argc, char const** argv)
   }
 
   // Initialize mr, default stream and stream pool
-  auto constexpr is_pool_used = false;
-  auto stream                 = cudf::get_default_stream();
-  auto resource               = create_memory_resource(is_pool_used);
-  auto stats_mr               = rmm::mr::statistics_resource_adaptor{resource};
+  auto stream   = cudf::get_default_stream();
+  auto resource = create_memory_resource();
+  auto stats_mr = rmm::mr::statistics_resource_adaptor{resource};
   rmm::mr::set_current_device_resource(stats_mr);
 
   // Create filter expression

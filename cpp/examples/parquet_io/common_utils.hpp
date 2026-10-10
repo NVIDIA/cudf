@@ -8,8 +8,7 @@
 #include <cudf/io/types.hpp>
 #include <cudf/table/table_view.hpp>
 
-#include <rmm/mr/cuda_memory_resource.hpp>
-#include <rmm/mr/pool_memory_resource.hpp>
+#include <rmm/mr/cuda_async_memory_resource.hpp>
 #include <rmm/resource_ref.hpp>
 
 #include <cuda/memory_resource>
@@ -26,10 +25,9 @@
 /**
  * @brief Create memory resource for libcudf functions
  *
- * @param pool Whether to use a pool memory resource.
  * @return Memory resource instance
  */
-cuda::mr::any_resource<cuda::mr::device_accessible> create_memory_resource(bool is_pool_used);
+cuda::mr::any_resource<cuda::mr::device_accessible> create_memory_resource();
 
 /**
  * @brief Get encoding type from the keyword

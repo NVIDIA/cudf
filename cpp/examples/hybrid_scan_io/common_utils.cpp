@@ -10,8 +10,6 @@
 #include <cudf/table/table_view.hpp>
 
 #include <rmm/mr/cuda_async_memory_resource.hpp>
-#include <rmm/mr/cuda_memory_resource.hpp>
-#include <rmm/mr/pool_memory_resource.hpp>
 
 #include <cuda/iterator>
 #include <cuda/stream>
@@ -33,12 +31,8 @@ bool get_boolean(std::string input)
   return input == "ON" or input == "TRUE" or input == "YES" or input == "Y" or input == "T";
 }
 
-cuda::mr::any_resource<cuda::mr::device_accessible> create_memory_resource(bool is_pool_used)
+cuda::mr::any_resource<cuda::mr::device_accessible> create_memory_resource()
 {
-  if (is_pool_used) {
-    return rmm::mr::pool_memory_resource{rmm::mr::cuda_memory_resource{},
-                                         rmm::percent_of_free_device_memory(80)};
-  }
   return rmm::mr::cuda_async_memory_resource{};
 }
 

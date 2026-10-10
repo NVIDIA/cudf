@@ -15,12 +15,7 @@
 #include <cudf/stream_compaction.hpp>
 #include <cudf/table/table_view.hpp>
 
-#include <rmm/cuda_device.hpp>
-#include <rmm/mr/cuda_memory_resource.hpp>
-#include <rmm/mr/pool_memory_resource.hpp>
-#include <rmm/resource_ref.hpp>
-
-#include <cuda/memory_resource>
+#include <rmm/mr/cuda_async_memory_resource.hpp>
 
 #include <iostream>
 #include <string>
@@ -38,21 +33,6 @@
  * so as to enable sorting
  *
  */
-
-/**
- * @brief Create memory resource for libcudf functions
- *
- * @param pool Whether to use a pool memory resource.
- * @return Memory resource instance
- */
-cuda::mr::any_resource<cuda::mr::device_accessible> create_memory_resource(bool pool)
-{
-  rmm::mr::cuda_memory_resource cuda_mr{};
-  if (pool) {
-    return rmm::mr::pool_memory_resource{cuda_mr, rmm::percent_of_free_device_memory(50)};
-  }
-  return cuda_mr;
-}
 
 /**
  * @brief Read JSON input from file
@@ -154,33 +134,28 @@ std::unique_ptr<cudf::table> sort_keys(cudf::table_view input)
  * Command line parameters:
  * 1. JSON input file name/path (default: "example.json")
  * 2. JSON output file name/path (default: "output.json")
- * 3. Memory resource (optional): "pool" or "cuda" (default: "cuda")
  *
  * Example invocation from directory `cudf/cpp/examples/nested_types`:
- * ./build/deduplication example.json output.json pool
+ * ./build/deduplication example.json output.json
  *
  */
 int main(int argc, char const** argv)
 {
   std::string input_filepath;
   std::string output_filepath;
-  std::string mr_name;
-  if (argc != 4 && argc != 1) {
+  if (argc != 3 && argc != 1) {
     std::cout << "Either provide all command-line arguments, or none to use defaults" << std::endl;
     return 1;
   }
   if (argc == 1) {
     input_filepath  = "example.json";
     output_filepath = "output.json";
-    mr_name         = "cuda";
   } else {
     input_filepath  = argv[1];
     output_filepath = argv[2];
-    mr_name         = argv[3];
   }
 
-  auto pool     = mr_name == "pool";
-  auto resource = create_memory_resource(pool);
+  rmm::mr::cuda_async_memory_resource resource{};
   cudf::set_current_device_resource(resource);
 
   std::cout << "Reading " << input_filepath << "..." << std::endl;

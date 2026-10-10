@@ -636,6 +636,7 @@ ConfigureTest(
   large_strings/case_tests.cpp
   large_strings/json_tests.cpp
   large_strings/large_strings_fixture.cpp
+  large_strings/bpe_tests.cpp
   large_strings/merge_tests.cpp
   large_strings/parquet_tests.cpp
   large_strings/replace_tests.cpp
@@ -659,6 +660,7 @@ ConfigureTest(STRUCTS_TEST structs/structs_column_tests.cpp structs/utilities_te
 ConfigureTest(
   TEXT_TEST
   text/deduplicate_tests.cpp
+  text/bpe_tests.cpp
   text/edit_distance_tests.cpp
   text/jaccard_tests.cpp
   text/minhash_tests.cpp
@@ -850,6 +852,7 @@ ConfigureTest(
 ConfigureTest(STREAM_TABLE_EQUALITY_TEST streams/table_equality_test.cpp STREAM_MODE testing)
 ConfigureTest(
   STREAM_TEXT_TEST
+  streams/text/bpe_test.cpp
   streams/text/edit_distance_test.cpp
   streams/text/ngrams_test.cpp
   streams/text/replace_test.cpp

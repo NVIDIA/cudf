@@ -30,7 +30,23 @@ __all__ = ["BPEMergePairs", "byte_pair_encoding"]
 cdef class BPEMergePairs:
     """The table of merge pairs for the BPE encoder.
 
-    For details, see :cpp:class:`cudf::nvtext::bpe_merge_pairs`.
+    For details, see :cpp:func:`nvtext::load_merge_pairs`.
+
+    Parameters
+    ----------
+    merge_pairs : Column
+        Strings column of unique merge pairs. Each row contains the two halves
+        of a pair separated by a single space. Pairs are ranked by their row
+        position; earlier rows have higher priority.
+    stream : Stream | None
+        CUDA stream on which to perform the operation.
+    mr : DeviceMemoryResource | None
+        Device memory resource used to allocate the merge pairs table.
+
+    Raises
+    ------
+    ValueError
+        If the merge pairs contain duplicates.
     """
     def __cinit__(
         self,
@@ -59,18 +75,21 @@ cpdef Column byte_pair_encoding(
     """
     Byte pair encode the input strings.
 
-    For details, see cpp:func:`cudf::nvtext::byte_pair_encoding`
+    For details, see :cpp:func:`nvtext::byte_pair_encoding`.
 
     Parameters
     ----------
     input : Column
         Strings to encode.
     merge_pairs : BPEMergePairs
-       Substrings to rebuild each string on.
-    separator : Scalar
-        String used to build the output after encoding. Default is a space.
+        The ranked merge pairs used to encode the strings.
+    separator : Scalar | None
+        Single-byte string inserted between the encoded tokens.
+        Default is a space.
     stream : Stream | None
         CUDA stream on which to perform the operation.
+    mr : DeviceMemoryResource | None
+        Device memory resource used to allocate the returned column's device memory.
 
     Returns
     -------

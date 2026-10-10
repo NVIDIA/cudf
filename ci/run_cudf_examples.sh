@@ -25,7 +25,7 @@ run_example() {
         cmd=(compute-sanitizer --tool memcheck --error-exitcode 1 "${cmd[@]}")
     fi
     echo "Running ${parent} example: ${cmd[*]}"
-    "${cmd[@]}" || EXITCODE=1
+    LIBCUDF_JIT_DUMP_TRACE=1 LIBCUDF_JIT_VERBOSE=1 "${cmd[@]}" || EXITCODE=1
 }
 
 pushd basic || exit

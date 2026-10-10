@@ -12,11 +12,138 @@
 
 #include <cudf/contiguous_split.hpp>
 #include <cudf/copying.hpp>
+#include <cudf/detail/utilities/host_vector.hpp>
+#include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/io/detail/codec.hpp>
+#include <cudf/null_mask.hpp>
+
+#include <algorithm>
+#include <array>
+#include <cstring>
+#include <limits>
+#include <map>
+#include <numeric>
+#include <string>
 
 // Size of the serialized table header that precedes the column entries in the
 // packed metadata buffer: version + num_columns + num_rows + pad, four 4-byte fields.
 // Must match `serialized_table_header` in cpp/src/copying/pack.cpp.
 auto constexpr metadata_header_size = 4 * sizeof(cudf::size_type);
+
+namespace cx = cudf::experimental;
+
+namespace {
+
+// Must match `compression_metadata_entry` in cpp/src/copying/contiguous_split.cu.
+struct compressed_region_entry {
+  uint64_t uncompressed_offset;
+  uint64_t uncompressed_bytes;
+  uint64_t data_bytes;
+  uint64_t chunk_bytes;
+  uint64_t chunk_begin;
+  uint64_t num_chunks;
+  int32_t type;
+  uint32_t is_validity;
+  int32_t compression;
+  uint32_t reserved;
+};
+
+// The entries follow a 32-byte header whose second field is the region count.
+std::vector<compressed_region_entry> read_region_entries(std::vector<uint8_t> const& metadata)
+{
+  uint32_t num_regions = 0;
+  std::memcpy(&num_regions, metadata.data() + sizeof(int32_t), sizeof(num_regions));
+  std::vector<compressed_region_entry> entries(num_regions);
+  std::memcpy(entries.data(), metadata.data() + 32, num_regions * sizeof(compressed_region_entry));
+  return entries;
+}
+
+constexpr std::array compressed_codecs{
+  cx::pack_compression::cascaded, cx::pack_compression::zstd, cx::pack_compression::snappy};
+constexpr std::array all_codecs{cx::pack_compression::none,
+                                cx::pack_compression::cascaded,
+                                cx::pack_compression::zstd,
+                                cx::pack_compression::snappy};
+
+bool is_codec_enabled(cx::pack_compression compression)
+{
+  if (compression != cx::pack_compression::zstd && compression != cx::pack_compression::snappy) {
+    return true;
+  }
+  auto const type = compression == cx::pack_compression::zstd ? cudf::io::compression_type::ZSTD
+                                                              : cudf::io::compression_type::SNAPPY;
+  return cudf::io::detail::is_compression_supported(type) &&
+         cudf::io::detail::is_decompression_supported(type);
+}
+
+cx::pack_options make_options(cx::pack_compression compression)
+{
+  cx::pack_options options;
+  options.compression = compression;
+  return options;
+}
+
+enum class destination_kind { device, pinned, pageable };
+
+std::span<uint8_t> as_span(rmm::device_buffer& buffer)
+{
+  return {static_cast<uint8_t*>(buffer.data()), buffer.size()};
+}
+
+struct packed_output {
+  rmm::device_buffer buffer;
+  cudf::detail::host_vector<uint8_t> pinned;
+  std::vector<uint8_t> pageable;
+  cx::pack_result result;
+  uint8_t const* data;
+
+  [[nodiscard]] cx::packed_data_view view() const
+  {
+    return {result.metadata, {data, result.payload_bytes}};
+  }
+};
+
+packed_output pack_to(cx::pack_plan const& plan, destination_kind kind)
+{
+  auto const stream = cudf::get_default_stream();
+  auto const bytes  = plan.sizes().payload_bytes;
+  auto const align  = plan.sizes().payload_alignment;
+  packed_output output{rmm::device_buffer(kind == destination_kind::device ? bytes : 0, stream),
+                       cudf::detail::make_pinned_vector_async<uint8_t>(
+                         kind == destination_kind::pinned ? bytes : 0, stream),
+                       std::vector<uint8_t>(kind == destination_kind::pageable ? bytes + align : 0),
+                       {},
+                       nullptr};
+  std::span<uint8_t> destination;
+  switch (kind) {
+    case destination_kind::device: destination = as_span(output.buffer); break;
+    case destination_kind::pinned:
+      destination = {output.pinned.data(), output.pinned.size()};
+      break;
+    case destination_kind::pageable: {
+      auto const base = reinterpret_cast<std::uintptr_t>(output.pageable.data());
+      destination     = {reinterpret_cast<uint8_t*>((base + align - 1) / align * align), bytes};
+      break;
+    }
+  }
+  output.result = cx::pack_into(plan, destination);
+  output.data   = destination.data();
+  stream.sync();
+  return output;
+}
+
+packed_output pack_to_device(cx::pack_plan const& plan)
+{
+  return pack_to(plan, destination_kind::device);
+}
+
+void expect_materializes_to(cudf::table_view const& expected, cx::packed_data_view packed)
+{
+  auto const materialized = cx::materialize(packed);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected, materialized->view());
+}
+
+}  // namespace
 
 struct PackUnpackTest : public cudf::test::BaseFixture {
   void verify_column_metadata(cudf::column_view const& col,
@@ -41,6 +168,19 @@ struct PackUnpackTest : public cudf::test::BaseFixture {
     }
   }
 
+  // ExperimentalPackUnpackTest.PackIntoHost covers host destinations and staging windows.
+  void verify_prepared_compressed_round_trip(cudf::table_view const& input)
+  {
+    for (auto const compression : compressed_codecs) {
+      if (!is_codec_enabled(compression)) { continue; }
+      SCOPED_TRACE(static_cast<int>(compression));
+      auto const plan   = cx::prepare_pack(input, make_options(compression));
+      auto const packed = pack_to_device(plan);
+      EXPECT_LE(packed.result.payload_bytes, plan.sizes().payload_bytes);
+      expect_materializes_to(input, packed.view());
+    }
+  }
+
   void run_test(cudf::table_view const& t)
   {
     // verify pack/unpack works
@@ -62,9 +202,496 @@ struct PackUnpackTest : public cudf::test::BaseFixture {
     EXPECT_EQ(
       std::equal(metadata.data(), metadata.data() + metadata.size(), packed.metadata->data()),
       true);
+
+    verify_prepared_compressed_round_trip(t);
   }
   void run_test(std::vector<cudf::column_view> const& t) { run_test(cudf::table_view{t}); }
 };
+
+struct ExperimentalPackUnpackTest : public cudf::test::BaseFixture {};
+
+TEST_F(ExperimentalPackUnpackTest, PreparedPackInto)
+{
+  std::vector<int32_t> values(64 * 1024, 7);
+  cudf::test::fixed_width_column_wrapper<int32_t> numbers(
+    values.begin(), values.end(), cudf::test::iterators::null_at(3));
+  auto const input = cudf::table_view{{numbers}};
+
+  for (auto const compression : all_codecs) {
+    if (!is_codec_enabled(compression)) { continue; }
+    SCOPED_TRACE(static_cast<int>(compression));
+    auto const plan = cx::prepare_pack(input, make_options(compression));
+    EXPECT_EQ(plan.sizes().uncompressed_payload_bytes, cudf::packed_size(input));
+
+    // A plan may be reused while the input remains alive and unchanged.
+    for (int execution = 0; execution < 2; ++execution) {
+      auto const packed = pack_to_device(plan);
+      EXPECT_EQ(packed.result.metadata.size(), plan.sizes().metadata_bytes);
+      if (compression == cx::pack_compression::none) {
+        EXPECT_EQ(packed.result.payload_bytes, plan.sizes().payload_bytes);
+        CUDF_TEST_EXPECT_TABLES_EQUAL(input, cx::unpack_view(packed.view()));
+      } else {
+        EXPECT_LT(packed.result.payload_bytes, plan.sizes().uncompressed_payload_bytes);
+        EXPECT_THROW(cx::unpack_view(packed.view()), std::invalid_argument);
+      }
+      expect_materializes_to(input, packed.view());
+    }
+  }
+}
+
+TEST_F(ExperimentalPackUnpackTest, PackIntoHost)
+{
+  cudf::test::fixed_width_column_wrapper<int64_t> numbers({10, 20, 30, 40, 50},
+                                                          {true, true, false, true, true});
+  cudf::test::strings_column_wrapper strings({"mapped", "pinned", "host", "destination", "buffer"});
+  auto const input = cudf::table_view{{numbers, strings}};
+
+  for (auto const compression : all_codecs) {
+    if (!is_codec_enabled(compression)) { continue; }
+    auto const plan = cx::prepare_pack(input, make_options(compression));
+    for (auto const kind : {destination_kind::pinned, destination_kind::pageable}) {
+      SCOPED_TRACE(static_cast<int>(compression));
+      SCOPED_TRACE(static_cast<int>(kind));
+      auto const packed = pack_to(plan, kind);
+      if (compression == cx::pack_compression::none && kind == destination_kind::pinned) {
+        CUDF_TEST_EXPECT_TABLES_EQUAL(input, cx::unpack_view(packed.view()));
+      }
+      expect_materializes_to(input, packed.view());
+    }
+  }
+}
+
+TEST_F(ExperimentalPackUnpackTest, PackIntoHostBufferLargerThanStaging)
+{
+  constexpr cudf::size_type num_rows = 256 * 1024;
+  auto const values =
+    cudf::detail::make_counting_transform_iterator(0, [](int64_t i) { return i; });
+  cudf::test::fixed_width_column_wrapper<int64_t> numbers(
+    values, values + num_rows, cudf::test::iterators::null_at(7));
+  auto const input = cudf::table_view{{numbers}};
+
+  // The smallest staging buffer forces the 2 MiB data buffer through several staging windows.
+  auto options                 = make_options(cx::pack_compression::none);
+  options.staging_buffer_bytes = 1024 * 1024 - 1;
+  EXPECT_THROW(cx::prepare_pack(input, options), std::invalid_argument);
+  options.staging_buffer_bytes = 1024 * 1024;
+  for (auto const compression : all_codecs) {
+    if (!is_codec_enabled(compression)) { continue; }
+    options.compression = compression;
+    auto const plan     = cx::prepare_pack(input, options);
+    for (auto const kind : {destination_kind::pinned, destination_kind::pageable}) {
+      SCOPED_TRACE(static_cast<int>(compression));
+      SCOPED_TRACE(static_cast<int>(kind));
+      expect_materializes_to(input, pack_to(plan, kind).view());
+    }
+  }
+
+  // A builder whose regions all end up uncompressed stages output through copy windows.
+  options.compression = cx::pack_compression::automatic;
+  auto builder        = cx::make_pack_plan_builder(input, options);
+  for (auto& region : builder.regions()) {
+    region.codec = cx::pack_compression::none;
+  }
+  auto const built = std::move(builder).build();
+  for (auto const kind : {destination_kind::pinned, destination_kind::pageable}) {
+    SCOPED_TRACE(static_cast<int>(kind));
+    expect_materializes_to(input, pack_to(built, kind).view());
+  }
+}
+
+TEST_F(ExperimentalPackUnpackTest, UnpackViewPageablePayload)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> numbers({1, 2, 3});
+  auto const input  = cudf::table_view{{numbers}};
+  auto const packed = pack_to(cx::prepare_pack(input, make_options(cx::pack_compression::none)),
+                              destination_kind::pageable);
+  int device        = 0;
+  int access        = 0;
+  CUDF_CUDA_TRY(cudaGetDevice(&device));
+  CUDF_CUDA_TRY(cudaDeviceGetAttribute(&access, cudaDevAttrPageableMemoryAccess, device));
+  if (access != 0) {
+    CUDF_TEST_EXPECT_TABLES_EQUAL(input, cx::unpack_view(packed.view()));
+  } else {
+    EXPECT_THROW(cx::unpack_view(packed.view()), cudf::logic_error);
+  }
+}
+
+TEST_F(ExperimentalPackUnpackTest, MaterializeOversizedUncompressedPayload)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> numbers({1, 2, 3, 4, 5});
+  auto const input  = cudf::table_view{{numbers}};
+  auto const plan   = cx::prepare_pack(input, make_options(cx::pack_compression::none));
+  auto const stream = cudf::get_default_stream();
+  rmm::device_buffer buffer(plan.sizes().payload_bytes + 4096, stream);
+  auto const result = cx::pack_into(plan, as_span(buffer));
+  auto const view   = cx::packed_data_view{
+    result.metadata, {static_cast<uint8_t const*>(buffer.data()), buffer.size()}};
+  auto materialized = cx::materialize(view);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(input, materialized->view());
+  auto columns = materialized->release();
+  EXPECT_EQ(columns.front()->release().data->size(), 5 * sizeof(int32_t));
+}
+
+TEST_F(ExperimentalPackUnpackTest, MaterializeColumnSubset)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> numbers({1, 2, 3, 4, 5, 6},
+                                                          {true, false, true, true, true, true});
+  cudf::test::strings_column_wrapper strings({"a", "", "ccc", "dddd", "e", "ff"},
+                                             {true, true, false, true, true, true});
+  cudf::test::lists_column_wrapper<int64_t> lists{{1, 2}, {}, {3}, {4, 5, 6}, {7}, {8}};
+  cudf::test::fixed_width_column_wrapper<int16_t> member({1, 2, 3, 4, 5, 6});
+  cudf::test::structs_column_wrapper structs({member});
+  auto const input = cudf::table_view{{numbers, strings, lists, structs}};
+  std::vector<std::vector<cudf::size_type>> const selections{{2, 0}, {1, 1}, {3}, {}};
+
+  // Zstd decompresses like Snappy, and pinned payloads are read in place like device ones.
+  for (auto const compression :
+       {cx::pack_compression::none, cx::pack_compression::cascaded, cx::pack_compression::snappy}) {
+    if (!is_codec_enabled(compression)) { continue; }
+    auto const plan = cx::prepare_pack(input, make_options(compression));
+    for (auto const kind : {destination_kind::device, destination_kind::pageable}) {
+      SCOPED_TRACE(static_cast<int>(compression));
+      SCOPED_TRACE(static_cast<int>(kind));
+      auto const packed = pack_to(plan, kind);
+      for (auto const& selection : selections) {
+        auto const materialized = cx::materialize(packed.view(), selection);
+        ASSERT_EQ(materialized->num_columns(), static_cast<cudf::size_type>(selection.size()));
+        if (!selection.empty()) {
+          CUDF_TEST_EXPECT_TABLES_EQUAL(input.select(selection), materialized->view());
+        }
+      }
+      if (kind != destination_kind::device) { continue; }
+      for (auto const index : {-1, input.num_columns()}) {
+        EXPECT_THROW(cx::materialize(packed.view(), std::vector<cudf::size_type>{index}),
+                     std::out_of_range);
+      }
+    }
+  }
+}
+
+TEST_F(ExperimentalPackUnpackTest, MaterializeSparseColumnSubset)
+{
+  // An incompressible middle column makes a pageable subset upload disjoint byte ranges. The first
+  // column is stored raw with an odd length, and Cascaded requires aligned input for the last one.
+  constexpr cudf::size_type num_rows = 512 * 1024 + 3;
+  auto const noise                   = cudf::detail::make_counting_transform_iterator(
+    0, [](int64_t i) { return (i * 2654435761) ^ (i << 17) ^ (i >> 5); });
+  auto const runs = cudf::detail::make_counting_transform_iterator(
+    0, [](int64_t i) { return (i / 3) % 7 + (i / 1000) * 1000; });
+  cudf::test::fixed_width_column_wrapper<int8_t> first(noise, noise + num_rows);
+  cudf::test::fixed_width_column_wrapper<int64_t> second(noise, noise + num_rows);
+  cudf::test::fixed_width_column_wrapper<int64_t> third(runs, runs + num_rows);
+  auto const input = cudf::table_view{{first, second, third}};
+  std::vector<cudf::size_type> const selection{2, 0};
+
+  for (auto const compression :
+       {cx::pack_compression::none, cx::pack_compression::cascaded, cx::pack_compression::snappy}) {
+    if (!is_codec_enabled(compression)) { continue; }
+    SCOPED_TRACE(static_cast<int>(compression));
+    auto const packed =
+      pack_to(cx::prepare_pack(input, make_options(compression)), destination_kind::pageable);
+    CUDF_TEST_EXPECT_TABLES_EQUAL(input.select(selection),
+                                  cx::materialize(packed.view(), selection)->view());
+  }
+}
+
+TEST_F(ExperimentalPackUnpackTest, PackIntoRejectsInvalidDestination)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> col({1, 2, 3, 4});
+  auto const plan  = cx::prepare_pack(cudf::table_view{{col}});
+  auto const sizes = plan.sizes();
+  ASSERT_GT(sizes.payload_bytes, 0);
+  rmm::device_buffer destination(sizes.payload_bytes + sizes.payload_alignment,
+                                 cudf::get_default_stream());
+  auto const span = as_span(destination);
+  EXPECT_THROW(cx::pack_into(plan, span.first(sizes.payload_bytes - 1)), std::invalid_argument);
+  EXPECT_THROW(cx::pack_into(plan, span.subspan(1, sizes.payload_bytes)), std::invalid_argument);
+}
+
+TEST_F(ExperimentalPackUnpackTest, CompressExistingPackedColumns)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> numbers({31, 31, 31, 31, 31},
+                                                          {true, false, true, true, true});
+  cudf::test::strings_column_wrapper strings({"late", "compression", "after", "ordinary", "pack"});
+  auto const input  = cudf::table_view{{numbers, strings}};
+  auto const packed = cudf::pack(input);
+
+  for (auto const compression : all_codecs) {
+    if (!is_codec_enabled(compression)) { continue; }
+    SCOPED_TRACE(static_cast<int>(compression));
+    auto const plan = cx::make_pack_plan_builder(packed, make_options(compression)).build();
+    EXPECT_EQ(plan.sizes().uncompressed_payload_bytes, packed.gpu_data->size());
+    auto const result = pack_to_device(plan);
+    if (compression == cx::pack_compression::none) {
+      EXPECT_EQ(result.result.payload_bytes, packed.gpu_data->size());
+      CUDF_TEST_EXPECT_TABLES_EQUAL(input, cx::unpack_view(result.view()));
+    }
+    expect_materializes_to(input, result.view());
+  }
+}
+
+TEST_F(ExperimentalPackUnpackTest, CompressContiguousSplitPartitions)
+{
+  constexpr cudf::size_type num_rows = 64 * 1024;
+  auto const values =
+    cudf::detail::make_counting_transform_iterator(0, [](int64_t i) { return (i / 16) % 1000; });
+  cudf::test::fixed_width_column_wrapper<int64_t> numbers(
+    values, values + num_rows, cudf::test::iterators::null_at(5));
+  // Strings and lists are all empty in the partition [1000, 20000).
+  auto const is_empty_row = [](cudf::size_type i) { return i >= 1000 && i < 20000; };
+  auto const words        = cudf::detail::make_counting_transform_iterator(
+    0, [&](int32_t i) { return is_empty_row(i) ? std::string{} : std::to_string(i % 100); });
+  cudf::test::strings_column_wrapper strings(words, words + num_rows);
+  std::vector<cudf::size_type> list_offsets(num_rows + 1, 0);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    list_offsets[i + 1] = list_offsets[i] + (is_empty_row(i) ? 0 : 2);
+  }
+  auto const elements =
+    cudf::detail::make_counting_transform_iterator(0, [](int32_t i) { return i % 7; });
+  auto lists = cudf::make_lists_column(
+    num_rows,
+    cudf::test::fixed_width_column_wrapper<cudf::size_type>(list_offsets.begin(),
+                                                            list_offsets.end())
+      .release(),
+    cudf::test::fixed_width_column_wrapper<int32_t>(elements, elements + list_offsets.back())
+      .release(),
+    0,
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+  auto const members = cudf::detail::make_counting_transform_iterator(
+    0, [](int32_t i) { return static_cast<int16_t>(i % 300); });
+  cudf::test::fixed_width_column_wrapper<int16_t> member(members, members + num_rows);
+  cudf::test::structs_column_wrapper structs({member}, cudf::test::iterators::null_at(30000));
+  auto const input = cudf::table_view{{numbers, strings, lists->view(), structs}};
+
+  std::vector<cudf::size_type> const splits{0, 1000, 20000, 20001, 50000};
+  auto const partitions = cudf::contiguous_split(input, splits);
+  auto const expected   = cudf::split(input, splits);
+  ASSERT_EQ(partitions.size(), expected.size());
+  for (std::size_t i = 0; i < partitions.size(); ++i) {
+    SCOPED_TRACE(i);
+    auto const plan =
+      cx::make_pack_plan_builder(partitions[i].data, make_options(cx::pack_compression::cascaded))
+        .build();
+    expect_materializes_to(expected[i], pack_to_device(plan).view());
+  }
+}
+
+TEST_F(ExperimentalPackUnpackTest, ExistingPackedColumnsRequireMatchingLayout)
+{
+  // Two columns stored in reverse order: the total size matches the planned layout, but the
+  // buffer offsets do not.
+  constexpr cudf::size_type num_rows = 64;
+  constexpr std::size_t column_bytes = num_rows * sizeof(int32_t);
+  auto const stream                  = cudf::get_default_stream();
+  auto data = std::make_unique<rmm::device_buffer>(2 * column_bytes, stream);
+  CUDF_CUDA_TRY(cudaMemsetAsync(data->data(), 0, data->size(), stream.get()));
+  auto const* const base = static_cast<uint8_t const*>(data->data());
+  auto const type        = cudf::data_type{cudf::type_id::INT32};
+  auto const input =
+    cudf::table_view{{cudf::column_view{type, num_rows, base + column_bytes, nullptr, 0},
+                      cudf::column_view{type, num_rows, base, nullptr, 0}}};
+  auto metadata =
+    std::make_unique<std::vector<uint8_t>>(cudf::pack_metadata(input, base, data->size()));
+  cudf::packed_columns const packed{std::move(metadata), std::move(data)};
+  EXPECT_THROW(cx::make_pack_plan_builder(packed, make_options(cx::pack_compression::cascaded)),
+               std::invalid_argument);
+}
+
+TEST_F(ExperimentalPackUnpackTest, CascadedUsesNativeTypedRegions)
+{
+  cudf::test::fixed_width_column_wrapper<int16_t> small({1, 1, 2, 3, 5},
+                                                        {true, false, true, true, true});
+  cudf::test::fixed_width_column_wrapper<int64_t> large({10, 20, 30, 40, 50});
+  cudf::test::fixed_width_column_wrapper<float> reals({1.5F, 2.5F, 3.5F, 4.5F, 5.5F});
+  cudf::test::strings_column_wrapper strings({"typed", "regions", "are", "separate", "frames"});
+  auto const input = cudf::table_view{{small, large, reals, strings}};
+
+  auto const plan   = cx::prepare_pack(input, make_options(cx::pack_compression::cascaded));
+  auto const packed = pack_to_device(plan);
+  ASSERT_EQ(packed.result.metadata.size(), plan.sizes().metadata_bytes);
+  auto const entries = read_region_entries(packed.result.metadata);
+  ASSERT_GE(entries.size(), 6);
+  for (auto const type : {cudf::type_id::INT16,
+                          cudf::type_id::INT64,
+                          cudf::type_id::FLOAT32,
+                          cudf::type_id::STRING}) {
+    EXPECT_TRUE(std::any_of(entries.begin(),
+                            entries.end(),
+                            [type](auto const& entry) {
+                              return entry.is_validity == 0 &&
+                                     static_cast<cudf::type_id>(entry.type) == type;
+                            }))
+      << static_cast<int>(type);
+  }
+  EXPECT_TRUE(std::any_of(
+    entries.begin(), entries.end(), [](auto const& entry) { return entry.is_validity != 0; }));
+
+  expect_materializes_to(input, packed.view());
+}
+
+TEST_F(ExperimentalPackUnpackTest, AutomaticPerRegionCompression)
+{
+  constexpr cudf::size_type rows = 32 * 1024;
+  std::vector<int32_t> values(rows, 7);
+  std::vector<std::string> words(rows, "automatic-region-selection");
+  // Full-width hashed values leave no codec anything to save.
+  auto const noise = cudf::detail::make_counting_transform_iterator(0, [](int64_t i) {
+    auto x = static_cast<uint64_t>(i) * 0x9E3779B97F4A7C15ULL;
+    x      = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ULL;
+    x      = (x ^ (x >> 27)) * 0x94D049BB133111EBULL;
+    return static_cast<int64_t>(x ^ (x >> 31));
+  });
+  cudf::test::fixed_width_column_wrapper<int32_t> numbers(values.begin(), values.end());
+  cudf::test::strings_column_wrapper strings(words.begin(), words.end());
+  cudf::test::fixed_width_column_wrapper<int64_t> hashes(noise, noise + rows);
+  auto const input = cudf::table_view{{numbers, strings, hashes}};
+
+  auto const packed =
+    pack_to_device(cx::prepare_pack(input, make_options(cx::pack_compression::automatic)));
+  // Data and string offsets are INT32 regions.
+  for (auto const& entry : read_region_entries(packed.result.metadata)) {
+    auto const expected =
+      std::map<cudf::type_id, cx::pack_compression>{
+        {cudf::type_id::INT32, cx::pack_compression::cascaded},
+        {cudf::type_id::STRING, cx::pack_compression::none},
+        {cudf::type_id::INT64, cx::pack_compression::none}}
+        .at(static_cast<cudf::type_id>(entry.type));
+    EXPECT_EQ(static_cast<cx::pack_compression>(entry.compression), expected)
+      << static_cast<int>(entry.type);
+  }
+  expect_materializes_to(input, packed.view());
+}
+
+TEST_F(ExperimentalPackUnpackTest, PerRegionCompression)
+{
+  if (!is_codec_enabled(cx::pack_compression::zstd) ||
+      !is_codec_enabled(cx::pack_compression::snappy)) {
+    GTEST_SKIP() << "Zstd or Snappy is disabled";
+  }
+  std::vector<int32_t> values(4096, 17);
+  std::vector<bool> validity(4096, true);
+  validity[3] = false;
+  std::vector<std::string> words(4096, "per-region-selection");
+  cudf::test::fixed_width_column_wrapper<int32_t> numbers(
+    values.begin(), values.end(), validity.begin());
+  cudf::test::strings_column_wrapper strings(words.begin(), words.end());
+  auto const input  = cudf::table_view{{numbers, strings}};
+  auto const packed = cudf::pack(input);
+
+  for (auto const from_packed : {false, true}) {
+    SCOPED_TRACE(from_packed);
+    auto const options = make_options(cx::pack_compression::automatic);
+    auto builder       = from_packed ? cx::make_pack_plan_builder(packed, options)
+                                     : cx::make_pack_plan_builder(input, options);
+    for (auto& region : builder.regions()) {
+      switch (region.info().kind) {
+        case cx::pack_region_kind::validity: region.codec = cx::pack_compression::none; break;
+        case cx::pack_region_kind::offsets: region.codec = cx::pack_compression::cascaded; break;
+        case cx::pack_region_kind::string_characters:
+          region.codec = cx::pack_compression::zstd;
+          break;
+        case cx::pack_region_kind::data: region.codec = cx::pack_compression::snappy; break;
+      }
+    }
+    auto const result  = pack_to_device(std::move(builder).build());
+    auto const entries = read_region_entries(result.result.metadata);
+    ASSERT_EQ(entries.size(), 4);
+    for (auto const compression : all_codecs) {
+      EXPECT_EQ(std::count_if(entries.begin(),
+                              entries.end(),
+                              [&](auto const& entry) {
+                                return static_cast<cx::pack_compression>(entry.compression) ==
+                                       compression;
+                              }),
+                1)
+        << static_cast<int>(compression);
+    }
+    expect_materializes_to(input, result.view());
+  }
+}
+
+TEST_F(ExperimentalPackUnpackTest, RegionColumnPaths)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> first({1, 2, 3});
+  cudf::test::fixed_width_column_wrapper<int32_t> second({4, 5, 6});
+  cudf::test::structs_column_wrapper structs({first, second}, {true, false, true});
+  using lcw = cudf::test::lists_column_wrapper<int32_t>;
+  lcw lists{lcw{lcw{1, 2}, lcw{3}}, lcw{lcw{4}}, lcw{lcw{5, 6}}};
+  cudf::test::dictionary_column_wrapper<std::string> dictionary({"a", "bb", "a"});
+  auto const input = cudf::table_view{{structs, lists, dictionary}};
+
+  auto builder = cx::make_pack_plan_builder(input, make_options(cx::pack_compression::none));
+  auto const has_region = [&](std::vector<cudf::size_type> const& path, cx::pack_region_kind kind) {
+    return std::any_of(builder.regions().begin(), builder.regions().end(), [&](auto const& region) {
+      return region.info().column_path == path && region.info().kind == kind;
+    });
+  };
+  EXPECT_TRUE(has_region({0}, cx::pack_region_kind::validity));
+  EXPECT_TRUE(has_region({0, 0}, cx::pack_region_kind::data));
+  EXPECT_TRUE(has_region({0, 1}, cx::pack_region_kind::data));
+  EXPECT_TRUE(has_region({1}, cx::pack_region_kind::offsets));
+  EXPECT_TRUE(has_region({1, 1}, cx::pack_region_kind::offsets));
+  EXPECT_TRUE(has_region({1, 1, 1}, cx::pack_region_kind::data));
+  EXPECT_TRUE(has_region({2, 0}, cx::pack_region_kind::data));
+  EXPECT_TRUE(has_region({2, 1}, cx::pack_region_kind::offsets));
+  EXPECT_TRUE(has_region({2, 1}, cx::pack_region_kind::string_characters));
+
+  expect_materializes_to(input, pack_to_device(std::move(builder).build()).view());
+}
+
+TEST_F(ExperimentalPackUnpackTest, GetPackedRegionInfo)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> first({1, 2, 3, 4}, {true, false, true, true});
+  cudf::test::strings_column_wrapper words({"a", "", "ccc", "dd"}, {true, false, true, true});
+  cudf::test::structs_column_wrapper structs({first, words}, {true, true, false, true});
+  using lcw = cudf::test::lists_column_wrapper<int32_t>;
+  lcw lists{lcw{lcw{1, 2}, lcw{3}}, lcw{lcw{4}}, lcw{}, lcw{lcw{5, 6}}};
+  cudf::test::strings_column_wrapper empty_words({"", "", "", ""});
+  cudf::test::fixed_width_column_wrapper<double> doubles({1.5, 2.5, 3.5, 4.5});
+  cudf::test::dictionary_column_wrapper<std::string> dictionary({"a", "bb", "a", "ccc"});
+  auto const table = cudf::table_view{{structs, lists, empty_words, doubles, dictionary}};
+
+  auto const expect_regions = [](std::vector<cx::pack_region_info> const& actual,
+                                 std::span<cx::pack_region const> expected) {
+    ASSERT_EQ(actual.size(), expected.size());
+    for (std::size_t i = 0; i < actual.size(); ++i) {
+      auto const& info = expected[i].info();
+      EXPECT_EQ(actual[i].region_index, info.region_index);
+      EXPECT_EQ(actual[i].column_path, info.column_path);
+      EXPECT_EQ(actual[i].kind, info.kind);
+      EXPECT_EQ(actual[i].type, info.type);
+      EXPECT_EQ(actual[i].uncompressed_bytes, info.uncompressed_bytes) << i;
+    }
+  };
+
+  for (auto const& input : {table, cudf::slice(table, {1, 3}).front()}) {
+    auto const builder =
+      cx::make_pack_plan_builder(input, make_options(cx::pack_compression::none));
+    for (auto const compression : {cx::pack_compression::none, cx::pack_compression::cascaded}) {
+      auto const packed = pack_to_device(cx::prepare_pack(input, make_options(compression)));
+      expect_regions(cx::get_packed_region_info(packed.result.metadata), builder.regions());
+    }
+    auto const legacy = cudf::pack(input);
+    expect_regions(cx::get_packed_region_info(*legacy.metadata), builder.regions());
+  }
+  EXPECT_TRUE(cx::get_packed_region_info({}).empty());
+}
+
+TEST_F(ExperimentalPackUnpackTest, CompressedInputValidation)
+{
+  if (!is_codec_enabled(cx::pack_compression::zstd)) { GTEST_SKIP() << "Zstd is disabled"; }
+  std::vector<int32_t> values(32 * 1024, 23);
+  cudf::test::fixed_width_column_wrapper<int32_t> numbers(values.begin(), values.end());
+  auto const input = cudf::table_view{{numbers}};
+
+  auto const plan   = cx::prepare_pack(input, make_options(cx::pack_compression::zstd));
+  auto const packed = pack_to_device(plan);
+
+  ASSERT_GT(packed.result.payload_bytes, 1);
+  auto truncated    = packed.view();
+  truncated.payload = truncated.payload.first(truncated.payload.size() - 1);
+  EXPECT_THROW(cx::materialize(truncated), cudf::logic_error);
+}
 
 TEST_F(PackUnpackTest, SingleColumnFixedWidth)
 {

@@ -373,11 +373,13 @@ void metadata_builder::clear() { impl->clear(); }
 
 packed_metadata_view::column_view::column_view(std::span<uint8_t const> buffer) : _buffer(buffer)
 {
-  auto const entry = detail::read_entry(_buffer.data(), _buffer.data() + _buffer.size());
-  _type            = entry.type;
-  _size            = entry.size;
-  _null_count      = entry.null_count;
-  _num_children    = entry.num_children;
+  auto const entry  = detail::read_entry(_buffer.data(), _buffer.data() + _buffer.size());
+  _type             = entry.type;
+  _size             = entry.size;
+  _null_count       = entry.null_count;
+  _data_offset      = entry.data_offset;
+  _null_mask_offset = entry.null_mask_offset;
+  _num_children     = entry.num_children;
 }
 
 data_type packed_metadata_view::column_view::type() const { return _type; }
@@ -385,6 +387,10 @@ data_type packed_metadata_view::column_view::type() const { return _type; }
 size_type packed_metadata_view::column_view::num_rows() const { return _size; }
 
 size_type packed_metadata_view::column_view::null_count() const { return _null_count; }
+
+int64_t packed_metadata_view::column_view::data_offset() const { return _data_offset; }
+
+int64_t packed_metadata_view::column_view::null_mask_offset() const { return _null_mask_offset; }
 
 size_type packed_metadata_view::column_view::num_children() const { return _num_children; }
 
@@ -416,9 +422,11 @@ packed_metadata_view::packed_metadata_view(std::span<uint8_t const> buffer)
   // Walk the top-level columns once to validate two things: every top-level column's size agrees
   // with the recorded row count and the column tree exactly fills the buffer.
   auto const* ptr = entries;
+  _column_offsets.reserve(_num_columns);
   for (size_type i = 0; i < _num_columns; ++i) {
     auto const entry = detail::read_entry(ptr, end);
     CUDF_EXPECTS(entry.size == _num_rows, "packed metadata row count does not match the columns");
+    _column_offsets.push_back(static_cast<std::size_t>(ptr - entries));
     ptr = detail::skip_subtrees(ptr, 1, end);
   }
   CUDF_EXPECTS(ptr == end, "packed metadata buffer size does not match the encoded column tree");
@@ -432,9 +440,7 @@ size_type packed_metadata_view::num_rows() const { return _num_rows; }
 packed_metadata_view::column_view packed_metadata_view::column(size_type i) const
 {
   CUDF_EXPECTS(i >= 0 && i < _num_columns, "column index out of range", std::out_of_range);
-  auto const* end    = _entries.data() + _entries.size();
-  auto const* target = detail::skip_subtrees(_entries.data(), i, end);
-  return packed_metadata_view::column_view{{target, end}};
+  return packed_metadata_view::column_view{_entries.subspan(_column_offsets[i])};
 }
 
 /**

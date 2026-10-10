@@ -161,9 +161,7 @@ template <>
 __device__ inline auto Spark_MurmurHash3_x86_32<bool>::operator()(bool const& key) const
   -> result_type
 {
-  // BOOL8 is "0 == false, else true", so canonicalize before hashing: a stored byte of 2 must
-  // hash as 1, not as 2.
-  return compute<uint32_t>(key ? 1u : 0u);
+  return compute<uint32_t>(key);
 }
 
 template <>

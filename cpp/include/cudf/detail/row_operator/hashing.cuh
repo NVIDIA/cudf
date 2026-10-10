@@ -26,6 +26,7 @@
 #include <cuda/std/limits>
 #include <cuda/std/type_traits>
 
+#include <cstdint>
 #include <memory>
 
 namespace CUDF_EXPORT cudf {
@@ -71,7 +72,13 @@ class element_hasher {
     requires(column_device_view::has_element_accessor<T>())
   {
     if (_check_nulls && col.is_null(row_index)) { return _null_hash; }
-    return hash_function<T>{_seed}(col.element<T>(row_index));
+    if constexpr (cuda::std::is_same_v<T, bool>) {
+      // BOOL8 permits any nonzero byte for true. Read the storage as a byte before converting
+      // to bool, since loading a noncanonical representation as bool is undefined behavior.
+      return hash_function<T>{_seed}(col.data<uint8_t>()[row_index] != 0);
+    } else {
+      return hash_function<T>{_seed}(col.element<T>(row_index));
+    }
   }
 
   /**

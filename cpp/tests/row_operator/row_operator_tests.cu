@@ -540,31 +540,48 @@ TEST_F(RowOperatorTest, TestSparkMurmurRowHasher)
 
 TEST_F(RowOperatorTest, TestPrimitiveRowHasher64BitHash)
 {
-  auto const stream = this->stream();
-  auto const mr     = this->resources();
+  auto const stream      = this->stream();
+  auto const mr          = this->resources();
+  auto const hash_column = [&](cudf::column_view col) {
+    auto const d_input =
+      cudf::table_device_view::create(cudf::table_view{{col}}, stream, mr.get_temporary_mr());
+    auto const hasher = cudf::detail::row::primitive::row_hasher<cudf::hashing::detail::XXHash_64>(
+      cudf::nullate::DYNAMIC{false}, *d_input, static_cast<std::uint64_t>(cudf::DEFAULT_HASH_SEED));
+    auto result = cudf::make_numeric_column(cudf::data_type{cudf::type_id::UINT64},
+                                            col.size(),
+                                            cudf::mask_state::UNALLOCATED,
+                                            stream,
+                                            mr.get_output_mr());
+    thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+                      cuda::counting_iterator<cudf::size_type>{0},
+                      cuda::counting_iterator<cudf::size_type>{col.size()},
+                      result->mutable_view().begin<std::uint64_t>(),
+                      hasher);
+    return result;
+  };
 
   auto const col = cudf::test::fixed_width_column_wrapper<int32_t>{{0, 42, 123456789}, stream, mr};
-  auto const input = cudf::table_view{{col}};
-
-  auto const d_input = cudf::table_device_view::create(input, stream, mr.get_temporary_mr());
-
-  auto const hasher = cudf::detail::row::primitive::row_hasher<cudf::hashing::detail::XXHash_64>(
-    cudf::nullate::DYNAMIC{false}, *d_input, static_cast<std::uint64_t>(cudf::DEFAULT_HASH_SEED));
-
-  auto results = cudf::test::fixed_width_column_wrapper<std::uint64_t>{{0, 0, 0}, stream, mr};
-
-  thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
-                    cuda::counting_iterator<cudf::size_type>{0},
-                    cuda::counting_iterator<cudf::size_type>{3},
-                    cudf::mutable_column_view{results}.begin<std::uint64_t>(),
-                    hasher);
-
+  auto const results = hash_column(col);
   // Expected values match cuCollections xxhash_64 reference implementation
   // https://github.com/NVIDIA/cuCollections/blob/4f03dcccb3a944594c693aa8cebc89302bbd8e20/tests/utility/hash_test.cu#L134-L137
   auto const expected = cudf::test::fixed_width_column_wrapper<std::uint64_t>{
     {4246796580750024372ul, 15516826743637085169ul, 9462334144942111946ul}, stream, mr};
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
-    results, expected, cudf::test::debug_output_level::FIRST_ERROR, stream, mr);
+    results->view(), expected, cudf::test::debug_output_level::FIRST_ERROR, stream, mr);
+
+  // Preserve noncanonical BOOL8 bytes that a bool column wrapper would normalize.
+  auto const bytes = cudf::test::fixed_width_column_wrapper<uint8_t>{{0, 1, 2, 255}, stream, mr};
+  auto const raw_bools = cudf::column_view{
+    cudf::data_type{cudf::type_id::BOOL8}, 4, cudf::column_view{bytes}.head(), nullptr, 0};
+  auto const canonical =
+    cudf::test::fixed_width_column_wrapper<bool>{{false, true, true, true}, stream, mr};
+  auto const bool_results  = hash_column(raw_bools);
+  auto const bool_expected = hash_column(canonical);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(bool_results->view(),
+                                 bool_expected->view(),
+                                 cudf::test::debug_output_level::FIRST_ERROR,
+                                 stream,
+                                 mr);
 }
 
 TEST_F(RowOperatorTest, TestRowHasherDictionaryColumn)

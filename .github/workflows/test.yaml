@@ -357,6 +357,29 @@ jobs:
         --cudf-polars-num-shards ${{ matrix.num_shards }}
       # https://github.com/NVIDIA/cudf/issues/23498
       matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
+  cudf-polars-test-summary:
+    needs: cudf-polars-polars-tests
+    if: ${{ !cancelled() && needs.cudf-polars-polars-tests.result != 'skipped' }}
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: read
+      pull-requests: read
+    secrets: inherit # zizmor: ignore[secrets-inherit]
+    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
+    with:
+      build_type: ${{ inputs.build_type }}
+      branch: ${{ inputs.branch }}
+      date: ${{ inputs.date }}
+      sha: ${{ inputs.sha }}
+      node_type: cpu8
+      container_image: rapidsai/citestwheel:26.12-latest
+      # Partial or failed test runs should still have an informational report.
+      continue-on-error: true
+      script: ci/run_cudf_polars_fallback_diagnostics.sh
+      file_to_upload: cudf-polars-fallback-diagnostics
+      artifact-name: cudf-polars-fallback-diagnostics
   narwhals-tests:
     permissions:
       actions: read

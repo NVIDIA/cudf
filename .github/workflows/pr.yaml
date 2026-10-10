@@ -37,6 +37,7 @@ jobs:
       - wheel-tests-cudf
       - wheel-tests-cudf-polars
       - cudf-polars-polars-tests
+      - cudf-polars-test-summary
       - wheel-python-build-noarch
       - wheel-tests-dask-cudf
       - devcontainer
@@ -250,6 +251,8 @@ jobs:
         test_python_wheel_dask_cudf:
           - 'ci/test_wheel_dask_cudf.sh'
         test_python_cudf_polars_polars:
+          - 'ci/analyze_cudf_polars_fallbacks.py'
+          - 'ci/run_cudf_polars_fallback_diagnostics.sh'
           - 'ci/test_cudf_polars_polars_tests.sh'
           - 'ci/run_cudf_polars_polars_tests.sh'
           - 'ci/cudf_polars/polars_test_deselections*.txt'
@@ -791,6 +794,29 @@ jobs:
         --inject-gpu-engine-blocksize default
         --cudf-polars-shard-id ${{ matrix.shard_id }}
         --cudf-polars-num-shards ${{ matrix.num_shards }}
+  cudf-polars-test-summary:
+    needs: cudf-polars-polars-tests
+    if: ${{ !cancelled() && needs.cudf-polars-polars-tests.result != 'skipped' }}
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: read
+      pull-requests: read
+    secrets: inherit # zizmor: ignore[secrets-inherit]
+    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
+    with:
+      build_type: pull-request
+      branch: ${{ inputs.branch }}
+      date: ${{ inputs.date }}
+      sha: ${{ inputs.sha }}
+      node_type: cpu8
+      container_image: rapidsai/citestwheel:26.12-latest
+      # Diagnostics must not replace the upstream jobs' pass/fail signal.
+      continue-on-error: true
+      script: ci/run_cudf_polars_fallback_diagnostics.sh
+      file_to_upload: cudf-polars-fallback-diagnostics
+      artifact-name: cudf-polars-fallback-diagnostics
   wheel-tests-dask-cudf:
     needs: [wheel-build, wheel-python-build-noarch, changed-files]
     permissions:

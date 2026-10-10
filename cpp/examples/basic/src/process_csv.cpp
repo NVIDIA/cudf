@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,6 +12,9 @@
 #include <rmm/mr/cuda_memory_resource.hpp>
 #include <rmm/mr/pool_memory_resource.hpp>
 
+#include <cuda/memory_resource>
+
+#include <iostream>
 #include <memory>
 #include <string>
 #include <utility>
@@ -65,15 +68,18 @@ std::unique_ptr<cudf::table> average_closing_price(cudf::table_view stock_info_t
 
 int main(int argc, char** argv)
 {
-  // Construct a CUDA memory resource using RAPIDS Memory Manager (RMM)
-  // This is the default memory resource for libcudf for allocating device memory.
-  // Construct a memory pool using the CUDA memory resource
-  // Using a memory pool for device memory allocations is important for good performance in libcudf.
-  // The pool defaults to allocating half of the available GPU memory.
-  rmm::mr::pool_memory_resource mr{rmm::mr::cuda_memory_resource{},
-                                   rmm::percent_of_free_device_memory(50)};
+  if (argc > 2 || (argc == 2 && std::string{argv[1]} != "--pool")) {
+    std::cerr << "Usage: basic_example [--pool]\n";
+    return 1;
+  }
+  // Pooling can improve allocation performance, but reserving half the device is unnecessary
+  // for the small default input and prevents other examples from sharing the GPU.
+  cuda::mr::any_resource<cuda::mr::device_accessible> mr = rmm::mr::cuda_memory_resource{};
+  if (argc == 2) {
+    mr = rmm::mr::pool_memory_resource{rmm::mr::cuda_memory_resource{},
+                                       rmm::percent_of_free_device_memory(50)};
+  }
 
-  // Set the pool resource to be used by default for all device memory allocations
   // Note: It is the user's responsibility to ensure the `mr` object stays alive for the duration of
   // it being set as the default
   // Also, call this before the first libcudf API call to ensure all data is allocated by the same

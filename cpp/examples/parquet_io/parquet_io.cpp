@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -79,7 +79,7 @@ void write_parquet(cudf::table_view input,
 void print_usage()
 {
   std::cout << "\nUsage: parquet_io <input parquet file> <output parquet file> <encoding type>\n"
-               "                  <compression type> <write page stats: yes/no>\n\n"
+               "                  <compression type> <write page stats: yes/no> [--pool]\n\n"
                "Available encoding types: DEFAULT, DICTIONARY, PLAIN, DELTA_BINARY_PACKED,\n"
                "                 DELTA_LENGTH_BYTE_ARRAY, DELTA_BYTE_ARRAY\n\n"
                "Available compression types: NONE, AUTO, SNAPPY, LZ4, ZSTD\n\n";
@@ -101,6 +101,8 @@ void print_usage()
  */
 int main(int argc, char const** argv)
 {
+  bool const is_pool_used = argc > 1 && std::string{argv[argc - 1]} == "--pool";
+  if (is_pool_used) { --argc; }
   std::string input_filepath                          = "example.parquet";
   std::string output_filepath                         = "output.parquet";
   cudf::io::column_encoding encoding                  = get_encoding_type("DELTA_BINARY_PACKED");
@@ -125,9 +127,8 @@ int main(int argc, char const** argv)
     default: print_usage(); throw std::runtime_error("");
   }
 
-  // Create and use a memory pool
-  bool constexpr is_pool_used = true;
-  auto resource               = create_memory_resource(is_pool_used);
+  // Async allocation avoids a large upfront reservation when examples share the GPU.
+  auto resource = create_memory_resource(is_pool_used);
   cudf::set_current_device_resource(resource);
 
   // Read input parquet file

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -154,7 +154,7 @@ std::unique_ptr<cudf::table> sort_keys(cudf::table_view input)
  * Command line parameters:
  * 1. JSON input file name/path (default: "example.json")
  * 2. JSON output file name/path (default: "output.json")
- * 3. Memory resource (optional): "pool" or "cuda" (default: "pool")
+ * 3. Memory resource (optional): "pool" or "cuda" (default: "cuda")
  *
  * Example invocation from directory `cudf/cpp/examples/nested_types`:
  * ./build/deduplication example.json output.json pool
@@ -172,7 +172,7 @@ int main(int argc, char const** argv)
   if (argc == 1) {
     input_filepath  = "example.json";
     output_filepath = "output.json";
-    mr_name         = "pool";
+    mr_name         = "cuda";
   } else {
     input_filepath  = argv[1];
     output_filepath = argv[2];

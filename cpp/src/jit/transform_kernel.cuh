@@ -24,6 +24,10 @@
 
 namespace cudf::detail {
 
+template <typename T>
+inline constexpr bool is_fixed_width_repr_compatible =
+  cudf::is_fixed_width<T>() && cudf::is_rep_layout_compatible<T>();
+
 /**
  * @brief Applies a row operation using transform input and output accessors.
  *
@@ -40,6 +44,12 @@ __device__ void transform_kernel(size_type row_size,
                                  int32_t* __restrict__ max_error,
                                  RowOperation&& operation)
 {
+  constexpr auto all_fixed_width_repr_compatible = []<typename... A>() {
+    return (is_fixed_width_repr_compatible<typename A::element_type> && ...);
+  };
+  constexpr bool direct_access = InputAccessors::map(all_fixed_width_repr_compatible) &&
+                                 OutputAccessors::map(all_fixed_width_repr_compatible);
+
   auto const start  = grid_1d::global_thread_id();
   auto const stride = grid_1d::grid_stride();
   auto thread_error = errc::SUCCESS;
@@ -54,21 +64,36 @@ __device__ void transform_kernel(size_type row_size,
       auto const row = static_cast<size_type>(row_index);
       if (stencil != nullptr && !bit_is_set(stencil, row)) { continue; }
 
-      auto outs = OutputAccessors::map(
-        [&]<typename... A>() { return cuda::std::tuple{A::output_arg(output_cols, row)...}; });
-
-      auto const row_error = OutputAccessors::map([&]<typename... Out>() {
-        return InputAccessors::map([&]<typename... In>() {
-          return operation(
-            row, &cuda::std::get<Out::index>(outs)..., In::element(input_cols, row)...);
+      if constexpr (direct_access) {
+        // Expand column pointers and input loads directly into the UDF arguments.
+        auto row_error = InputAccessors::map([&]<typename... I>() {
+          return OutputAccessors::map([&]<typename... O>() {
+            return operation(
+              row,
+              (O::column(output_cols).template data<typename O::element_type>() + row)...,
+              I::column(input_cols)
+                .template data<typename I::element_type>()[I::map_index(row)]...);
+          });
         });
-      });
 
-      OutputAccessors::map([&]<typename... A>() {
-        (A::assign(output_cols, row, cuda::std::get<A::index>(outs)), ...);
-      });
+        thread_error = cuda::std::max(thread_error, row_error);
+      } else {
+        auto outs = OutputAccessors::map(
+          [&]<typename... A>() { return cuda::std::tuple{A::output_arg(output_cols, row)...}; });
 
-      thread_error = cuda::std::max(thread_error, row_error);
+        auto const row_error = OutputAccessors::map([&]<typename... Out>() {
+          return InputAccessors::map([&]<typename... In>() {
+            return operation(
+              row, &cuda::std::get<Out::index>(outs)..., In::element(input_cols, row)...);
+          });
+        });
+
+        OutputAccessors::map([&]<typename... A>() {
+          (A::assign(output_cols, row, cuda::std::get<A::index>(outs)), ...);
+        });
+
+        thread_error = cuda::std::max(thread_error, row_error);
+      }
     }
   } else {
     // Keep every lane in a warp on the same loop iteration when writing validity.

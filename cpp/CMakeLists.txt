@@ -481,6 +481,16 @@ rtcx_embed_includes(
   cudf/cpp/src/transform/jit INCLUDE_DIRECTORIES cudf/cpp/src
 )
 
+rtcx_embed_includes(
+  cudf_cuda_embed SOURCE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/hash/jit DEST_DIRECTORY
+  cudf/cpp/src/hash/jit INCLUDE_DIRECTORIES cudf/cpp/src
+)
+
+rtcx_embed_includes(
+  cudf_cuda_embed SOURCE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/row_operator/jit DEST_DIRECTORY
+  cudf/cpp/src/row_operator/jit INCLUDE_DIRECTORIES cudf/cpp/src
+)
+
 get_target_property(LIBCUDACXX_RAW_INCLUDE_DIRS CCCL::libcudacxx INTERFACE_INCLUDE_DIRECTORIES)
 
 foreach(INC_DIR IN LISTS LIBCUDACXX_RAW_INCLUDE_DIRS)
@@ -644,6 +654,15 @@ endfunction()
 precompile_fixed_width_kernel_fragments()
 precompile_string_kernel_fragments()
 
+# Function-dispatch fragments retain device functions as LTO IR so nvJitLink can optimize the schema
+# wrapper and type-specific leaves together at runtime.
+add_fragment(
+  cudf_fragments FRAGMENT row_function_hash_lto SOURCE src/hash/jit/murmurhash3_x86_32_kernel.cu
+)
+add_fragment(
+  cudf_fragments FRAGMENT row_function_definitions_lto SOURCE src/row_operator/jit/row_function_definitions.cu
+)
+
 rtcx_embed(cudf_fragments COMPRESSION none OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/embed")
 
 # ##################################################################################################
@@ -795,6 +814,7 @@ add_library(
   src/groupby/streaming_groupby/merge.cu
   src/hash/md5_hash.cu
   src/hash/murmurhash3_x86_32.cu
+  src/hash/jit/row_hash_descriptor.cpp
   src/hash/murmurhash3_x64_128.cu
   src/hash/spark_murmurhash3_x86_32.cu
   src/hash/sha1_hash.cu

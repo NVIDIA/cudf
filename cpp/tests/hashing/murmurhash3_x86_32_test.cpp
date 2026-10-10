@@ -9,11 +9,131 @@
 #include <cudf_test/testing_main.hpp>
 #include <cudf_test/type_lists.hpp>
 
+#include <cudf/context.hpp>
+#include <cudf/copying.hpp>
+#include <cudf/dictionary/dictionary_factories.hpp>
+#include <cudf/dictionary/encode.hpp>
 #include <cudf/hashing.hpp>
+#include <cudf/unary.hpp>
+#include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/memory_resource.hpp>
+
+#include <bit>
 
 constexpr cudf::test::debug_output_level verbosity{cudf::test::debug_output_level::ALL_ERRORS};
 
 class MurmurHashTest : public cudf::test::BaseFixture {};
+
+TEST_F(MurmurHashTest, RepeatedJitCallsMatchAot)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> values{1, 2, 3, 4};
+  auto const input = cudf::table_view{{values}};
+  cudf::clear_jit_cache();
+
+  auto const aot = cudf::hashing::murmurhash3_x86_32(input, 17);
+  auto const jit = cudf::hashing::murmurhash3_x86_32_jit(input, 17);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(jit->view(), aot->view());
+
+  auto const warm_jit = cudf::hashing::murmurhash3_x86_32_jit(input, 17);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(warm_jit->view(), aot->view());
+}
+
+TEST_F(MurmurHashTest, WideSchemaJitMatchesAot)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> const values({1, 2, 3, 4});
+  cudf::test::lists_column_wrapper<int32_t> lists{{1}, {2, 3}, {}, {4}};
+  // Exceed both former limits: 64 columns and 256 schema nodes.
+  for (auto const& columns :
+       {std::vector<cudf::column_view>(65, values), std::vector<cudf::column_view>(129, lists)}) {
+    auto const input = cudf::table_view{columns};
+    auto const aot   = cudf::hashing::murmurhash3_x86_32(input);
+    auto const jit   = cudf::hashing::murmurhash3_x86_32_jit(input);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(jit->view(), aot->view());
+  }
+}
+
+TEST_F(MurmurHashTest, FunctionDispatchMatchesAot)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> ints{{1, 2, 3, 4}, {1, 0, 1, 1}};
+  cudf::test::fixed_width_column_wrapper<double> doubles{1.5, 2.5, 3.5, 4.5};
+  cudf::test::fixed_width_column_wrapper<uint8_t> bytes{1, 2, 3, 4};
+  cudf::test::fixed_width_column_wrapper<int16_t> shorts{10, 20, 30, 40};
+  auto const input      = cudf::table_view({ints, doubles, bytes, shorts});
+  auto const stream     = cudf::get_default_stream();
+  auto const mr         = cudf::get_current_device_resource_ref();
+  auto const aot        = cudf::hashing::murmurhash3_x86_32(input, 0, stream, mr);
+  auto const public_jit = cudf::hashing::murmurhash3_x86_32_jit(input, 0, stream, mr);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(public_jit->view(), aot->view());
+  auto const seeded_aot = cudf::hashing::murmurhash3_x86_32(input, 91, stream, mr);
+  auto const seeded_jit = cudf::hashing::murmurhash3_x86_32_jit(input, 91, stream, mr);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(seeded_jit->view(), seeded_aot->view());
+}
+
+TEST_F(MurmurHashTest, ListAndDictionaryJitMatchAot)
+{
+  using lists_wrapper = cudf::test::lists_column_wrapper<int32_t>;
+  std::vector<bool> const validity{true, false, true, true, true, true};
+  lists_wrapper lists{{{1, 2}, {}, {3}, {4, 5, 6}, {}, {7}}, validity.begin()};
+  cudf::test::fixed_width_column_wrapper<int32_t> values{{1, 2, 3, 1, 2, 3}, {1, 1, 0, 1, 1, 1}};
+  for (auto index_type : {cudf::type_id::INT8, cudf::type_id::INT16, cudf::type_id::INT32}) {
+    auto dictionary = cudf::dictionary::encode(values, cudf::data_type{index_type});
+    for (int columns : {1, 16}) {
+      for (bool mixed : {false, true}) {
+        std::vector<cudf::column_view> views;
+        for (int i = 0; i < columns; ++i) {
+          views.push_back(mixed && i % 2 == 0 ? dictionary->view()
+                                              : static_cast<cudf::column_view>(lists));
+        }
+        auto const input = cudf::table_view{views};
+        for (auto const& table : {input, cudf::slice(input, {1, 5}).front()}) {
+          for (uint32_t seed : {0u, 91u}) {
+            auto const aot = cudf::hashing::murmurhash3_x86_32(table, seed);
+            auto const jit = cudf::hashing::murmurhash3_x86_32_jit(table, seed);
+            CUDF_TEST_EXPECT_COLUMNS_EQUAL(jit->view(), aot->view());
+          }
+        }
+      }
+    }
+  }
+}
+
+TEST_F(MurmurHashTest, DictionaryListJitMatchesDecodedAot)
+{
+  // AOT dictionary hashing does not accept list keys, so hash their gathered values as a reference.
+  for (auto index_type : {cudf::type_id::INT8, cudf::type_id::INT16, cudf::type_id::INT32}) {
+    cudf::test::lists_column_wrapper<int32_t> keys{{}, {1}, {1, 2}, {2, 3}};
+    cudf::test::fixed_width_column_wrapper<int32_t> indices{3, 0, 1, 2, 0, 3};
+    auto dictionary =
+      cudf::make_dictionary_column(keys.release(),
+                                   cudf::cast(indices, cudf::data_type{index_type}),
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                   0);
+    auto decoded = cudf::gather(cudf::table_view{{dictionary->view().child(1)}}, indices);
+    for (int columns : {1, 16}) {
+      auto const input =
+        cudf::table_view{std::vector<cudf::column_view>(columns, dictionary->view())};
+      auto const reference =
+        cudf::table_view{std::vector<cudf::column_view>(columns, decoded->view().column(0))};
+      for (bool sliced : {false, true}) {
+        auto const table    = sliced ? cudf::slice(input, {1, 5}).front() : input;
+        auto const expected = sliced ? cudf::slice(reference, {1, 5}).front() : reference;
+        for (uint32_t seed : {0u, 91u}) {
+          auto const aot = cudf::hashing::murmurhash3_x86_32(expected, seed);
+          auto const jit = cudf::hashing::murmurhash3_x86_32_jit(table, seed);
+          CUDF_TEST_EXPECT_COLUMNS_EQUAL(jit->view(), aot->view());
+        }
+      }
+    }
+  }
+}
+
+TEST_F(MurmurHashTest, StructSchemaRejectsJit)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> values{1, 2, 3, 4};
+  cudf::test::structs_column_wrapper structs{{values}};
+  EXPECT_THROW(cudf::hashing::murmurhash3_x86_32_jit(cudf::table_view{{structs}}),
+               std::invalid_argument);
+}
 
 TEST_F(MurmurHashTest, NonCanonicalBool)
 {

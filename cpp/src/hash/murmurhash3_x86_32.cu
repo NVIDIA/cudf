@@ -2,7 +2,9 @@
  * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
+#include "jit/row_hash_descriptor.hpp"
 #include "murmurhash3_x86_32.cuh"
+#include "runtime/context.hpp"
 
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_factories.hpp>
@@ -22,14 +24,52 @@
 #include <cub/device/device_for.cuh>
 #include <cuda/stream>
 
+#include <cudf_fragments.hpp>
+#include <jit/cache.hpp>
+#include <rtcx/rtcx.hpp>
+
+#include <algorithm>
 #include <cstdint>
 #include <memory>
+#include <stdexcept>
+#include <string>
 
 namespace cudf {
 namespace hashing {
 namespace detail {
 
 namespace {
+
+void launch_murmurhash3_x86_32_jit(table_view const& input,
+                                   table_device_view table,
+                                   uint32_t seed,
+                                   bool check_nulls,
+                                   hash_value_type* output,
+                                   cuda::stream_ref stream)
+{
+  auto schema   = jit::make_row_hash_schema(input);
+  auto num_rows = input.num_rows();
+
+  auto kernel_range = cudf_fragments::file_ranges[cudf_fragments::row_function_hash_lto];
+  auto leaf_range   = cudf_fragments::file_ranges[cudf_fragments::row_function_definitions_lto];
+
+  auto kernel_fragment = cudf_fragments::files.subspan(kernel_range[0], kernel_range[1]);
+  auto hash_fragment   = cudf_fragments::files.subspan(leaf_range[0], leaf_range[1]);
+
+  auto dispatcher = jit::get_row_function_dispatch_fragment(
+    "murmurhash3_x86_32", schema, {.check_nulls = check_nulls});
+
+  rtcx::memory_fragment fragments[] = {
+    {.data = kernel_fragment, .type = rtcx::binary_type::FATBIN},
+    {.data = hash_fragment, .type = rtcx::binary_type::FATBIN},
+    {.data = dispatcher->view(), .type = rtcx::binary_type::LTO_IR}};
+
+  auto specialized_kernel = get_lto_linked_kernel("murmurhash3_x86_32", {}, fragments);
+
+  auto config = specialized_kernel.max_occupancy_config(0, 0);
+  specialized_kernel.launch_with(
+    {config.min_grid_size}, {config.block_size}, 0, stream, table, num_rows, seed, output);
+}
 
 template <typename Nullate>
 std::unique_ptr<column> murmurhash3_x86_32_impl(
@@ -83,6 +123,37 @@ std::unique_ptr<column> murmurhash3_x86_32(
   return murmurhash3_x86_32_impl(input, num_rows, seed, nullate::YES{}, stream, mr);
 }
 
+std::unique_ptr<column> murmurhash3_x86_32_jit(table_view const& input,
+                                               table_device_view device_input,
+                                               uint32_t seed,
+                                               cuda::stream_ref stream,
+                                               rmm::device_async_resource_ref mr)
+{
+  auto output = make_numeric_column(data_type(type_to_id<hash_value_type>()),
+                                    input.num_rows(),
+                                    mask_state::UNALLOCATED,
+                                    stream,
+                                    mr);
+  if (input.num_rows() != 0) {
+    launch_murmurhash3_x86_32_jit(input,
+                                  device_input,
+                                  seed,
+                                  has_nulls(input),
+                                  output->mutable_view().begin<hash_value_type>(),
+                                  stream);
+  }
+  return output;
+}
+
+std::unique_ptr<column> murmurhash3_x86_32_jit(table_view const& input,
+                                               uint32_t seed,
+                                               cuda::stream_ref stream,
+                                               rmm::device_async_resource_ref mr)
+{
+  auto const device_input = table_device_view::create(input, stream);
+  return murmurhash3_x86_32_jit(input, *device_input, seed, stream, mr);
+}
+
 }  // namespace detail
 
 std::unique_ptr<column> murmurhash3_x86_32(table_view const& input,
@@ -92,6 +163,15 @@ std::unique_ptr<column> murmurhash3_x86_32(table_view const& input,
 {
   CUDF_FUNC_RANGE();
   return detail::murmurhash3_x86_32(input, seed, stream, mr);
+}
+
+std::unique_ptr<column> murmurhash3_x86_32_jit(table_view const& input,
+                                               uint32_t seed,
+                                               cuda::stream_ref stream,
+                                               rmm::device_async_resource_ref mr)
+{
+  CUDF_FUNC_RANGE();
+  return detail::murmurhash3_x86_32_jit(input, seed, stream, mr);
 }
 
 }  // namespace hashing

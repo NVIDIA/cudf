@@ -128,8 +128,8 @@ void post_process_list_overlap(cudf::column_view const& lhs,
     // new nullmask.
     if (overlap_cv.nullable()) {
       auto [null_mask, null_count] = cudf::bitmask_and(
-        std::vector<bitmask_type const*>{overlap_cv.null_mask(),
-                                         static_cast<bitmask_type const*>(new_null_mask->data())},
+        std::vector<bitmask_type const*>{
+          overlap_cv.null_mask(), reinterpret_cast<bitmask_type const*>(new_null_mask->data())},
         std::vector<cudf::size_type>{0, 0},
         overlap_cv.size(),
         stream,
@@ -175,7 +175,10 @@ std::unique_ptr<cudf::column> lists_distinct_by_key(cudf::lists_column_view cons
   out_structs_members.emplace_back(std::move(out_columns[1]));
   out_structs_members.emplace_back(std::move(out_columns[2]));
   auto out_structs =
-    cudf::make_structs_column(out_labels.size(), std::move(out_structs_members), 0, {});
+    cudf::make_structs_column(out_labels.size(),
+                              std::move(out_structs_members),
+                              0,
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   // Assemble a lists column of structs<out_keys, out_vals>.
   auto out_offsets = make_numeric_column(

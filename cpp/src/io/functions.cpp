@@ -6,7 +6,6 @@
 #include "io/orc/orc.hpp"
 #include "io/parquet/reader_impl_helpers.hpp"
 
-#include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/getenv_or.hpp>
 #include <cudf/detail/utilities/host_worker_pool.hpp>
@@ -33,6 +32,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <ranges>
 #include <utility>
 
 namespace cudf::io {
@@ -175,10 +175,8 @@ std::vector<std::unique_ptr<cudf::io::datasource>> make_datasources(source_info 
             return cudf::io::datasource::create(fs.path, offset, max_size_estimate, fs.size);
           }));
         }
-        std::transform(
-          source_tasks.begin(), source_tasks.end(), std::back_inserter(sources), [](auto& task) {
-            return task.get();
-          });
+        std::ranges::transform(
+          source_tasks, std::back_inserter(sources), [](auto& task) { return task.get(); });
       } else {
         for (auto const& fs : info.filepath_sources()) {
           sources.emplace_back(
@@ -433,17 +431,13 @@ parsed_orc_statistics read_parsed_orc_statistics(source_info const& src_info,
     return column_statistics(std::move(stats_internal));
   };
 
-  std::transform(raw_stats.file_stats.cbegin(),
-                 raw_stats.file_stats.cend(),
-                 std::back_inserter(result.file_stats),
-                 parse_column_statistics);
+  std::ranges::transform(
+    raw_stats.file_stats, std::back_inserter(result.file_stats), parse_column_statistics);
 
   for (auto const& raw_stripe_stats : raw_stats.stripes_stats) {
     result.stripes_stats.emplace_back();
-    std::transform(raw_stripe_stats.cbegin(),
-                   raw_stripe_stats.cend(),
-                   std::back_inserter(result.stripes_stats.back()),
-                   parse_column_statistics);
+    std::ranges::transform(
+      raw_stripe_stats, std::back_inserter(result.stripes_stats.back()), parse_column_statistics);
   }
 
   return result;
@@ -456,16 +450,16 @@ orc_column_schema make_orc_column_schema(host_span<orc::detail::SchemaType const
   auto const& orc_col_schema = orc_schema[column_id];
   std::vector<orc_column_schema> children;
   children.reserve(orc_col_schema.subtypes.size());
-  std::transform(
-    orc_col_schema.subtypes.cbegin(),
-    orc_col_schema.subtypes.cend(),
-    cudf::detail::make_counting_transform_iterator(0,
-                                                   [&names = orc_col_schema.fieldNames](size_t i) {
-                                                     return i < names.size() ? names[i]
-                                                                             : std::string{};
-                                                   }),
-    std::back_inserter(children),
-    [&](auto& type, auto name) { return make_orc_column_schema(orc_schema, type, name); });
+  // A subtype without a matching entry in `fieldNames` is unnamed
+  auto const field_names =
+    std::views::iota(std::size_t{0}, orc_col_schema.subtypes.size()) |
+    std::views::transform([&names = orc_col_schema.fieldNames](std::size_t i) {
+      return i < names.size() ? names[i] : std::string{};
+    });
+  std::ranges::transform(
+    orc_col_schema.subtypes, field_names, std::back_inserter(children), [&](auto& type, auto name) {
+      return make_orc_column_schema(orc_schema, type, name);
+    });
 
   return {std::move(column_name), orc_schema[column_id].kind, std::move(children)};
 }
@@ -720,8 +714,7 @@ table_input_metadata::table_input_metadata(table_view const& table)
     return col_meta;
   };
 
-  std::transform(
-    table.begin(), table.end(), std::back_inserter(this->column_metadata), get_children);
+  std::ranges::transform(table, std::back_inserter(this->column_metadata), get_children);
 }
 
 table_input_metadata::table_input_metadata(table_metadata const& metadata)
@@ -735,15 +728,11 @@ table_input_metadata::table_input_metadata(table_metadata const& metadata)
       if (name.is_nullable.has_value()) { col_meta.set_nullability(name.is_nullable.value()); }
       if (name.is_binary.value_or(false)) { col_meta.set_output_as_binary(true); }
       if (name.type_length.has_value()) { col_meta.set_type_length(name.type_length.value()); }
-      std::transform(name.children.begin(),
-                     name.children.end(),
-                     std::back_inserter(col_meta.children),
-                     process_node);
+      std::ranges::transform(name.children, std::back_inserter(col_meta.children), process_node);
       return col_meta;
     };
 
-  std::transform(
-    names.begin(), names.end(), std::back_inserter(this->column_metadata), process_node);
+  std::ranges::transform(names, std::back_inserter(this->column_metadata), process_node);
 }
 
 /**

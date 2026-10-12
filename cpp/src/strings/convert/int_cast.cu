@@ -22,6 +22,8 @@
 #include <cuda/iterator>
 #include <cuda/std/algorithm>
 #include <cuda/std/functional>
+#include <cuda/std/type_traits>
+#include <cuda/std/utility>
 #include <cuda/stream>
 #include <thrust/for_each.h>
 #include <thrust/transform_reduce.h>
@@ -64,8 +66,9 @@ struct cast_to_integer_fn {
     auto value = uint64_t{0};
     auto data  = reinterpret_cast<u_char const*>(d_str.data());
     if (swap == endian::LITTLE) {
-      for (size_type i = 0; i < size; i++) {
-        value = (value << CHAR_BIT) | data[i];
+      // left-align the bytes (zero-pad on the right) so the integers sort like the strings
+      for (size_type i = 0; i < output_type_size; i++) {
+        value = (value << CHAR_BIT) | (i < size ? data[i] : u_char{0});
       }
     } else {
       memcpy(&value, data, size);
@@ -123,7 +126,9 @@ struct dispatch_get_int_fn {
     requires(cudf::is_integral_not_bool<T>())
   __device__ uint64_t operator()(column_device_view const& d_results, size_type idx) const
   {
-    return static_cast<uint64_t>(d_results.element<T>(idx));
+    // convert through the unsigned type to prevent sign-extension
+    return static_cast<uint64_t>(
+      static_cast<cuda::std::make_unsigned_t<T>>(d_results.element<T>(idx)));
   }
   template <typename T>
     requires(not cudf::is_integral_not_bool<T>())
@@ -137,6 +142,7 @@ namespace {
 struct from_integers_fn {
   column_device_view const d_column;
   endian swap;
+  size_type type_size;
   size_type* d_sizes{};
   char* d_chars{};
   cudf::detail::input_offsetalator d_offsets;
@@ -149,8 +155,13 @@ struct from_integers_fn {
     }
 
     auto value = type_dispatcher(d_column.type(), dispatch_get_int_fn{}, d_column, idx);
-    // compute the number of UTF-8 bytes needed
-    auto const size = static_cast<size_type>(sizeof(uint64_t) - (__clzll(value) / CHAR_BIT));
+    // compute the number of UTF-8 bytes needed:
+    // little-endian values are left-aligned so trailing zero bytes are ignored;
+    // big-endian values are stored in the low bytes so leading zero bytes are ignored
+    auto const size = value == 0 ? 0
+                      : swap == endian::LITTLE
+                        ? type_size - ((__ffsll(static_cast<long long>(value)) - 1) / CHAR_BIT)
+                        : static_cast<size_type>(sizeof(uint64_t) - (__clzll(value) / CHAR_BIT));
     if (d_chars == nullptr) {
       d_sizes[idx] = size;
       return;
@@ -160,7 +171,7 @@ struct from_integers_fn {
     auto output = d_chars + d_offsets[idx];
     if (swap == endian::LITTLE) {
       for (size_type i = 0; i < size; i++) {
-        output[i] = static_cast<u_char>(value >> ((size - 1 - i) * CHAR_BIT));
+        output[i] = static_cast<u_char>(value >> ((type_size - 1 - i) * CHAR_BIT));
       }
     } else {
       memcpy(output, &value, size);
@@ -180,10 +191,11 @@ std::unique_ptr<column> cast_from_integer(column_view const& integers,
                cudf::data_type_error);
   if (integers.size() == 0) { return make_empty_column(type_id::STRING); }
 
-  auto d_column = column_device_view::create(integers, stream);
+  auto d_column        = column_device_view::create(integers, stream);
+  auto const type_size = static_cast<size_type>(cudf::size_of(integers.type()));
 
-  auto [offsets, chars] =
-    make_strings_children(from_integers_fn{*d_column, swap}, integers.size(), stream, mr);
+  auto [offsets, chars] = make_strings_children(
+    from_integers_fn{*d_column, swap, type_size}, integers.size(), stream, mr);
 
   return make_strings_column(integers.size(),
                              std::move(offsets),
@@ -213,31 +225,29 @@ std::optional<cudf::data_type> integer_cast_type(strings_column_view const& inpu
   if (input.size() == 0) { return std::nullopt; }
   auto d_strings = column_device_view::create(input.parent(), stream);
 
-  auto bits_size = thrust::transform_reduce(
+  // compute the maximum string size and whether any first byte has its high bit set;
+  // since the bytes are left-aligned, the first byte's high bit becomes the sign bit
+  using size_sign                 = cuda::std::pair<size_type, bool>;
+  auto const [max_size, high_bit] = thrust::transform_reduce(
     rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
     cuda::counting_iterator<size_type>{0},
     cuda::counting_iterator<size_type>{input.size()},
-    cuda::proclaim_return_type<size_type>(
-      [d_strings = *d_strings] __device__(size_type idx) -> size_type {
-        if (d_strings.is_null(idx)) { return 0; }
-        auto const d_str  = d_strings.element<string_view>(idx);
-        auto const bits   = d_str.size_bytes() * CHAR_BIT;
-        u_char first_byte = bits > 0 ? d_str.data()[0] : 0;
-        return bits - ((first_byte & 0x80) == 0);
+    cuda::proclaim_return_type<size_sign>(
+      [d_strings = *d_strings] __device__(size_type idx) -> size_sign {
+        if (d_strings.is_null(idx)) { return {0, false}; }
+        auto const d_str      = d_strings.element<string_view>(idx);
+        auto const first_byte = d_str.empty() ? u_char{0} : static_cast<u_char>(d_str.data()[0]);
+        return {d_str.size_bytes(), (first_byte & 0x80) != 0};
       }),
-    size_type{0},
-    cuda::maximum<size_type>{});
+    size_sign{0, false},
+    cuda::proclaim_return_type<size_sign>([] __device__(size_sign lhs, size_sign rhs) -> size_sign {
+      return {cuda::std::max(lhs.first, rhs.first), lhs.second || rhs.second};
+    }));
 
-  if (bits_size <= 8) { return data_type{type_id::INT8}; }
-  if (bits_size <= 16) {
-    return bits_size == 16 ? data_type{type_id::UINT16} : data_type{type_id::INT16};
-  }
-  if (bits_size <= 32) {
-    return bits_size == 32 ? data_type{type_id::UINT32} : data_type{type_id::INT32};
-  }
-  if (bits_size <= 64) {
-    return bits_size == 64 ? data_type{type_id::UINT64} : data_type{type_id::INT64};
-  }
+  if (max_size <= 1) { return data_type{high_bit ? type_id::UINT8 : type_id::INT8}; }
+  if (max_size <= 2) { return data_type{high_bit ? type_id::UINT16 : type_id::INT16}; }
+  if (max_size <= 4) { return data_type{high_bit ? type_id::UINT32 : type_id::INT32}; }
+  if (max_size <= 8) { return data_type{high_bit ? type_id::UINT64 : type_id::INT64}; }
   return std::nullopt;
 }
 }  // namespace detail

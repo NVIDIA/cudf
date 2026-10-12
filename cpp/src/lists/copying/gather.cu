@@ -98,7 +98,9 @@ std::unique_ptr<column> gather_list_leaf(column_view const& column,
                                            mr);
   auto leaf_column  = std::move(gather_table->release().front());
 
-  if (column.null_count() == 0) { leaf_column->set_null_mask(rmm::device_buffer{}, 0); }
+  if (column.null_count() == 0) {
+    leaf_column->set_null_mask(cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
+  }
 
   return leaf_column;
 }
@@ -120,7 +122,7 @@ std::unique_ptr<column> gather_list_nested(cudf::lists_column_view const& list,
   if (gather_map_size == 0) { return empty_like(list.parent()); }
 
   // gather the bitmask, if relevant
-  rmm::device_buffer null_mask{0, stream, mr};
+  auto null_mask       = cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr);
   size_type null_count = list.null_count();
   if (null_count > 0) {
     auto list_cdv = column_device_view::create(list.parent(), stream);

@@ -13,6 +13,7 @@
 #include <cudf/utilities/type_checks.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
+#include <cuda/buffer>
 #include <cuda/stream>
 
 #include <dlpack/dlpack.h>
@@ -110,7 +111,11 @@ DLDataType data_type_to_DLDataType(data_type type)
 struct dltensor_context {
   int64_t shape[2]{};    // NOLINT
   int64_t strides[2]{};  // NOLINT
-  rmm::device_buffer buffer;
+  cuda::device_buffer<std::byte> buffer;
+
+  dltensor_context(cuda::stream_ref stream, rmm::device_async_resource_ref mr) : buffer(stream, mr)
+  {
+  }
 
   static void deleter(DLManagedTensor* arg)
   {
@@ -224,12 +229,11 @@ DLManagedTensor* to_dlpack(table_view const& input,
                cudf::data_type_error);
 
   // Ensure none of the columns have nulls
-  CUDF_EXPECTS(
-    std::none_of(input.begin(), input.end(), [](auto const& col) { return col.has_nulls(); }),
-    "Input required to have null count zero");
+  CUDF_EXPECTS(std::ranges::none_of(input, [](auto const& col) { return col.has_nulls(); }),
+               "Input required to have null count zero");
 
   auto managed_tensor = std::make_unique<DLManagedTensor>();
-  auto context        = std::make_unique<dltensor_context>();
+  auto context        = std::make_unique<dltensor_context>(stream, mr);
 
   DLTensor& tensor = managed_tensor->dl_tensor;
   tensor.dtype     = dltype;
@@ -259,7 +263,7 @@ DLManagedTensor* to_dlpack(table_view const& input,
   size_t const stride_bytes = num_rows * size_of(type);
   size_t const total_bytes  = stride_bytes * num_cols;
 
-  context->buffer = rmm::device_buffer(total_bytes, stream, mr);
+  context->buffer = cuda::device_buffer<std::byte>(stream, mr, total_bytes, cuda::no_init);
   tensor.data     = context->buffer.data();
 
   auto tensor_data = reinterpret_cast<uintptr_t>(tensor.data);

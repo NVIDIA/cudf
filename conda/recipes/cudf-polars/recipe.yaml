@@ -39,7 +39,7 @@ requirements:
     - rapidsmpf =${{ minor_version }}
     - kvikio =${{ minor_version }}
     - cudf-streaming =${{ version }}
-    - polars>=1.35,<1.43
+    - polars>=1.35,<1.45
     - packaging
     - ${{ pin_compatible("cuda-version", upper_bound="x", lower_bound="x") }}
     - if: cuda_major == "12"

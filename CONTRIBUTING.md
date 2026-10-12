@@ -4,7 +4,7 @@ Contributions to cuDF fall into the following categories:
 
 1. To report a bug, request a new feature, or report a problem with documentation, please file an
    [issue](https://github.com/NVIDIA/cudf/issues/new/choose) describing the problem or new feature
-   in detail. The RAPIDS team evaluates and triages issues, and schedules them for a release. If you
+   in detail. The maintainers evaluate and triage issues, and schedule them for a release. If you
    believe the issue needs priority attention, please comment on the issue to notify the team.
 2. To propose and implement a new feature, please file a new feature request
    [issue](https://github.com/NVIDIA/cudf/issues/new/choose). Describe the intended feature and
@@ -17,7 +17,7 @@ Contributions to cuDF fall into the following categories:
 
 As contributors and maintainers to this project, you are expected to abide by cuDF's code of
 conduct. More information can be found at:
-[Contributor Code of Conduct](https://docs.rapids.ai/resources/conduct/).
+[Contributor Code of Conduct](https://docs.nvidia.com/datascience/resources/conduct/).
 
 ## Documentation contributions
 
@@ -32,7 +32,7 @@ conda install cudf -c rapidsai-nightly -c conda-forge
 ```
 
 3. Build and view the docs locally following the instructions in the [Building
-documentation docs](https://docs.rapids.ai/api/cudf/stable/developer_guide/documentation/#building-documentation)
+documentation docs](https://docs.nvidia.com/cudf/latest/cudf/developer_guide/documentation/#building-documentation)
 4. Follow steps 7-10 in the section [Your first issue](#your-first-issue)
 
 ## Code contributions
@@ -58,7 +58,7 @@ documentation docs](https://docs.rapids.ai/api/cudf/stable/developer_guide/docum
    merging.
    Changes limited to libcudf_streaming C++ files require at least 1 approval from the
    rapidsmpf-cpp-codeowners before merging.
-10. Once reviewed and approved, a RAPIDS developer will merge your pull request.
+10. Once reviewed and approved, a maintainer will merge your pull request.
 
 If you are unsure about anything, don't hesitate to comment on issues and ask for clarification!
 
@@ -69,8 +69,8 @@ prioritized issues for our next release in our
 [project boards](https://github.com/NVIDIA/cudf/projects).
 
 **Note:** Always look at the release board that is
-[currently under development](https://docs.rapids.ai/maintainers/) for issues to work on. This is
-where RAPIDS developers also focus their efforts.
+[currently under development](https://docs.nvidia.com/datascience/maintainers/) for issues to work on. This is
+where maintainers also focus their efforts.
 
 Look at the unassigned issues, and find an issue to which you are comfortable contributing. Start
 with _Step 3_ above, commenting on the issue to let others know you are working on it. If you have
@@ -325,9 +325,9 @@ This will bring up an interactive prompt to select which spelling fixes to apply
 
 ## Developer Guidelines
 
-The [C++ Developer Guide](cpp/doxygen/developer_guide/DEVELOPER_GUIDE.md) includes details on contributing to libcudf C++ code.
+The [C++ Developer Guide](https://docs.nvidia.com/cudf/latest/libcudf/developer_guide/) includes details on contributing to libcudf C++ code.
 
-The [Python Developer Guide](https://docs.rapids.ai/api/cudf/stable/cudf/developer_guide/) includes details on contributing to cuDF Python code.
+The [Python Developer Guide](https://docs.nvidia.com/cudf/latest/developer_guide/) includes details on contributing to cuDF Python code.
 
 
 ## Attribution

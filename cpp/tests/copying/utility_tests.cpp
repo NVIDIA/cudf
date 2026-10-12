@@ -72,8 +72,10 @@ TYPED_TEST_SUITE(EmptyLikeScalarTest, cudf::test::FixedWidthTypes);
 TYPED_TEST(EmptyLikeScalarTest, FixedWidth)
 {
   // make a column
-  auto input = make_fixed_width_column(
-    cudf::data_type{cudf::type_to_id<TypeParam>()}, 1, rmm::device_buffer{}, 0);
+  auto input = make_fixed_width_column(cudf::data_type{cudf::type_to_id<TypeParam>()},
+                                       1,
+                                       cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                       0);
   // get a scalar out of it
   std::unique_ptr<cudf::scalar> sc = cudf::get_element(*input, 0);
 

@@ -17,7 +17,7 @@ tracked separately in ``ChannelMetadata``.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, TypeAlias
+from typing import TYPE_CHECKING, Literal, TypeAlias
 
 from cudf_polars.dsl import expr
 from cudf_polars.dsl.ir import (
@@ -58,12 +58,16 @@ class StrictPartitioningRequest:
     keys: tuple[str, ...]
 
 
+OrderRequestSource: TypeAlias = Literal["consumer", "hint"]
+
+
 @dataclass(frozen=True)
 class OrderPartitioningRequest:
     """Request for upstream output to be ordered by a key sequence."""
 
     keys: tuple[NamedOrderKey, ...]
     strict_key_count: int | None = None
+    source: OrderRequestSource = "consumer"
 
 
 PartitioningRequest: TypeAlias = StrictPartitioningRequest | OrderPartitioningRequest
@@ -103,7 +107,9 @@ def _direct_child_requests(ir: IR) -> list[tuple[IR, PartitioningRequest]]:
         order, null_order = sort_order(
             descending, nulls_last=nulls_last, num_keys=len(column_names)
         )
-        return [(ir.children[0], _order_request(column_names, order, null_order))]
+        return [
+            (ir.children[0], _order_request(column_names, order, null_order, "hint"))
+        ]
 
     if isinstance(ir, Join) and ir.options[0] != "Cross":
         left_keys = _column_names(ir.left_on)
@@ -173,12 +179,14 @@ def _order_request(
     names: tuple[str, ...],
     orders: Sequence[plc.types.Order],
     null_orders: Sequence[plc.types.NullOrder],
+    source: OrderRequestSource = "consumer",
 ) -> OrderPartitioningRequest:
     return OrderPartitioningRequest(
         tuple(
             NamedOrderKey(name, order, null_order)
             for name, order, null_order in zip(names, orders, null_orders, strict=True)
-        )
+        ),
+        source=source,
     )
 
 
@@ -210,7 +218,9 @@ def _remap_request(
         if new_name is None:
             return None
         remapped_keys.append(NamedOrderKey(new_name, key.order, key.null_order))
-    return OrderPartitioningRequest(tuple(remapped_keys), request.strict_key_count)
+    return OrderPartitioningRequest(
+        tuple(remapped_keys), request.strict_key_count, request.source
+    )
 
 
 def _merge_requests(
@@ -236,7 +246,9 @@ def _merge_requests(
     else:
         return None
     return OrderPartitioningRequest(
-        keys, _merge_strict_key_count(left.strict_key_count, right.strict_key_count)
+        keys,
+        _merge_strict_key_count(left.strict_key_count, right.strict_key_count),
+        _merge_order_request_source(left, right),
     )
 
 
@@ -253,8 +265,15 @@ def _merge_order_with_strict(
         return OrderPartitioningRequest(
             order_request.keys,
             _merge_strict_key_count(order_request.strict_key_count, strict_key_count),
+            order_request.source,
         )
     return None
+
+
+def _merge_order_request_source(
+    left: OrderPartitioningRequest, right: OrderPartitioningRequest
+) -> OrderRequestSource:
+    return "hint" if left.source == "hint" or right.source == "hint" else "consumer"
 
 
 def _merge_strict_key_count(*counts: int | None) -> int | None:

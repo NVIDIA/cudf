@@ -23,7 +23,6 @@
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/iterator>
-#include <thrust/binary_search.h>
 #include <thrust/transform.h>
 
 #include <vector>

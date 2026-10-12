@@ -99,8 +99,20 @@ def _collect_doctests():
     mutable shared state.
     """
     results = []
+    seen = set()
     for mod in tests:
         for docstring in _find_doctests_in_obj(mod):
+            # The public API exposes many inherited and re-exported methods.
+            # Test each source docstring once, regardless of its public path.
+            key = (
+                docstring.name,
+                docstring.filename,
+                docstring.lineno,
+                docstring.docstring,
+            )
+            if key in seen:
+                continue
+            seen.add(key)
             if (mark := marks_for_doctests.get(docstring.name)) is not None:
                 doc = pytest.param(docstring, marks=mark)
             else:

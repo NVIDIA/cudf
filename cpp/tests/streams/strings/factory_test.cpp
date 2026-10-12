@@ -63,7 +63,8 @@ TEST_F(StringsFactoryTest, StructConstruction)
   children.push_back(cudf::test::fixed_width_column_wrapper<int32_t>{1, 2, 3}.release());
   children.push_back(cudf::test::strings_column_wrapper{"a", "b", "c"}.release());
 
-  auto result = cudf::make_structs_column(3, std::move(children), 0, rmm::device_buffer{}, stream);
+  auto result = cudf::make_structs_column(
+    3, std::move(children), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), stream);
   EXPECT_EQ(result->size(), 3);
 }
 
@@ -75,7 +76,7 @@ TEST_F(StringsFactoryTest, StructHierarchyConstruction)
   children.push_back(cudf::test::fixed_width_column_wrapper<int32_t>{1, 2, 3}.release());
   children.push_back(cudf::test::strings_column_wrapper{"a", "b", "c"}.release());
 
-  auto result =
-    cudf::create_structs_hierarchy(3, std::move(children), 0, rmm::device_buffer{}, stream);
+  auto result = cudf::create_structs_hierarchy(
+    3, std::move(children), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), stream);
   EXPECT_EQ(result->size(), 3);
 }

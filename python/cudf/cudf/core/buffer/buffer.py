@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -461,7 +461,7 @@ def get_ptr_and_size(array_interface: Mapping) -> tuple[int, int]:
     """
 
     shape = array_interface["shape"] or (1,)
-    strides = array_interface["strides"]
+    strides = array_interface.get("strides")
     itemsize = numpy.dtype(array_interface["typestr"]).itemsize
     if strides is None or pylibcudf.column.is_c_contiguous(
         shape, strides, itemsize

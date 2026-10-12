@@ -2276,17 +2276,17 @@ _DATAFRAME_LIST_OTHERS = [
 @pytest.mark.parametrize(
     "df, other",
     [
-        pytest.param(_DATAFRAME_LIST_DFS[0], _DATAFRAME_LIST_OTHERS[0]),
-        pytest.param(_DATAFRAME_LIST_DFS[1], _DATAFRAME_LIST_OTHERS[1]),
-        pytest.param(_DATAFRAME_LIST_DFS[2], _DATAFRAME_LIST_OTHERS[2]),
-        pytest.param(_DATAFRAME_LIST_DFS[3], _DATAFRAME_LIST_OTHERS[3]),
-        pytest.param(_DATAFRAME_LIST_DFS[4], _DATAFRAME_LIST_OTHERS[4]),
-        pytest.param(_DATAFRAME_LIST_DFS[5], _DATAFRAME_LIST_OTHERS[0]),
-        pytest.param(_DATAFRAME_LIST_DFS[6], _DATAFRAME_LIST_OTHERS[1]),
-        pytest.param(_DATAFRAME_LIST_DFS[7], _DATAFRAME_LIST_OTHERS[2]),
-        pytest.param(_DATAFRAME_LIST_DFS[8], _DATAFRAME_LIST_OTHERS[3]),
-        pytest.param(_DATAFRAME_LIST_DFS[9], _DATAFRAME_LIST_OTHERS[4]),
-        pytest.param(_DATAFRAME_LIST_DFS[10], _DATAFRAME_LIST_OTHERS[2]),
+        (_DATAFRAME_LIST_DFS[0], _DATAFRAME_LIST_OTHERS[0]),
+        (_DATAFRAME_LIST_DFS[1], _DATAFRAME_LIST_OTHERS[1]),
+        (_DATAFRAME_LIST_DFS[2], _DATAFRAME_LIST_OTHERS[2]),
+        (_DATAFRAME_LIST_DFS[3], _DATAFRAME_LIST_OTHERS[3]),
+        (_DATAFRAME_LIST_DFS[4], _DATAFRAME_LIST_OTHERS[4]),
+        (_DATAFRAME_LIST_DFS[5], _DATAFRAME_LIST_OTHERS[0]),
+        (_DATAFRAME_LIST_DFS[6], _DATAFRAME_LIST_OTHERS[1]),
+        (_DATAFRAME_LIST_DFS[7], _DATAFRAME_LIST_OTHERS[2]),
+        (_DATAFRAME_LIST_DFS[8], _DATAFRAME_LIST_OTHERS[3]),
+        (_DATAFRAME_LIST_DFS[9], _DATAFRAME_LIST_OTHERS[4]),
+        (_DATAFRAME_LIST_DFS[10], _DATAFRAME_LIST_OTHERS[2]),
     ],
 )
 def test_dataframe_concat_lists(df, other, sort, ignore_index):
@@ -2447,42 +2447,18 @@ _DATAFRAME_CONCAT_LIST_OTHERS = [
 @pytest.mark.parametrize(
     "df, other",
     [
-        pytest.param(
-            _DATAFRAME_CONCAT_LIST_DFS[0], _DATAFRAME_CONCAT_LIST_OTHERS[0]
-        ),
-        pytest.param(
-            _DATAFRAME_CONCAT_LIST_DFS[1], _DATAFRAME_CONCAT_LIST_OTHERS[1]
-        ),
-        pytest.param(
-            _DATAFRAME_CONCAT_LIST_DFS[2], _DATAFRAME_CONCAT_LIST_OTHERS[2]
-        ),
-        pytest.param(
-            _DATAFRAME_CONCAT_LIST_DFS[3], _DATAFRAME_CONCAT_LIST_OTHERS[3]
-        ),
-        pytest.param(
-            _DATAFRAME_CONCAT_LIST_DFS[4], _DATAFRAME_CONCAT_LIST_OTHERS[4]
-        ),
-        pytest.param(
-            _DATAFRAME_CONCAT_LIST_DFS[5], _DATAFRAME_CONCAT_LIST_OTHERS[5]
-        ),
-        pytest.param(
-            _DATAFRAME_CONCAT_LIST_DFS[6], _DATAFRAME_CONCAT_LIST_OTHERS[6]
-        ),
-        pytest.param(
-            _DATAFRAME_CONCAT_LIST_DFS[7], _DATAFRAME_CONCAT_LIST_OTHERS[7]
-        ),
-        pytest.param(
-            _DATAFRAME_CONCAT_LIST_DFS[8], _DATAFRAME_CONCAT_LIST_OTHERS[8]
-        ),
-        pytest.param(
-            _DATAFRAME_CONCAT_LIST_DFS[9], _DATAFRAME_CONCAT_LIST_OTHERS[9]
-        ),
-        pytest.param(
-            _DATAFRAME_CONCAT_LIST_DFS[10], _DATAFRAME_CONCAT_LIST_OTHERS[10]
-        ),
-        pytest.param(
-            _DATAFRAME_CONCAT_LIST_DFS[11], _DATAFRAME_CONCAT_LIST_OTHERS[3]
-        ),
+        (_DATAFRAME_CONCAT_LIST_DFS[0], _DATAFRAME_CONCAT_LIST_OTHERS[0]),
+        (_DATAFRAME_CONCAT_LIST_DFS[1], _DATAFRAME_CONCAT_LIST_OTHERS[1]),
+        (_DATAFRAME_CONCAT_LIST_DFS[2], _DATAFRAME_CONCAT_LIST_OTHERS[2]),
+        (_DATAFRAME_CONCAT_LIST_DFS[3], _DATAFRAME_CONCAT_LIST_OTHERS[3]),
+        (_DATAFRAME_CONCAT_LIST_DFS[4], _DATAFRAME_CONCAT_LIST_OTHERS[4]),
+        (_DATAFRAME_CONCAT_LIST_DFS[5], _DATAFRAME_CONCAT_LIST_OTHERS[5]),
+        (_DATAFRAME_CONCAT_LIST_DFS[6], _DATAFRAME_CONCAT_LIST_OTHERS[6]),
+        (_DATAFRAME_CONCAT_LIST_DFS[7], _DATAFRAME_CONCAT_LIST_OTHERS[7]),
+        (_DATAFRAME_CONCAT_LIST_DFS[8], _DATAFRAME_CONCAT_LIST_OTHERS[8]),
+        (_DATAFRAME_CONCAT_LIST_DFS[9], _DATAFRAME_CONCAT_LIST_OTHERS[9]),
+        (_DATAFRAME_CONCAT_LIST_DFS[10], _DATAFRAME_CONCAT_LIST_OTHERS[10]),
+        (_DATAFRAME_CONCAT_LIST_DFS[11], _DATAFRAME_CONCAT_LIST_OTHERS[3]),
     ],
 )
 def test_dataframe_concat_dataframe_lists(df, other, sort, ignore_index):

@@ -29,7 +29,6 @@
 #include <thrust/reduce.h>
 #include <thrust/scan.h>
 #include <thrust/scatter.h>
-#include <thrust/sequence.h>
 #include <thrust/transform.h>
 
 namespace cudf {

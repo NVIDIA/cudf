@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -43,7 +43,7 @@ TYPED_TEST(ListsExtractNumericsTest, ExtractElement)
   auto validity = cudf::detail::make_counting_transform_iterator(cudf::size_type{0},
                                                                  [](auto i) { return i != 1; });
   using LCW     = cudf::test::lists_column_wrapper<TypeParam>;
-  LCW input({LCW{3, 2, 1}, LCW{}, LCW{30, 20, 10, 50}, LCW{100, 120}, LCW{0}}, validity);
+  LCW input({{3, 2, 1}, {}, {30, 20, 10, 50}, {100, 120}, {0}}, validity);
 
   {
     auto result = cudf::lists::extract_list_element(cudf::lists_column_view(input), 0);
@@ -102,9 +102,8 @@ TEST_F(ListsExtractTest, ExtractElementStrings)
   auto validity = cudf::detail::make_counting_transform_iterator(cudf::size_type{0},
                                                                  [](auto i) { return i != 1; });
   using LCW     = cudf::test::lists_column_wrapper<cudf::string_view>;
-  LCW input(
-    {LCW{"", "Héllo", "thesé"}, LCW{}, LCW{"are", "some", "", "z"}, LCW{"tést", "String"}, LCW{""}},
-    validity);
+  LCW input({{"", "Héllo", "thesé"}, {}, {"are", "some", "", "z"}, {"tést", "String"}, {""}},
+            validity);
 
   {
     auto result = cudf::lists::extract_list_element(cudf::lists_column_view(input), 0);
@@ -163,48 +162,48 @@ TYPED_TEST(ListsExtractNumericsTest, ExtractElementNestedLists)
 {
   std::vector<int32_t> validity{1, 0, 1, 1};
   using LCW = cudf::test::lists_column_wrapper<TypeParam>;
-  LCW list({LCW{LCW{2, 3}, LCW{4, 5}},
-            LCW{LCW{}},
-            LCW{LCW{6, 7, 8}, LCW{9, 10, 11}, LCW{12, 13, 14}},
-            LCW{LCW{15, 16}, LCW{17, 18}, LCW{19, 20}, LCW{21, 22}, LCW{23, 24}}},
+  LCW list({{{2, 3}, {4, 5}},
+            {{}},
+            {{6, 7, 8}, {9, 10, 11}, {12, 13, 14}},
+            {{15, 16}, {17, 18}, {19, 20}, {21, 22}, {23, 24}}},
            validity.begin());
 
   {
     auto result = cudf::lists::extract_list_element(cudf::lists_column_view(list), 0);
-    LCW expected({LCW{2, 3}, LCW{}, LCW{6, 7, 8}, LCW{15, 16}}, validity.begin());
+    LCW expected({{2, 3}, {}, {6, 7, 8}, {15, 16}}, validity.begin());
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *result);
   }
   {
     auto result = cudf::lists::extract_list_element(cudf::lists_column_view(list), 1);
-    LCW expected({LCW{4, 5}, LCW{}, LCW{9, 10, 11}, LCW{17, 18}}, validity.begin());
+    LCW expected({{4, 5}, {}, {9, 10, 11}, {17, 18}}, validity.begin());
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *result);
   }
   {
     auto result = cudf::lists::extract_list_element(cudf::lists_column_view(list), 2);
     std::vector<int32_t> expected_validity{0, 0, 1, 1};
-    LCW expected({LCW{}, LCW{}, LCW{12, 13, 14}, LCW{19, 20}}, expected_validity.begin());
+    LCW expected({{}, {}, {12, 13, 14}, {19, 20}}, expected_validity.begin());
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *result);
   }
   {
     auto result = cudf::lists::extract_list_element(cudf::lists_column_view(list), 3);
     std::vector<int32_t> expected_validity{0, 0, 0, 1};
-    LCW expected({LCW{}, LCW{}, LCW{}, LCW{21, 22}}, expected_validity.begin());
+    LCW expected({{}, {}, {}, {21, 22}}, expected_validity.begin());
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *result);
   }
   {
     auto result = cudf::lists::extract_list_element(cudf::lists_column_view(list), -1);
-    LCW expected({LCW{4, 5}, LCW{}, LCW{12, 13, 14}, LCW{23, 24}}, validity.begin());
+    LCW expected({{4, 5}, {}, {12, 13, 14}, {23, 24}}, validity.begin());
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *result);
   }
   {
     auto result = cudf::lists::extract_list_element(cudf::lists_column_view(list), -2);
-    LCW expected({LCW{2, 3}, LCW{}, LCW{9, 10, 11}, LCW{21, 22}}, validity.begin());
+    LCW expected({{2, 3}, {}, {9, 10, 11}, {21, 22}}, validity.begin());
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *result);
   }
   {
     auto result = cudf::lists::extract_list_element(cudf::lists_column_view(list), -3);
     std::vector<int32_t> expected_validity{0, 0, 1, 1};
-    LCW expected({LCW{}, LCW{}, LCW{6, 7, 8}, LCW{19, 20}}, expected_validity.begin());
+    LCW expected({{}, {}, {6, 7, 8}, {19, 20}}, expected_validity.begin());
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *result);
   }
 }
@@ -218,12 +217,12 @@ TEST_F(ListsExtractTest, ExtractElementEmpty)
   EXPECT_EQ(cudf::data_type{cudf::type_id::STRING}, result->type());
   EXPECT_EQ(0, result->size());
 
-  LCW empty_strings({LCW{"", "", ""}});
+  LCW empty_strings({{"", "", ""}});
   result = cudf::lists::extract_list_element(cudf::lists_column_view(empty_strings), 1);
   cudf::test::strings_column_wrapper expected({""});
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, *result);
 
-  LCW null_strings({LCW{"", "", ""}}, cuda::make_constant_iterator<int32_t>(0));
+  LCW null_strings({{"", "", ""}}, cuda::make_constant_iterator<int32_t>(0));
   result = cudf::lists::extract_list_element(cudf::lists_column_view(null_strings), 1);
   cudf::test::strings_column_wrapper expected_null({""}, {0});
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_null, *result);
@@ -267,9 +266,9 @@ TYPED_TEST(ListsExtractColumnIndicesTypedTest, ExtractElement)
   using FWCW    = cudf::test::fixed_width_column_wrapper<TypeParam, int32_t>;
   using indices = cudf::test::fixed_width_column_wrapper<cudf::size_type>;
 
-  auto input_column = LCW({LCW{3, 2, 1}, LCW{}, LCW{30, 20, 10, 50}, LCW{100, 120}, LCW{0}, LCW{}},
-                          cudf::test::iterators::null_at(1));
-  auto input        = cudf::lists_column_view(input_column);
+  auto input_column =
+    LCW({{3, 2, 1}, {}, {30, 20, 10, 50}, {100, 120}, {0}, {}}, cudf::test::iterators::null_at(1));
+  auto input = cudf::lists_column_view(input_column);
 
   {
     // Test fetching first element.
@@ -329,19 +328,17 @@ TYPED_TEST(ListsExtractColumnIndicesTypedTest, FailureCases)
 
   {
     // Non-empty input, with mismatched size of indices.
-    auto input_column =
-      LCW({LCW{3, 2, 1}, LCW{}, LCW{30, 20, 10, 50}, LCW{100, 120}, LCW{0}, LCW{}},
-          cudf::test::iterators::null_at(1));
-    auto input = cudf::lists_column_view(input_column);
+    auto input_column = LCW({{3, 2, 1}, {}, {30, 20, 10, 50}, {100, 120}, {0}, {}},
+                            cudf::test::iterators::null_at(1));
+    auto input        = cudf::lists_column_view(input_column);
 
     EXPECT_THROW(cudf::lists::extract_list_element(input, indices{0, 1, 2}), cudf::logic_error);
   }
   {
     // Non-empty input, with empty indices.
-    auto input_column =
-      LCW({LCW{3, 2, 1}, LCW{}, LCW{30, 20, 10, 50}, LCW{100, 120}, LCW{0}, LCW{}},
-          cudf::test::iterators::null_at(1));
-    auto input = cudf::lists_column_view(input_column);
+    auto input_column = LCW({{3, 2, 1}, {}, {30, 20, 10, 50}, {100, 120}, {0}, {}},
+                            cudf::test::iterators::null_at(1));
+    auto input        = cudf::lists_column_view(input_column);
 
     EXPECT_THROW(cudf::lists::extract_list_element(input, indices{}), cudf::logic_error);
   }
@@ -359,9 +356,9 @@ TEST_F(ListsExtractColumnIndicesTest, ExtractStrings)
   using strings = cudf::test::strings_column_wrapper;
   using indices = cudf::test::fixed_width_column_wrapper<cudf::size_type>;
 
-  auto input_column = LCW(
-    {LCW{"3", "2", "1"}, LCW{}, LCW{"30", "20", "10", "50"}, LCW{"100", "120"}, LCW{"0"}, LCW{}},
-    cudf::test::iterators::null_at(1));
+  auto input_column =
+    LCW({{"3", "2", "1"}, {}, {"30", "20", "10", "50"}, {"100", "120"}, {"0"}, {}},
+        cudf::test::iterators::null_at(1));
   auto input = cudf::lists_column_view(input_column);
 
   {

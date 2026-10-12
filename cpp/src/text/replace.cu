@@ -265,9 +265,10 @@ std::unique_ptr<cudf::column> replace_helper(ReplacerFn replacer,
                                                       input.offsets(), input.offset(), stream);
   auto const last_offset =
     cudf::strings::detail::get_offset_value(input.offsets(), input.size() + input.offset(), stream);
-  auto const chars_size = last_offset - first_offset;
+  auto const chars_size     = last_offset - first_offset;
+  auto const non_null_count = input.size() - input.null_count();
 
-  if ((chars_size / (input.size() - input.null_count())) < AVG_CHAR_BYTES_THRESHOLD) {
+  if ((non_null_count == 0) || ((chars_size / non_null_count) < AVG_CHAR_BYTES_THRESHOLD)) {
     // this utility calls replacer to build the offsets and chars columns
     auto [offsets_column, chars] =
       cudf::strings::detail::make_strings_children(replacer, input.size(), stream, mr);

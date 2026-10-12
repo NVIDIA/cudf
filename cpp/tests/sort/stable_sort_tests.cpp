@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -14,6 +14,7 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 
+#include <limits>
 #include <type_traits>
 #include <vector>
 
@@ -287,4 +288,35 @@ TEST_F(StableSortDouble, InfinityAndNaN)
       {5, 11, 0, 14, 7, 8, 6, 4, 10, 1, 2, 3, 9, 12, 13});
   auto results = stable_sorted_order(cudf::table_view({input}));
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(results->view(), expected);
+}
+
+TEST_F(StableSortDouble, SlicedNumericColumnsWithNullsAndTies)
+{
+  auto constexpr nan = std::numeric_limits<double>::quiet_NaN();
+  auto constexpr inf = std::numeric_limits<double>::infinity();
+
+  // Each column has a different offset. Ties in nulls, NaNs, and signed zeros must
+  // advance to the next column, with fully equal rows retaining their input order.
+  cudf::test::fixed_width_column_wrapper<double> primary{
+    {99.0, -0.0, 0.0, nan, -nan, 1.0, 99.0, 99.0, nan, -0.0, 0.0, inf, -inf},
+    {1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1}};
+  cudf::test::fixed_width_column_wrapper<uint64_t> secondary{
+    {99, 99, 2, 2, 1, 1, 0, 99, 99, 99, 2, 1, 0, 0}, {1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 1, 1, 1}};
+  cudf::test::fixed_width_column_wrapper<int8_t> tertiary{
+    {99, 99, 99, 0, 0, 2, 1, 0, 2, 1, 0, 99, 0, 0, 0},
+    {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1}};
+  cudf::table_view input{{cudf::slice(primary, {1, 13}).front(),
+                          cudf::slice(secondary, {2, 14}).front(),
+                          cudf::slice(tertiary, {3, 15}).front()}};
+  std::vector<cudf::order> column_order{
+    cudf::order::ASCENDING, cudf::order::DESCENDING, cudf::order::ASCENDING};
+  std::vector<cudf::null_order> null_precedence{
+    cudf::null_order::AFTER, cudf::null_order::BEFORE, cudf::null_order::BEFORE};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> expected{
+    11, 8, 0, 1, 9, 4, 10, 3, 2, 7, 6, 5};
+
+  auto got = cudf::stable_sorted_order(input, column_order, null_precedence);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, got->view());
+  run_stable_sort_test(input, expected, column_order, null_precedence, false);
+  run_stable_sort_test(input, expected, column_order, null_precedence, true);
 }

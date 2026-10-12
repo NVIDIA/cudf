@@ -466,19 +466,18 @@ public class HybridScanReaderTest extends CudfTestBase {
   }
 
   /**
-   * Verifies payloadColumnChunksByteRanges() returns ranges for all projected columns when
-   * called BEFORE any filter-column operation has populated the reader's filter
-   * column-name cache (_filter_columns_names in C++). In this pre-filter-pipeline state,
-   * the C++ select_payload_columns receives an empty filter-column set and skips the
-   * filter-column exclusion step. Result: 3 projected columns × 3 row groups = 9 ranges.
-   * See {@link #testPayloadColumnChunksByteRangesAfterFilterColumnsCall} for the
-   * post-pipeline contract (filter column excluded → 6 ranges).
+   * Verifies payloadColumnChunksByteRanges() excludes the filter column even when called
+   * BEFORE filterColumnChunksByteRanges. select_payload_columns now auto-populates the
+   * filter column-name cache from the options' filter expression when it has not yet been
+   * populated, so payload selection consistently excludes the filter column. With filter
+   * zip_code > 50,000: 2 payload columns × 3 row groups = 6 ranges.
    */
   @Test
   void testPayloadColumnChunksByteRangesWithFilter(@TempDir Path tmp) throws IOException {
     try (OpenReader open = OpenReader.standard(tmp).withFilter("zip_code", BinaryOperator.GREATER, 50000)) {
       ByteRange[] ranges = open.reader.payloadColumnChunksByteRanges(open.reader.allRowGroups());
-      assertEquals(9, ranges.length, "3 projected columns × 3 row groups (filter column not excluded)");
+      assertEquals(6, ranges.length,
+          "Filter column zip_code excluded from payload columns: 2 cols × 3 row groups");
       for (ByteRange r : ranges) {
         assertTrue(r.size() > 0);
       }
@@ -1030,25 +1029,26 @@ public class HybridScanReaderTest extends CudfTestBase {
   }
 
   // --------------------------------------------------------------------
-  // Tests: constructRowGroupPasses()
+  // Tests: scope-specific row-group pass construction
   // --------------------------------------------------------------------
 
   /**
-   * Verifies constructRowGroupPasses() with no read-limit (passReadLimit = 0) packs all
+   * Verifies all-column pass construction with no read-limit packs all
    * input row groups into a single pass that is structurally equal to the input.
    */
   @Test
   void testConstructRowGroupPassesUnlimitedReturnsSinglePass(@TempDir Path tmp) throws IOException {
     try (OpenReader open = OpenReader.standard(tmp)) {
       int[] all = open.reader.allRowGroups();
-      int[][] passes = open.reader.constructRowGroupPasses(all, 0L);
+      int[][] passes = open.reader.constructRowGroupPasses(
+          HybridScanReader.ReadColumnsMode.ALL_COLUMNS, all, 0L);
       assertEquals(1, passes.length, "passReadLimit = 0 must return one pass");
       assertArrayEquals(all, passes[0]);
     }
   }
 
   /**
-   * Verifies constructRowGroupPasses() partitions input row groups across multiple passes,
+   * Verifies all-column pass construction partitions input row groups across multiple passes,
    * preserving order, when passReadLimit is small enough to force splitting. With
    * passReadLimit = 1, comp_read_limit = floor(1 * 0.3) = 0, so compute_row_group_passes
    * closes a pass at every row group boundary: {[0]}, {[1]}, {[2]}. The exact partition
@@ -1059,8 +1059,10 @@ public class HybridScanReaderTest extends CudfTestBase {
   void testConstructRowGroupPassesMultiPassPartition(@TempDir Path tmp) throws IOException {
     try (OpenReader open = OpenReader.standard(tmp)) {
       int[] all = open.reader.allRowGroups();
-      int[][] passes = open.reader.constructRowGroupPasses(all, 1L);
-      assertEquals(3, passes.length, "passReadLimit = 1 forces each row group into its own pass");
+      int[][] passes = open.reader.constructRowGroupPasses(
+          HybridScanReader.ReadColumnsMode.ALL_COLUMNS, all, 1L);
+      assertEquals(3, passes.length,
+          "passReadLimit = 1 forces each row group into its own pass");
       assertArrayEquals(new int[]{0}, passes[0]);
       assertArrayEquals(new int[]{1}, passes[1]);
       assertArrayEquals(new int[]{2}, passes[2]);
@@ -1188,7 +1190,10 @@ public class HybridScanReaderTest extends CudfTestBase {
             r.setupChunkingForAllColumns(0L, 0L, new int[]{0}, null)),
         invocation("setupChunkingForAllColumnsNullBufferElement", r ->
             r.setupChunkingForAllColumns(0L, 0L, new int[]{0}, new DeviceMemoryBuffer[]{null})),
-        invocation("constructRowGroupPasses", r -> r.constructRowGroupPasses(null, 0L))
+        invocation("constructRowGroupPasses",
+            r -> r.constructRowGroupPasses(HybridScanReader.ReadColumnsMode.ALL_COLUMNS, null, 0L)),
+        invocation("constructRowGroupPassesNullMode",
+            r -> r.constructRowGroupPasses(null, new int[]{0}, 0L))
     );
   }
 
@@ -1220,8 +1225,8 @@ public class HybridScanReaderTest extends CudfTestBase {
         }),
         invocation("setupChunkingForAllColumns", r ->
             r.setupChunkingForAllColumns(-1L, 0L, new int[]{0}, new DeviceMemoryBuffer[0])),
-        invocation("constructRowGroupPasses", r ->
-            r.constructRowGroupPasses(new int[]{0}, -1L)),
+        invocation("constructRowGroupPasses", r -> r.constructRowGroupPasses(
+            HybridScanReader.ReadColumnsMode.ALL_COLUMNS, new int[]{0}, -1L)),
         invocation("setupChunkingForFilterColumnsPassLimit", r ->
             r.setupChunkingForFilterColumns(0L, -1L, new int[]{0}, false,
                 new DeviceMemoryBuffer[0]))
@@ -1295,7 +1300,8 @@ public class HybridScanReaderTest extends CudfTestBase {
             0L, 0L, new int[]{0}, new DeviceMemoryBuffer[0])),
         invocation("materializeAllColumnsChunk", HybridScanReader::materializeAllColumnsChunk),
         invocation("hasNextTableChunk", HybridScanReader::hasNextTableChunk),
-        invocation("constructRowGroupPasses", r -> r.constructRowGroupPasses(new int[]{0}, 0L)),
+        invocation("constructRowGroupPasses", r -> r.constructRowGroupPasses(
+            HybridScanReader.ReadColumnsMode.ALL_COLUMNS, new int[]{0}, 0L)),
         invocation("setFilter", r -> r.setFilter(null))
     );
   }

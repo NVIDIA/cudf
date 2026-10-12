@@ -265,6 +265,12 @@ def test_expr_is_in_empty_list(engine: pl.GPUEngine):
     assert_gpu_result_equal(q, engine=engine)
 
 
+def test_expr_is_in_empty_list_with_nulls(engine: pl.GPUEngine):
+    ldf = pl.LazyFrame({"a": [1, None, 3]})
+    q = ldf.select(pl.col("a").is_in([]))
+    assert_gpu_result_equal(q, engine=engine)
+
+
 @pytest.mark.parametrize(
     "needles,haystack",
     [

@@ -227,7 +227,7 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns,
   auto itr_new_offsets =
     cudf::detail::offsetalator_factory::make_output_iterator(offsets_column->mutable_view());
 
-  rmm::device_buffer null_mask{0, stream, mr};
+  auto null_mask = cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr);
   size_type null_count{};
   if (has_nulls) {
     null_mask =

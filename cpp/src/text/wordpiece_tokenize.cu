@@ -29,8 +29,9 @@
 
 #include <cooperative_groups.h>
 #include <cooperative_groups/scan.h>
-#include <cub/cub.cuh>
+#include <cub/device/device_segmented_reduce.cuh>
 #include <cuco/static_map.cuh>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/functional>
@@ -483,7 +484,8 @@ rmm::device_uvector<cudf::size_type> count_tokens(cudf::size_type const* d_token
   auto d_out = d_counts.data();
   cub::DeviceSegmentedReduce::Sum(
     nullptr, temp, d_in, d_out, size, d_offsets, d_offsets + 1, stream.get());
-  auto d_temp = rmm::device_buffer{temp, stream};
+  auto d_temp = cuda::device_buffer<std::byte>{
+    stream, cudf::get_current_device_resource_ref(), temp, cuda::no_init};
   cub::DeviceSegmentedReduce::Sum(
     d_temp.data(), temp, d_in, d_out, size, d_offsets, d_offsets + 1, stream.get());
 

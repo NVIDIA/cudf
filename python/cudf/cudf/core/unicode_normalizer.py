@@ -5,13 +5,49 @@
 
 from __future__ import annotations
 
+import threading
 import unicodedata as ud
+
+import numpy as np
 
 import pylibcudf as plc
 
 from cudf.core.column.column import ColumnBase
 from cudf.core.dataframe import DataFrame
 from cudf.core.series import Series
+
+_UNICODE_DATA_CACHE: dict[str, tuple[list[str], np.ndarray, list[str]]] = {}
+_UNICODE_DATA_LOCK = threading.Lock()
+
+
+def _load_unicode_raw_data(
+    unidata_version: str,
+) -> tuple[list[str], np.ndarray, list[str]]:
+    # Fast path: warm cache requires no lock.
+    try:
+        return _UNICODE_DATA_CACHE[unidata_version]
+    except KeyError:
+        pass
+    # Slow path: acquire the lock so that concurrent cold-cache callers block
+    # until the first scan completes; the double-checked guard ensures only
+    # one thread ever runs the scan even if several raced to the lock.
+    with _UNICODE_DATA_LOCK:
+        if unidata_version in _UNICODE_DATA_CACHE:
+            return _UNICODE_DATA_CACHE[unidata_version]
+        cp_list: list[str] = []
+        ccc_list: list[int] = []
+        decomp_list: list[str] = []
+        for cp in range(0x0080, 0x110000):
+            c = chr(cp)
+            ccc = ud.combining(c)
+            decomp = ud.decomposition(c)
+            if ccc != 0 or decomp:
+                cp_list.append(f"{cp:04X}")
+                ccc_list.append(ccc)
+                decomp_list.append(decomp)
+        result = (cp_list, np.array(ccc_list, dtype="int32"), decomp_list)
+        _UNICODE_DATA_CACHE[unidata_version] = result
+        return result
 
 
 class UnicodeNormalizer:
@@ -131,22 +167,13 @@ class UnicodeNormalizer:
                 f"Expected one of: {list(cls._FORM_MAP)}"
             )
 
-        cp_list: list[str] = []
-        ccc_list: list[int] = []
-        decomp_list: list[str] = []
-        for cp in range(0x0080, 0x110000):
-            c = chr(cp)
-            ccc = ud.combining(c)
-            decomp = ud.decomposition(c)
-            if ccc != 0 or decomp:
-                cp_list.append(f"{cp:04X}")
-                ccc_list.append(ccc)
-                decomp_list.append(decomp)
-
+        cp_list, ccc_arr, decomp_list = _load_unicode_raw_data(
+            ud.unidata_version
+        )
         unicode_data = DataFrame(
             {
                 "cp": Series(cp_list),
-                "ccc": Series(ccc_list, dtype="int32"),
+                "ccc": Series(ccc_arr),
                 "decomp": Series(decomp_list),
             }
         )

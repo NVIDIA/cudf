@@ -13,7 +13,6 @@
 #include <cuda/iterator>
 
 #include <jit/cache.hpp>
-#include <jit/span.cuh>
 
 #include <algorithm>
 #include <span>

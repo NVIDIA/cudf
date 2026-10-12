@@ -22,6 +22,7 @@
 #include <rmm/device_uvector.hpp>
 
 #include <cuda/atomic>
+#include <cuda/cmath>
 #include <cuda/iterator>
 #include <cuda/std/limits>
 #include <cuda/std/optional>
@@ -333,6 +334,43 @@ struct PageNestingInfo {
 };
 
 /**
+ * @brief Which level-prepass consumer a page uses, or NONE for the legacy decoders.
+ *
+ * The level prepass walks a page's definition levels once up front and publishes a valid-rank
+ * map, so that the decode kernel can place values without decoding levels
+ * itself. For now, only the DELTA encodings have a consumer for the map. See
+ * `classify_prepass_family` in reader_impl_preprocess.cu.
+ *
+ * uint8_t to minimize the overhead in PageInfo
+ */
+enum class level_prepass_family : uint8_t {
+  NONE       = 0,
+  DELTA_FLAT = 1,
+};
+
+/**
+ * @brief Level prepass scratch information
+ *
+ * Contains a valid-rank map computed from the rep and def levels for later decode kernels to use
+ *
+ * Reached through a pointer on `PageInfo`, like `PageNestingInfo`, rather than copied into a
+ * per-kernel shared-memory struct: the map is indexed by rank straight out of global memory.
+ */
+struct page_prepass_state {
+  // `nz_count` value meaning "claimed, but the producer has not run yet".
+  static constexpr int32_t not_yet_produced = -1;
+
+  // Valid-rank map: `nz_idx[rank]` is the input position of the rank-th valid value. Null for a
+  // required page, whose map is the identity and is synthesized by the consumer.
+  uint32_t* nz_idx{};
+  // Negative until the producer runs; the page's valid count afterwards.
+  int32_t nz_count{not_yet_produced};
+  // Producer-written count whose meaning depends on the page's family, which is why it is not
+  // named for one of them. `DELTA_FLAT`, the only family here, uses it for the page's null count.
+  int32_t aux_count{};
+};
+
+/**
  * @brief Struct describing a particular page of column chunk data
  */
 struct PageInfo {
@@ -409,6 +447,23 @@ struct PageInfo {
   Encoding repetition_level_encoding;  // Encoding used for repetition levels (data page)
   bool is_compressed;                  // Whether the page is compressed (V2 header)
   bool has_value_info;  // true if str_bytes, num_valids, etc are derivable from page indexes
+
+  // prepass_family indicates which prepass consumer a page uses.
+  // `prepass_state` is null when the selector did not claim this page -- non-null *is* the
+  // selection flag.
+  level_prepass_family prepass_family{level_prepass_family::NONE};
+  page_prepass_state* prepass_state{};
+
+  /**
+   * @brief True when this page was selected for @p family's prepass.
+   *
+   * @param family Prepass family to test against
+   * @return True if the page carries prepass scratch for @p family
+   */
+  [[nodiscard]] CUDF_HOST_DEVICE constexpr bool is_prepass_family(level_prepass_family family) const
+  {
+    return prepass_state != nullptr && prepass_family == family;
+  }
 };
 
 // forward declaration
@@ -593,8 +648,7 @@ CUDF_HOST_DEVICE constexpr inline size_t max_RLE_page_size(uint8_t value_bit_wid
   // bitwidths it's hard to get the pathological 8:2 split.
   // If the encoder starts printing the data corruption warning, then this will need to be
   // revisited.
-  return 4 + 5 + cudf::util::div_rounding_up_unsafe<size_t>(num_values * value_bit_width, 8) +
-         (num_values / 8);
+  return 4 + 5 + cuda::ceil_div<size_t, size_t>(num_values * value_bit_width, 8) + (num_values / 8);
 }
 
 // Bytes needed for the RLE length field
@@ -604,7 +658,7 @@ constexpr uint32_t RLE_LENGTH_FIELD_LEN = sizeof(uint32_t);
 // seven payload bits. Equal to 1 (field header byte) + ceil(value_bits / 7).
 CUDF_HOST_DEVICE constexpr size_t max_thrift_field_size(size_t value_bits)
 {
-  return 1 + cudf::util::div_rounding_up_unsafe<size_t>(value_bits, 7);
+  return 1 + cuda::ceil_div<size_t, size_t>(value_bits, 7);
 }
 
 // Max V2 page header size excluding statistics. Equal to size of 9 `i32` fields + 2 bool fields

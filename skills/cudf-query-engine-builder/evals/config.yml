@@ -1,0 +1,9 @@
+schema_version: 1
+harbor:
+  task_source: evals_json
+  n_attempts: 1
+  n_concurrent: 1
+skill_workspace:
+  mode: isolated
+grading:
+  mode: default

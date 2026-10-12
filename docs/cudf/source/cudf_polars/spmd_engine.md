@@ -12,6 +12,24 @@ Under `rrun` this binding is delegated to the launcher; outside `rrun` (single-p
 {class}`~cudf_polars.engine.hardware_binding.HardwareBindingPolicy`
 to override this behaviour.
 
+## Selecting a GPU
+
+`SPMDEngine` runs on CUDA device ordinal 0, so the GPU it should use has to come first in
+`CUDA_VISIBLE_DEVICES`. Selecting a GPU by ordinal instead, by leaving the list alone and
+calling `cudaSetDevice`, is not supported, and constructing an engine that way raises. Other
+GPUs may stay visible: `CUDA_VISIBLE_DEVICES=1,0` runs the engine on GPU 1 while both remain
+available to the process.
+
+`rrun` assigns a GPU to each rank, as do the Dask and Ray frontends for their workers, so
+this is usually taken care of. A launcher that does not, `torchrun` being the common case,
+leaves it to the script, which can call {func}`~cudf_polars.engine.spmd.use_gpu` before its
+first CUDA call. {doc}`pytorch` covers that setup.
+
+The requirement exists because the engine runs its actors on threads created by rapidsmpf,
+and the current CUDA device is per-thread: a new thread always starts on ordinal 0 whatever
+the thread that created it had selected. Putting the engine's GPU first makes that safe,
+because ordinal 0 is then the device every thread already uses.
+
 ## Single-GPU setup
 
 To use {class}`~cudf_polars.engine.spmd.SPMDEngine` on a single GPU, create the engine and

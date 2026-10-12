@@ -15,6 +15,7 @@
 #include "reader_impl_chunking.hpp"
 #include "reader_impl_helpers.hpp"
 
+#include <cudf/detail/utilities/getenv_or.hpp>
 #include <cudf/detail/utilities/host_vector.hpp>
 #include <cudf/io/datasource.hpp>
 #include <cudf/io/detail/parquet.hpp>
@@ -414,19 +415,6 @@ class reader_impl {
   }
 
   /**
-   * @brief Check if the user has specified columns from mismatched sources
-   *
-   * @param options Reader options
-   * @return True if the user has specified columns from mismatched sources
-   */
-  [[nodiscard]] bool has_cols_from_mismatched_sources(parquet_reader_options const& options) const
-  {
-    return (options.get_column_names().has_value() or
-            options.get_column_field_ids().has_value()) and
-           options.is_enabled_allow_mismatched_pq_schemas();
-  }
-
-  /**
    * @brief Effective `ignore_missing_columns` policy for column selection
    *
    * This flag would be disabled when multiple sources use mismatched-schema column selection.
@@ -438,6 +426,20 @@ class reader_impl {
   {
     return options.is_enabled_ignore_missing_columns() and
            not(has_cols_from_mismatched_sources(options) and _metadata->get_num_sources() > 1);
+  }
+
+ private:
+  /**
+   * @brief Check if the user has specified columns from mismatched sources
+   *
+   * @param options Reader options
+   * @return True if the user has specified columns from mismatched sources
+   */
+  [[nodiscard]] bool has_cols_from_mismatched_sources(parquet_reader_options const& options) const
+  {
+    return (options.get_column_names().has_value() or
+            options.get_column_field_ids().has_value()) and
+           options.is_enabled_allow_mismatched_pq_schemas();
   }
 
  protected:
@@ -602,6 +604,13 @@ class reader_impl {
   // Per-input-column flag indicating whether that column was selected for direct
   // Parquet-dict → DICTIONARY32 transcode.
   std::vector<bool> _dict_transcode_eligible;
+
+  // LIBCUDF_PARQUET_LEVEL_PREPASS selector is fixed for the reader lifetime so
+  // every pass and output chunk agrees on which prepass consumer families may
+  // be selected. Read here rather than in a constructor body because
+  // `hybrid_scan_reader_impl` reaches this class through the default constructor.
+  bool _level_prepass_enabled{
+    cudf::detail::get_bool_env_or("LIBCUDF_PARQUET_LEVEL_PREPASS", false)};
 };
 
 }  // namespace cudf::io::parquet::detail

@@ -11,7 +11,8 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/row_operator/equality.cuh>
 #include <cudf/detail/row_operator/hashing.cuh>
-#include <cudf/detail/row_operator/primitive_row_operators.cuh>
+#include <cudf/detail/row_operator/primitive_equality.cuh>
+#include <cudf/detail/row_operator/primitive_hashing.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
@@ -315,7 +316,7 @@ class key_remap_table : public key_remap_table_interface {
     auto const row_bitmask =
       skip_nulls
         ? cudf::detail::bitmask_and(_right, stream, cudf::get_current_device_resource_ref()).first
-        : rmm::device_buffer{};
+        : cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED);
     auto const bitmask_ptr =
       skip_nulls ? reinterpret_cast<cudf::bitmask_type const*>(row_bitmask.data()) : nullptr;
 
@@ -667,8 +668,11 @@ std::unique_ptr<cudf::column> remap_keys_internal(detail::key_remapping_impl con
                   not_found_sentinel);
 
   auto const row_count = static_cast<cudf::size_type>(indices->size());
-  return std::make_unique<cudf::column>(
-    cudf::data_type{cudf::type_id::INT32}, row_count, indices->release(), rmm::device_buffer{}, 0);
+  return std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::INT32},
+                                        row_count,
+                                        indices->release(),
+                                        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                        0);
 }
 }  // namespace
 

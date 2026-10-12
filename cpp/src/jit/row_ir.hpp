@@ -88,6 +88,7 @@ using input = std::variant<scalar_input, column_input>;
  * @brief The arguments needed to invoke a `cudf::transform`
  */
 struct [[nodiscard]] transform_args {
+  // Keeps materialized scalar inputs alive; borrowed scalar_column_views retain external owners.
   std::vector<std::unique_ptr<column>> scalar_columns      = {};
   std::vector<std::optional<int32_t>> input_table_sources  = {};
   std::vector<std::optional<int32_t>> input_column_indices = {};

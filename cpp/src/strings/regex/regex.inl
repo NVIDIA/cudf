@@ -7,6 +7,8 @@
 #include <cudf/strings/detail/char_tables.hpp>
 #include <cudf/types.hpp>
 
+#include <cuda/cmath>
+
 namespace cudf {
 namespace strings {
 namespace detail {
@@ -25,8 +27,7 @@ struct alignas(8) relist {
    */
   CUDF_HOST_DEVICE constexpr inline static std::size_t data_size_for(int32_t insts)
   {
-    return ((sizeof(ranges[0]) + sizeof(inst_ids[0])) * insts) +
-           cudf::util::div_rounding_up_unsafe(insts, 8);
+    return ((sizeof(ranges[0]) + sizeof(inst_ids[0])) * insts) + cuda::ceil_div(insts, 8);
   }
 
   /**
@@ -46,7 +47,7 @@ struct alignas(8) relist {
 
   __device__ __forceinline__
   relist(int16_t insts, int32_t num_threads, u_char* gp_ptr, int32_t index)
-    : masksize(cudf::util::div_rounding_up_unsafe(insts, 8)), stride(num_threads)
+    : masksize(cuda::ceil_div(insts, 8)), stride(num_threads)
   {
     auto const rdata_size = sizeof(ranges[0]);
     auto const idata_size = sizeof(inst_ids[0]);

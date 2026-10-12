@@ -3,6 +3,8 @@
 
 from typing import Protocol, TypeAlias, TypedDict
 
+from cuda.bindings.runtime import cudaStream_t
+
 from rmm.pylibrmm.stream import Stream
 
 
@@ -10,7 +12,7 @@ class HasCudaStream(Protocol):
     def __cuda_stream__(self) -> object: ...
 
 
-CudaStreamLike: TypeAlias = Stream | HasCudaStream
+CudaStreamLike: TypeAlias = Stream | HasCudaStream | cudaStream_t
 
 
 class ArrayInterfaceBase(TypedDict):

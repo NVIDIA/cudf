@@ -5500,8 +5500,8 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         Thus the allowed operations within ``func`` are limited to `those
         supported by the CUDA Python Numba target
         <https://numba.readthedocs.io/en/stable/cuda/cudapysupported.html>`__.
-        For more information, see the `cuDF guide to user defined functions
-        <https://docs.rapids.ai/api/cudf/stable/cudf/guide-to-udfs/>`__.
+        For more information, see the :doc:`cuDF guide to user defined functions
+        </cudf/guide-to-udfs>`.
 
         Some string functions and methods are supported. Refer to the guide
         to UDFs for details.
@@ -5684,8 +5684,8 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         >>> df.apply(f, axis=1)  # doctest: +SKIP
 
         For a complete list of supported functions and methods that may be
-        used to manipulate string data, see the UDF guide,
-        <https://docs.rapids.ai/api/cudf/stable/cudf/guide-to-udfs/>
+        used to manipulate string data, see the :doc:`UDF guide
+        </cudf/guide-to-udfs>`
         """
         if axis != 1:
             raise NotImplementedError(
@@ -7835,6 +7835,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         column_type_length=None,
         output_as_binary=None,
         *args,
+        filesystem=None,
         **kwargs,
     ):
         """{docstring}"""
@@ -7857,6 +7858,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             max_page_size_bytes=max_page_size_bytes,
             max_page_size_rows=max_page_size_rows,
             storage_options=storage_options,
+            filesystem=filesystem,
             return_metadata=return_metadata,
             use_dictionary=use_dictionary,
             header_version=header_version,
@@ -7890,6 +7892,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         lineterminator=None,
         chunksize=None,
         storage_options=None,
+        filesystem=None,
     ):
         """{docstring}"""
         from cudf.io import csv
@@ -7909,6 +7912,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             encoding=encoding,
             compression=compression,
             storage_options=storage_options,
+            filesystem=filesystem,
             quoting=quoting,
         )
 
@@ -7924,6 +7928,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         cols_as_map_type=None,
         storage_options=None,
         index=None,
+        filesystem=None,
     ):
         """{docstring}"""
         from cudf.io import orc
@@ -7938,6 +7943,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             row_index_stride=row_index_stride,
             cols_as_map_type=cols_as_map_type,
             storage_options=storage_options,
+            filesystem=filesystem,
             index=index,
         )
 

@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import TYPE_CHECKING
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -24,7 +25,7 @@ try:
 except ImportError:
     pytest.skip("distributed not installed", allow_module_level=True)
 
-from cudf_polars.engine.dask import DaskEngine
+from cudf_polars.engine.dask import DaskEngine, _shutdown_dask
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -51,6 +52,38 @@ def dask_client() -> Iterator[distributed.Client]:
         distributed.Client(cluster) as client,
     ):
         yield client
+
+
+def test_shutdown_dask_runs_all_steps_in_order() -> None:
+    """A failed cleanup step must not prevent later resources from closing."""
+    events: list[str] = []
+
+    def run(func: Any) -> None:
+        events.append(func.func.__name__)
+        if func.func.__name__ == "_close_quent_worker":
+            raise RuntimeError("worker Quent close failed")
+
+    client = SimpleNamespace(run=run)
+    runtime = SimpleNamespace(close=lambda: events.append("controller"))
+    owned_client = SimpleNamespace(close=lambda: events.append("client"))
+    owned_cluster = SimpleNamespace(close=lambda: events.append("cluster"))
+    with pytest.raises(ExceptionGroup, match="Dask engine shutdown failed"):
+        _shutdown_dask(
+            cast("Any", client),
+            "test",
+            cast("Any", runtime),
+            None,
+            cast("Any", owned_client),
+            cast("Any", owned_cluster),
+        )
+
+    assert events == [
+        "_close_quent_worker",
+        "controller",
+        "_teardown_worker",
+        "client",
+        "cluster",
+    ]
 
 
 # ---------------------------------------------------------------------------

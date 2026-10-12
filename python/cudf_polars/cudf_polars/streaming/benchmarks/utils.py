@@ -21,7 +21,6 @@ import textwrap
 import time
 import traceback
 import uuid
-import warnings
 from collections import defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -70,7 +69,7 @@ try:
     import cudf_polars.dsl.tracing
     import cudf_polars.quent
     from cudf_polars.dsl.ir import IRExecutionContext
-    from cudf_polars.dsl.tracing import Scope
+    from cudf_polars.dsl.tracing import _HAS_QUENT, Scope
     from cudf_polars.dsl.translate import Translator
     from cudf_polars.engine.core import StreamingEngine
     from cudf_polars.quent._export import write_quent_export
@@ -91,9 +90,10 @@ except ImportError:
     CUDF_POLARS_AVAILABLE = False
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, MutableMapping
 
     from cudf_polars.engine.options import StreamingOptions
+    from cudf_polars.quent import QuentConfig
     from cudf_polars.streaming.explain import SerializablePlan
 
 POLARS_VALIDATION_OPTIONS = {
@@ -554,7 +554,7 @@ class RunConfig:
     # Query selection & dataset
     queries: list[int]
     query_set: str
-    dataset_path: Path
+    dataset_path: str | Path
     scale_factor: int | float
     suffix: str
     qualification: bool = False
@@ -848,9 +848,10 @@ def get_executor_options(
     executor_options: dict[str, Any] = (
         run_config.streaming_options.to_executor_options()
     )
-    executor_options["quent_context"] = cudf_polars.quent.QuentContext(
-        engine=cudf_polars.quent.Engine(id=run_config.run_id)
-    )
+    if _HAS_QUENT and run_config.collect_traces:
+        executor_options["quent_context"] = cudf_polars.quent.QuentConfig(
+            engine_id=run_config.run_id
+        )
 
     return executor_options
 
@@ -874,7 +875,12 @@ def print_query_plan(
     elif CUDF_POLARS_AVAILABLE:
         assert isinstance(engine, pl.GPUEngine)
         if args.explain_logical:
-            logical_plan = explain_query(q, engine, physical=False)
+            logical_plan = explain_query(
+                q,
+                engine,
+                optimized=run_config.frontend in _STREAMING_FRONTENDS,
+                physical=False,
+            )
         if args.explain and run_config.frontend in _STREAMING_FRONTENDS:
             plan = explain_query(q, engine)
     else:
@@ -893,8 +899,18 @@ def print_query_plan(
     return logical_plan, plan
 
 
+def is_remote_path(path: os.PathLike | str) -> bool:
+    """Return True if `path` is an S3 URL rather than a local path."""
+    return str(path).startswith("s3://")
+
+
 def drop_file_page_cache_recursively(path: os.PathLike | str) -> None:
     """Drop the Linux page cache for all files under `path`."""
+    if is_remote_path(path):
+        raise ValueError(
+            f"--io-mode cold cannot drop the page cache for the remote dataset {path!r}; "
+            "use --io-mode lukewarm or point --path at a local copy."
+        )
     try:
         import kvikio
     except ImportError as err:
@@ -1201,13 +1217,16 @@ def run_polars_query(
         if _HAS_STRUCTLOG and run_config.collect_traces:
             setup_logging(q_id, i)
             if isinstance(engine, StreamingEngine):
-                quent_context = engine.config["executor_options"].get("quent_context")
+                quent_context: QuentConfig | None = engine.config[
+                    "executor_options"
+                ].get("quent_context")
                 if quent_context is not None:
                     engine.config["executor_options"]["quent_context"] = (
                         dataclasses.replace(
                             quent_context,
-                            query=cudf_polars.quent.Query(
-                                instance_name=f"Iteration {i + 1}",
+                            query=dataclasses.replace(
+                                quent_context.query,
+                                query_name=f"Iteration {i + 1}",
                             ),
                         )
                     )
@@ -1286,15 +1305,17 @@ def _run_query_loop(
 
     for q_id in run_config.queries:
         if engine is not None:
-            quent_context = engine.config.get("executor_options", {}).get(
-                "quent_context"
-            )
+            quent_context: QuentConfig | None = engine.config.get(
+                "executor_options", {}
+            ).get("quent_context")
             if quent_context is not None:
                 engine.config["executor_options"]["quent_context"] = (
                     dataclasses.replace(
                         quent_context,
-                        query_group=cudf_polars.quent.QueryGroup(
-                            instance_name=f"PDSH Query {q_id}",
+                        query=dataclasses.replace(
+                            quent_context.query,
+                            query_group_id=uuid.uuid4(),
+                            query_group_name=f"PDSH Query {q_id}",
                         ),
                     )
                 )
@@ -1739,19 +1760,17 @@ def setup_logging(query_id: int, iteration: int) -> None:
         # So instead we make a new logger each time we need a new context,
         # i.e. for each query/iteration pair.
 
-        def make_injector(
-            query_id: int, iteration: int
-        ) -> Callable[[logging.Logger, str, dict[str, Any]], dict[str, Any]]:
+        def make_injector(query_id: int, iteration: int) -> structlog.types.Processor:
             def inject(
-                logger: Any, method_name: Any, event_dict: Any
-            ) -> dict[str, Any]:
+                logger: Any, method_name: str, event_dict: MutableMapping[str, Any]
+            ) -> MutableMapping[str, Any]:
                 event_dict["query_id"] = query_id
                 event_dict["iteration"] = iteration
                 return event_dict
 
             return inject
 
-        shared_processors = [
+        shared_processors: list[structlog.types.Processor] = [
             structlog.contextvars.merge_contextvars,
             make_injector(query_id, iteration),
             structlog.processors.add_log_level,
@@ -1802,22 +1821,13 @@ def _write_quent_traces(
     if not (_HAS_STRUCTLOG or collect_traces):
         return None
 
-    quent_logs = list(engine._quent_events)
-
-    # The quent UI currently requires the context directory to match the engine's ID.
-    for log in quent_logs:
-        if log.get("data", {}).get("Engine", {}).get("Init") and log.get("id") != str(
-            run_id
-        ):
-            msg = (
-                f"Engine ID mismatch: Quent ID ({log['id']}) != Run ID ({run_id}). "
-                "The data might not load in the Quent UI."
-            )
-            warnings.warn(msg, stacklevel=2)
-
-    logs_dir = Path("logs")
-    output_path = write_quent_export(quent_logs, logs_dir, run_id, quent_archive)
-    print(f"Wrote {len(quent_logs)} Quent trace events to {output_path}")
+    export_root = engine._quent_output_root
+    if export_root is None:
+        return None
+    if export_root.name != str(run_id):
+        raise ValueError(f"Quent output {export_root} does not match run {run_id}")
+    output_path = write_quent_export(export_root, quent_archive)
+    print(f"Wrote Quent trace archive to {output_path}")
     return output_path
 
 
@@ -1954,10 +1964,32 @@ def _make_duckdb_config(run_config: RunConfig | None) -> dict[str, Any]:
     return config
 
 
+def _duckdb_register_views(
+    conn: duckdb.DuckDBPyConnection,
+    dataset_path: str | Path,
+    suffix: str,
+    query_set: str,
+) -> None:
+    """Register one view per table in the query set over `dataset_path`."""
+    if is_remote_path(dataset_path):
+        # Object-storage reads go through httpfs, and each caller opens its own
+        # connection, so the extension and credentials are set up per connection.
+        conn.execute("INSTALL httpfs")
+        conn.execute("LOAD httpfs")
+        conn.execute("CREATE OR REPLACE SECRET (TYPE s3, PROVIDER credential_chain)")
+
+    tbl_names = PDSDS_TABLE_NAMES if query_set == "pdsds" else PDSH_TABLE_NAMES
+    for name in tbl_names:
+        pattern = str(dataset_path).removesuffix("/") + f"/{name}{suffix}"
+        conn.execute(
+            f"CREATE OR REPLACE VIEW {name} AS SELECT * FROM parquet_scan('{pattern}');"
+        )
+
+
 def print_duckdb_plan(
     q_id: int,
     sql: str,
-    dataset_path: Path,
+    dataset_path: str | Path,
     suffix: str,
     query_set: str,
     args: argparse.Namespace,
@@ -1967,18 +1999,8 @@ def print_duckdb_plan(
     if duckdb is None:
         raise ImportError(duckdb_err)
 
-    if query_set == "pdsds":
-        tbl_names = PDSDS_TABLE_NAMES
-    else:
-        tbl_names = PDSH_TABLE_NAMES
-
     with duckdb.connect(config=_make_duckdb_config(run_config)) as conn:
-        for name in tbl_names:
-            pattern = (Path(dataset_path) / name).as_posix() + suffix
-            conn.execute(
-                f"CREATE OR REPLACE VIEW {name} AS "
-                f"SELECT * FROM parquet_scan('{pattern}');"
-            )
+        _duckdb_register_views(conn, dataset_path, suffix, query_set)
 
         if args.explain_logical and args.explain:
             conn.execute("PRAGMA explain_output = 'all';")
@@ -1996,7 +2018,7 @@ def print_duckdb_plan(
 
 def execute_duckdb_query(
     query: str,
-    dataset_path: Path,
+    dataset_path: str | Path,
     *,
     suffix: str = ".parquet",
     query_set: str = "pdsh",
@@ -2005,17 +2027,8 @@ def execute_duckdb_query(
     """Execute a query with DuckDB."""
     if duckdb is None:
         raise ImportError(duckdb_err)
-    if query_set == "pdsds":
-        tbl_names = PDSDS_TABLE_NAMES
-    else:
-        tbl_names = PDSH_TABLE_NAMES
     with duckdb.connect(config=_make_duckdb_config(run_config)) as conn:
-        for name in tbl_names:
-            pattern = (Path(dataset_path) / name).as_posix() + suffix
-            conn.execute(
-                f"CREATE OR REPLACE VIEW {name} AS "
-                f"SELECT * FROM parquet_scan('{pattern}');"
-            )
+        _duckdb_register_views(conn, dataset_path, suffix, query_set)
         return conn.execute(query).pl()
 
 

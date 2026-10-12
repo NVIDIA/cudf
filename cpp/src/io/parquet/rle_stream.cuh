@@ -13,6 +13,7 @@
 
 #include <cooperative_groups.h>
 #include <cuda/barrier>
+#include <cuda/cmath>
 #include <cuda/std/algorithm>
 #include <cuda/std/iterator>
 #include <cuda/std/memory>
@@ -319,11 +320,11 @@ struct rle_stream {
     if (is_literal_run(run.level_run)) {
       // from the parquet spec: literal runs always come in multiples of 8 values.
       run.size = (run.level_run >> 1) * 8;
-      run_bytes += util::div_rounding_up_unsafe(run.size * level_bits, 8);
+      run_bytes += cuda::ceil_div(run.size * level_bits, 8);
     } else {
       // repeated value run
       run.size = (run.level_run >> 1);
-      run_bytes += util::div_rounding_up_unsafe(level_bits, 8);
+      run_bytes += cuda::ceil_div(level_bits, 8);
     }
 
     return run_bytes;
@@ -500,7 +501,7 @@ struct rle_stream {
     int const lane        = warp.thread_rank();
     int const warp_id     = warp.meta_group_rank();
     int const num_warps   = warp.meta_group_size();
-    int const value_width = cudf::util::div_rounding_up_unsafe(level_bits, 8);
+    int const value_width = cuda::ceil_div(level_bits, 8);
     // Bit mask used to extract a single level from a bit-packed literal-run
     // payload word. Invariant across the whole call; hoisted out of the
     // phase-2 expand loop to keep it out of the hot register set.

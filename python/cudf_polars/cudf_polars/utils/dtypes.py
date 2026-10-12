@@ -101,7 +101,7 @@ def can_cast(from_: plc.DataType, to: plc.DataType) -> bool:
         or (
             to.id() == plc.TypeId.STRING
             and not from_is_empty
-            and is_numeric_not_bool(from_)
+            and (is_numeric_not_bool(from_) or plc.traits.is_boolean(from_))
         )
         or (
             plc.traits.is_integral_not_bool(from_)

@@ -28,34 +28,31 @@ def pq_file(tmp_path_factory, df):
     return pl.scan_parquet(tmp_path / "tmp.pq")
 
 
-@pytest.mark.parametrize(
-    "expr",
-    [
-        pl.col("a").is_in([0, 1]),
-        pl.col("c").is_in(["a", "b"]),
-        pl.col("a").is_between(0, 2),
-        (pl.col("a") < 2).not_(),
-        pl.lit(2) > pl.col("a"),
-        pl.lit(2) >= pl.col("a"),
-        pl.lit(2) < pl.col("a"),
-        pl.lit(2) <= pl.col("a"),
-        pl.lit(0) == pl.col("a"),
-        pl.lit(1) != pl.col("a"),
-        pl.col("a") == pl.col("d"),
-        (pl.col("b") < pl.lit(2, dtype=pl.Float64).sqrt()),
-        (pl.col("a") >= pl.lit(2)) & (pl.col("b") > 0),
-        pl.col("b").is_finite(),
-        pl.col("a").is_null(),
-        pl.col("a").is_not_null(),
-        pl.col("a").abs().is_between(0, 2),
-        pl.col("a").ne_missing(pl.lit(None, dtype=pl.Int64)),
-        (pl.col("a") >= 2) & pl.col("c").str.contains("b"),
-        pl.col("a").is_null() & pl.col("c").str.starts_with("d"),
-    ],
-)
-@pytest.mark.parametrize("selection", [["c", "b"], ["a"], ["a", "c"], ["b"], "c"])
-@pytest.mark.parametrize("chunked", [False, True], ids=["unchunked", "chunked"])
-def test_scan_by_hand(expr, selection, pq_file, chunked):
+FILTER_EXPRESSIONS = [
+    pl.col("a").is_in([0, 1]),
+    pl.col("c").is_in(["a", "b"]),
+    pl.col("a").is_between(0, 2),
+    (pl.col("a") < 2).not_(),
+    pl.lit(2) > pl.col("a"),
+    pl.lit(2) >= pl.col("a"),
+    pl.lit(2) < pl.col("a"),
+    pl.lit(2) <= pl.col("a"),
+    pl.lit(0) == pl.col("a"),
+    pl.lit(1) != pl.col("a"),
+    pl.col("a") == pl.col("d"),
+    (pl.col("b") < pl.lit(2, dtype=pl.Float64).sqrt()),
+    (pl.col("a") >= pl.lit(2)) & (pl.col("b") > 0),
+    pl.col("b").is_finite(),
+    pl.col("a").is_null(),
+    pl.col("a").is_not_null(),
+    pl.col("a").abs().is_between(0, 2),
+    pl.col("a").ne_missing(pl.lit(None, dtype=pl.Int64)),
+    (pl.col("a") >= 2) & pl.col("c").str.contains("b"),
+    pl.col("a").is_null() & pl.col("c").str.starts_with("d"),
+]
+
+
+def assert_scan_result(expr, selection, pq_file, *, chunked):
     q = pq_file.filter(expr).select(*selection)
     assert_gpu_result_equal(
         q,
@@ -65,6 +62,30 @@ def test_scan_by_hand(expr, selection, pq_file, chunked):
             parquet_options={"chunked": chunked},
         ),
     )
+
+
+@pytest.mark.parametrize("expr", FILTER_EXPRESSIONS)
+def test_scan_by_hand(expr, pq_file):
+    assert_scan_result(expr, ["c", "b"], pq_file, chunked=False)
+
+
+@pytest.mark.parametrize("selection", [["c", "b"], ["a"], ["a", "c"], ["b"], "c"])
+@pytest.mark.parametrize("expr", [FILTER_EXPRESSIONS[2], FILTER_EXPRESSIONS[18]])
+def test_scan_filter_projection(expr, selection, pq_file):
+    assert_scan_result(expr, selection, pq_file, chunked=False)
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        FILTER_EXPRESSIONS[0],
+        FILTER_EXPRESSIONS[1],
+        FILTER_EXPRESSIONS[12],
+        FILTER_EXPRESSIONS[18],
+    ],
+)
+def test_scan_filter_chunked(expr, pq_file):
+    assert_scan_result(expr, ["c", "b"], pq_file, chunked=True)
 
 
 def test_parquet_filter_ne_missing(tmp_path):

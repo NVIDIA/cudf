@@ -77,6 +77,28 @@ def test_parallel_dataframescan(
         assert count == 1
 
 
+def test_nullable_array_dataframescan(streaming_engine_factory):
+    streaming_engine = streaming_engine_factory(
+        StreamingOptions(max_rows_per_partition=2, fallback_mode="raise"),
+    )
+    q = pl.LazyFrame(
+        {
+            "embedding": pl.Series(
+                # The outer null is in the nonzero-offset second partition.
+                [
+                    [0.0, 1.0],
+                    [2.0, None],
+                    None,
+                    [3.0, 4.0],
+                ],
+                dtype=pl.Array(pl.Float32, 2),
+            )
+        }
+    )
+
+    assert_gpu_result_equal(q, engine=streaming_engine)
+
+
 def test_dataframescan_concat(request, df, streaming_engine_factory):
     streaming_engine = streaming_engine_factory(
         StreamingOptions(max_rows_per_partition=1_000),

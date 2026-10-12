@@ -24,7 +24,7 @@ namespace cudf {
 namespace detail {
 struct dispatch_nan_to_null {
   template <typename T>
-  std::pair<std::unique_ptr<rmm::device_buffer>, cudf::size_type> operator()(
+  std::pair<std::unique_ptr<cuda::device_buffer<std::byte>>, cudf::size_type> operator()(
     column_view const& input, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
     requires(std::is_floating_point_v<T>)
   {
@@ -42,28 +42,18 @@ struct dispatch_nan_to_null {
                                  stream,
                                  mr);
 
-    return std::pair(std::make_unique<rmm::device_buffer>(std::move(mask.first)), mask.second);
+    return std::pair(std::make_unique<cuda::device_buffer<std::byte>>(std::move(mask.first)),
+                     mask.second);
   }
 
   template <typename T>
-  std::pair<std::unique_ptr<rmm::device_buffer>, cudf::size_type> operator()(
+  std::pair<std::unique_ptr<cuda::device_buffer<std::byte>>, cudf::size_type> operator()(
     column_view const& input, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
     requires(!std::is_floating_point_v<T>)
   {
     CUDF_FAIL("Input column can't be a non-floating type");
   }
 };
-
-std::pair<std::unique_ptr<rmm::device_buffer>, cudf::size_type> nans_to_nulls(
-  column_view const& input, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
-{
-  CUDF_EXPECTS(cudf::is_floating_point(input.type()),
-               "Input must be a floating point type",
-               std::invalid_argument);
-  if (input.is_empty()) { return std::pair(std::make_unique<rmm::device_buffer>(), 0); }
-
-  return cudf::type_dispatcher(input.type(), dispatch_nan_to_null{}, input, stream, mr);
-}
 
 struct copy_float_data_fn {
   column_view const& input;
@@ -106,13 +96,6 @@ std::unique_ptr<column> column_nans_to_nulls(column_view const& input,
                                   null_count);
 }
 }  // namespace detail
-
-std::pair<std::unique_ptr<rmm::device_buffer>, cudf::size_type> nans_to_nulls(
-  column_view const& input, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
-{
-  CUDF_FUNC_RANGE();
-  return detail::nans_to_nulls(input, stream, mr);
-}
 
 std::unique_ptr<column> column_nans_to_nulls(column_view const& input,
                                              cuda::stream_ref stream,

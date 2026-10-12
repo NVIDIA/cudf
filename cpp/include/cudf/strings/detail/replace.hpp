@@ -27,16 +27,6 @@ std::unique_ptr<column> replace(strings_column_view const& strings,
                                 rmm::device_async_resource_ref mr);
 
 /**
- * @copydoc cudf::strings::replace_multiple(strings_column_view const&, strings_column_view const&,
- * strings_column_view const&, cuda::stream_ref, rmm::device_async_resource_ref)
- */
-std::unique_ptr<column> replace_mutiple(strings_column_view const& strings,
-                                        strings_column_view const& targets,
-                                        strings_column_view const& repls,
-                                        cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr);
-
-/**
  * @brief Replaces any null string entries with the given string.
  *
  * This returns a strings column with no null entries.

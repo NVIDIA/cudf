@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,6 +13,8 @@
 #include <cudf/aggregation.hpp>
 #include <cudf/groupby.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
+
+#include <utility>
 
 using K = int32_t;  // Key type.
 
@@ -59,6 +61,19 @@ TYPED_TEST(groupby_stream_test, test_count)
 }
 
 struct GroupbyTest : public cudf::test::BaseFixture {};
+
+TEST_F(GroupbyTest, StreamingFinalizeAndRelease)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> keys{1, 1, 2};
+  cudf::test::fixed_width_column_wrapper<int32_t> values{1, 2, 3};
+  std::vector<cudf::groupby::streaming_aggregation_request> requests;
+  requests.push_back({1, cudf::make_sum_aggregation<cudf::groupby_aggregation>()});
+  std::vector<cudf::size_type> key_indices{0};
+
+  cudf::groupby::streaming_groupby groupby{key_indices, requests, 3};
+  groupby.aggregate(cudf::table_view{{keys, values}}, cudf::test::get_default_stream());
+  static_cast<void>(std::move(groupby).finalize_and_release(cudf::test::get_default_stream()));
+}
 
 TEST_F(GroupbyTest, Scan)
 {

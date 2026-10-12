@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -38,7 +38,7 @@ auto to_string(T value) -> std::string
       value /= 10;
     } while (value);
     if (sign) s.push_back('-');
-    std::reverse(s.begin(), s.end());
+    std::ranges::reverse(s);
     return s;
   } else {
     return std::to_string(value);

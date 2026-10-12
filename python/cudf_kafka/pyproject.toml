@@ -31,7 +31,7 @@ test = [
 
 [project.urls]
 Homepage = "https://github.com/NVIDIA/cudf"
-Documentation = "https://docs.rapids.ai/api/cudf/stable/"
+Documentation = "https://docs.nvidia.com/cudf/"
 
 [tool.ruff]
 extend = "../../pyproject.toml"

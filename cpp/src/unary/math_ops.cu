@@ -22,6 +22,8 @@
 #include <cuda/stream>
 #include <thrust/transform.h>
 
+#include <transform/checked_arithmetic.hpp>
+
 namespace cudf {
 namespace detail {
 namespace {
@@ -334,7 +336,7 @@ std::unique_ptr<column> unary_op_with(column_view const& input,
 template <typename OutputType, typename UFN, typename InputIterator>
 std::unique_ptr<cudf::column> transform_fn(InputIterator begin,
                                            InputIterator end,
-                                           rmm::device_buffer&& null_mask,
+                                           cuda::device_buffer<std::byte>&& null_mask,
                                            size_type null_count,
                                            cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
@@ -344,7 +346,7 @@ std::unique_ptr<cudf::column> transform_fn(InputIterator begin,
   std::unique_ptr<cudf::column> output =
     make_fixed_width_column(data_type{type_to_id<OutputType>()},
                             size,
-                            std::forward<rmm::device_buffer>(null_mask),
+                            std::forward<cuda::device_buffer<std::byte>>(null_mask),
                             null_count,
                             stream,
                             mr);
@@ -562,6 +564,11 @@ std::unique_ptr<cudf::column> unary_operation(cudf::column_view const& input,
                                               cuda::stream_ref stream,
                                               rmm::device_async_resource_ref mr)
 {
+  if (checked_arithmetic::is_checked(op)) {
+    // Omitting an error policy for a checked operator means propagate any row error.
+    return checked_arithmetic::unary_operation(input, op, error_policy::PROPAGATE, stream, mr);
+  }
+
   if (cudf::is_fixed_point(input.type()))
     return type_dispatcher(input.type(), detail::FixedPointOpDispatcher{}, input, op, stream, mr);
 
@@ -662,6 +669,16 @@ std::unique_ptr<cudf::column> unary_operation(cudf::column_view const& input,
 {
   CUDF_FUNC_RANGE();
   return detail::unary_operation(input, op, stream, mr);
+}
+
+std::unique_ptr<cudf::column> unary_operation(cudf::column_view const& input,
+                                              cudf::unary_operator op,
+                                              cudf::error_policy policy,
+                                              cuda::stream_ref stream,
+                                              rmm::device_async_resource_ref mr)
+{
+  CUDF_FUNC_RANGE();
+  return detail::checked_arithmetic::unary_operation(input, op, policy, stream, mr);
 }
 
 }  // namespace cudf

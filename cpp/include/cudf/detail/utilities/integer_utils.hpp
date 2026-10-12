@@ -1,7 +1,7 @@
 /*
  * SPDX-FileCopyrightText: Copyright 2019 BlazingDB, Inc.
  * SPDX-FileCopyrightText: Copyright 2019 Eyal Rozenberg <eyalroz@blazingdb.com>
- * SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /*
@@ -27,14 +27,20 @@
  * @file Utility code involving integer arithmetic
  */
 
+#include <cudf/detail/utilities/assert.cuh>
 #include <cudf/fixed_point/temporary.hpp>
 #include <cudf/types.hpp>
+
+#include <cuda/cmath>
+
+#ifndef __CUDACC_RTC__
 #include <cudf/utilities/error.hpp>
 
 #include <cmath>
 #include <cstdlib>
 #include <stdexcept>
 #include <type_traits>
+#endif
 
 namespace cudf {
 //! Utility functions
@@ -105,24 +111,6 @@ CUDF_HOST_DEVICE constexpr S round_up_unsafe(S number_to_round, S modulus) noexc
   return rounded_up;
 }
 
-/**
- * Divides the left-hand-side by the right-hand-side, rounding up
- * to an integral multiple of the right-hand-side, e.g. (9,5) -> 2 , (10,5) -> 2, (11,5) -> 3.
- *
- * @param dividend the number to divide
- * @param divisor the number by which to divide
- * @return The least integer multiple of {@link divisor} which is greater than or equal to
- * the non-integral division dividend/divisor.
- *
- * @note sensitive to overflow, i.e. if dividend > std::numeric_limits<S>::max() - divisor,
- * the result will be incorrect
- */
-template <typename S, typename T>
-CUDF_HOST_DEVICE constexpr S div_rounding_up_unsafe(S const& dividend, T const& divisor) noexcept
-{
-  return (dividend + divisor - 1) / divisor;
-}
-
 namespace detail {
 template <typename I>
 CUDF_HOST_DEVICE constexpr I div_rounding_up_safe(cuda::std::false_type,
@@ -130,8 +118,7 @@ CUDF_HOST_DEVICE constexpr I div_rounding_up_safe(cuda::std::false_type,
                                                   I divisor) noexcept
 {
   // TODO: This could probably be implemented faster
-  return (dividend > divisor) ? 1 + div_rounding_up_unsafe(dividend - divisor, divisor)
-                              : (dividend > 0);
+  return (dividend > divisor) ? 1 + cuda::ceil_div(dividend - divisor, divisor) : (dividend > 0);
 }
 
 template <typename I>
@@ -167,13 +154,6 @@ CUDF_HOST_DEVICE constexpr I div_rounding_up_safe(I dividend, I divisor) noexcep
 {
   using i_is_a_signed_type = cuda::std::bool_constant<cuda::std::is_signed_v<I>>;
   return detail::div_rounding_up_safe(i_is_a_signed_type{}, dividend, divisor);
-}
-
-template <typename I>
-constexpr bool is_a_power_of_two(I val) noexcept
-{
-  static_assert(std::is_integral_v<I>, "This function only applies to integral types");
-  return ((val - 1) & val) == 0;
 }
 
 /**

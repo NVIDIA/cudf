@@ -11,6 +11,8 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/buffer>
+
 #include <functional>
 #include <memory>
 #include <optional>
@@ -393,25 +395,6 @@ std::unique_ptr<table> transform_lto(
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
- * @brief Creates a null_mask from `input` by converting `NaN` to null and
- * preserving existing null values and also returns new null_count.
- *
- * @deprecated in release 26.04. Use column_nans_to_nulls instead.
- *
- * @throws cudf::logic_error if `input.type()` is a non-floating type
- *
- * @param input  An immutable view of the input column of floating-point type
- * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr     Device memory resource used to allocate the returned bitmask
- * @return A pair containing a `device_buffer` with the new bitmask and its
- * null count obtained by replacing `NaN` in `input` with null.
- */
-[[deprecated]] std::pair<std::unique_ptr<rmm::device_buffer>, size_type> nans_to_nulls(
-  column_view const& input,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
-
-/**
  * @brief Creates a null_mask from `input` by converting `NaN` elements to null rows
  * and preserving existing null values
  *
@@ -518,7 +501,7 @@ std::unique_ptr<table> compute_table_jit(
  * null count obtained from input considering `true` represent `valid`/`1` and
  * `false` represent `invalid`/`0`.
  */
-std::pair<std::unique_ptr<rmm::device_buffer>, cudf::size_type> bools_to_mask(
+std::pair<std::unique_ptr<cuda::device_buffer<std::byte>>, cudf::size_type> bools_to_mask(
   column_view const& input,
   cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());

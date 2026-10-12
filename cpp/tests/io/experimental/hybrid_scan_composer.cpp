@@ -61,7 +61,7 @@ std::unique_ptr<hybrid_scan_reader> setup_reader(cudf::io::datasource& datasourc
  * @return Filtered row group indices
  */
 auto apply_hybrid_scan_filters(cudf::io::datasource& datasource,
-                               hybrid_scan_reader const& reader,
+                               hybrid_scan_reader& reader,
                                cudf::io::parquet_reader_options const& options,
                                cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr)

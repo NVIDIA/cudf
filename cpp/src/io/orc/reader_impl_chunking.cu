@@ -16,16 +16,18 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_buffer.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/iterator>
 #include <thrust/binary_search.h>
 #include <thrust/scan.h>
 
 #include <algorithm>
+#include <format>
 #include <numeric>
+#include <ranges>
 #include <tuple>
 
 namespace cudf::io::orc::detail {
@@ -242,23 +244,34 @@ void reader_impl::preprocess_file(read_mode mode)
   auto const num_total_stripes = selected_stripes.size();
   auto const num_levels        = _selected_columns.num_levels();
 
-  // Set up table for converting timestamp columns from local to UTC time
-  _file_itm_data.tz_table = [&] {
-    auto const has_timestamp_column = std::any_of(
-      _selected_columns.levels.cbegin(), _selected_columns.levels.cend(), [&](auto const& col_lvl) {
-        return std::any_of(col_lvl.cbegin(), col_lvl.cend(), [&](auto const& col_meta) {
-          return _metadata.get_col_type(col_meta.id).kind == TypeKind::TIMESTAMP;
-        });
-      });
+  auto const has_timestamp_column =
+    std::ranges::any_of(_selected_columns.levels | std::views::join, [&](auto const& col_meta) {
+      return _metadata.get_col_type(col_meta.id).kind == TypeKind::TIMESTAMP;
+    });
+  auto const writer_timezone =
+    has_timestamp_column ? std::string_view{selected_stripes[0].stripe_footer->writerTimezone}
+                         : std::string_view{};
 
-    return (has_timestamp_column && !_options.ignore_timezone_in_stripe_footer)
-             ? cudf::detail::make_timezone_transition_table(
-                 {},
-                 selected_stripes[0].stripe_footer->writerTimezone,
-                 _stream,
-                 cudf::get_current_device_resource_ref())
-             : std::make_unique<cudf::table>();
-  }();
+  // Set up table for converting timestamp columns from local to UTC time
+  _file_itm_data.tz_table =
+    (has_timestamp_column && !_options.ignore_timezone_in_stripe_footer)
+      ? cudf::detail::make_timezone_transition_table(
+          {}, writer_timezone, _stream, cudf::get_current_device_resource_ref())
+      : std::make_unique<cudf::table>();
+
+  // The ORC epoch as it occurs in the writer's timezone. The data stream is stored relative to it,
+  // so the negative timestamp borrow must be decided in that frame even with the timezone ignored
+  try {
+    _file_itm_data.orc_base_epoch = base_epoch_in_timezone(writer_timezone);
+  } catch (cudf::logic_error const& e) {
+    if (!_options.ignore_timezone_in_stripe_footer) { throw; }
+    // Don't throw if the timezone is only used for negative timestamp borrow.
+    CUDF_LOG_WARN(std::format(
+      "Could not resolve the ORC writer timezone '{}'; the negative timestamp borrow falls back "
+      "to UTC, so timestamps within the timezone's offset of 1970-01-01 may be one second off. {}",
+      writer_timezone,
+      e.what()));
+  }
 
   //
   // Pre allocate necessary memory for data processed in the other reading steps:
@@ -471,12 +484,15 @@ void reader_impl::load_next_stripe_data(read_mode mode)
   // Prepare the buffer to read raw data onto.
   for (std::size_t level = 0; level < num_levels; ++level) {
     auto& stripe_data = lvl_stripe_data[level];
-    stripe_data.resize(stripe_count);
+    stripe_data.clear();
+    stripe_data.reserve(stripe_count);
 
     for (std::size_t idx = 0; idx < stripe_count; ++idx) {
       auto const stripe_size = _file_itm_data.lvl_stripe_sizes[level][idx + stripe_start];
-      stripe_data[idx]       = rmm::device_buffer(
-        cudf::util::round_up_safe(stripe_size, BUFFER_PADDING_MULTIPLE), _stream);
+      stripe_data.emplace_back(_stream,
+                               _mr,
+                               cudf::util::round_up_safe(stripe_size, BUFFER_PADDING_MULTIPLE),
+                               cuda::no_init);
     }
   }
 
@@ -664,9 +680,8 @@ void reader_impl::load_next_stripe_data(read_mode mode)
       auto compinfo = cudf::detail::hostdevice_span<compressed_stream_info>{hd_compinfo}.subspan(
         0, stream_range.size());
       for (auto stream_idx = stream_range.begin; stream_idx < stream_range.end; ++stream_idx) {
-        auto const& info = stream_info[stream_idx];
-        auto const dst_base =
-          static_cast<uint8_t const*>(stripe_data[info.source.stripe_idx - stripe_start].data());
+        auto const& info    = stream_info[stream_idx];
+        auto const dst_base = stripe_data[info.source.stripe_idx - stripe_start].data();
         compinfo[stream_idx - stream_range.begin] =
           compressed_stream_info(dst_base + info.dst_pos, info.length);
       }

@@ -6,6 +6,7 @@
 
 #include <cudf/column/column_view.hpp>
 #include <cudf/sorting.hpp>
+#include <cudf/table/table_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/stream>
@@ -17,6 +18,18 @@ namespace detail {
  * @brief The enum specifying which sorting method to use (stable or unstable).
  */
 enum class sort_method : bool { STABLE, UNSTABLE };
+
+/**
+ * @brief Sort table row indices using a shared owner for stable and unstable instantiations.
+ *
+ * Keeping both instantiations in one translation unit avoids duplicating their common kernels.
+ */
+std::unique_ptr<column> sorted_order_impl(table_view const& input,
+                                          std::vector<order> const& column_order,
+                                          std::vector<null_order> const& null_precedence,
+                                          sort_method method,
+                                          cuda::stream_ref stream,
+                                          rmm::device_async_resource_ref mr);
 
 /**
  * @brief Sort indices of a single column.

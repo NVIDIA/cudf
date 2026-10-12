@@ -57,7 +57,8 @@ expression_parser::expression_parser(
   bool has_nulls,
   cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
-  : _left{left},
+  : _device_data_buffer{stream, mr},
+    _left{left},
     _right{right},
     _expression_count{0},
     _intermediate_counter{},
@@ -65,10 +66,9 @@ expression_parser::expression_parser(
     _has_complex_type{false}
 {
   expr.accept(*this);
-  _has_complex_type =
-    std::any_of(_data_references.begin(), _data_references.end(), [&](auto const& ref) {
-      return ast::detail::is_complex_type(ref.data_type.id());
-    });
+  _has_complex_type = std::ranges::any_of(_data_references, [&](auto const& ref) {
+    return ast::detail::is_complex_type(ref.data_type.id());
+  });
 
   move_to_device(stream, mr);
 }
@@ -107,17 +107,17 @@ void expression_parser::move_to_device(cuda::stream_ref stream, rmm::device_asyn
                          });
 
   auto const buffer_size = buffer_offsets.empty() ? 0 : (buffer_offsets.back() + sizes.back());
-  auto host_data_buffer  = std::vector<char>(buffer_size);
+  auto host_data_buffer  = std::vector<std::byte>(buffer_size);
 
   for (unsigned int i = 0; i < data_pointers.size(); ++i) {
     std::memcpy(host_data_buffer.data() + buffer_offsets[i], data_pointers[i], sizes[i]);
   }
 
-  _device_data_buffer = rmm::device_buffer(host_data_buffer.data(), buffer_size, stream, mr);
+  _device_data_buffer = cuda::device_buffer<std::byte>(stream, mr, host_data_buffer);
   cudf::detail::sync_stream(stream);
 
   // Create device pointers to components of plan
-  auto device_data_buffer_ptr            = static_cast<char const*>(_device_data_buffer.data());
+  auto device_data_buffer_ptr            = _device_data_buffer.data();
   device_expression_data.data_references = device_span<detail::device_data_reference const>(
     reinterpret_cast<detail::device_data_reference const*>(device_data_buffer_ptr +
                                                            buffer_offsets[0]),
@@ -151,7 +151,7 @@ cudf::size_type expression_parser::intermediate_counter::take()
 void expression_parser::intermediate_counter::give(cudf::size_type value)
 {
   // TODO: add comment
-  auto const lower_bound = std::lower_bound(used_values.cbegin(), used_values.cend(), value);
+  auto const lower_bound = std::ranges::lower_bound(used_values, value);
   if ((lower_bound != used_values.cend()) && (*lower_bound == value))
     used_values.erase(lower_bound);
 }
@@ -161,7 +161,7 @@ cudf::size_type expression_parser::intermediate_counter::find_first_missing() co
   if (used_values.empty() || (used_values.front() != 0)) { return 0; }
   // Search for the first non-contiguous pair of elements.
   auto diff_not_one = [](auto a, auto b) { return a != b - 1; };
-  auto it           = std::adjacent_find(used_values.cbegin(), used_values.cend(), diff_not_one);
+  auto it           = std::ranges::adjacent_find(used_values, diff_not_one);
   return it != used_values.cend()
            ? *it + 1              // A missing value was found and is returned.
            : used_values.size();  // No missing elements. Return the next element in the sequence.
@@ -229,10 +229,9 @@ cudf::size_type expression_parser::visit(operation const& expr)
 
   // Validate type_id's of operand data references match
   // (decimal types with different scales are supported)
-  if (std::adjacent_find(
-        operand_types.cbegin(), operand_types.cend(), [](auto const& dt1, auto const& dt2) {
-          return dt1.id() != dt2.id();
-        }) != operand_types.cend()) {
+  if (std::ranges::adjacent_find(operand_types, [](auto const& dt1, auto const& dt2) {
+        return dt1.id() != dt2.id();
+      }) != operand_types.cend()) {
     CUDF_FAIL("An AST expression was provided non-matching operand types.");
   }
 
@@ -247,16 +246,13 @@ cudf::size_type expression_parser::visit(operation const& expr)
   }
 
   // Give back intermediate storage locations that are consumed by this operation
-  std::for_each(
-    operand_data_ref_indices.cbegin(),
-    operand_data_ref_indices.cend(),
-    [this](auto const& data_reference_index) {
-      auto const operand_source = _data_references[data_reference_index];
-      if (operand_source.reference_type == detail::device_data_reference_type::INTERMEDIATE) {
-        auto const intermediate_index = operand_source.data_index;
-        _intermediate_counter.give(intermediate_index);
-      }
-    });
+  std::ranges::for_each(operand_data_ref_indices, [this](auto const& data_reference_index) {
+    auto const operand_source = _data_references[data_reference_index];
+    if (operand_source.reference_type == detail::device_data_reference_type::INTERMEDIATE) {
+      auto const intermediate_index = operand_source.data_index;
+      _intermediate_counter.give(intermediate_index);
+    }
+  });
   // Resolve expression type
   auto const data_type = cudf::ast::detail::ast_operator_return_type(op, operand_types);
   _operators.push_back(op);
@@ -324,9 +320,9 @@ cudf::size_type expression_parser::add_data_reference(detail::device_data_refere
 {
   // If an equivalent data reference already exists, return its index. Otherwise add this data
   // reference and return the new index.
-  auto const it = std::find(_data_references.cbegin(), _data_references.cend(), data_ref);
-  if (it != _data_references.cend()) {
-    return std::distance(_data_references.cbegin(), it);
+  auto const it = std::ranges::find(_data_references, data_ref);
+  if (it != _data_references.end()) {
+    return std::distance(_data_references.begin(), it);
   } else {
     _data_references.push_back(data_ref);
     return _data_references.size() - 1;

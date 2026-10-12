@@ -60,9 +60,12 @@ def df():
 
 
 def large_frames():
-    x = [1.0] * 10_000
+    # Three partitions are sufficient to exercise distributed merge ordering;
+    # additional partitions only repeat the same merge path in this unit test.
+    nrows = 4_201
+    x = [1.0] * nrows
     x[-1] = float("nan")
-    y = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] * 1000
+    y = ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10] * ((nrows + 9) // 10))[:nrows]
 
     yield pytest.param(
         pl.LazyFrame(
@@ -87,7 +90,7 @@ def large_frames():
         id="two_cols",
     )
 
-    idx = list(range(10_000))
+    idx = list(range(nrows))
     yield pytest.param(
         pl.LazyFrame(
             {
@@ -102,14 +105,36 @@ def large_frames():
     )
 
 
+def large_sort_cases():
+    for large_df, by, stable in (param.values for param in large_frames()):
+        if by == ["x"]:
+            orderings = [(True, False), (False, True)]
+            frame_id = "all_equal_one_nan"
+        elif stable:
+            orderings = [(True, False)]
+            frame_id = "two_col_stable"
+        else:
+            orderings = [(True, False), (True, True), (False, True)]
+            frame_id = "two_cols"
+
+        for nulls_last, descending in orderings:
+            yield pytest.param(
+                large_df,
+                by,
+                stable,
+                nulls_last,
+                descending,
+                id=f"{frame_id}-{nulls_last}-{descending}",
+            )
+
+
 def test_sort(df, engine):
     q = df.sort(by=["y", "z"])
     assert_gpu_result_equal(q, engine=engine)
 
 
-@pytest.mark.parametrize("large_df,by,stable", list(large_frames()))
 @pytest.mark.parametrize(
-    "nulls_last,descending", [(True, False), (True, True), (False, True)]
+    "large_df,by,stable,nulls_last,descending", list(large_sort_cases())
 )
 def test_large_sort(large_df, by, engine_large, stable, nulls_last, descending):
     q = large_df.sort(

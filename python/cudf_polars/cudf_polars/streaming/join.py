@@ -8,10 +8,17 @@ import operator
 from functools import reduce
 from typing import TYPE_CHECKING
 
-from cudf_polars.dsl.ir import ConditionalJoin, Join, Slice
+from cudf_polars.dsl.ir import ConditionalJoin, Join, Projection, Slice
 from cudf_polars.dsl.traversal import traversal
 from cudf_polars.streaming.base import PartitionInfo
 from cudf_polars.streaming.dispatch import lower_ir_node
+from cudf_polars.streaming.filter_hint import (
+    ExternalDomain,
+    JoinInputDomain,
+    JoinWithPrefilter,
+    Prefilter,
+    PushdownFilterHint,
+)
 from cudf_polars.streaming.repartition import Repartition
 from cudf_polars.streaming.shuffle import Shuffle
 from cudf_polars.streaming.utils import (
@@ -25,6 +32,7 @@ if TYPE_CHECKING:
 
     from cudf_polars.dsl.expr import NamedExpr
     from cudf_polars.dsl.ir import IR
+    from cudf_polars.streaming.filter_hint import JoinSide
     from cudf_polars.streaming.parallel import LowerIRTransformer
 
 
@@ -149,6 +157,144 @@ def _has_non_pointwise_keys(ir: Join) -> bool:
     return not all(expr.is_pointwise for expr in traversal(keys))
 
 
+def is_direct_join_prefilter(ir: IR) -> bool:
+    """Return whether a hint belongs to its immediately enclosing join."""
+    return isinstance(ir, PushdownFilterHint) and ir.placement == "join_input"
+
+
+def lower_join_with_prefilters(
+    ir: Join,
+    rec: LowerIRTransformer,
+) -> tuple[Join, MutableMapping[IR, PartitionInfo]]:
+    """Lower a join and normalize its adjacent filter hints."""
+    targets = tuple(
+        child.children[0] if is_direct_join_prefilter(child) else child
+        for child in ir.children
+    )
+    lowered_targets, target_partition_info = zip(
+        *(rec(target) for target in targets),
+        strict=True,
+    )
+    partition_info: MutableMapping[IR, PartitionInfo] = reduce(
+        operator.or_, target_partition_info
+    )
+
+    if all(
+        isinstance(target, Repartition) and partition_info[target].count == 1
+        for target in lowered_targets
+    ):
+        # This join will execute partition-wise, so its optional prefilters
+        # are unnecessary. Moreover, the piecewise join special case
+        # execution at runtime never has a chance to shut down prefilter
+        # channels that would be produced, which would leave an actor graph
+        # in a deadlocked state. Since they are unnecessary, drop them
+        # before lowering their domains and before the actor graph derives
+        # fanout from the lowered DAG.
+        return (
+            Join(
+                ir.schema,
+                ir.left_on,
+                ir.right_on,
+                ir.options,
+                *lowered_targets,
+            ),
+            partition_info,
+        )
+
+    prefilters: list[Prefilter] = []
+    external_domains: list[IR] = []
+    claimed_sides: set[JoinSide] = set()
+    for target_index, child in enumerate(ir.children):
+        if not is_direct_join_prefilter(child):
+            continue
+        assert isinstance(child, PushdownFilterHint)
+
+        _target, domain = child.children
+        domain, domain_partition_info = rec(domain)
+        partition_info.update(domain_partition_info)
+
+        # A key-only Projection retains an explicit edge to its source. If that
+        # source is a join input and contains every requested key, the join can
+        # project those keys itself rather than execute a separate domain input.
+        left, right = lowered_targets
+        direct_domain = domain
+        while True:
+            if direct_domain == left and direct_domain == right:
+                domain_side: JoinSide | None = "right" if target_index == 0 else "left"
+                break
+            if direct_domain == left:
+                domain_side = "left"
+                break
+            if direct_domain == right:
+                domain_side = "right"
+                break
+            if isinstance(direct_domain, Projection) and all(
+                key.name in direct_domain.children[0].schema for key in child.domain_on
+            ):
+                (direct_domain,) = direct_domain.children
+                continue
+            domain_side = None
+            break
+
+        target_side: JoinSide = "left" if target_index == 0 else "right"
+        if domain_side in claimed_sides:
+            domain_side = None
+        elif domain_side is not None:
+            claimed_sides.add(domain_side)
+
+        if domain_side is not None:
+            prefilters.append(
+                Prefilter(
+                    target_side,
+                    child.target_on,
+                    JoinInputDomain(domain_side),
+                    child.domain_on,
+                    child.nulls_equal,
+                )
+            )
+        else:
+            external_domains.append(domain)
+            prefilters.append(
+                Prefilter(
+                    target_side,
+                    child.target_on,
+                    ExternalDomain(),
+                    child.domain_on,
+                    child.nulls_equal,
+                )
+            )
+
+    return (
+        JoinWithPrefilter(
+            ir.schema,
+            ir.left_on,
+            ir.right_on,
+            ir.options,
+            prefilters,
+            *lowered_targets,
+            *external_domains,
+        ),
+        partition_info,
+    )
+
+
+@lower_ir_node.register(PushdownFilterHint)
+def _(
+    ir: PushdownFilterHint, rec: LowerIRTransformer
+) -> tuple[IR, MutableMapping[IR, PartitionInfo]]:
+    """Preserve optional filters for dynamic execution, otherwise discard them."""
+    target, domain = ir.children
+    target, partition_info = rec(target)
+    if not _dynamic_planning_on(rec.state["config_options"]):
+        return target, partition_info
+
+    domain, domain_partition_info = rec(domain)
+    partition_info.update(domain_partition_info)
+    lowered = ir.reconstruct((target, domain))
+    partition_info[lowered] = partition_info[target]
+    return lowered, partition_info
+
+
 @lower_ir_node.register(ConditionalJoin)
 def _(
     ir: ConditionalJoin, rec: LowerIRTransformer
@@ -214,17 +360,33 @@ def _(
         )
         return rec(Slice(ir.schema, offset, length, new_join))
 
-    # Lower children
-    children, _partition_info = zip(*(rec(c) for c in ir.children), strict=True)
-    partition_info = reduce(operator.or_, _partition_info)
-
-    # Check for dynamic planning - may have more partitions at runtime
     config_options = rec.state["config_options"]
     dynamic_planning = _dynamic_planning_on(config_options)
-
-    left, right = children
-    output_count = max(partition_info[left].count, partition_info[right].count)
     has_non_pointwise_keys = _has_non_pointwise_keys(ir)
+    if (
+        dynamic_planning
+        and ir.options[0] != "Cross"
+        and ir.options[5] == "none"
+        and not has_non_pointwise_keys
+        and any(is_direct_join_prefilter(child) for child in ir.children)
+    ):
+        preserve_prefilters = True
+    else:
+        preserve_prefilters = False
+
+    if preserve_prefilters:
+        ir, partition_info = lower_join_with_prefilters(ir, rec)
+        children = ir.children
+    else:
+        # Hints not owned by an adaptive join use the generic identity lowering.
+        children, _partition_info = zip(
+            *(rec(child) for child in ir.children),
+            strict=True,
+        )
+        partition_info = reduce(operator.or_, _partition_info)
+
+    left, right = children[:2]
+    output_count = max(partition_info[left].count, partition_info[right].count)
     if output_count == 1 and not dynamic_planning:
         new_node = ir.reconstruct(children)
         partition_info[new_node] = PartitionInfo(count=1)

@@ -11,7 +11,11 @@
 
 #include <cuda/stream>
 
+#include <execinfo.h>
+#include <unistd.h>
+
 #include <cstddef>
+#include <iostream>
 #include <utility>
 
 namespace cudf::test {
@@ -27,11 +31,27 @@ scoped_current_device_resource::~scoped_current_device_resource()
   std::ignore = cudf::set_current_device_resource(std::move(_previous));
 }
 
+namespace {
+
+void print_allocation_stacktrace()
+{
+  constexpr int max_frames = 64;
+  void* frames[max_frames];
+  int const nframes = ::backtrace(frames, max_frames);
+  std::cerr << "Unexpected allocation from the current device resource. Callstack (" << nframes
+            << " frames):\n";
+  if (nframes > 0) { ::backtrace_symbols_fd(frames, nframes, STDERR_FILENO); }
+  std::cerr.flush();
+}
+
+}  // namespace
+
 memory_resource_test_harness::memory_resource_test_harness(rmm::device_async_resource_ref upstream)
   : _setup_mr{upstream},
     _output_mr{upstream},
     _temporary_mr{upstream},
     _failing_mr{[](std::size_t, cuda::stream_ref, void*) -> void* {
+                  print_allocation_stacktrace();
                   throw rmm::bad_alloc{"Unexpected allocation from the current device resource"};
                 },
                 [](void*, std::size_t, cuda::stream_ref, void*) {}}

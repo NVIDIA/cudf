@@ -66,10 +66,7 @@ from cudf_polars.streaming.actor_graph.dispatch import (
     generate_ir_sub_network,
     ir_context_for_node,
 )
-from cudf_polars.streaming.actor_graph.tracing import (
-    send_chunk,
-    trace_channel,
-)
+from cudf_polars.streaming.actor_graph.tracing import send_chunk
 from cudf_polars.streaming.actor_graph.utils import (
     ChannelManager,
     ChunkStore,
@@ -691,7 +688,12 @@ async def _shuffle_and_reassemble(
             skip_insert,
         ),
         replay_buffered_channel(
-            context, ch_replay, ch_in, sample.chunks, metadata_in, trace_ir=ir
+            context,
+            ch_replay,
+            ch_in,
+            sample.local_sample.chunks,
+            metadata_in,
+            trace_ir=ir,
         ),
     )
 
@@ -757,10 +759,14 @@ async def over_actor(
         time. ``None`` for non-scalar Over nodes.
     """
     async with shutdown_on_error(
-        context, ch_in, ch_out, trace_ir=ir, ir_context=ir_context
-    ) as tracer:
-        ch_in = trace_channel(ch_in, tracer)
-        ch_out = trace_channel(ch_out, tracer)
+        context,
+        chs_in=(ch_in,),
+        chs_out=(ch_out,),
+        trace_ir=ir,
+        ir_context=ir_context,
+    ) as actor_scope:
+        tracer = actor_scope.tracer
+        ir_context = actor_scope.require_ir_context()
         metadata_in = await recv_metadata(ch_in, context)
 
         partitioning = NormalizedPartitioning.from_keys(

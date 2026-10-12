@@ -17,7 +17,6 @@
 
 #include <cuda/functional>
 #include <cuda/stream>
-#include <thrust/scan.h>
 
 namespace cudf {
 namespace detail {

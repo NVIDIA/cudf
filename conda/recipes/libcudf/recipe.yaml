@@ -90,7 +90,6 @@ cache:
       - cuda-nvtx-dev
       - cuda-profiler-api
       - cuda-sanitizer-api
-      - libcurand-dev
       - libnvjitlink-dev
       - if: linux and x86_64
         then:
@@ -164,7 +163,6 @@ outputs:
           - cuda-version
           - flatbuffers
           - libcufile
-          - libcurand
           - libkvikio
           - librdkafka
           - libzlib
@@ -201,7 +199,6 @@ outputs:
           - cuda-version
           - flatbuffers
           - libcufile
-          - libcurand
           - libcudf
           - libkvikio
           - librdkafka
@@ -209,7 +206,7 @@ outputs:
           - libzlib
           - libnvcomp
     about:
-      homepage: https://rapids.ai/
+      homepage: https://docs.nvidia.com/cudf/
       license: Apache-2.0
       summary: libcudf_kafka library
 
@@ -253,7 +250,7 @@ outputs:
           - libzlib
           - libnvcomp
     about:
-      homepage: https://rapids.ai/
+      homepage: https://docs.nvidia.com/cudf/
       license: Apache-2.0
       summary: libcudf-streaming library
 
@@ -310,6 +307,8 @@ outputs:
         - cuda-version =${{ cuda_version }}
         - cuda-nvtx-dev
         - cuda-cudart-dev
+        - cuda-nvrtc-dev
+        - libnvjitlink-dev
       run:
         - ${{ pin_subpackage("libcudf", exact=True) }}
         - ${{ pin_compatible("cuda-version", upper_bound="x", lower_bound="x") }}
@@ -324,7 +323,6 @@ outputs:
           - cuda-version
           - flatbuffers
           - libcufile
-          - libcurand
           - libkvikio
           - librdkafka
           - librmm
@@ -355,7 +353,6 @@ outputs:
         - ${{ pin_subpackage("libcudf", exact=True) }}
         - ${{ pin_subpackage("libcudf_kafka", exact=True) }}
         - cuda-version =${{ cuda_version }}
-        - libcurand-dev
         - cuda-cudart-dev
         - croaring ${{ croaring_version }}
         - cuda-profiler-api
@@ -364,11 +361,8 @@ outputs:
         - ${{ pin_compatible("cuda-version", upper_bound="x", lower_bound="x") }}
         - ${{ pin_subpackage("libcudf", exact=True) }}
         - ${{ pin_subpackage("libcudf_kafka", exact=True) }}
-        - libcurand
         - cuda-sanitizer-api
       ignore_run_exports:
-        from_package:
-          - libcurand-dev
         by_name:
           - cuda-cudart
           - cuda-nvrtc
@@ -378,7 +372,6 @@ outputs:
           - flatbuffers
           - libcudf
           - libcufile
-          - libcurand
           - libkvikio
           - librdkafka
           - librmm
@@ -431,6 +424,6 @@ outputs:
           - librmm
           - libnvcomp
     about:
-      homepage: https://rapids.ai/
+      homepage: https://docs.nvidia.com/cudf/
       license: Apache-2.0
       summary: libcudf-streaming test & benchmark executables

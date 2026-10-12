@@ -31,7 +31,7 @@ dependencies = [
     "nvtx>=0.2.1",
     "packaging",
     "pandas>=3.0.0,<3.1.0",
-    "pyarrow>=19.0.0",
+    "pyarrow>=19.0.0,<26.0.0",
     "pylibcudf==26.12.*,>=0.0.0a0",
     "rich",
     "rmm==26.12.*,>=0.0.0a0",
@@ -86,7 +86,7 @@ cudf-pandas-tests = [
 
 [project.urls]
 Homepage = "https://github.com/NVIDIA/cudf"
-Documentation = "https://docs.rapids.ai/api/cudf/stable/"
+Documentation = "https://docs.nvidia.com/cudf/"
 
 [project.entry-points.rapids_doctor_check]
 cudf_import = "cudf._health_checks:import_check"

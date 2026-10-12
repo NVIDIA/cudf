@@ -33,7 +33,7 @@ jobs:
     steps:
       - id: shards
         env:
-          NUM_SHARDS: 2
+          NUM_SHARDS: 3
         run: |
           {
             echo "num_shards=${NUM_SHARDS}"

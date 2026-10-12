@@ -34,6 +34,7 @@ def test_trace_basic(
     # Whether tracing is enabled is determined when cudf_polars is imported.
     # So our best way of testing this is to run things in a subprocess
     # to control the environment and isolate it from the rest of the test suite.
+    pytest.importorskip("cudf_polars_quent")
     code = textwrap.dedent("""\
     import polars as pl
     import rmm
@@ -73,6 +74,7 @@ def test_import_without_structlog(timeout_seconds: int) -> None:
     code = textwrap.dedent("""\
     import sys
     sys.modules["structlog"] = None
+    sys.modules["cudf_polars_quent"] = None
 
     import cudf_polars.dsl.tracing
     assert not cudf_polars.dsl.tracing._HAS_STRUCTLOG
@@ -87,6 +89,8 @@ def test_import_without_structlog(timeout_seconds: int) -> None:
 def test_log_query_plan(timeout_seconds: int) -> None:
     """Test that log_query_plan emits a Query Plan event."""
     import os
+
+    pytest.importorskip("cudf_polars_quent")
 
     code = textwrap.dedent("""\
     import polars as pl
@@ -129,6 +133,7 @@ def test_log_query_plan(timeout_seconds: int) -> None:
     reason="Requires CUDF_POLARS_LOG_TRACES=1.",
 )
 def test_sets_cudf_polars_query_id():
+    pytest.importorskip("cudf_polars_quent")
     left = pl.LazyFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
     right = pl.LazyFrame({"a": [1, 2, 3], "c": [7, 8, 9]})
 
@@ -156,13 +161,13 @@ def test_sets_cudf_polars_query_id():
         assert "scope" in log
         assert "cudf_polars_query_id" in log
         assert log["cudf_polars_query_id"] == query_id
+        keys = set(log.keys())
 
         match log["scope"]:
             case "plan":
-                assert "plan" in log
+                expected_keys = {"plan"}
             case "actor":
-                keys = set(log.keys())
-                assert keys >= {
+                expected_keys = {
                     "actor_ir_id",
                     "actor_ir_type",
                     "cudf_polars_query_id",
@@ -172,8 +177,7 @@ def test_sets_cudf_polars_query_id():
                     "stop",
                 }
             case "evaluate_ir_node":
-                keys = set(log.keys())
-                assert keys >= {
+                expected_keys = {
                     "start",
                     "stop",
                     "cudf_polars_query_id",
@@ -182,5 +186,24 @@ def test_sets_cudf_polars_query_id():
                     "scope",
                     "actor_ir_id",
                 }
+            case "io_task":
+                expected_keys = {
+                    "actor_ir_id",
+                    "actor_ir_type",
+                    "admitted",
+                    "cudf_polars_query_id",
+                    "estimated_output_bytes",
+                    "event",
+                    "ir_id",
+                    "ir_type",
+                    "log_level",
+                    "reservation_bytes",
+                    "scope",
+                    "sequence_number",
+                    "start",
+                    "stop",
+                }
             case _:
                 pytest.fail(f"Unexpected scope: {log['scope']}")
+
+        assert expected_keys.issubset(keys)

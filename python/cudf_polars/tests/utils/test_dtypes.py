@@ -27,7 +27,6 @@ FLOAT64 = plc.DataType(plc.TypeId.FLOAT64)
 @pytest.mark.parametrize(
     "pltype",
     [
-        pl.Time(),
         pl.Struct({"a": pl.Binary(), "b": pl.Float32}),
         pl.List(pl.Object()),
         pl.List(pl.Array(pl.Int8, 2)),
@@ -35,8 +34,8 @@ FLOAT64 = plc.DataType(plc.TypeId.FLOAT64)
         pl.Array(pl.Array(pl.Int8, 2), 3),
         pl.Struct({"a": pl.Array(pl.Int8, 2)}),
         pl.Binary(),
-        pl.Categorical(),
-        pl.Enum(["a", "b"]),
+        pl.List(pl.Categorical()),
+        pl.Struct({"a": pl.Enum(["a"])}),
         pl.Field("a", pl.Int8),
         pl.Object(),
         pl.Unknown(),

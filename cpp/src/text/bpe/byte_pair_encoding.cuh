@@ -21,8 +21,6 @@
 #include <cuda/std/iterator>
 #include <cuda/std/utility>
 #include <cuda/stream>
-#include <thrust/execution_policy.h>
-#include <thrust/find.h>
 
 #include <cstdint>
 #include <type_traits>

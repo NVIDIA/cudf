@@ -434,7 +434,7 @@ class IndexedFrame(Frame):
 
         The available flags are
 
-        * :attr:`pandas.Flags.allows_duplicate_labels`
+        * ``allows_duplicate_labels``
 
         See Also
         --------

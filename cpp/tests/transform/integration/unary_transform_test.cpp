@@ -1291,8 +1291,10 @@ TEST_F(StringOperationTest, StringConcat)
     "John", "Mia", "Abd", "Mendes", "Arya", "John", "François", "José", "Søren", "张"};
   auto last_name = cudf::test::strings_column_wrapper{
     "Doe", "Folk", "Louis", "Xi", "Serenity", "Scott", "Ольга", "Łukasz", "Zoë", "伟"};
-  rmm::device_buffer scratch(100 * static_cast<cudf::column_view>(first_name).size(),
-                             cudf::get_default_stream());
+  cuda::device_buffer<char> scratch(cudf::get_default_stream(),
+                                    cudf::get_current_device_resource_ref(),
+                                    100 * static_cast<cudf::column_view>(first_name).size(),
+                                    cuda::no_init);
   auto scratch_sizes = cudf::test::fixed_width_column_wrapper<int32_t>{100};
 
   std::string cuda = R"***(

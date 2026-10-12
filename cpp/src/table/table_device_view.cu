@@ -11,8 +11,7 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/device_buffer.hpp>
-
+#include <cuda/buffer>
 #include <cuda/stream>
 
 #include <memory>
@@ -42,8 +41,10 @@ template class table_device_view_base<mutable_column_device_view, mutable_table_
 }  // namespace detail
 
 template <typename ColumnDeviceView, typename HostTableView>
-std::pair<std::unique_ptr<rmm::device_buffer>, ColumnDeviceView*> create_column_device_views(
-  HostTableView source_view, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
+std::pair<std::unique_ptr<cuda::device_buffer<std::byte>>, ColumnDeviceView*>
+create_column_device_views(HostTableView source_view,
+                           cuda::stream_ref stream,
+                           rmm::device_async_resource_ref mr)
 {
   // First calculate the size of memory needed to hold the
   // table's ColumnDeviceViews. This is done by calling extent()
@@ -66,8 +67,12 @@ std::pair<std::unique_ptr<rmm::device_buffer>, ColumnDeviceView*> create_column_
   // ColumnDeviceViews so the column can set the pointer(s) for any
   // of its child objects.
   // align both h_ptr, d_ptr
-  auto descendant_storage =
-    std::make_unique<rmm::device_buffer>(padded_views_size_bytes, stream, mr);
+  auto descendant_storage = std::make_unique<cuda::device_buffer<std::byte>>(
+    stream,
+    mr,
+    padded_views_size_bytes,
+    cuda::no_init,
+    cuda::std::execution::prop{cuda::allocation_alignment, alignof(ColumnDeviceView)});
   void* h_ptr    = detail::align_ptr_for_type<ColumnDeviceView>(h_buffer.data());
   void* d_ptr    = detail::align_ptr_for_type<ColumnDeviceView>(descendant_storage->data());
   auto d_columns = detail::child_columns_to_device_array<ColumnDeviceView>(
@@ -80,7 +85,7 @@ std::pair<std::unique_ptr<rmm::device_buffer>, ColumnDeviceView*> create_column_
   return std::make_pair(std::move(descendant_storage), d_columns);
 }
 
-template std::pair<std::unique_ptr<rmm::device_buffer>, column_device_view*>
+template std::pair<std::unique_ptr<cuda::device_buffer<std::byte>>, column_device_view*>
 create_column_device_views<column_device_view, host_span<column_view const>>(
   host_span<column_view const> source_view,
   cuda::stream_ref stream,

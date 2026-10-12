@@ -25,11 +25,7 @@ def df():
     )
 
 
-@pytest.mark.filterwarnings("ignore:Unsupported unique options for multiple partitions")
-@pytest.mark.parametrize("subset", [None, ("y",), ("y", "z")])
-@pytest.mark.parametrize("keep", ["first", "last", "any", "none"])
-@pytest.mark.parametrize("maintain_order", [True, False])
-def test_unique(df, streaming_engine_factory, keep, subset, maintain_order):
+def assert_unique_result(df, streaming_engine_factory, keep, subset, maintain_order):
     engine = streaming_engine_factory(
         StreamingOptions(fallback_mode="warn"),
     )
@@ -40,6 +36,44 @@ def test_unique(df, streaming_engine_factory, keep, subset, maintain_order):
         check_row_order = False
 
     assert_gpu_result_equal(q, engine=engine, check_row_order=check_row_order)
+
+
+@pytest.mark.filterwarnings("ignore:Unsupported unique options for multiple partitions")
+@pytest.mark.engine_params(["spmd", "spmd-small"])
+@pytest.mark.parametrize(
+    "keep,subset,maintain_order",
+    [
+        (keep, subset, maintain_order)
+        for keep in ("first", "last")
+        for subset in (None, ("y",), ("y", "z"))
+        for maintain_order in (True, False)
+    ]
+    + [
+        ("any", None, True),
+        ("any", ("y",), False),
+        ("none", None, True),
+        ("none", ("y", "z"), False),
+    ],
+)
+def test_unique(df, streaming_engine_factory, keep, subset, maintain_order):
+    assert_unique_result(df, streaming_engine_factory, keep, subset, maintain_order)
+
+
+@pytest.mark.filterwarnings("ignore:Unsupported unique options for multiple partitions")
+@pytest.mark.engine_params(["dask", "ray"])
+@pytest.mark.parametrize(
+    "keep,subset,maintain_order",
+    [
+        ("first", None, True),
+        ("last", ("y", "z"), False),
+        ("any", ("y",), False),
+        ("none", None, True),
+    ],
+)
+def test_unique_distributed_backends(
+    df, streaming_engine_factory, keep, subset, maintain_order
+):
+    assert_unique_result(df, streaming_engine_factory, keep, subset, maintain_order)
 
 
 @pytest.mark.parametrize("maintain_order", [True, False])

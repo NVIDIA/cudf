@@ -24,6 +24,9 @@ from cudf_streaming.table_chunk import TableChunk
 from rapidsmpf.coll import AllGather
 from rapidsmpf.config import Options, get_environment_variables
 from rapidsmpf.memory.packed_data import PackedData
+from rapidsmpf.memory.pinned_memory_resource import (
+    is_pinned_memory_resources_supported,
+)
 from rapidsmpf.statistics import Statistics
 from rapidsmpf.streaming.core.actor import run_actor_network
 
@@ -33,7 +36,7 @@ from cudf_polars.dsl.utils.io import (
     attach_cached_parquet_metadata,
     prefetch_parquet_file_metadata_for_ir,
 )
-from cudf_polars.quent._plan import build_plan, build_quent_operator_map
+from cudf_polars.quent._plan import build_quent_operator_map, emit_plan
 from cudf_polars.streaming.actor_graph.collectives import ReserveOpIDs
 from cudf_polars.streaming.actor_graph.collectives.common import reserve_op_id
 from cudf_polars.streaming.actor_graph.core import generate_network
@@ -43,11 +46,12 @@ from cudf_polars.streaming.base import StatsCollector
 from cudf_polars.streaming.parallel import lower_ir_graph_with_node_map
 from cudf_polars.streaming.statistics import collect_statistics
 from cudf_polars.streaming.utils import _concat
-from cudf_polars.utils.config import Unspecified, get_total_device_memory
+from cudf_polars.utils.config import get_total_device_memory
 
 if TYPE_CHECKING:
     from collections.abc import Callable, MutableMapping
     from concurrent.futures import Executor, ThreadPoolExecutor
+    from pathlib import Path
 
     import rapidsmpf.config
     from cudf_streaming.channel_metadata import ChannelMetadata
@@ -55,17 +59,28 @@ if TYPE_CHECKING:
     from rapidsmpf.memory.buffer_resource import BufferResource
     from rapidsmpf.streaming.core.context import Context
 
-    import cudf_polars.quent._logging
-    import cudf_polars.quent._types
+    import cudf_polars.quent._runtime
     from cudf_polars.dsl.ir import IR
     from cudf_polars.dsl.translate import Translator
-    from cudf_polars.quent._context import LocalQuentContext
+    from cudf_polars.quent._context import QuentConfig, QuentQueryWorkerState
     from cudf_polars.streaming.base import PartitionInfo
     from cudf_polars.streaming.parallel import ConfigOptions
     from cudf_polars.utils.config import StreamingExecutor
 
 
 T = TypeVar("T")
+
+
+def _run_cleanup_steps(message: str, *steps: Callable[[], object]) -> None:
+    """Run every cleanup step and group any failures."""
+    exceptions: list[Exception] = []
+    for step in steps:
+        try:
+            step()
+        except Exception as error:
+            exceptions.append(error)
+    if exceptions:
+        raise ExceptionGroup(message, exceptions)
 
 
 def reset_statistics_from_options(
@@ -211,6 +226,9 @@ def resolve_rapidsmpf_options(rapidsmpf_options: Options | None) -> Options:
 
     - ``num_streaming_threads=4``: moderate worker count for the rapidsmpf
       streaming runtime, shared across frontends.
+    - ``pinned_memory``, ``pinned_initial_pool_size=0``: pinned host memory
+      enabled by default, but only on systems that support it (CUDA 12.6+
+      with async memory pool support).
 
     Parameters
     ----------
@@ -226,7 +244,16 @@ def resolve_rapidsmpf_options(rapidsmpf_options: Options | None) -> Options:
     if rapidsmpf_options is None:
         rapidsmpf_options = Options(get_environment_variables())
 
-    rapidsmpf_options.insert_if_absent({"num_streaming_threads": "4"})
+    pinned_memory_default = (
+        "true" if is_pinned_memory_resources_supported() else "false"
+    )
+    rapidsmpf_options.insert_if_absent(
+        {
+            "num_streaming_threads": "4",
+            "pinned_memory": pinned_memory_default,
+            "pinned_initial_pool_size": "0",
+        }
+    )
     return rapidsmpf_options
 
 
@@ -286,12 +313,24 @@ class StreamingEngine(pl.GPUEngine):
     destruction and context manager exit must occur on the thread that created
     the instance.
 
-    Creating an engine sets the kvikio remote I/O backend to ``EASY_THREADPOOL``
-    and configures its thread pool (default 256 threads). Because kvikio's pool
-    is a global singleton, this blocks any concurrent kvikio IO in the process
-    until in-flight IO completes and overrides any prior ``kvikio.defaults.set(...)``
-    calls. Use the ``kvikio_nthreads`` executor option or the ``KVIKIO_NTHREADS``
-    environment variable to control the thread count.
+    Creating an engine sets the kvikio remote I/O backend to
+    ``kvikio.RemoteIOBackend.MULTI_POLL`` by default (see the
+    ``kvikio_remote_io_backend`` executor option), along with the
+    ``kvikio_task_size`` executor option (16 MiB under ``MULTI_POLL``, 64 MiB
+    under ``EASY_THREADPOOL``). Because kvikio's configuration is a global
+    singleton, this overrides mutable prior ``kvikio.defaults.set(...)`` calls
+    made in the process. The ``MULTI_POLL`` reactor settings are process-lifetime
+    values: after the first remote I/O, subsequent engines must use the same
+    values. When the backend is ``EASY_THREADPOOL``, engine creation
+    also configures kvikio's thread pool (default 256 threads), which blocks
+    any concurrent kvikio IO in the process until in-flight IO completes. Use
+    the ``kvikio_nthreads`` executor option or the ``KVIKIO_NTHREADS``
+    environment variable to control the thread count. Under ``MULTI_POLL``,
+    cudf-polars does not resolve a thread-pool size at all (kvikio itself may
+    still honor ``KVIKIO_NTHREADS`` via its own deferred default); remote I/O
+    concurrency is instead controlled by the ``kvikio_reactor_count``,
+    ``kvikio_reactor_dispatch``, and ``kvikio_request_ceiling`` executor
+    options.
 
     Parameters
     ----------
@@ -307,7 +346,7 @@ class StreamingEngine(pl.GPUEngine):
         when :meth:`shutdown` is called. If ``None``, an empty stack is created.
     """
 
-    _quent_logger: cudf_polars.quent._logging.QuentLogger | None
+    _quent_runtime: cudf_polars.quent._runtime.QuentControllerRuntime | None
     rapidsmpf_options: rapidsmpf.config.Options
     # Process-wide registry of every live :class:`StreamingEngine`. Used by
     # :class:`DefaultSingletonEngine` to enforce that no other engine is
@@ -331,7 +370,10 @@ class StreamingEngine(pl.GPUEngine):
 
         check_no_live_default_singleton(self)
         self._nranks = nranks
-        self._quent_events_raw: list[dict[str, Any]] = []  # populated on shutdown
+        quent_context: QuentConfig | None = executor_options.get("quent_context")
+        self._quent_output_root: Path | None = (
+            quent_context.run_root if quent_context is not None else None
+        )
         self._exit_stack: contextlib.ExitStack | None = (
             exit_stack or contextlib.ExitStack()
         )
@@ -504,6 +546,16 @@ class StreamingEngine(pl.GPUEngine):
         engine_options = engine_options or {}
         check_reserved_keys(executor_options, engine_options)
 
+        existing_executor_options = self.config.get("executor_options", {})
+        if not isinstance(existing_executor_options, dict):
+            existing_executor_options = {}
+        existing_quent_context = existing_executor_options.get("quent_context")
+        if (
+            "quent_context" in executor_options
+            and executor_options["quent_context"] != existing_quent_context
+        ):
+            raise ValueError("quent_context cannot be changed during reset")
+
         _disallowed_exec = {"num_py_executors"} & executor_options.keys()
         if _disallowed_exec:
             raise ValueError(
@@ -547,12 +599,6 @@ class StreamingEngine(pl.GPUEngine):
         """Exit the context manager, calling :meth:`shutdown`."""
         self.shutdown()
 
-    @property
-    def _quent_events(self) -> list[dict[str, Any]]:
-        """Return all Quent telemetry events collected during the engine's lifecycle."""
-        # Not ready to make this public yet.
-        return [x["event"] for x in self._quent_events_raw]
-
     def _run(self, func: Callable[..., T], *args: Any, **kwargs: Any) -> list[T]:
         """
         Execute a function on all ranks.
@@ -594,8 +640,8 @@ def execute_ir_on_rank(
     stats: StatsCollector,
     collective_id_map: dict[IR, list[int]],
     *,
-    quent_operator_map: dict[IR, cudf_polars.quent._types.Operator] | None = None,
-    local_quent_context: LocalQuentContext | None = None,
+    quent_operator_map: dict[IR, uuid.UUID] | None = None,
+    quent_query_worker_state: QuentQueryWorkerState | None = None,
 ) -> tuple[DataFrame, list[ChannelMetadata]]:
     """
     Execute a Polars IR query on a single rank's GPU.
@@ -625,8 +671,8 @@ def execute_ir_on_rank(
     quent_operator_map
         Mapping from IR nodes to their Quent operators, or ``None`` when tracing
         is disabled.
-    local_quent_context
-        The local Quent context for this rank, or ``None`` when tracing is
+    quent_query_worker_state
+        The Quent query-worker state for this rank, or ``None`` when tracing is
         disabled.
 
     Returns
@@ -649,7 +695,7 @@ def execute_ir_on_rank(
         collective_id_map=collective_id_map,
         metadata_collector=metadata_collector,
         quent_operator_map=quent_operator_map,
-        local_quent_context=local_quent_context,
+        quent_query_worker_state=quent_query_worker_state,
     )
 
     try:
@@ -660,7 +706,7 @@ def execute_ir_on_rank(
             hint = (
                 f"Try lowering `target_partition_size` (current {target_partition_size}) "
                 f"and/or RAPIDSMPF_SPILL_DEVICE_LIMIT (default '80%') to reduce peak memory."
-                f"\nSee https://docs.rapids.ai/api/cudf/stable/cudf_polars/memory_errors/ "
+                f"\nSee https://docs.nvidia.com/cudf/latest/cudf_polars/memory_errors/ "
                 f"for troubleshooting guidance."
                 f"\nOriginal error:\n{mem_error}"
             )
@@ -834,7 +880,7 @@ def evaluate_on_rank(
     config_options: ConfigOptions[StreamingExecutor],
     *,
     collect_metadata: bool = False,
-    local_quent_context: LocalQuentContext | None = None,
+    quent_query_worker_state: QuentQueryWorkerState | None = None,
     query_id: uuid.UUID,
 ) -> tuple[DataFrame, list[ChannelMetadata]]:
     """
@@ -862,8 +908,8 @@ def evaluate_on_rank(
         Executor configuration forwarded from the client.
     collect_metadata
         Whether to collect channel metadata during execution.
-    local_quent_context
-        The local Quent context for this rank, or ``None`` when tracing is
+    quent_query_worker_state
+        The Quent query-worker state for this rank, or ``None`` when tracing is
         disabled.
     query_id
         A unique identifier for the query.
@@ -887,8 +933,8 @@ def evaluate_on_rank(
     # unique per collect.
     logical_plan_id = uuid.uuid5(query_id, str(ir.get_stable_plan_id()))
 
-    physical_op_by_id: dict[str, cudf_polars.quent._types.Operator] | None = None
-    quent_operator_map: dict[IR, cudf_polars.quent._types.Operator] | None = None
+    physical_op_by_id: dict[str, uuid.UUID] | None = None
+    quent_operator_map: dict[IR, uuid.UUID] | None = None
 
     lowering, node_map = lower_ir_graph_with_node_map(
         ir, config_options, stats, rank=comm.rank, nranks=comm.nranks
@@ -898,35 +944,32 @@ def evaluate_on_rank(
     partition_info = lowering.partition_info
     # TODO: figure out if we emit anything about optimized.
     if config_options.executor.quent_context is not None:
-        assert local_quent_context is not None
-        plan, ops, ports, logical_op_by_id = build_plan(
+        assert quent_query_worker_state is not None
+        logical_op_by_id = emit_plan(
+            quent_query_worker_state.runtime.session,
             optimized,
             config_options,
-            query=local_quent_context.query,
+            query_id=quent_query_worker_state.query_id,
             plan_id=logical_plan_id,
-            worker=local_quent_context.worker,
+            worker_id=quent_query_worker_state.runtime.worker_resources.worker_id,
             instance_name="logical",
-            parent_plan=None,
+            parent_plan_id=None,
             parent_operators_by_node_id=None,
+            emit=comm.rank == 0,
         )
-        if comm.rank == 0:
-            local_quent_context.context._emit_plan_declarations(
-                local_quent_context.logger, plan, ops, ports
-            )
 
     if comm.rank == 0:
         log_query_plan(ir, config_options)
 
     if config_options.executor.quent_context is not None:
-        assert local_quent_context is not None
+        assert quent_query_worker_state is not None
         physical_plan_id = uuid.uuid4()
-        physical_op_by_id = local_quent_context.context._emit_physical_plan_events(
-            local_quent_context.logger,
+        physical_op_by_id = quent_query_worker_state.runtime.emit_physical_plan(
+            quent_query_worker_state,
             ir,
             config_options,
             plan_id=physical_plan_id,
-            worker=local_quent_context.worker,
-            parent_plan=plan,
+            parent_plan_id=logical_plan_id,
             node_map=node_map,
             logical_op_by_id=logical_op_by_id,
         )
@@ -941,7 +984,6 @@ def evaluate_on_rank(
             ir,
             ir_context.py_executor,
             stats=stats,
-            remote_only=isinstance(prefetch_file_metadata, Unspecified),
             parse_hybrid_metadata=config_options.parquet_options.use_hybrid_scan,
         )
         attach_cached_parquet_metadata(ir, cached_parquet_info_map)
@@ -957,7 +999,7 @@ def evaluate_on_rank(
             stats,
             collective_id_map,
             quent_operator_map=quent_operator_map,
-            local_quent_context=local_quent_context,
+            quent_query_worker_state=quent_query_worker_state,
         )
 
 

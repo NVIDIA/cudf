@@ -26,6 +26,7 @@
 #include <cub/block/block_scan.cuh>
 #include <cub/device/device_histogram.cuh>
 #include <cuda/atomic>
+#include <cuda/buffer>
 #include <cuda/devices>
 #include <cuda/iterator>
 #include <cuda/stream>
@@ -426,8 +427,11 @@ struct copy_block_partitions_dispatcher {
                                grid_size,
                                stream);
 
-    return std::make_unique<column>(
-      input.type(), input.size(), std::move(output), rmm::device_buffer{}, 0);
+    return std::make_unique<column>(input.type(),
+                                    input.size(),
+                                    std::move(output),
+                                    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                    0);
   }
 
   template <typename DataType, CUDF_ENABLE_IF(not is_copy_block_supported<DataType>())>
@@ -519,7 +523,8 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table_g
                                         upper_level,
                                         num_rows,
                                         stream.get());
-    rmm::device_buffer temp_storage(temp_storage_bytes, stream);
+    cuda::device_buffer<std::byte> temp_storage(
+      stream, cudf::get_current_device_resource_ref(), temp_storage_bytes, cuda::no_init);
     cub::DeviceHistogram::HistogramEven(temp_storage.data(),
                                         temp_storage_bytes,
                                         row_partition_numbers.data(),
@@ -794,7 +799,8 @@ struct dispatch_map_type {
                                         partition_map.size(),
                                         stream.get());
 
-    rmm::device_buffer temp_storage(temp_storage_bytes, stream);
+    cuda::device_buffer<std::byte> temp_storage(
+      stream, cudf::get_current_device_resource_ref(), temp_storage_bytes, cuda::no_init);
 
     cub::DeviceHistogram::HistogramEven(temp_storage.data(),
                                         temp_storage_bytes,

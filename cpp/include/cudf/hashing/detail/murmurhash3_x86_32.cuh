@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2017-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2017-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -49,7 +49,9 @@ template <>
 MurmurHash3_x86_32<bool>::result_type __device__ inline MurmurHash3_x86_32<bool>::operator()(
   bool const& key) const
 {
-  return this->compute(static_cast<uint8_t>(key));
+  // BOOL8 is "0 == false, else true", so canonicalize before hashing: a stored byte of 2 must
+  // hash as 1, not as 2.
+  return this->compute(static_cast<uint8_t>(key ? 1 : 0));
 }
 
 template <>

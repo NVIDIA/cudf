@@ -198,7 +198,7 @@ struct cast_numeric_scalar_fn {
   template <typename ResultType>
   static constexpr bool is_supported()
   {
-    return cudf::is_convertible<InputType, ResultType>::value && cudf::is_numeric<ResultType>();
+    return cuda::std::is_convertible_v<InputType, ResultType> && cudf::is_numeric<ResultType>();
   }
 
  public:

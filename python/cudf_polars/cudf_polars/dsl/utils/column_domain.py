@@ -21,6 +21,7 @@ from cudf_polars.dsl.ir import (
     Slice,
     Sort,
 )
+from cudf_polars.streaming.filter_hint import PushdownFilterHint
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -140,4 +141,12 @@ def _(
     child = node.children[0]
     return {
         name: ColumnBinding(0, name) for name in node.schema if name in child.schema
+    }
+
+
+@column_domain_bindings.register(PushdownFilterHint)
+def _(node: PushdownFilterHint) -> Mapping[str, ColumnBinding]:
+    target = node.children[0]
+    return {
+        name: ColumnBinding(0, name) for name in node.schema if name in target.schema
     }

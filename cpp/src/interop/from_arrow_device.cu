@@ -383,7 +383,7 @@ dispatch_tuple_t dispatch_from_arrow_device::operator()<cudf::list_view>(
   return std::make_tuple<column_view, owned_columns_t>(
     {type,
      num_rows,
-     rmm::device_buffer{0, stream, mr}.data(),
+     nullptr,
      reinterpret_cast<bitmask_type const*>(input->buffers[validity_buffer_idx]),
      null_count,
      offset,

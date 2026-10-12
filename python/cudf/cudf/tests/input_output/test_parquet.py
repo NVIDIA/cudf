@@ -5278,3 +5278,60 @@ def test_read_parquet_snappy_malformed_copy_elem(
 )
 def test_parquet_reader_one_null_row(datadir, filename):
     cudf.read_parquet(datadir / filename)
+
+
+@pytest.mark.parametrize("root_exists", [False, True])
+def test_parquet_dataset_writer_explicit_filesystem(tmp_path, root_exists):
+    """Chunked output must land on the configured filesystem, not local disk."""
+    import fsspec
+
+    fs = fsspec.filesystem("memory")
+    root = f"/{tmp_path.name}/pdw"
+    if root_exists:
+        fs.makedirs(root)
+    df1 = cudf.DataFrame({"a": [1, 1, 2], "b": [9, 8, 7]})
+    df2 = cudf.DataFrame({"a": [2, 3, 3], "b": [6, 5, 4]})
+
+    with ParquetDatasetWriter(
+        root, partition_cols=["a"], index=False, filesystem=fs
+    ) as cw:
+        cw.write_table(df1)
+        cw.write_table(df2)
+
+    written = sorted(fs.find(root))
+    assert written, "no files written to the configured filesystem"
+    # Nothing should have leaked onto the local filesystem
+    assert not os.path.exists(root)
+
+    got = {}
+    for f in written:
+        parent, partition, _ = f.rsplit("/", 2)
+        assert parent == root
+        got.setdefault(partition, []).extend(
+            cudf.read_parquet(f, filesystem=fs)["b"].to_arrow().to_pylist()
+        )
+    got = {k: sorted(v) for k, v in got.items()}
+    assert got == {"a=1": [8, 9], "a=2": [6, 7], "a=3": [4, 5]}
+
+
+def test_parquet_writer_pathlike_explicit_filesystem(tmp_path):
+    import fsspec
+
+    fs = fsspec.filesystem("memory")
+    path = tmp_path / "out.parquet"
+    df = cudf.DataFrame({"a": [1, 2, 3]})
+    df.to_parquet(path, filesystem=fs)
+
+    assert not path.exists()
+    assert_eq(cudf.read_parquet(str(path), filesystem=fs), df)
+
+
+def test_parquet_pyarrow_engine_native_filesystem(tmp_path):
+    from pyarrow import fs as pa_fs
+
+    df = cudf.DataFrame({"a": [1, 2, 3]})
+    df.to_parquet(
+        str(tmp_path), engine="pyarrow", filesystem=pa_fs.LocalFileSystem()
+    )
+
+    assert_eq(cudf.read_parquet(tmp_path), df, check_index_type=False)

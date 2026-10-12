@@ -4,7 +4,7 @@
 
 The scripts under `java/ci/` build the cuDF Java JAR for every Maven classifier the
 same way locally and in CI (GitHub Actions is only a thin wrapper that adds
-artifact upload/download). Each script pulls the RAPIDS `ci-wheel` build image,
+artifact upload/download). Each script pulls the `ci-wheel` build image,
 runs the build in a throwaway container, and writes its output to a host
 directory. No local `docker build` is required, and no GPU is required to build.
 
@@ -118,6 +118,11 @@ runs Steps 1-2 per (CUDA x arch) entry and uploads each classifier subdir as a
 per-entry artifact. The separate `java-gather` job downloads them (with
 `merge-multiple: true`, so all subdirs land in a single parent dir), runs
 Step 3, and uploads the combined `cudf_java_maven_repo` artifact.
+
+The `java-publish` job then hands the assembled repository to
+[`maven-publish.yaml`](https://github.com/rapidsai/shared-workflows/blob/main/.github/workflows/maven-publish.yaml),
+which routes on `rapids-is-release-build`: Maven Central on release tags,
+Sonatype snapshots otherwise.
 
 ### Packaging-aware tests (local)
 

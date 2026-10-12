@@ -97,7 +97,9 @@ std::unique_ptr<cudf::column> synthesize_row_index_column(
   }
 
   return std::make_unique<cudf::column>(
-    std::move(col_data), rmm::device_buffer{0, stream, mr.get_output_mr()}, 0);
+    std::move(col_data),
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr.get_output_mr()),
+    0);
 }
 
 std::unique_ptr<cudf::column> synthesize_source_index_column(
@@ -141,7 +143,9 @@ std::unique_ptr<cudf::column> synthesize_source_index_column(
   }
 
   return std::make_unique<cudf::column>(
-    std::move(col_data), rmm::device_buffer{0, stream, mr.get_output_mr()}, 0);
+    std::move(col_data),
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr.get_output_mr()),
+    0);
 }
 
 std::unique_ptr<cudf::column> synthesize_row_group_index_column(

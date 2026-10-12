@@ -45,6 +45,6 @@ if [ -n "$TESTING_LIB" ] && [ -f "$TESTING_LIB" ] && [ "$RAPIDS_CUDA_VERSION" !=
     # run the stream tests without xdist to ease the burden on the compute-sanitizer checks
     LD_PRELOAD="$TESTING_LIB" PYLIBCUDF_STREAM_TESTING=1 \
         pytest --cache-clear -m "not uses_custom_stream" --ignore="benchmarks" \
-        -p no:xdist --durations=10 --durations-min=10 tests
+        -p no:xdist --durations=50 --durations-min=1 tests
 fi
 pytest --cache-clear --ignore="benchmarks" "$@" tests

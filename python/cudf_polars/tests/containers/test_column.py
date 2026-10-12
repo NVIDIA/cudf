@@ -9,12 +9,13 @@ from typing import TYPE_CHECKING
 import pytest
 
 import polars as pl
+from polars.testing import assert_frame_equal
 
 import pylibcudf as plc
 
 import cudf_polars.containers.column
 import cudf_polars.containers.datatype
-from cudf_polars.containers import Column, DataType
+from cudf_polars.containers import Column, DataFrame, DataType
 from cudf_polars.utils.cuda_stream import get_cuda_stream
 
 if TYPE_CHECKING:
@@ -244,6 +245,34 @@ def test_serialize_cache_miss():
     assert result.dtype == dtype
 
 
+@pytest.mark.parametrize(
+    "pl_dtype, values",
+    [
+        (pl.Enum(["a", "b", "c"]), ["b", None, "a", "c"]),
+        (pl.Enum([str(i) for i in range(300)]), ["1", None, "0", "299"]),
+        (pl.Categorical(), ["b", None, "a", "c"]),
+        (pl.Categorical(pl.Categories("serialize", "ns", pl.UInt8)), ["b", None, "a"]),
+    ],
+    ids=["enum", "enum_uint16", "categorical", "categorical_uint8"],
+)
+def test_categorical_serialize_roundtrip(pl_dtype, values):
+    stream = get_cuda_stream()
+    expected = pl.DataFrame({"a": pl.Series(values, dtype=pl_dtype)})
+    dtype = DataType(pl_dtype)
+    column = Column(
+        plc.Column.from_arrow(expected["a"].to_physical(), stream=stream),
+        name="a",
+        dtype=dtype,
+    )
+    header, frames = column.serialize(stream=stream)
+    cudf_polars.containers.datatype._from_polars.cache_clear()
+    result = Column.deserialize(header, frames, stream=stream)
+
+    assert result.dtype == dtype
+    assert result.obj.type() == dtype.plc_type
+    assert_frame_equal(DataFrame([result], stream=stream).to_polars(), expected)
+
+
 # datetimes return instances of DataType, rather than DataTypeClass
 
 
@@ -283,11 +312,12 @@ def test_serialize_cache_miss():
             pl.Binary(),
             marks=pytest.mark.xfail(reason="Binary is not supported", strict=True),
         ),
-        # These Error
-        pytest.param(
-            pl.Enum(["a", "b"]),
-            marks=pytest.mark.xfail(reason="Enum is not supported", strict=True),
-        ),
+        pl.Enum(["a", "b"]),
+        pl.Enum([]),
+        pl.Categorical(),
+        pl.Categorical("fruit"),
+        pl.Categorical(pl.Categories("x", "ns", pl.UInt16)),
+        pl.Categorical(pl.Categories.random()),
         pl.Array(pl.Int8, shape=(1,)),
     ],
 )

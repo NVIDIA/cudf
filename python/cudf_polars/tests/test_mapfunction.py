@@ -29,11 +29,11 @@ if TYPE_CHECKING:
     from cudf_polars.streaming.dispatch import State
 
 
-def test_explode_multiple_raises(engine: pl.GPUEngine):
+def test_explode_multiple_raises(in_memory_engine):
     df = pl.LazyFrame({"a": [[1, 2], [3, 4]], "b": [[5, 6], [7, 8]]})
     q = df.explode("a", "b")
 
-    assert_ir_translation_raises(q, engine, NotImplementedError)
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 
 
 @pytest.mark.parametrize("column", ["a", "b"])
@@ -51,13 +51,13 @@ def test_explode_single(engine: pl.GPUEngine, column):
 
 
 @pytest.mark.parametrize("mapping", [{"b": "a"}, {"a": "c", "b": "c"}])
-def test_rename_duplicate_raises(engine: pl.GPUEngine, mapping):
+def test_rename_duplicate_raises(in_memory_engine, mapping):
     df = pl.LazyFrame({"a": [1, 2, 3], "b": [3, 4, 5]})
 
     q = df.rename(mapping)
 
     with pytest.raises(pl.exceptions.DuplicateError, match="is duplicate"):
-        assert_ir_translation_raises(q, engine, NotImplementedError)
+        assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 
 
 @pytest.mark.parametrize(

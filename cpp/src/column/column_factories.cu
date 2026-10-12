@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "cudf/utilities/default_stream.hpp"
+
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/fill.hpp>
 #include <cudf/detail/gather.cuh>
@@ -111,7 +113,7 @@ std::unique_ptr<cudf::column> column_from_scalar_dispatch::operator()<cudf::stru
                              std::move(children->release()),
                              is_valid ? 0 : size,
                              is_valid
-                               ? rmm::device_buffer{}
+                               ? cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED)
                                : detail::create_null_mask(size, mask_state::ALL_NULL, stream, mr),
                              stream,
                              mr);

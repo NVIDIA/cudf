@@ -504,8 +504,8 @@ TYPED_TEST(FromArrowHostDeviceTestDecimalsTest, FixedPointTableLargeNulls)
 TEST_F(FromArrowHostDeviceTest, NestedList)
 {
   auto valids = cudf::test::iterators::nulls_at_multiples_of(3);
-  auto col    = cudf::test::lists_column_wrapper<int64_t>(
-    {{{{{1, 2}, valids}, {{3, 4}, valids}, {5}}, {{6}, {{7, 8, 9}, valids}}}, valids});
+  using LCW   = cudf::test::lists_column_wrapper<int64_t>;
+  auto col = LCW({{{{1, 2}, valids}, {{3, 4}, valids}, {5}}, {{6}, {{7, 8, 9}, valids}}}, valids);
   cudf::table_view expected_table_view({col});
 
   nanoarrow::UniqueSchema input_schema;
@@ -577,7 +577,6 @@ TEST_F(FromArrowHostDeviceTest, NestedList)
 }
 
 namespace {
-
 ArrowDeviceArray as_host_device_array(nanoarrow::UniqueArray const& array)
 {
   ArrowDeviceArray input{};
@@ -705,7 +704,11 @@ TEST_F(FromArrowHostDeviceTest, FixedSizeListColumnZeroWidth)
   constexpr cudf::size_type num_rows = 3;
   auto offsets  = cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 0, 0}.release();
   auto child    = cudf::test::fixed_width_column_wrapper<int64_t>{}.release();
-  auto expected = cudf::make_lists_column(num_rows, std::move(offsets), std::move(child), 0, {});
+  auto expected = cudf::make_lists_column(num_rows,
+                                          std::move(offsets),
+                                          std::move(child),
+                                          0,
+                                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   // nanoarrow's schema builder rejects width zero, but ArrowSchemaView accepts it from a
   // foreign producer. Replace a normally constructed fixed-size-list format to exercise it.
@@ -802,9 +805,8 @@ TEST_F(FromArrowHostDeviceTest, StructColumn)
   auto int_col2 =
     cudf::test::fixed_width_column_wrapper<int32_t, int32_t>{{12, 24, 47}, {1, 0, 1}}.release();
   auto bool_col = cudf::test::fixed_width_column_wrapper<bool>{{true, true, false}}.release();
-  auto list_col = cudf::test::lists_column_wrapper<int64_t>(
-                    {{{1, 2}, {3, 4}, {5}}, {{{6}}}, {{7}, {8, 9}}})  // NOLINT
-                    .release();
+  using LCW     = cudf::test::lists_column_wrapper<int64_t>;
+  auto list_col = LCW{{{1, 2}, {3, 4}, {5}}, {{6}}, {{7}, {8, 9}}}.release();
   vector_of_columns cols2;
   cols2.push_back(std::move(str_col2));
   cols2.push_back(std::move(int_col2));
@@ -819,7 +821,8 @@ TEST_F(FromArrowHostDeviceTest, StructColumn)
   cols.push_back(std::move(list_col));
   cols.push_back(std::move(sub_struct_col));
 
-  auto struct_col = cudf::make_structs_column(num_rows, std::move(cols), 0, {});
+  auto struct_col = cudf::make_structs_column(
+    num_rows, std::move(cols), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   cudf::table_view expected_table_view({struct_col->view()});
 
   // Create name metadata

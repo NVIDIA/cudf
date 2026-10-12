@@ -156,8 +156,8 @@ inline __device__ void read_int96_timestamp(auto* s, state_buf* sb, int src_pos,
   nanos |= v.x;
   // Convert from Julian day at noon to UTC seconds
   days = static_cast<int32_t>(v.z);
-  cudf::duration_D d_d{
-    days - 2440588};  // TBD: Should be noon instead of midnight, but this matches pyarrow
+  // TBD: Should be noon instead of midnight, but this matches pyarrow
+  cudf::duration_D d_d{days - julian_day_unix_epoch};
 
   *dst = [&]() {
     switch (s->setup.col.ts_clock_rate) {

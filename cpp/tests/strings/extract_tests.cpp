@@ -306,13 +306,13 @@ TEST_F(StringsExtractTests, ExtractAllTest)
 
   std::array valids{true, true, true, false, false, false, true};
   using LCW = cudf::test::lists_column_wrapper<cudf::string_view>;
-  LCW expected({LCW{"123", "banana", "7", "eleven"},
-                LCW{"41", "apple"},
-                LCW{"6", "péar", "0", "pair"},
-                LCW{},
-                LCW{},
-                LCW{},
-                LCW{"4", "paré"}},
+  LCW expected({{"123", "banana", "7", "eleven"},
+                {"41", "apple"},
+                {"6", "péar", "0", "pair"},
+                {},
+                {},
+                {},
+                {"4", "paré"}},
                valids.data());
   auto prog    = cudf::strings::regex_program::create(pattern);
   auto results = cudf::strings::extract_all_record(sv, *prog);

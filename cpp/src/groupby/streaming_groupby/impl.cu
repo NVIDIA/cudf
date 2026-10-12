@@ -9,27 +9,34 @@
 #include "groupby/hash/hash_compound_agg_finalizer.hpp"
 #include "groupby/hash/output_utils.hpp"
 
+#include <cudf/column/column_stream.hpp>
 #include <cudf/column/column_view.hpp>
 #include <cudf/concatenate.hpp>
 #include <cudf/copying.hpp>
 #include <cudf/detail/aggregation/aggregation.hpp>
 #include <cudf/detail/aggregation/result_cache.hpp>
 #include <cudf/detail/copy.hpp>
-#include <cudf/detail/groupby.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/dictionary/dictionary_column_view.hpp>
+#include <cudf/fixed_point/fixed_point.hpp>
+#include <cudf/null_mask.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
+#include <cudf/utilities/traits.cuh>
 
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/iterator>
 #include <cuda/stream>
 
 #include <algorithm>
+#include <cstddef>
 #include <memory>
 #include <string>
+#include <type_traits>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -37,6 +44,32 @@
 namespace cudf::groupby {
 
 namespace {
+
+// Streaming still uses element_aggregator, whose atomic requirements are independent of the
+// reductions used by ordinary hash groupby.
+struct is_atomic_aggregation_supported {
+  template <typename T, aggregation::Kind K>
+  bool operator()() const
+  {
+    if constexpr (cudf::is_nested<T>()) {
+      return false;
+    } else if constexpr (std::is_same_v<T, numeric::decimal128> && K == aggregation::SUM) {
+      // The existing decimal128 SUM implementation provides its own atomic addition.
+      return true;
+    } else {
+      using Target = cudf::detail::target_type_t<T, K>;
+      constexpr auto uses_storage =
+        cudf::is_fixed_point<T>() &&
+        (K == aggregation::MIN || K == aggregation::MAX || K == aggregation::SUM);
+      using DeviceTarget =
+        std::conditional_t<uses_storage, cudf::device_storage_type_t<Target>, Target>;
+      if constexpr (!std::is_void_v<DeviceTarget>) {
+        return cudf::has_atomic_support<DeviceTarget>();
+      }
+      return false;
+    }
+  }
+};
 
 void validate_requests(host_span<streaming_aggregation_request const> requests)
 {
@@ -125,18 +158,6 @@ void streaming_groupby::impl::initialize(table_view const& data, cuda::stream_re
 
   auto agg_requests = build_aggregation_requests(_requests_clone, data);
 
-  // TODO: streaming aggregation reuses the cudf hash-groupby element_aggregator,
-  // so it inherits the same atomic-support requirement.  In particular, decimal128
-  // MIN/MAX/SUM falls through to CUDF_UNREACHABLE because __int128 is not
-  // lock-free atomic.  Stateless cudf::groupby falls back to sort-based groupby
-  // in that case; streaming has no such fallback.  Until streaming has a
-  // non-atomic aggregator path (or 128-bit atomics gain hardware support), gate
-  // by the same predicate to fail loudly instead of silently producing garbage.
-  CUDF_EXPECTS(detail::hash::can_use_hash_groupby(agg_requests),
-               "streaming_groupby does not support this combination of value type and "
-               "aggregation kind (e.g. decimal128 MIN/MAX/SUM require 128-bit atomics).",
-               std::invalid_argument);
-
   auto [values_view, agg_kinds_hv, agg_objects, is_intermediate, has_compound] =
     detail::hash::extract_single_pass_aggs(agg_requests, stream);
 
@@ -157,8 +178,35 @@ void streaming_groupby::impl::initialize(table_view const& data, cuda::stream_re
                  std::invalid_argument);
   }
 
+  CUDF_EXPECTS(
+    std::all_of(cuda::counting_iterator<size_type>{0},
+                cuda::counting_iterator<size_type>{values_view.num_columns()},
+                [&](auto i) {
+                  auto const& values     = values_view.column(i);
+                  auto const values_type = cudf::is_dictionary(values.type())
+                                             ? cudf::dictionary_column_view(values).keys().type()
+                                             : values.type();
+                  return cudf::detail::dispatch_type_and_aggregation(
+                    values_type, _agg_kinds[i], is_atomic_aggregation_supported{});
+                }),
+    "streaming_groupby does not support this combination of value type and aggregation kind.",
+    std::invalid_argument);
+
   _agg_results = detail::hash::create_results_table(
     _max_distinct_keys, values_view, _agg_kinds, _is_agg_intermediate, stream, mr);
+
+  // Later batches and merged states may introduce groups containing only null values,
+  // even when the first batch has no nulls. Keep direct results nullable so each group
+  // remains null until its first valid input. Counts and intermediates stay non-nullable.
+  for (size_type i = 0; i < _agg_results->num_columns(); ++i) {
+    auto& result = _agg_results->get_column(i);
+    if (!result.nullable() && !_is_agg_intermediate[i] &&
+        _agg_kinds[i] != aggregation::COUNT_VALID && _agg_kinds[i] != aggregation::COUNT_ALL) {
+      result.set_null_mask(
+        cudf::create_null_mask(_max_distinct_keys, mask_state::ALL_NULL, stream, mr),
+        _max_distinct_keys);
+    }
+  }
 
   // Cache the mutable_table_device_view once; the underlying table is fixed-size and
   // never reallocated, so the device-side descriptor stays valid for the whole
@@ -243,7 +291,9 @@ std::unique_ptr<table> streaming_groupby::impl::gather_agg_results(
   // The results we care about are dense in `[0, _distinct_keys)` and can be extracted by
   // slice+copy.
   auto const sliced =
-    cudf::detail::slice(_agg_results->view(), {0, _distinct_keys}, stream).front();
+    cudf::detail::slice(
+      _agg_results->view(), {0, _distinct_keys.load(std::memory_order_relaxed)}, stream)
+      .front();
   return std::make_unique<table>(sliced, stream, mr);
 }
 
@@ -265,14 +315,11 @@ std::unique_ptr<table> streaming_groupby::impl::gather_distinct_keys(
 }
 
 std::pair<std::unique_ptr<table>, std::vector<aggregation_result>>
-streaming_groupby::impl::do_finalize(cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr) const
+streaming_groupby::impl::finalize_gathered(std::unique_ptr<table> keys,
+                                           std::unique_ptr<table> agg_gathered,
+                                           cuda::stream_ref stream,
+                                           cudf::memory_resources mr) const
 {
-  CUDF_EXPECTS(_initialized, "Cannot finalize streaming_groupby with no accumulated data.");
-
-  auto keys         = gather_distinct_keys(stream, mr);
-  auto agg_gathered = gather_agg_results(stream, mr);
-
   // Group user requests by their target column in `agg_gathered` so the cache layout
   // produced by `extract_single_pass_aggs` matches the dedup'd `agg_gathered`.  Uses
   // linear search on a small `group_offsets` vector since the number of distinct
@@ -308,7 +355,7 @@ streaming_groupby::impl::do_finalize(cuda::stream_ref stream,
     // dedupes: skip if (column, kind) is already there from a prior agg in the group.
     for (auto const& req : column_grouped) {
       auto const finalizer =
-        detail::hash::hash_compound_agg_finalizer(req.values, &cache, nullptr, stream, mr);
+        detail::hash::hash_compound_agg_finalizer(req.values, &cache, stream, mr);
       for (auto const& agg : req.aggregations) {
         if (cache.has_result(req.values, *agg)) continue;
         cudf::detail::aggregation_dispatcher(agg->kind, finalizer, *agg);
@@ -328,9 +375,32 @@ streaming_groupby::impl::do_finalize(cuda::stream_ref stream,
     user_requests.push_back(std::move(ar));
   }
 
-  return {std::move(keys),
-          detail::extract_results(
-            std::span<aggregation_request const>{user_requests}, cache, stream, mr)};
+  return {
+    std::move(keys),
+    detail::extract_results(
+      std::span<aggregation_request const>{user_requests}, cache, stream, mr.get_output_mr())};
+}
+
+std::pair<std::unique_ptr<table>, std::vector<aggregation_result>>
+streaming_groupby::impl::do_finalize(cuda::stream_ref stream,
+                                     rmm::device_async_resource_ref mr) const
+{
+  CUDF_EXPECTS(_initialized, "Cannot finalize streaming_groupby with no accumulated data.");
+  return finalize_gathered(
+    gather_distinct_keys(stream, mr), gather_agg_results(stream, mr), stream, mr);
+}
+
+std::pair<std::unique_ptr<table>, std::vector<aggregation_result>>
+streaming_groupby::impl::do_finalize_and_release(cuda::stream_ref stream, cudf::memory_resources mr)
+{
+  auto keys = gather_distinct_keys(stream, mr.get_output_mr());
+  _compacted_batches.clear();
+  _empty_key_schema.reset();
+
+  auto agg_gathered = gather_agg_results(stream, mr.get_output_mr());
+  _agg_results.reset();
+
+  return finalize_gathered(std::move(keys), std::move(agg_gathered), stream, mr);
 }
 
 streaming_groupby::impl::batch_insert_result streaming_groupby::impl::probe_and_insert(
@@ -364,21 +434,59 @@ streaming_groupby& streaming_groupby::operator=(streaming_groupby&&) noexcept = 
 // The public API wrappers in streaming_groupby.cpp call these.
 void streaming_groupby::do_aggregate(table_view const& data, cuda::stream_ref stream)
 {
+  CUDF_EXPECTS(_impl != nullptr, "streaming_groupby has been consumed or moved from.");
   _impl->do_aggregate(data, stream);
 }
 
 void streaming_groupby::do_merge(streaming_groupby const& other, cuda::stream_ref stream)
 {
+  CUDF_EXPECTS(_impl != nullptr && other._impl != nullptr,
+               "streaming_groupby has been consumed or moved from.");
   _impl->do_merge(*other._impl, stream);
 }
 
 std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> streaming_groupby::do_finalize(
   cuda::stream_ref stream, rmm::device_async_resource_ref mr) const
 {
+  CUDF_EXPECTS(_impl != nullptr, "streaming_groupby has been consumed or moved from.");
   return _impl->do_finalize(stream, mr);
 }
 
-size_type streaming_groupby::distinct_keys() const noexcept { return _impl->_distinct_keys; }
+std::pair<std::unique_ptr<table>, std::vector<aggregation_result>>
+streaming_groupby::do_finalize_and_release(cuda::stream_ref stream, cudf::memory_resources mr)
+{
+  CUDF_EXPECTS(_impl != nullptr, "streaming_groupby has been consumed or moved from.");
+  CUDF_EXPECTS(_impl->_initialized, "Cannot finalize streaming_groupby with no accumulated data.");
+  // The caller must order all prior uses before stream. Wait for those uses
+  // before destroying lookup structures on their original allocation streams.
+  stream.sync();
+  auto state = std::move(_impl);
+  state->_key_set.reset();
+  state->_key_loc.reset();
+  state->_preprocessed_batches.clear();
+  // Finalization reads these columns asynchronously. Rebind before enqueueing any
+  // copies so destruction is stream-ordered even if finalization throws.
+  auto rebind_table = [stream](std::unique_ptr<table>& source) {
+    if (!source) return;
+    auto columns = source->release();
+    for (auto& col : columns) {
+      col = cudf::rebind_stream(std::move(*col), stream);
+    }
+    source = std::make_unique<table>(std::move(columns));
+  };
+  for (auto& batch : state->_compacted_batches) {
+    rebind_table(batch);
+  }
+  rebind_table(state->_empty_key_schema);
+  rebind_table(state->_agg_results);
+
+  return state->do_finalize_and_release(stream, mr);
+}
+
+size_type streaming_groupby::distinct_keys() const noexcept
+{
+  return _impl ? _impl->_distinct_keys.load(std::memory_order_relaxed) : 0;
+}
 
 bool is_streaming_groupby_supported(data_type values_type, aggregation::Kind kind)
 {
@@ -399,8 +507,8 @@ bool is_streaming_groupby_supported(data_type values_type, aggregation::Kind kin
       break;
     default: return false;
   }
-  // decimal128 SUM/MIN/MAX needs 128-bit atomics, which aren't supported.
-  if ((kind == aggregation::SUM || kind == aggregation::MIN || kind == aggregation::MAX) &&
+  // DECIMAL128 SUM uses 128-bit atomic addition, but MIN/MAX still lack atomic support.
+  if ((kind == aggregation::MIN || kind == aggregation::MAX) &&
       values_type.id() == type_id::DECIMAL128) {
     return false;
   }

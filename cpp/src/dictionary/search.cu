@@ -16,6 +16,7 @@
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <cub/device/device_find.cuh>
+#include <cuda/buffer>
 #include <cuda/stream>
 
 namespace cudf {
@@ -60,7 +61,8 @@ struct find_index_fn {
     auto tmp_size = std::size_t{0};
     CUDF_CUDA_TRY(cub::DeviceFind::FindIf(
       nullptr, tmp_size, keys, result->data(), find_fn, num_keys, stream.get()));
-    auto tmp = rmm::device_buffer(tmp_size, stream);
+    auto tmp = cuda::device_buffer<std::byte>(
+      stream, cudf::get_current_device_resource_ref(), tmp_size, cuda::no_init);
     CUDF_CUDA_TRY(cub::DeviceFind::FindIf(
       tmp.data(), tmp_size, keys, result->data(), find_fn, num_keys, stream.get()));
     if (result->value(stream) == num_keys) { result->set_valid_async(false, stream); }

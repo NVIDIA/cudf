@@ -562,7 +562,11 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
         }));
     return cudf::strings::detail::make_strings_column(it, it + string_count, stream, mr);
   } else {
-    return cudf::make_strings_column(string_count, std::move(offsets), chars.release(), 0, {});
+    return cudf::make_strings_column(string_count,
+                                     std::move(offsets),
+                                     chars.release(),
+                                     0,
+                                     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }
 }
 

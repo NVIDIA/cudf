@@ -40,6 +40,30 @@ _TIMESTAMP_TO_DURATION = {
 }
 
 
+def _find_tzif_dir(zone: str | None) -> str | None:
+    if zone is None or zone == "UTC":
+        return None
+    tzif_dir = next(
+        (
+            search_path
+            for search_path in zoneinfo.TZPATH
+            if (Path(search_path) / zone).is_file()
+        ),
+        None,
+    )
+    if tzif_dir is None:
+        raise NotImplementedError(
+            f"Time zone {zone!r} not found in system time zone data (zoneinfo.TZPATH)"
+        )
+    return tzif_dir
+
+
+def _get_tz_desc(zone: str | None) -> tuple[str, str] | None:
+    """Locate the TZif data needed to convert timestamps to or from ``zone``."""
+    tzif_dir = _find_tzif_dir(zone)
+    return None if zone is None or tzif_dir is None else (zone, tzif_dir)
+
+
 def _tz_transition_columns(
     zone_name: str, tzif_dir: str, stream: Stream
 ) -> tuple[plc.Column, plc.Column] | None:
@@ -516,7 +540,7 @@ class TemporalFunction(Expr):
                 raise ValueError("TemporalFunction required")
             return getattr(cls, name)
 
-    __slots__ = ("ambiguous_scalar", "name", "options", "tzif_dirs")
+    __slots__ = ("ambiguous_scalar", "name", "options", "tz_descs")
     _non_child = ("dtype", "name", "options")
     _COMPONENT_MAP: ClassVar[dict[Name, plc.datetime.DatetimeComponent]] = {
         Name.Year: plc.datetime.DatetimeComponent.YEAR,
@@ -570,6 +594,7 @@ class TemporalFunction(Expr):
         Name.CastTimeUnit,
         Name.Truncate,
         Name.Date,
+        Name.Time,
         Name.DaysInMonth,
         Name.Quarter,
         Name.ConvertTimeZone,
@@ -591,7 +616,10 @@ class TemporalFunction(Expr):
         self.children = children
         self.is_pointwise = True
         self.ambiguous_scalar = None
-        self.tzif_dirs: tuple[str | None, str | None] = (None, None)
+        self.tz_descs: tuple[tuple[str, str] | None, tuple[str, str] | None] = (
+            None,
+            None,
+        )
         if self.name not in self._valid_ops:
             raise NotImplementedError(f"Temporal function {self.name}")
         if self.name is TemporalFunction.Name.ToString and plc.traits.is_duration(
@@ -622,28 +650,13 @@ class TemporalFunction(Expr):
             from_zone = cast(
                 "pl.Datetime", self.children[0].dtype.polars_type
             ).time_zone
-            to_zone = self.options[0]
-            tzif_dirs: list[str | None] = []
-            for zone in (from_zone, to_zone):
-                if zone is None or zone == "UTC":
-                    # Normalize to not needing a tzif_dir lookup.
-                    tzif_dirs.append(None)
-                    continue
-                tzif_dir = next(
-                    (
-                        search_path
-                        for search_path in zoneinfo.TZPATH
-                        if (Path(search_path) / zone).is_file()
-                    ),
-                    None,
-                )
-                if tzif_dir is None:
-                    raise NotImplementedError(
-                        f"Time zone {zone!r} not found in system time zone data "
-                        "(zoneinfo.TZPATH)"
-                    )
-                tzif_dirs.append(tzif_dir)
-            self.tzif_dirs = (tzif_dirs[0], tzif_dirs[1])
+            self.tz_descs = (_get_tz_desc(from_zone), _get_tz_desc(self.options[0]))
+        elif self.name is TemporalFunction.Name.Time:
+            child_dtype = self.children[0].dtype.polars_type
+            if isinstance(child_dtype, pl.Datetime):
+                self.tz_descs = (_get_tz_desc(child_dtype.time_zone), None)
+            elif not isinstance(child_dtype, pl.Time):
+                raise NotImplementedError(f"dt.time on {child_dtype} input")
         elif self.name in {
             TemporalFunction.Name.Truncate,
             TemporalFunction.Name.Round,
@@ -672,20 +685,12 @@ class TemporalFunction(Expr):
             )
         if self.name is TemporalFunction.Name.ReplaceTimeZone:
             column, ambiguous = columns
-            from_zone = cast(
-                "pl.Datetime", self.children[0].dtype.polars_type
-            ).time_zone
-            to_zone = self.options[0]
             non_existent = self.options[1]
-            from_dir, to_dir = self.tzif_dirs
-            from_zone_desc = (
-                (from_zone, from_dir)
-                if from_zone is not None and from_dir is not None
-                else None
-            )
+            from_desc, to_desc = self.tz_descs
             stream = df.stream
-            same_zone = from_zone == to_zone or (from_dir is None and to_dir is None)
-            if same_zone and (from_dir is None or self.ambiguous_scalar == "raise"):
+            if from_desc == to_desc and (
+                from_desc is None or self.ambiguous_scalar == "raise"
+            ):
                 return Column(
                     column.obj,
                     dtype=self.dtype,
@@ -694,8 +699,8 @@ class TemporalFunction(Expr):
                     null_order=column.null_order,
                     name=column.name,
                 )
-            local = _local_wall_clock(column.obj, from_zone_desc, stream)
-            if to_dir is None:
+            local = _local_wall_clock(column.obj, from_desc, stream)
+            if to_desc is None:
                 return Column(
                     _apply_ambiguous_without_transitions(
                         local, self.ambiguous_scalar, ambiguous.obj, stream
@@ -705,12 +710,43 @@ class TemporalFunction(Expr):
             return Column(
                 _localize(
                     local,
-                    to_zone,
-                    to_dir,
+                    *to_desc,
                     self.ambiguous_scalar,
                     ambiguous.obj,
                     non_existent,
                     stream,
+                ),
+                dtype=self.dtype,
+            )
+        if self.name is TemporalFunction.Name.Time:
+            (column,) = columns
+            if isinstance(column.dtype.polars_type, pl.Time):
+                return column
+            stream = df.stream
+            obj = _local_wall_clock(column.obj, self.tz_descs[0], stream)
+            day_start = plc.datetime.floor_datetimes(
+                obj, plc.datetime.RoundingFrequency.DAY, stream=stream
+            )
+            time_of_day = plc.unary.cast(
+                plc.binaryop.binary_operation(
+                    obj,
+                    day_start,
+                    plc.binaryop.BinaryOperator.SUB,
+                    plc.DataType(_TIMESTAMP_TO_DURATION[obj.type().id()]),
+                    stream=stream,
+                ),
+                plc.DataType(plc.TypeId.DURATION_NANOSECONDS),
+                stream=stream,
+            )
+            return Column(
+                plc.Column(
+                    self.dtype.plc_type,
+                    time_of_day.size(),
+                    time_of_day.data(),
+                    time_of_day.null_mask(),
+                    time_of_day.null_count(),
+                    time_of_day.offset(),
+                    time_of_day.children(),
                 ),
                 dtype=self.dtype,
             )
@@ -894,36 +930,43 @@ class TemporalFunction(Expr):
                 stream=df.stream,
             )
             return Column(result, dtype=self.dtype)
-        elif self.name is TemporalFunction.Name.MonthStart:
+        elif self.name in {
+            TemporalFunction.Name.MonthStart,
+            TemporalFunction.Name.MonthEnd,
+        }:
             (column,) = columns
-            ends = plc.datetime.last_day_of_month(column.obj, stream=df.stream)
-            days_to_subtract = plc.datetime.days_in_month(column.obj, stream=df.stream)
-            # must subtract 1 to avoid rolling over to the previous month
-            days_to_subtract = plc.binaryop.binary_operation(
-                days_to_subtract,
-                plc.Scalar.from_py(1, plc.DataType(plc.TypeId.INT32), stream=df.stream),
-                plc.binaryop.BinaryOperator.SUB,
-                plc.DataType(plc.TypeId.DURATION_DAYS),
-                stream=df.stream,
+            # Shift by a whole number of days so the time of day is kept
+            day = plc.datetime.extract_datetime_component(
+                column.obj, plc.datetime.DatetimeComponent.DAY, stream=df.stream
             )
+            if self.name is TemporalFunction.Name.MonthStart:
+                # day - 1 days back to the first of the month
+                days_to_shift = plc.binaryop.binary_operation(
+                    plc.Scalar.from_py(
+                        1, plc.DataType(plc.TypeId.INT32), stream=df.stream
+                    ),
+                    day,
+                    plc.binaryop.BinaryOperator.SUB,
+                    plc.DataType(plc.TypeId.DURATION_DAYS),
+                    stream=df.stream,
+                )
+            else:
+                # days_in_month - day days forward to the last of the month
+                days_to_shift = plc.binaryop.binary_operation(
+                    plc.datetime.days_in_month(column.obj, stream=df.stream),
+                    day,
+                    plc.binaryop.BinaryOperator.SUB,
+                    plc.DataType(plc.TypeId.DURATION_DAYS),
+                    stream=df.stream,
+                )
             result = plc.binaryop.binary_operation(
-                ends,
-                days_to_subtract,
-                plc.binaryop.BinaryOperator.SUB,
+                column.obj,
+                days_to_shift,
+                plc.binaryop.BinaryOperator.ADD,
                 self.dtype.plc_type,
                 stream=df.stream,
             )
             return Column(result, dtype=self.dtype)
-        elif self.name is TemporalFunction.Name.MonthEnd:
-            (column,) = columns
-            return Column(
-                plc.unary.cast(
-                    plc.datetime.last_day_of_month(column.obj, stream=df.stream),
-                    self.dtype.plc_type,
-                    stream=df.stream,
-                ),
-                dtype=self.dtype,
-            )
         elif self.name is TemporalFunction.Name.IsLeapYear:
             (column,) = columns
             return Column(

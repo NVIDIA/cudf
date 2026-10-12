@@ -319,6 +319,30 @@ def test_datetime_month_end(engine: pl.GPUEngine, dtype):
     assert_gpu_result_equal(q, engine=engine)
 
 
+@pytest.mark.parametrize("time_unit", ["ms", "us", "ns"])
+@pytest.mark.parametrize("time_zone", [None, "UTC"])
+@pytest.mark.parametrize("func", ["month_start", "month_end"])
+def test_datetime_month_start_end_keeps_time(
+    engine: pl.GPUEngine, time_unit, time_zone, func
+):
+    data = pl.LazyFrame(
+        {
+            "datetimes": pl.Series(
+                [
+                    datetime.datetime(2024, 1, 31, 13, 5, 7, 123456),
+                    datetime.datetime(2024, 2, 1, 23, 59, 59, 999999),
+                    datetime.datetime(2023, 2, 15, 6, 30),
+                    datetime.datetime(1969, 12, 31, 23, 0, 0, 1),
+                    None,
+                ],
+                dtype=pl.Datetime(time_unit),
+            ).dt.replace_time_zone(time_zone)
+        }
+    )
+    q = data.select(getattr(pl.col("datetimes").dt, func)())
+    assert_gpu_result_equal(q, engine=engine)
+
+
 @pytest.mark.parametrize(
     "data",
     [
@@ -665,3 +689,189 @@ def test_integer_from_datetime(engine: pl.GPUEngine, datetime_dtype, integer_dty
     df = pl.LazyFrame({"data": pl.Series(values, dtype=datetime_dtype)})
     q = df.select(pl.col("data").cast(integer_dtype).alias("int_from_datetime"))
     assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("time_unit", ["ms", "us", "ns"])
+def test_datetime_time(engine: pl.GPUEngine, time_unit):
+    ldf = pl.LazyFrame(
+        {
+            "a": pl.Series(
+                [
+                    datetime.datetime(2024, 3, 10, 12, 34, 56, 789123),
+                    datetime.datetime(1970, 1, 1, 0, 0, 0),
+                    datetime.datetime(1969, 12, 31, 23, 59, 59, 999999),
+                    datetime.datetime(1900, 6, 15, 6, 30, 0, 1),
+                    datetime.datetime(2020, 1, 1, 23, 59, 59, 999999),
+                    None,
+                ],
+                dtype=pl.Datetime(time_unit),
+            )
+        }
+    )
+    assert_gpu_result_equal(ldf.select(pl.col("a").dt.time()), engine=engine)
+
+
+@pytest.mark.parametrize("time_unit", ["ms", "us", "ns"])
+def test_datetime_time_from_integers(engine: pl.GPUEngine, time_unit):
+    ldf = pl.LazyFrame(
+        {
+            "a": pl.Series(
+                [-1, 0, 1, -86_400_001, 1_234_567_890_123, None], dtype=pl.Int64
+            ).cast(pl.Datetime(time_unit))
+        }
+    )
+    assert_gpu_result_equal(ldf.select(pl.col("a").dt.time()), engine=engine)
+
+
+@pytest.mark.parametrize(
+    "make_query",
+    [
+        pytest.param(
+            lambda lf: lf.with_columns(t=pl.col("a").dt.time()), id="with_columns"
+        ),
+        pytest.param(
+            lambda lf: lf.with_columns(t=pl.col("a").dt.time()).select(
+                pl.col("t").alias("u"), "b"
+            ),
+            id="alias",
+        ),
+        pytest.param(
+            lambda lf: lf.with_columns(t=pl.col("a").dt.time()).rename({"t": "u"}),
+            id="rename",
+        ),
+        pytest.param(
+            lambda lf: lf.with_columns(t=pl.col("a").dt.time()).filter(pl.col("b") > 1),
+            id="filter",
+        ),
+        pytest.param(
+            lambda lf: lf.with_columns(t=pl.col("a").dt.time()).sort(
+                "b", descending=True
+            ),
+            id="sort_other_key",
+        ),
+        pytest.param(
+            lambda lf: lf.with_columns(t=pl.col("a").dt.time()).slice(1, 2),
+            id="slice",
+        ),
+        pytest.param(
+            lambda lf: lf.with_columns(t=pl.col("a").dt.time()).join(
+                pl.LazyFrame({"b": [1, 2, 4], "c": [10, 20, 40]}), on="b"
+            ),
+            id="join",
+        ),
+        pytest.param(
+            lambda lf: pl.concat(
+                [lf.select(t=pl.col("a").dt.time()), lf.select(t=pl.col("a").dt.time())]
+            ),
+            id="concat",
+        ),
+        pytest.param(
+            lambda lf: pl.concat(
+                [lf.select(t=pl.col("a").dt.time()), lf.select(pl.col("b"))],
+                how="horizontal",
+            ),
+            id="hconcat",
+        ),
+        pytest.param(
+            lambda lf: lf.select(pl.col("a").dt.time().dt.time()), id="time_of_time"
+        ),
+        pytest.param(
+            lambda lf: lf.with_columns(t=pl.col("a").dt.time()).select(
+                pl.col("t").dt.time()
+            ),
+            id="time_of_time_column",
+        ),
+    ],
+)
+def test_datetime_time_passthrough(engine: pl.GPUEngine, make_query):
+    ldf = pl.LazyFrame(
+        {
+            "a": pl.Series(
+                [
+                    datetime.datetime(2024, 1, 1, 1, 2, 3),
+                    datetime.datetime(2024, 1, 2, 4, 5, 6),
+                    None,
+                    datetime.datetime(1960, 5, 5, 23, 0, 0),
+                ],
+                dtype=pl.Datetime("us"),
+            ),
+            "b": [1, 2, 3, 4],
+        }
+    )
+    q = make_query(ldf)
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
+@pytest.mark.parametrize(
+    "make_query",
+    [
+        pytest.param(
+            lambda lf: pl.LazyFrame({"t": [datetime.time(1, 2, 3), None]}).select("t"),
+            id="scan",
+        ),
+        pytest.param(
+            lambda lf: pl.LazyFrame({"t": [datetime.time(1, 2, 3), None]}).select(
+                pl.col("t").dt.time()
+            ),
+            id="time_input",
+        ),
+        pytest.param(
+            lambda lf: lf.select(pl.lit(datetime.time(1, 2, 3))), id="literal"
+        ),
+        pytest.param(lambda lf: lf.select(pl.col("b").cast(pl.Time)), id="cast"),
+        pytest.param(
+            lambda lf: lf.select(pl.col("a").dt.time().dt.hour()), id="consume"
+        ),
+        pytest.param(
+            lambda lf: lf.filter(pl.col("a").dt.time().dt.time() > datetime.time(6)),
+            id="compare_time_of_time",
+        ),
+        pytest.param(
+            lambda lf: lf.with_columns(t=pl.col("a").dt.time()).filter(
+                pl.col("t") > datetime.time(6)
+            ),
+            id="compare",
+        ),
+        pytest.param(
+            lambda lf: lf.with_columns(t=pl.col("a").dt.time()).sort("t"),
+            id="sort_key",
+        ),
+        pytest.param(lambda lf: lf.sort(pl.col("a").dt.time()), id="sort_key_expr"),
+        pytest.param(
+            lambda lf: lf.group_by(pl.col("a").dt.time()).agg(pl.col("b").sum()),
+            id="group_by_key",
+        ),
+        pytest.param(
+            lambda lf: (
+                lf.with_columns(t=pl.col("a").dt.time())
+                .group_by("b")
+                .agg(pl.col("t").first())
+            ),
+            id="agg",
+        ),
+        pytest.param(
+            lambda lf: lf.with_columns(t=pl.col("a").dt.time()).unique(),
+            id="unique",
+        ),
+        pytest.param(
+            lambda lf: lf.select(pl.struct(pl.col("a").dt.time())), id="struct"
+        ),
+        pytest.param(
+            lambda lf: lf.with_columns(t=pl.col("a").dt.time()).join(
+                lf.with_columns(t=pl.col("a").dt.time()), on="t"
+            ),
+            id="join_key",
+        ),
+    ],
+)
+def test_datetime_time_unsupported(engine: pl.GPUEngine, make_query):
+    ldf = pl.LazyFrame(
+        {
+            "a": pl.Series(
+                [datetime.datetime(2024, 1, 1, 12), None], dtype=pl.Datetime("us")
+            ),
+            "b": [1, 2],
+        }
+    )
+    q = make_query(ldf)
+    assert_ir_translation_raises(q, engine, NotImplementedError)

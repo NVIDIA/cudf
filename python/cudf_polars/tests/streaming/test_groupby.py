@@ -12,6 +12,7 @@ from unittest.mock import patch
 import pytest
 
 import polars as pl
+from polars.testing import assert_frame_equal
 
 import pylibcudf as plc
 from cudf_streaming.channel_metadata import OrderScheme
@@ -142,7 +143,7 @@ def test_groupby_adjusts_truncated_ordering_with_maintain_order(
     """GroupBy can adjust an ordered prefix without tree-reducing."""
     engine = spmd_engine_factory(
         StreamingOptions(
-            target_partition_size=1,
+            target_partition_size=64,
             max_rows_per_partition=8,
             fallback_mode="raise",
             raise_on_fail=True,
@@ -150,9 +151,11 @@ def test_groupby_adjusts_truncated_ordering_with_maintain_order(
     )
     df = pl.LazyFrame(
         {
-            "DateTime": [i * 250 for i in range(128)],
-            "RIC": ["a", "b", "a", "b"] * 32,
-            "value": range(128),
+            # Four partitions are enough to exercise truncated ordering across
+            # partition boundaries. More just repeats the same SPMD work.
+            "DateTime": [i * 250 for i in range(32)],
+            "RIC": ["a", "b", "a", "b"] * 8,
+            "value": range(32),
         }
     )
     q = (
@@ -167,13 +170,12 @@ def test_groupby_adjusts_truncated_ordering_with_maintain_order(
         .group_by("ts_bucket", "RIC", maintain_order=True)
         .agg(pl.col("value").sum())
     )
-    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
-
+    expected = q.collect()
     ir = Translator(q._ldf.visit(), engine).translate_ir()
-
-    metadata_collector = evaluate_logical_plan(
+    result, metadata_collector = evaluate_logical_plan(
         ir, ConfigOptions.from_polars_engine(engine), collect_metadata=True
-    )[1]
+    )
+    assert_frame_equal(result, expected, check_row_order=False)
 
     assert metadata_collector is not None
     assert len(metadata_collector) == 1

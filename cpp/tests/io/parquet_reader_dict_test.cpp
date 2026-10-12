@@ -96,8 +96,11 @@ std::unique_ptr<cudf::column> make_low_cardinality_lists_of_strings()
   auto offsets_col =
     cudf::test::fixed_width_column_wrapper<int32_t>(offsets.begin(), offsets.end()).release();
 
-  return cudf::make_lists_column(
-    num_rows, std::move(offsets_col), child.release(), 0, rmm::device_buffer{});
+  return cudf::make_lists_column(num_rows,
+                                 std::move(offsets_col),
+                                 child.release(),
+                                 0,
+                                 cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }
 
 void write_parquet(cudf::table_view const& input, std::string const& filepath)

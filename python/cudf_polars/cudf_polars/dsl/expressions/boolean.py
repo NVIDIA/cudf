@@ -560,14 +560,13 @@ class BooleanFunction(Expr):
                     ),
                     dtype=self.dtype,
                 )
-            return Column(
-                plc.Column.from_scalar(
-                    plc.Scalar.from_py(py_val=False, stream=df.stream),
-                    needles.size,
-                    stream=df.stream,
-                ),
-                dtype=self.dtype,
+            base = plc.Column.from_scalar(
+                plc.Scalar.from_py(py_val=False, stream=df.stream),
+                needles.size,
+                stream=df.stream,
             )
+            out = base.with_mask(needles.obj.null_mask(), needles.null_count)
+            return Column(out, dtype=self.dtype)
         elif self.name is BooleanFunction.Name.IsSorted:
             (column,) = columns
             (descending, nulls_last) = self.options

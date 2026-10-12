@@ -15,6 +15,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_radix_sort.cuh>
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/stream>
 #include <thrust/sequence.h>
@@ -83,13 +84,15 @@ struct sorted_order_radix_fn {
     if (ascending) {
       cub::DeviceRadixSort::SortPairs(
         nullptr, tmp_bytes, d_in, d_out, dv_in, dv_out, n, 0, end_bit, sv);
-      auto tmp_stg = rmm::device_buffer(tmp_bytes, stream);
+      auto tmp_stg = cuda::device_buffer<std::byte>(
+        stream, cudf::get_current_device_resource_ref(), tmp_bytes, cuda::no_init);
       cub::DeviceRadixSort::SortPairs(
         tmp_stg.data(), tmp_bytes, d_in, d_out, dv_in, dv_out, n, 0, end_bit, sv);
     } else {
       cub::DeviceRadixSort::SortPairsDescending(
         nullptr, tmp_bytes, d_in, d_out, dv_in, dv_out, n, 0, end_bit, sv);
-      auto tmp_stg = rmm::device_buffer(tmp_bytes, stream);
+      auto tmp_stg = cuda::device_buffer<std::byte>(
+        stream, cudf::get_current_device_resource_ref(), tmp_bytes, cuda::no_init);
       cub::DeviceRadixSort::SortPairsDescending(
         tmp_stg.data(), tmp_bytes, d_in, d_out, dv_in, dv_out, n, 0, end_bit, sv);
     }
@@ -124,13 +127,15 @@ struct sorted_order_radix_fn {
     if (ascending) {
       cub::DeviceRadixSort::SortPairs(
         nullptr, tmp_bytes, d_in, d_out, dv_in, dv_out, n, decomposer, 0, end_bit, sv);
-      auto tmp_stg = rmm::device_buffer(tmp_bytes, stream);
+      auto tmp_stg = cuda::device_buffer<std::byte>(
+        stream, cudf::get_current_device_resource_ref(), tmp_bytes, cuda::no_init);
       cub::DeviceRadixSort::SortPairs(
         tmp_stg.data(), tmp_bytes, d_in, d_out, dv_in, dv_out, n, decomposer, 0, end_bit, sv);
     } else {
       cub::DeviceRadixSort::SortPairsDescending(
         nullptr, tmp_bytes, d_in, d_out, dv_in, dv_out, n, decomposer, 0, end_bit, sv);
-      auto tmp_stg = rmm::device_buffer(tmp_bytes, stream);
+      auto tmp_stg = cuda::device_buffer<std::byte>(
+        stream, cudf::get_current_device_resource_ref(), tmp_bytes, cuda::no_init);
       cub::DeviceRadixSort::SortPairsDescending(
         tmp_stg.data(), tmp_bytes, d_in, d_out, dv_in, dv_out, n, decomposer, 0, end_bit, sv);
     }

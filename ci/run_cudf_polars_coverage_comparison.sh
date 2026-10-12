@@ -36,9 +36,8 @@ POLARS_DIR="${polars_dir}" COVERAGE_FILE="${output_dir}/.coverage.upstream" \
 COVERAGE_FILE="${output_dir}/.coverage.upstream" \
     python -m coverage combine --keep "${output_dir}"
 
-# Capture the no-fallback subset separately from the broad compatibility data.
-# The broad runner includes this subset, but its combined coverage cannot prove
-# that a local test is covered without fallback.
+# Keep strict-policy coverage separate for review. Listed fallback exceptions
+# still run on the CPU, so this file alone cannot establish GPU coverage.
 (
     cd "${polars_dir}"
     COVERAGE_FILE="${strict_data}" python -m pytest \

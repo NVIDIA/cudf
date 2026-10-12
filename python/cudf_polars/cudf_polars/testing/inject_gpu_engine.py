@@ -138,11 +138,6 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=1,
         help="Total number of cudf-polars test shards.",
     )
-    group.addoption(
-        "--inject-gpu-engine-require-use",
-        action="store_true",
-        help="Fail a passing test that does not invoke the injected GPU engine.",
-    )
 
 
 def _sha256_hash(value: str) -> int:
@@ -247,17 +242,13 @@ def pytest_configure(config: pytest.Config) -> None:
         self: polars.LazyFrame, *args: Any, **kwargs: Any
     ) -> Any:
         nodeid = getattr(config, "_inject_gpu_engine_nodeid", None)
-        selected_engine = kwargs.setdefault(
+        kwargs.setdefault(
             "engine", fallback_engine if nodeid in _fallbacks_for(config) else engine
         )
-        if selected_engine is engine:
-            _set_config_attr(config, "_inject_gpu_engine_used", value=True)
         return collect(self, *args, **kwargs)
 
     polars.LazyFrame.collect = collect_with_injected_engine  # type: ignore[method-assign]
     _set_config_attr(config, "_inject_gpu_engine", value=engine)
-    _set_config_attr(config, "_inject_gpu_fallback_engine", value=fallback_engine)
-    _set_config_attr(config, "_inject_gpu_engine_used", value=False)
     _verify_collect_patch(engine, collect_with_injected_engine)
 
     post_opt_callback = polars.GPUEngine._post_opt_callback
@@ -411,8 +402,6 @@ def pytest_runtest_setup(item: pytest.Item) -> Generator[None, None, None]:
     """Select the engine before fixtures can execute lazy queries."""
     config = item.config
     _set_config_attr(config, "_inject_gpu_engine_nodeid", value=item.nodeid)
-    _set_config_attr(config, "_inject_gpu_engine_used", value=False)
-    fallback_used.set(False)
     yield
 
 

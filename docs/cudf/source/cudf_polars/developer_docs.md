@@ -604,6 +604,22 @@ The command exits nonzero for drift or incomplete evidence. Review the diff
 before committing a replacement. New Polars versions require full discovery
 and matching list entries before selected PR runs can use them.
 
+### Initial behavioral review candidates
+
+These pairs are starting points for review, not approved test removals. Recheck
+the upstream assertions and execution diagnostics on the current versions
+before acting on them.
+
+| Local test | Upstream lazy counterpart | Public contract to compare |
+| --- | --- | --- |
+| `tests/test_hconcat.py::test_hconcat` | `tests/unit/functions/test_concat.py::test_concat_lazyframe_horizontal` | Horizontal concatenation of equal-height inputs, including the local computed-column variant |
+| `tests/test_hconcat.py::test_hconcat_different_heights` | `tests/unit/functions/test_concat.py::test_concat_lazyframe_horizontal` | Null padding for unequal-height inputs |
+| `tests/test_join.py::test_join_where` | `tests/unit/lazyframe/test_lazyframe.py::test_join_where` | Non-equi joins with multiple predicates and unordered result comparison |
+
+Keep strict-height error cases and tests that construct cudf-polars IR directly
+unless equivalent GPU error-path or internal-contract coverage is demonstrated.
+Eager-only upstream counterparts cannot establish cudf-polars GPU coverage.
+
 # Debugging
 
 If the callback execution fails during the polars `collect` call, we

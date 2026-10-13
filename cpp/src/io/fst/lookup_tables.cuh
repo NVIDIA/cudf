@@ -9,8 +9,11 @@
 #include "io/utilities/hostdevice_vector.hpp"
 
 #include <cudf/types.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
-#include <cub/cub.cuh>
+#include <cub/util_arch.cuh>
+#include <cub/util_type.cuh>
+#include <cuda/buffer>
 #include <cuda/std/iterator>
 
 #include <algorithm>
@@ -889,7 +892,7 @@ class Dfa {
                  cuda::stream_ref stream)
   {
     std::size_t temp_storage_bytes = 0;
-    rmm::device_buffer temp_storage{};
+    cuda::device_buffer<std::byte> temp_storage{stream, cudf::get_current_device_resource_ref()};
     DeviceTransduce(nullptr,
                     temp_storage_bytes,
                     this->get_device_view(),
@@ -902,7 +905,8 @@ class Dfa {
                     stream.get());
 
     if (temp_storage.size() < temp_storage_bytes) {
-      temp_storage.resize(temp_storage_bytes, stream);
+      temp_storage = cuda::device_buffer<std::byte>{
+        stream, cudf::get_current_device_resource_ref(), temp_storage_bytes, cuda::no_init};
     }
 
     DeviceTransduce(temp_storage.data(),

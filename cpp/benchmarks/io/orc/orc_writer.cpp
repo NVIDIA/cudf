@@ -34,17 +34,23 @@ constexpr cudf::size_type num_cols = 64;
 template <data_type DataType>
 void BM_orc_write_encode(nvbench::state& state, nvbench::type_list<nvbench::enum_type<DataType>>)
 {
+  // A single column of the full data size is slow and memory-hungry for the wider types.
+  constexpr std::size_t single_column_data_size = 64 << 20;
+
   auto const d_type                 = get_type_or_group(static_cast<int32_t>(DataType));
   cudf::size_type const cardinality = state.get_int64("cardinality");
   cudf::size_type const run_length  = state.get_int64("run_length");
-  auto const compression            = cudf::io::compression_type::SNAPPY;
-  auto const sink_type              = io_type::VOID;
-  auto const stripe_size_bytes      = state.get_int64("stripe_size_bytes");
-  auto const stripe_size_rows       = state.get_int64("stripe_size_rows");
+  auto const num_cols_to_write      = static_cast<cudf::size_type>(state.get_int64("num_cols"));
+  auto const bytes =
+    num_cols_to_write == 1 ? single_column_data_size : static_cast<std::size_t>(data_size);
+  auto const compression       = cudf::io::compression_type::SNAPPY;
+  auto const sink_type         = io_type::VOID;
+  auto const stripe_size_bytes = state.get_int64("stripe_size_bytes");
+  auto const stripe_size_rows  = state.get_int64("stripe_size_rows");
 
   auto const tbl =
-    create_random_table(cycle_dtypes(d_type, num_cols),
-                        table_size_bytes{data_size},
+    create_random_table(cycle_dtypes(d_type, num_cols_to_write),
+                        table_size_bytes{bytes},
                         data_profile_builder().cardinality(cardinality).avg_run_length(run_length));
   auto const view = tbl->view();
 
@@ -70,7 +76,7 @@ void BM_orc_write_encode(nvbench::state& state, nvbench::type_list<nvbench::enum
              });
 
   auto const time = state.get_summary("nv/cold/time/gpu/mean").get_float64("value");
-  state.add_element_count(static_cast<double>(data_size) / time, "bytes_per_second");
+  state.add_element_count(static_cast<double>(bytes) / time, "bytes_per_second");
   state.add_buffer_size(
     mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
   state.add_buffer_size(encoded_file_size, "encoded_file_size", "encoded_file_size");
@@ -191,6 +197,7 @@ NVBENCH_BENCH_TYPES(BM_orc_write_encode, NVBENCH_TYPE_AXES(d_type_list))
   .set_min_samples(4)
   .add_int64_axis("cardinality", {0, 1000})
   .add_int64_axis("run_length", {1, 32})
+  .add_int64_axis("num_cols", {1, num_cols})
   .add_int64_axis("stripe_size_bytes", {0})
   .add_int64_axis("stripe_size_rows", {0});
 

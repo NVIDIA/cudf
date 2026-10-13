@@ -19,6 +19,7 @@
 #include <cuda/iterator>
 
 #include <algorithm>
+#include <ranges>
 #include <string>
 #include <utility>
 
@@ -171,11 +172,11 @@ parquet_filter_normalizer::parquet_filter_normalizer(
 {
   if (!expr.has_value()) { return; }
   // create map for column name.
-  std::transform(metadata.schema_info.cbegin(),
-                 metadata.schema_info.cend(),
-                 cuda::counting_iterator<std::size_t>{0},
-                 std::inserter(_column_name_to_index, _column_name_to_index.end()),
-                 [](auto const& sch, auto index) { return std::make_pair(sch.name, index); });
+  std::ranges::transform(
+    metadata.schema_info,
+    std::views::iota(std::size_t{0}, metadata.schema_info.size()),
+    std::inserter(_column_name_to_index, _column_name_to_index.end()),
+    [](auto const& sch, auto index) { return std::make_pair(sch.name, index); });
 
   expr.value().get().accept(*this);
 }
@@ -522,6 +523,11 @@ void parquet_expression_simplifier::validate_column_reference(
                std::out_of_range);
 }
 
+ast::expression const& parquet_expression_simplifier::placeholder_expr()
+{
+  return _tree.push(ast::column_reference{0});
+}
+
 void parquet_expression_simplifier::validate_operands(ast::expression const& expr) const
 {
   // Validate column references and traverse operations. Literals don't really need validation.
@@ -675,7 +681,7 @@ std::optional<std::vector<std::vector<size_type>>> collect_filtered_row_group_in
         cudf::device_span<bitmask_type const>{predicate.null_mask(), num_bitmasks}, stream);
     } else {
       auto bitmask = cudf::detail::make_pinned_vector<bitmask_type>(num_bitmasks, stream);
-      std::fill(bitmask.begin(), bitmask.end(), ~bitmask_type{0});
+      std::ranges::fill(bitmask, ~bitmask_type{0});
       return bitmask;
     }
   }();
@@ -690,9 +696,8 @@ std::optional<std::vector<std::vector<size_type>>> collect_filtered_row_group_in
     stream);
 
   // Return if all are required, or all are nulls.
-  if (predicate.null_count() == predicate.size() or std::all_of(is_row_group_required.cbegin(),
-                                                                is_row_group_required.cend(),
-                                                                [](auto i) { return bool(i); })) {
+  if (predicate.null_count() == predicate.size() or
+      std::ranges::all_of(is_row_group_required, [](auto i) { return bool(i); })) {
     return std::nullopt;
   }
 

@@ -50,7 +50,7 @@ struct PackUnpackTest : public cudf::test::BaseFixture {
 
     // verify packed_metadata_view matches the unpacked table (which reflects
     // the compacted sizes stored in the packed metadata, not the original sliced sizes)
-    if (!packed.metadata->empty()) { verify_metadata(unpacked, packed); }
+    verify_metadata(unpacked, packed);
 
     // verify packed_size returns the correct size
     EXPECT_EQ(cudf::packed_size(t), packed.gpu_data->size());
@@ -134,8 +134,6 @@ TEST_F(PackUnpackTest, EmptyColumns)
 
 std::vector<std::unique_ptr<cudf::column>> generate_lists(bool include_validity)
 {
-  using LCW = cudf::test::lists_column_wrapper<int>;
-
   if (include_validity) {
     auto valids = cudf::test::iterators::valids_at_multiples_of(2);
     cudf::test::lists_column_wrapper<int> list0{{1, 2, 3},
@@ -143,20 +141,20 @@ std::vector<std::unique_ptr<cudf::column>> generate_lists(bool include_validity)
                                                 {6},
                                                 {{7, 8}, valids},
                                                 {9, 10, 11},
-                                                LCW{},
-                                                LCW{},
+                                                {},
+                                                {},
                                                 {{-1, -2, -3, -4, -5}, valids},
                                                 {{100, -200}, valids}};
 
     cudf::test::lists_column_wrapper<int> list1{{{{1, 2, 3}, valids}, {4, 5}},
-                                                {{LCW{}, LCW{}, {7, 8}, LCW{}}, valids},
-                                                {LCW{6}},
-                                                {{{7, 8}, {{9, 10, 11}, valids}, LCW{}}, valids},
-                                                {{LCW{}, {-1, -2, -3, -4, -5}}, valids},
-                                                {LCW{}},
-                                                {LCW{-10}, {-100, -200}},
-                                                {{-10, -200}, LCW{}, {8, 9}},
-                                                {LCW{8}, LCW{}, LCW{9}, {5, 6}}};
+                                                {{{}, {}, {7, 8}, {}}, valids},
+                                                {{6}},
+                                                {{{7, 8}, {{9, 10, 11}, valids}, {}}, valids},
+                                                {{{}, {-1, -2, -3, -4, -5}}, valids},
+                                                {{}},
+                                                {{-10}, {-100, -200}},
+                                                {{-10, -200}, {}, {8, 9}},
+                                                {{8}, {}, {9}, {5, 6}}};
 
     std::vector<std::unique_ptr<cudf::column>> out;
     out.push_back(list0.release());
@@ -165,17 +163,17 @@ std::vector<std::unique_ptr<cudf::column>> generate_lists(bool include_validity)
   }
 
   cudf::test::lists_column_wrapper<int> list0{
-    {1, 2, 3}, {4, 5}, {6}, {7, 8}, {9, 10, 11}, LCW{}, LCW{}, {-1, -2, -3, -4, -5}, {-100, -200}};
+    {1, 2, 3}, {4, 5}, {6}, {7, 8}, {9, 10, 11}, {}, {}, {-1, -2, -3, -4, -5}, {-100, -200}};
 
   cudf::test::lists_column_wrapper<int> list1{{{1, 2, 3}, {4, 5}},
-                                              {LCW{}, LCW{}, {7, 8}, LCW{}},
-                                              {LCW{6}},
-                                              {{7, 8}, {9, 10, 11}, LCW{}},
-                                              {LCW{}, {-1, -2, -3, -4, -5}},
-                                              {LCW{}},
+                                              {{}, {}, {7, 8}, {}},
+                                              {{6}},
+                                              {{7, 8}, {9, 10, 11}, {}},
+                                              {{}, {-1, -2, -3, -4, -5}},
+                                              {{}},
                                               {{-10}, {-100, -200}},
-                                              {{-10, -200}, LCW{}, {8, 9}},
-                                              {LCW{8}, LCW{}, LCW{9}, {5, 6}}};
+                                              {{-10, -200}, {}, {8, 9}},
+                                              {{8}, {}, {9}, {5, 6}}};
 
   std::vector<std::unique_ptr<cudf::column>> out;
   out.push_back(list0.release());
@@ -235,18 +233,17 @@ std::vector<std::unique_ptr<cudf::column>> generate_struct_of_list()
     cudf::test::fixed_width_column_wrapper<int>(ages.begin(), ages.end(), ages_validity.begin());
 
   // 3. List column
-  using LCW = cudf::test::lists_column_wrapper<cudf::string_view>;
   std::vector<bool> list_validity{true, true, true, true, true, false, true, false, true};
   cudf::test::lists_column_wrapper<cudf::string_view> list(
     {{{"abc", "d", "edf"}, {"jjj"}},
-     {{"dgaer", "-7"}, LCW{}},
-     {LCW{}},
+     {{"dgaer", "-7"}, {}},
+     {{}},
      {{"qwerty"}, {"ral", "ort", "tal"}, {"five", "six"}},
-     {LCW{}, LCW{}, {"eight", "nine"}},
-     {LCW{}},
+     {{}, {}, {"eight", "nine"}},
+     {{}},
      {{"fun"}, {"a", "bc", "def", "ghij", "klmno", "pqrstu"}},
-     {{"seven", "zz"}, LCW{}, {"xyzzy"}},
-     {LCW{"negative 3", "  ", "cleveland"}}},
+     {{"seven", "zz"}, {}, {"xyzzy"}},
+     {{"negative 3", "  ", "cleveland"}}},
     list_validity.begin());
 
   // Assemble struct column.
@@ -445,8 +442,11 @@ TEST_F(PackUnpackTest, NestedEmpty)
   {
     auto empty_string = cudf::make_empty_column(cudf::data_type{cudf::type_id::STRING});
     auto offsets      = cudf::test::fixed_width_column_wrapper<int>({0, 0});
-    auto list         = cudf::make_lists_column(
-      1, offsets.release(), std::move(empty_string), 0, rmm::device_buffer{});
+    auto list         = cudf::make_lists_column(1,
+                                        offsets.release(),
+                                        std::move(empty_string),
+                                        0,
+                                        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     cudf::table_view src_table({static_cast<cudf::column_view>(*list)});
     this->run_test(src_table);
@@ -458,8 +458,11 @@ TEST_F(PackUnpackTest, NestedEmpty)
     cudf::test::strings_column_wrapper str{"abc"};
     auto empty_string = cudf::empty_like(str);
     auto offsets      = cudf::test::fixed_width_column_wrapper<int>({0, 0});
-    auto list         = cudf::make_lists_column(
-      1, offsets.release(), std::move(empty_string), 0, rmm::device_buffer{});
+    auto list         = cudf::make_lists_column(1,
+                                        offsets.release(),
+                                        std::move(empty_string),
+                                        0,
+                                        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     cudf::table_view src_table({static_cast<cudf::column_view>(*list)});
     this->run_test(src_table);
@@ -471,8 +474,11 @@ TEST_F(PackUnpackTest, NestedEmpty)
     cudf::test::lists_column_wrapper<float> listw{{1.0f, 2.0f}, {3.0f, 4.0f}};
     auto empty_list = cudf::empty_like(listw);
     auto offsets    = cudf::test::fixed_width_column_wrapper<int>({0, 0});
-    auto list =
-      cudf::make_lists_column(1, offsets.release(), std::move(empty_list), 0, rmm::device_buffer{});
+    auto list       = cudf::make_lists_column(1,
+                                        offsets.release(),
+                                        std::move(empty_list),
+                                        0,
+                                        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     cudf::table_view src_table({static_cast<cudf::column_view>(*list)});
     this->run_test(src_table);
@@ -484,8 +490,11 @@ TEST_F(PackUnpackTest, NestedEmpty)
     cudf::test::lists_column_wrapper<float> listw{{1.0f, 2.0f}, {3.0f, 4.0f}};
     auto empty_list = cudf::empty_like(listw);
     auto offsets    = cudf::test::fixed_width_column_wrapper<int>({0, 0});
-    auto list =
-      cudf::make_lists_column(1, offsets.release(), std::move(empty_list), 0, rmm::device_buffer{});
+    auto list       = cudf::make_lists_column(1,
+                                        offsets.release(),
+                                        std::move(empty_list),
+                                        0,
+                                        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     cudf::table_view src_table({static_cast<cudf::column_view>(*list)});
     this->run_test(src_table);
@@ -499,8 +508,11 @@ TEST_F(PackUnpackTest, NestedEmpty)
     auto struct_column = cudf::test::structs_column_wrapper({ints, floats});
     auto empty_struct  = cudf::empty_like(struct_column);
     auto offsets       = cudf::test::fixed_width_column_wrapper<int>({0, 0});
-    auto list          = cudf::make_lists_column(
-      1, offsets.release(), std::move(empty_struct), 0, rmm::device_buffer{});
+    auto list          = cudf::make_lists_column(1,
+                                        offsets.release(),
+                                        std::move(empty_struct),
+                                        0,
+                                        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     cudf::table_view src_table({static_cast<cudf::column_view>(*list)});
     this->run_test(src_table);
@@ -513,14 +525,12 @@ TEST_F(PackUnpackTest, NestedSliced)
   {
     auto valids = cudf::test::iterators::valids_at_multiples_of(2);
 
-    using LCW = cudf::test::lists_column_wrapper<int>;
-
     cudf::test::lists_column_wrapper<int> col0{{{{1, 2, 3}, valids}, {4, 5}},
-                                               {{LCW{}, LCW{}, {7, 8}, LCW{}}, valids},
+                                               {{{}, {}, {7, 8}, {}}, valids},
                                                {{6, 12}},
-                                               {{{7, 8}, {{9, 10, 11}, valids}, LCW{}}, valids},
-                                               {{LCW{}, {-1, -2, -3, -4, -5}}, valids},
-                                               {LCW{}},
+                                               {{{7, 8}, {{9, 10, 11}, valids}, {}}, valids},
+                                               {{{}, {-1, -2, -3, -4, -5}}, valids},
+                                               {{}},
                                                {{-10}, {-100, -200}}};
 
     cudf::test::strings_column_wrapper col1{
@@ -531,8 +541,10 @@ TEST_F(PackUnpackTest, NestedSliced)
     children.push_back(std::make_unique<cudf::column>(col2));
     children.push_back(std::make_unique<cudf::column>(col0));
     children.push_back(std::make_unique<cudf::column>(col1));
-    auto col3 = cudf::make_structs_column(
-      static_cast<cudf::column_view>(col0).size(), std::move(children), 0, rmm::device_buffer{});
+    auto col3 = cudf::make_structs_column(static_cast<cudf::column_view>(col0).size(),
+                                          std::move(children),
+                                          0,
+                                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     cudf::table_view t({col0, col1, col2, *col3});
     this->run_test(t);
@@ -598,6 +610,38 @@ TEST_F(PackUnpackTest, ZeroColumnsWithRows)
   EXPECT_EQ(unpacked_empty.num_rows(), 0);
 }
 
+TEST_F(PackUnpackTest, UnpackMetadataSpan)
+{
+  auto const unpack_and_test = [](cudf::table_view const& input,
+                                  cudf::packed_columns const packed) {
+    auto unpacked =
+      cudf::unpack(*packed.metadata, reinterpret_cast<uint8_t const*>(packed.gpu_data->data()));
+    CUDF_TEST_EXPECT_TABLES_EQUAL(input, unpacked);
+  };
+
+  cudf::table_view only_rows{std::vector<cudf::column_view>{}, 7};
+  unpack_and_test(only_rows, cudf::pack(only_rows));
+
+  cudf::table_view empty{};
+  auto empty_packed = cudf::pack(empty);
+  ASSERT_TRUE(empty_packed.metadata->empty());
+  unpack_and_test(empty, std::move(empty_packed));
+}
+
+TEST_F(PackUnpackTest, UnpackMetadataSpanRejectsTruncatedBuffer)
+{
+  std::vector<uint8_t> truncated_header(1);
+  EXPECT_THROW(cudf::unpack(truncated_header, nullptr), cudf::logic_error);
+
+  cudf::test::fixed_width_column_wrapper<int> column{1, 2, 3};
+  auto packed = cudf::pack(cudf::table_view({column}));
+  auto truncated_column =
+    std::span<uint8_t const>{packed.metadata->data(), packed.metadata->size() - 1};
+  EXPECT_THROW(
+    cudf::unpack(truncated_column, reinterpret_cast<uint8_t const*>(packed.gpu_data->data())),
+    cudf::logic_error);
+}
+
 TEST_F(PackUnpackTest, SlicedEmpty)
 {
   // empty sliced column. this is specifically testing the corner case:
@@ -634,6 +678,16 @@ TEST_F(PackUnpackTest, DISABLED_LongOffsetsAndChars)
   auto str = make_long_offsets_and_chars_string_column();
   cudf::table_view tbl({*str});
   this->run_test(tbl);
+}
+
+TEST_F(PackUnpackTest, MetadataViewEmptyBuffer)
+{
+  auto packed = cudf::pack(cudf::table_view{});
+  ASSERT_TRUE(packed.metadata->empty());
+  auto view = cudf::packed_metadata_view(*packed.metadata);
+  EXPECT_EQ(view.num_columns(), 0);
+  EXPECT_EQ(view.num_rows(), 0);
+  EXPECT_THROW(std::ignore = view.column(0), std::out_of_range);
 }
 
 TEST_F(PackUnpackTest, MetadataViewRejectsNonMultipleSize)

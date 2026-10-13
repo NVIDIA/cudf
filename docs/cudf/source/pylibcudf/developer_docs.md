@@ -16,7 +16,7 @@ To satisfy the goals of pylibcudf, we impose the following set of design princip
 - Every variable used should be strongly typed and either be a primitive type (int, float, etc) or a cdef class. Any enums in C++ should be mirrored using `cpdef enum`, which will create both a C-style enum in Cython and a PEP 435-style Python enum that will automatically be used in Python.
 - All typing in code should be written using Cython syntax, not PEP 484 Python typing syntax. Not only does this ensure compatibility with Cython < 3, but even with Cython 3 PEP 484 support remains incomplete as of this writing.
 - All cudf code should interact only with pylibcudf, never with libcudf directly. This is not currently the case, but is the direction that the library is moving towards.
-- Ideally, pylibcudf should depend on no RAPIDS component other than rmm, and should in general have minimal runtime dependencies.
+- In general, pylibcudf should have minimal runtime dependencies.
 - Type stubs are provided and generated manually. When adding new
   functionality, ensure that the matching type stub is appropriately updated.
 

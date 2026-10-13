@@ -28,7 +28,6 @@
 #include <thrust/binary_search.h>
 #include <thrust/reduce.h>
 #include <thrust/scan.h>
-#include <thrust/sort.h>
 
 #include <limits>
 #include <memory>

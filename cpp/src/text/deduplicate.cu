@@ -19,7 +19,8 @@
 
 #include <rmm/device_uvector.hpp>
 
-#include <cub/cub.cuh>
+#include <cub/device/device_merge_sort.cuh>
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/functional>
 #include <cuda/std/iterator>
@@ -156,7 +157,8 @@ std::unique_ptr<rmm::device_uvector<cudf::size_type>> build_suffix_array_fn(
   auto tmp_bytes    = std::size_t{0};
   cub::DeviceMergeSort::SortKeysCopy(
     nullptr, tmp_bytes, seq, indices.begin(), indices.size(), cmp_op, stream.get());
-  auto tmp_stg = rmm::device_buffer(tmp_bytes, stream);
+  auto tmp_stg = cuda::device_buffer<std::byte>(
+    stream, cudf::get_current_device_resource_ref(), tmp_bytes, cuda::no_init);
   cub::DeviceMergeSort::SortKeysCopy(
     tmp_stg.data(), tmp_bytes, seq, indices.begin(), indices.size(), cmp_op, stream.get());
 

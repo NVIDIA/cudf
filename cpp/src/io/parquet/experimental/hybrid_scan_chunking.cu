@@ -19,9 +19,7 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
-#include <thrust/binary_search.h>
 #include <thrust/host_vector.h>
-#include <thrust/transform_scan.h>
 
 #include <numeric>
 

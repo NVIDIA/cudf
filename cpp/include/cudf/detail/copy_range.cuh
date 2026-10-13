@@ -18,7 +18,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <cub/cub.cuh>
 #include <cuda/stream>
 #include <cuda_runtime.h>
 

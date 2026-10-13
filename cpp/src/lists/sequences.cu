@@ -22,7 +22,6 @@
 #include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
-#include <thrust/scan.h>
 #include <thrust/tabulate.h>
 
 #include <limits>
@@ -168,8 +167,11 @@ std::unique_ptr<column> sequences(column_view const& starts,
                                stream,
                                mr);
 
-  return make_lists_column(
-    n_lists, std::move(list_offsets), std::move(child), 0, rmm::device_buffer(0, stream, mr));
+  return make_lists_column(n_lists,
+                           std::move(list_offsets),
+                           std::move(child),
+                           0,
+                           cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr));
 }
 
 }  // anonymous namespace

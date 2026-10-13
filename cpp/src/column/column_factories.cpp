@@ -8,6 +8,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/dictionary/dictionary_factories.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/traits.hpp>
 
@@ -17,22 +18,19 @@ struct size_of_helper {
   cudf::data_type type;
   template <typename T>
   constexpr int operator()() const
-    requires(not is_fixed_width<T>())
   {
     CUDF_FAIL("Invalid, non fixed-width element type.");
     return 0;
   }
 
-  template <typename T>
+  template <concepts::fixed_width T>
   constexpr int operator()() const noexcept
-    requires(is_fixed_width<T>() && not is_fixed_point<T>())
   {
     return sizeof(T);
   }
 
-  template <typename T>
+  template <concepts::fixed_point T>
   constexpr int operator()() const noexcept
-    requires(is_fixed_point<T>())
   {
     // Only want the sizeof fixed_point::Rep as fixed_point::scale is stored in data_type
     return sizeof(typename T::rep);
@@ -52,7 +50,8 @@ std::unique_ptr<column> make_empty_column(data_type type)
   CUDF_EXPECTS(type.id() == type_id::EMPTY || !cudf::is_nested(type),
                "make_empty_column is invalid to call on nested types",
                cudf::data_type_error);
-  return std::make_unique<column>(type, 0, rmm::device_buffer{}, rmm::device_buffer{}, 0);
+  return std::make_unique<column>(
+    type, 0, rmm::device_buffer{}, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
 }
 
 // Empty column of specified type id
@@ -175,7 +174,7 @@ std::unique_ptr<column> make_dictionary_from_scalar(scalar const& s,
       size,
       stream,
       mr),
-    rmm::device_buffer{0, stream, mr},
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
     0);
 }
 

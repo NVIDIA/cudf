@@ -68,7 +68,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import singledispatch
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypedDict
+from typing import TYPE_CHECKING, Any, Literal, TypedDict
 
 from cudf_polars.dsl import expr
 from cudf_polars.dsl.ir import (
@@ -112,7 +112,7 @@ if TYPE_CHECKING:
     from cudf_polars.utils.config import ConfigOptions, StreamingExecutor
 
 
-DomainScore: TypeAlias = tuple[int, int, int]
+type DomainScore = tuple[int, int, int]
 
 
 @dataclass(frozen=True)
@@ -183,8 +183,8 @@ class CompositeCandidate:
         return (0, self.constraint_domain.domain_score, self.domain.domain_score)
 
 
-Candidate: TypeAlias = SimpleCandidate | CompositeCandidate
-DecisionReason: TypeAlias = Literal[
+type Candidate = SimpleCandidate | CompositeCandidate
+type DecisionReason = Literal[
     "applied",
     "maintain_order",
     "no_profitable_domain",

@@ -119,7 +119,7 @@ When adding a new API, include the API name to the appropriate page.
 
 ### Documenting classes
 
-Python classes and the Sphinx plugins used in RAPIDS interact in nontrivial ways.
+Python classes and the Sphinx plugins used in cuDF documentation interact in nontrivial ways.
 `autosummary`'s default page generated for a class uses [`autodoc`](https://www.sphinx-doc.org/en/master/usage/extensions/autodoc.html) to automatically detect and document all methods of a class.
 That means that in addition to the manually created `autosummary` pages where class methods are grouped into sections of related features, there is another page for each class where all the methods of that class are automatically summarized in a table for quick access.
 However, we also use the [`numpydoc`](https://numpydoc.readthedocs.io/en/latest/) extension, which offers the same feature.
@@ -184,7 +184,7 @@ when possible.
 ### Requirements
 
 The following are required to build the documentation:
-- A RAPIDS-compatible GPU. This is necessary because the documentation execute code.
+- A compatible GPU. This is necessary because the documentation executes code.
 - A working copy of cudf in the same build environment.
   If you are only making changes to documentation we recommend following the
   [Documentation contributions guide](https://github.com/NVIDIA/cudf/blob/main/CONTRIBUTING.md#documentation-contributions) otherwise follow the

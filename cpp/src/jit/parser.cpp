@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -53,7 +53,7 @@ constexpr char percent_escape[] = "_";  // NOLINT
 std::string ptx_parser::escape_percent(std::string const& src)
 {
   // b/c we're transforming into inline ptx we aren't allowed to have register names starting with %
-  auto f = std::find_if_not(src.begin(), src.end(), [](auto c) { return is_white(c) || c == '['; });
+  auto f = std::ranges::find_if_not(src, [](auto c) { return is_white(c) || c == '['; });
   if (f != src.end() && *f == '%') {
     std::string output = src;
     output.replace(std::distance(src.begin(), f), 1, percent_escape);
@@ -65,8 +65,8 @@ std::string ptx_parser::escape_percent(std::string const& src)
 std::string ptx_parser::remove_nonalphanumeric(std::string const& src)
 {
   std::string out = src;
-  auto f = std::find_if_not(out.begin(), out.end(), [](auto c) { return is_white(c) || c == '['; });
-  auto l = std::find_if(f, out.end(), [](auto c) { return is_white(c) || c == ']'; });
+  auto f          = std::ranges::find_if_not(out, [](auto c) { return is_white(c) || c == '['; });
+  auto l          = std::find_if(f, out.end(), [](auto c) { return is_white(c) || c == ']'; });
   std::replace_if(f, l, [](auto c) { return !isalnum(c) && c != '_'; }, '_');
   return std::string(f, l);
 }
@@ -261,7 +261,7 @@ std::string ptx_parser::parse_instruction(std::string const& src)
 
 std::string ptx_parser::parse_statement(std::string const& src)
 {
-  auto f = std::find_if_not(src.cbegin(), src.cend(), [](auto c) { return is_white(c); });
+  auto f = std::ranges::find_if_not(src, [](auto c) { return is_white(c); });
   return f == src.cend() ? " \n" : parse_instruction(std::string(f, src.cend()));
 }
 
@@ -325,7 +325,7 @@ std::string ptx_parser::parse_function_header(std::string const& src)
 {
   // Essentially we only need the information inside the two pairs of parentheses.
   auto f = [&] {
-    auto i = std::find_if_not(src.cbegin(), src.cend(), [](auto c) { return is_white(c); });
+    auto i = std::ranges::find_if_not(src, [](auto c) { return is_white(c); });
     if (i != src.cend() && *i == '(')  // This function has a return type
       // First Pass: output param list
       i = std::find_if_not(std::next(i), src.cend(), [](auto c) { return c == ')'; });
@@ -339,9 +339,8 @@ std::string ptx_parser::parse_function_header(std::string const& src)
 
   auto const ptx_params = parse_param_list(std::string(f, l));
 
-  CUDF_EXPECTS(std::all_of(param_types.begin(),
-                           param_types.end(),
-                           [&](auto const& entry) { return entry.first < ptx_params.size(); }),
+  CUDF_EXPECTS(std::ranges::all_of(
+                 param_types, [&](auto const& entry) { return entry.first < ptx_params.size(); }),
                "Argument index exceeds the number of parameters found in the PTX");
 
   std::vector<std::string> param_decls;
@@ -378,8 +377,7 @@ std::string ptx_parser::parse()
   std::string const no_comments = remove_comments(ptx);
 
   auto const _func = std::string(".func");  // Go directly to the .func mark
-  auto f = std::search(no_comments.cbegin(), no_comments.cend(), _func.cbegin(), _func.cend()) +
-           _func.size();
+  auto f           = std::ranges::search(no_comments, _func).end();
 
   CUDF_EXPECTS(f < no_comments.cend(), "No function (.func) found in the input ptx code.\n");
 

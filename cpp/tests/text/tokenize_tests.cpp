@@ -103,9 +103,9 @@ TEST_F(TextTokenizeTest, CharacterTokenize)
   cudf::test::strings_column_wrapper input({"the mousé ate", "the cheese", ""});
 
   using LCW = cudf::test::lists_column_wrapper<cudf::string_view>;
-  LCW expected{LCW{"t", "h", "e", " ", "m", "o", "u", "s", "é", " ", "a", "t", "e"},
-               LCW{"t", "h", "e", " ", "c", "h", "e", "e", "s", "e"},
-               LCW{}};
+  LCW expected{{"t", "h", "e", " ", "m", "o", "u", "s", "é", " ", "a", "t", "e"},
+               {"t", "h", "e", " ", "c", "h", "e", "e", "s", "e"},
+               {}};
 
   auto results = nvtext::character_tokenize(cudf::strings_column_view(input));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
@@ -209,12 +209,12 @@ TEST_F(TextTokenizeTest, Vocabulary)
 
   using LCW = cudf::test::lists_column_wrapper<cudf::size_type>;
   // clang-format off
-  LCW expected({LCW{ 9, 4, 5, 8, 9, 3},
-                LCW{ 9, 3, 1, 9,-7},
-                LCW{},
-                LCW{ 9,-7, 1, 9, 6},
-                LCW{ 9, 7, 0, 2},
-                LCW{}, LCW{3}},
+  LCW expected({{ 9, 4, 5, 8, 9, 3},
+                { 9, 3, 1, 9,-7},
+                {},
+                { 9,-7, 1, 9, 6},
+                { 9, 7, 0, 2},
+                {}, {3}},
                 validity);
   // clang-format on
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
@@ -246,10 +246,10 @@ TEST_F(TextTokenizeTest, VocabularyLongStrings)
 
   using LCW = cudf::test::lists_column_wrapper<cudf::size_type>;
   // clang-format off
-  LCW expected({LCW{ 9, 4, 5, 1, 9, 3, 2, 6, -1, 9, 8, -1, 3, 6, -1, -1, 9, -1, 5, 8, 9, 7, -1, -1, 9, 3},
-                LCW{ 9, 4, 5, 1, 9, 3, 2, 6, -1, 9, 8, -1, 3, 6, -1, -1, 9, -1, 5, 8, 9, 7, -1, -1, 9, 3},
-                LCW{ 9, 4, 5, 1, 9, 3, 2, 6, -1, 9, 8, -1, 3, 6, -1, -1, 9, -1, 5, 8, 9, 7, -1, -1, 9, 3},
-                LCW{ 9, 4, 5, 1, 9, 3, 2, 6, -1, 9, 8, -1, 3, 6, -1, -1, 9, -1, 5, 8, 9, 7, -1, -1, 9, 3}});
+  LCW expected({{ 9, 4, 5, 1, 9, 3, 2, 6, -1, 9, 8, -1, 3, 6, -1, -1, 9, -1, 5, 8, 9, 7, -1, -1, 9, 3},
+                { 9, 4, 5, 1, 9, 3, 2, 6, -1, 9, 8, -1, 3, 6, -1, -1, 9, -1, 5, 8, 9, 7, -1, -1, 9, 3},
+                { 9, 4, 5, 1, 9, 3, 2, 6, -1, 9, 8, -1, 3, 6, -1, -1, 9, -1, 5, 8, 9, 7, -1, -1, 9, 3},
+                { 9, 4, 5, 1, 9, 3, 2, 6, -1, 9, 8, -1, 3, 6, -1, -1, 9, -1, 5, 8, 9, 7, -1, -1, 9, 3}});
   // clang-format on
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 
@@ -260,6 +260,24 @@ TEST_F(TextTokenizeTest, VocabularyLongStrings)
 
   results = nvtext::tokenize_with_vocabulary(input_view, *vocab, delimiter, default_id);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(results->view(), sliced_expected);
+}
+
+TEST_F(TextTokenizeTest, VocabularyLongStringsSingleCharacter)
+{
+  std::string const long_token(300, 'b');
+  std::vector<std::string> vocabulary_strings{"a", "é", long_token};
+  cudf::test::strings_column_wrapper vocabulary(vocabulary_strings.begin(),
+                                                vocabulary_strings.end());
+  auto vocab = nvtext::load_vocabulary(cudf::strings_column_view(vocabulary));
+
+  std::vector<std::string> input_strings{"a", "é", long_token};
+  cudf::test::strings_column_wrapper input(input_strings.begin(), input_strings.end());
+  auto results = nvtext::tokenize_with_vocabulary(
+    cudf::strings_column_view(input), *vocab, cudf::string_scalar(" "));
+
+  using LCW = cudf::test::lists_column_wrapper<cudf::size_type>;
+  LCW expected({{0}, {1}, {2}});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 }
 
 TEST_F(TextTokenizeTest, TokenizeErrors)

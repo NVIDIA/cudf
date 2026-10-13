@@ -21,14 +21,14 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cooperative_groups.h>
-#include <cub/cub.cuh>
+#include <cub/device/device_merge_sort.cuh>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/iterator>
 #include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/equal.h>
-#include <thrust/fill.h>
 #include <thrust/logical.h>
 #include <thrust/sequence.h>
 #include <thrust/unique.h>
@@ -208,7 +208,8 @@ std::unique_ptr<table> contains_multiple(strings_column_view const& input,
     std::size_t tmp_bytes = 0;
     cub::DeviceMergeSort::SortPairsCopy(
       nullptr, tmp_bytes, tgt_itr, count_itr, keys_out, vals_out, num_items, cmp_op, sv);
-    auto tmp_stg = rmm::device_buffer(tmp_bytes, stream);
+    auto tmp_stg = cuda::device_buffer<std::byte>(
+      stream, cudf::get_current_device_resource_ref(), tmp_bytes, cuda::no_init);
     cub::DeviceMergeSort::SortPairsCopy(
       tmp_stg.data(), tmp_bytes, tgt_itr, count_itr, keys_out, vals_out, num_items, cmp_op, sv);
   }

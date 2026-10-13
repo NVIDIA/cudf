@@ -1,10 +1,10 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
 
 from functools import singledispatch
-from typing import TypeAlias, TypedDict
+from typing import TypedDict
 
 import polars as pl
 from polars.testing import assert_frame_equal
@@ -30,7 +30,7 @@ class State(TypedDict):
     expr_mapper: ExprTransformer
 
 
-IRTransformer: TypeAlias = GenericTransformer[ir.IR, ir.IR, State]
+type IRTransformer = GenericTransformer[ir.IR, ir.IR, State]
 
 
 def make_expr(dt, n1, n2):

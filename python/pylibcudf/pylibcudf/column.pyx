@@ -49,7 +49,7 @@ from ._interop_helpers cimport (
     _release_schema,
 )
 from .filling cimport sequence
-from .gpumemoryview cimport gpumemoryview
+from .gpumemoryview cimport gpumemoryview, _from_cuda_device_buffer
 from .scalar cimport Scalar
 from .span import Span, is_span as py_is_span
 from .traits cimport (
@@ -692,8 +692,8 @@ cdef class Column:
 
         cdef gpumemoryview mask = None
         if null_count > 0:
-            mask = gpumemoryview(
-                DeviceBuffer.c_from_unique_ptr(move(contents.null_mask), _stream, mr)
+            mask = _from_cuda_device_buffer(
+                move(contents.null_mask), _stream, mr
             )
 
         children = []

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -125,13 +125,13 @@ TYPED_TEST(CollectTestFixedWidth, MergeLists)
 
   // test with nulls
   auto const lists2    = lists_col{{
-                                  lists_col{1, 2, 3},
-                                  lists_col{},
-                                  lists_col{{0, 4, 0, 5}, cudf::test::iterators::nulls_at({0, 2})},
-                                  lists_col{{0, 0, 0}, cudf::test::iterators::all_nulls()},
-                                  lists_col{6},
-                                  lists_col{-1, -1},  // null_list
-                                  lists_col{7, 8, 9},
+                                  {1, 2, 3},
+                                  {},
+                                  {{0, 4, 0, 5}, cudf::test::iterators::nulls_at({0, 2})},
+                                  {{0, 0, 0}, cudf::test::iterators::all_nulls()},
+                                  {6},
+                                  {-1, -1},  // null_list
+                                  {7, 8, 9},
                                 },
                                 cudf::test::iterators::null_at(5)};
   auto const expected2 = fw_wrapper{{1, 2, 3, 0, 4, 0, 5, 0, 0, 0, 6, 7, 8, 9},
@@ -156,13 +156,13 @@ TYPED_TEST(CollectTestFixedWidth, MergeSets)
 
   // test with null_equal
   auto const lists2    = lists_col{{
-                                  lists_col{1, 2, 3},
-                                  lists_col{},
-                                  lists_col{{0, 4, 0, 5}, cudf::test::iterators::nulls_at({0, 2})},
-                                  lists_col{{0, 0, 0}, cudf::test::iterators::all_nulls()},
-                                  lists_col{5},
-                                  lists_col{-1, -1},  // null_list
-                                  lists_col{1, 3, 5},
+                                  {1, 2, 3},
+                                  {},
+                                  {{0, 4, 0, 5}, cudf::test::iterators::nulls_at({0, 2})},
+                                  {{0, 0, 0}, cudf::test::iterators::all_nulls()},
+                                  {5},
+                                  {-1, -1},  // null_list
+                                  {1, 3, 5},
                                 },
                                 cudf::test::iterators::null_at(5)};
   auto const expected2 = fw_wrapper{{1, 2, 3, 4, 5, 0}, {1, 1, 1, 1, 1, 0}};
@@ -230,11 +230,11 @@ TEST_F(CollectTest, MergeSetsWithNaN)
   using lists_col  = cudf::test::lists_column_wrapper<float>;
 
   auto const col = lists_col{
-    lists_col{1.0f, -2.3e-5f, NAN},
-    lists_col{},
-    lists_col{{-2.3e-5f, 2.3e5f, NAN, 0.0f}, cudf::test::iterators::nulls_at({3})},
-    lists_col{{0.0f, 0.0f}, cudf::test::iterators::all_nulls()},
-    lists_col{-NAN},
+    {1.0f, -2.3e-5f, NAN},
+    {},
+    {{-2.3e-5f, 2.3e5f, NAN, 0.0f}, cudf::test::iterators::nulls_at({3})},
+    {{0.0f, 0.0f}, cudf::test::iterators::all_nulls()},
+    {-NAN},
   };
 
   // nan unequal with null equal
@@ -308,9 +308,9 @@ TEST_F(CollectTest, CollectStrings)
   lists_col strings{{"a"},
                     {},
                     {"a", "b"},
-                    lists_col{{"b", "null", "c"}, cudf::test::iterators::null_at(1)},
-                    lists_col{{"null", "d"}, cudf::test::iterators::null_at(0)},
-                    lists_col{{"null"}, cudf::test::iterators::null_at(0)},
+                    {{"b", "null", "c"}, cudf::test::iterators::null_at(1)},
+                    {{"null", "d"}, cudf::test::iterators::null_at(0)},
+                    {{"null"}, cudf::test::iterators::null_at(0)},
                     {"e"}};
 
   // merge_lists
@@ -392,7 +392,7 @@ TEST_F(CollectTest, CollectAllNullsWithLists)
   using namespace cudf::test::iterators;
 
   // list<list<int>>
-  auto const input    = LCW{{LCW{LCW{1, 2, 3}, LCW{4, 5, 6}}, LCW{{1, 2, 3}}}, all_nulls()};
+  auto const input    = LCW{{{{1, 2, 3}, {4, 5, 6}}, {{1, 2, 3}}}, all_nulls()};
   auto const expected = cudf::empty_like(input);
 
   {

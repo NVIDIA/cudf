@@ -11,6 +11,8 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/buffer>
+
 #include <functional>
 #include <memory>
 #include <optional>
@@ -499,7 +501,7 @@ std::unique_ptr<table> compute_table_jit(
  * null count obtained from input considering `true` represent `valid`/`1` and
  * `false` represent `invalid`/`0`.
  */
-std::pair<std::unique_ptr<rmm::device_buffer>, cudf::size_type> bools_to_mask(
+std::pair<std::unique_ptr<cuda::device_buffer<std::byte>>, cudf::size_type> bools_to_mask(
   column_view const& input,
   cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -89,8 +89,11 @@ TEST_P(JsonCompressedWriterTest, EmptyLeaf)
 {
   cudf::test::strings_column_wrapper col1{""};
   cudf::test::fixed_width_column_wrapper<cudf::size_type> offsets{0, 0};
-  auto col2 = make_lists_column(
-    1, offsets.release(), cudf::test::strings_column_wrapper{}.release(), 0, rmm::device_buffer{});
+  auto col2 = make_lists_column(1,
+                                offsets.release(),
+                                cudf::test::strings_column_wrapper{}.release(),
+                                0,
+                                cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   auto col3 = cudf::test::lists_column_wrapper<int>::make_one_empty_row_column();
   cudf::table_view tbl_view{{col1, *col2, col3}};
   cudf::io::table_metadata mt{{{"col1"}, {"col2"}, {"col3"}}};
@@ -252,7 +255,7 @@ TEST_F(JsonWriterTest, WriteReadNested)
   cudf::test::fixed_width_column_wrapper<int64_t> e{{0, 0, 4, 9}, nulls_at({0, 1})};
   cudf::test::structs_column_wrapper c{{d, e}};
   cudf::test::fixed_width_column_wrapper<float> f{5.5, 10.5, 5.5, 10.5};
-  LCW g{{LCW{1}, LCW{0}, LCW{{2, 0}, null_at(1)}, LCW{3, 4, 5}}, null_at(1)};
+  LCW g{{{1}, {0}, {{2, 0}, null_at(1)}, {3, 4, 5}}, null_at(1)};
   cudf::table_view tbl_view{{a, b, c, f, g}};
   cudf::io::table_metadata mt{{{"a"}, {"b"}, {"c"}, {"f"}, {"g"}}};
   mt.schema_info[2].children = {{"d"}, {"e"}};

@@ -7,6 +7,7 @@
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/testing_main.hpp>
+#include <cudf_test/type_list_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/ast/expressions.hpp>
@@ -26,9 +27,11 @@
 
 #include <array>
 #include <functional>
+#include <initializer_list>
 #include <limits>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -41,47 +44,6 @@ template <typename T>
 using decimal_column_wrapper = cudf::test::fixed_point_column_wrapper<typename T::rep>;
 
 struct JITExpressionTest : public cudf::test::BaseFixture {};
-
-template <typename T>
-struct JITIntegerArithmeticTest : public cudf::test::BaseFixture {
-  static constexpr T MAX = std::numeric_limits<T>::max();
-  static constexpr T MIN = std::numeric_limits<T>::min();
-};
-
-template <typename T>
-struct JITSignedIntegerArithmeticTest : public JITIntegerArithmeticTest<T> {};
-
-template <typename T>
-struct JITDecimalArithmeticTest : public JITIntegerArithmeticTest<typename T::rep> {};
-
-using SignedIntegralTypesNotBool = cudf::test::Types<int8_t, int16_t, int32_t, int64_t>;
-
-TYPED_TEST_SUITE(JITIntegerArithmeticTest, cudf::test::IntegralTypesNotBool);
-TYPED_TEST_SUITE(JITSignedIntegerArithmeticTest, SignedIntegralTypesNotBool);
-TYPED_TEST_SUITE(JITDecimalArithmeticTest, cudf::test::FixedPointTypes);
-
-struct overflow_expressions {
-  cudf::ast::expression const& success;
-  cudf::ast::expression const& throwing;
-  cudf::ast::expression const& nullified;
-};
-
-void expect_overflow_results(cudf::table_view const& table,
-                             overflow_expressions ops,
-                             cudf::column_view expected,
-                             cudf::column_view expected_fail)
-{
-  // Successful and NULLIFY expressions can share one JIT kernel. The throwing path must be
-  // evaluated independently to verify its error policy without discarding the successful outputs.
-  auto expressions = std::to_array<std::reference_wrapper<cudf::ast::expression const>>(
-    {ops.success, ops.nullified});
-  auto result = cudf::compute_table_jit(table, expressions);
-
-  ASSERT_EQ(result->num_columns(), static_cast<cudf::size_type>(expressions.size()));
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view().column(0), VERBOSITY);
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_fail, result->view().column(1), VERBOSITY);
-  EXPECT_THROW(cudf::compute_column_jit(table, ops.throwing), cudf::evaluation_error);
-}
 
 TEST_F(JITExpressionTest, Coalesce)
 {
@@ -98,395 +60,400 @@ TEST_F(JITExpressionTest, Coalesce)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view(), VERBOSITY);
 }
 
-TYPED_TEST(JITIntegerArithmeticTest, AddOverflow)
-{
-  using T            = TypeParam;
-  auto a             = column_wrapper<T>{{3, 20, 1, 50}};
-  auto b             = column_wrapper<T>{{10, 7, 20, 0}};
-  auto b_fail        = column_wrapper<T>{{T{10}, this->MAX, T{20}, T{0}}};
-  auto expected      = column_wrapper<T>{{13, 27, 21, 50}};
-  auto expected_fail = column_wrapper<T>{{13, 0, 21, 50}, {1, 0, 1, 1}};
-  auto table         = cudf::table_view{{a, b, b_fail}};
-  auto tree          = cudf::ast::tree{};
-  auto a_ref         = cudf::ast::column_reference(0);
-  auto b_ref         = cudf::ast::column_reference(1);
-  auto b_fail_ref    = cudf::ast::column_reference(2);
+/// @brief Selects the fixture value type so integer and decimal cases share input factories.
+template <typename T, bool = cudf::is_fixed_point<T>()>
+struct overflow_rep {
+  using type = T;
+};
 
-  auto& add = cudf::ast::jit::operation(tree, cudf::ast::jit::op::ADD_OVERFLOW, {a_ref, b_ref});
-  auto& add_fail =
-    cudf::ast::jit::operation(tree, cudf::ast::jit::op::ADD_OVERFLOW, {a_ref, b_fail_ref});
-  auto& try_add_fail = cudf::ast::jit::operation(
-    tree, cudf::ast::jit::op::ADD_OVERFLOW, {a_ref, b_fail_ref}, cudf::error_policy::NULLIFY);
-  expect_overflow_results(table,
-                          {.success = add, .throwing = add_fail, .nullified = try_add_fail},
-                          expected,
-                          expected_fail);
+/// @brief Uses decimal storage values while column construction preserves the logical type.
+template <typename T>
+struct overflow_rep<T, true> {
+  using type = typename T::rep;
+};
+
+/// @brief Provides the storage value type used by overflow fixture arrays.
+template <typename T>
+using overflow_rep_t = typename overflow_rep<T>::type;
+
+/// @brief Creates typed fixture columns, retaining decimal semantics with scale zero.
+template <typename T, std::size_t N>
+std::unique_ptr<cudf::column> make_overflow_column(std::array<overflow_rep_t<T>, N> const& values)
+{
+  if constexpr (cudf::is_fixed_point<T>()) {
+    return decimal_column_wrapper<T>(values.begin(), values.end(), numeric::scale_type{0})
+      .release();
+  } else {
+    return column_wrapper<T>(values.begin(), values.end()).release();
+  }
 }
 
-TYPED_TEST(JITDecimalArithmeticTest, AddOverflow)
+/// @brief Creates nullable expected columns so NULLIFY results retain type and validity coverage.
+template <typename T, std::size_t N>
+std::unique_ptr<cudf::column> make_overflow_column(std::array<overflow_rep_t<T>, N> const& values,
+                                                   std::array<bool, N> const& validity)
 {
-  using T     = TypeParam;
-  using R     = typename T::rep;
-  auto a      = decimal_column_wrapper<T>{{3, 20, 1, 50}, numeric::scale_type{0}};
-  auto b      = decimal_column_wrapper<T>{{10, 7, 20, 0}, numeric::scale_type{0}};
-  auto b_fail = decimal_column_wrapper<T>{{R{10}, this->MAX, R{20}, R{0}}, numeric::scale_type{0}};
-  auto expected = decimal_column_wrapper<T>{{13, 27, 21, 50}, numeric::scale_type{0}};
-  auto expected_fail =
-    decimal_column_wrapper<T>{{13, 0, 21, 50}, {1, 0, 1, 1}, numeric::scale_type{0}};
-  auto table      = cudf::table_view{{a, b, b_fail}};
-  auto tree       = cudf::ast::tree{};
-  auto a_ref      = cudf::ast::column_reference(0);
-  auto b_ref      = cudf::ast::column_reference(1);
-  auto b_fail_ref = cudf::ast::column_reference(2);
-  auto& add = cudf::ast::jit::operation(tree, cudf::ast::jit::op::ADD_OVERFLOW, {a_ref, b_ref});
-  auto& add_fail =
-    cudf::ast::jit::operation(tree, cudf::ast::jit::op::ADD_OVERFLOW, {a_ref, b_fail_ref});
-  auto& try_add_fail = cudf::ast::jit::operation(
-    tree, cudf::ast::jit::op::ADD_OVERFLOW, {a_ref, b_fail_ref}, cudf::error_policy::NULLIFY);
-  expect_overflow_results(table,
-                          {.success = add, .throwing = add_fail, .nullified = try_add_fail},
-                          expected,
-                          expected_fail);
+  if constexpr (cudf::is_fixed_point<T>()) {
+    return decimal_column_wrapper<T>(
+             values.begin(), values.end(), validity.begin(), numeric::scale_type{0})
+      .release();
+  } else {
+    return column_wrapper<T>(values.begin(), values.end(), validity.begin()).release();
+  }
 }
 
-TYPED_TEST(JITSignedIntegerArithmeticTest, SubOverflow)
+/// @brief Expands type coverage within one batch instead of separate typed GTest nodes.
+template <typename... T, typename F>
+void for_each_overflow_type(cudf::test::Types<T...>, F&& f)
 {
-  using T            = TypeParam;
-  auto a             = column_wrapper<T>{{3, 20, 1, 50}};
-  auto b             = column_wrapper<T>{{10, 7, 20, 0}};
-  auto b_fail        = column_wrapper<T>{{T{10}, T{this->MIN}, T{20}, T{0}}};
-  auto expected      = column_wrapper<T>{{-7, 13, -19, 50}};
-  auto expected_fail = column_wrapper<T>{{-7, 0, -19, 50}, {1, 0, 1, 1}};
-  auto table         = cudf::table_view{{a, b, b_fail}};
-  auto tree          = cudf::ast::tree{};
-  auto a_ref         = cudf::ast::column_reference(0);
-  auto b_ref         = cudf::ast::column_reference(1);
-  auto b_fail_ref    = cudf::ast::column_reference(2);
-  auto& sub = cudf::ast::jit::operation(tree, cudf::ast::jit::op::SUB_OVERFLOW, {a_ref, b_ref});
-  auto& sub_fail =
-    cudf::ast::jit::operation(tree, cudf::ast::jit::op::SUB_OVERFLOW, {a_ref, b_fail_ref});
-  auto& try_sub_fail = cudf::ast::jit::operation(
-    tree, cudf::ast::jit::op::SUB_OVERFLOW, {a_ref, b_fail_ref}, cudf::error_policy::NULLIFY);
-
-  expect_overflow_results(table,
-                          {.success = sub, .throwing = sub_fail, .nullified = try_sub_fail},
-                          expected,
-                          expected_fail);
+  (f.template operator()<T>(), ...);
 }
 
-TYPED_TEST(JITDecimalArithmeticTest, SubOverflow)
-{
-  using T = TypeParam;
-  using R = typename T::rep;
-  auto a  = decimal_column_wrapper<T>{{3, 20, 1, 50}, numeric::scale_type{0}};
-  auto b  = decimal_column_wrapper<T>{{10, 7, 20, 0}, numeric::scale_type{0}};
-  auto b_fail =
-    decimal_column_wrapper<T>{{R{10}, R{this->MIN}, R{20}, R{0}}, numeric::scale_type{0}};
-  auto expected = decimal_column_wrapper<T>{{-7, 13, -19, 50}, numeric::scale_type{0}};
-  auto expected_fail =
-    decimal_column_wrapper<T>{{-7, 0, -19, 50}, {1, 0, 1, 1}, numeric::scale_type{0}};
-  auto table      = cudf::table_view{{a, b, b_fail}};
-  auto tree       = cudf::ast::tree{};
-  auto a_ref      = cudf::ast::column_reference(0);
-  auto b_ref      = cudf::ast::column_reference(1);
-  auto b_fail_ref = cudf::ast::column_reference(2);
-  auto& sub = cudf::ast::jit::operation(tree, cudf::ast::jit::op::SUB_OVERFLOW, {a_ref, b_ref});
-  auto& sub_fail =
-    cudf::ast::jit::operation(tree, cudf::ast::jit::op::SUB_OVERFLOW, {a_ref, b_fail_ref});
-  auto& try_sub_fail = cudf::ast::jit::operation(
-    tree, cudf::ast::jit::op::SUB_OVERFLOW, {a_ref, b_fail_ref}, cudf::error_policy::NULLIFY);
-  expect_overflow_results(table,
-                          {.success = sub, .throwing = sub_fail, .nullified = try_sub_fail},
-                          expected,
-                          expected_fail);
-}
+/// @brief Keeps binary boundary inputs and normal/NULLIFY expectations together for each type.
+template <typename R>
+struct binary_overflow_inputs {
+  std::array<R, 4> a;
+  std::array<R, 4> b;
+  std::array<R, 4> b_fail;
+  std::array<R, 4> expected;
+  std::array<R, 4> expected_fail;
+  std::array<bool, 4> validity;
+};
 
-TYPED_TEST(JITIntegerArithmeticTest, MulOverflow)
-{
-  using T            = TypeParam;
-  auto a             = column_wrapper<T>{{3, 20, 2, 50}};
-  auto b             = column_wrapper<T>{{10, 2, 1, 0}};
-  auto b_fail        = column_wrapper<T>{{T{10}, T{this->MAX}, T{1}, T{0}}};
-  auto expected      = column_wrapper<T>{{30, 40, 2, 0}};
-  auto expected_fail = column_wrapper<T>{{30, 0, 2, 0}, {1, 0, 1, 1}};
-  auto table         = cudf::table_view{{a, b, b_fail}};
-  auto a_ref         = cudf::ast::column_reference(0);
-  auto b_ref         = cudf::ast::column_reference(1);
-  auto b_fail_ref    = cudf::ast::column_reference(2);
-  auto tree          = cudf::ast::tree{};
-  auto& mul = cudf::ast::jit::operation(tree, cudf::ast::jit::op::MUL_OVERFLOW, {a_ref, b_ref});
-  auto& mul_fail =
-    cudf::ast::jit::operation(tree, cudf::ast::jit::op::MUL_OVERFLOW, {a_ref, b_fail_ref});
-  auto& try_mul_fail = cudf::ast::jit::operation(
-    tree, cudf::ast::jit::op::MUL_OVERFLOW, {a_ref, b_fail_ref}, cudf::error_policy::NULLIFY);
-  expect_overflow_results(table,
-                          {.success = mul, .throwing = mul_fail, .nullified = try_mul_fail},
-                          expected,
-                          expected_fail);
-}
+/// @brief Keeps unary boundary inputs and normal/NULLIFY expectations together for each type.
+template <typename R>
+struct unary_overflow_inputs {
+  std::array<R, 7> a;
+  std::array<R, 7> a_fail;
+  std::array<R, 7> expected;
+  std::array<R, 7> expected_fail;
+  std::array<bool, 7> validity;
+};
 
-TYPED_TEST(JITDecimalArithmeticTest, MulOverflow)
-{
-  using T = TypeParam;
-  using R = typename T::rep;
-  auto a  = decimal_column_wrapper<T>{{3, 20, 2, 50}, numeric::scale_type{0}};
-  auto b  = decimal_column_wrapper<T>{{10, 7, 1, 0}, numeric::scale_type{0}};
-  auto b_fail =
-    decimal_column_wrapper<T>{{R{10}, R{this->MAX}, R{1}, R{0}}, numeric::scale_type{0}};
-  auto expected = decimal_column_wrapper<T>{{30, 140, 2, 0}, numeric::scale_type{0}};
-  auto expected_fail =
-    decimal_column_wrapper<T>{{30, 0, 2, 0}, {1, 0, 1, 1}, numeric::scale_type{0}};
-  auto table      = cudf::table_view{{a, b, b_fail}};
-  auto a_ref      = cudf::ast::column_reference(0);
-  auto b_ref      = cudf::ast::column_reference(1);
-  auto b_fail_ref = cudf::ast::column_reference(2);
-  auto tree       = cudf::ast::tree{};
-  auto& mul = cudf::ast::jit::operation(tree, cudf::ast::jit::op::MUL_OVERFLOW, {a_ref, b_ref});
-  auto& mul_fail =
-    cudf::ast::jit::operation(tree, cudf::ast::jit::op::MUL_OVERFLOW, {a_ref, b_fail_ref});
-  auto& try_mul_fail = cudf::ast::jit::operation(
-    tree, cudf::ast::jit::op::MUL_OVERFLOW, {a_ref, b_fail_ref}, cudf::error_policy::NULLIFY);
+/// @brief Covers integer arithmetic boundaries without treating booleans as numeric operands.
+using integral_overflow_types = cudf::test::IntegralTypesNotBool;
+/// @brief Restricts signed-only boundary cases to the four signed integer widths.
+using signed_overflow_types = cudf::test::Types<int8_t, int16_t, int32_t, int64_t>;
+/// @brief Shares binary fixtures across integer and decimal arithmetic with identical inputs.
+using binary_overflow_types =
+  cudf::test::Concat<integral_overflow_types, cudf::test::FixedPointTypes>;
+/// @brief Shares signed boundary fixtures across signed integers and decimal representations.
+using signed_decimal_overflow_types =
+  cudf::test::Concat<signed_overflow_types, cudf::test::FixedPointTypes>;
 
-  // This fails on CI CUDA 12.2, driver 535, V100
-  if constexpr (std::is_same_v<T, numeric::decimal128>) {
-    int driver_version{0};
-    auto const err = cudaDriverGetVersion(&driver_version);
-    if (err != cudaSuccess or driver_version < 12090) {
-      std::cout
-        << "Skipping JITDecimalArithmeticTest.MulOverflow/decimal128 test, driver earlier than 12.9"
-        << std::endl;
-      GTEST_SKIP();
-    }
+/// @brief Owns fixture data and expressions to batch type coverage into fewer JIT compilations.
+class overflow_batch {
+  /// @brief Identifies interchangeable operands so each throwing case can be isolated without
+  /// changing the expression graph or input schema.
+  struct failure_case {
+    cudf::size_type failing_input;
+    cudf::size_type safe_input;
+    std::string label;
+  };
+
+  cudf::ast::tree tree{};
+  std::vector<std::unique_ptr<cudf::column>> inputs{};
+  std::vector<std::unique_ptr<cudf::column>> expected{};
+  std::vector<std::unique_ptr<cudf::scalar>> literals{};
+  std::vector<std::reference_wrapper<cudf::ast::expression const>> outputs{};
+  std::vector<std::reference_wrapper<cudf::ast::expression const>> throwing{};
+  std::vector<std::string> labels{};
+  std::vector<failure_case> failures{};
+
+  /// @brief Retains column ownership for the borrowed views used during batch evaluation.
+  cudf::size_type add_input(std::unique_ptr<cudf::column> input)
+  {
+    auto const index = static_cast<cudf::size_type>(inputs.size());
+    inputs.push_back(std::move(input));
+    return index;
   }
 
-  expect_overflow_results(table,
-                          {.success = mul, .throwing = mul_fail, .nullified = try_mul_fail},
-                          expected,
-                          expected_fail);
+  /// @brief Gives operand references tree-owned lifetimes for the batch's expression graph.
+  cudf::ast::column_reference const& add_reference(cudf::size_type column)
+  {
+    return tree.push(cudf::ast::column_reference(column));
+  }
+
+  /// @brief Registers normal and NULLIFY outputs together with isolated THROW expectations.
+  template <typename T, std::size_t N>
+  void append_case(
+    cudf::ast::jit::op op,
+    std::initializer_list<std::reference_wrapper<cudf::ast::expression const>> success_args,
+    std::initializer_list<std::reference_wrapper<cudf::ast::expression const>> failure_args,
+    std::array<overflow_rep_t<T>, N> const& expected_values,
+    std::array<overflow_rep_t<T>, N> const& expected_fail_values,
+    std::array<bool, N> const& validity,
+    failure_case failure)
+  {
+    auto label = std::move(failure.label);
+    if (!label.empty()) { label += ' '; }
+    label += cudf::type_to_name(cudf::data_type{cudf::type_to_id<T>()});
+    outputs.emplace_back(cudf::ast::jit::operation(tree, op, success_args));
+    expected.push_back(make_overflow_column<T>(expected_values));
+    labels.push_back(label + " success");
+    outputs.emplace_back(
+      cudf::ast::jit::operation(tree, op, failure_args, cudf::error_policy::NULLIFY));
+    expected.push_back(make_overflow_column<T>(expected_fail_values, validity));
+    labels.push_back(label + " NULLIFY");
+    throwing.emplace_back(cudf::ast::jit::operation(tree, op, failure_args));
+    failures.push_back({failure.failing_input, failure.safe_input, label + " THROW"});
+  }
+
+ public:
+  /// @brief Adds one type's binary boundary coverage while keeping its failing operand replaceable.
+  template <typename T>
+  void append_binary(cudf::ast::jit::op op,
+                     binary_overflow_inputs<overflow_rep_t<T>> const& values,
+                     std::string_view operation_name = {})
+  {
+    auto const a_index      = add_input(make_overflow_column<T>(values.a));
+    auto const b_index      = add_input(make_overflow_column<T>(values.b));
+    auto const b_fail_index = add_input(make_overflow_column<T>(values.b_fail));
+    auto const& a           = add_reference(a_index);
+    auto const& b           = add_reference(b_index);
+    auto const& b_fail      = add_reference(b_fail_index);
+    append_case<T>(op,
+                   {a, b},
+                   {a, b_fail},
+                   values.expected,
+                   values.expected_fail,
+                   values.validity,
+                   {b_fail_index, b_index, std::string{operation_name}});
+  }
+
+  /// @brief Applies a shared binary fixture factory across types, preserving driver exclusions.
+  template <cudf::ast::jit::op Op, typename... T, typename F>
+  void append_binary_types(cudf::test::Types<T...> types,
+                           F&& make_inputs,
+                           std::string_view operation_name = {})
+  {
+    for_each_overflow_type(types, [&]<typename U>() {
+      if constexpr (Op == cudf::ast::jit::op::MUL_OVERFLOW &&
+                    std::is_same_v<U, numeric::decimal128>) {
+        int driver_version{0};
+        if (cudaDriverGetVersion(&driver_version) != cudaSuccess || driver_version < 12090) {
+          return;
+        }
+      }
+      append_binary<U>(Op, make_inputs.template operator()<U>(), operation_name);
+    });
+  }
+
+  /// @brief Adds one type's unary boundary coverage while keeping its failing operand replaceable.
+  template <typename T>
+  void append_unary(cudf::ast::jit::op op, unary_overflow_inputs<overflow_rep_t<T>> const& values)
+  {
+    auto const a_index      = add_input(make_overflow_column<T>(values.a));
+    auto const a_fail_index = add_input(make_overflow_column<T>(values.a_fail));
+    auto const& a           = add_reference(a_index);
+    auto const& a_fail      = add_reference(a_fail_index);
+    append_case<T>(op,
+                   {a},
+                   {a_fail},
+                   values.expected,
+                   values.expected_fail,
+                   values.validity,
+                   {a_fail_index, a_index, {}});
+  }
+
+  /// @brief Applies a shared unary fixture factory across types within the same expression batch.
+  template <cudf::ast::jit::op Op, typename... T, typename F>
+  void append_unary_types(cudf::test::Types<T...> types, F&& make_inputs)
+  {
+    for_each_overflow_type(
+      types, [&]<typename U>() { append_unary<U>(Op, make_inputs.template operator()<U>()); });
+  }
+
+  /// @brief Adds decimal precision boundaries and owns the scalar borrowed by their expressions.
+  template <typename T>
+  void append_precision()
+  {
+    using R            = overflow_rep_t<T>;
+    auto const a_index = add_input(make_overflow_column<T>(std::array<R, 4>{3, 200, 250, 200}));
+    auto const a_fail_index =
+      add_input(make_overflow_column<T>(std::array<R, 4>{3, 200, 250, 20000}));
+    auto const& a      = add_reference(a_index);
+    auto const& a_fail = add_reference(a_fail_index);
+    auto max_precision = std::make_unique<cudf::numeric_scalar<int32_t>>(3);
+    auto& precision    = tree.push(cudf::ast::literal(*max_precision));
+    literals.push_back(std::move(max_precision));
+    append_case<T>(cudf::ast::jit::op::CHECK_PRECISION,
+                   {a, precision},
+                   {a_fail, precision},
+                   std::array<R, 4>{3, 200, 250, 200},
+                   std::array<R, 4>{3, 200, 250, 200},
+                   {1, 1, 1, 0},
+                   {a_fail_index, a_index, {}});
+  }
+
+  /// @brief Checks batched normal/NULLIFY outputs and each isolated THROW case with type
+  /// diagnostics.
+  void expect_results() const
+  {
+    std::vector<cudf::column_view> input_views;
+    input_views.reserve(inputs.size());
+    for (auto const& input : inputs) {
+      input_views.push_back(input->view());
+    }
+    auto const table = cudf::table_view{input_views};
+
+    auto result = cudf::compute_table_jit(table, outputs);
+    ASSERT_EQ(result->num_columns(), static_cast<cudf::size_type>(expected.size()));
+    for (cudf::size_type i = 0; i < result->num_columns(); ++i) {
+      SCOPED_TRACE(labels[i]);
+      CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected[i]->view(), result->view().column(i), VERBOSITY);
+    }
+
+    // PROPAGATE returns on the first error, so isolate each failure while keeping the expression
+    // graph and input schema unchanged to reuse the compiled kernel.
+    for (auto const& failure : failures) {
+      input_views[failure.failing_input] = input_views[failure.safe_input];
+    }
+    ASSERT_NO_THROW(cudf::compute_table_jit(cudf::table_view{input_views}, throwing));
+    for (auto const& failure : failures) {
+      SCOPED_TRACE(failure.label);
+      input_views[failure.failing_input] = inputs[failure.failing_input]->view();
+      EXPECT_THROW(cudf::compute_table_jit(cudf::table_view{input_views}, throwing),
+                   cudf::evaluation_error);
+      input_views[failure.failing_input] = input_views[failure.safe_input];
+    }
+  }
+};
+
+TEST_F(JITExpressionTest, BinaryOverflow)
+{
+  overflow_batch batch;
+  batch.append_binary_types<cudf::ast::jit::op::ADD_OVERFLOW>(
+    binary_overflow_types{},
+    []<typename T>() {
+      using R = overflow_rep_t<T>;
+      return binary_overflow_inputs<R>{{3, 20, 1, 50},
+                                       {10, 7, 20, 0},
+                                       {10, std::numeric_limits<R>::max(), 20, 0},
+                                       {13, 27, 21, 50},
+                                       {13, 0, 21, 50},
+                                       {1, 0, 1, 1}};
+    },
+    "add");
+  batch.append_binary_types<cudf::ast::jit::op::MUL_OVERFLOW>(
+    integral_overflow_types{},
+    []<typename T>() {
+      using R = overflow_rep_t<T>;
+      return binary_overflow_inputs<R>{{3, 20, 2, 50},
+                                       {10, 2, 1, 0},
+                                       {10, std::numeric_limits<R>::max(), 1, 0},
+                                       {30, 40, 2, 0},
+                                       {30, 0, 2, 0},
+                                       {1, 0, 1, 1}};
+    },
+    "multiply");
+  batch.append_binary_types<cudf::ast::jit::op::MUL_OVERFLOW>(
+    cudf::test::FixedPointTypes{},
+    []<typename T>() {
+      using R = overflow_rep_t<T>;
+      return binary_overflow_inputs<R>{{3, 20, 2, 50},
+                                       {10, 7, 1, 0},
+                                       {10, std::numeric_limits<R>::max(), 1, 0},
+                                       {30, 140, 2, 0},
+                                       {30, 0, 2, 0},
+                                       {1, 0, 1, 1}};
+    },
+    "multiply");
+  batch.append_binary_types<cudf::ast::jit::op::DIV_OVERFLOW>(
+    binary_overflow_types{},
+    []<typename T>() {
+      using R = overflow_rep_t<T>;
+      return binary_overflow_inputs<R>{
+        {3, 20, 1, 50}, {10, 7, 2, 1}, {10, 1, 20, 0}, {0, 2, 0, 50}, {0, 20, 0, 50}, {1, 1, 1, 0}};
+    },
+    "divide");
+  batch.append_binary_types<cudf::ast::jit::op::MOD_OVERFLOW>(
+    binary_overflow_types{},
+    []<typename T>() {
+      using R = overflow_rep_t<T>;
+      return binary_overflow_inputs<R>{
+        {3, 20, 1, 50}, {10, 7, 2, 1}, {10, 1, 20, 0}, {3, 6, 1, 0}, {3, 0, 1, 0}, {1, 1, 1, 0}};
+    },
+    "modulo");
+  batch.append_binary_types<cudf::ast::jit::op::SUB_OVERFLOW>(
+    signed_decimal_overflow_types{},
+    []<typename T>() {
+      using R = overflow_rep_t<T>;
+      return binary_overflow_inputs<R>{{3, 20, 1, 50},
+                                       {10, 7, 20, 0},
+                                       {10, std::numeric_limits<R>::min(), 20, 0},
+                                       {-7, 13, -19, 50},
+                                       {-7, 0, -19, 50},
+                                       {1, 0, 1, 1}};
+    },
+    "subtract");
+  batch.expect_results();
 }
 
-TYPED_TEST(JITIntegerArithmeticTest, DivOverflow)
+TEST_F(JITExpressionTest, AbsOverflow)
 {
-  using T            = TypeParam;
-  auto a             = column_wrapper<T>{{3, 20, 1, 50}};
-  auto b             = column_wrapper<T>{{10, 7, 2, 1}};
-  auto b_fail        = column_wrapper<T>{{10, 1, 20, 0}};
-  auto expected      = column_wrapper<T>{{0, 2, 0, 50}};
-  auto expected_fail = column_wrapper<T>{{0, 20, 0, 50}, {1, 1, 1, 0}};
-  auto table         = cudf::table_view{{a, b, b_fail}};
-  auto a_ref         = cudf::ast::column_reference(0);
-  auto b_ref         = cudf::ast::column_reference(1);
-  auto b_fail_ref    = cudf::ast::column_reference(2);
-  auto tree          = cudf::ast::tree{};
-  auto& div = cudf::ast::jit::operation(tree, cudf::ast::jit::op::DIV_OVERFLOW, {a_ref, b_ref});
-  auto& div_fail =
-    cudf::ast::jit::operation(tree, cudf::ast::jit::op::DIV_OVERFLOW, {a_ref, b_fail_ref});
-  auto& try_div_fail = cudf::ast::jit::operation(
-    tree, cudf::ast::jit::op::DIV_OVERFLOW, {a_ref, b_fail_ref}, cudf::error_policy::NULLIFY);
-  expect_overflow_results(table,
-                          {.success = div, .throwing = div_fail, .nullified = try_div_fail},
-                          expected,
-                          expected_fail);
+  overflow_batch batch;
+  auto make_inputs = []<typename T>() {
+    using R = overflow_rep_t<T>;
+    return unary_overflow_inputs<R>{
+      {R{3},
+       R{-20},
+       R{1},
+       R{-50},
+       std::numeric_limits<R>::max(),
+       R{std::numeric_limits<R>::min() + 1},
+       R{0}},
+      {R{3}, R{-20}, R{1}, R{-50}, std::numeric_limits<R>::min(), R{1}, R{0}},
+      {R{3},
+       R{20},
+       R{1},
+       R{50},
+       std::numeric_limits<R>::max(),
+       R{std::abs(std::numeric_limits<R>::min() + 1)},
+       R{0}},
+      {R{3}, R{20}, R{1}, R{50}, R{0}, R{1}, R{0}},
+      {1, 1, 1, 1, 0, 1, 1}};
+  };
+  batch.append_unary_types<cudf::ast::jit::op::ABS_OVERFLOW>(signed_decimal_overflow_types{},
+                                                             make_inputs);
+  batch.expect_results();
 }
 
-TYPED_TEST(JITDecimalArithmeticTest, DivOverflow)
+TEST_F(JITExpressionTest, NegOverflow)
 {
-  using T       = TypeParam;
-  auto a        = decimal_column_wrapper<T>{{3, 20, 1, 50}, numeric::scale_type{0}};
-  auto b        = decimal_column_wrapper<T>{{10, 7, 2, 1}, numeric::scale_type{0}};
-  auto b_fail   = decimal_column_wrapper<T>{{10, 1, 20, 0}, numeric::scale_type{0}};
-  auto expected = decimal_column_wrapper<T>{{0, 2, 0, 50}, numeric::scale_type{0}};
-  auto expected_fail =
-    decimal_column_wrapper<T>{{0, 20, 0, 50}, {1, 1, 1, 0}, numeric::scale_type{0}};
-  auto table      = cudf::table_view{{a, b, b_fail}};
-  auto a_ref      = cudf::ast::column_reference(0);
-  auto b_ref      = cudf::ast::column_reference(1);
-  auto b_fail_ref = cudf::ast::column_reference(2);
-  auto tree       = cudf::ast::tree{};
-  auto& div = cudf::ast::jit::operation(tree, cudf::ast::jit::op::DIV_OVERFLOW, {a_ref, b_ref});
-  auto& div_fail =
-    cudf::ast::jit::operation(tree, cudf::ast::jit::op::DIV_OVERFLOW, {a_ref, b_fail_ref});
-  auto& try_div_fail = cudf::ast::jit::operation(
-    tree, cudf::ast::jit::op::DIV_OVERFLOW, {a_ref, b_fail_ref}, cudf::error_policy::NULLIFY);
-  expect_overflow_results(table,
-                          {.success = div, .throwing = div_fail, .nullified = try_div_fail},
-                          expected,
-                          expected_fail);
+  overflow_batch batch;
+  auto make_inputs = []<typename T>() {
+    using R = overflow_rep_t<T>;
+    return unary_overflow_inputs<R>{
+      {R{3},
+       R{-20},
+       R{1},
+       R{-50},
+       std::numeric_limits<R>::max(),
+       R{-std::numeric_limits<R>::max()},
+       R{0}},
+      {R{3}, R{-20}, R{1}, R{-50}, std::numeric_limits<R>::min(), R{1}, R{0}},
+      {R{-3},
+       R{20},
+       R{-1},
+       R{50},
+       R{-std::numeric_limits<R>::max()},
+       std::numeric_limits<R>::max(),
+       R{0}},
+      {R{-3}, R{20}, R{-1}, R{50}, R{0}, R{-1}, R{0}},
+      {1, 1, 1, 1, 0, 1, 1}};
+  };
+  batch.append_unary_types<cudf::ast::jit::op::NEG_OVERFLOW>(signed_decimal_overflow_types{},
+                                                             make_inputs);
+  batch.expect_results();
 }
 
-TYPED_TEST(JITIntegerArithmeticTest, ModOverflow)
+TEST_F(JITExpressionTest, CheckPrecision)
 {
-  using T            = TypeParam;
-  auto a             = column_wrapper<T>{{3, 20, 1, 50}};
-  auto b             = column_wrapper<T>{{10, 7, 2, 1}};
-  auto b_fail        = column_wrapper<T>{{10, 1, 20, 0}};
-  auto expected      = column_wrapper<T>{{3, 6, 1, 0}};
-  auto expected_fail = column_wrapper<T>{{3, 0, 1, 0}, {1, 1, 1, 0}};
-  auto table         = cudf::table_view{{a, b, b_fail}};
-  auto a_ref         = cudf::ast::column_reference(0);
-  auto b_ref         = cudf::ast::column_reference(1);
-  auto b_fail_ref    = cudf::ast::column_reference(2);
-  auto tree          = cudf::ast::tree{};
-  auto& mod = cudf::ast::jit::operation(tree, cudf::ast::jit::op::MOD_OVERFLOW, {a_ref, b_ref});
-  auto& mod_fail =
-    cudf::ast::jit::operation(tree, cudf::ast::jit::op::MOD_OVERFLOW, {a_ref, b_fail_ref});
-  auto& try_mod_fail = cudf::ast::jit::operation(
-    tree, cudf::ast::jit::op::MOD_OVERFLOW, {a_ref, b_fail_ref}, cudf::error_policy::NULLIFY);
-  expect_overflow_results(table,
-                          {.success = mod, .throwing = mod_fail, .nullified = try_mod_fail},
-                          expected,
-                          expected_fail);
-}
-
-TYPED_TEST(JITDecimalArithmeticTest, ModOverflow)
-{
-  using T       = TypeParam;
-  auto a        = decimal_column_wrapper<T>{{3, 20, 1, 50}, numeric::scale_type{0}};
-  auto b        = decimal_column_wrapper<T>{{10, 7, 2, 1}, numeric::scale_type{0}};
-  auto b_fail   = decimal_column_wrapper<T>{{10, 1, 20, 0}, numeric::scale_type{0}};
-  auto expected = decimal_column_wrapper<T>{{3, 6, 1, 0}, numeric::scale_type{0}};
-  auto expected_fail =
-    decimal_column_wrapper<T>{{3, 0, 1, 0}, {1, 1, 1, 0}, numeric::scale_type{0}};
-  auto table      = cudf::table_view{{a, b, b_fail}};
-  auto a_ref      = cudf::ast::column_reference(0);
-  auto b_ref      = cudf::ast::column_reference(1);
-  auto b_fail_ref = cudf::ast::column_reference(2);
-  auto tree       = cudf::ast::tree{};
-  auto& mod = cudf::ast::jit::operation(tree, cudf::ast::jit::op::MOD_OVERFLOW, {a_ref, b_ref});
-  auto& mod_fail =
-    cudf::ast::jit::operation(tree, cudf::ast::jit::op::MOD_OVERFLOW, {a_ref, b_fail_ref});
-  auto& try_mod_fail = cudf::ast::jit::operation(
-    tree, cudf::ast::jit::op::MOD_OVERFLOW, {a_ref, b_fail_ref}, cudf::error_policy::NULLIFY);
-  expect_overflow_results(table,
-                          {.success = mod, .throwing = mod_fail, .nullified = try_mod_fail},
-                          expected,
-                          expected_fail);
-}
-
-TYPED_TEST(JITSignedIntegerArithmeticTest, AbsOverflow)
-{
-  using T     = TypeParam;
-  auto a      = column_wrapper<T>{{T{3}, T{-20}, T{1}, T{-50}, this->MAX, T{this->MIN + 1}, T{0}}};
-  auto a_fail = column_wrapper<T>{{T{3}, T{-20}, T{1}, T{-50}, this->MIN, T{1}, T{0}}};
-  auto expected =
-    column_wrapper<T>{{T{3}, T{20}, T{1}, T{50}, this->MAX, T{std::abs(this->MIN + 1)}, T{0}}};
-  auto expected_fail = column_wrapper<T>{{3, 20, 1, 50, 0, 1, 0}, {1, 1, 1, 1, 0, 1, 1}};
-  auto table         = cudf::table_view{{a, a_fail}};
-  auto a_ref         = cudf::ast::column_reference(0);
-  auto a_fail_ref    = cudf::ast::column_reference(1);
-  auto tree          = cudf::ast::tree{};
-  auto& abs          = cudf::ast::jit::operation(tree, cudf::ast::jit::op::ABS_OVERFLOW, {a_ref});
-  auto& abs_fail = cudf::ast::jit::operation(tree, cudf::ast::jit::op::ABS_OVERFLOW, {a_fail_ref});
-  auto& try_abs_fail = cudf::ast::jit::operation(
-    tree, cudf::ast::jit::op::ABS_OVERFLOW, {a_fail_ref}, cudf::error_policy::NULLIFY);
-  expect_overflow_results(table,
-                          {.success = abs, .throwing = abs_fail, .nullified = try_abs_fail},
-                          expected,
-                          expected_fail);
-}
-
-TYPED_TEST(JITDecimalArithmeticTest, AbsOverflow)
-{
-  using T = TypeParam;
-  using R = typename T::rep;
-  auto a  = decimal_column_wrapper<T>{
-    {R{3}, R{-20}, R{1}, R{-50}, this->MAX, R{this->MIN + 1}, R{0}}, numeric::scale_type{0}};
-  auto a_fail   = decimal_column_wrapper<T>{{R{3}, R{-20}, R{1}, R{-50}, this->MIN, R{1}, R{0}},
-                                            numeric::scale_type{0}};
-  auto expected = decimal_column_wrapper<T>{
-    {R{3}, R{20}, R{1}, R{50}, this->MAX, R{std::abs(this->MIN + 1)}, R{0}},
-    numeric::scale_type{0}};
-  auto expected_fail = decimal_column_wrapper<T>{
-    {3, 20, 1, 50, 0, 1, 0}, {1, 1, 1, 1, 0, 1, 1}, numeric::scale_type{0}};
-  auto table      = cudf::table_view{{a, a_fail}};
-  auto a_ref      = cudf::ast::column_reference(0);
-  auto a_fail_ref = cudf::ast::column_reference(1);
-  auto tree       = cudf::ast::tree{};
-  auto& abs       = cudf::ast::jit::operation(tree, cudf::ast::jit::op::ABS_OVERFLOW, {a_ref});
-  auto& abs_fail  = cudf::ast::jit::operation(tree, cudf::ast::jit::op::ABS_OVERFLOW, {a_fail_ref});
-  auto& try_abs_fail = cudf::ast::jit::operation(
-    tree, cudf::ast::jit::op::ABS_OVERFLOW, {a_fail_ref}, cudf::error_policy::NULLIFY);
-  expect_overflow_results(table,
-                          {.success = abs, .throwing = abs_fail, .nullified = try_abs_fail},
-                          expected,
-                          expected_fail);
-}
-
-TYPED_TEST(JITSignedIntegerArithmeticTest, NegOverflow)
-{
-  using T       = TypeParam;
-  auto a        = column_wrapper<T>{{T{3}, T{-20}, T{1}, T{-50}, this->MAX, T{-this->MAX}, T{0}}};
-  auto a_fail   = column_wrapper<T>{{T{3}, T{-20}, T{1}, T{-50}, this->MIN, T{1}, T{0}}};
-  auto expected = column_wrapper<T>{{T{-3}, T{20}, T{-1}, T{50}, T{-this->MAX}, this->MAX, T{0}}};
-  auto expected_fail = column_wrapper<T>{{-3, 20, -1, 50, 0, -1, 0}, {1, 1, 1, 1, 0, 1, 1}};
-  auto table         = cudf::table_view{{a, a_fail}};
-  auto a_ref         = cudf::ast::column_reference(0);
-  auto a_fail_ref    = cudf::ast::column_reference(1);
-  auto tree          = cudf::ast::tree{};
-  auto& neg          = cudf::ast::jit::operation(tree, cudf::ast::jit::op::NEG_OVERFLOW, {a_ref});
-  auto& neg_fail = cudf::ast::jit::operation(tree, cudf::ast::jit::op::NEG_OVERFLOW, {a_fail_ref});
-  auto& try_neg_fail = cudf::ast::jit::operation(
-    tree, cudf::ast::jit::op::NEG_OVERFLOW, {a_fail_ref}, cudf::error_policy::NULLIFY);
-  expect_overflow_results(table,
-                          {.success = neg, .throwing = neg_fail, .nullified = try_neg_fail},
-                          expected,
-                          expected_fail);
-}
-
-TYPED_TEST(JITDecimalArithmeticTest, NegOverflow)
-{
-  using T = TypeParam;
-  using R = typename T::rep;
-  auto a  = decimal_column_wrapper<T>{{R{3}, R{-20}, R{1}, R{-50}, this->MAX, R{-this->MAX}, R{0}},
-                                      numeric::scale_type{0}};
-  auto a_fail   = decimal_column_wrapper<T>{{R{3}, R{-20}, R{1}, R{-50}, this->MIN, R{1}, R{0}},
-                                            numeric::scale_type{0}};
-  auto expected = decimal_column_wrapper<T>{
-    {R{-3}, R{20}, R{-1}, R{50}, R{-this->MAX}, this->MAX, R{0}}, numeric::scale_type{0}};
-  auto expected_fail = decimal_column_wrapper<T>{
-    {-3, 20, -1, 50, 0, -1, 0}, {1, 1, 1, 1, 0, 1, 1}, numeric::scale_type{0}};
-  auto table      = cudf::table_view{{a, a_fail}};
-  auto a_ref      = cudf::ast::column_reference(0);
-  auto a_fail_ref = cudf::ast::column_reference(1);
-  auto tree       = cudf::ast::tree{};
-  auto& neg       = cudf::ast::jit::operation(tree, cudf::ast::jit::op::NEG_OVERFLOW, {a_ref});
-  auto& neg_fail  = cudf::ast::jit::operation(tree, cudf::ast::jit::op::NEG_OVERFLOW, {a_fail_ref});
-  auto& try_neg_fail = cudf::ast::jit::operation(
-    tree, cudf::ast::jit::op::NEG_OVERFLOW, {a_fail_ref}, cudf::error_policy::NULLIFY);
-  expect_overflow_results(table,
-                          {.success = neg, .throwing = neg_fail, .nullified = try_neg_fail},
-                          expected,
-                          expected_fail);
-}
-
-TYPED_TEST(JITDecimalArithmeticTest, CheckPrecision)
-{
-  using T       = TypeParam;
-  auto a        = decimal_column_wrapper<T>{{3, 200, 250, 200}, numeric::scale_type{0}};
-  auto a_fail   = decimal_column_wrapper<T>{{3, 200, 250, 20000}, numeric::scale_type{0}};
-  auto expected = decimal_column_wrapper<T>{{3, 200, 250, 200}, numeric::scale_type{0}};
-  auto expected_fail =
-    decimal_column_wrapper<T>{{3, 200, 250, 200}, {1, 1, 1, 0}, numeric::scale_type{0}};
-  auto max_precision = cudf::numeric_scalar<int32_t>(3);
-  auto table         = cudf::table_view{{a, a_fail}};
-  auto a_ref         = cudf::ast::column_reference(0);
-  auto a_fail_ref    = cudf::ast::column_reference(1);
-  auto tree          = cudf::ast::tree{};
-  auto precision     = cudf::ast::literal(max_precision);
-  auto& check_precision =
-    cudf::ast::jit::operation(tree, cudf::ast::jit::op::CHECK_PRECISION, {a_ref, precision});
-  auto& check_precision_fail =
-    cudf::ast::jit::operation(tree, cudf::ast::jit::op::CHECK_PRECISION, {a_fail_ref, precision});
-  auto& try_check_precision = cudf::ast::jit::operation(tree,
-                                                        cudf::ast::jit::op::CHECK_PRECISION,
-                                                        {a_fail_ref, precision},
-                                                        cudf::error_policy::NULLIFY);
-  expect_overflow_results(table,
-                          {.success   = check_precision,
-                           .throwing  = check_precision_fail,
-                           .nullified = try_check_precision},
-                          expected,
-                          expected_fail);
+  overflow_batch batch;
+  for_each_overflow_type(cudf::test::FixedPointTypes{},
+                         [&]<typename T>() { batch.append_precision<T>(); });
+  batch.expect_results();
 }
 
 TEST_F(JITExpressionTest, BitShiftLeft)

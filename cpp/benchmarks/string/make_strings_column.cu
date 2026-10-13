@@ -7,10 +7,11 @@
 
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_factories.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/std/utility>
 #include <thrust/tabulate.h>
 
@@ -57,16 +58,17 @@ static void BM_make_strings_column_batch(nvbench::state& state)
     cycle_dtypes({cudf::type_id::STRING}, batch_size), row_count{num_rows}, table_profile);
 
   auto const stream = cudf::get_default_stream();
-  auto input_data   = std::vector<rmm::device_uvector<string_index_pair>>{};
+  auto input_data   = std::vector<cuda::device_buffer<string_index_pair>>{};
   auto input        = std::vector<cudf::device_span<string_index_pair const>>{};
   input_data.reserve(batch_size);
   input.reserve(batch_size);
   for (auto const& cv : data_table->view()) {
     auto const d_data_ptr = cudf::column_device_view::create(cv, stream);
-    auto batch_input      = rmm::device_uvector<string_index_pair>(cv.size(), stream);
+    auto batch_input      = cuda::device_buffer<string_index_pair>(
+      stream, cudf::get_current_device_resource_ref(), cv.size(), cuda::no_init);
     thrust::tabulate(rmm::exec_policy_nosync(stream),
-                     batch_input.begin(),
-                     batch_input.end(),
+                     batch_input.data(),
+                     batch_input.data() + batch_input.size(),
                      [data_col = *d_data_ptr] __device__(auto const idx) {
                        if (data_col.is_null(idx)) { return string_index_pair{nullptr, 0}; }
                        auto const row = data_col.element<cudf::string_view>(idx);

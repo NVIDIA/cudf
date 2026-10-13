@@ -20,7 +20,7 @@ data structures and fundamental algorithms for tabular data.
 
 Notable projects that use cuDF include:
 
-* [Spark RAPIDS](https://github.com/NVIDIA/spark-rapids): A GPU accelerator plugin for [Apache Spark](https://spark.apache.org/)
+* [NVIDIA cuDF plugin for Apache Spark](https://github.com/NVIDIA/cudf-spark): A GPU accelerator plugin for [Apache Spark](https://spark.apache.org/)
 * [Velox-cuDF](https://github.com/facebookincubator/velox/blob/main/velox/experimental/cudf/README.md): A [Velox](https://velox-lib.io/)
 extension module to execute Velox plans on the GPU
 * [Sirius](https://www.sirius-db.com/): A GPU-native SQL engine providing extensions for libraries like [DuckDB](https://duckdb.org/)
@@ -29,7 +29,7 @@ extension module to execute Velox plans on the GPU
 
 ### System Requirements
 
-Operating System, GPU driver, and supported CUDA version information can be found at the [RAPIDS Installation Guide](https://docs.nvidia.com/datascience/install/#system-req)
+Operating System, GPU driver, and supported CUDA version information can be found at the [system requirements](https://docs.nvidia.com/datascience/install/#system-req)
 
 ### pip
 
@@ -134,7 +134,7 @@ lf.drop_nulls().group_by(["A", "B"]).mean().collect(engine="gpu")
 
 For bug reports or feature requests, please [file an issue](https://github.com/NVIDIA/cudf/issues/new/choose) on the GitHub issue tracker.
 
-For questions or discussion about cuDF and GPU data processing, feel free to post in the [RAPIDS Slack](https://rapids.ai/slack-invite) workspace.
+For questions or discussion about cuDF and GPU data processing, feel free to post in the [community Slack](https://rapids.ai/slack-invite) workspace.
 
 ## Contributing
 

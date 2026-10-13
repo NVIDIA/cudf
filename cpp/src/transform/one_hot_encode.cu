@@ -19,6 +19,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/stream>
 #include <thrust/transform.h>
@@ -74,22 +75,24 @@ std::pair<std::unique_ptr<column>, table_view> one_hot_encode(column_view const&
   auto const comparator =
     cudf::detail::row::equality::two_table_comparator{t_lhs, t_rhs, stream, temp_mr};
 
-  auto const comparator_helper = [&](auto const d_equal) {
+  auto const comparator_helper = [&](auto const fn) {
     thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
                       cuda::counting_iterator<cudf::size_type>{0},
                       cuda::counting_iterator{total_size},
                       all_encodings->mutable_view().begin<bool>(),
-                      ohe_equality_functor<decltype(d_equal)>(input.size(), d_equal));
+                      fn);
   };
 
   if (cudf::detail::has_nested_columns(t_lhs) or cudf::detail::has_nested_columns(t_rhs)) {
     auto const d_equal = comparator.equal_to<true>(
       nullate::DYNAMIC{has_nested_nulls(t_lhs) || has_nested_nulls(t_rhs)});
-    comparator_helper(d_equal);
+    comparator_helper(ohe_equality_functor<decltype(d_equal)>(input.size(), d_equal));
   } else {
     auto const d_equal = comparator.equal_to<false>(
       nullate::DYNAMIC{has_nested_nulls(t_lhs) || has_nested_nulls(t_rhs)});
-    comparator_helper(d_equal);
+    // the non-nested comparator is cheap and uniform per row
+    comparator_helper(cuda::proclaim_copyable_arguments(
+      ohe_equality_functor<decltype(d_equal)>(input.size(), d_equal)));
   }
 
   auto const split_iter =

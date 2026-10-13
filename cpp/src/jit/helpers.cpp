@@ -15,6 +15,7 @@
 #include <rtcx/rtcx.hpp>
 #include <runtime/context.hpp>
 
+#include <algorithm>
 #include <format>
 
 namespace cudf {
@@ -30,8 +31,8 @@ typename std::vector<column_view>::const_iterator get_transform_base_column(
 {
   if (inputs.empty()) { return inputs.end(); }
 
-  auto [smallest, largest] = std::minmax_element(
-    inputs.begin(), inputs.end(), [](auto const& a, auto const& b) { return a.size() < b.size(); });
+  auto [smallest, largest] = std::ranges::minmax_element(
+    inputs, [](auto const& a, auto const& b) { return a.size() < b.size(); });
 
   /// when the largest size is 1, the size-1 column could be a scalar or an actual column, it would
   /// be a scalar if it has columns that are zero-sized

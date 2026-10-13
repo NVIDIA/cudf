@@ -23,7 +23,6 @@
 
 #include <cuda/iterator>
 #include <cuda/stream>
-#include <thrust/copy.h>
 #include <thrust/transform.h>
 
 #include <algorithm>
@@ -38,11 +37,12 @@ inline bool __device__ out_of_bounds(size_type size, size_type idx)
   return idx < 0 || idx >= size;
 }
 
-std::pair<rmm::device_buffer, size_type> create_null_mask(column_device_view const& input,
-                                                          size_type offset,
-                                                          scalar const& fill_value,
-                                                          cuda::stream_ref stream,
-                                                          rmm::device_async_resource_ref mr)
+std::pair<cuda::device_buffer<std::byte>, size_type> create_null_mask(
+  column_device_view const& input,
+  size_type offset,
+  scalar const& fill_value,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr)
 {
   auto const size = input.size();
   auto func_validity =

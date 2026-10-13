@@ -7,9 +7,9 @@ This skill is ready for commercial/non-commercial use. <br>
 NVIDIA <br>
 
 ### License/Terms of Use: <br>
-CC-BY-4.0 AND Apache-2.0 <br>
+CC-BY-4.0 AND Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers accelerating tabular data processing with GPU DataFrames, migrating pandas code to cuDF, optimizing ETL pipelines, and scaling DataFrame workloads across multiple GPUs. <br>
+Developers and data engineers use this skill to have an agent migrate or accelerate pandas DataFrame code on NVIDIA GPUs with cudf.pandas, explicit cuDF, or dask-cuDF, covering ETL, joins, groupby, reshape, nullable semantics, CSV/Parquet I/O, memory management, and CPU/GPU parity validation. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -26,15 +26,17 @@ Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
 - [cuDF API Patterns, Gaps, and Semantic Differences](references/api-patterns.md) <br>
-- [cudf.pandas Accelerator Deep Dive](references/cudf-pandas-accelerator.md) <br>
+- [cudf.pandas Accelerator — Deep Dive](references/cudf-pandas-accelerator.md) <br>
 - [dask-cuDF Patterns](references/dask-cudf-patterns.md) <br>
-- [NVIDIA cuDF Documentation](https://docs.nvidia.com/cudf/) <br>
-- [dask-cuDF Documentation](https://docs.nvidia.com/dask-cudf/) <br>
-- [NVIDIA cuDF GitHub Repository](https://github.com/NVIDIA/cudf) <br>
+- [cuDF Documentation](https://docs.nvidia.com/cudf/) <br>
+- [dask-cuDF API Reference](https://docs.nvidia.com/dask-cudf/) <br>
+- [Installation System Requirements](https://docs.nvidia.com/datascience/install/#system-req) <br>
+- [cuDF GitHub](https://github.com/NVIDIA/cudf) <br>
+- [cuDF CHANGELOG](https://github.com/NVIDIA/cudf/blob/main/CHANGELOG.md) <br>
 
 
 ## Skill Output: <br>
-**Output Type(s):** [Code, Configuration instructions, Analysis] <br>
+**Output Type(s):** [Code, Shell commands, Configuration instructions, Analysis] <br>
 **Output Format:** [Markdown with inline Python and bash code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
@@ -46,39 +48,39 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-13 evaluation tasks (12 positive, 1 negative), each run with 3 attempts in isolated sandbox pods. <br>
+13 evaluation tasks (12 positive, 1 negative), one attempt per task, each run in an isolated k8s sandbox pod and compared against a no-skill baseline. Overall verdict: PASS — recommended for publication (evaluation date 2026-10-08, evaluator version 1.5.6). <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
-- Security: Checks for unsafe operations, secret leakage, and unauthorized access. <br>
-- Correctness: Checks final-answer correctness against the reference answer. <br>
-- Discoverability: Checks whether the expected skill was selected and the workflow executed. <br>
-- Effectiveness: Checks whether the user’s goal was achieved and expected workflow behavior was followed. <br>
-- Efficiency: Checks tool-call productivity and token usage efficiency. <br>
+- Security: Is it safe to use? Scored from the security signal. <br>
+- Correctness: Is the answer correct? Scored from final-answer accuracy. <br>
+- Discoverability: Was the right skill loaded when needed? Scored from skill execution. <br>
+- Effectiveness: Did the skill help complete the task? Equal-weight mean of goal accuracy and behavior check. <br>
+- Efficiency: Did it avoid wasted tool calls and token usage? 50% tool-call productivity and 50% token efficiency. <br>
 
 Underlying evaluation signals used in this run: <br>
-- `security`: Detects unsafe operations, secret leakage, and unauthorized access. <br>
-- `accuracy`: Verifies final-answer correctness against the reference answer. <br>
-- `skill_execution`: Verifies whether the expected skill was selected and decoys were avoided. <br>
-- `goal_accuracy`: Verifies whether the user’s goal was achieved. <br>
-- `behavior_check`: Verifies whether the expected workflow behavior was followed. <br>
-- `skill_efficiency`: Measures tool-call productivity. <br>
-- `token_efficiency`: Measures actual uncached prompt plus completion token usage. <br>
+- `security`: Unsafe operations, secret leakage, and unauthorized access. <br>
+- `skill_execution`: Whether the expected skill was selected, decoys were avoided, and the workflow executed. <br>
+- `skill_efficiency`: Tool-call productivity. <br>
+- `accuracy`: Final-answer correctness against the reference answer. <br>
+- `goal_accuracy`: Whether the user's goal was achieved. <br>
+- `behavior_check`: Whether the expected workflow behavior was followed. <br>
+- `token_efficiency`: Actual uncached prompt plus completion token usage. <br>
 
 
 
 ## Evaluation Results: <br>
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | Not available | 84.7% — baseline ran, but no comparable score was available; uplift unavailable |
-| Security | Not available | 76.9% → 69.2% (-7.7 points) |
-| Correctness | Not available | 100.0% → 100.0% (±0.0 points) |
-| Discoverability | Not available | 81.3% — baseline ran, but no comparable score was available; uplift unavailable |
-| Effectiveness | Not available | 94.4% → 90.9% (-3.5 points) |
-| Efficiency | Not available | 82.3% — baseline ran, but no comparable score was available; uplift unavailable |
+| Overall | 81.5% — baseline ran, but no comparable score was available; uplift unavailable | 81.7% — baseline ran, but no comparable score was available; uplift unavailable |
+| Security | 23.1% → 61.5% (+38.4 points) | 69.2% → 53.9% (-15.3 points) |
+| Correctness | 100.0% → 100.0% (±0.0 points) | 100.0% → 100.0% (±0.0 points) |
+| Discoverability | 78.8% — baseline ran, but no comparable score was available; uplift unavailable | 77.5% — baseline ran, but no comparable score was available; uplift unavailable |
+| Effectiveness | 95.1% → 94.8% (-0.3 points) | 94.1% → 92.8% (-1.3 points) |
+| Efficiency | 72.6% — baseline ran, but no comparable score was available; uplift unavailable | 84.4% — baseline ran, but no comparable score was available; uplift unavailable |
 
 ## Skill Version(s): <br>
-4ad07b44f1 (source: git SHA, committed 2026-09-10) <br>
+26.12.00 development release (source: repo VERSION file and SKILL.md compatibility section; latest CHANGELOG release 26.10.00, git SHA 18f5bd5bf3 committed 2026-10-08) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>

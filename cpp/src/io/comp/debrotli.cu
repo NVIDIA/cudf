@@ -2083,11 +2083,12 @@ size_t get_gpu_debrotli_scratch_size(int max_num_inputs)
 void gpu_debrotli(device_span<device_span<uint8_t const> const> inputs,
                   device_span<device_span<uint8_t> const> outputs,
                   device_span<codec_exec_result> results,
-                  cuda::stream_ref stream)
+                  cuda::stream_ref stream,
+                  cudf::memory_resources mr)
 {
   // Scratch memory for decompressing
   rmm::device_uvector<uint8_t> scratch(
-    cudf::io::detail::get_gpu_debrotli_scratch_size(inputs.size()), stream);
+    cudf::io::detail::get_gpu_debrotli_scratch_size(inputs.size()), stream, mr.get_temporary_mr());
 
   auto const count = inputs.size();
   dim3 dim_block(block_size, 1);

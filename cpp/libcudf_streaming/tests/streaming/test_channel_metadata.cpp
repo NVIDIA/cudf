@@ -169,11 +169,12 @@ class StreamingChannelMetadataGPU : public ::testing::Test {
   {
     rmm::device_buffer buf(vals.data(), vals.size() * sizeof(int32_t), stream);
     stream.sync();
-    auto col = std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::INT32},
-                                              static_cast<cudf::size_type>(vals.size()),
-                                              std::move(buf),
-                                              rmm::device_buffer{},
-                                              0);
+    auto col =
+      std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::INT32},
+                                     static_cast<cudf::size_type>(vals.size()),
+                                     std::move(buf),
+                                     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                     0);
     std::vector<std::unique_ptr<cudf::column>> cols;
     cols.push_back(std::move(col));
     return std::make_shared<table_chunk>(std::make_unique<cudf::table>(std::move(cols)), stream);

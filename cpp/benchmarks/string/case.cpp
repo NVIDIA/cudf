@@ -21,33 +21,11 @@ void bench_case(nvbench::state& state)
 
   data_profile const profile = data_profile_builder().distribution(
     cudf::type_id::STRING, distribution_id::NORMAL, min_width, max_width);
-  auto const column = create_random_column(cudf::type_id::STRING, row_count{num_rows}, profile);
-
-  auto col_view = column->view();
-  auto col_size = column->alloc_size();
-
-  cudf::column::contents ascii_contents;
-  if (encoding == "ascii") {
-    data_profile ascii_profile = data_profile_builder().no_validity().distribution(
-      cudf::type_id::INT8, distribution_id::UNIFORM, 32, 126);  // nice ASCII range
-    auto input        = cudf::strings_column_view(col_view);
-    auto ascii_column = create_random_column(
-      cudf::type_id::INT8,
-      row_count{static_cast<cudf::size_type>(input.chars_size(cudf::get_default_stream()))},
-      ascii_profile);
-    auto ascii_data = ascii_column->view();
-
-    col_view       = cudf::column_view(col_view.type(),
-                                 col_view.size(),
-                                 ascii_data.data<char>(),
-                                 col_view.null_mask(),
-                                 col_view.null_count(),
-                                 0,
-                                       {input.offsets()});
-    col_size       = ascii_column->alloc_size();
-    ascii_contents = ascii_column->release();
-  }
-  auto input = cudf::strings_column_view(col_view);
+  auto const column   = encoding == "ascii"
+                          ? create_ascii_string_column(profile, num_rows)
+                          : create_random_column(cudf::type_id::STRING, row_count{num_rows}, profile);
+  auto const input    = cudf::strings_column_view(column->view());
+  auto const col_size = column->alloc_size();
 
   state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
 

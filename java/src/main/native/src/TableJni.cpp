@@ -885,11 +885,12 @@ jlongArray mixed_join_size(JNIEnv* env,
     auto col_data = matches_per_row->release();
     cudf::jni::native_jlongArray result(env, 2);
     result[0] = static_cast<jlong>(join_size);
-    result[1] = ptr_as_jlong(new cudf::column{cudf::data_type{cudf::type_id::INT32},
-                                              col_size,
-                                              std::move(col_data),
-                                              rmm::device_buffer{},
-                                              0});
+    result[1] =
+      ptr_as_jlong(new cudf::column{cudf::data_type{cudf::type_id::INT32},
+                                    col_size,
+                                    std::move(col_data),
+                                    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                    0});
     return result.get_jArray();
   }
   JNI_CATCH(env, NULL);
@@ -1141,7 +1142,7 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_Table_deleteCudfTable(JNIEnv* env,
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    delete reinterpret_cast<cudf::table_view*>(j_cudf_table_view);
+    cudf::jni::safe_delete<cudf::table_view>(j_cudf_table_view);
   }
   JNI_CATCH(env, );
 }
@@ -1761,7 +1762,7 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_TableWithMeta_close(JNIEnv* env, jcla
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    delete reinterpret_cast<cudf::io::table_with_metadata*>(handle);
+    cudf::jni::safe_delete<cudf::io::table_with_metadata>(handle);
   }
   JNI_CATCH(env, );
 }
@@ -2979,7 +2980,7 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_Table_closeArrowTable(JNIEnv* env,
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    delete handle;
+    cudf::jni::safe_delete<std::shared_ptr<arrow::Table>>(handle);
   }
   JNI_CATCH(env, );
 }
@@ -3541,6 +3542,61 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_fullHashJoinGatherMapsWit
     [output_row_count](cudf::table_view const& left, cudf::hash_join const& hash) {
       return hash.full_join(left, output_row_count);
     });
+}
+
+JNIEXPORT jlongArray JNICALL
+Java_ai_rapids_cudf_Table_filterJoinGatherMaps(JNIEnv* env,
+                                               jclass,
+                                               jlong j_left_gather_map_address,
+                                               jlong j_left_gather_map_length,
+                                               jlong j_right_gather_map_address,
+                                               jlong j_right_gather_map_length,
+                                               jlong j_left_table,
+                                               jlong j_right_table,
+                                               jlong j_condition,
+                                               jint j_join_kind)
+{
+  constexpr jlong index_size = sizeof(cudf::size_type);
+  if (j_left_gather_map_length < 0 || j_left_gather_map_length % index_size != 0) {
+    JNI_THROW_NEW(
+      env, cudf::jni::ILLEGAL_ARG_EXCEPTION_CLASS, "invalid left gather map length", NULL);
+  }
+  if (j_right_gather_map_length != j_left_gather_map_length) {
+    JNI_THROW_NEW(env,
+                  cudf::jni::ILLEGAL_ARG_EXCEPTION_CLASS,
+                  "left and right gather maps must have the same length",
+                  NULL);
+  }
+  if (j_left_gather_map_length != 0) {
+    JNI_NULL_CHECK(env, j_left_gather_map_address, "left gather map is null", NULL);
+    JNI_NULL_CHECK(env, j_right_gather_map_address, "right gather map is null", NULL);
+  }
+  JNI_NULL_CHECK(env, j_left_table, "left table is null", NULL);
+  JNI_NULL_CHECK(env, j_right_table, "right table is null", NULL);
+  JNI_NULL_CHECK(env, j_condition, "condition is null", NULL);
+
+  JNI_TRY
+  {
+    cudf::jni::auto_set_device(env);
+    auto const map_size     = static_cast<std::size_t>(j_left_gather_map_length / index_size);
+    auto const left_indices = cudf::device_span<cudf::size_type const>{
+      reinterpret_cast<cudf::size_type const*>(j_left_gather_map_address), map_size};
+    auto const right_indices = cudf::device_span<cudf::size_type const>{
+      reinterpret_cast<cudf::size_type const*>(j_right_gather_map_address), map_size};
+    auto const left_table  = reinterpret_cast<cudf::table_view const*>(j_left_table);
+    auto const right_table = reinterpret_cast<cudf::table_view const*>(j_right_table);
+    auto const condition   = reinterpret_cast<cudf::jni::ast::compiled_expr const*>(j_condition);
+    auto const join_kind   = static_cast<cudf::join_kind>(j_join_kind);
+
+    return cudf::jni::gather_maps_to_java(env,
+                                          cudf::filter_join_indices(*left_table,
+                                                                    *right_table,
+                                                                    left_indices,
+                                                                    right_indices,
+                                                                    condition->get_top_expression(),
+                                                                    join_kind));
+  }
+  JNI_CATCH(env, NULL);
 }
 
 JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_conditionalFullJoinGatherMaps(
@@ -4954,8 +5010,12 @@ Java_ai_rapids_cudf_Table_contiguousSplitGroups(JNIEnv* env,
       auto const vec  = thrust::host_vector<cudf::size_type>(begin, end);
       auto buf =
         rmm::device_buffer{vec.data(), size * sizeof(cudf::size_type), cudf::get_default_stream()};
-      auto gather_map_col = std::make_unique<cudf::column>(
-        cudf::data_type{cudf::type_id::INT32}, size, std::move(buf), rmm::device_buffer{}, 0);
+      auto gather_map_col =
+        std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::INT32},
+                                       size,
+                                       std::move(buf),
+                                       cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                       0);
 
       // gather the first key in each group to remove duplicated ones.
       group_by_result_table = cudf::gather(groups.keys->view(), gather_map_col->view());

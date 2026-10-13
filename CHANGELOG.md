@@ -1,3 +1,464 @@
+# cudf 26.10.00 (7 Oct 2026)
+
+### 🚨 Breaking Changes
+* Support zero-column operands in cross_join by @madsbk in https://github.com/NVIDIA/cudf/pull/23235
+* Modify scalar factory APIs to honor the data_type scale by @davidwendt in https://github.com/NVIDIA/cudf/pull/23483
+* Avoid a deep copy for no-op mergeAndSetValidity and make merging zero columns a no-op by @rishic3 in https://github.com/NVIDIA/cudf/pull/23030
+* [FEA] Remove Deprecated Transform APIs by @lamarrr in https://github.com/NVIDIA/cudf/pull/23489
+* Rename errc::OVERFLOW to avoid macro collisions by @a-hirota in https://github.com/NVIDIA/cudf/pull/23509
+* Change cudf::strings::zfill_by_widths to accept null widths by @davidwendt in https://github.com/NVIDIA/cudf/pull/23215
+* Rename cudf-polars max_io_threads configuration and change meaning by @wence- in https://github.com/NVIDIA/cudf/pull/23569
+* Encode non-negative nanos for negative ORC timestamps by @vuule in https://github.com/NVIDIA/cudf/pull/23391
+* Add opt-in per-row status column to VARIANT extraction and cast APIs by @abigalekim in https://github.com/NVIDIA/cudf/pull/23560
+* [FEA] Simplify & Use a Meyers singleton for the cuDF context by @lamarrr in https://github.com/NVIDIA/cudf/pull/23760
+* Replace the hybrid scan single-file secondary-filter API by @qbacpey in https://github.com/NVIDIA/cudf/pull/23800
+* Apply memory backpressure to the shuffle by @madsbk in https://github.com/NVIDIA/cudf/pull/23886
+* Fix empty mask behavior of `apply_deletion_mask`  by @mhaseeb123 in https://github.com/NVIDIA/cudf/pull/23857
+* Add Java API to return Parquet footer by @liurenjie1024 in https://github.com/NVIDIA/cudf/pull/23912
+* [FEA] Drop Obsolete PTX/CUDA Rolling Aggregations by @lamarrr in https://github.com/NVIDIA/cudf/pull/23840
+* Migrate stream APIs from rmm::cuda_stream_view to cuda::stream_ref by @bdice in https://github.com/NVIDIA/cudf/pull/23929
+* Fix FULL_JOIN filtering through internal finalization by @bdice in https://github.com/NVIDIA/cudf/pull/24146
+### 🐛 Bug Fixes
+* Bump versions of packages missed in 26.10 rollover by @wence- in https://github.com/NVIDIA/cudf/pull/23315
+* Fix NativeDepsLoaderTest is skipped in Java Test CI by @paul-aiyedun in https://github.com/NVIDIA/cudf/pull/23312
+* Fix cum_sum window functions with null filling in cudf-polars by @Matt711 in https://github.com/NVIDIA/cudf/pull/23206
+* Fix malformed LIB_BUILD_DIR default in conda builds by @fallintoplace in https://github.com/NVIDIA/cudf/pull/23102
+* Fix 26.10 versions by @bdice in https://github.com/NVIDIA/cudf/pull/23383
+* Fix hybrid scan parquet reader incorrectly parse bloom filter by @qbacpey in https://github.com/NVIDIA/cudf/pull/22901
+* Make proxy extension dtypes instances of pandas ExtensionDtype by @galipremsagar in https://github.com/NVIDIA/cudf/pull/23417
+* Use libcudf-bundled CCCL for NRT UDF compilation by @vyasr in https://github.com/NVIDIA/cudf/pull/23455
+* Fix ORC chunked reads of empty structs by @wjxiz1992 in https://github.com/NVIDIA/cudf/pull/23289
+* Fix integer overflow in nvtext::normalize_characters by @davidwendt in https://github.com/NVIDIA/cudf/pull/23473
+* Fix fallback for unsupported fill strategy in cudf-polars by @rjzamora in https://github.com/NVIDIA/cudf/pull/23485
+* Temporarily exclude GB300 and GH200 from testing by @KyleFromNVIDIA in https://github.com/NVIDIA/cudf/pull/23499
+* Accept a device memory resource in the device-view factories by @nirandaperera in https://github.com/NVIDIA/cudf/pull/23486
+* Fix usage of dask-cuda in pip constraints by @KyleFromNVIDIA in https://github.com/NVIDIA/cudf/pull/23516
+* Record cudf-polars device only after a successful switch by @fallintoplace in https://github.com/NVIDIA/cudf/pull/23512
+* Reject unsupported masked array-interface inputs by @fallintoplace in https://github.com/NVIDIA/cudf/pull/23511
+* Fix order preservation in grouped-window evaluation by @rjzamora in https://github.com/NVIDIA/cudf/pull/23524
+* [BUG] Avoid writing duplicated data in cudf-polars ``sink`` by @rjzamora in https://github.com/NVIDIA/cudf/pull/23525
+* Serialize engine config in cudf-polars benchmark by @TomAugspurger in https://github.com/NVIDIA/cudf/pull/23529
+* Use `uint64_t` to track column chunk data size in PQ writer by @mhaseeb123 in https://github.com/NVIDIA/cudf/pull/23544
+* cast_variant skips unsupported target type validation for empty inputs by @abigalekim in https://github.com/NVIDIA/cudf/pull/23462
+* Fix how `build.sh` determines CUDA version by @KyleFromNVIDIA in https://github.com/NVIDIA/cudf/pull/23588
+* Fix uninitialized page info for column chunks without a dictionary page by @mhaseeb123 in https://github.com/NVIDIA/cudf/pull/23579
+* Additional fixes for libcudf large strings support by @davidwendt in https://github.com/NVIDIA/cudf/pull/23612
+* Fix inconsistency with Polars when doing quantile nearest on even length columns by @jberg5 in https://github.com/NVIDIA/cudf/pull/21708
+* Change cudf-polars benchmarking `NightlyRole` date to `Y-M-D` format by @mroeschke in https://github.com/NVIDIA/cudf/pull/23631
+* Make is_supported_cast fail for variable-width inputs by @JohnZed in https://github.com/NVIDIA/cudf/pull/23613
+* Add Rocky 8 packaged-JAR Java CI and skip optional nvcomp by @paul-aiyedun in https://github.com/NVIDIA/cudf/pull/23646
+* fix: declare libcudf wheel CUDA runtime dependencies by @bdice in https://github.com/NVIDIA/cudf/pull/23414
+* Ensure ParquetOptions.prefetch_file_metadata value of Unspecified is serializable by @mroeschke in https://github.com/NVIDIA/cudf/pull/23684
+* Guard xfail for polars test test_series_init_np_temporal_with_nat_15518 for NumPy>=2.5 by @Matt711 in https://github.com/NVIDIA/cudf/pull/23676
+* Fix reset_index: level bounds, duplicate columns, columns.name, tuple index names by @galipremsagar in https://github.com/NVIDIA/cudf/pull/23418
+* Fix invalid device context error in ValidIfTest.ExplicitMemoryResourcesEmptyRange by @davidwendt in https://github.com/NVIDIA/cudf/pull/23704
+* Fix JSON writes to fsspec targets by @fallintoplace in https://github.com/NVIDIA/cudf/pull/23603
+* Fix duplicate bin detection for large cut inputs by @fallintoplace in https://github.com/NVIDIA/cudf/pull/23601
+* Require cudaMemcpyDefault policy by @bdice in https://github.com/NVIDIA/cudf/pull/23605
+* Fix racecheck in parquet page_string_decode kernels by @davidwendt in https://github.com/NVIDIA/cudf/pull/23681
+* Allow large strings input within the parquet make_column utility by @davidwendt in https://github.com/NVIDIA/cudf/pull/23685
+* Fix host-source lifetime races by @bdice in https://github.com/NVIDIA/cudf/pull/23718
+* Select batched memcpy flags by copy size by @bdice in https://github.com/NVIDIA/cudf/pull/23675
+* Fix version guards in tests for set sorted hints by @Matt711 in https://github.com/NVIDIA/cudf/pull/23703
+* Check for output offsets int32 overflow in list APIs by @davidwendt in https://github.com/NVIDIA/cudf/pull/23652
+* Add length check to cudf::strings::is_timestamp logic for literals by @davidwendt in https://github.com/NVIDIA/cudf/pull/23712
+* Reject ragged nested iterables in pylibcudf column construction by @fallintoplace in https://github.com/NVIDIA/cudf/pull/23510
+* Fix per-rank result attribution in the Ray and Dask engines by @madsbk in https://github.com/NVIDIA/cudf/pull/23739
+* Fix Parquet row group pruning for negated equality predicates by @mhaseeb123 in https://github.com/NVIDIA/cudf/pull/23580
+* Support empty segments in segmented bitmask reductions by @vuule in https://github.com/NVIDIA/cudf/pull/23689
+* Pin Cython version for cython-lint pre-commit hook by @Matt711 in https://github.com/NVIDIA/cudf/pull/23767
+* Workaround cuda::std::memcpy assert in unaligned_load utility by @davidwendt in https://github.com/NVIDIA/cudf/pull/23724
+* Fix `StreamingOptions._from_argparse` silently dropping env vars by @Matt711 in https://github.com/NVIDIA/cudf/pull/23720
+* Skip upstream polars test `test_scan_ndjson_streaming_decompression` by @Matt711 in https://github.com/NVIDIA/cudf/pull/23783
+* Fix scale handling of fixed-point types in minmax aggregation for cudf::reduce by @davidwendt in https://github.com/NVIDIA/cudf/pull/23752
+* Fix RMM race conditions from deferred H2D copies in pylibcudf tests by @Matt711 in https://github.com/NVIDIA/cudf/pull/23789
+* Fix flaky `StreamPoolTest.ConcurrentThreadsGetDistinctStreams` by @vuule in https://github.com/NVIDIA/cudf/pull/23820
+* fix(to_numpy): return object dtype for bool/numeric and datetime/timedelta mixes in pandas-compatible mode by @Matt711 in https://github.com/NVIDIA/cudf/pull/23722
+* Fix style check in rolling utils module by @Matt711 in https://github.com/NVIDIA/cudf/pull/23824
+* Add missing include for std::cerr in debug build by @davidwendt in https://github.com/NVIDIA/cudf/pull/23780
+* Fix cudf::strings::to_timestamp handling of %U format specifier by @davidwendt in https://github.com/NVIDIA/cudf/pull/23807
+* Fix stream copy on scoped host variable in json reduce_to_column_tree by @davidwendt in https://github.com/NVIDIA/cudf/pull/23806
+* Add max size_type overflow check in cudf::interleave_columns by @davidwendt in https://github.com/NVIDIA/cudf/pull/23838
+* Remove `XPASS`ing datetime tests from pandas `XFAIL` set by @Matt711 in https://github.com/NVIDIA/cudf/pull/23866
+* Check for integer overflow on input parameters to cudf::tile() by @davidwendt in https://github.com/NVIDIA/cudf/pull/23843
+* Add check for non-zero sample of empty table in cudf::sample() by @davidwendt in https://github.com/NVIDIA/cudf/pull/23841
+* [BUG] Fix null handling in mixed semi joins by @wjxiz1992 in https://github.com/NVIDIA/cudf/pull/23861
+* Handle int64 strings offsets in cudf::byte_cast API by @davidwendt in https://github.com/NVIDIA/cudf/pull/23725
+* Fix fast-count optimization with hybrid scan by @TomAugspurger in https://github.com/NVIDIA/cudf/pull/23874
+* Preserve header-only CSVs in pandas-compatible mode by @fallintoplace in https://github.com/NVIDIA/cudf/pull/23513
+* Fix parquet prefetch test wrapper signature by @vyasr in https://github.com/NVIDIA/cudf/pull/23883
+* Fix streaming builds with RAPIDS MPF stream pools by @vyasr in https://github.com/NVIDIA/cudf/pull/23885
+* Fix CUDA 13 LTO architecture selection with older CMake by @wjxiz1992 in https://github.com/NVIDIA/cudf/pull/23862
+* Fix Literal broadcasting in pl.struct by @TomAugspurger in https://github.com/NVIDIA/cudf/pull/23893
+* Zero-fill non-nullable string offsets with a nullable ancestor by @mhaseeb123 in https://github.com/NVIDIA/cudf/pull/23879
+* Fix Parquet statistics pruning for predicates satisfied by NaN by @mhaseeb123 in https://github.com/NVIDIA/cudf/pull/23735
+* Require polars>=1.38 for max|min_by tests by @TomAugspurger in https://github.com/NVIDIA/cudf/pull/23913
+* Fix deprecation warning: declaring default stream as cuda::stream_ref by @davidwendt in https://github.com/NVIDIA/cudf/pull/23865
+* Fix segmented gather for sliced gather map input by @davidwendt in https://github.com/NVIDIA/cudf/pull/23876
+* Track local row ordering in streaming cudf-polars metadata by @rjzamora in https://github.com/NVIDIA/cudf/pull/23844
+* Fix compute-sanitizer racecheck hazards in DELTA_BYTE_ARRAY decode path by @pramodsatya in https://github.com/NVIDIA/cudf/pull/23910
+* Fix dictionary concatenate for INT8/INT16 indices by @a-hirota in https://github.com/NVIDIA/cudf/pull/23889
+* Fix stream view construction in new benchmark by @wence- in https://github.com/NVIDIA/cudf/pull/23933
+* Initialize NVML once per traced `do_evaluate` definition  by @TomAugspurger in https://github.com/NVIDIA/cudf/pull/23926
+* Fix racecheck in parquet reader delta byte array kernels by @davidwendt in https://github.com/NVIDIA/cudf/pull/23898
+* User upper_bound to find parquet page with end of row in get_page_span by @pmattione-nvidia in https://github.com/NVIDIA/cudf/pull/23761
+* Skip failing narhwals datetime to_string tests by @TomAugspurger in https://github.com/NVIDIA/cudf/pull/23936
+* Fix Parquet writer partition size computation for lists and structs by @mhaseeb123 in https://github.com/NVIDIA/cudf/pull/23907
+* Avoid serializing I/O requests from Parquet reader by @mhaseeb123 in https://github.com/NVIDIA/cudf/pull/23823
+* Fix build failure due to crossed merges by @davidwendt in https://github.com/NVIDIA/cudf/pull/23954
+* Skip length-1 max/min_by tests with polars<1.39 by @TomAugspurger in https://github.com/NVIDIA/cudf/pull/23969
+* Work around CUDA 12.9 scan corruption on Blackwell by @gerashegalov in https://github.com/NVIDIA/cudf/pull/23973
+* Throw on dictionary columns in cudf::binary_operation instead of silently comparing indices by @davidwendt in https://github.com/NVIDIA/cudf/pull/23916
+* Skip another test that fails due to a polars bug by @wence- in https://github.com/NVIDIA/cudf/pull/23984
+* Fix dictionary specialization for json allnull_column_functor by @davidwendt in https://github.com/NVIDIA/cudf/pull/23687
+* Ignore coverage of untaken branches in cudf-polars timezone handling by @wence- in https://github.com/NVIDIA/cudf/pull/24023
+* Ensure that Lineariser doesn't buffer unboundedly by @wence- in https://github.com/NVIDIA/cudf/pull/24027
+* Ensure streams are passed into pylibcudf calls in cudf_polars  by @mroeschke in https://github.com/NVIDIA/cudf/pull/24053
+* Fix racecheck reported in parquet decode_delta_length_byte_array_kernel by @davidwendt in https://github.com/NVIDIA/cudf/pull/24034
+* Fix undefined behavior in Parquet `varint` decoding by @ttnghia in https://github.com/NVIDIA/cudf/pull/23346
+* Only default pinned memory on when the system supports it by @Matt711 in https://github.com/NVIDIA/cudf/pull/24129
+* Revert "Cache Cython generated sources in wheel builds (#23998)" by @wence- in https://github.com/NVIDIA/cudf/pull/24132
+* Ensure CUDA Context initialized before stream sync by @TomAugspurger in https://github.com/NVIDIA/cudf/pull/24157
+* Backport batched deletion-vector row count API to 26.10 by @wjxiz1992 in https://github.com/NVIDIA/cudf/pull/24171
+* Backport #23919 to release/26.10 by @rishic3 in https://github.com/NVIDIA/cudf/pull/24187
+* cudf doc build and CI fixes (#24279) by @TomAugspurger in https://github.com/NVIDIA/cudf/pull/24302
+### 📖 Documentation
+* Update code review guidelines to recommend spans over pointer + length parameters by @vuule in https://github.com/NVIDIA/cudf/pull/22663
+* Fix Doxygen @param and @tparam names that do not match the declarations by @darkdi in https://github.com/NVIDIA/cudf/pull/23564
+* Update cuDF repository references for NVIDIA organization by @bdice in https://github.com/NVIDIA/cudf/pull/23632
+* [DOC] Document cuDF spilling by @nethum529 in https://github.com/NVIDIA/cudf/pull/23326
+* Document null binary operator semantics explicitly by @findepi in https://github.com/NVIDIA/cudf/pull/23604
+* Fix stale data generation comment in generate_input.hpp by @VaggelisGian in https://github.com/NVIDIA/cudf/pull/23816
+* Enable public docs features in CI by @bdice in https://github.com/NVIDIA/cudf/pull/23902
+* Turn on autosectionlabel in sphinx docs by @wence- in https://github.com/NVIDIA/cudf/pull/23942
+* DOC Add accelerated data engines and tools to landing page by @jsack-ga in https://github.com/NVIDIA/cudf/pull/23921
+* Migrate docs links onto docs.nvidia.com by @wence- in https://github.com/NVIDIA/cudf/pull/23971
+### 🚀 New Features
+* [FEA] Add Java bindings for AST JIT operations by @thirtiseven in https://github.com/NVIDIA/cudf/pull/23117
+* Use provided memory resource for wordpiece vocabulary maps by @PointKernel in https://github.com/NVIDIA/cudf/pull/23281
+* Use provided memory resource for tokenize_vocabulary map by @PointKernel in https://github.com/NVIDIA/cudf/pull/23280
+* Add memory resource parameter to cudf::mark_join constructors by @PointKernel in https://github.com/NVIDIA/cudf/pull/23278
+* Add memory resource parameter to cudf::approx_distinct_count by @PointKernel in https://github.com/NVIDIA/cudf/pull/23221
+* Add memory resource parameter to cudf::distinct_hash_join constructors by @PointKernel in https://github.com/NVIDIA/cudf/pull/23263
+* Python bindings for Parquet select cols by field ID by @mhaseeb123 in https://github.com/NVIDIA/cudf/pull/22956
+* Add memory resource parameter to cudf::filtered_join constructors by @PointKernel in https://github.com/NVIDIA/cudf/pull/23264
+* Enable hybrid scan page pruning for page level IO by @mhaseeb123 in https://github.com/NVIDIA/cudf/pull/23374
+* Add memory resource parameter to streaming_groupby by @PointKernel in https://github.com/NVIDIA/cudf/pull/23279
+* Add memory resource parameter to cudf::key_remapping constructor by @PointKernel in https://github.com/NVIDIA/cudf/pull/23277
+* Add floating point type support to Parquet variant field extraction by @abigalekim in https://github.com/NVIDIA/cudf/pull/23075
+* Support shift over grouped windows in cudf-polars by @rjzamora in https://github.com/NVIDIA/cudf/pull/23451
+* Preserve input order for grouped window evaluation by @rjzamora in https://github.com/NVIDIA/cudf/pull/23466
+* Support fixed-size rolling windows inside ``over()`` by @rjzamora in https://github.com/NVIDIA/cudf/pull/23468
+* Relax parquet page index requirements in hybrid scan by @mhaseeb123 in https://github.com/NVIDIA/cudf/pull/23386
+* Support `diff()` inside `over()` in cudf-polars by @rjzamora in https://github.com/NVIDIA/cudf/pull/23497
+* Add boolean type support to Parquet variant field extraction by @abigalekim in https://github.com/NVIDIA/cudf/pull/23276
+* Add basic slicing support to pylibcudf's `gpumemoryview` by @Matt711 in https://github.com/NVIDIA/cudf/pull/23541
+* Transcode parquet to cuDF dictionaries for flat STRING columns by @y2kiran in https://github.com/NVIDIA/cudf/pull/22532
+* Support Parquet DELTA encodings with more than 64 values per mini-block by @pramodsatya in https://github.com/NVIDIA/cudf/pull/23314
+* Support ordered first/last groupby aggregations in cudf-polars by @rjzamora in https://github.com/NVIDIA/cudf/pull/23600
+* Add logical type inspection for raw Parquet VARIANT values by @abigalekim in https://github.com/NVIDIA/cudf/pull/23491
+* Parquet Variant Extract Benchmark by @abigalekim in https://github.com/NVIDIA/cudf/pull/23616
+* In-memory support for ``set_sorted``/``MapFunction("hint_sorted")`` by @rjzamora in https://github.com/NVIDIA/cudf/pull/23663
+* Add memory resource control to valid_if by @bdice in https://github.com/NVIDIA/cudf/pull/23490
+* Add GZIP compression support to the Parquet writer by @vuule in https://github.com/NVIDIA/cudf/pull/23557
+* Support aggregate rolling expressions inside grouped over by @rjzamora in https://github.com/NVIDIA/cudf/pull/23627
+* Update rtcx by @arhag23 in https://github.com/NVIDIA/cudf/pull/23626
+* Add page-level I/O and materialization in Hybrid Scan by @mhaseeb123 in https://github.com/NVIDIA/cudf/pull/23375
+* [FEA] Make JIT Compilation Warnings Only Emit in Verbose Mode by @lamarrr in https://github.com/NVIDIA/cudf/pull/23750
+* Add pylibcudf bindings for `fetch_byte_ranges_to_device` by @Matt711 in https://github.com/NVIDIA/cudf/pull/23543
+* [FEA] Implement Multi-output AST JIT & IR CSE by @lamarrr in https://github.com/NVIDIA/cudf/pull/23621
+* [FEA] Add support for scalar column views in AST expressions and JIT execution by @lamarrr in https://github.com/NVIDIA/cudf/pull/23615
+* Add python bindings for hybrid scan metadata and release GIL in the reader APIs by @Matt711 in https://github.com/NVIDIA/cudf/pull/23546
+* Expose Parquet column-chunk statistics in pylibcudf by @rjzamora in https://github.com/NVIDIA/cudf/pull/23666
+* Support streaming "hint_sorted" metadata propagation by @rjzamora in https://github.com/NVIDIA/cudf/pull/23748
+* Add Arrow fixed-size-list ingress by @0guban0v in https://github.com/NVIDIA/cudf/pull/23583
+* Add packaged Java tests to nightly tests by @paul-aiyedun in https://github.com/NVIDIA/cudf/pull/23732
+* Add cuDF Java Maven Central publish job by @paul-aiyedun in https://github.com/NVIDIA/cudf/pull/23714
+* Add Java Variant logical type inspection support by @nartal1 in https://github.com/NVIDIA/cudf/pull/23734
+* Add velox-cudf CI build job by @shrshi in https://github.com/NVIDIA/cudf/pull/22647
+* [FEA] Use a common base architecture as LTO IR target by @lamarrr in https://github.com/NVIDIA/cudf/pull/23803
+* Collect downstream partitioning requests during cudf-polars planning by @rjzamora in https://github.com/NVIDIA/cudf/pull/23729
+* Add float, boolean and array indexing support to Java Variant extraction by @nartal1 in https://github.com/NVIDIA/cudf/pull/23711
+* [FEA] Introduce `transform_program` to amortize JIT dispatch overhead by @lamarrr in https://github.com/NVIDIA/cudf/pull/23648
+* Fix kvikio thread count override and the default backend to `EASY_THREADPOOL` in cudf-polars by @Matt711 in https://github.com/NVIDIA/cudf/pull/23683
+* Adopt hybrid scan reader in cudf-polars for split scans by @Matt711 in https://github.com/NVIDIA/cudf/pull/23677
+* Extract ``OrderScheme`` metadata from a sorted Channel by @rjzamora in https://github.com/NVIDIA/cudf/pull/22526
+* Optimizations for Parquet Variant's `locate_object_field` by @abigalekim in https://github.com/NVIDIA/cudf/pull/23657
+* Use ``OrderScheme`` metadata to select order-aware ``Join`` execution by @rjzamora in https://github.com/NVIDIA/cudf/pull/23371
+* Add nvtext unicode normalizer APIs by @davidwendt in https://github.com/NVIDIA/cudf/pull/23403
+* Add a streaming_hash_join API for partitioned right tables by @PointKernel in https://github.com/NVIDIA/cudf/pull/22724
+* [FEA] Add zstd compression support for `to_csv` by @a-hirota in https://github.com/NVIDIA/cudf/pull/21518
+* Add decimal support to VARIANT casting by @vuule in https://github.com/NVIDIA/cudf/pull/23858
+* Support dictionary columns in contiguous_split by @vuule in https://github.com/NVIDIA/cudf/pull/23920
+* Add python/cython interface for unicode-normalizer APIs by @davidwendt in https://github.com/NVIDIA/cudf/pull/23896
+* [MLIR] Masked Unary Ops by @brandon-b-miller in https://github.com/NVIDIA/cudf/pull/23119
+* [FEA] Remove precompiled header directory specifications by @lamarrr in https://github.com/NVIDIA/cudf/pull/23987
+* Support concurrent aggregate calls on one streaming_groupby by @PointKernel in https://github.com/NVIDIA/cudf/pull/23884
+### 🛠️ Improvements
+* Replace hyperlinks that 404 by @mroeschke in https://github.com/NVIDIA/cudf/pull/23268
+* Replace hyperlinks that redirect by @mroeschke in https://github.com/NVIDIA/cudf/pull/23269
+* Support PEP 515 underscores in string-to-integer astype by @bedo-48 in https://github.com/NVIDIA/cudf/pull/23108
+* Remove redundant type dispatch from column contains by @PointKernel in https://github.com/NVIDIA/cudf/pull/23282
+* [FEA] Support force_ascii flag in JSON writer by @Tjindl in https://github.com/NVIDIA/cudf/pull/23177
+* Use explicit filter join kernel instantiations by @PointKernel in https://github.com/NVIDIA/cudf/pull/23331
+* Reduce sort-based groupby helper build time by @PointKernel in https://github.com/NVIDIA/cudf/pull/23285
+* Update RAPIDS.cmake to log source of rapids-cmake by @arhag23 in https://github.com/NVIDIA/cudf/pull/23130
+* Support `pl.Expr.dt.round` by @mroeschke in https://github.com/NVIDIA/cudf/pull/23158
+* Add assert to appropriate cudf::host_span member functions by @davidwendt in https://github.com/NVIDIA/cudf/pull/23274
+* feat(cudf): add DatetimeIndex.indexer_between_time by @nethum529 in https://github.com/NVIDIA/cudf/pull/23033
+* Support `pl.Expr.mode/implode` by @mroeschke in https://github.com/NVIDIA/cudf/pull/23226
+* Support `pl.Expr.dt.date` by @mroeschke in https://github.com/NVIDIA/cudf/pull/23155
+* Support `pl.Expr.str.to_integer` by @mroeschke in https://github.com/NVIDIA/cudf/pull/23194
+* Support `pl.Expr.str.zfill` with null widths by @mroeschke in https://github.com/NVIDIA/cudf/pull/23193
+* Update hooks by @vyasr in https://github.com/NVIDIA/cudf/pull/23339
+* Remove redundant template instantiations from table contains by @PointKernel in https://github.com/NVIDIA/cudf/pull/23323
+* Support `pl.Expr.top/bottom_k_by` by @mroeschke in https://github.com/NVIDIA/cudf/pull/23213
+* Support `pl.Expr.diff/pct_change` by @mroeschke in https://github.com/NVIDIA/cudf/pull/23225
+* Forward-merge release/26.08 into main by @bdice in https://github.com/NVIDIA/cudf/pull/23382
+* Main merge release/26.08 by @wence- in https://github.com/NVIDIA/cudf/pull/23395
+* Support `pl.repeat`, `pl.Expr.repeat_by` by @mroeschke in https://github.com/NVIDIA/cudf/pull/23227
+* Fix ufunc test domains to ensure valid input generation by @Tjindl in https://github.com/NVIDIA/cudf/pull/23196
+* Support `pl.Expr.to_physical/hash` by @mroeschke in https://github.com/NVIDIA/cudf/pull/23313
+* Support `pl.max_horizontal` by @mroeschke in https://github.com/NVIDIA/cudf/pull/23160
+* feat(pre-commit): add lychee local link checking for markdown and notebooks by @nethum529 in https://github.com/NVIDIA/cudf/pull/23132
+* Label profiling thread names in libcudf and cudf-polars by @vyasr in https://github.com/NVIDIA/cudf/pull/23408
+* Optimize Python overheads in Parquet metadata preprocessing  by @vyasr in https://github.com/NVIDIA/cudf/pull/23406
+* Forward-merge release/26.08 into main by @Matt711 in https://github.com/NVIDIA/cudf/pull/23401
+* Add common load factor validation for joins by @PointKernel in https://github.com/NVIDIA/cudf/pull/23379
+* Decompression - Make host fork/join stream conditional by @y2kiran in https://github.com/NVIDIA/cudf/pull/23444
+* Remove redundant gather map view in sort groupby helper by @PointKernel in https://github.com/NVIDIA/cudf/pull/23420
+* enforce 'yamllint' checks by @jameslamb in https://github.com/NVIDIA/cudf/pull/23413
+* Update Narwhals testing with agent skill  by @mroeschke in https://github.com/NVIDIA/cudf/pull/23435
+* Reduce streaming groupby insert_first build time by @PointKernel in https://github.com/NVIDIA/cudf/pull/23448
+* Additional Unit Tests for Parquet VARIANT Field Extraction by @abigalekim in https://github.com/NVIDIA/cudf/pull/23036
+* Upgrade Thrift version to 0.23.0 by @mythrocks in https://github.com/NVIDIA/cudf/pull/23453
+* Reduce filtered join build time by @PointKernel in https://github.com/NVIDIA/cudf/pull/23320
+* Replace duplicate type-stringify logic with type_to_name, add print_type debug utility by @Tjindl in https://github.com/NVIDIA/cudf/pull/23230
+* refactor(parquet): remove unused page_state_s fields by @vyasr in https://github.com/NVIDIA/cudf/pull/23470
+* refactor(parquet): extract page_decode_setup_state substruct by @vyasr in https://github.com/NVIDIA/cudf/pull/23471
+* Add `cuda-profiler-api` dependency for NVBench by @PointKernel in https://github.com/NVIDIA/cudf/pull/23404
+* Remove deprecated `sum_with_overflow` APIs by @PointKernel in https://github.com/NVIDIA/cudf/pull/23475
+* Reduce cudf-polars test output verbosity by @TomAugspurger in https://github.com/NVIDIA/cudf/pull/23480
+* Migrate additional Thrust iterators to CUDA equivalents by @PointKernel in https://github.com/NVIDIA/cudf/pull/23338
+* Add parallel native library extraction by @gerashegalov in https://github.com/NVIDIA/cudf/pull/23409
+* refactor(parquet): introduce level_state_scan struct for preprocess_levels_kernel by @vyasr in https://github.com/NVIDIA/cudf/pull/23479
+* Support non-unique keys for dictionary column types by @davidwendt in https://github.com/NVIDIA/cudf/pull/22839
+* X-ORG-23411: Publish API docs to docs.nvidia.com by @josephine-wolf-oberholtzer in https://github.com/NVIDIA/cudf/pull/23412
+* Remove dead spilling to pinned memory config option by @Matt711 in https://github.com/NVIDIA/cudf/pull/23426
+* Remove deprecated key_remapping and filter_join_indices APIs by @PointKernel in https://github.com/NVIDIA/cudf/pull/23476
+* Make `use_cuda_wheels` and `cuda_suffixed` explicit by @KyleFromNVIDIA in https://github.com/NVIDIA/cudf/pull/23472
+* Improve Parquet reader pass construction by @mhaseeb123 in https://github.com/NVIDIA/cudf/pull/23446
+* Improve performance of strings split/split_record for smaller strings by @davidwendt in https://github.com/NVIDIA/cudf/pull/23394
+* Forward-merge release/26.08 into main by @gforsyth in https://github.com/NVIDIA/cudf/pull/23531
+* Reduce distinct_helpers build time by @PointKernel in https://github.com/NVIDIA/cudf/pull/23322
+* Migrate Thrust zip iterators to CUDA equivalents by @PointKernel in https://github.com/NVIDIA/cudf/pull/23336
+* X-ORG-23411: Enable docs version picker by @josephine-wolf-oberholtzer in https://github.com/NVIDIA/cudf/pull/23540
+* ensure nightly builds always produce new packages, expand 'changed-files' lists by @jameslamb in https://github.com/NVIDIA/cudf/pull/23533
+* Remove bloom prefilter application in cudf-polars streaming by @wence- in https://github.com/NVIDIA/cudf/pull/23523
+* Add approx_distinct_count API to cudf_streaming by @wence- in https://github.com/NVIDIA/cudf/pull/23522
+* Reduce compute_shared_memory_aggs build time by @PointKernel in https://github.com/NVIDIA/cudf/pull/23330
+* Remove obsolete distinct filtered join wrapper by @PointKernel in https://github.com/NVIDIA/cudf/pull/23520
+* Pre-touch pages concurrently during pinned memory pool initialization by @rishic3 in https://github.com/NVIDIA/cudf/pull/23457
+* [cudf] Adding `memory_resources` support for test utils by @nirandaperera in https://github.com/NVIDIA/cudf/pull/23578
+* refactor(parquet): introduce string_offset_scan_state for preprocess_string_offsets_kernel by @vyasr in https://github.com/NVIDIA/cudf/pull/23495
+* Optimize sort-merge join data passes by @PointKernel in https://github.com/NVIDIA/cudf/pull/23532
+* refactor(parquet): introduce string_size_scan_state for string size kernels by @vyasr in https://github.com/NVIDIA/cudf/pull/23496
+* Reduce range_rolling build time by @PointKernel in https://github.com/NVIDIA/cudf/pull/23343
+* Update to rapids-logger 0.3 by @bdice in https://github.com/NVIDIA/cudf/pull/23530
+* refactor(parquet): extract page_decode_nesting_state and compose full_page_decode_state replacing page_state_s by @vyasr in https://github.com/NVIDIA/cudf/pull/23610
+* Reduce the number of device allocations in the ORC writer  by @vuule in https://github.com/NVIDIA/cudf/pull/23433
+* Update CODEOWNERS team names for rapidsai->NVIDIA migration by @josephine-wolf-oberholtzer in https://github.com/NVIDIA/cudf/pull/23625
+* Optimize RLE decoding using a warp-balanced chunking approach by @vyasr in https://github.com/NVIDIA/cudf/pull/23271
+* Skip Polars unit test for Numpy DeprecationWarning by @mroeschke in https://github.com/NVIDIA/cudf/pull/23635
+* Use cuda::stream_ref for null mask APIs by @vyasr in https://github.com/NVIDIA/cudf/pull/23630
+* Use async memory resource by default in microbenchmarks by @vuule in https://github.com/NVIDIA/cudf/pull/23586
+* Use cuda::stream_ref for core libcudf APIs by @vyasr in https://github.com/NVIDIA/cudf/pull/23645
+* Add annotations to pylibcudf source files by @vyasr in https://github.com/NVIDIA/cudf/pull/23643
+* Change deprecated calls of stream_ref.wait() to stream_ref.sync() by @davidwendt in https://github.com/NVIDIA/cudf/pull/23653
+* Support `pl.Expr.str.contains/find(strict=False)`, `pl.Expr.str.head/tail` with expression inputs by @mroeschke in https://github.com/NVIDIA/cudf/pull/23240
+* [cudf] Adding `memory_resources` support for column wrappers by @nirandaperera in https://github.com/NVIDIA/cudf/pull/23581
+* Expose UCXX progress mode in cudf-polars options by @pentschev in https://github.com/NVIDIA/cudf/pull/23659
+* Disable cuml-compat-tests for cpp-only PR changes by @davidwendt in https://github.com/NVIDIA/cudf/pull/23644
+* wheels: enforce 'abi3audit' checks by @jameslamb in https://github.com/NVIDIA/cudf/pull/23641
+* Support `pl.Expr.str.to_decimal/to_integer`, `pl.Expr.str.count_matches/extract` with more options by @mroeschke in https://github.com/NVIDIA/cudf/pull/23243
+* Use cuda::stream_ref for compute APIs by @vyasr in https://github.com/NVIDIA/cudf/pull/23649
+* Add numba-cuda-mlir conda package to cudf by @mroeschke in https://github.com/NVIDIA/cudf/pull/23670
+* Unbind cudf::size_type from offsets used by list columns by @davidwendt in https://github.com/NVIDIA/cudf/pull/23607
+* Replace `<cuda/stream_ref>` includes with `<cuda/stream>` by @bdice in https://github.com/NVIDIA/cudf/pull/23664
+* Add unit tests for fixed point in quantiles by @pieroevcc in https://github.com/NVIDIA/cudf/pull/23437
+* [PERF]: Improve the performance of `plc.io.parquet.read_parquet` with prefetched parquet file metadata. by @TomAugspurger in https://github.com/NVIDIA/cudf/pull/23558
+* Change kvikio default thread count in cudf-polars to 256 by @Matt711 in https://github.com/NVIDIA/cudf/pull/23634
+* Remove cudf_polars testing `engine_raise_on_fail` fixture by @mroeschke in https://github.com/NVIDIA/cudf/pull/23425
+* Support `pl.coalesce` by @mroeschke in https://github.com/NVIDIA/cudf/pull/23159
+* Revamp cudf-java build skill with nightly libcudf option by @rishic3 in https://github.com/NVIDIA/cudf/pull/23248
+* Support `pl.Expr.approx_n_unique` by @mroeschke in https://github.com/NVIDIA/cudf/pull/23211
+* Support `pl.Expr.reverse`, `reverse=True` for Polars cummulative expressions by @mroeschke in https://github.com/NVIDIA/cudf/pull/23164
+* Use cuda::stream_ref for nested and IO APIs by @vyasr in https://github.com/NVIDIA/cudf/pull/23669
+* Improve hash partition operator benchmarks by @tgujar in https://github.com/NVIDIA/cudf/pull/23337
+* Parquet writer writes smaller page headers if not writing stats by @mhaseeb123 in https://github.com/NVIDIA/cudf/pull/23431
+* Improve predicate pushdown coverage in cudf-polars by @Matt711 in https://github.com/NVIDIA/cudf/pull/23143
+* Migrate transform iterators to CUDA by @PointKernel in https://github.com/NVIDIA/cudf/pull/23505
+* Handle oversized fragments, pages, and column chunks in Parquet writer by @mhaseeb123 in https://github.com/NVIDIA/cudf/pull/23562
+* Remove CUDA_STATIC_RUNTIME option by @bdice in https://github.com/NVIDIA/cudf/pull/23698
+* Remove multi-file secondary-filter API and add bloom-filter pruning to hybrid scan by @qbacpey in https://github.com/NVIDIA/cudf/pull/22861
+* cudf-polars benchmarks always include a query plan by @TomAugspurger in https://github.com/NVIDIA/cudf/pull/23405
+* [cudf] Thread memory resources through equality/hash row preprocessing by @nirandaperera in https://github.com/NVIDIA/cudf/pull/23665
+* Add more pylibcudf source annotations by @vyasr in https://github.com/NVIDIA/cudf/pull/23673
+* [MINOR][cudf_polars] Validation summary skips query failures by @nirandaperera in https://github.com/NVIDIA/cudf/pull/23508
+* perf(parquet): decode def and rep level streams concurrently via 2D grid by @vyasr in https://github.com/NVIDIA/cudf/pull/23637
+* Use dictionary indices in join functions by @davidwendt in https://github.com/NVIDIA/cudf/pull/23534
+* ci: avoid triggered-by-schedule and triggered-by-merge builds cancelling each other by @jameslamb in https://github.com/NVIDIA/cudf/pull/23716
+* Ignore xgboost warning in cudf.pandas third party tests by @mroeschke in https://github.com/NVIDIA/cudf/pull/23650
+* Reduce libcudf binary size by trimming instantiations by @vyasr in https://github.com/NVIDIA/cudf/pull/23706
+* Remove pip only skips of `numba-cuda-mlir` backend tests  by @brandon-b-miller in https://github.com/NVIDIA/cudf/pull/23713
+* Change LIST column offsets from size_type to int32 in benchmarks and gtests by @davidwendt in https://github.com/NVIDIA/cudf/pull/23682
+* Reduce Parquet writer memory footprint for list columns by @mhaseeb123 in https://github.com/NVIDIA/cudf/pull/23573
+* Use ``OrderScheme`` metadata to select order-aware groupby execution by @rjzamora in https://github.com/NVIDIA/cudf/pull/23306
+* Disable benchmarks in cudf-polars test runner, add cudf-polars dependency on kvikio by @bdice in https://github.com/NVIDIA/cudf/pull/23719
+* Add parquet benchmark for output_dict_columns option by @y2kiran in https://github.com/NVIDIA/cudf/pull/23596
+* Optimize hash full join by @PointKernel in https://github.com/NVIDIA/cudf/pull/23521
+* Use no:xdist on pylibcudf stream checking pytests by @davidwendt in https://github.com/NVIDIA/cudf/pull/23721
+* Add ``Ordering.as_strict`` helper by @rjzamora in https://github.com/NVIDIA/cudf/pull/23757
+* Make the CUDA stream pool per-thread by @vuule in https://github.com/NVIDIA/cudf/pull/23672
+* Remove Arrow C++ dependency from C++ tests by @vyasr in https://github.com/NVIDIA/cudf/pull/23708
+* Use cuda::stream_ref in remaining core libcudf APIs by @vyasr in https://github.com/NVIDIA/cudf/pull/23691
+* Binary search optimization for Parquet Variant's object field ID lookup by @abigalekim in https://github.com/NVIDIA/cudf/pull/23638
+* X-ORG-23411: Publish dask-cudf to docs.nvidia.com by @josephine-wolf-oberholtzer in https://github.com/NVIDIA/cudf/pull/23728
+* Use cuda::stream_ref in Python stream shims by @vyasr in https://github.com/NVIDIA/cudf/pull/23694
+* Migrate to cuco's key-based Bloom filter policy by @PointKernel in https://github.com/NVIDIA/cudf/pull/23671
+* Use cuda::stream_ref in Java native code by @vyasr in https://github.com/NVIDIA/cudf/pull/23726
+* refactor: replace rmm::device_scalar with cudf::detail::device_scalar by @vyasr in https://github.com/NVIDIA/cudf/pull/23618
+* Fix dictionary pruning for column chunks with no dictionary page by @pmattione-nvidia in https://github.com/NVIDIA/cudf/pull/23746
+* Report kvikio I/O statistics per rank in the streaming engines by @madsbk in https://github.com/NVIDIA/cudf/pull/23738
+* Support `pl.Expr.hist/is_close` by @mroeschke in https://github.com/NVIDIA/cudf/pull/23254
+* Support `pl.Expr.entropy` by @mroeschke in https://github.com/NVIDIA/cudf/pull/23384
+* Add `--sleep-between-iterations` option to cudf-polars benchmark runner by @Matt711 in https://github.com/NVIDIA/cudf/pull/23763
+* fix(update-version): make numba-cuda upper pin creation idempotent by @gforsyth in https://github.com/NVIDIA/cudf/pull/23815
+* Support groupby.mean() for decimal columns; fix decimal reflection binops in cudf Python by @mroeschke in https://github.com/NVIDIA/cudf/pull/23787
+* Hybrid scan avoids nullable cols unless pruning pages by @mhaseeb123 in https://github.com/NVIDIA/cudf/pull/23792
+* Use new `constraints` type from DFG by @KyleFromNVIDIA in https://github.com/NVIDIA/cudf/pull/23556
+* [MINOR] Route leftover temps through local `temp_mr` by @nirandaperera in https://github.com/NVIDIA/cudf/pull/23730
+* Enable numpydoc validation by @pathak-satyam in https://github.com/NVIDIA/cudf/pull/23439
+* Replace rolling.apply implementation with numba-cuda-mlir by @mroeschke in https://github.com/NVIDIA/cudf/pull/23598
+* Support pyarrow 24 by @vyasr in https://github.com/NVIDIA/cudf/pull/23809
+* Refactor Parquet synthetic column helpers by @mhaseeb123 in https://github.com/NVIDIA/cudf/pull/23759
+* Capture engine setup/teardown durations by @TomAugspurger in https://github.com/NVIDIA/cudf/pull/23808
+* Add pylibcudf source annotations for stubgen by @vyasr in https://github.com/NVIDIA/cudf/pull/23715
+* PERF: Optimize cudf-polars stable hashing by @TomAugspurger in https://github.com/NVIDIA/cudf/pull/23582
+* Support `pl.Expr.kurtosis/skew` by @mroeschke in https://github.com/NVIDIA/cudf/pull/23353
+* pre-commit: update 'cython-lint' to 0.21.1 by @jameslamb in https://github.com/NVIDIA/cudf/pull/23842
+* Migrate T-digest test helpers to memory_resources by @bdice in https://github.com/NVIDIA/cudf/pull/23608
+* Use cuda::stream_ref in libcudf tests by @vyasr in https://github.com/NVIDIA/cudf/pull/23768
+* Migrate Nanoarrow test helpers to memory_resources by @bdice in https://github.com/NVIDIA/cudf/pull/23609
+* Add nvcarps skill by @vyasr in https://github.com/NVIDIA/cudf/pull/23851
+* Use cuda::stream_ref in benchmarks and examples by @vyasr in https://github.com/NVIDIA/cudf/pull/23769
+* Shard pandas tests across runners in PR and nightly CI by @galipremsagar in https://github.com/NVIDIA/cudf/pull/22992
+* Add PDSHDuckDBQueries for cudf.pandas PDSH benchmarks; support validation with decimal data by @mroeschke in https://github.com/NVIDIA/cudf/pull/23788
+* Deprecate windowslinetermination CSV option by @utkarshparekh in https://github.com/NVIDIA/cudf/pull/23363
+* Speed up `segmented_bitmask_and` for tall tables by @vuule in https://github.com/NVIDIA/cudf/pull/23686
+* Add parquet DELTA read tests and nested benchmark axis by @vyasr in https://github.com/NVIDIA/cudf/pull/23771
+* CI: narrow cudf.pandas unit test filter by @vyasr in https://github.com/NVIDIA/cudf/pull/23869
+* Update skill with latest validation by @vyasr in https://github.com/NVIDIA/cudf/pull/23852
+* Enable Sphinx version switcher for dask-cudf docs by @josephine-wolf-oberholtzer in https://github.com/NVIDIA/cudf/pull/23870
+* Add `apply_retention_mask` and deprecate `apply_boolean_mask` by @mhaseeb123 in https://github.com/NVIDIA/cudf/pull/23700
+* Support Series/DataFrame.mean with decimals; allow cudf.pandas PDSH benchmarks to run with fallback-as-error by @mroeschke in https://github.com/NVIDIA/cudf/pull/23871
+* Use cuda::stream_ref in libcudf_streaming by @vyasr in https://github.com/NVIDIA/cudf/pull/23727
+* Use different ``max_concurrent_io_tasks`` defaults for local and remote paths by @rjzamora in https://github.com/NVIDIA/cudf/pull/23847
+* Decimal cleanup by @TomAugspurger in https://github.com/NVIDIA/cudf/pull/23518
+* Replace hand-rolled output iterators with cuda::tabulate_output_iterator by @PointKernel in https://github.com/NVIDIA/cudf/pull/23856
+* Test one Polars version per matrix entry in cudf-polars wheel tests by @Matt711 in https://github.com/NVIDIA/cudf/pull/23867
+* Lazily initialize streaming groupby aggregation kinds by @bdice in https://github.com/NVIDIA/cudf/pull/23850
+* Reuse sampled parquet footers from statistics collection by @Matt711 in https://github.com/NVIDIA/cudf/pull/23855
+* Let callers reserve partitioning memory by @madsbk in https://github.com/NVIDIA/cudf/pull/23833
+* wheels: declare 'cuda-pathfinder' dependency for libcudf by @jameslamb in https://github.com/NVIDIA/cudf/pull/23880
+* CI: Migrate custom jobs to RTX PRO 6000 by @bdice in https://github.com/NVIDIA/cudf/pull/23878
+* [MLIR] MaskedType: numeric binary operators by @brandon-b-miller in https://github.com/NVIDIA/cudf/pull/22886
+* Add compressed percentile approximation oracle test by @vyasr in https://github.com/NVIDIA/cudf/pull/23798
+* Support `pl.Expr.max_by/min_by` by @mroeschke in https://github.com/NVIDIA/cudf/pull/23224
+* Improve Parquet writer struct test by @mhaseeb123 in https://github.com/NVIDIA/cudf/pull/23882
+* Avoid blocking memory reservations in actor coroutines by @madsbk in https://github.com/NVIDIA/cudf/pull/23892
+* Improve strings split on whitespace performance for smaller strings by @davidwendt in https://github.com/NVIDIA/cudf/pull/23542
+* Make Parquet statistics pruning null-aware by @pmattione-nvidia in https://github.com/NVIDIA/cudf/pull/23747
+* Fix racecheck in segmented_offset_bitmask_binop kernel by @davidwendt in https://github.com/NVIDIA/cudf/pull/23897
+* Expose prepend_source_index_column parquet reader options in pylibcudf by @mroeschke in https://github.com/NVIDIA/cudf/pull/23911
+* Support `pl.Expr.dt.convert_time_zone/replace_time_zone` by @mroeschke in https://github.com/NVIDIA/cudf/pull/23424
+* Optimize DICT32 transcode via batched keys and index shift by @y2kiran in https://github.com/NVIDIA/cudf/pull/23710
+* Use cuda::stream_ref for central stream helpers by @vyasr in https://github.com/NVIDIA/cudf/pull/23770
+* Convert cudf-polars ActorTracer to a dataclass by @TomAugspurger in https://github.com/NVIDIA/cudf/pull/23925
+* Add cudf-polars DataFrame._size_bytes by @TomAugspurger in https://github.com/NVIDIA/cudf/pull/23924
+* Update cudf-polars Quent export format by @TomAugspurger in https://github.com/NVIDIA/cudf/pull/23922
+* CI: Reduce dask-cuDF wheel test frequency by @vyasr in https://github.com/NVIDIA/cudf/pull/23941
+* Give distinct exit codes to query and validation errors in benchmark runner by @mroeschke in https://github.com/NVIDIA/cudf/pull/23928
+* CI: Remove redundant Conda Java test jobs by @vyasr in https://github.com/NVIDIA/cudf/pull/23946
+* CI: Preserve notebook test trigger by @vyasr in https://github.com/NVIDIA/cudf/pull/23947
+* Route dictionary encode temp allocations through `memory_resources` by @nirandaperera in https://github.com/NVIDIA/cudf/pull/23642
+* CI: Enable sccache preprocessor cache for Java builds by @vyasr in https://github.com/NVIDIA/cudf/pull/23943
+* CI: Filter CMake tests and C++ linters by source changes by @vyasr in https://github.com/NVIDIA/cudf/pull/23945
+* Support `pl.Expr.mean_horizontal/min_horizontal/sum_horizontal` by @mroeschke in https://github.com/NVIDIA/cudf/pull/23427
+* Update codeowners for narwhals test plugins by @TomAugspurger in https://github.com/NVIDIA/cudf/pull/23940
+* Add a JNI wrapper for reusable distinct hash join by @rishic3 in https://github.com/NVIDIA/cudf/pull/22392
+* Run narwhals tests on cudf-polars changes by @mroeschke in https://github.com/NVIDIA/cudf/pull/23961
+* Improve cudf-spark-jni build workflow by @bdice in https://github.com/NVIDIA/cudf/pull/23825
+* Fix jit compile warning for CUDA 12.9 by @davidwendt in https://github.com/NVIDIA/cudf/pull/23944
+* Update hybrid scan benchmark I/O policy by @bdice in https://github.com/NVIDIA/cudf/pull/23957
+* CI: Narrow conda C++ test triggers by @vyasr in https://github.com/NVIDIA/cudf/pull/23962
+* CI: Narrow Java test triggers by @vyasr in https://github.com/NVIDIA/cudf/pull/23950
+* CI: Narrow docs build triggers by @vyasr in https://github.com/NVIDIA/cudf/pull/23964
+* Update cudf-polars Quent attribute serialization by @TomAugspurger in https://github.com/NVIDIA/cudf/pull/23951
+* Move Velox compatibility build to nightly tests by @bdice in https://github.com/NVIDIA/cudf/pull/23948
+* CI: Consolidate Python test triggers by @vyasr in https://github.com/NVIDIA/cudf/pull/23968
+* Support Polars Array dtype pass-through in cudf-polars by @0guban0v in https://github.com/NVIDIA/cudf/pull/23773
+* CI: Narrow C++ file triggers by @vyasr in https://github.com/NVIDIA/cudf/pull/23970
+* Unpin pandas<3.0.4a as 3.0.4 was yanked and patched in 3.0.5 by @sethtroisi in https://github.com/NVIDIA/cudf/pull/23577
+* CI: Narrow Python package test triggers by @vyasr in https://github.com/NVIDIA/cudf/pull/23975
+* Copy many cudf-polars benchmark runner functionality over to cudf.pandas benchmark runner by @mroeschke in https://github.com/NVIDIA/cudf/pull/23979
+* CI: Refine PR changed-file filters by @vyasr in https://github.com/NVIDIA/cudf/pull/23976
+* Replace hash join internals with HashCSR by @PointKernel in https://github.com/NVIDIA/cudf/pull/23640
+* Use cuDF to count the total deleted row count for cuDF based Delta reader for deletion vectors by @sdrp713 in https://github.com/NVIDIA/cudf/pull/23978
+* CI: Shard cudf-polars compatibility tests by @vyasr in https://github.com/NVIDIA/cudf/pull/23990
+* CI: Use isolated build for all wheel packages by @vyasr in https://github.com/NVIDIA/cudf/pull/23991
+* CI: Stage wheel builds by package type by @vyasr in https://github.com/NVIDIA/cudf/pull/23988
+* Cache Cython generated sources in wheel builds by @vyasr in https://github.com/NVIDIA/cudf/pull/23998
+* Build noarch packages in parallel by @vyasr in https://github.com/NVIDIA/cudf/pull/23997
+* Consolidate cuDF wheel tests by @vyasr in https://github.com/NVIDIA/cudf/pull/23994
+* CI: Reduce cached Conda C++ build overhead by @vyasr in https://github.com/NVIDIA/cudf/pull/23999
+* CI: Restore cudf-spark-jni sccache setup by @vyasr in https://github.com/NVIDIA/cudf/pull/23996
+* CI: Report slow Python tests by @vyasr in https://github.com/NVIDIA/cudf/pull/24009
+* TEST: Remove redundant concat tests by @vyasr in https://github.com/NVIDIA/cudf/pull/24011
+* TEST: Reuse I/O test fixtures by @vyasr in https://github.com/NVIDIA/cudf/pull/24012
+* TEST: Reuse invariant Python test inputs by @vyasr in https://github.com/NVIDIA/cudf/pull/24013
+* TEST: Speed up GroupBy test setup by @vyasr in https://github.com/NVIDIA/cudf/pull/24014
+* TEST: Merge import subprocess checks by @vyasr in https://github.com/NVIDIA/cudf/pull/24010
+* TEST: Remove deterministic temporal and rolling skips by @vyasr in https://github.com/NVIDIA/cudf/pull/24015
+* TEST: Remove deterministic reshape skips by @vyasr in https://github.com/NVIDIA/cudf/pull/24016
+* Java CI: remove CUDA version normalization and install ninja via pip by @paul-aiyedun in https://github.com/NVIDIA/cudf/pull/23790
+* Adopt CUDA stream compatibility accessors by @bdice in https://github.com/NVIDIA/cudf/pull/23995
+* Update dependencies after dep-file change by @wence- in https://github.com/NVIDIA/cudf/pull/24057
+* Improve ``Ordering`` reuse for groupby and join by @rjzamora in https://github.com/NVIDIA/cudf/pull/23927
+* Rework join filter pushdown rewrites to leave hints and apply adaptively by @wence- in https://github.com/NVIDIA/cudf/pull/23584
+* Remove the -Wno-error=deprecated-declarations compile flag by @davidwendt in https://github.com/NVIDIA/cudf/pull/23985
+* Default pinned host memory to enabled for cudf-polars' Ray, Dask, and SPMD engines by @Matt711 in https://github.com/NVIDIA/cudf/pull/23836
+* Default remote parquet metadata work to off by @pentschev in https://github.com/NVIDIA/cudf/pull/24111
+* Default cudf-polars to the kvikio `MULTI_POLL` backend by @Matt711 in https://github.com/NVIDIA/cudf/pull/23839
+* Improve and rework metadata handling in the hybrid scan reader by @mhaseeb123 in https://github.com/NVIDIA/cudf/pull/23795
+* Pin Polars<1.45 by @Matt711 in https://github.com/NVIDIA/cudf/pull/23914
+* Rewrite skills docs links by @wence- in https://github.com/NVIDIA/cudf/pull/24083
+* Fix UnicodeNormalizer from_python_unicodedata performance by @davidwendt in https://github.com/NVIDIA/cudf/pull/24063
+* Use CUDA driver API for context initialization in pylibcudf by @bdice in https://github.com/NVIDIA/cudf/pull/24151
+* Expose filter_join_indices in Java by @bdice in https://github.com/NVIDIA/cudf/pull/24097
+* X-ORG-410: Integrate archived docs into version switcher by @josephine-wolf-oberholtzer in https://github.com/NVIDIA/cudf/pull/24398
+
+## New Contributors
+* @bedo-48 made their first contribution in https://github.com/NVIDIA/cudf/pull/23108
+* @arhag23 made their first contribution in https://github.com/NVIDIA/cudf/pull/23130
+* @darkdi made their first contribution in https://github.com/NVIDIA/cudf/pull/23564
+* @pieroevcc made their first contribution in https://github.com/NVIDIA/cudf/pull/23437
+* @pathak-satyam made their first contribution in https://github.com/NVIDIA/cudf/pull/23439
+* @VaggelisGian made their first contribution in https://github.com/NVIDIA/cudf/pull/23816
+* @sethtroisi made their first contribution in https://github.com/NVIDIA/cudf/pull/23577
+
+**Full Changelog**: https://github.com/NVIDIA/cudf/compare/v26.10.00a...release/26.10
+
 # cudf 26.08.00 (5 Aug 2026)
 
 ### 🚨 Breaking Changes

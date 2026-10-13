@@ -134,6 +134,7 @@ cpdef object partition_and_pack(
     int num_partitions,
     Stream stream,
     BufferResource br,
+    uint32_t seed = cpp_DEFAULT_HASH_SEED,
     MemoryReservation reservation=None,
 ):
     """
@@ -151,6 +152,8 @@ cpdef object partition_and_pack(
         The CUDA stream used for memory operations.
     br
         Buffer resource for memory allocations.
+    seed
+        Optional seed for the hash function.
     reservation
         Device memory reservation covering :func:`partition_and_pack_cost`. It is
         consumed as the allocations land, leaving it empty on return. If not given,
@@ -192,7 +195,7 @@ cpdef object partition_and_pack(
                 _columns_to_hash,
                 num_partitions,
                 cpp_HASH_MURMUR3,
-                cpp_DEFAULT_HASH_SEED,
+                seed,
                 _stream,
                 _br,
             )
@@ -202,7 +205,7 @@ cpdef object partition_and_pack(
                 _columns_to_hash,
                 num_partitions,
                 cpp_HASH_MURMUR3,
-                cpp_DEFAULT_HASH_SEED,
+                seed,
                 _stream,
                 deref(_reservation),
             )

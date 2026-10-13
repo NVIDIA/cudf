@@ -196,7 +196,7 @@ The following guidelines apply to organizing `#include` lines.
    groupings and sort the individual includes within a group lexicographically.
  * Separate groups by a blank line.
  * Order the groups from "nearest" to "farthest". In other words, local includes, then includes
-   from other RAPIDS libraries, then includes from related libraries, like `<thrust/...>`, then
+   from other NVIDIA CUDA-X libraries, then includes from related libraries, like `<thrust/...>`, then
    includes from dependencies installed with cuDF, and then standard headers (for example
    `<string>`, `<iostream>`).
  * We use clang-format for grouping and sorting headers automatically. See the

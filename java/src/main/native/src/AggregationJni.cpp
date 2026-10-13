@@ -17,8 +17,7 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_Aggregation_close(JNIEnv* env,
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    auto to_del = reinterpret_cast<cudf::aggregation*>(ptr);
-    delete to_del;
+    cudf::jni::safe_delete<cudf::aggregation>(ptr);
   }
   JNI_CATCH(env, );
 }

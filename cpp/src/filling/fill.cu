@@ -19,6 +19,7 @@
 #include <cudf/scalar/scalar_factories.hpp>
 #include <cudf/strings/detail/fill.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -54,17 +55,14 @@ struct in_place_fill_range_dispatch {
   cudf::scalar const& value;
   cudf::mutable_column_view& destination;
 
-  template <typename T>
-  std::enable_if_t<cudf::is_fixed_width<T>() && not cudf::is_fixed_point<T>(), void> operator()(
-    cudf::size_type begin, cudf::size_type end, cuda::stream_ref stream)
+  template <cudf::concepts::fixed_width T>
+  void operator()(cudf::size_type begin, cudf::size_type end, cuda::stream_ref stream)
   {
     in_place_fill<T>(destination, begin, end, value, stream);
   }
 
-  template <typename T>
-  std::enable_if_t<cudf::is_fixed_point<T>(), void> operator()(cudf::size_type begin,
-                                                               cudf::size_type end,
-                                                               cuda::stream_ref stream)
+  template <cudf::concepts::fixed_point T>
+  void operator()(cudf::size_type begin, cudf::size_type end, cuda::stream_ref stream)
   {
     auto unscaled = static_cast<cudf::fixed_point_scalar<T> const&>(value).value(stream);
     using RepType = typename T::rep;
@@ -74,7 +72,8 @@ struct in_place_fill_range_dispatch {
   }
 
   template <typename T, typename... Args>
-  std::enable_if_t<not cudf::is_fixed_width<T>(), void> operator()(Args&&...)
+  void operator()(Args&&...)
+    requires(not cudf::concepts::fixed_width<T>)
   {
     CUDF_FAIL("in-place fill does not work for variable width types.");
   }

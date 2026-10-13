@@ -607,6 +607,15 @@ public final class Table implements AutoCloseable {
   private static native long[] fullHashJoinGatherMapsWithCount(long leftTable, long rightHashJoin,
                                                                long outputRowCount) throws CudfException;
 
+  private static native long[] filterJoinGatherMaps(long leftGatherMapAddress,
+                                                    long leftGatherMapLength,
+                                                    long rightGatherMapAddress,
+                                                    long rightGatherMapLength,
+                                                    long leftTable,
+                                                    long rightTable,
+                                                    long condition,
+                                                    int joinKind) throws CudfException;
+
   private static native long[] leftSemiJoinGatherMap(long leftKeys, long rightKeys,
                                                      boolean compareNullsEqual) throws CudfException;
 
@@ -2780,6 +2789,63 @@ public final class Table implements AutoCloseable {
   }
 
   /**
+   * Filters a pair of join gather maps by evaluating a conditional expression on the
+   * corresponding rows from the left and right tables.
+   *
+   * <p>The maps must be the paired results of an equality join of the same kind as
+   * {@code joinKind}: INNER maps for {@link JoinKind#INNER}, LEFT maps for {@link JoinKind#LEFT},
+   * and FULL maps for {@link JoinKind#FULL}. For example, maps from
+   * {@link #leftJoinGatherMaps(HashJoin)} can be filtered with {@code JoinKind.LEFT}. Equivalent
+   * equality-join maps from other producers are also supported. Each conditional table must have
+   * the same row count and row numbering as its corresponding equality-join source table; its
+   * columns may differ. The maps must have the same length, and entries at the same position
+   * identify a candidate row pair. The join origin and index validity are not checked, and
+   * converting maps between join kinds is unsupported.
+   *
+   * <p>{@link Integer#MIN_VALUE} denotes an unmatched row in an outer-join map. Such pairs pass
+   * through without evaluating the condition. For pairs with two valid indices, the condition
+   * must produce a Boolean result; false or null means no match. LEFT and FULL retain one
+   * unmatched entry for each retained-side row with no passing candidate. Empty input maps
+   * produce empty output maps; this method does not complete an outer join from empty INNER
+   * maps. In particular, LEFT maps for a nonempty left table and an empty right table must
+   * already contain the unmatched left rows.
+   *
+   * <p>The input gather maps are not modified or closed. Two new {@link GatherMap} instances
+   * with independent storage are returned for the left and right tables, respectively. The
+   * outputs remain valid after closing the inputs, and closing the outputs does not prevent
+   * reusing the inputs. Output row order is unspecified.
+   *
+   * <p>It is the responsibility of the caller to close the resulting gather map instances.
+   *
+   * @param leftGatherMap input gather map for the left table
+   * @param rightGatherMap input gather map for the right table
+   * @param leftTable left table containing the columns referenced by the condition
+   * @param rightTable right table containing the columns referenced by the condition
+   * @param condition Boolean conditional expression to evaluate for each valid pair
+   * @param joinKind kind of the input equality join and the filtered output join
+   * @return filtered left and right table gather maps
+   * @throws IllegalArgumentException if the input gather maps have different lengths
+   */
+  public static GatherMap[] filterJoinGatherMaps(GatherMap leftGatherMap,
+                                                 GatherMap rightGatherMap,
+                                                 Table leftTable,
+                                                 Table rightTable,
+                                                 CompiledExpression condition,
+                                                 JoinKind joinKind) {
+    long leftLength = leftGatherMap.getBufferLength();
+    long rightLength = rightGatherMap.getBufferLength();
+    if (leftLength != rightLength) {
+      throw new IllegalArgumentException("left and right gather maps must have the same length");
+    }
+    long[] gatherMapData = filterJoinGatherMaps(
+        leftGatherMap.getBufferAddress(), leftLength,
+        rightGatherMap.getBufferAddress(), rightLength,
+        leftTable.getNativeView(), rightTable.getNativeView(),
+        condition.getNativeHandle(), joinKind.nativeId);
+    return buildJoinGatherMaps(gatherMapData);
+  }
+
+  /**
    * Computes the gather maps that can be used to manifest the result of a left equi-join between
    * two tables. It is assumed this table instance holds the key columns from the left table, and
    * the table argument represents the key columns from the right table. Two {@link GatherMap}
@@ -4023,6 +4089,15 @@ public final class Table implements AutoCloseable {
      * Computes row-based window aggregation functions on the Table/projection,
      * based on windows specified in the argument.
      *
+     * The rows must already be sorted by the columns passed to {@link Table#groupBy}; this method
+     * does not sort them, and the {@link GroupByOptions} sort settings have no effect here. Groups
+     * are taken to be runs of adjacent rows with equal values in those columns, so rows with equal
+     * values that are not adjacent are aggregated as separate groups. Within a group, the preceding
+     * and following rows are counted in the order the rows appear in the table, so if the window
+     * should follow some other order (the ORDER BY of the SQL example below), the rows must be
+     * sorted by it within each group as well. Unsorted input is not detected and might silently
+     * produce incorrect results.
+     *
      * This method enables queries such as the following SQL:
      *
      *  SELECT user_id,
@@ -4053,7 +4128,7 @@ public final class Table implements AutoCloseable {
      *    { "user2",     40      }
      *  ]
      *
-     * Partitioning (grouping) by `user_id` yields the following `sales_amt` vector
+     * The input must first be sorted by `user_id`, which yields the following `sales_amt` vector
      * (with 2 groups, one for each distinct `user_id`):
      *
      *    [ 10,  20,  10,  50,  60,  20,  30,  80,  40 ]
@@ -4150,6 +4225,17 @@ public final class Table implements AutoCloseable {
      * Computes range-based window aggregation functions on the Table/projection,
      * based on windows specified in the argument.
      *
+     * The rows must already be sorted by the columns passed to {@link Table#groupBy} and, within
+     * each group, by the order-by columns of the {@link WindowOptions}; this method does not sort
+     * them, and the {@link GroupByOptions} sort settings have no effect here. Groups are taken to be
+     * runs of adjacent rows with equal values in the group-by columns, as in
+     * {@link #aggregateWindows}. Within a group, the window bounds are found by searching the
+     * order-by columns, so they must be sorted in the direction the {@link WindowOptions} gives. For
+     * a single order-by column, the placement of nulls is deduced from the data, so the nulls must be
+     * at the same end, either the start or the end, of every group; for multiple order-by columns,
+     * the nulls must be placed as {@link WindowOptions.Builder#orderByColumns} states. Unsorted input
+     * is not detected and might silently produce incorrect results.
+     *
      * This method enables queries such as the following SQL:
      *
      *  SELECT user_id,
@@ -4181,8 +4267,8 @@ public final class Table implements AutoCloseable {
      *    { "user2",   40,      20200104    }
      *  ]
      *
-     * Partitioning (grouping) by `user_id`, and ordering by `date` yields the following `sales_amt` vector
-     * (with 2 groups, one for each distinct `user_id`):
+     * The input must first be sorted by `user_id` and then by `date`, which yields the following
+     * `sales_amt` vector (with 2 groups, one for each distinct `user_id`):
      *
      * Date :(202001-)  [ 01,  02,  03,  07,  07,    01,   01,   02,  04 ]
      * Input:           [ 10,  20,  10,  50,  60,    20,   30,   80,  40 ]

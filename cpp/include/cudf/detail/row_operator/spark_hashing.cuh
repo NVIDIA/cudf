@@ -10,6 +10,7 @@
 #include <cudf/detail/row_operator/hashing.cuh>
 #include <cudf/detail/utilities/accumulate.cuh>
 #include <cudf/hashing.hpp>
+#include <cudf/hashing/detail/hashing.hpp>
 #include <cudf/lists/lists_column_device_view.cuh>
 #include <cudf/structs/structs_column_device_view.cuh>
 #include <cudf/table/table_device_view.cuh>
@@ -132,9 +133,10 @@ class spark_device_row_hasher {
     result_type const _seed;
   };
 
-  CUDF_HOST_DEVICE spark_device_row_hasher(Nullate check_nulls,
-                                           table_device_view table,
-                                           result_type seed = DEFAULT_HASH_SEED) noexcept
+  CUDF_HOST_DEVICE spark_device_row_hasher(
+    Nullate check_nulls,
+    table_device_view table,
+    result_type seed = hashing::detail::DEFAULT_ALGORITHM_HASH_SEED) noexcept
     : _check_nulls{check_nulls}, _table{table}, _seed(seed)
   {
   }

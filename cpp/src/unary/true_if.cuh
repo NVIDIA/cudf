@@ -10,6 +10,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/functional>
 #include <cuda/stream>
 #include <thrust/transform.h>
 
@@ -50,7 +51,7 @@ std::unique_ptr<column> true_if(InputIterator begin,
                     begin,
                     end,
                     output_data,
-                    p);
+                    cuda::proclaim_copyable_arguments(p));
 
   return output;
 }

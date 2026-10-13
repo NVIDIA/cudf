@@ -1,18 +1,20 @@
 # Skill Benchmark: accelerated-computing-cudf
 
-> ⚠️ **Overall verdict: INCOMPLETE — Required evidence is missing**
+> ✅ **Overall verdict: PASS — Recommended for publication**
 
-One or more required evaluation tiers did not complete, so this benchmark is not publication-complete.
+## Publication Recommendation
+
+Recommended for publication based on the completed evaluation evidence in this report.
 
 ## Evaluation Metadata
 
 - Skill: `accelerated-computing-cudf`
-- Evaluation date: 2026-09-11
+- Evaluation date: 2026-10-08
 - Evaluator version: `1.5.6`
 - Agents: Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`), Codex (`openai/openai/gpt-5.5`)
 - Tasks: 13 evaluation tasks (12 positive, 1 negative)
 - Dataset digest: `sha256:307ff81fa3f0d04ee89889dcedc5ac0208fc0eb5dba112e1c8ed515a08fa3ba9` (skill-evaluator-dataset-snapshot/1)
-- Attempts per task: 3
+- Attempts per task: 1
 - Environment: `k8s-sandbox`
 - Tier 2 evidence: required for publication
 - Tier 3 evidence: required for publication
@@ -33,12 +35,12 @@ The three-tier evaluation checks whether the skill:
 
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | Not available | 84.7% — baseline ran, but no comparable score was available; uplift unavailable |
-| Security | Not available | 76.9% → 69.2% (-7.7 points) |
-| Correctness | Not available | 100.0% → 100.0% (±0.0 points) |
-| Discoverability | Not available | 81.3% — baseline ran, but no comparable score was available; uplift unavailable |
-| Effectiveness | Not available | 94.4% → 90.9% (-3.5 points) |
-| Efficiency | Not available | 82.3% — baseline ran, but no comparable score was available; uplift unavailable |
+| Overall | 81.5% — baseline ran, but no comparable score was available; uplift unavailable | 81.7% — baseline ran, but no comparable score was available; uplift unavailable |
+| Security | 23.1% → 61.5% (+38.4 points) | 69.2% → 53.9% (-15.3 points) |
+| Correctness | 100.0% → 100.0% (±0.0 points) | 100.0% → 100.0% (±0.0 points) |
+| Discoverability | 78.8% — baseline ran, but no comparable score was available; uplift unavailable | 77.5% — baseline ran, but no comparable score was available; uplift unavailable |
+| Effectiveness | 95.1% → 94.8% (-0.3 points) | 94.1% → 92.8% (-1.3 points) |
+| Efficiency | 72.6% — baseline ran, but no comparable score was available; uplift unavailable | 84.4% — baseline ran, but no comparable score was available; uplift unavailable |
 
 **How to read this table:** baseline is the same task attempted without the target skill. Scores are rounded to one decimal; threshold-adjacent values use additional precision so their displayed band matches the verdict. Uplift is derived from those displayed scores and shown in percentage points.
 
@@ -52,35 +54,35 @@ Actual Tier 3 execution usage is reported for every observed agent/case pair and
 
 | Agent | Dataset case | With skill | Without skill | Delta | Change | Coverage |
 |---|---|---:|---:|---:|---:|---|
-| claude-code | All cases | 14,012,571 | 10,980,314 | N/A | N/A | skill 13/14; base 13/39 |
-| claude-code | cudf-apply-udf__generic | 1,615,916 | 2,921,909 | -1,305,993 | -44.70% | skill 1/1; base 1/1 |
-| claude-code | cudf-csv-etl__generic | 640,979 | 540,152 | +100,827 | +18.67% | skill 1/1; base 1/1 |
-| claude-code | cudf-groupby-agg__generic | 1,334,220 | 1,114,950 | +219,270 | +19.67% | skill 1/1; base 1/1 |
-| claude-code | cudf-multi-join__generic | 938,388 | 609,377 | +329,011 | +53.99% | skill 1/1; base 1/1 |
-| claude-code | cudf-native-stream-handoff-boundary__generic | 753,844 | 676,138 | +77,706 | +11.49% | skill 1/1; base 1/1 |
-| claude-code | cudf-null-handling__generic | 573,498 | 698,891 | -125,393 | -17.94% | skill 1/1; base 1/1 |
-| claude-code | cudf-parquet-io__generic | 795,742 | 632,812 | +162,930 | +25.75% | skill 1/1; base 1/1 |
-| claude-code | cudf-pivot-melt__generic | 969,475 | 636,461 | +333,014 | +52.32% | skill 1/1; base 1/1 |
-| claude-code | cudf-string-ops__generic | 934,970 | 723,865 | +211,105 | +29.16% | skill 1/1; base 1/1 |
-| claude-code | cudf-timeseries-resample__generic | 585,864 | 624,629 | -38,765 | -6.21% | skill 1/1; base 1/1 |
-| claude-code | cudf-window-functions__generic | 2,207,481 | 675,332 | N/A | N/A | skill 1/2; base 1/1 |
-| claude-code | negative-deep-learning-training__generic | 458,761 | 642,097 | -183,336 | -28.55% | skill 1/1; base 1/1 |
-| claude-code | source-cudf-null-fillna-semantics__generic | 2,203,433 | 483,701 | +1,719,732 | +355.54% | skill 1/1; base 1/1 |
-| codex | All cases | 4,399,248 | 3,330,594 | +1,068,654 | +32.09% | skill 13/13; base 13/13 |
-| codex | cudf-apply-udf__generic | 366,287 | 333,591 | +32,696 | +9.80% | skill 1/1; base 1/1 |
-| codex | cudf-csv-etl__generic | 368,472 | 218,866 | +149,606 | +68.36% | skill 1/1; base 1/1 |
-| codex | cudf-groupby-agg__generic | 282,617 | 251,646 | +30,971 | +12.31% | skill 1/1; base 1/1 |
-| codex | cudf-multi-join__generic | 246,898 | 177,146 | +69,752 | +39.38% | skill 1/1; base 1/1 |
-| codex | cudf-native-stream-handoff-boundary__generic | 322,482 | 324,176 | -1,694 | -0.52% | skill 1/1; base 1/1 |
-| codex | cudf-null-handling__generic | 481,827 | 313,356 | +168,471 | +53.76% | skill 1/1; base 1/1 |
-| codex | cudf-parquet-io__generic | 294,404 | 206,582 | +87,822 | +42.51% | skill 1/1; base 1/1 |
-| codex | cudf-pivot-melt__generic | 269,590 | 280,046 | -10,456 | -3.73% | skill 1/1; base 1/1 |
-| codex | cudf-string-ops__generic | 258,274 | 162,821 | +95,453 | +58.62% | skill 1/1; base 1/1 |
-| codex | cudf-timeseries-resample__generic | 385,513 | 291,946 | +93,567 | +32.05% | skill 1/1; base 1/1 |
-| codex | cudf-window-functions__generic | 444,592 | 281,185 | +163,407 | +58.11% | skill 1/1; base 1/1 |
-| codex | negative-deep-learning-training__generic | 268,298 | 220,178 | +48,120 | +21.86% | skill 1/1; base 1/1 |
-| codex | source-cudf-null-fillna-semantics__generic | 409,994 | 269,055 | +140,939 | +52.38% | skill 1/1; base 1/1 |
-| ALL AGENTS | Dataset aggregate | 18,411,819 | 14,310,908 | N/A | N/A | skill 26/27; base 26/52 |
+| claude-code | All cases | 15,380,001 | 9,883,350 | +5,496,651 | +55.62% | skill 13/13; base 13/13 |
+| claude-code | cudf-apply-udf__generic | 3,276,979 | 1,632,103 | +1,644,876 | +100.78% | skill 1/1; base 1/1 |
+| claude-code | cudf-csv-etl__generic | 929,377 | 626,417 | +302,960 | +48.36% | skill 1/1; base 1/1 |
+| claude-code | cudf-groupby-agg__generic | 1,673,299 | 666,999 | +1,006,300 | +150.87% | skill 1/1; base 1/1 |
+| claude-code | cudf-multi-join__generic | 656,234 | 583,229 | +73,005 | +12.52% | skill 1/1; base 1/1 |
+| claude-code | cudf-native-stream-handoff-boundary__generic | 780,852 | 522,955 | +257,897 | +49.32% | skill 1/1; base 1/1 |
+| claude-code | cudf-null-handling__generic | 990,183 | 931,683 | +58,500 | +6.28% | skill 1/1; base 1/1 |
+| claude-code | cudf-parquet-io__generic | 910,215 | 682,786 | +227,429 | +33.31% | skill 1/1; base 1/1 |
+| claude-code | cudf-pivot-melt__generic | 624,586 | 689,867 | -65,281 | -9.46% | skill 1/1; base 1/1 |
+| claude-code | cudf-string-ops__generic | 777,342 | 750,422 | +26,920 | +3.59% | skill 1/1; base 1/1 |
+| claude-code | cudf-timeseries-resample__generic | 1,154,409 | 562,653 | +591,756 | +105.17% | skill 1/1; base 1/1 |
+| claude-code | cudf-window-functions__generic | 2,417,792 | 807,572 | +1,610,220 | +199.39% | skill 1/1; base 1/1 |
+| claude-code | negative-deep-learning-training__generic | 558,752 | 597,992 | -39,240 | -6.56% | skill 1/1; base 1/1 |
+| claude-code | source-cudf-null-fillna-semantics__generic | 629,981 | 828,672 | -198,691 | -23.98% | skill 1/1; base 1/1 |
+| codex | All cases | 4,143,406 | 3,256,824 | +886,582 | +27.22% | skill 13/13; base 13/13 |
+| codex | cudf-apply-udf__generic | 440,428 | 481,525 | -41,097 | -8.53% | skill 1/1; base 1/1 |
+| codex | cudf-csv-etl__generic | 205,788 | 187,153 | +18,635 | +9.96% | skill 1/1; base 1/1 |
+| codex | cudf-groupby-agg__generic | 278,324 | 167,811 | +110,513 | +65.86% | skill 1/1; base 1/1 |
+| codex | cudf-multi-join__generic | 210,799 | 243,024 | -32,225 | -13.26% | skill 1/1; base 1/1 |
+| codex | cudf-native-stream-handoff-boundary__generic | 255,481 | 262,663 | -7,182 | -2.73% | skill 1/1; base 1/1 |
+| codex | cudf-null-handling__generic | 318,364 | 228,751 | +89,613 | +39.17% | skill 1/1; base 1/1 |
+| codex | cudf-parquet-io__generic | 309,807 | 265,751 | +44,056 | +16.58% | skill 1/1; base 1/1 |
+| codex | cudf-pivot-melt__generic | 436,604 | 288,134 | +148,470 | +51.53% | skill 1/1; base 1/1 |
+| codex | cudf-string-ops__generic | 420,292 | 180,914 | +239,378 | +132.32% | skill 1/1; base 1/1 |
+| codex | cudf-timeseries-resample__generic | 403,278 | 260,103 | +143,175 | +55.05% | skill 1/1; base 1/1 |
+| codex | cudf-window-functions__generic | 417,147 | 306,835 | +110,312 | +35.95% | skill 1/1; base 1/1 |
+| codex | negative-deep-learning-training__generic | 269,474 | 155,081 | +114,393 | +73.76% | skill 1/1; base 1/1 |
+| codex | source-cudf-null-fillna-semantics__generic | 177,620 | 229,079 | -51,459 | -22.46% | skill 1/1; base 1/1 |
+| ALL AGENTS | Dataset aggregate | 19,523,407 | 13,140,174 | +6,383,233 | +48.58% | skill 26/26; base 26/26 |
 
 Prompt tokens include cached reads, so total tokens are `prompt + completion` (cached is not added twice). The Efficiency score uses `(prompt - cached) + completion`. N/A means the relevant trajectory counters were not available; coverage is never estimated.
 
@@ -88,9 +90,9 @@ Prompt tokens include cached reads, so total tokens are `prompt + completion` (c
 
 | Tier | Purpose | Status | Evidence |
 |---|---|---|---|
-| Tier 1 | Static validation | **PASSED WITH OBSERVATIONS** | 1 validator(s); 3 finding(s) |
-| Tier 2 | Semantic deduplication | **NOT RUN** | No result was recorded |
-| Tier 3 | Live agent evaluation | **NEUTRAL** | 2 agent(s); 13 task(s) |
+| Tier 1 | Static validation | **PASSED WITH OBSERVATIONS** | 11 validator(s); 8 finding(s) |
+| Tier 2 | Semantic deduplication | **PASSED** | 2 validator(s); 0 finding(s) |
+| Tier 3 | Live agent evaluation | **PASS** | 2 agent(s); 13 task(s) |
 
 ## Findings and Observations
 
@@ -99,7 +101,10 @@ Prompt tokens include cached reads, so total tokens are `prompt + completion` (c
 
 - **MEDIUM** SCHEMA/body_recommended_section: Missing recommended section: '## Instructions' (`skills/accelerated-computing-cudf/SKILL.md`)
 - **MEDIUM** SCHEMA/body_recommended_section: Missing recommended section: '## Examples' (`skills/accelerated-computing-cudf/SKILL.md`)
-- **LOW** SCHEMA/author_format: Author must be of the form 'Name <email@host>' (`skills/accelerated-computing-cudf/SKILL.md`)
+- **LOW** QUALITY/quality_discoverability: No '## Purpose' section (`skills/accelerated-computing-cudf/SKILL.md`)
+- **LOW** QUALITY/quality_reliability: No prerequisites/requirements documented (`skills/accelerated-computing-cudf/SKILL.md`)
+- **LOW** QUALITY/quality_reliability: No limitations documented (`skills/accelerated-computing-cudf/SKILL.md`)
+- 3 additional finding(s) are available in the full evaluation artifacts.
 
 </details>
 

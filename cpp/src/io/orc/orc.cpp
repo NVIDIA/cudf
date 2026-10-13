@@ -5,6 +5,7 @@
 
 #include "orc.hpp"
 
+#include "datetime/timezone_utils.hpp"
 #include "orc_field_reader.hpp"
 #include "orc_field_writer.hpp"
 
@@ -15,10 +16,17 @@
 #include <cuda/numeric>
 #include <thrust/tabulate.h>
 
+#include <optional>
 #include <stdexcept>
 #include <string>
 
 namespace cudf::io::orc::detail {
+
+duration_s base_epoch_in_timezone(std::string_view timezone)
+{
+  static constexpr duration_s utc_epoch{orc_utc_epoch};
+  return utc_epoch - cudf::detail::get_ut_offset(std::nullopt, timezone, timestamp_s{utc_epoch});
+}
 
 namespace {
 [[nodiscard]] constexpr uint32_t varint_size(uint64_t val)

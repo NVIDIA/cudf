@@ -14,6 +14,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/stream>
 #include <thrust/transform.h>
@@ -40,7 +41,8 @@ std::unique_ptr<column> mask_to_bools(bitmask_type const* bitmask,
                       cuda::counting_iterator<cudf::size_type>{begin_bit},
                       cuda::counting_iterator<cudf::size_type>{end_bit},
                       mutable_view.begin<bool>(),
-                      [bitmask] __device__(auto index) { return bit_is_set(bitmask, index); });
+                      cuda::proclaim_copyable_arguments(
+                        [bitmask] __device__(auto index) { return bit_is_set(bitmask, index); }));
   }
 
   return out_col;

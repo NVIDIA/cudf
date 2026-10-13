@@ -11,6 +11,7 @@
 #include <cudf/ast/detail/expression_transformer.hpp>
 #include <cudf/ast/expressions.hpp>
 #include <cudf/column/column_factories.hpp>
+#include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/parquet_schema.hpp>
@@ -30,6 +31,9 @@ namespace cudf::io::parquet::detail {
 
 /// Initial capacity for the chars host vector in host_column
 constexpr size_t initial_chars_capacity = 1024;
+
+/// Number of statistics columns per input table column: min, max and all-nulls
+auto constexpr stats_cols_per_column = 3;
 
 /**
  * @brief Base utilities for converting and casting stats values
@@ -281,19 +285,26 @@ class stats_caster_base {
     {
       if constexpr (std::is_same_v<T, string_view>) {
         auto [d_chars, d_offsets, _] = make_strings_children(val, chars, stream, mr);
-        auto null_mask_buffer        = rmm::device_buffer{
-          null_mask.data(), cudf::bitmask_allocation_size_bytes(val.size()), stream, mr};
+        auto null_mask_buffer =
+          cudf::create_null_mask(val.size(), cudf::mask_state::UNINITIALIZED, stream, mr);
+        CUDF_CUDA_TRY(cudf::detail::memcpy_async(
+          null_mask_buffer.data(), null_mask.data(), null_mask_buffer.size(), stream));
         stream.sync();
         return cudf::make_strings_column(
           val.size(),
-          std::make_unique<column>(std::move(d_offsets), rmm::device_buffer{0, stream, mr}, 0),
+          std::make_unique<column>(
+            std::move(d_offsets),
+            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
+            0),
           d_chars.release(),
           null_count,
           std::move(null_mask_buffer));
       }
-      auto data             = cudf::detail::make_device_uvector_async(val, stream, mr);
-      auto null_mask_buffer = rmm::device_buffer{
-        null_mask.data(), cudf::bitmask_allocation_size_bytes(val.size()), stream, mr};
+      auto data = cudf::detail::make_device_uvector_async(val, stream, mr);
+      auto null_mask_buffer =
+        cudf::create_null_mask(val.size(), cudf::mask_state::UNINITIALIZED, stream, mr);
+      CUDF_CUDA_TRY(cudf::detail::memcpy_async(
+        null_mask_buffer.data(), null_mask.data(), null_mask_buffer.size(), stream));
       stream.sync();
       return std::make_unique<column>(
         dtype, val.size(), data.release(), std::move(null_mask_buffer), null_count);
@@ -305,31 +316,10 @@ class stats_caster_base {
  * @brief Constructs a boolean mask indicating which input columns can participate in statistics
  * (StatsAST) based filtering
  */
-class stats_columns_collector : public ast::detail::expression_transformer {
+class stats_columns_collector final : public parquet_expression_simplifier {
  public:
   stats_columns_collector(ast::expression const& expr,
                           std::span<cudf::data_type const> output_dtypes);
-
-  /**
-   * @copydoc ast::detail::expression_transformer::visit(ast::literal const& )
-   */
-  std::reference_wrapper<ast::expression const> visit(ast::literal const& expr) override;
-
-  /**
-   * @copydoc ast::detail::expression_transformer::visit(ast::column_reference const& )
-   */
-  std::reference_wrapper<ast::expression const> visit(ast::column_reference const& expr) override;
-
-  /**
-   * @copydoc ast::detail::expression_transformer::visit(ast::column_name_reference const& )
-   */
-  std::reference_wrapper<ast::expression const> visit(
-    ast::column_name_reference const& expr) override;
-
-  /**
-   * @copydoc ast::detail::expression_transformer::visit(ast::operation const& )
-   */
-  std::reference_wrapper<ast::expression const> visit(ast::operation const& expr) override;
 
   /**
    * @brief Return a boolean vector indicating which input columns can participate in stats based
@@ -340,9 +330,32 @@ class stats_columns_collector : public ast::detail::expression_transformer {
   thrust::host_vector<bool> get_stats_columns_mask() &&;
 
  protected:
-  explicit stats_columns_collector(std::span<cudf::data_type const> output_dtypes);
+  /**
+   * @copydoc parquet_expression_simplifier::simplify_comparison
+   */
+  [[nodiscard]] simplified_expression_opt simplify_comparison(ast::ast_operator op,
+                                                              ast::column_reference const& col_ref,
+                                                              ast::literal const& literal) override;
 
-  std::span<cudf::data_type const> _output_dtypes;
+  /**
+   * @copydoc parquet_expression_simplifier::simplify_unary_op
+   */
+  [[nodiscard]] simplified_expression_opt simplify_unary_op(
+    ast::ast_operator op, ast::column_reference const& col_ref) override;
+
+  /**
+   * @copydoc parquet_expression_simplifier::simplify_negated_unary_op
+   */
+  [[nodiscard]] simplified_expression_opt simplify_negated_unary_op(
+    ast::ast_operator op, ast::column_reference const& col_ref) override;
+
+  /**
+   * @copydoc parquet_expression_simplifier::simplify_negated_comparison
+   */
+  [[nodiscard]] simplified_expression_opt simplify_negated_comparison(
+    ast::ast_operator op,
+    ast::column_reference const& col_ref,
+    ast::literal const& literal) override;
 
  private:
   thrust::host_vector<bool> _columns_mask;
@@ -403,9 +416,6 @@ class stats_expression_converter final : public parquet_expression_simplifier {
     ast::literal const& literal) override;
 
  private:
-  /// Number of statistics columns per input table column: min, max and all-nulls
-  static constexpr size_type stats_cols_per_column = 3;
-
   /**
    * @brief Returns `not_all_null AND stats_expr` for a column, so that a chunk holding nothing but
    * nulls is pruned by a predicate needing a non-null value to match, rather than kept because its

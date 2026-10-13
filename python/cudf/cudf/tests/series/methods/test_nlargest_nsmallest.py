@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import pandas as pd
@@ -66,4 +66,15 @@ def test_series_nsmallest(data, n):
         rfunc=sr.nsmallest,
         lfunc_args_and_kwargs=([], {"n": 3, "keep": "what"}),
         rfunc_args_and_kwargs=([], {"n": 3, "keep": "what"}),
+    )
+
+
+@pytest.mark.parametrize("attr", ["nlargest", "nsmallest"])
+def test_series_nlargest_nsmallest_keep_last_with_nulls(attr):
+    data = [3.0, None, 5.0, 2.0]
+    psr = pd.Series(data)
+    sr = cudf.Series(data)
+    # n covers every row, so the null has to come after the valid values.
+    assert_eq(
+        getattr(sr, attr)(4, keep="last"), getattr(psr, attr)(4, keep="last")
     )

@@ -13,11 +13,11 @@
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/device_buffer.hpp>
-
+#include <cuda/buffer>
 #include <cuda/functional>
 
 template <typename T>
@@ -132,7 +132,8 @@ TEST(TableToDeviceArrayTest, UnsupportedStringType)
   auto stream = cudf::get_default_stream();
   auto col    = cudf::test::strings_column_wrapper({"a", "b", "c"});
   cudf::table_view input_table({col});
-  rmm::device_buffer output(3 * sizeof(int32_t), stream);
+  cuda::device_buffer<std::byte> output(
+    stream, cudf::get_current_device_resource_ref(), 3 * sizeof(int32_t), cuda::no_init);
 
   EXPECT_THROW(
     cudf::table_to_array(input_table,
@@ -148,7 +149,8 @@ TEST(TableToDeviceArrayTest, FailsWithNullValues)
 
   cudf::test::fixed_width_column_wrapper<int32_t> col({1, 2, 3}, {true, false, true});
   cudf::table_view input_table({col});
-  rmm::device_buffer output(3 * sizeof(int32_t), stream);
+  cuda::device_buffer<std::byte> output(
+    stream, cudf::get_current_device_resource_ref(), 3 * sizeof(int32_t), cuda::no_init);
 
   EXPECT_THROW(
     cudf::table_to_array(input_table,
@@ -165,7 +167,8 @@ TEST(TableToDeviceArrayTest, FailsWhenOutputSpanTooSmall)
   cudf::test::fixed_width_column_wrapper<int32_t> col({1, 2, 3});
   cudf::table_view input_table({col});
 
-  rmm::device_buffer output(4, stream);
+  cuda::device_buffer<std::byte> output(
+    stream, cudf::get_current_device_resource_ref(), 4, cuda::no_init);
 
   EXPECT_THROW(
     cudf::table_to_array(input_table,
@@ -182,7 +185,8 @@ TEST(TableToDeviceArrayTest, NoRows)
   cudf::test::fixed_width_column_wrapper<int32_t> col({});
   cudf::table_view input_table({col});
 
-  rmm::device_buffer output(0, stream);
+  cuda::device_buffer<std::byte> output(
+    stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init);
 
   EXPECT_NO_THROW(
     cudf::table_to_array(input_table,
@@ -197,7 +201,8 @@ TEST(TableToDeviceArrayTest, NoColumns)
 
   cudf::table_view input_table{std::vector<cudf::column_view>{}};
 
-  rmm::device_buffer output(0, stream);
+  cuda::device_buffer<std::byte> output(
+    stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init);
 
   EXPECT_NO_THROW(
     cudf::table_to_array(input_table,
@@ -220,7 +225,8 @@ TEST(TableToDeviceArrayTest, FlatSizeExceedsSizeTypeLimit)
 
   cudf::table_view input_table({col, col});
 
-  rmm::device_buffer output(total_bytes, stream);
+  cuda::device_buffer<std::byte> output(
+    stream, cudf::get_current_device_resource_ref(), total_bytes, cuda::no_init);
 
   EXPECT_NO_THROW(
     cudf::table_to_array(input_table,

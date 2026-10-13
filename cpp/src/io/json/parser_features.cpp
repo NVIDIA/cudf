@@ -84,7 +84,7 @@ struct empty_column_functor {
     return std::make_unique<column>(cudf::data_type{type_id::LIST},
                                     0,
                                     rmm::device_buffer{},
-                                    rmm::device_buffer{},
+                                    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
                                     0,
                                     std::move(child_columns));
   }
@@ -97,7 +97,12 @@ struct empty_column_functor {
       child_columns.push_back(cudf::type_dispatcher(
         schema.child_types.at(child_name).type, *this, schema.child_types.at(child_name)));
     }
-    return make_structs_column(0, std::move(child_columns), 0, {}, stream, mr);
+    return make_structs_column(0,
+                               std::move(child_columns),
+                               0,
+                               cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                               stream,
+                               mr);
   }
 };
 
@@ -118,13 +123,15 @@ struct allnull_column_functor {
   {
     auto offsets_buff =
       cudf::detail::make_zeroed_device_uvector_async<int32_t>(size + 1, stream, mr);
-    return std::make_unique<column>(std::move(offsets_buff), rmm::device_buffer{}, 0);
+    return std::make_unique<column>(
+      std::move(offsets_buff), cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
   }
 
   [[nodiscard]] auto make_zeroed_indices(size_type size) const
   {
     auto indices_buff = cudf::detail::make_zeroed_device_uvector_async<size_type>(size, stream, mr);
-    return std::make_unique<column>(std::move(indices_buff), rmm::device_buffer{}, 0);
+    return std::make_unique<column>(
+      std::move(indices_buff), cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
   }
 
  public:

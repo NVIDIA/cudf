@@ -145,7 +145,7 @@ size_t CompactProtocolWriter::write(KeyValue const& k)
 {
   CompactProtocolFieldWriter c(*this);
   c.field_string(1, k.key);
-  if (not k.value.empty()) { c.field_string(2, k.value); }
+  if (k.value.has_value()) { c.field_string(2, k.value.value()); }
   return c.value();
 }
 

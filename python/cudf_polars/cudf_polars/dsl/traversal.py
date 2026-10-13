@@ -6,18 +6,25 @@
 from __future__ import annotations
 
 from collections import Counter, deque
-from typing import TYPE_CHECKING, Generic
-
-from cudf_polars.typing import (
-    StateT_co,
-    U_contra,
-    V_co,
-)
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator, Mapping, MutableMapping, Sequence
+    from collections.abc import (
+        Callable,
+        Generator,
+        Hashable,
+        Mapping,
+        MutableMapping,
+        Sequence,
+    )
 
-    from cudf_polars.typing import GenericTransformer, NodeT
+    from cudf_polars.typing import (
+        GenericTransformer,
+        NodeT,
+        StateT_co,
+        U_contra,
+        V_co,
+    )
 
 
 __all__: list[str] = [
@@ -190,7 +197,7 @@ def make_recursive(
     return rec  # type: ignore[return-value]
 
 
-class CachingVisitor(Generic[U_contra, V_co, StateT_co]):
+class CachingVisitor[U: Hashable, V, S]:
     """
     Caching wrapper for recursive visitors.
 
@@ -218,15 +225,15 @@ class CachingVisitor(Generic[U_contra, V_co, StateT_co]):
 
     def __init__(
         self,
-        fn: Callable[[U_contra, GenericTransformer[U_contra, V_co, StateT_co]], V_co],
+        fn: Callable[[U, GenericTransformer[U, V, S]], V],
         *,
-        state: StateT_co,
+        state: S,
     ) -> None:
         self.fn = fn
-        self.cache: MutableMapping[U_contra, V_co] = {}
+        self.cache: MutableMapping[U, V] = {}
         self.state = state
 
-    def __call__(self, value: U_contra) -> V_co:
+    def __call__(self, value: U) -> V:
         """
         Apply the function to a value.
 

@@ -34,7 +34,6 @@
 #include <cuda/std/functional>
 #include <cuda/std/iterator>
 #include <cuda/stream>
-#include <thrust/copy.h>
 #include <thrust/execution_policy.h>
 #include <thrust/logical.h>
 #include <thrust/transform.h>
@@ -246,7 +245,7 @@ CUDF_KERNEL void token_counts_fn(cudf::column_device_view const d_strings,
   cudf::size_type count = 0;
   if (lane_idx == 0) {
     cudf::char_utf8 chr = 0;
-    auto ch_size        = cudf::strings::detail::to_char_utf8(begin, chr);
+    auto const ch_size  = cudf::strings::detail::to_char_utf8(begin, chr);
     auto output         = 1;
     if (begin > chars_begin) {
       auto ptr = begin - 1;
@@ -256,10 +255,11 @@ CUDF_KERNEL void token_counts_fn(cudf::column_device_view const d_strings,
       cudf::strings::detail::to_char_utf8(ptr, chr);
       output = !is_delimiter(d_delimiter, chr);
     }
-    auto ptr = d_output;
-    while (ch_size > 0) {
+    auto ptr       = d_output;
+    auto remaining = ch_size;
+    while (remaining > 0) {
       *ptr++ = output;
-      --ch_size;
+      --remaining;
     }
     count = ((begin + ch_size) == end);
   }
@@ -432,8 +432,8 @@ std::unique_ptr<cudf::column> tokenize_with_vocabulary(cudf::strings_column_view
     },
     stream);
 
-  auto tmp_offsets =
-    std::make_unique<cudf::column>(std::move(d_tmp_offsets), rmm::device_buffer{}, 0);
+  auto tmp_offsets = std::make_unique<cudf::column>(
+    std::move(d_tmp_offsets), cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
   auto const tmp_input = cudf::column_view(
     input.parent().type(), total_count, d_input_chars, nullptr, 0, 0, {tmp_offsets->view()});
 

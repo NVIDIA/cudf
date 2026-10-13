@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -105,7 +105,7 @@ TYPED_TEST(CollectSetTypedTest, TrivialInput)
     keys_col keys{1};
     vals_col vals{10};
     keys_col keys_expected{1};
-    lists_col vals_expected{lists_col{10}};
+    lists_col vals_expected({{10}});
 
     auto const [out_keys, out_lists] =
       groupby_collect_set(keys, vals, CollectSetTest::collect_set());
@@ -118,7 +118,7 @@ TYPED_TEST(CollectSetTypedTest, TrivialInput)
     keys_col keys{2, 1};
     vals_col vals{20, 10};
     keys_col keys_expected{1, 2};
-    lists_col vals_expected{lists_col{10}, lists_col{20}};
+    lists_col vals_expected({{10}, {20}});
 
     auto const [out_keys, out_lists] =
       groupby_collect_set(keys, vals, CollectSetTest::collect_set());

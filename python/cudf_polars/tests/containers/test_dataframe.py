@@ -235,3 +235,42 @@ def test_size_bytes():
     )
     df = DataFrame.from_polars(df, stream=stream)
     assert df._size_bytes == 24
+
+
+def test_to_polars_time():
+    stream = get_cuda_stream()
+    values = pl.Series(
+        "t", [0, 3_723_000_000_123, 86_400_000_000_000 - 1, None], dtype=pl.Int64
+    )
+    time_column = plc.unary.bit_cast(
+        plc.Column.from_arrow(values, stream=stream),
+        plc.DataType(plc.TypeId.TIMESTAMP_NANOSECONDS),
+        stream=stream,
+    )
+    other = pl.Series("a", [4, 3, 2, 1], dtype=pl.Int64)
+    df = DataFrame(
+        [
+            Column(
+                time_column,
+                dtype=DataType(pl.Time()),
+                name="t",
+                is_sorted=plc.types.Sorted.YES,
+                order=plc.types.Order.ASCENDING,
+                null_order=plc.types.NullOrder.AFTER,
+            ),
+            Column(
+                plc.Column.from_arrow(other, stream=stream),
+                dtype=DataType(pl.Int64()),
+                name="a",
+            ),
+        ],
+        stream=stream,
+    )
+
+    result = df.to_polars()
+
+    expected = pl.DataFrame([values.cast(pl.Time), other]).with_columns(
+        pl.col("t").set_sorted()
+    )
+    assert_frame_equal(result, expected)
+    assert result.flags == expected.flags

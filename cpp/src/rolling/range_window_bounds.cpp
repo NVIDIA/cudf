@@ -8,6 +8,7 @@
 #include <cudf/rolling/range_window_bounds.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 namespace cudf {
@@ -20,7 +21,7 @@ namespace {
  * This makes it possible to copy construct and copy assign `range_window_bounds` objects.
  */
 struct range_scalar_constructor {
-  template <typename T, CUDF_ENABLE_IF(not detail::is_supported_range_type<T>())>
+  template <typename T>
   std::unique_ptr<scalar> operator()(scalar const& range_scalar_, cuda::stream_ref stream) const
   {
     CUDF_FAIL(
@@ -28,7 +29,7 @@ struct range_scalar_constructor {
       "Only durations, fixed-point, and non-boolean numeric range types are allowed.");
   }
 
-  template <typename T, CUDF_ENABLE_IF(cudf::is_duration<T>())>
+  template <cudf::concepts::duration T>
   std::unique_ptr<scalar> operator()(scalar const& range_scalar_, cuda::stream_ref stream) const
   {
     return std::make_unique<duration_scalar<T>>(
@@ -37,7 +38,7 @@ struct range_scalar_constructor {
       cudf::get_current_device_resource_ref());
   }
 
-  template <typename T, CUDF_ENABLE_IF(cudf::is_numeric<T>() && not cudf::is_boolean<T>())>
+  template <cudf::concepts::arithmetic_not_bool T>
   std::unique_ptr<scalar> operator()(scalar const& range_scalar_, cuda::stream_ref stream) const
   {
     return std::make_unique<numeric_scalar<T>>(static_cast<numeric_scalar<T> const&>(range_scalar_),
@@ -45,7 +46,7 @@ struct range_scalar_constructor {
                                                cudf::get_current_device_resource_ref());
   }
 
-  template <typename T, CUDF_ENABLE_IF(cudf::is_fixed_point<T>())>
+  template <cudf::concepts::fixed_point T>
   std::unique_ptr<scalar> operator()(scalar const& range_scalar_, cuda::stream_ref stream) const
   {
     return std::make_unique<fixed_point_scalar<T>>(

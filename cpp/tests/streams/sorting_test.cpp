@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -19,6 +19,10 @@ TEST_F(SortingTest, SortedOrder)
   cudf::table_view const tbl{{column}};
 
   cudf::sorted_order(tbl, {}, {}, cudf::test::get_default_stream());
+  cudf::sorted_order(cudf::table_view{{column, column}},
+                     {cudf::order::ASCENDING, cudf::order::DESCENDING},
+                     {cudf::null_order::BEFORE, cudf::null_order::AFTER},
+                     cudf::test::get_default_stream());
 }
 
 TEST_F(SortingTest, StableSortedOrder)
@@ -27,6 +31,10 @@ TEST_F(SortingTest, StableSortedOrder)
   cudf::table_view const tbl{{column}};
 
   cudf::stable_sorted_order(tbl, {}, {}, cudf::test::get_default_stream());
+  cudf::stable_sorted_order(cudf::table_view{{column, column}},
+                            {cudf::order::ASCENDING, cudf::order::DESCENDING},
+                            {cudf::null_order::BEFORE, cudf::null_order::AFTER},
+                            cudf::test::get_default_stream());
 }
 
 TEST_F(SortingTest, IsSorted)

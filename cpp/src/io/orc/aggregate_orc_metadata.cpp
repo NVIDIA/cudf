@@ -90,10 +90,9 @@ auto metadatas_from_sources(std::vector<std::unique_ptr<datasource>> const& sour
 {
   std::vector<metadata> metadatas;
   metadatas.reserve(sources.size());
-  std::transform(
-    sources.cbegin(), sources.cend(), std::back_inserter(metadatas), [stream](auto const& source) {
-      return metadata(source.get(), stream);
-    });
+  std::ranges::transform(sources, std::back_inserter(metadatas), [stream](auto const& source) {
+    return metadata(source.get(), stream);
+  });
   return metadatas;
 }
 

@@ -30,9 +30,7 @@
 #include <cuda/std/algorithm>
 #include <cuda/stream>
 #include <thrust/count.h>
-#include <thrust/detail/copy.h>
 #include <thrust/remove.h>
-#include <thrust/transform.h>
 
 #include <type_traits>
 

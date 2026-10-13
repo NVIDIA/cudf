@@ -10,6 +10,7 @@
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/sorting.hpp>
 #include <cudf/strings/convert/convert_integers.hpp>
 #include <cudf/strings/convert/int_cast.hpp>
 #include <cudf/strings/strings_column_view.hpp>
@@ -489,7 +490,7 @@ TEST_F(StringsConvertTest, IntegerCast)
   sv     = cudf::strings_column_view(input);
   result = cudf::strings::cast_to_integer(sv, int16_type);
   auto expected16 =
-    cudf::test::fixed_width_column_wrapper<int16_t>({0x61, 0x6263, 0x6465, 0x6566, 0, 0x2067});
+    cudf::test::fixed_width_column_wrapper<int16_t>({0x6100, 0x6263, 0x6465, 0x6566, 0, 0x2067});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, expected16);
   result = cudf::strings::cast_from_integer(expected16);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, input);
@@ -501,7 +502,7 @@ TEST_F(StringsConvertTest, IntegerCast)
   sv              = cudf::strings_column_view(input);
   result          = cudf::strings::cast_to_integer(sv, int32_type);
   auto expected32 = cudf::test::fixed_width_column_wrapper<int32_t>(
-    {0x61, 0x6263, 0x646566, 0x676869, 0, 0x6A206B});
+    {0x61000000, 0x62630000, 0x64656600, 0x67686900, 0, 0x6A206B00});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, expected32);
   result = cudf::strings::cast_from_integer(expected32);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, input);
@@ -512,8 +513,12 @@ TEST_F(StringsConvertTest, IntegerCast)
   input  = cudf::test::strings_column_wrapper({"the", "quick", "brown", "fox", "", "jumps up"});
   sv     = cudf::strings_column_view(input);
   result = cudf::strings::cast_to_integer(sv, int64_type);
-  auto expected64 = cudf::test::fixed_width_column_wrapper<int64_t>(
-    {0x746865L, 0x717569636BL, 0x62726F776EL, 0x666F78L, 0L, 0x6A756D7073207570L});
+  auto expected64 = cudf::test::fixed_width_column_wrapper<int64_t>({0x7468650000000000L,
+                                                                     0x717569636B000000L,
+                                                                     0x62726F776E000000L,
+                                                                     0x666F780000000000L,
+                                                                     0L,
+                                                                     0x6A756D7073207570L});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, expected64);
   result = cudf::strings::cast_from_integer(expected64);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, input);
@@ -553,6 +558,48 @@ TEST_F(StringsConvertTest, IntegerCastType)
   sv    = cudf::strings_column_view(input);
   otype = cudf::strings::integer_cast_type(sv);
   EXPECT_EQ(otype.value(), uint64_type);
+
+  // a leading byte with the high bit set requires an unsigned type even if it is not the longest
+  input = cudf::test::strings_column_wrapper({"é", "abc"});
+  sv    = cudf::strings_column_view(input);
+  otype = cudf::strings::integer_cast_type(sv);
+  EXPECT_EQ(otype.value(), uint32_type);
+}
+
+TEST_F(StringsConvertTest, IntegerCastSortOrder)
+{
+  auto input = cudf::test::strings_column_wrapper(
+    {"b", "ab", "a", "abcdefgh", "abcdefghZZ", "é", "z", "", "\x01", "abcdefgg", "ba"},
+    {true, true, true, true, true, true, true, true, true, true, false});
+  auto sv     = cudf::strings_column_view(input);
+  auto result = cudf::strings::cast_to_integer(sv, cudf::data_type{cudf::type_id::UINT64});
+
+  auto expected = cudf::test::fixed_width_column_wrapper<uint64_t>(
+    {0x6200000000000000UL,
+     0x6162000000000000UL,
+     0x6100000000000000UL,
+     0x6162636465666768UL,
+     0x6162636465666768UL,
+     0xC3A9000000000000UL,
+     0x7A00000000000000UL,
+     0UL,
+     0x0100000000000000UL,
+     0x6162636465666767UL,
+     0UL},
+    {true, true, true, true, true, true, true, true, true, true, false});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, expected);
+
+  // the integers should sort in the same order as the strings
+  auto const sorted_strings  = cudf::stable_sorted_order(cudf::table_view({input}));
+  auto const sorted_integers = cudf::stable_sorted_order(cudf::table_view({*result}));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*sorted_integers, *sorted_strings);
+
+  // strings longer than 8 bytes are truncated
+  auto expected_strings = cudf::test::strings_column_wrapper(
+    {"b", "ab", "a", "abcdefgh", "abcdefgh", "é", "z", "", "\x01", "abcdefgg", ""},
+    {true, true, true, true, true, true, true, true, true, true, false});
+  auto strings = cudf::strings::cast_from_integer(*result);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*strings, expected_strings);
 }
 
 TEST_F(StringsConvertTest, IntegerCastBigEndian)

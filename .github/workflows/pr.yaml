@@ -16,12 +16,14 @@ jobs:
       - changed-files
       - checks
       - cmake-tests
+      - cudf-polars-quent
       - conda-cpp-build
       - cpp-linters
       - conda-cpp-checks
       - conda-cpp-tests
       - conda-python-build
       - conda-python-build-noarch
+      - conda-python-import-tests
       - conda-python-cudf-tests
       - conda-python-cudf-polars-tests
       - conda-python-other-tests
@@ -36,6 +38,7 @@ jobs:
       - wheel-tests-cudf
       - wheel-tests-cudf-polars
       - cudf-polars-polars-tests
+      - cudf-polars-test-summary
       - wheel-python-build-noarch
       - wheel-tests-dask-cudf
       - devcontainer
@@ -197,7 +200,17 @@ jobs:
           - 'ci/run_cudf_streaming_pytests.sh'
         test_python_cudf_polars:
           - 'python/cudf_polars/**'
+          - '!python/cudf_polars/quent/**'
           - 'ci/test_python_cudf_polars.sh'
+          - 'ci/test_python_cudf_polars_integrations.sh'
+        test_cudf_polars_quent:
+          - 'python/cudf_polars/cudf_polars/quent/**'
+          - 'python/cudf_polars/quent/analyzer/**'
+          - 'python/cudf_polars/quent/bridge/**'
+          - 'python/cudf_polars/quent/model.yaml'
+          - 'python/cudf_polars/tests/quent/**'
+          - 'ci/test_cudf_polars_quent.sh'
+          - 'ci/run_cudf_polars_quent_tests.sh'
         test_python_cudf_streaming:
           - 'python/cudf_streaming/**'
           - 'python/libcudf_streaming/**'
@@ -207,8 +220,11 @@ jobs:
           - 'ci/build_cpp.sh'
           - 'ci/build_python.sh'
           - 'ci/build_python_noarch.sh'
+          - 'ci/build_python_common.sh'
+          - 'ci/build_parallel.sh'
         test_python_conda_common:
           - 'ci/test_python_common.sh'
+          - 'ci/test_python_imports.sh'
         test_python_conda_cudf:
           - 'ci/test_python_cudf.sh'
         test_python_conda_pylibcudf:
@@ -227,6 +243,7 @@ jobs:
           - 'ci/build_wheel_noarch.sh'
           - 'ci/build_wheel.sh'
           - 'ci/build_wheel_common.sh'
+          - 'ci/build_parallel.sh'
           - 'ci/validate_wheel.sh'
           - '.github/workflows/build.yaml'
           - '.github/workflows/wheels-build-stage.yaml'
@@ -238,6 +255,8 @@ jobs:
         test_python_wheel_dask_cudf:
           - 'ci/test_wheel_dask_cudf.sh'
         test_python_cudf_polars_polars:
+          - 'ci/analyze_cudf_polars_fallbacks.py'
+          - 'ci/run_cudf_polars_fallback_diagnostics.sh'
           - 'ci/test_cudf_polars_polars_tests.sh'
           - 'ci/run_cudf_polars_polars_tests.sh'
           - 'ci/cudf_polars/polars_test_deselections*.txt'
@@ -258,7 +277,7 @@ jobs:
     uses: rapidsai/shared-workflows/.github/workflows/checks.yaml@main
     with:
       enable_check_generated_files: false
-      ignored_pr_jobs: "telemetry-summarize cudf-spark-jni cuml-compat-tests"
+      ignored_pr_jobs: "telemetry-summarize cudf-spark-jni cuml-compat-tests conda-python-cudf-polars-tests-integration-optional"
       # Main builds seed this cache. PR merge refs can restore it but should not create
       # duplicate archives that are inaccessible to other PRs.
       pre-commit-cache-read-only: true
@@ -294,6 +313,23 @@ jobs:
       arch: "amd64"
       container_image: "rapidsai/ci-conda:26.12-latest"
       script: "ci/test_cmake.sh"
+  cudf-polars-quent:
+    needs: [checks, changed-files]
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: read
+      pull-requests: read
+    secrets: inherit # zizmor: ignore[secrets-inherit]
+    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
+    if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_cudf_polars_quent
+    with:
+      build_type: pull-request
+      node_type: cpu8
+      arch: "amd64"
+      container_image: "rapidsai/ci-conda:26.12-latest"
+      script: "ci/test_cudf_polars_quent.sh"
   cpp-linters:
     permissions:
       actions: read
@@ -375,7 +411,6 @@ jobs:
       cache-read-only: true
       cache-environment: |
         LIBCUDF_KERNEL_CACHE_PATH=.cache/libcudf
-        LIBCUDF_KERNEL_CACHE_PRELOAD=1
       # https://github.com/NVIDIA/cudf/issues/23498
       matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
   conda-python-build:
@@ -409,6 +444,39 @@ jobs:
       build-datetime: ${{ needs.build-details.outputs.build-datetime }}
       script: ci/build_python_noarch.sh
       pure-conda: cuda_major
+  conda-python-import-tests:
+    needs: [conda-python-build, changed-files]
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: read
+      pull-requests: read
+    secrets: inherit # zizmor: ignore[secrets-inherit]
+    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
+    if: >
+      fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs ||
+      fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_all ||
+      fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf ||
+      fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf_polars ||
+      fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_other ||
+      fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_dask_cudf ||
+      fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf_kafka ||
+      fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_custreamz ||
+      fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf_streaming ||
+      fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda_builds ||
+      fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda_common ||
+      fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda_cudf ||
+      fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda_pylibcudf ||
+      fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda_cudf_tests ||
+      fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf_polars_runner ||
+      fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf_streaming_runner
+    with:
+      build_type: pull-request
+      node_type: cpu8
+      arch: "amd64"
+      container_image: "rapidsai/ci-conda:26.12-latest"
+      script: "ci/test_python_imports.sh"
   conda-python-cudf-tests:
     needs: [conda-python-build, conda-python-build-noarch, changed-files]
     permissions:
@@ -459,9 +527,31 @@ jobs:
       build_type: pull-request
       # https://github.com/NVIDIA/cudf/pull/22381/changes#r3196736965
       container-options: "--cap-add CAP_SYS_PTRACE --shm-size=8g --ulimit=nofile=1000000:1000000"
-      script: ci/test_python_cudf_polars.sh
+      script: "env POLARS_VERSIONS=latest ci/test_python_cudf_polars.sh"
       # https://github.com/NVIDIA/cudf/issues/23498
       matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
+  conda-python-cudf-polars-tests-integration-optional:
+    needs: [conda-python-build, conda-python-build-noarch, changed-files]
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: read
+      pull-requests: read
+    secrets: inherit # zizmor: ignore[secrets-inherit]
+    uses: rapidsai/shared-workflows/.github/workflows/conda-python-tests.yaml@main
+    if: >
+      fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs ||
+      fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_all ||
+      fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf_polars ||
+      fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda_builds ||
+      fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda_common ||
+      fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf_polars_runner
+    with:
+      build_type: pull-request
+      # https://github.com/NVIDIA/cudf/pull/22381/changes#r3196736965
+      container-options: "--cap-add CAP_SYS_PTRACE --shm-size=8g --ulimit=nofile=1000000:1000000"
+      script: "ci/test_python_cudf_polars_integrations.sh"
   conda-python-other-tests:
     # Tests for dask_cudf, cudf_kafka, custreamz, and cudf_streaming run separately from cudf_polars.
     needs: [conda-python-build, conda-python-build-noarch, changed-files]
@@ -611,6 +701,7 @@ jobs:
       target-aws-access-key-id: ${{ secrets.NVIDIA_DOCS_AWS_ACCESS_KEY_ID }}
       target-aws-region: ${{ secrets.NVIDIA_DOCS_AWS_REGION }}
       target-aws-secret-access-key: ${{ secrets.NVIDIA_DOCS_AWS_SECRET_ACCESS_KEY }}
+      target-archive-s3-bucket: ${{ secrets.NVIDIA_DOCS_ARCHIVE_S3_BUCKET }}
       target-s3-bucket: ${{ secrets.NVIDIA_DOCS_S3_BUCKET }}
     uses: rapidsai/shared-workflows/.github/workflows/publish-api-docs.yaml@main
     with:
@@ -698,7 +789,7 @@ jobs:
       matrix_filter: map(select(.ARCH == "amd64")) | group_by(.CUDA_VER|split(".")|map(tonumber)|.[0]) | map(max_by([(.PY_VER|split(".")|map(tonumber)), (.CUDA_VER|split(".")|map(tonumber))]))
       build_type: pull-request
       container-options: "--cap-add CAP_SYS_PTRACE --shm-size=8g --ulimit=nofile=1000000:1000000"
-      script: "env POLARS_VERSIONS=endpoints ci/test_wheel_cudf_polars.sh"
+      script: "env POLARS_VERSIONS=earliest ci/test_wheel_cudf_polars.sh"
   cudf-polars-polars-tests:
     needs: [wheel-build, wheel-python-build-noarch, changed-files]
     strategy:
@@ -739,6 +830,29 @@ jobs:
         --inject-gpu-engine-blocksize default
         --cudf-polars-shard-id ${{ matrix.shard_id }}
         --cudf-polars-num-shards ${{ matrix.num_shards }}
+  cudf-polars-test-summary:
+    needs: cudf-polars-polars-tests
+    if: ${{ !cancelled() && needs.cudf-polars-polars-tests.result != 'skipped' }}
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: read
+      pull-requests: read
+    secrets: inherit # zizmor: ignore[secrets-inherit]
+    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
+    with:
+      build_type: pull-request
+      branch: ${{ inputs.branch }}
+      date: ${{ inputs.date }}
+      sha: ${{ inputs.sha }}
+      node_type: cpu8
+      container_image: rapidsai/citestwheel:26.12-latest
+      # Diagnostics must not replace the upstream jobs' pass/fail signal.
+      continue-on-error: true
+      script: ci/run_cudf_polars_fallback_diagnostics.sh
+      file_to_upload: cudf-polars-fallback-diagnostics
+      artifact-name: cudf-polars-fallback-diagnostics
   wheel-tests-dask-cudf:
     needs: [wheel-build, wheel-python-build-noarch, changed-files]
     permissions:

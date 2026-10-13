@@ -16,7 +16,6 @@
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <cuda/iterator>
-#include <thrust/adjacent_difference.h>
 
 namespace cudf {
 namespace reduction {

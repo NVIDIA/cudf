@@ -9,7 +9,8 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/row_operator/common_utils.cuh>
 #include <cudf/detail/row_operator/preprocessed_table.cuh>
-#include <cudf/detail/row_operator/primitive_row_operators.cuh>
+#include <cudf/detail/row_operator/primitive_equality.cuh>
+#include <cudf/detail/row_operator/primitive_hashing.cuh>
 #include <cudf/hashing/detail/default_hash.cuh>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>

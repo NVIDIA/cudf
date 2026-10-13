@@ -59,8 +59,8 @@ std::unique_ptr<cudf::table> hybrid_scan_multifile_single_step(
 /**
  * @brief Read parquet sources with the hybrid scan multifile reader using chunked materialization
  *
- * Splits the filtered row groups into read passes via `construct_row_group_passes` and chunks the
- * filter and payload column materialization within each pass.
+ * Splits the filtered row groups into read passes and chunks filter and payload column
+ * materialization within each pass.
  *
  * @param source_info Input source info containing one or more Parquet sources
  * @param filter_expression Filter expression

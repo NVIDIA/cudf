@@ -965,8 +965,7 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_Rmm_freeDeviceBuffer(JNIEnv* env,
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    rmm::device_buffer* cptr = reinterpret_cast<rmm::device_buffer*>(ptr);
-    delete cptr;
+    cudf::jni::safe_delete<rmm::device_buffer>(ptr);
   }
   JNI_CATCH(env, );
 }
@@ -1404,7 +1403,7 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_Rmm_releasePinnedPoolMemoryResource(J
     // if we didn't overwrite it with setCudfPinnedPoolMemoryResource
     cudf::set_pinned_memory_resource(prior_cudf_pinned_mr());
     pinned_fallback_mr.reset();
-    delete reinterpret_cast<rmm::mr::pool_memory_resource*>(pool_ptr);
+    cudf::jni::safe_delete<rmm::mr::pool_memory_resource>(pool_ptr);
   }
   JNI_CATCH(env, );
 }

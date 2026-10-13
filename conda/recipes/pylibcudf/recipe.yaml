@@ -11,7 +11,6 @@ context:
   head_rev: '${{ git.head_rev(".")[:8] }}'
   py_abi_min: ${{ env.get("RAPIDS_PY_VERSION") }}
   py_buildstring: ${{ py_abi_min | version_to_buildstring }}
-  py_runtime_latest: "3.14"
 
 package:
   name: pylibcudf
@@ -26,6 +25,9 @@ build:
   string: cuda${{ cuda_major }}_cp${{ py_buildstring }}_abi3_${{ datetime_string }}_${{ head_rev }}
   script:
     content: |
+      # Versioned debug-prefix maps change sccache keys even when build paths are stable.
+      export CFLAGS=$(echo "$CFLAGS" | sed -E 's@\-fdebug\-prefix\-map[^ ]*@@g')
+      export CXXFLAGS=$(echo "$CXXFLAGS" | sed -E 's@\-fdebug\-prefix\-map[^ ]*@@g')
       ./build.sh pylibcudf
     secrets:
       - AWS_ACCESS_KEY_ID
@@ -96,7 +98,7 @@ requirements:
     - nvtx >=0.2.1
   run_constraints:
     - numpy >=2.0,<3.0
-    - pyarrow>=19.0.0
+    - pyarrow>=19.0.0,<26.0.0
   ignore_run_exports:
     from_package:
       - cuda-cudart-dev
@@ -106,13 +108,6 @@ requirements:
           - libcufile-dev
     by_name:
       - cuda-version
-
-tests:
-  - python:
-      imports:
-        - pylibcudf
-      python_version: ${{ py_runtime_latest }}.*
-      pip_check: false
 
 about:
   homepage: ${{ load_from_file("python/pylibcudf/pyproject.toml").project.urls.Homepage }}

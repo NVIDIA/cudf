@@ -91,12 +91,21 @@ std::unique_ptr<column> make_expected_tdigest_column(std::vector<expected_tdiges
     inner_children.push_back(std::make_unique<cudf::column>(tdigest.mean, stream, temporary_mr));
     inner_children.push_back(std::make_unique<cudf::column>(tdigest.weight, stream, temporary_mr));
     // tdigest struct
-    auto tdigests = cudf::make_structs_column(
-      tdigest.mean.size(), std::move(inner_children), 0, {}, stream, temporary_mr);
+    auto tdigests =
+      cudf::make_structs_column(tdigest.mean.size(),
+                                std::move(inner_children),
+                                0,
+                                cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                stream,
+                                temporary_mr);
 
     auto offsets =
       fixed_width_column_wrapper<int32_t>({0, tdigest.mean.size()}, stream, temporary_resources);
-    auto list = cudf::make_lists_column(1, offsets.release(), std::move(tdigests), 0, {});
+    auto list = cudf::make_lists_column(1,
+                                        offsets.release(),
+                                        std::move(tdigests),
+                                        0,
+                                        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     auto min_col = fixed_width_column_wrapper<double>({tdigest.min}, stream, temporary_resources);
     auto max_col = fixed_width_column_wrapper<double>({tdigest.max}, stream, temporary_resources);
@@ -105,7 +114,12 @@ std::unique_ptr<column> make_expected_tdigest_column(std::vector<expected_tdiges
     children.push_back(std::move(list));
     children.push_back(min_col.release());
     children.push_back(max_col.release());
-    return make_structs_column(1, std::move(children), 0, {}, stream, temporary_mr);
+    return make_structs_column(1,
+                               std::move(children),
+                               0,
+                               cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                               stream,
+                               temporary_mr);
   };
 
   // build the individual digests

@@ -182,8 +182,8 @@ std::vector<aggregation::Kind> get_simple_aggregations(groupby_aggregation const
   auto aggs = cudf::detail::aggregation_dispatcher(
     agg.kind, simple_aggregation_collector{}, values_type, agg);
   std::vector<aggregation::Kind> agg_kinds;
-  std::transform(
-    aggs.begin(), aggs.end(), std::back_inserter(agg_kinds), [](auto const& a) { return a->kind; });
+  std::ranges::transform(
+    aggs, std::back_inserter(agg_kinds), [](auto const& a) { return a->kind; });
   return agg_kinds;
 }
 

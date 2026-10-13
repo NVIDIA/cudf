@@ -218,10 +218,7 @@ TEST_F(ListTest, HaveOverlap)
 TEST_F(ListTest, Explode)
 {
   cudf::test::fixed_width_column_wrapper<int32_t> list_col_a{100, 200, 300};
-  cudf::test::lists_column_wrapper<int32_t> list_col_b{
-    cudf::test::lists_column_wrapper<int32_t>{1, 2, 7},
-    cudf::test::lists_column_wrapper<int32_t>{5, 6},
-    cudf::test::lists_column_wrapper<int32_t>{0, 3}};
+  cudf::test::lists_column_wrapper<int32_t> list_col_b{{1, 2, 7}, {5, 6}, {0, 3}};
   cudf::test::strings_column_wrapper list_col_c{"string0", "string1", "string2"};
   cudf::table_view lists_table({list_col_a, list_col_b, list_col_c});
   cudf::explode(lists_table, 1, cudf::test::get_default_stream());
@@ -230,10 +227,7 @@ TEST_F(ListTest, Explode)
 TEST_F(ListTest, ExplodePosition)
 {
   cudf::test::fixed_width_column_wrapper<int32_t> list_col_a{100, 200, 300};
-  cudf::test::lists_column_wrapper<int32_t> list_col_b{
-    cudf::test::lists_column_wrapper<int32_t>{1, 2, 7},
-    cudf::test::lists_column_wrapper<int32_t>{5, 6},
-    cudf::test::lists_column_wrapper<int32_t>{0, 3}};
+  cudf::test::lists_column_wrapper<int32_t> list_col_b{{1, 2, 7}, {5, 6}, {0, 3}};
   cudf::test::strings_column_wrapper list_col_c{"string0", "string1", "string2"};
   cudf::table_view lists_table({list_col_a, list_col_b, list_col_c});
   cudf::explode_position(lists_table, 1, cudf::test::get_default_stream());
@@ -244,10 +238,7 @@ TEST_F(ListTest, ExplodeOuter)
   constexpr auto null = 0;
   auto valids         = cudf::test::iterators::valids_at_multiples_of(2);
   cudf::test::lists_column_wrapper<int32_t> list_col_a{
-    cudf::test::lists_column_wrapper<int32_t>({1, null, 7}, valids),
-    cudf::test::lists_column_wrapper<int32_t>({5, null, 0, null}, valids),
-    cudf::test::lists_column_wrapper<int32_t>{},
-    cudf::test::lists_column_wrapper<int32_t>({0, null, 8}, valids)};
+    {{1, null, 7}, valids}, {{5, null, 0, null}, valids}, {}, {{0, null, 8}, valids}};
   cudf::test::fixed_width_column_wrapper<int32_t> list_col_b{100, 200, 300, 400};
   cudf::table_view lists_table({list_col_a, list_col_b});
   cudf::explode_outer(lists_table, 0, cudf::test::get_default_stream());
@@ -258,10 +249,7 @@ TEST_F(ListTest, ExplodeOuterPosition)
   constexpr auto null = 0;
   auto valids         = cudf::test::iterators::valids_at_multiples_of(2);
   cudf::test::lists_column_wrapper<int32_t> list_col_a{
-    cudf::test::lists_column_wrapper<int32_t>({1, null, 7}, valids),
-    cudf::test::lists_column_wrapper<int32_t>({5, null, 0, null}, valids),
-    cudf::test::lists_column_wrapper<int32_t>{},
-    cudf::test::lists_column_wrapper<int32_t>({0, null, 8}, valids)};
+    {{1, null, 7}, valids}, {{5, null, 0, null}, valids}, {}, {{0, null, 8}, valids}};
   cudf::test::fixed_width_column_wrapper<int32_t> list_col_b{100, 200, 300, 400};
   cudf::table_view lists_table({list_col_a, list_col_b});
   cudf::explode_outer_position(lists_table, 0, cudf::test::get_default_stream());

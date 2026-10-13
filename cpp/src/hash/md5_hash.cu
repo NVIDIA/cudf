@@ -20,6 +20,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/std/bit>
 #include <cuda/std/utility>
 #include <cuda/stream>
 #include <thrust/for_each.h>
@@ -200,7 +201,7 @@ struct MD5Hasher {
         A = D;
         D = C;
         C = B;
-        B = B + rotate_bits_left(F, md5_shift_constants[((j / 16) * 4) + (j % 4)]);
+        B = B + cuda::std::rotl(F, md5_shift_constants[((j / 16) * 4) + (j % 4)]);
       }
 
       hash_values[0] += A;
@@ -335,7 +336,11 @@ std::unique_ptr<column> md5(table_view const& input,
       }
     });
 
-  return make_strings_column(input.num_rows(), std::move(offsets_column), chars.release(), 0, {});
+  return make_strings_column(input.num_rows(),
+                             std::move(offsets_column),
+                             chars.release(),
+                             0,
+                             cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }
 
 }  // namespace detail

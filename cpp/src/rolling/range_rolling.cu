@@ -23,6 +23,7 @@
 #include <rmm/resource_ref.hpp>
 
 #include <cub/device/device_segmented_reduce.cuh>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/stream>
 
@@ -58,7 +59,8 @@ rmm::device_uvector<cudf::size_type> nulls_per_group(column_view const& orderby,
                                   offsets.begin(),
                                   offsets.begin() + 1,
                                   stream.get());
-  auto tmp = rmm::device_buffer(bytes, stream);
+  auto tmp = cuda::device_buffer<std::byte>(
+    stream, cudf::get_current_device_resource_ref(), bytes, cuda::no_init);
   cub::DeviceSegmentedReduce::Sum(tmp.data(),
                                   bytes,
                                   is_null_it,

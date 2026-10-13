@@ -161,7 +161,7 @@ template <typename T,
  */
 [[nodiscard]] std::vector<cudf::size_type> filter_row_groups_with_dictionaries(
   cudf::io::datasource& datasource,
-  cudf::io::parquet::experimental::hybrid_scan_reader const& reader,
+  cudf::io::parquet::experimental::hybrid_scan_reader& reader,
   cudf::io::parquet_reader_options const& options,
   cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
@@ -173,7 +173,7 @@ template <typename T,
  */
 [[nodiscard]] std::vector<std::vector<cudf::size_type>> filter_row_groups_with_dictionaries(
   multifile_inputs const& inputs,
-  cudf::io::parquet::experimental::hybrid_scan_multifile const& reader,
+  cudf::io::parquet::experimental::hybrid_scan_multifile& reader,
   cudf::io::parquet_reader_options const& options,
   cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);

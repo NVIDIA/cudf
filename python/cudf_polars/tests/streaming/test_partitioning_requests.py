@@ -13,11 +13,11 @@ from cudf_polars.dsl.ir import (
     DataFrameScan,
     GroupBy,
     Join,
-    MapFunction,
     Select,
     Sort,
     Union,
 )
+from cudf_polars.streaming.hint_sorted import HintSorted
 from cudf_polars.streaming.partitioning_requests import (
     NamedOrderKey,
     OrderPartitioningRequest,
@@ -80,14 +80,12 @@ def make_hint_sorted(
     *names: str,
     descending: tuple[bool, ...] | None = None,
     nulls_last: tuple[bool, ...] | None = None,
-) -> MapFunction:
+) -> HintSorted:
     if descending is None:
         descending = (False,) * len(names)
     if nulls_last is None:
         nulls_last = (False,) * len(names)
-    return MapFunction(
-        child.schema, "hint_sorted", (names, descending, nulls_last), child
-    )
+    return HintSorted(child.schema, (names, descending, nulls_last), child)
 
 
 def make_groupby(child: IR, *names: str, maintain_order: bool = False) -> GroupBy:
@@ -163,7 +161,9 @@ def test_hint_sorted_creates_order_partition_request() -> None:
     requests = collect_partitioning_requests(hint_sorted)
 
     assert requests[scan] == (
-        OrderPartitioningRequest((named_order_key("a", descending=True),)),
+        OrderPartitioningRequest(
+            (named_order_key("a", descending=True),), source="hint"
+        ),
     )
 
 
@@ -265,7 +265,9 @@ def test_hint_sorted_keeps_declared_order_with_compatible_downstream_sort() -> N
 
     requests = collect_partitioning_requests(sort)
 
-    assert requests[scan] == (OrderPartitioningRequest((named_order_key("a"),)),)
+    assert requests[scan] == (
+        OrderPartitioningRequest((named_order_key("a"),), source="hint"),
+    )
 
 
 def test_hint_sorted_keeps_declared_order_with_extended_downstream_sort() -> None:
@@ -275,7 +277,9 @@ def test_hint_sorted_keeps_declared_order_with_extended_downstream_sort() -> Non
 
     requests = collect_partitioning_requests(sort)
 
-    assert requests[scan] == (OrderPartitioningRequest((named_order_key("a"),)),)
+    assert requests[scan] == (
+        OrderPartitioningRequest((named_order_key("a"),), source="hint"),
+    )
 
 
 def test_hint_sorted_keeps_declared_order_with_incompatible_downstream_sort() -> None:
@@ -286,7 +290,9 @@ def test_hint_sorted_keeps_declared_order_with_incompatible_downstream_sort() ->
     requests = collect_partitioning_requests(sort)
 
     assert requests[scan] == (
-        OrderPartitioningRequest((named_order_key("a", descending=True),)),
+        OrderPartitioningRequest(
+            (named_order_key("a", descending=True),), source="hint"
+        ),
     )
 
 

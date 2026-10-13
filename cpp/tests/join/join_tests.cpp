@@ -30,6 +30,7 @@
 #include <rmm/device_uvector.hpp>
 #include <rmm/mr/statistics_resource_adaptor.hpp>
 
+#include <cuda/buffer>
 #include <cuda/stream>
 
 #include <algorithm>
@@ -2492,7 +2493,10 @@ TEST_F(JoinTest, HashJoinLargeOutputSize)
 {
   // self-join a table of zeroes to generate an output row count that would overflow int32_t
   std::size_t col_size = 65567;
-  rmm::device_buffer zeroes(col_size * sizeof(int32_t), cudf::get_default_stream());
+  cuda::device_buffer<std::byte> zeroes(cudf::get_default_stream(),
+                                        cudf::get_current_device_resource_ref(),
+                                        col_size * sizeof(int32_t),
+                                        cuda::no_init);
   CUDF_CUDA_TRY(cudaMemsetAsync(zeroes.data(), 0, zeroes.size(), cudf::get_default_stream().get()));
   cudf::column_view col_zeros(
     cudf::data_type{cudf::type_id::INT32}, col_size, zeroes.data(), nullptr, 0);

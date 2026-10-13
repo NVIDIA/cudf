@@ -2,6 +2,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+# shellcheck source=ci/build_parallel.sh
+source ./ci/build_parallel.sh
+
 if [[ "${RAPIDS_WHEEL_COMMON_INITIALIZED:-}" != "true" ]]; then
   source rapids-configure-sccache
   source rapids-datetime-string

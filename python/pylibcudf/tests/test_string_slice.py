@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import pyarrow as pa
@@ -28,7 +28,7 @@ def pa_start_stop_step(request):
 
 @pytest.fixture(scope="module")
 def plc_start_stop_step(pa_start_stop_step):
-    return tuple(plc.Scalar.from_arrow(x) for x in pa_start_stop_step)
+    return tuple(x.as_py() for x in pa_start_stop_step)
 
 
 @pytest.fixture(scope="module")
@@ -102,17 +102,20 @@ def test_slice_column(
 
 
 def test_slice_invalid(plc_col, plc_starts_col, plc_stops_col):
-    with pytest.raises(TypeError):
-        # no maching signature
-        plc.strings.slice.slice_strings(None, pa_starts_col, pa_stops_col)
     with pytest.raises(ValueError):
-        # signature found but wrong value passed
+        # input cannot be None
+        plc.strings.slice.slice_strings(None, plc_starts_col, plc_stops_col)
+    with pytest.raises(ValueError):
+        # start and stop must both be provided for column-wise slice
         plc.strings.slice.slice_strings(plc_col, plc_starts_col, None)
-    with pytest.raises(TypeError):
-        # no matching signature (2nd arg)
-        plc.strings.slice.slice_strings(plc_col, None, plc_stops_col)
-    with pytest.raises(TypeError):
-        # can't provide step for columnwise api
+    with pytest.raises(ValueError):
+        # can't provide step for column-wise slice
         plc.strings.slice.slice_strings(
-            plc_col, plc_starts_col, plc_stops_col, plc_starts_col
+            plc_col, plc_starts_col, plc_stops_col, 2
         )
+    with pytest.raises(TypeError):
+        # can't mix a Column and a non-Column
+        plc.strings.slice.slice_strings(plc_col, plc_starts_col, 3)
+    with pytest.raises(ValueError):
+        # start/stop must be a Column or an int
+        plc.strings.slice.slice_strings(plc_col, "invalid", 3)

@@ -15,6 +15,7 @@
 #include "reader_impl_chunking.hpp"
 #include "reader_impl_helpers.hpp"
 
+#include <cudf/detail/utilities/getenv_or.hpp>
 #include <cudf/detail/utilities/host_vector.hpp>
 #include <cudf/io/datasource.hpp>
 #include <cudf/io/detail/parquet.hpp>
@@ -603,6 +604,13 @@ class reader_impl {
   // Per-input-column flag indicating whether that column was selected for direct
   // Parquet-dict → DICTIONARY32 transcode.
   std::vector<bool> _dict_transcode_eligible;
+
+  // LIBCUDF_PARQUET_LEVEL_PREPASS selector is fixed for the reader lifetime so
+  // every pass and output chunk agrees on which prepass consumer families may
+  // be selected. Read here rather than in a constructor body because
+  // `hybrid_scan_reader_impl` reaches this class through the default constructor.
+  bool _level_prepass_enabled{
+    cudf::detail::get_bool_env_or("LIBCUDF_PARQUET_LEVEL_PREPASS", false)};
 };
 
 }  // namespace cudf::io::parquet::detail

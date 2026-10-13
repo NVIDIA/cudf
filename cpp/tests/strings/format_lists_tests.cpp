@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2023, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -29,7 +29,7 @@ TEST_F(StringsFormatListsTest, EmptyNestedList)
 {
   using STR_LISTS = cudf::test::lists_column_wrapper<cudf::string_view>;
 
-  auto const input = STR_LISTS{STR_LISTS{STR_LISTS{}, STR_LISTS{}}, STR_LISTS{STR_LISTS{}}};
+  auto const input = STR_LISTS{{{}, {}}, {{}}};
   auto const view  = cudf::lists_column_view(input);
 
   auto results  = cudf::strings::format_list_column(view);
@@ -41,11 +41,11 @@ TEST_F(StringsFormatListsTest, WithNulls)
 {
   using STR_LISTS = cudf::test::lists_column_wrapper<cudf::string_view>;
 
-  auto const input = STR_LISTS{{STR_LISTS{{"a", "", "ccc"}, cudf::test::iterators::null_at(1)},
-                                STR_LISTS{},
-                                STR_LISTS{{"", "bb", "ddd"}, cudf::test::iterators::null_at(0)},
-                                STR_LISTS{"zzz", "xxxxx"},
-                                STR_LISTS{{"v", "", "", "w"}, cudf::test::iterators::null_at(2)}},
+  auto const input = STR_LISTS{{{{"a", "", "ccc"}, cudf::test::iterators::null_at(1)},
+                                {},
+                                {{"", "bb", "ddd"}, cudf::test::iterators::null_at(0)},
+                                {"zzz", "xxxxx"},
+                                {{"v", "", "", "w"}, cudf::test::iterators::null_at(2)}},
                                cudf::test::iterators::null_at(1)};
   auto const view  = cudf::lists_column_view(input);
 
@@ -61,11 +61,9 @@ TEST_F(StringsFormatListsTest, CustomParameters)
   using STR_LISTS = cudf::test::lists_column_wrapper<cudf::string_view>;
 
   auto const input =
-    STR_LISTS{STR_LISTS{{STR_LISTS{{"a", "", "ccc"}, cudf::test::iterators::null_at(1)},
-                         STR_LISTS{},
-                         STR_LISTS{"ddd", "ee", "f"}},
-                        cudf::test::iterators::null_at(1)},
-              {STR_LISTS{"gg", "hhh"}, STR_LISTS{"i", "", "", "jj"}}};
+    STR_LISTS{{{{{"a", "", "ccc"}, cudf::test::iterators::null_at(1)}, {}, {"ddd", "ee", "f"}},
+               cudf::test::iterators::null_at(1)},
+              {{"gg", "hhh"}, {"i", "", "", "jj"}}};
   auto const view = cudf::lists_column_view(input);
   auto separators = cudf::test::strings_column_wrapper({": ", "{", "}"});
 
@@ -81,8 +79,7 @@ TEST_F(StringsFormatListsTest, NestedList)
   using STR_LISTS = cudf::test::lists_column_wrapper<cudf::string_view>;
 
   auto const input =
-    STR_LISTS{{STR_LISTS{"a", "bb", "ccc"}, STR_LISTS{}, STR_LISTS{"ddd", "ee", "f"}},
-              {STR_LISTS{"gg", "hhh"}, STR_LISTS{"i", "", "", "jj"}}};
+    STR_LISTS{{{"a", "bb", "ccc"}, {}, {"ddd", "ee", "f"}}, {{"gg", "hhh"}, {"i", "", "", "jj"}}};
   auto const view = cudf::lists_column_view(input);
 
   auto results = cudf::strings::format_list_column(view);
@@ -95,19 +92,18 @@ TEST_F(StringsFormatListsTest, SlicedLists)
 {
   using STR_LISTS = cudf::test::lists_column_wrapper<cudf::string_view>;
 
-  auto const input =
-    STR_LISTS{{STR_LISTS{{"a", "", "bb"}, cudf::test::iterators::null_at(1)},
-               STR_LISTS{},
-               STR_LISTS{{"", "ccc", "dddd"}, cudf::test::iterators::null_at(0)},
-               STR_LISTS{"zzz", ""},
-               STR_LISTS{},
-               STR_LISTS{{"abcdef", "012345", "", ""}, cudf::test::iterators::null_at(2)},
-               STR_LISTS{{"", "11111", "00000"}, cudf::test::iterators::null_at(0)},
-               STR_LISTS{"hey hey", "way way"},
-               STR_LISTS{},
-               STR_LISTS{"ééé", "12345abcdef"},
-               STR_LISTS{"www", "12345"}},
-              cudf::test::iterators::nulls_at({1, 4, 8})};
+  auto const input = STR_LISTS{{{{"a", "", "bb"}, cudf::test::iterators::null_at(1)},
+                                {},
+                                {{"", "ccc", "dddd"}, cudf::test::iterators::null_at(0)},
+                                {"zzz", ""},
+                                {},
+                                {{"abcdef", "012345", "", ""}, cudf::test::iterators::null_at(2)},
+                                {{"", "11111", "00000"}, cudf::test::iterators::null_at(0)},
+                                {"hey hey", "way way"},
+                                {},
+                                {"ééé", "12345abcdef"},
+                                {"www", "12345"}},
+                               cudf::test::iterators::nulls_at({1, 4, 8})};
 
   // matching expected strings
   auto const h_expected = std::vector<std::string>({"[a,NULL,bb]",
@@ -143,7 +139,7 @@ TEST_F(StringsFormatListsTest, Errors)
   EXPECT_THROW(cudf::strings::format_list_column(cudf::lists_column_view(invalid)),
                cudf::logic_error);
 
-  auto const input = STR_LISTS{STR_LISTS{}, STR_LISTS{}};
+  auto const input = STR_LISTS{{}, {}};
   auto const view  = cudf::lists_column_view(input);
   auto separators  = cudf::test::strings_column_wrapper({"{", "}"});
 

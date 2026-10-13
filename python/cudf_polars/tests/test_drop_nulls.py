@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -68,10 +68,15 @@ def test_fill_null_with_strategy_bool(engine: pl.GPUEngine, strategy):
 
 
 @pytest.mark.parametrize("strategy", ["forward", "backward"])
-@pytest.mark.parametrize("limit", [0, 1, 2])
-def test_fill_null_with_limit(engine: pl.GPUEngine, null_data, strategy, limit):
-    q = null_data.select(pl.col("a").fill_null(strategy=strategy, limit=limit))
-    if limit != 0:
-        assert_ir_translation_raises(q, engine, NotImplementedError)
-    else:
-        assert_gpu_result_equal(q, engine=engine)
+def test_fill_null_with_zero_limit(engine: pl.GPUEngine, null_data, strategy):
+    q = null_data.select(pl.col("a").fill_null(strategy=strategy, limit=0))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("strategy", ["forward", "backward"])
+@pytest.mark.parametrize("limit", [1, 2])
+def test_fill_null_with_nonzero_limit_unsupported(in_memory_engine, strategy, limit):
+    q = pl.LazyFrame({"a": [None, 1]}).select(
+        pl.col("a").fill_null(strategy=strategy, limit=limit)
+    )
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)

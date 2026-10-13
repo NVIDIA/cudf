@@ -116,6 +116,7 @@ _DECIMAL_AGGS = {
     "MIN",
     "NTH",
     "NUNIQUE",
+    "SIZE",
     "SUM",
 }
 
@@ -629,7 +630,7 @@ class GroupBy(Serializable, Reducible, Scannable):
         self._sort = sort
         self._dropna = dropna
         self._group_keys = group_keys
-        self._selection: tuple[Any, ...] | None = None
+        self._selection = None
 
         if isinstance(self._by, _Grouping):
             self._by._obj = self.obj
@@ -652,7 +653,7 @@ class GroupBy(Serializable, Reducible, Scannable):
         if isinstance(group_names, Index):
             group_names = group_names.to_pandas()
         if self._sort or len(offsets) <= 2:
-            order: Iterable[int] = range(len(offsets) - 1)
+            order = range(len(offsets) - 1)
         else:
             # libcudf returns groups sorted by key, but with ``sort=False``
             # pandas iterates groups in order of first appearance. Reorder by

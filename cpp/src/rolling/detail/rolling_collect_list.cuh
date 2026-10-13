@@ -17,7 +17,6 @@
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/stream>
-#include <thrust/extrema.h>
 #include <thrust/transform.h>
 
 namespace cudf {

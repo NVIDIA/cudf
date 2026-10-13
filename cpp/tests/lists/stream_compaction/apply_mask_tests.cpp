@@ -64,11 +64,11 @@ TYPED_TEST(ApplyRetentionMaskTypedTest, NullElementsInTheListRows)
   auto input =
     lists<T>{
       {0, 1, 2, 3},
-      lists<T>{{X, 5}, null_at(0)},
+      {{X, 5}, null_at(0)},
       {6, 7, 8, 9},
       {0, 1},
-      lists<T>{{X, 3, 4, X}, nulls_at({0, 3})},
-      lists<T>{{X, X}, nulls_at({0, 1})},
+      {{X, 3, 4, X}, nulls_at({0, 3})},
+      {{X, X}, nulls_at({0, 1})},
     }
       .release();
   auto filter = filter_t{{1, 0, 1, 0}, {1, 0}, {1, 0, 1, 0}, {1, 0}, {1, 0, 1, 0}, {1, 0}};
@@ -76,12 +76,8 @@ TYPED_TEST(ApplyRetentionMaskTypedTest, NullElementsInTheListRows)
   {
     // Unsliced.
     auto filtered = apply_retention_mask(lists_column_view{*input}, lists_column_view{filter});
-    auto expected = lists<T>{{0, 2},
-                             lists<T>{{X}, null_at(0)},
-                             {6, 8},
-                             {0},
-                             lists<T>{{X, 4}, null_at(0)},
-                             lists<T>{{X}, null_at(0)}};
+    auto expected =
+      lists<T>{{0, 2}, {{X}, null_at(0)}, {6, 8}, {0}, {{X, 4}, null_at(0)}, {{X}, null_at(0)}};
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*filtered, expected);
   }
   {
@@ -90,7 +86,7 @@ TYPED_TEST(ApplyRetentionMaskTypedTest, NullElementsInTheListRows)
     //           == lists_t {{X, 5}, {6, 7, 8, 9}, {0, 1}, {X, 3, 4, X}, {X, X}};
     auto filter   = filter_t{{0, 1}, {0, 1, 0, 1}, {1, 1}, {0, 1, 0, 1}, {0, 0}};
     auto filtered = apply_retention_mask(lists_column_view{sliced}, lists_column_view{filter});
-    auto expected = lists<T>{{5}, {7, 9}, {0, 1}, lists<T>{{3, X}, null_at(1)}, {}};
+    auto expected = lists<T>{{5}, {7, 9}, {0, 1}, {{3, X}, null_at(1)}, {}};
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*filtered, expected);
   }
 }
@@ -199,10 +195,13 @@ TYPED_TEST(ApplyRetentionMaskTypedTest, NullsInBooleanMask)
   // mask offsets:                {0,           3,        5,             9}
   // kept (valid AND true):       {10, 30},     {},       {80}
   auto mask_child = fwcw<bool>{{1, X, 1, 0, X, X, 0, 1, 0}, nulls_at({1, 4, 5})};
-  auto mask =
-    cudf::make_lists_column(3, offsets{0, 3, 5, 9}.release(), mask_child.release(), 0, {});
-  auto filtered = apply_retention_mask(lists_column_view{input}, lists_column_view{*mask});
-  auto expected = lists<T>{{10, 30}, lists<T>{}, {80}};
+  auto mask       = cudf::make_lists_column(3,
+                                      offsets{0, 3, 5, 9}.release(),
+                                      mask_child.release(),
+                                      0,
+                                      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+  auto filtered   = apply_retention_mask(lists_column_view{input}, lists_column_view{*mask});
+  auto expected   = lists<T>{{10, 30}, {}, {80}};
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*filtered, expected);
 }
 
@@ -260,7 +259,7 @@ TYPED_TEST(ApplyDeletionMaskTypedTest, AllTrue)
   auto mask  = filter_t{{1, 1, 1}, {1, 1}};
 
   auto filtered = apply_deletion_mask(lists_column_view{input}, lists_column_view{mask});
-  auto expected = lists<T>{lists<T>{}, lists<T>{}};
+  auto expected = lists<T>{{}, {}};
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*filtered, expected);
 }
 
@@ -281,30 +280,26 @@ TYPED_TEST(ApplyDeletionMaskTypedTest, NullElementsInTheListRows)
   auto input =
     lists<T>{
       {0, 1, 2, 3},
-      lists<T>{{X, 5}, null_at(0)},
+      {{X, 5}, null_at(0)},
       {6, 7, 8, 9},
       {0, 1},
-      lists<T>{{X, 3, 4, X}, nulls_at({0, 3})},
-      lists<T>{{X, X}, nulls_at({0, 1})},
+      {{X, 3, 4, X}, nulls_at({0, 3})},
+      {{X, X}, nulls_at({0, 1})},
     }
       .release();
   auto filter = filter_t{{1, 0, 1, 0}, {1, 0}, {1, 0, 1, 0}, {1, 0}, {1, 0, 1, 0}, {1, 0}};
 
   {
     auto filtered = apply_deletion_mask(lists_column_view{*input}, lists_column_view{filter});
-    auto expected =
-      lists<T>{{1, 3}, {5}, {7, 9}, {1}, lists<T>{{3, X}, null_at(1)}, lists<T>{{X}, null_at(0)}};
+    auto expected = lists<T>{{1, 3}, {5}, {7, 9}, {1}, {{3, X}, null_at(1)}, {{X}, null_at(0)}};
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*filtered, expected);
   }
   {
     auto sliced   = cudf::slice(*input, {1, input->size()}).front();
     auto filter   = filter_t{{0, 1}, {0, 1, 0, 1}, {1, 1}, {0, 1, 0, 1}, {0, 0}};
     auto filtered = apply_deletion_mask(lists_column_view{sliced}, lists_column_view{filter});
-    auto expected = lists<T>{lists<T>{{X}, null_at(0)},
-                             {6, 8},
-                             {},
-                             lists<T>{{X, 4}, null_at(0)},
-                             lists<T>{{X, X}, nulls_at({0, 1})}};
+    auto expected =
+      lists<T>{{{X}, null_at(0)}, {6, 8}, {}, {{X, 4}, null_at(0)}, {{X, X}, nulls_at({0, 1})}};
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*filtered, expected);
   }
 }
@@ -360,10 +355,13 @@ TYPED_TEST(ApplyDeletionMaskTypedTest, NullsInDeletionMask)
   // mask offsets:                {0,           3,        5,            9}
   // kept (valid AND false):      {},           {40},     {70, 90}
   auto mask_child = fwcw<bool>{{1, X, 1, 0, X, X, 0, 1, 0}, nulls_at({1, 4, 5})};
-  auto mask =
-    cudf::make_lists_column(3, offsets{0, 3, 5, 9}.release(), mask_child.release(), 0, {});
-  auto filtered = apply_deletion_mask(lists_column_view{input}, lists_column_view{*mask});
-  auto expected = lists<T>{lists<T>{}, {40}, {70, 90}};
+  auto mask       = cudf::make_lists_column(3,
+                                      offsets{0, 3, 5, 9}.release(),
+                                      mask_child.release(),
+                                      0,
+                                      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+  auto filtered   = apply_deletion_mask(lists_column_view{input}, lists_column_view{*mask});
+  auto expected   = lists<T>{{}, {40}, {70, 90}};
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*filtered, expected);
 }
 

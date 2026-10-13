@@ -33,6 +33,7 @@
 #include <cudf/strings/detail/strings_children.cuh>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/table/table.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
@@ -40,12 +41,11 @@
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/std/concepts>
 #include <cuda/stream>
 #include <thrust/execution_policy.h>
 #include <thrust/fill.h>
-#include <thrust/host_vector.h>
 #include <thrust/logical.h>
-#include <thrust/scan.h>
 #include <thrust/tabulate.h>
 
 #include <algorithm>
@@ -155,7 +155,7 @@ void write_compressed_to_sink(data_sink* out_sink,
                d_results.end(),
                io::detail::codec_exec_result{0, io::detail::codec_status::FAILURE});
 
-  io::detail::compress(compression, d_inputs, d_outputs, d_results, stream);
+  io::detail::compress(compression, d_inputs, d_outputs, d_results, stream, {temp_mr, temp_mr});
 
   auto const results = cudf::detail::make_host_vector(d_results, stream);
   CUDF_EXPECTS(std::all_of(results.begin(),
@@ -308,36 +308,32 @@ struct column_to_strings_fn {
 
   // ints:
   //
-  template <typename column_type>
+  template <cudf::concepts::integral_not_bool column_type>
   std::unique_ptr<column> operator()(column_view const& column) const
-    requires(std::is_integral_v<column_type> && !std::is_same_v<column_type, bool>)
   {
     return cudf::strings::detail::from_integers(column, stream_, mr_);
   }
 
   // floats:
   //
-  template <typename column_type>
+  template <cuda::std::floating_point column_type>
   std::unique_ptr<column> operator()(column_view const& column) const
-    requires(std::is_floating_point_v<column_type>)
   {
     return cudf::strings::detail::from_floats(column, stream_, mr_);
   }
 
   // fixed point:
   //
-  template <typename column_type>
+  template <cudf::concepts::fixed_point column_type>
   std::unique_ptr<column> operator()(column_view const& column) const
-    requires(cudf::is_fixed_point<column_type>())
   {
     return cudf::strings::detail::from_fixed_point(column, stream_, mr_);
   }
 
   // timestamps:
   //
-  template <typename column_type>
+  template <cudf::concepts::timestamp column_type>
   std::unique_ptr<column> operator()(column_view const& column) const
-    requires(cudf::is_timestamp<column_type>())
   {
     std::string format = [&]() {
       if (std::is_same_v<cudf::timestamp_s, column_type>) {
@@ -373,9 +369,8 @@ struct column_to_strings_fn {
       mr_);
   }
 
-  template <typename column_type>
+  template <cudf::concepts::duration column_type>
   std::unique_ptr<column> operator()(column_view const& column) const
-    requires(cudf::is_duration<column_type>())
   {
     return cudf::io::detail::csv::pandas_format_durations(column, stream_, mr_);
   }
@@ -384,7 +379,6 @@ struct column_to_strings_fn {
   //
   template <typename column_type>
   std::unique_ptr<column> operator()(column_view const&) const
-    requires(!cudf::io::detail::is_convertible_to_string_column<column_type>())
   {
     CUDF_FAIL("Unsupported column type.");
   }

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import pylibcudf as plc
@@ -14,12 +14,14 @@ def read_avro(
     skiprows=None,
     num_rows=None,
     storage_options=None,
+    filesystem=None,
 ):
     """{docstring}"""
 
     filepath_or_buffer = ioutils.get_reader_filepath_or_buffer(
         path_or_data=filepath_or_buffer,
         storage_options=storage_options,
+        filesystem=filesystem,
     )
     filepath_or_buffer = ioutils._select_single_source(
         filepath_or_buffer, "read_avro"

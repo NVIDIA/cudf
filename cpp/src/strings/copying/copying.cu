@@ -68,7 +68,7 @@ std::unique_ptr<cudf::column> copy_slice(strings_column_view const& input,
     input.null_mask(), offsets_offset, offsets_offset + strings_count, stream, mr);
 
   auto null_count = cudf::detail::null_count(
-    static_cast<bitmask_type const*>(null_mask.data()), 0, strings_count, stream);
+    reinterpret_cast<bitmask_type const*>(null_mask.data()), 0, strings_count, stream);
 
   return make_strings_column(strings_count,
                              std::move(offsets_column),

@@ -200,8 +200,8 @@ TYPED_TEST(ChronoColumnTest, ChronosCanBeComparedInDeviceCode)
 
 TYPED_TEST(ChronoColumnTest, ChronoFactoryNullMaskAsParm)
 {
-  rmm::device_buffer null_mask{create_null_mask(this->size(), cudf::mask_state::ALL_NULL)};
-  auto column = make_fixed_width_column(cudf::data_type{cudf::type_to_id<TypeParam>()},
+  auto null_mask = create_null_mask(this->size(), cudf::mask_state::ALL_NULL);
+  auto column    = make_fixed_width_column(cudf::data_type{cudf::type_to_id<TypeParam>()},
                                         this->size(),
                                         std::move(null_mask),
                                         this->size());
@@ -215,8 +215,8 @@ TYPED_TEST(ChronoColumnTest, ChronoFactoryNullMaskAsParm)
 
 TYPED_TEST(ChronoColumnTest, ChronoFactoryNullMaskAsEmptyParm)
 {
-  rmm::device_buffer null_mask{};
-  auto column = make_fixed_width_column(
+  auto null_mask = cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED);
+  auto column    = make_fixed_width_column(
     cudf::data_type{cudf::type_to_id<TypeParam>()}, this->size(), std::move(null_mask), 0);
 
   EXPECT_EQ(column->type(), cudf::data_type{cudf::type_to_id<TypeParam>()});

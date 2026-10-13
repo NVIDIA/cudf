@@ -13,7 +13,6 @@ from rapidsmpf.streaming.core.leaf_actor import pull_from_channel
 
 import cudf_polars.dsl.tracing
 import cudf_polars.quent._context
-import cudf_polars.quent._types
 from cudf_polars.dsl.ir import (
     Join,
     Union,
@@ -25,7 +24,9 @@ from cudf_polars.streaming.actor_graph.nodes import (
     metadata_drain_node,
 )
 from cudf_polars.streaming.filter_hint import PushdownFilterHint
+from cudf_polars.streaming.hint_sorted import HintSorted
 from cudf_polars.streaming.over import Over
+from cudf_polars.streaming.partitioning_requests import collect_partitioning_requests
 from cudf_polars.utils.config import SPMDContext
 
 if TYPE_CHECKING:
@@ -81,7 +82,7 @@ def evaluate_logical_plan(
 
         engine = DefaultSingletonEngine.get_or_create()
         if config_options.executor.quent_context is not None:
-            engine_id = config_options.executor.quent_context.engine.id
+            engine_id = config_options.executor.quent_context.engine_id
         else:
             engine_id = uuid.uuid4()
         config_options = dataclasses.replace(
@@ -93,9 +94,9 @@ def evaluate_logical_plan(
                     context=engine.context,
                     py_executor=engine.py_executor,
                     engine_id=engine_id,
-                    worker_id=engine._quent_worker.id,
-                    quent_logger=engine._quent_logger,
-                    worker_resources=engine._worker_resources,
+                    worker_id=engine._quent_worker_id,
+                    quent_controller_runtime=engine._quent_runtime,
+                    quent_worker_runtime=engine._quent_worker_runtime,
                 ),
             ),
         )
@@ -180,12 +181,12 @@ def determine_fanout_nodes(
     for node in traversal([ir]):
         if node in unbounded:
             _mark_children_unbounded(node)
-        elif isinstance(node, (Union, Join, Over, PushdownFilterHint)):
+        elif isinstance(node, (Union, Join, Over, HintSorted, PushdownFilterHint)):
             # Union processes children sequentially; Join may broadcast one
             # side; Over buffers (or samples-then-replays) its input before
-            # producing output; PushdownFilterHint similarly might buffer
-            # then replay. In every case the input source needs unbounded
-            # fanout so other consumers don't block it.
+            # producing output; hints may buffer then replay. In every case
+            # the input source needs unbounded fanout so other consumers don't
+            # block it.
             _mark_children_unbounded(node)
         elif len(node.children) > 1:
             # Check if this node is doing any broadcasting.
@@ -222,8 +223,9 @@ def generate_network(
     ir_context: IRExecutionContext,
     collective_id_map: dict[IR, list[int]],
     metadata_collector: list[ChannelMetadata] | None,
-    quent_operator_map: dict[IR, cudf_polars.quent._types.Operator] | None = None,
-    local_quent_context: cudf_polars.quent._context.LocalQuentContext | None = None,
+    quent_operator_map: dict[IR, uuid.UUID] | None = None,
+    quent_query_worker_state: cudf_polars.quent._context.QuentQueryWorkerState
+    | None = None,
 ) -> tuple[list[Any], DeferredMessages]:
     """
     Translate the IR graph to a RapidsMPF streaming network.
@@ -253,8 +255,8 @@ def generate_network(
     quent_operator_map
         Mapping from IR nodes to their Quent operators, or ``None`` when tracing
         is disabled.
-    local_quent_context
-        The local Quent context for this rank, or ``None`` when tracing is
+    quent_query_worker_state
+        The Quent query-worker state for this rank, or ``None`` when tracing is
         disabled.
 
     Returns
@@ -270,6 +272,11 @@ def generate_network(
     # Determine which nodes need fanout
     fanout_nodes = determine_fanout_nodes(ir, partition_info, ir_dep_count)
 
+    # Collect partitioning requests any optimizations might consume them
+    dynamic_planning = config_options.executor.dynamic_planning
+    infer_ordering = dynamic_planning and dynamic_planning.infer_ordering
+    partitioning_requests = collect_partitioning_requests(ir) if infer_ordering else {}
+
     # Generate the network
     state: GenState = {
         "context": context,
@@ -281,8 +288,9 @@ def generate_network(
         "max_concurrent_io_tasks": config_options.executor.max_concurrent_io_tasks,
         "stats": stats,
         "collective_id_map": collective_id_map,
+        "partitioning_requests": partitioning_requests,
         "quent_operator_map": quent_operator_map,
-        "quent_execution_context": local_quent_context,
+        "quent_query_worker_state": quent_query_worker_state,
     }
     mapper: SubNetGenerator = CachingVisitor(
         generate_ir_sub_network_wrapper, state=state

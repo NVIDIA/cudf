@@ -1,11 +1,11 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Multi-partition dispatch functions."""
 
 from __future__ import annotations
 
 from functools import singledispatch
-from typing import TYPE_CHECKING, TypeAlias, TypedDict
+from typing import TYPE_CHECKING, TypedDict
 
 from cudf_polars.typing import GenericTransformer
 
@@ -44,7 +44,7 @@ class State(TypedDict):
     nranks: int
 
 
-LowerIRTransformer: TypeAlias = GenericTransformer[
+type LowerIRTransformer = GenericTransformer[
     "ir.IR", "tuple[ir.IR, MutableMapping[ir.IR, PartitionInfo]]", State
 ]
 """Protocol for Lowering IR nodes."""

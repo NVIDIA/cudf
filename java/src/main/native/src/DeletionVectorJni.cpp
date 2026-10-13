@@ -383,7 +383,7 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_DeletionVector_closeParquetChunkedRea
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    delete reinterpret_cast<cudf::io::parquet::experimental::chunked_parquet_reader*>(
+    cudf::jni::safe_delete<cudf::io::parquet::experimental::chunked_parquet_reader>(
       j_reader_handle);
   }
   JNI_CATCH(env, );
@@ -401,7 +401,7 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_DeletionVector_destroyMultiHostBuffer
 {
   JNI_NULL_CHECK(env, handle, "handle is null", );
 
-  JNI_TRY { delete reinterpret_cast<cudf::jni::multi_host_buffer_source*>(handle); }
+  JNI_TRY { cudf::jni::safe_delete<cudf::jni::multi_host_buffer_source>(handle); }
   JNI_CATCH(env, );
 }
 
@@ -417,10 +417,7 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_DeletionVector_destroyDeletionVectorP
 {
   JNI_NULL_CHECK(env, handle, "handle is null", );
 
-  JNI_TRY
-  {
-    delete reinterpret_cast<cudf::io::parquet::experimental::deletion_vector_info*>(handle);
-  }
+  JNI_TRY { cudf::jni::safe_delete<cudf::io::parquet::experimental::deletion_vector_info>(handle); }
   JNI_CATCH(env, );
 }
 

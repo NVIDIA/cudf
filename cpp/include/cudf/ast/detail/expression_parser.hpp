@@ -12,6 +12,9 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <cuda/buffer>
+
+#include <cstddef>
 #include <functional>
 #include <numeric>
 #include <optional>
@@ -267,7 +270,7 @@ class expression_parser {
    */
   cudf::size_type add_data_reference(detail::device_data_reference data_ref);
 
-  rmm::device_buffer
+  cuda::device_buffer<std::byte>
     _device_data_buffer;  ///< The device-side data buffer containing the plan information, which is
                           ///< owned by this class and persists until it is destroyed.
 

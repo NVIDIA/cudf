@@ -22,7 +22,6 @@
 #include <thrust/execution_policy.h>
 #include <thrust/for_each.h>
 #include <thrust/gather.h>
-#include <thrust/host_vector.h>
 
 #include <functional>
 

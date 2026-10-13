@@ -16,6 +16,7 @@ from cudf_polars.dsl.ir import DataFrameScan, IRExecutionContext, MapFunction
 from cudf_polars.dsl.translate import Translator
 from cudf_polars.streaming.base import PartitionInfo
 from cudf_polars.streaming.dispatch import lower_ir_node
+from cudf_polars.streaming.hint_sorted import HintSorted
 from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
@@ -29,11 +30,11 @@ if TYPE_CHECKING:
     from cudf_polars.streaming.dispatch import State
 
 
-def test_explode_multiple_raises(engine: pl.GPUEngine):
+def test_explode_multiple_raises(in_memory_engine):
     df = pl.LazyFrame({"a": [[1, 2], [3, 4]], "b": [[5, 6], [7, 8]]})
     q = df.explode("a", "b")
 
-    assert_ir_translation_raises(q, engine, NotImplementedError)
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 
 
 @pytest.mark.parametrize("column", ["a", "b"])
@@ -51,13 +52,13 @@ def test_explode_single(engine: pl.GPUEngine, column):
 
 
 @pytest.mark.parametrize("mapping", [{"b": "a"}, {"a": "c", "b": "c"}])
-def test_rename_duplicate_raises(engine: pl.GPUEngine, mapping):
+def test_rename_duplicate_raises(in_memory_engine, mapping):
     df = pl.LazyFrame({"a": [1, 2, 3], "b": [3, 4, 5]})
 
     q = df.rename(mapping)
 
     with pytest.raises(pl.exceptions.DuplicateError, match="is duplicate"):
-        assert_ir_translation_raises(q, engine, NotImplementedError)
+        assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 
 
 @pytest.mark.parametrize(
@@ -242,8 +243,8 @@ def test_hint_sorted_streaming_lowering_preserves_partitioning() -> None:
 
     lowered, partition_info = lower_ir_node(node, Rec())
 
-    assert isinstance(lowered, MapFunction)
-    assert lowered.name == "hint_sorted"
+    assert isinstance(lowered, HintSorted)
+    assert lowered.options == node.options
     assert partition_info[lowered] is child_partition
 
 

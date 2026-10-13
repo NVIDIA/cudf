@@ -70,7 +70,8 @@ async def union_node(
         chs_out=(ch_out,),
         trace_ir=ir,
         ir_context=ir_context,
-    ):
+    ) as actor_scope:
+        ir_context = actor_scope.require_ir_context()
         # Merge and forward metadata.
         # Union loses partitioning/ordering info since sources may differ.
         # TODO: Warn users that Union does NOT preserve order?

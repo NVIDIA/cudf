@@ -16,8 +16,10 @@ metadata:
 
 ## Compatibility
 
-- Release tracked by this skill: 26.04.
-- Requires NVIDIA Volta or newer on CUDA 12, or Turing or newer on CUDA 13. Release 26.04 supports CUDA 12.2-12.9 with driver 535+ or CUDA 13.0-13.1 with driver 580+, and Python 3.11-3.14. cuDF sweet spot: >100K rows.
+- Development release tracked by this skill: 26.12 (`VERSION`: `26.12.00`). Use the selected installed release for deployment requirements.
+- Current package metadata targets Python 3.11-3.14 and pandas `>=3.0.0,<3.1.0`. The dependency matrix uses CUDA 12.9 and 13.3; libcudf requires CUDA Toolkit 12.2+ to build. Match cuDF, pylibcudf, libcudf, and RMM release versions, and match pip wheel suffixes (`-cu12` / `-cu13`) to the CUDA major version.
+- Requires a supported NVIDIA GPU and compatible driver. Check the [installation requirements](https://docs.nvidia.com/datascience/install/#system-req) for the selected release and CUDA version.
+- For another checkout or installed release, check `VERSION`, `dependencies.yaml`, `python/cudf/pyproject.toml`, and `cudf.__version__` before choosing versions or relying on an API.
 
 ## Naming
 
@@ -30,9 +32,9 @@ You are a cuDF expert helping an implementer work with GPU DataFrames. The user 
 ## Critical Rules
 
 1. **Choose the right cuDF path.** Use `cudf.pandas` for broad compatibility or minimal-change acceleration. Use explicit cuDF when the user asks to migrate DataFrame code, inspect parity, optimize a visible ETL hot path, or control unsupported operations.
-2. **Size gate: 100K rows minimum.** Below that, GPU transfer overhead usually beats the speedup; use small data for correctness and benchmark larger working sets for performance.
-3. **Keep conversions at boundaries.** Use `.to_pandas()`, `.values`, or `.numpy()` for display, plotting, CPU-only libraries, or final output boundaries. Keep intermediate ETL data on GPU.
-4. **Float32 is your friend.** cuDF operations on float64 are slower; cast early when precision allows.
+2. **Benchmark the working set.** GPU transfer and launch overhead can dominate small workloads; 100K rows is a starting heuristic, not a minimum. Use small data for correctness and representative data for performance.
+3. **Keep conversions at boundaries.** Use `.to_pandas()` or `.to_numpy()` for CPU-only libraries, display, or final output boundaries. `.values` and `.to_cupy()` return GPU arrays, not NumPy arrays. Keep intermediate ETL data on GPU.
+4. **Choose precision deliberately.** Float32 reduces memory use and may improve throughput, but preserve float64 when accuracy requires it and benchmark the target hardware.
 5. **Validate semantics on representative slices.** For null handling, joins, time series, reshape, or grouped logic, keep a small pandas reference path and compare shape, labels, null counts, ordering, and representative values before claiming parity.
 6. **For data > GPU memory**, move to dask-cuDF with `enable_cudf_spill=True`. See `references/dask-cudf-patterns.md`.
 
@@ -117,12 +119,15 @@ When dataset exceeds GPU memory. See `references/dask-cudf-patterns.md` for full
 ```python
 from dask_cuda import LocalCUDACluster
 from dask.distributed import Client
-import dask_cudf
+import dask
+import dask.dataframe as dd
+
+dask.config.set({"dataframe.backend": "cudf"})
 
 cluster = LocalCUDACluster(enable_cudf_spill=True)  # one worker per GPU
 client = Client(cluster)
 
-ddf = dask_cudf.read_parquet("s3://bucket/data/*.parquet")
+ddf = dd.read_parquet("s3://bucket/data/*.parquet")
 result = ddf.groupby("key").agg({"value": "sum"}).compute()
 ```
 
@@ -134,11 +139,11 @@ import cudf
 cudf.set_option("spill", True)   # spill to host RAM when GPU is full
 ```
 
-**RMM pool allocator** (reduces cudaMalloc overhead in pipelines with many allocations):
+**RMM async allocator** (can reduce allocation overhead in pipelines with many allocations). Configure it before any cuDF allocations, and keep the resource alive while its allocations are in use:
 ```python
 import rmm
-rmm.set_current_device_resource(rmm.mr.CudaAsyncMemoryResource())
-# Must be called BEFORE any cuDF operations
+memory_resource = rmm.mr.CudaAsyncMemoryResource()
+rmm.mr.set_current_device_resource(memory_resource)
 ```
 
 | GPU Free vs Dataset | Strategy |
@@ -151,7 +156,7 @@ rmm.set_current_device_resource(rmm.mr.CudaAsyncMemoryResource())
 ## Troubleshooting
 
 **No speedup vs pandas:**
-- Data < 100K rows? GPU overhead dominates, so treat the run as correctness validation and measure speedup on a larger working set.
+- Small working set? Measure transfer and launch overhead, then benchmark representative data sizes.
 - Run `%%cudf.pandas.profile` — high CPU % means many fallbacks. Identify and fix those ops.
 - Check `references/api-patterns.md` for known gaps.
 
@@ -167,8 +172,8 @@ rmm.set_current_device_resource(rmm.mr.CudaAsyncMemoryResource())
 
 **Wrong results vs pandas:**
 - Null/NaN handling differs: cuDF uses `<NA>` (nullable) by default, pandas uses `NaN`. See `references/api-patterns.md`.
-- Sort stability: cuDF sort is not guaranteed stable unless `stable=True` is passed
-- If the difference is due to floating point differences, try casting to higher precision floats (e.g. `float64` instead of `float32`). If the results are still different, stop. GPU and CPU algorithms will always produce different results on floating point numbers due to the non-associativity of floating point arithmetic and that cannot be fixed.
+- Sort stability: Python `sort_values` has no `stable=True` parameter, and `kind="stable"` / `kind="mergesort"` currently warn and fall back to quicksort. Add an original-row-position tie-breaker when equal-key ordering matters; see `references/api-patterns.md`.
+- Floating-point reductions can differ between CPU and GPU because arithmetic is not associative. Preserve the required precision, compare with explicit tolerances, and investigate differences outside those tolerances.
 
 ## Nullable and Fill Semantics
 

@@ -18,7 +18,7 @@
 #include <kvikio/file_utils.hpp>
 #include <kvikio/mmap.hpp>
 
-#include <rmm/device_buffer.hpp>
+#include <cuda/buffer>
 
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -116,10 +116,13 @@ class kvikio_source : public datasource {
                                                   size_t size,
                                                   cuda::stream_ref stream) override
   {
-    rmm::device_buffer out_data(size, stream);
-    size_t const read =
-      device_read(offset, size, reinterpret_cast<uint8_t*>(out_data.data()), stream);
-    out_data.resize(read, stream);
+    cuda::device_buffer<std::uint8_t> out_data(
+      stream, cudf::get_current_device_resource_ref(), size, cuda::no_init);
+    size_t const read = device_read(offset, size, out_data.data(), stream);
+    if (read != out_data.size()) {
+      out_data = cuda::device_buffer<std::uint8_t>{
+        stream, cudf::get_current_device_resource_ref(), out_data.data(), out_data.data() + read};
+    }
     return datasource::buffer::create(std::move(out_data));
   }
 

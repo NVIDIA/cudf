@@ -237,56 +237,6 @@ class parquet_filter_normalizer : public ast::detail::expression_transformer {
 };
 
 /**
- * @brief Collects lists of equality predicate literals in the AST expression, one list per input
- * table column. This is used in row group filtering based on bloom filters.
- */
-class equality_literals_collector : public ast::detail::expression_transformer {
- public:
-  equality_literals_collector() = default;
-
-  equality_literals_collector(ast::expression const& expr,
-                              cudf::host_span<cudf::data_type const> output_dtypes,
-                              cudf::host_span<cudf::size_type const> output_column_schemas = {},
-                              cudf::host_span<SchemaElement const> schema_tree             = {});
-
-  /**
-   * @copydoc ast::detail::expression_transformer::visit(ast::literal const& )
-   */
-  std::reference_wrapper<ast::expression const> visit(ast::literal const& expr) override;
-
-  /**
-   * @copydoc ast::detail::expression_transformer::visit(ast::column_reference const& )
-   */
-  std::reference_wrapper<ast::expression const> visit(ast::column_reference const& expr) override;
-
-  /**
-   * @copydoc ast::detail::expression_transformer::visit(ast::column_name_reference const& )
-   */
-  std::reference_wrapper<ast::expression const> visit(
-    ast::column_name_reference const& expr) override;
-
-  /**
-   * @copydoc ast::detail::expression_transformer::visit(ast::operation const& )
-   */
-  std::reference_wrapper<ast::expression const> visit(ast::operation const& expr) override;
-
-  /**
-   * @brief Vectors of equality literals in the AST expression, one per input table column
-   *
-   * @return Vectors of equality literals, one per input table column
-   */
-  [[nodiscard]] std::vector<std::vector<ast::literal*>> get_literals() &&;
-
- protected:
-  cudf::host_span<cudf::data_type const> _output_dtypes;
-  std::vector<std::vector<ast::literal*>> _literals;
-
- private:
-  cudf::host_span<cudf::size_type const> _output_column_schemas;
-  cudf::host_span<SchemaElement const> _schema_tree;
-};
-
-/**
  * @brief Offsets every column referencein an expression by the specified value
  *
  */
@@ -414,6 +364,11 @@ class parquet_expression_simplifier {
    */
   void validate_column_reference(ast::column_reference const& col_ref) const;
 
+  /**
+   * @brief Returns a placeholder column reference for collectors to preserve logical folding
+   */
+  [[nodiscard]] ast::expression const& placeholder_expr();
+
   std::span<cudf::data_type const> _output_dtypes;
   ast::tree _tree;
 
@@ -442,6 +397,62 @@ class parquet_expression_simplifier {
    * @brief Validates operands in `expr`
    */
   void validate_operands(ast::expression const& expr) const;
+};
+
+/**
+ * @brief Collects lists of equality predicate literals in the AST expression, one list per input
+ * table column. This is used in row group filtering based on bloom filters.
+ */
+class equality_literals_collector : public parquet_expression_simplifier {
+ public:
+  equality_literals_collector(ast::expression const& expr,
+                              std::span<cudf::data_type const> output_dtypes,
+                              std::span<cudf::size_type const> output_column_schemas = {},
+                              std::span<SchemaElement const> schema_tree             = {});
+
+  /**
+   * @brief Vectors of equality literals in the AST expression, one per input table column
+   *
+   * @return Vectors of equality literals, one per input table column
+   */
+  [[nodiscard]] std::vector<std::vector<ast::literal*>> get_literals() &&;
+
+  /**
+   * @brief Whether the membership filter built from the collected literals can prune anything
+   *
+   * @return Whether any row groups can be pruned by the filter
+   */
+  [[nodiscard]] bool can_filter() const;
+
+ protected:
+  /**
+   * @brief Constructs a collector without walking for derived classes
+   */
+  equality_literals_collector(std::span<cudf::data_type const> output_dtypes,
+                              std::span<cudf::size_type const> output_column_schemas,
+                              std::span<SchemaElement const> schema_tree);
+
+  /**
+   * @brief Walks `expr` and records if the filter can prune any row groups
+   */
+  void collect(ast::expression const& expr);
+
+  /**
+   * @copydoc parquet_expression_simplifier::simplify_comparison
+   *
+   * A bloom filter only evaluates if a row group may be present, so we can only evaluate equality
+   * comparisons against literals.
+   */
+  [[nodiscard]] simplified_expression_opt simplify_comparison(ast::ast_operator op,
+                                                              ast::column_reference const& col_ref,
+                                                              ast::literal const& literal) override;
+
+  std::vector<std::vector<ast::literal*>> _literals;
+
+ private:
+  std::span<cudf::size_type const> _output_column_schemas;
+  std::span<SchemaElement const> _schema_tree;
+  bool _can_filter{false};
 };
 
 /**

@@ -14,7 +14,7 @@ import os.path
 from collections.abc import Mapping, Sequence
 from itertools import groupby
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Self, TypeAlias
+from typing import TYPE_CHECKING, Any, Self
 
 import pylibcudf as plc
 
@@ -76,7 +76,7 @@ class PartitionPlanRow:
     partitions: int
 
 
-Serializable: TypeAlias = (
+type Serializable = (
     str
     | int
     | float

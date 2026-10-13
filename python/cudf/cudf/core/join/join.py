@@ -486,8 +486,8 @@ class Merge:
         # (labels already duplicated in an input are allowed), or when a
         # suffixed label collides with a non-renamed label on the other side.
         def _within_frame_dups(labels, names):
-            seen_labels: set = set()
-            seen_names: set = set()
+            seen_labels = set()
+            seen_names = set()
             dups = []
             for label, name in zip(labels, names, strict=True):
                 if label in seen_labels and name not in seen_names:

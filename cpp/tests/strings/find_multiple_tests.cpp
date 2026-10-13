@@ -35,12 +35,12 @@ TEST_F(StringsFindMultipleTest, FindMultiple)
   auto results = cudf::strings::find_multiple(strings_view, targets_view);
 
   using LCW = cudf::test::lists_column_wrapper<int32_t>;
-  LCW expected({LCW{1, -1, -1, -1, 4, -1, -1},
-                LCW{4, -1, 2, -1, -1, -1, 2},
-                LCW{-1, -1, -1, -1, -1, -1, -1},
-                LCW{-1, 2, 1, -1, -1, -1, -1},
-                LCW{-1, -1, 1, 8, -1, -1, 1},
-                LCW{-1, -1, -1, -1, -1, -1, -1}});
+  LCW expected({{1, -1, -1, -1, 4, -1, -1},
+                {4, -1, 2, -1, -1, -1, 2},
+                {-1, -1, -1, -1, -1, -1, -1},
+                {-1, 2, 1, -1, -1, -1, -1},
+                {-1, -1, 1, 8, -1, -1, 1},
+                {-1, -1, -1, -1, -1, -1, -1}});
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 }

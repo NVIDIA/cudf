@@ -27,10 +27,6 @@
 #include <cuda/iterator>
 #include <cuda/std/functional>
 #include <cuda/stream>
-#include <thrust/execution_policy.h>
-#include <thrust/fill.h>
-#include <thrust/for_each.h>
-#include <thrust/sequence.h>
 #include <thrust/transform.h>
 
 namespace nvtext {
@@ -266,7 +262,12 @@ std::unique_ptr<cudf::column> edit_distance(cudf::strings_column_view const& inp
   auto d_buffer = compute_buffer.data();
 
   auto results = cudf::make_fixed_width_column(
-    output_type, input.size(), rmm::device_buffer{0, stream, mr}, 0, stream, mr);
+    output_type,
+    input.size(),
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
+    0,
+    stream,
+    mr);
   auto d_results = results->mutable_view().data<cudf::size_type>();
 
   constexpr auto block_size = 256L;

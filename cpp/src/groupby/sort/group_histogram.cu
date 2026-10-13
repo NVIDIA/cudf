@@ -9,6 +9,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/gather.hpp>
 #include <cudf/detail/labeling/label_segments.cuh>
+#include <cudf/null_mask.hpp>
 #include <cudf/reduction/detail/histogram.hpp>
 #include <cudf/structs/structs_column_view.hpp>
 #include <cudf/types.hpp>
@@ -65,11 +66,15 @@ std::unique_ptr<column> build_histogram(column_view const& values,
   auto out_structs = make_structs_column(static_cast<size_type>(distinct_indices->size()),
                                          std::move(struct_children),
                                          0,
-                                         {},
+                                         cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
                                          stream,
                                          mr);
 
-  return make_lists_column(num_groups, std::move(out_offsets), std::move(out_structs), 0, {});
+  return make_lists_column(num_groups,
+                           std::move(out_offsets),
+                           std::move(out_structs),
+                           0,
+                           cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }
 
 }  // namespace

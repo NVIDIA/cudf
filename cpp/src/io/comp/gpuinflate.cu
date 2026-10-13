@@ -1201,17 +1201,17 @@ sorted_codec_parameters sort_tasks(device_span<device_span<uint8_t const> const>
                                    device_span<device_span<uint8_t> const> outputs,
                                    task_type task_type,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  rmm::device_uvector<std::size_t> order(inputs.size(), stream, mr);
-  thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                   order.begin(),
-                   order.end());
+  auto const output_mr = mr.get_output_mr();
+  auto const temp_mr   = mr.get_temporary_mr();
+  rmm::device_uvector<std::size_t> order(inputs.size(), stream, output_mr);
+  thrust::sequence(rmm::exec_policy_nosync(stream, temp_mr), order.begin(), order.end());
 
   // Precompute costs to avoid repeated computation during sorting
-  rmm::device_uvector<double> costs(inputs.size(), stream, mr);
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  rmm::device_uvector<double> costs(inputs.size(), stream, temp_mr);
+  thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
                     cuda::make_zip_iterator(inputs.begin(), outputs.begin()),
                     cuda::make_zip_iterator(inputs.end(), outputs.end()),
                     costs.begin(),
@@ -1221,22 +1221,24 @@ sorted_codec_parameters sort_tasks(device_span<device_span<uint8_t const> const>
                       return cost_model::task_device_cost(input.size(), output.size(), task_type);
                     });
 
-  thrust::sort(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::sort(rmm::exec_policy_nosync(stream, temp_mr),
                order.begin(),
                order.end(),
                [costs = costs.data()] __device__(std::size_t a, std::size_t b) {
                  return costs[a] > costs[b];
                });
 
-  auto sorted_inputs = rmm::device_uvector<device_span<uint8_t const>>(inputs.size(), stream, mr);
-  thrust::gather(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  auto sorted_inputs =
+    rmm::device_uvector<device_span<uint8_t const>>(inputs.size(), stream, output_mr);
+  thrust::gather(rmm::exec_policy_nosync(stream, temp_mr),
                  order.begin(),
                  order.end(),
                  inputs.begin(),
                  sorted_inputs.begin());
 
-  auto sorted_outputs = rmm::device_uvector<device_span<uint8_t>>(outputs.size(), stream, mr);
-  thrust::gather(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  auto sorted_outputs =
+    rmm::device_uvector<device_span<uint8_t>>(outputs.size(), stream, output_mr);
+  thrust::gather(rmm::exec_policy_nosync(stream, temp_mr),
                  order.begin(),
                  order.end(),
                  outputs.begin(),
@@ -1320,7 +1322,7 @@ sorted_codec_parameters sort_decompression_tasks(
   device_span<device_span<uint8_t const> const> inputs,
   device_span<device_span<uint8_t> const> outputs,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   return sort_tasks(inputs, outputs, task_type::DECOMPRESSION, stream, mr);
 }
@@ -1328,7 +1330,7 @@ sorted_codec_parameters sort_decompression_tasks(
 sorted_codec_parameters sort_compression_tasks(device_span<device_span<uint8_t const> const> inputs,
                                                device_span<device_span<uint8_t> const> outputs,
                                                cuda::stream_ref stream,
-                                               rmm::device_async_resource_ref mr)
+                                               cudf::memory_resources mr)
 {
   return sort_tasks(inputs, outputs, task_type::COMPRESSION, stream, mr);
 }
@@ -1336,9 +1338,10 @@ sorted_codec_parameters sort_compression_tasks(device_span<device_span<uint8_t c
 void copy_results_to_original_order(device_span<codec_exec_result const> sorted_results,
                                     device_span<codec_exec_result> original_results,
                                     device_span<std::size_t const> order,
-                                    cuda::stream_ref stream)
+                                    cuda::stream_ref stream,
+                                    cudf::memory_resources mr)
 {
-  thrust::scatter(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::scatter(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                   sorted_results.begin(),
                   sorted_results.end(),
                   order.begin(),

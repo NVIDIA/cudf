@@ -49,6 +49,28 @@ jlong release_as_jlong(std::unique_ptr<T>& ptr)
   return release_as_jlong(std::move(ptr));
 }
 
+/**
+ * @brief Helper to destroy an object obtained from untyped storage (e.g. a JNI handle).
+ *
+ * Wraps the pointer in a `std::unique_ptr` that is destroyed at the end of the full
+ * expression, so the same destructor runs exactly where a `delete` expression would.
+ * Use `safe_delete_array` instead for pointers obtained by `new[]`.
+ */
+template <typename Target, typename Source>
+inline void safe_delete(Source ptr)
+{
+  [[maybe_unused]] std::unique_ptr<Target> deleter(reinterpret_cast<Target*>(ptr));
+}
+
+/**
+ * @brief Array counterpart of `safe_delete` for pointers obtained by `new[]`.
+ */
+template <typename Target, typename Source>
+inline void safe_delete_array(Source ptr)
+{
+  [[maybe_unused]] std::unique_ptr<Target[]> deleter(reinterpret_cast<Target*>(ptr));
+}
+
 class native_jdoubleArray_accessor {
  public:
   jdouble* getArrayElements(JNIEnv* const env, jdoubleArray arr) const
@@ -592,7 +614,7 @@ class native_jstring {
   {
     if (orig != nullptr && cstr != nullptr) {
       if (converted) {
-        delete[] cstr;
+        safe_delete_array<char>(const_cast<char*>(cstr));
       } else {
         env->ReleaseStringUTFChars(orig, cstr);
       }
@@ -653,7 +675,7 @@ class native_jstring {
   {
     if (orig != nullptr && cstr != nullptr) {
       if (converted) {
-        delete[] cstr;
+        safe_delete_array<char>(const_cast<char*>(cstr));
       } else {
         env->ReleaseStringUTFChars(orig, cstr);
       }

@@ -5,11 +5,11 @@
 
 #include "parquet_common.hpp"
 
-#include <benchmarks/common/generate_input.hpp>
 #include <benchmarks/common/memory_stats.hpp>
 #include <benchmarks/io/cuio_common.hpp>
 
 #include <cudf/io/parquet.hpp>
+#include <cudf/table/table_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 
@@ -54,8 +54,7 @@ void parquet_read_common(cudf::size_type num_rows_to_read,
   state.add_buffer_size(source_sink.size(), "encoded_file_size", "encoded_file_size");
 }
 
-cuio_source_sink_pair write_file_shape_parquet_file(cudf::type_id dtype,
-                                                    cudf::size_type num_rows,
+cuio_source_sink_pair write_file_shape_parquet_file(cudf::table_view const& table,
                                                     cudf::size_type num_row_groups,
                                                     cudf::size_type pages_per_row_group,
                                                     io_type source_type,
@@ -63,17 +62,12 @@ cuio_source_sink_pair write_file_shape_parquet_file(cudf::type_id dtype,
 {
   cuio_source_sink_pair source_sink(source_type);
 
-  auto const tbl =
-    create_random_table({dtype},
-                        row_count{num_rows},
-                        data_profile_builder().cardinality(num_rows / 10).avg_run_length(4));
-  auto const view = tbl->view();
-
+  auto const num_rows      = table.num_rows();
   auto const rows_per_page = num_rows / (num_row_groups * pages_per_row_group);
   CUDF_EXPECTS(rows_per_page > 0, "num_row_groups * pages_per_row_group must not exceed num_rows");
 
   cudf::io::parquet_writer_options write_opts =
-    cudf::io::parquet_writer_options::builder(source_sink.make_sink_info(), view)
+    cudf::io::parquet_writer_options::builder(source_sink.make_sink_info(), table)
       .compression(cudf::io::compression_type::NONE)
       .row_group_size_rows(num_rows / num_row_groups)
       .max_page_size_rows(rows_per_page)

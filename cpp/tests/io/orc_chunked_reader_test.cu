@@ -71,7 +71,7 @@ auto write_file(std::vector<std::unique_ptr<cudf::column>>& input_columns,
       auto const [null_mask, null_count] =
         cudf::test::detail::make_null_mask(valid_iter + offset, valid_iter + col->size() + offset);
       col = cudf::structs::detail::superimpose_and_sanitize_nulls(
-        static_cast<cudf::bitmask_type const*>(null_mask.data()),
+        reinterpret_cast<cudf::bitmask_type const*>(null_mask.data()),
         null_count,
         std::move(col),
         cudf::get_default_stream(),
@@ -220,7 +220,8 @@ TEST_F(OrcChunkedReaderTest, NestedEmptyStructColumnSelection)
     cudf::test::detail::make_null_mask(validity.begin(), validity.end());
 
   std::vector<std::unique_ptr<cudf::column>> struct_children;
-  struct_children.emplace_back(cudf::make_structs_column(num_rows, {}, 0, {}));
+  struct_children.emplace_back(cudf::make_structs_column(
+    num_rows, {}, 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED)));
   auto input_column = cudf::make_structs_column(
     num_rows, std::move(struct_children), null_count, std::move(null_mask));
   ASSERT_TRUE(input_column->nullable());
@@ -243,7 +244,11 @@ TEST_F(OrcChunkedReaderTest, NullableEmptyStructChildColumnSelection)
   std::vector<std::unique_ptr<cudf::column>> struct_children;
   struct_children.emplace_back(
     cudf::make_structs_column(num_rows, {}, null_count, std::move(null_mask)));
-  auto input_column = cudf::make_structs_column(num_rows, std::move(struct_children), 0, {});
+  auto input_column =
+    cudf::make_structs_column(num_rows,
+                              std::move(struct_children),
+                              0,
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   ASSERT_FALSE(input_column->nullable());
   ASSERT_TRUE(input_column->child(0).nullable());
   ASSERT_EQ(null_count, input_column->child(0).null_count());
@@ -630,8 +635,7 @@ TEST_F(OrcChunkedReaderTest, TestChunkedReadWithListsNoNulls)
     //
     // However, `segmented_row_bit_count` used in chunked reader returns 200000,
     // thus we consider as having only 200000 bytes in total.
-    auto const template_lists = int32s_lists_col{
-      int32s_lists_col{}, int32s_lists_col{0}, int32s_lists_col{1, 2}, int32s_lists_col{3, 4, 5}};
+    auto const template_lists = int32s_lists_col{{}, {0}, {1, 2}, {3, 4, 5}};
 
     auto const gather_values = std::views::iota(int32_t{0}) |
                                std::views::transform([&](int32_t i) -> int32_t { return i % 4; });
@@ -716,10 +720,10 @@ TEST_F(OrcChunkedReaderTest, TestChunkedReadWithListsHavingNulls)
     // thus we consider as having only 142500 bytes in total.
     auto const template_lists =
       int32s_lists_col{// these will all be null
-                       int32s_lists_col{},
-                       int32s_lists_col{0},
-                       int32s_lists_col{1, 2},
-                       int32s_lists_col{3, 4, 5, 6, 7, 8, 9} /* this list will be nullified out */};
+                       {},
+                       {0},
+                       {1, 2},
+                       {3, 4, 5, 6, 7, 8, 9} /* this list will be nullified out */};
     auto const gather_values = std::views::iota(int32_t{0}) |
                                std::views::transform([&](int32_t i) -> int32_t { return i % 4; });
     auto const gather_iter = gather_values.begin();
@@ -808,9 +812,8 @@ TEST_F(OrcChunkedReaderTest, TestChunkedReadWithStructsOfLists)
       auto const str_iter = str_values.begin();
       child_columns.emplace_back(strings_col{str_iter, str_iter + num_rows}.release());
 
-      auto const template_lists = int32s_lists_col{
-        int32s_lists_col{}, int32s_lists_col{0}, int32s_lists_col{0, 1}, int32s_lists_col{0, 1, 2}};
-      auto const gather_values = std::views::iota(int32_t{0}) |
+      auto const template_lists = int32s_lists_col{{}, {0}, {0, 1}, {0, 1, 2}};
+      auto const gather_values  = std::views::iota(int32_t{0}) |
                                  std::views::transform([&](int32_t i) -> int32_t { return i % 4; });
       auto const gather_iter = gather_values.begin();
       auto const gather_map  = int32s_col(gather_iter, gather_iter + num_rows);
@@ -953,7 +956,7 @@ TEST_F(OrcChunkedReaderTest, TestChunkedReadWithListsOfStructs)
                               int32s_col(offsets.begin(), offsets.end()).release(),
                               make_structs_col(),
                               0,
-                              rmm::device_buffer{}));
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED)));
 
     return write_file(input_columns, "chunked_read_with_lists_of_structs", nullable);
   };
@@ -1268,7 +1271,11 @@ TEST_F(OrcChunkedReaderInputLimitTest, ListType)
                     value_gen<int>{});
 
   auto const lists_col =
-    cudf::make_lists_column(num_rows, std::move(offset_col), std::move(value_col), 0, {});
+    cudf::make_lists_column(num_rows,
+                            std::move(offset_col),
+                            std::move(value_col),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   auto const filename   = std::string{"list_type"};
   auto const test_files = input_limit_get_test_names(temp_env->get_temp_filepath(filename));
@@ -1332,7 +1339,11 @@ TEST_F(OrcChunkedReaderInputLimitTest, MixedColumnsHavingList)
                     value_gen<int>{});
 
   auto const lists_col =
-    cudf::make_lists_column(num_rows, std::move(offset_col), std::move(value_col), 0, {});
+    cudf::make_lists_column(num_rows,
+                            std::move(offset_col),
+                            std::move(value_col),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   // strings
   int constexpr num_chars = num_rows * str_size;
@@ -1350,7 +1361,11 @@ TEST_F(OrcChunkedReaderInputLimitTest, MixedColumnsHavingList)
                     static_cast<int8_t*>(str_chars.data()),
                     char_values{});
   auto const str_col =
-    cudf::make_strings_column(num_rows, std::move(str_offset_col), std::move(str_chars), 0, {});
+    cudf::make_strings_column(num_rows,
+                              std::move(str_offset_col),
+                              std::move(str_chars),
+                              0,
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   // doubles
   auto const double_col = cudf::make_fixed_width_column(

@@ -286,10 +286,9 @@ std::vector<uint8_t> pack_metadata(table_view const& table,
                                    size_t buffer_size,
                                    metadata_builder& builder)
 {
-  std::for_each(
-    table.begin(), table.end(), [&builder, contiguous_buffer, buffer_size](column_view const& col) {
-      build_column_metadata(builder, col, contiguous_buffer, buffer_size);
-    });
+  std::ranges::for_each(table, [&builder, contiguous_buffer, buffer_size](column_view const& col) {
+    build_column_metadata(builder, col, contiguous_buffer, buffer_size);
+  });
 
   return builder.build();
 }
@@ -401,7 +400,8 @@ packed_metadata_view::column_view packed_metadata_view::column_view::child(size_
 
 packed_metadata_view::packed_metadata_view(std::span<uint8_t const> buffer)
 {
-  CUDF_EXPECTS(!buffer.empty(), "metadata buffer must not be empty");
+  // pack() represents a table with no columns and no rows using empty metadata.
+  if (buffer.empty()) { return; }
   CUDF_EXPECTS(buffer.size() >= sizeof(detail::serialized_table_header),
                "metadata buffer too small");
   CUDF_EXPECTS(
@@ -471,11 +471,15 @@ std::vector<uint8_t> pack_metadata(table_view const& table,
 
 table_view unpack(packed_columns const& input)
 {
+  return unpack(*input.metadata, reinterpret_cast<uint8_t const*>(input.gpu_data->data()));
+}
+
+table_view unpack(std::span<uint8_t const> const metadata, uint8_t const* gpu_data)
+{
   CUDF_FUNC_RANGE();
-  return input.metadata->size() == 0
-           ? table_view{}
-           : detail::unpack(input.metadata->data(),
-                            reinterpret_cast<uint8_t const*>(input.gpu_data->data()));
+  if (metadata.empty()) { return table_view{}; }
+  std::ignore = packed_metadata_view{metadata};  // validate the metadata before unpacking
+  return detail::unpack(metadata.data(), gpu_data);
 }
 
 table_view unpack(uint8_t const* metadata, uint8_t const* gpu_data)

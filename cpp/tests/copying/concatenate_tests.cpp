@@ -48,10 +48,10 @@ struct TypedColumnTest : public cudf::test::BaseFixture {
 
   TypedColumnTest(cuda::stream_ref stream = cudf::get_default_stream())
     : data{_num_elements * sizeof(T), stream},
-      mask{cudf::bitmask_allocation_size_bytes(_num_elements), stream}
+      mask{cudf::create_null_mask(_num_elements, cudf::mask_state::UNINITIALIZED, stream)}
   {
     auto typed_data = static_cast<char*>(data.data());
-    auto typed_mask = static_cast<char*>(mask.data());
+    auto typed_mask = mask.data();
     std::vector<char> h_data(data.size());
     std::iota(h_data.begin(), h_data.end(), char{0});
     std::vector<char> h_mask(mask.size());
@@ -60,7 +60,8 @@ struct TypedColumnTest : public cudf::test::BaseFixture {
       cudaMemcpyAsync(typed_data, h_data.data(), data.size(), cudaMemcpyDefault, stream.get()));
     CUDF_CUDA_TRY(
       cudaMemcpyAsync(typed_mask, h_mask.data(), mask.size(), cudaMemcpyDefault, stream.get()));
-    _null_count = cudf::null_count(static_cast<cudf::bitmask_type*>(mask.data()), 0, _num_elements);
+    _null_count =
+      cudf::null_count(reinterpret_cast<cudf::bitmask_type*>(mask.data()), 0, _num_elements);
     stream.sync();
   }
 
@@ -72,10 +73,12 @@ struct TypedColumnTest : public cudf::test::BaseFixture {
   std::uniform_int_distribution<cudf::size_type> distribution{200, 1000};
   cudf::size_type _num_elements{distribution(generator)};
   rmm::device_buffer data{};
-  rmm::device_buffer mask{};
+  cuda::device_buffer<std::byte> mask = cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED);
   cudf::size_type _null_count{};
-  rmm::device_buffer all_valid_mask{create_null_mask(num_elements(), cudf::mask_state::ALL_VALID)};
-  rmm::device_buffer all_null_mask{create_null_mask(num_elements(), cudf::mask_state::ALL_NULL)};
+  cuda::device_buffer<std::byte> all_valid_mask =
+    create_null_mask(num_elements(), cudf::mask_state::ALL_VALID);
+  cuda::device_buffer<std::byte> all_null_mask =
+    create_null_mask(num_elements(), cudf::mask_state::ALL_NULL);
 };
 
 TYPED_TEST_SUITE(TypedColumnTest, cudf::test::Types<int32_t>);
@@ -384,8 +387,11 @@ TEST_F(OverflowTest, OverflowTest)
     // try and concatenate 6 string columns of with 1 billion chars in each
     auto offsets    = cudf::test::fixed_width_column_wrapper<int32_t>{0, size};
     auto many_chars = rmm::device_uvector<char>(size, cudf::get_default_stream());
-    auto col        = cudf::make_strings_column(
-      1, offsets.release(), many_chars.release(), 0, rmm::device_buffer{});
+    auto col        = cudf::make_strings_column(1,
+                                         offsets.release(),
+                                         many_chars.release(),
+                                         0,
+                                         cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     cudf::table_view tbl({*col});
     EXPECT_THROW(cudf::concatenate(std::vector<cudf::table_view>({tbl, tbl, tbl, tbl, tbl, tbl})),
@@ -400,8 +406,11 @@ TEST_F(OverflowTest, OverflowTest)
     auto many_offsets =
       cudf::make_fixed_width_column(cudf::data_type{cudf::type_id::INT32}, size + 1);
     auto chars = rmm::device_uvector<char>(3, cudf::get_default_stream());
-    auto col   = cudf::make_strings_column(
-      size, std::move(many_offsets), chars.release(), 0, rmm::device_buffer{});
+    auto col   = cudf::make_strings_column(size,
+                                         std::move(many_offsets),
+                                         chars.release(),
+                                         0,
+                                         cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     cudf::table_view tbl({*col});
     EXPECT_THROW(cudf::concatenate(std::vector<cudf::table_view>({tbl, tbl, tbl, tbl, tbl, tbl})),
@@ -419,13 +428,16 @@ TEST_F(OverflowTest, OverflowTest)
       cudf::make_fixed_width_column(cudf::data_type{cudf::type_id::INT8}, inner_size));
     children.push_back(
       cudf::make_fixed_width_column(cudf::data_type{cudf::type_id::INT8}, inner_size));
-    auto struct_col =
-      cudf::make_structs_column(inner_size, std::move(children), 0, rmm::device_buffer{});
+    auto struct_col = cudf::make_structs_column(
+      inner_size, std::move(children), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     // list
     auto offsets = cudf::test::fixed_width_column_wrapper<int32_t>{0, inner_size};
-    auto col =
-      cudf::make_lists_column(1, offsets.release(), std::move(struct_col), 0, rmm::device_buffer{});
+    auto col     = cudf::make_lists_column(1,
+                                       offsets.release(),
+                                       std::move(struct_col),
+                                       0,
+                                       cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     cudf::table_view tbl({*col});
     auto tables =
@@ -444,13 +456,18 @@ TEST_F(OverflowTest, OverflowTest)
     auto many_chars =
       cudf::make_fixed_width_column(cudf::data_type{cudf::type_id::INT8}, inner_size);
     auto list_col =
-      cudf::make_lists_column(3, offsets.release(), std::move(many_chars), 0, rmm::device_buffer{});
+      cudf::make_lists_column(3,
+                              offsets.release(),
+                              std::move(many_chars),
+                              0,
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     // struct
     std::vector<std::unique_ptr<column>> children;
     children.push_back(cudf::make_fixed_width_column(cudf::data_type{cudf::type_id::INT32}, size));
     children.push_back(std::move(list_col));
-    auto col = cudf::make_structs_column(size, std::move(children), 0, rmm::device_buffer{});
+    auto col = cudf::make_structs_column(
+      size, std::move(children), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     cudf::table_view tbl({*col});
     auto tables =
@@ -486,7 +503,8 @@ TEST_F(OverflowTest, Presliced)
     // try and concatenate 4 char columns of size ~1/2 billion each
     std::vector<std::unique_ptr<column>> children;
     children.push_back(cudf::make_fixed_width_column(cudf::data_type{cudf::type_id::INT8}, size));
-    auto struct_col = cudf::make_structs_column(size, std::move(children), 0, rmm::device_buffer{});
+    auto struct_col = cudf::make_structs_column(
+      size, std::move(children), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     auto sliced = cudf::split(*struct_col, {511 * 1024 * 1024});
 
@@ -511,8 +529,11 @@ TEST_F(OverflowTest, Presliced)
       0, [](cudf::size_type index) { return index * string_size; });
     cudf::test::fixed_width_column_wrapper<int> offsets(offset_gen, offset_gen + num_rows + 1);
     auto many_chars = rmm::device_uvector<char>(total_chars_size, cudf::get_default_stream());
-    auto col        = cudf::make_strings_column(
-      num_rows, offsets.release(), many_chars.release(), 0, rmm::device_buffer{});
+    auto col        = cudf::make_strings_column(num_rows,
+                                         offsets.release(),
+                                         many_chars.release(),
+                                         0,
+                                         cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     auto sliced = cudf::split(*col, {(num_rows / 2) - 1});
 
@@ -537,8 +558,11 @@ TEST_F(OverflowTest, Presliced)
                                   cudf::numeric_scalar<cudf::size_type>(0),
                                   cudf::numeric_scalar<cudf::size_type>(string_size));
     auto many_chars = rmm::device_uvector<char>(total_chars_size, cudf::get_default_stream());
-    auto col        = cudf::make_strings_column(
-      num_rows, std::move(offsets), many_chars.release(), 0, rmm::device_buffer{});
+    auto col        = cudf::make_strings_column(num_rows,
+                                         std::move(offsets),
+                                         many_chars.release(),
+                                         0,
+                                         cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     // should pass (with 2 rows to spare)
     // leaving this disabled as it typically runs out of memory on a T4
@@ -575,15 +599,18 @@ TEST_F(OverflowTest, Presliced)
       cudf::make_fixed_width_column(cudf::data_type{cudf::type_id::INT8}, inner_size));
     children.push_back(
       cudf::make_fixed_width_column(cudf::data_type{cudf::type_id::INT8}, inner_size));
-    auto struct_col =
-      cudf::make_structs_column(inner_size, std::move(children), 0, rmm::device_buffer{});
+    auto struct_col = cudf::make_structs_column(
+      inner_size, std::move(children), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     // list
     constexpr cudf::size_type list_size = inner_size / 4;
     auto offsets                        = cudf::test::fixed_width_column_wrapper<int>{
       0, list_size, list_size * 2, list_size * 3, inner_size};
-    auto col =
-      cudf::make_lists_column(4, offsets.release(), std::move(struct_col), 0, rmm::device_buffer{});
+    auto col = cudf::make_lists_column(4,
+                                       offsets.release(),
+                                       std::move(struct_col),
+                                       0,
+                                       cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     auto sliced = cudf::split(*col, {2});
     cudf::table_view tbl({sliced[1]});
@@ -603,16 +630,19 @@ TEST_F(OverflowTest, Presliced)
       cudf::make_fixed_width_column(cudf::data_type{cudf::type_id::INT8}, inner_size));
     children.push_back(
       cudf::make_fixed_width_column(cudf::data_type{cudf::type_id::INT8}, inner_size));
-    auto struct_col =
-      cudf::make_structs_column(inner_size, std::move(children), 0, rmm::device_buffer{});
+    auto struct_col = cudf::make_structs_column(
+      inner_size, std::move(children), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     // try and concatenate 4 struct columns of with ~1/2 billion elements in each
     auto offsets = cudf::sequence(num_rows + 1,
                                   cudf::numeric_scalar<cudf::size_type>(0),
                                   cudf::numeric_scalar<cudf::size_type>(list_size));
 
-    auto col = cudf::make_lists_column(
-      num_rows, std::move(offsets), std::move(struct_col), 0, rmm::device_buffer{});
+    auto col = cudf::make_lists_column(num_rows,
+                                       std::move(offsets),
+                                       std::move(struct_col),
+                                       0,
+                                       cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     // should pass (with 2 rows to spare)
     // leaving this disabled as it typically runs out of memory on a T4
@@ -650,16 +680,20 @@ TEST_F(OverflowTest, Presliced)
       0, list_size, (list_size * 2) - 1, list_size * 3, inner_size};
     auto many_chars =
       cudf::make_fixed_width_column(cudf::data_type{cudf::type_id::INT8}, inner_size);
-    auto list_col = cudf::make_lists_column(
-      num_rows, offsets.release(), std::move(many_chars), 0, rmm::device_buffer{});
+    auto list_col =
+      cudf::make_lists_column(num_rows,
+                              offsets.release(),
+                              std::move(many_chars),
+                              0,
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     // struct
     std::vector<std::unique_ptr<column>> children;
     children.push_back(
       cudf::make_fixed_width_column(cudf::data_type{cudf::type_id::INT8}, num_rows));
     children.push_back(std::move(list_col));
-    auto struct_col =
-      cudf::make_structs_column(num_rows, std::move(children), 0, rmm::device_buffer{});
+    auto struct_col = cudf::make_structs_column(
+      num_rows, std::move(children), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     auto sliced = cudf::split(*struct_col, {2});
 
@@ -701,8 +735,11 @@ TEST_F(OverflowTest, BigColumnsSmallSlices)
                                   cudf::numeric_scalar<cudf::size_type>(0),
                                   cudf::numeric_scalar<cudf::size_type>(string_size));
     auto many_chars = rmm::device_uvector<char>(inner_size, cudf::get_default_stream());
-    auto col        = cudf::make_strings_column(
-      num_rows, std::move(offsets), many_chars.release(), 0, rmm::device_buffer{});
+    auto col        = cudf::make_strings_column(num_rows,
+                                         std::move(offsets),
+                                         many_chars.release(),
+                                         0,
+                                         cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     auto sliced = cudf::slice(*col, {16, 32});
 
@@ -724,8 +761,11 @@ TEST_F(OverflowTest, BigColumnsSmallSlices)
                                   cudf::numeric_scalar<cudf::size_type>(list_size));
     auto many_chars =
       cudf::make_fixed_width_column(cudf::data_type{cudf::type_id::INT8}, inner_size);
-    auto col = cudf::make_lists_column(
-      num_rows, std::move(offsets), std::move(many_chars), 0, rmm::device_buffer{});
+    auto col = cudf::make_lists_column(num_rows,
+                                       std::move(offsets),
+                                       std::move(many_chars),
+                                       0,
+                                       cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     auto sliced = cudf::slice(*col, {16, 32});
 
@@ -747,16 +787,20 @@ TEST_F(OverflowTest, BigColumnsSmallSlices)
                                   cudf::numeric_scalar<cudf::size_type>(list_size));
     auto many_chars =
       cudf::make_fixed_width_column(cudf::data_type{cudf::type_id::INT8}, inner_size);
-    auto list_col = cudf::make_lists_column(
-      num_rows, std::move(offsets), std::move(many_chars), 0, rmm::device_buffer{});
+    auto list_col =
+      cudf::make_lists_column(num_rows,
+                              std::move(offsets),
+                              std::move(many_chars),
+                              0,
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     // struct
     std::vector<std::unique_ptr<column>> children;
     children.push_back(
       cudf::make_fixed_width_column(cudf::data_type{cudf::type_id::INT8}, num_rows));
     children.push_back(std::move(list_col));
-    auto struct_col =
-      cudf::make_structs_column(num_rows, std::move(children), 0, rmm::device_buffer{});
+    auto struct_col = cudf::make_structs_column(
+      num_rows, std::move(children), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     auto sliced = cudf::slice(*struct_col, {16, 32});
 
@@ -836,11 +880,16 @@ TEST_F(StructsColumnTest, ConcatenateStructs)
 
 TEST_F(StructsColumnTest, ConcatenateEmptyStructs)
 {
-  auto expected = cudf::make_structs_column(10, {}, 0, rmm::device_buffer());
-  auto first    = cudf::make_structs_column(5, {}, 0, rmm::device_buffer());
-  auto second   = cudf::make_structs_column(2, {}, 0, rmm::device_buffer());
-  auto third    = cudf::make_structs_column(0, {}, 0, rmm::device_buffer());
-  auto fourth   = cudf::make_structs_column(3, {}, 0, rmm::device_buffer());
+  auto expected =
+    cudf::make_structs_column(10, {}, 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+  auto first =
+    cudf::make_structs_column(5, {}, 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+  auto second =
+    cudf::make_structs_column(2, {}, 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+  auto third =
+    cudf::make_structs_column(0, {}, 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+  auto fourth =
+    cudf::make_structs_column(3, {}, 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   // concatenate
   auto result = cudf::concatenate(std::vector<column_view>({*first, *second, *third, *fourth}));
@@ -905,7 +954,8 @@ TEST_F(StructsColumnTest, ConcatenateSplitStructs)
   expected_children.push_back(cudf::concatenate(expected_names));
   expected_children.push_back(cudf::concatenate(expected_ages));
   expected_children.push_back(cudf::concatenate(expected_is_human));
-  auto expected = make_structs_column(7, std::move(expected_children), 0, rmm::device_buffer{});
+  auto expected = make_structs_column(
+    7, std::move(expected_children), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   // concatenate as structs
   std::vector<cudf::test::structs_column_wrapper> src;
@@ -964,14 +1014,13 @@ TEST_F(StructsColumnTest, ConcatenateStructsNested)
   }
 
   // inner lists
-  using LCW = cudf::test::lists_column_wrapper<cudf::string_view>;
   std::vector<cudf::test::lists_column_wrapper<cudf::string_view>> inner_lists;
   {
     inner_lists.push_back(cudf::test::lists_column_wrapper<cudf::string_view>{
-      {"abc", "d"}, {"ef", "ghi", "j"}, {"klm", "no"}, LCW{}, LCW{"whee"}, {"xyz", "ab", "g"}});
+      {"abc", "d"}, {"ef", "ghi", "j"}, {"klm", "no"}, {}, {"whee"}, {"xyz", "ab", "g"}});
 
     inner_lists.push_back(cudf::test::lists_column_wrapper<cudf::string_view>{
-      {"er", "hyj"}, {"", "", "uvw"}, LCW{}, LCW{"oipq", "te"}, LCW{"yay", "bonk"}});
+      {"er", "hyj"}, {"", "", "uvw"}, {}, {"oipq", "te"}, {"yay", "bonk"}});
   }
 
   // build expected output
@@ -981,7 +1030,8 @@ TEST_F(StructsColumnTest, ConcatenateStructsNested)
     cudf::concatenate(std::vector<column_view>({inner_structs[0], inner_structs[1]})));
   expected_children.push_back(
     cudf::concatenate(std::vector<column_view>({inner_lists[0], inner_lists[1]})));
-  auto expected = make_structs_column(11, std::move(expected_children), 0, rmm::device_buffer{});
+  auto expected = make_structs_column(
+    11, std::move(expected_children), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   // concatenate as structs
   std::vector<cudf::test::structs_column_wrapper> src;
@@ -1036,10 +1086,6 @@ TEST_F(ListsColumnTest, ConcatenateLists)
 
 TEST_F(ListsColumnTest, ConcatenateEmptyLists)
 {
-  // to disambiguate between {} == 0 and {} == List{0}
-  // Also, see note about compiler issues when declaring nested
-  // empty lists in lists_column_wrapper documentation
-  using LCW = cudf::test::lists_column_wrapper<int>;
   {
     cudf::test::lists_column_wrapper<int> a;
     cudf::test::lists_column_wrapper<int> b{4, 5, 6, 7};
@@ -1061,9 +1107,9 @@ TEST_F(ListsColumnTest, ConcatenateEmptyLists)
   }
 
   {
-    cudf::test::lists_column_wrapper<int> a{LCW{}};
+    cudf::test::lists_column_wrapper<int> a{{}};
     cudf::test::lists_column_wrapper<int> b{4, 5, 6, 7};
-    cudf::test::lists_column_wrapper<int> expected{LCW{}, {4, 5, 6, 7}};
+    cudf::test::lists_column_wrapper<int> expected{{}, {4, 5, 6, 7}};
 
     auto result = cudf::concatenate(std::vector<column_view>({a, b}));
 
@@ -1071,9 +1117,9 @@ TEST_F(ListsColumnTest, ConcatenateEmptyLists)
   }
 
   {
-    cudf::test::lists_column_wrapper<int> a{LCW{}}, b{LCW{}}, c{LCW{}};
+    cudf::test::lists_column_wrapper<int> a{{}}, b{{}}, c{{}};
     cudf::test::lists_column_wrapper<int> d{4, 5, 6, 7};
-    cudf::test::lists_column_wrapper<int> expected{LCW{}, LCW{}, LCW{}, {4, 5, 6, 7}};
+    cudf::test::lists_column_wrapper<int> expected{{}, {}, {}, {4, 5, 6, 7}};
 
     auto result = cudf::concatenate(std::vector<column_view>({a, b, c, d}));
 
@@ -1082,9 +1128,9 @@ TEST_F(ListsColumnTest, ConcatenateEmptyLists)
 
   {
     cudf::test::lists_column_wrapper<int> a{1, 2};
-    cudf::test::lists_column_wrapper<int> b{LCW{}}, c{LCW{}};
+    cudf::test::lists_column_wrapper<int> b{{}}, c{{}};
     cudf::test::lists_column_wrapper<int> d{4, 5, 6, 7};
-    cudf::test::lists_column_wrapper<int> expected{{1, 2}, LCW{}, LCW{}, {4, 5, 6, 7}};
+    cudf::test::lists_column_wrapper<int> expected{{1, 2}, {}, {}, {4, 5, 6, 7}};
 
     auto result = cudf::concatenate(std::vector<column_view>({a, b, c, d}));
 
@@ -1149,15 +1195,11 @@ TEST_F(ListsColumnTest, ConcatenateNestedLists)
 TEST_F(ListsColumnTest, ConcatenateNestedEmptyLists)
 {
   using T = int;
-  // to disambiguate between {} == 0 and {} == List{0}
-  // Also, see note about compiler issues when declaring nested
-  // empty lists in lists_column_wrapper documentation
-  using LCW = cudf::test::lists_column_wrapper<T>;
   {
-    cudf::test::lists_column_wrapper<T> a{{LCW{}}, {{0, 1}, {2, 3}}};
-    cudf::test::lists_column_wrapper<int> b{{{6, 7}}, {LCW{}, {11, 12}}};
+    cudf::test::lists_column_wrapper<T> a{{{}}, {{0, 1}, {2, 3}}};
+    cudf::test::lists_column_wrapper<int> b{{{6, 7}}, {{}, {11, 12}}};
     cudf::test::lists_column_wrapper<int> expected{
-      {LCW{}}, {{0, 1}, {2, 3}}, {{6, 7}}, {LCW{}, {11, 12}}};
+      {{}}, {{0, 1}, {2, 3}}, {{6, 7}}, {{}, {11, 12}}};
 
     auto result = cudf::concatenate(std::vector<column_view>({a, b}));
 
@@ -1166,24 +1208,24 @@ TEST_F(ListsColumnTest, ConcatenateNestedEmptyLists)
 
   {
     cudf::test::lists_column_wrapper<int> a{
-      {{{0, 1, 2}, LCW{}}, {{5}, {6, 7}}, {{8, 9}}},
-      {{LCW{}}, {{17, 18}, {19, 20}}},
-      {{LCW{}}},
+      {{{0, 1, 2}, {}}, {{5}, {6, 7}}, {{8, 9}}},
+      {{{}}, {{17, 18}, {19, 20}}},
+      {{{}}},
       {{{50}, {51, 52}}, {{53, 54}, {55, 16, 17}}, {{59, 60}}}};
 
     cudf::test::lists_column_wrapper<int> b{
-      {{{21, 22}, {23, 24}}, {LCW{}, {26, 27}}, {{28, 29, 30}}},
+      {{{21, 22}, {23, 24}}, {{}, {26, 27}}, {{28, 29, 30}}},
       {{{31, 32}, {33, 34}}, {{35, 36}, {37, 38}, {1, 2}}, {{39, 40}}},
-      {{LCW{}}}};
+      {{{}}}};
 
     cudf::test::lists_column_wrapper<int> expected{
-      {{{0, 1, 2}, LCW{}}, {{5}, {6, 7}}, {{8, 9}}},
-      {{LCW{}}, {{17, 18}, {19, 20}}},
-      {{LCW{}}},
+      {{{0, 1, 2}, {}}, {{5}, {6, 7}}, {{8, 9}}},
+      {{{}}, {{17, 18}, {19, 20}}},
+      {{{}}},
       {{{50}, {51, 52}}, {{53, 54}, {55, 16, 17}}, {{59, 60}}},
-      {{{21, 22}, {23, 24}}, {LCW{}, {26, 27}}, {{28, 29, 30}}},
+      {{{21, 22}, {23, 24}}, {{}, {26, 27}}, {{28, 29, 30}}},
       {{{31, 32}, {33, 34}}, {{35, 36}, {37, 38}, {1, 2}}, {{39, 40}}},
-      {{LCW{}}}};
+      {{{}}}};
 
     auto result = cudf::concatenate(std::vector<column_view>({a, b}));
 
@@ -1225,29 +1267,25 @@ TEST_F(ListsColumnTest, ConcatenateNestedListsWithNulls)
 
 TEST_F(ListsColumnTest, ConcatenateMismatchedHierarchies)
 {
-  // to disambiguate between {} == 0 and {} == List{0}
-  // Also, see note about compiler issues when declaring nested
-  // empty lists in lists_column_wrapper documentation
-  using LCW = cudf::test::lists_column_wrapper<int>;
   {
-    cudf::test::lists_column_wrapper<int> a{{{{LCW{}}}}};
-    cudf::test::lists_column_wrapper<int> b{{{LCW{}}}};
-    cudf::test::lists_column_wrapper<int> c{{LCW{}}};
+    cudf::test::lists_column_wrapper<int> a{{{{{}}}}};
+    cudf::test::lists_column_wrapper<int> b{{{{}}}};
+    cudf::test::lists_column_wrapper<int> c{{{}}};
 
     EXPECT_THROW(cudf::concatenate(std::vector<column_view>({a, b, c})), cudf::data_type_error);
   }
 
   {
     std::vector<bool> valids{false};
-    cudf::test::lists_column_wrapper<int> a{{{{{LCW{}}}}, valids.begin()}};
-    cudf::test::lists_column_wrapper<int> b{{{LCW{}}}};
-    cudf::test::lists_column_wrapper<int> c{{LCW{}}};
+    cudf::test::lists_column_wrapper<int> a{{{{{{}}}}, valids.begin()}};
+    cudf::test::lists_column_wrapper<int> b{{{{}}}};
+    cudf::test::lists_column_wrapper<int> c{{{}}};
 
     EXPECT_THROW(cudf::concatenate(std::vector<column_view>({a, b, c})), cudf::data_type_error);
   }
 
   {
-    cudf::test::lists_column_wrapper<int> a{{{{LCW{}}}}};
+    cudf::test::lists_column_wrapper<int> a{{{{{}}}}};
     cudf::test::lists_column_wrapper<int> b{1, 2, 3};
     cudf::test::lists_column_wrapper<int> c{{3, 4, 5}};
 
@@ -1315,57 +1353,46 @@ TEST_F(ListsColumnTest, SlicedColumns)
   }
 
   {
-    cudf::test::lists_column_wrapper<int> a{
-      {{{1, 1, 1}, {2, 2}}, {{3, 3}}, {{10, 9, 16}, {8, 7, 1}, {6, 8, 2}}},
-      {LCW{}, {LCW{}}, {{6, 6}, {2}}},
-      {LCW{}, LCW{}},
-      {LCW{}, LCW{}, {{10, 10, 10}, {11, 11}, {12, 12}}, LCW{}}};
+    LCW a{{{{1, 1, 1}, {2, 2}}, {{3, 3}}, {{10, 9, 16}, {8, 7, 1}, {6, 8, 2}}},
+          {{}, {{}}, {{6, 6}, {2}}},
+          {{}, {}},
+          {{}, {}, {{10, 10, 10}, {11, 11}, {12, 12}}, {}}};
     auto split_a = cudf::split(a, {2});
 
-    cudf::test::lists_column_wrapper<int> b{
-      {{LCW{}}},
-      {LCW{}, {LCW{}}},
-      {{{1, 2, 9}, LCW{}}, {{5, 6, 7, 8, 9}, {0}, {15, 17}}},
-      {{LCW{}}},
+    LCW b{
+      {{{}}},
+      {{}, {{}}},
+      {{{1, 2, 9}, {}}, {{5, 6, 7, 8, 9}, {0}, {15, 17}}},
+      {{{}}},
     };
     auto split_b = cudf::split(b, {2});
 
-    cudf::test::lists_column_wrapper<int> expected0{
-      {{{1, 1, 1}, {2, 2}}, {{3, 3}}, {{10, 9, 16}, {8, 7, 1}, {6, 8, 2}}},
-      {LCW{}, {LCW{}}, {{6, 6}, {2}}},
-      {{LCW{}}},
-      {LCW{}, {LCW{}}}};
-
+    LCW expected0{{{{1, 1, 1}, {2, 2}}, {{3, 3}}, {{10, 9, 16}, {8, 7, 1}, {6, 8, 2}}},
+                  {{}, {{}}, {{6, 6}, {2}}},
+                  {{{}}},
+                  {{}, {{}}}};
     auto result0 = cudf::concatenate(std::vector<column_view>({split_a[0], split_b[0]}));
-
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*result0, expected0);
 
-    cudf::test::lists_column_wrapper<int> expected1{
+    LCW expected1{
       {{{1, 1, 1}, {2, 2}}, {{3, 3}}, {{10, 9, 16}, {8, 7, 1}, {6, 8, 2}}},
-      {LCW{}, {LCW{}}, {{6, 6}, {2}}},
-      {{{1, 2, 9}, LCW{}}, {{5, 6, 7, 8, 9}, {0}, {15, 17}}},
-      {{LCW{}}},
+      {{}, {{}}, {{6, 6}, {2}}},
+      {{{1, 2, 9}, {}}, {{5, 6, 7, 8, 9}, {0}, {15, 17}}},
+      {{{}}},
     };
-
     auto result1 = cudf::concatenate(std::vector<column_view>({split_a[0], split_b[1]}));
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*result1, expected1);
 
-    cudf::test::lists_column_wrapper<int> expected2{
-      {LCW{}, LCW{}},
-      {LCW{}, LCW{}, {{10, 10, 10}, {11, 11}, {12, 12}}, LCW{}},
-      {{LCW{}}},
-      {LCW{}, {LCW{}}}};
-
+    LCW expected2{{{}, {}}, {{}, {}, {{10, 10, 10}, {11, 11}, {12, 12}}, {}}, {{{}}}, {{}, {{}}}};
     auto result2 = cudf::concatenate(std::vector<column_view>({split_a[1], split_b[0]}));
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*result2, expected2);
 
-    cudf::test::lists_column_wrapper<int> expected3{
-      {LCW{}, LCW{}},
-      {LCW{}, LCW{}, {{10, 10, 10}, {11, 11}, {12, 12}}, LCW{}},
-      {{{1, 2, 9}, LCW{}}, {{5, 6, 7, 8, 9}, {0}, {15, 17}}},
-      {{LCW{}}},
+    LCW expected3{
+      {{}, {}},
+      {{}, {}, {{10, 10, 10}, {11, 11}, {12, 12}}, {}},
+      {{{1, 2, 9}, {}}, {{5, 6, 7, 8, 9}, {0}, {15, 17}}},
+      {{{}}},
     };
-
     auto result3 = cudf::concatenate(std::vector<column_view>({split_a[1], split_b[1]}));
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*result3, expected3);
   }
@@ -1378,112 +1405,101 @@ TEST_F(ListsColumnTest, SlicedColumnsWithNulls)
   auto valids = cudf::test::iterators::valids_at_multiples_of(2);
 
   {
-    cudf::test::lists_column_wrapper<int> a{{{{1, 1, 1}, valids}, {2, 2}, {{3, 3}, valids}},
-                                            {{{4, 4, 4}, {{5, 5}, valids}, {6, 6}}, valids},
-                                            {{7, 7, 7}, {8, 8}, {9, 9}},
-                                            {{{10, 10, 10}, {11, 11}, {{12, 12}, valids}}, valids}};
+    LCW a{{{{1, 1, 1}, valids}, {2, 2}, {{3, 3}, valids}},
+          {{{4, 4, 4}, {{5, 5}, valids}, {6, 6}}, valids},
+          {{7, 7, 7}, {8, 8}, {9, 9}},
+          {{{10, 10, 10}, {11, 11}, {{12, 12}, valids}}, valids}};
     auto split_a = cudf::split(a, {3});
 
-    cudf::test::lists_column_wrapper<int> b{{{{{-1, -1, -1, -1}, valids}, {-2}}, valids},
-                                            {{{{-3, -3, -3, -3}, valids}, {-4}}, valids},
-                                            {{{{-5, -5, -5, -5}, valids}, {-6}}, valids},
-                                            {{{{-7, -7, -7, -7}, valids}, {-8}}, valids}};
+    LCW b{{{{{-1, -1, -1, -1}, valids}, {-2}}, valids},
+          {{{{-3, -3, -3, -3}, valids}, {-4}}, valids},
+          {{{{-5, -5, -5, -5}, valids}, {-6}}, valids},
+          {{{{-7, -7, -7, -7}, valids}, {-8}}, valids}};
     auto split_b = cudf::split(b, {3});
 
-    cudf::test::lists_column_wrapper<int> expected0{{{{1, 1, 1}, valids}, {2, 2}, {{3, 3}, valids}},
-                                                    {{{4, 4, 4}, {{5, 5}, valids}, {6, 6}}, valids},
-                                                    {{7, 7, 7}, {8, 8}, {9, 9}},
-                                                    {{{{-1, -1, -1, -1}, valids}, {-2}}, valids},
-                                                    {{{{-3, -3, -3, -3}, valids}, {-4}}, valids},
-                                                    {{{{-5, -5, -5, -5}, valids}, {-6}}, valids}};
-
+    LCW expected0{{{{1, 1, 1}, valids}, {2, 2}, {{3, 3}, valids}},
+                  {{{4, 4, 4}, {{5, 5}, valids}, {6, 6}}, valids},
+                  {{7, 7, 7}, {8, 8}, {9, 9}},
+                  {{{{-1, -1, -1, -1}, valids}, {-2}}, valids},
+                  {{{{-3, -3, -3, -3}, valids}, {-4}}, valids},
+                  {{{{-5, -5, -5, -5}, valids}, {-6}}, valids}};
     auto result0 = cudf::concatenate(std::vector<column_view>({split_a[0], split_b[0]}));
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*result0, expected0);
 
-    cudf::test::lists_column_wrapper<int> expected1{{{{1, 1, 1}, valids}, {2, 2}, {{3, 3}, valids}},
-                                                    {{{4, 4, 4}, {{5, 5}, valids}, {6, 6}}, valids},
-                                                    {{7, 7, 7}, {8, 8}, {9, 9}},
-                                                    {{{{-7, -7, -7, -7}, valids}, {-8}}, valids}};
-
+    LCW expected1{{{{1, 1, 1}, valids}, {2, 2}, {{3, 3}, valids}},
+                  {{{4, 4, 4}, {{5, 5}, valids}, {6, 6}}, valids},
+                  {{7, 7, 7}, {8, 8}, {9, 9}},
+                  {{{{-7, -7, -7, -7}, valids}, {-8}}, valids}};
     auto result1 = cudf::concatenate(std::vector<column_view>({split_a[0], split_b[1]}));
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*result1, expected1);
 
-    cudf::test::lists_column_wrapper<int> expected2{
-      {{{10, 10, 10}, {11, 11}, {{12, 12}, valids}}, valids},
-      {{{{-1, -1, -1, -1}, valids}, {-2}}, valids},
-      {{{{-3, -3, -3, -3}, valids}, {-4}}, valids},
-      {{{{-5, -5, -5, -5}, valids}, {-6}}, valids}};
-
+    LCW expected2{{{{10, 10, 10}, {11, 11}, {{12, 12}, valids}}, valids},
+                  {{{{-1, -1, -1, -1}, valids}, {-2}}, valids},
+                  {{{{-3, -3, -3, -3}, valids}, {-4}}, valids},
+                  {{{{-5, -5, -5, -5}, valids}, {-6}}, valids}};
     auto result2 = cudf::concatenate(std::vector<column_view>({split_a[1], split_b[0]}));
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*result2, expected2);
 
-    cudf::test::lists_column_wrapper<int> expected3{
-      {{{10, 10, 10}, {11, 11}, {{12, 12}, valids}}, valids},
-      {{{{-7, -7, -7, -7}, valids}, {-8}}, valids}};
-
+    LCW expected3{{{{10, 10, 10}, {11, 11}, {{12, 12}, valids}}, valids},
+                  {{{{-7, -7, -7, -7}, valids}, {-8}}, valids}};
     auto result3 = cudf::concatenate(std::vector<column_view>({split_a[1], split_b[1]}));
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*result3, expected3);
   }
 
   {
-    cudf::test::lists_column_wrapper<int> a{
-      {{{{1, 1, 1}, valids}, {2, 2}},
-       {{{3, 3}}, valids},
-       {{{10, 9, 16}, valids}, {8, 7, 1}, {{6, 8, 2}, valids}}},
-      {{LCW{}, {{LCW{}}, valids}, {{6, 6}, {2}}}, valids},
-      {{{LCW{}, LCW{}}, valids}},
-      {LCW{}, LCW{}, {{{10, 10, 10}, {{11, 11}, valids}, {12, 12}}, valids}, LCW{}}};
+    LCW a{{{{{1, 1, 1}, valids}, {2, 2}},
+           {{{3, 3}}, valids},
+           {{{10, 9, 16}, valids}, {8, 7, 1}, {{6, 8, 2}, valids}}},
+          {{{}, {{{}}, valids}, {{6, 6}, {2}}}, valids},
+          {{{{}, {}}, valids}},
+          {{}, {}, {{{10, 10, 10}, {{11, 11}, valids}, {12, 12}}, valids}, {}}};
     auto split_a = cudf::split(a, {3});
 
-    cudf::test::lists_column_wrapper<int> b{
-      {{{LCW{}}, valids}},
-      {{LCW{}, {{LCW{}}, valids}}, valids},
-      {{{{1, 2, 9}, LCW{}}, {{5, 6, 7, 8, 9}, {0}, {15, 17}}}, valids},
-      {{LCW{}}},
+    LCW b{
+      {{{{}}, valids}},
+      {{{}, {{{}}, valids}}, valids},
+      {{{{1, 2, 9}, {}}, {{5, 6, 7, 8, 9}, {0}, {15, 17}}}, valids},
+      {{{}}},
     };
     auto split_b = cudf::split(b, {3});
 
-    cudf::test::lists_column_wrapper<int> expected0{
+    LCW expected0{
       {{{{1, 1, 1}, valids}, {2, 2}},
        {{{3, 3}}, valids},
        {{{10, 9, 16}, valids}, {8, 7, 1}, {{6, 8, 2}, valids}}},
-      {{LCW{}, {{LCW{}}, valids}, {{6, 6}, {2}}}, valids},
-      {{{LCW{}, LCW{}}, valids}},
-      {{{LCW{}}, valids}},
-      {{LCW{}, {{LCW{}}, valids}}, valids},
-      {{{{1, 2, 9}, LCW{}}, {{5, 6, 7, 8, 9}, {0}, {15, 17}}}, valids},
+      {{{}, {{{}}, valids}, {{6, 6}, {2}}}, valids},
+      {{{{}, {}}, valids}},
+      {{{{}}, valids}},
+      {{{}, {{{}}, valids}}, valids},
+      {{{{1, 2, 9}, {}}, {{5, 6, 7, 8, 9}, {0}, {15, 17}}}, valids},
     };
-
     auto result0 = cudf::concatenate(std::vector<column_view>({split_a[0], split_b[0]}));
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*result0, expected0);
 
-    cudf::test::lists_column_wrapper<int> expected1{
+    LCW expected1{
       {{{{1, 1, 1}, valids}, {2, 2}},
        {{{3, 3}}, valids},
        {{{10, 9, 16}, valids}, {8, 7, 1}, {{6, 8, 2}, valids}}},
-      {{LCW{}, {{LCW{}}, valids}, {{6, 6}, {2}}}, valids},
-      {{{LCW{}, LCW{}}, valids}},
-      {{LCW{}}},
+      {{{}, {{{}}, valids}, {{6, 6}, {2}}}, valids},
+      {{{{}, {}}, valids}},
+      {{{}}},
     };
-
     auto result1 = cudf::concatenate(std::vector<column_view>({split_a[0], split_b[1]}));
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*result1, expected1);
 
-    cudf::test::lists_column_wrapper<int> expected2{
-      {LCW{}, LCW{}, {{{10, 10, 10}, {{11, 11}, valids}, {12, 12}}, valids}, LCW{}},
-      {{{LCW{}}, valids}},
-      {{LCW{}, {{LCW{}}, valids}}, valids},
-      {{{{1, 2, 9}, LCW{}}, {{5, 6, 7, 8, 9}, {0}, {15, 17}}}, valids},
+    LCW expected2{
+      {{}, {}, {{{10, 10, 10}, {{11, 11}, valids}, {12, 12}}, valids}, {}},
+      {{{{}}, valids}},
+      {{{}, {{{}}, valids}}, valids},
+      {{{{1, 2, 9}, {}}, {{5, 6, 7, 8, 9}, {0}, {15, 17}}}, valids},
     };
-
     auto result2 = cudf::concatenate(std::vector<column_view>({split_a[1], split_b[0]}));
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*result2, expected2);
 
-    cudf::test::lists_column_wrapper<int> expected3{
-      {LCW{}, LCW{}, {{{10, 10, 10}, {{11, 11}, valids}, {12, 12}}, valids}, LCW{}},
-      {{LCW{}}},
+    LCW expected3{
+      {{}, {}, {{{10, 10, 10}, {{11, 11}, valids}, {12, 12}}, valids}, {}},
+      {{{}}},
     };
-
     auto result3 = cudf::concatenate(std::vector<column_view>({split_a[1], split_b[1]}));
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*result3, expected3);
   }
@@ -1534,8 +1550,11 @@ TEST_F(ListsColumnTest, ListOfStructs)
     {inner_structs[0], inner_structs[1], inner_structs[2], inner_structs[3]});
   auto expected_child = cudf::concatenate(struct_views);
   cudf::test::fixed_width_column_wrapper<int> offsets_w{0, 1, 1, 1, 1, 4, 6, 6, 6, 10, 11};
-  auto expected =
-    make_lists_column(10, offsets_w.release(), std::move(expected_child), 0, rmm::device_buffer{});
+  auto expected = make_lists_column(10,
+                                    offsets_w.release(),
+                                    std::move(expected_child),
+                                    0,
+                                    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   // lists
   std::vector<cudf::test::fixed_width_column_wrapper<int>> offsets;
@@ -1548,8 +1567,11 @@ TEST_F(ListsColumnTest, ListOfStructs)
   std::vector<std::unique_ptr<column>> src;
   for (size_t idx = 0; idx < inner_structs.size(); idx++) {
     int size = static_cast<column_view>(offsets[idx]).size() - 1;
-    src.push_back(make_lists_column(
-      size, offsets[idx].release(), inner_structs[idx].release(), 0, rmm::device_buffer{}));
+    src.push_back(make_lists_column(size,
+                                    offsets[idx].release(),
+                                    inner_structs[idx].release(),
+                                    0,
+                                    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED)));
   }
 
   // concatenate
@@ -1756,7 +1778,7 @@ TEST_F(EmptyColumnTest, SimpleTest)
     columns.emplace_back(cudf::data_type(cudf::type_id::EMPTY),
                          num_rows,
                          rmm::device_buffer{},
-                         rmm::device_buffer{},
+                         cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
                          0);
   }
 
@@ -1782,11 +1804,12 @@ TEST_F(TableOfEmptyColumnsTest, SimpleTest)
   for (auto i = 0; i < num_copies; ++i) {
     std::vector<std::unique_ptr<cudf::column>> columns;
     for (auto j = 0; j < num_columns; ++j) {
-      columns.push_back(std::make_unique<cudf::column>(cudf::data_type(cudf::type_id::EMPTY),
-                                                       num_rows,
-                                                       rmm::device_buffer{},
-                                                       rmm::device_buffer{},
-                                                       0));
+      columns.push_back(
+        std::make_unique<cudf::column>(cudf::data_type(cudf::type_id::EMPTY),
+                                       num_rows,
+                                       rmm::device_buffer{},
+                                       cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                       0));
     }
     tables.emplace_back(std::move(columns));
   }

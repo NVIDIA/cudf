@@ -19,6 +19,7 @@
 #include <concepts>
 #include <cstddef>
 #include <limits>
+#include <span>
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
@@ -214,10 +215,10 @@ class CompactProtocolReader {
   friend class parquet_field_list;
   template <typename T>
   friend class parquet_field_struct_list;
-  friend void decode_footer_bytes(cudf::host_span<uint8_t const> footer_bytes,
+  friend void decode_footer_bytes(std::span<uint8_t const> footer_bytes,
                                   FileMetaData* metadata,
                                   experimental::thrift_mismatch_policy mode);
-  friend void decode_footer_and_init_schema(cudf::host_span<uint8_t const> footer_bytes,
+  friend void decode_footer_and_init_schema(std::span<uint8_t const> footer_bytes,
                                             FileMetaData* metadata);
 };
 
@@ -231,7 +232,7 @@ class CompactProtocolReader {
  * @throws cudf::logic_error If the footer is truncated or corrupt within the struct
  */
 void decode_footer_bytes(
-  cudf::host_span<uint8_t const> footer_bytes,
+  std::span<uint8_t const> footer_bytes,
   FileMetaData* metadata,
   experimental::thrift_mismatch_policy mode = experimental::thrift_mismatch_policy::THROW);
 
@@ -247,8 +248,7 @@ void decode_footer_bytes(
  * @throws cudf::logic_error If the schema cannot be initialized
  * @throws cudf::logic_error If the footer is truncated or corrupt within the struct
  */
-void decode_footer_and_init_schema(cudf::host_span<uint8_t const> footer_bytes,
-                                   FileMetaData* metadata);
+void decode_footer_and_init_schema(std::span<uint8_t const> footer_bytes, FileMetaData* metadata);
 
 }  // namespace io::parquet::detail
 }  // namespace CUDF_EXPORT cudf

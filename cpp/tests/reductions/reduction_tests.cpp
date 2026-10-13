@@ -3278,10 +3278,9 @@ TEST_F(ListReductionTest, NestedListReductionNthElement)
   using LCW = cudf::test::lists_column_wrapper<int>;
 
   // test without nulls
-  auto validity    = std::vector<bool>{true, false, false, true, true};
-  auto nested_list = LCW(
-    {{LCW{}, LCW{2, 3, 4}}, {}, {LCW{5}, LCW{6}, LCW{7, 8}}, {LCW{9, 10}}, {LCW{11}, LCW{12, 13}}},
-    validity.begin());
+  auto validity = std::vector<bool>{true, false, false, true, true};
+  auto nested_list =
+    LCW({{{}, {2, 3, 4}}, {}, {{5}, {6}, {7, 8}}, {{9, 10}}, {{11}, {12, 13}}}, validity.begin());
   this->reduction_test(
     nested_list,
     LCW{{}, {2, 3, 4}},  // expected_value,
@@ -3428,14 +3427,14 @@ TEST_F(ListReductionTest, ReductionMinMaxWithNulls)
   using cudf::test::iterators::nulls_at;
   constexpr int null{0};
 
-  auto const input = LISTS_CW{{LISTS_CW{3, 4},
-                               LISTS_CW{1, 2},
-                               LISTS_CW{{1, null}, null_at(1)},
-                               LISTS_CW{} /*null*/,
-                               LISTS_CW{5, 6, 7},
-                               LISTS_CW{1, 8},
-                               LISTS_CW{{9, null}, null_at(1)},
-                               LISTS_CW{} /*null*/},
+  auto const input = LISTS_CW{{{3, 4},
+                               {1, 2},
+                               {{1, null}, null_at(1)},
+                               {} /*null*/,
+                               {5, 6, 7},
+                               {1, 8},
+                               {{9, null}, null_at(1)},
+                               {} /*null*/},
                               nulls_at({3, 7})};
   this->reduction_test(input,
                        INTS_CW{{1, null}, null_at(1)},
@@ -3552,7 +3551,7 @@ TEST_F(StructReductionTest, NestedStructReductionNthElement)
   auto result_child0 = ICW{0};
   auto result_col0   = SCW({result_child0}, std::vector<bool>{false});
   auto result_col1   = ICW{{1}, {true}};
-  auto result_col2   = LCW({LCW{}}, std::vector<bool>{true}.begin());
+  auto result_col2   = LCW({{}}, std::vector<bool>{true}.begin());
   // test without nulls
   this->reduction_test(
     struct_col1,
@@ -3565,7 +3564,7 @@ TEST_F(StructReductionTest, NestedStructReductionNthElement)
   result_child0 = ICW{0};
   result_col0   = SCW({result_child0}, std::vector<bool>{false});
   result_col1   = ICW{{0}, {false}};
-  result_col2   = LCW({LCW{3}}, std::vector<bool>{false}.begin());
+  result_col2   = LCW({{3}}, std::vector<bool>{false}.begin());
   this->reduction_test(
     struct_col1,
     cudf::table_view{{result_col0, result_col1, result_col2}},  // expected_value,
@@ -3577,7 +3576,7 @@ TEST_F(StructReductionTest, NestedStructReductionNthElement)
   result_child0 = ICW{0};
   result_col0   = SCW({result_child0}, std::vector<bool>{true});
   result_col1   = ICW{{4}, {true}};
-  result_col2   = LCW({LCW{4}}, std::vector<bool>{true}.begin());
+  result_col2   = LCW({{4}}, std::vector<bool>{true}.begin());
   this->reduction_test(
     struct_col1,
     cudf::table_view{{result_col0, result_col1, result_col2}},  // expected_value,

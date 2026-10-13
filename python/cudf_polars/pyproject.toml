@@ -19,7 +19,7 @@ authors = [
 ]
 license = "Apache-2.0"
 license-files = ["LICENSE"]
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "cuda-bindings>=13.0.2,<14.0",
     "cudf-streaming==26.12.*,>=0.0.0a0",
@@ -36,7 +36,6 @@ classifiers = [
     "Topic :: Database",
     "Topic :: Scientific/Engineering",
     "Programming Language :: Python",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
@@ -74,6 +73,10 @@ Homepage = "https://github.com/NVIDIA/cudf"
 [tool.setuptools.dynamic]
 version = {file = "cudf_polars/VERSION"}
 
+[tool.setuptools.packages.find]
+# exclude python/cudf_polars/quent/
+include = ["cudf_polars*"]
+
 [tool.pydistcheck]
 select = [
     "distro-too-large-compressed",
@@ -104,14 +107,16 @@ exclude_also = [
 # See https://github.com/NVIDIA/cudf/issues/22568.
 omit = [
   "cudf_polars/testing/inject_gpu_engine.py",
+  "cudf_polars/testing/fallback_report.py",
   "cudf_polars/streaming/**",
   "cudf_polars/engine/**",
+  "cudf_polars/quent/**",  # packaging component of https://github.com/NVIDIA/cudf/issues/22949
 ]
 
 [tool.ruff]
 line-length = 88
 indent-width = 4
-target-version = "py311"
+target-version = "py312"
 fix = true
 
 [tool.ruff.lint]

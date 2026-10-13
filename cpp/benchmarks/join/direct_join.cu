@@ -11,9 +11,9 @@
 #include <cudf/join/join.hpp>
 #include <cudf/join/streaming_hash_join.hpp>
 
+#include <cuda/std/random>
 #include <thrust/execution_policy.h>
 #include <thrust/functional.h>
-#include <thrust/random.h>
 #include <thrust/sequence.h>
 #include <thrust/shuffle.h>
 #include <thrust/tabulate.h>
@@ -43,7 +43,7 @@ void nvbench_direct_inner_join(nvbench::state& state)
   thrust::shuffle(thrust::device,
                   right->mutable_view().begin<std::uint32_t>(),
                   right->mutable_view().end<std::uint32_t>(),
-                  thrust::default_random_engine{12345});
+                  cuda::std::philox4x32{12345});
 
   // Left keys cycle through [0, capacity), then shuffled
   auto left = cudf::make_numeric_column(
@@ -55,7 +55,7 @@ void nvbench_direct_inner_join(nvbench::state& state)
   thrust::shuffle(thrust::device,
                   left->mutable_view().begin<std::uint32_t>(),
                   left->mutable_view().end<std::uint32_t>(),
-                  thrust::default_random_engine{67890});
+                  cuda::std::philox4x32{67890});
 
   auto const left_view  = left->view();
   auto const right_view = right->view();

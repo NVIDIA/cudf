@@ -272,3 +272,30 @@ def test_replace_time_zone_unknown_zone_raises(engine, naive_frame, monkeypatch)
     monkeypatch.setattr(zoneinfo, "TZPATH", ())
     q = naive_frame.select(pl.col("a").dt.replace_time_zone("Europe/Amsterdam"))
     assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+@pytest.mark.parametrize(
+    "time_zone", ["UTC", "Europe/London", "US/Pacific", "Asia/Kolkata"]
+)
+def test_datetime_time_tz_aware(engine, utc_frame, time_zone):
+    q = utc_frame.select(pl.col("a").dt.convert_time_zone(time_zone).dt.time())
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_datetime_time_dst_transition(engine, units):
+    ldf = pl.LazyFrame(
+        {
+            "a": pl.Series(
+                [
+                    datetime.datetime(2021, 3, 28, 0, 59, 59),
+                    datetime.datetime(2021, 3, 28, 1, 0, 0),
+                    datetime.datetime(2021, 10, 31, 0, 59, 59),
+                    datetime.datetime(2021, 10, 31, 1, 0, 0),
+                ],
+                dtype=pl.Datetime(cast("Literal['ms', 'us', 'ns']", units)),
+            )
+            .dt.replace_time_zone("UTC")
+            .dt.convert_time_zone("Europe/London")
+        }
+    )
+    assert_gpu_result_equal(ldf.select(pl.col("a").dt.time()), engine=engine)

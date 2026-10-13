@@ -302,6 +302,20 @@ std::vector<uint8_t> pack_metadata(table_view const& table,
 table_view unpack(packed_columns const& input);
 
 /**
+ * @brief Deserialize packed table data using a sized metadata buffer.
+ *
+ * An empty metadata buffer represents a table with no columns and no rows.
+ * The returned `table_view` must not outlive the device data in `gpu_data`.
+ * No new device memory is allocated.
+ *
+ * @throws cudf::logic_error if non-empty metadata does not describe a valid column tree
+ * @param metadata The host-side metadata buffer resulting from `cudf::pack`
+ * @param gpu_data The device-side contiguous buffer referenced by the resulting `table_view`
+ * @return The unpacked `table_view`
+ */
+table_view unpack(std::span<uint8_t const> const metadata, uint8_t const* gpu_data);
+
+/**
  * @brief Deserialize the result of `cudf::pack`.
  *
  * Converts the result of a serialized table into a `table_view` that points to the data stored in
@@ -400,8 +414,9 @@ class packed_metadata_view {
   /**
    * @brief Construct a view from a metadata byte buffer.
    *
-   * @throws cudf::logic_error if the buffer is empty or does not satisfy minimum requirements for
-   * describing a valid column tree.
+   * An empty buffer represents a table with no columns and no rows.
+   *
+   * @throws cudf::logic_error if a non-empty buffer does not describe a valid column tree.
    * @param buffer The metadata bytes (as produced by `cudf::pack`)
    */
   explicit packed_metadata_view(std::span<std::uint8_t const> buffer);

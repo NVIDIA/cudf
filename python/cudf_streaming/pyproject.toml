@@ -17,7 +17,7 @@ authors = [
     { name = "NVIDIA Corporation" },
 ]
 license = "Apache-2.0"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "libcudf-streaming==26.12.*,>=0.0.0a0",
     "pylibcudf==26.12.*,>=0.0.0a0",
@@ -71,7 +71,7 @@ xfail_strict = true
 
 [tool.rapids-build-backend]
 build-backend = "scikit_build_core.build"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies-file = "../../dependencies.yaml"
 matrix-entry = "cuda_suffixed=true;use_cuda_wheels=true"
 requires = [

@@ -20,7 +20,6 @@
 #include <cuda/iterator>
 #include <cuda/stream>
 #include <thrust/transform.h>
-#include <thrust/transform_scan.h>
 
 namespace cudf {
 namespace lists {

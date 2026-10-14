@@ -19,6 +19,7 @@
 #include <cudf/column/column.hpp>
 #include <cudf/fixed_point/fixed_point.hpp>
 #include <cudf/scalar/scalar.hpp>
+#include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
@@ -52,7 +53,7 @@ std::unique_ptr<column> divide_decimal(
   column_view const& lhs,
   column_view const& rhs,
   numeric::decimal_rounding_mode rounding_mode = numeric::decimal_rounding_mode::HALF_UP,
-  rmm::cuda_stream_view stream                 = cudf::get_default_stream(),
+  cuda::stream_ref stream                      = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr            = cudf::get_current_device_resource_ref());
 
 /**
@@ -74,7 +75,7 @@ std::unique_ptr<column> divide_decimal(
   column_view const& lhs,
   scalar const& rhs,
   numeric::decimal_rounding_mode rounding_mode = numeric::decimal_rounding_mode::HALF_UP,
-  rmm::cuda_stream_view stream                 = cudf::get_default_stream(),
+  cuda::stream_ref stream                      = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr            = cudf::get_current_device_resource_ref());
 
 /**
@@ -96,7 +97,7 @@ std::unique_ptr<column> divide_decimal(
   scalar const& lhs,
   column_view const& rhs,
   numeric::decimal_rounding_mode rounding_mode = numeric::decimal_rounding_mode::HALF_UP,
-  rmm::cuda_stream_view stream                 = cudf::get_default_stream(),
+  cuda::stream_ref stream                      = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr            = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group

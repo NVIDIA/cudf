@@ -26,11 +26,12 @@
 #include <cudf/scalar/scalar_factories.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 namespace cudf {
@@ -49,7 +50,7 @@ struct divide_decimal_functor {
 std::unique_ptr<column> divide_decimal_impl(column_view const& lhs,
                                             column_view const& rhs,
                                             numeric::decimal_rounding_mode rounding_mode,
-                                            rmm::cuda_stream_view stream,
+                                            cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr)
 {
   using namespace numeric;
@@ -65,15 +66,8 @@ std::unique_ptr<column> divide_decimal_impl(column_view const& lhs,
     result =
       cudf::make_fixed_width_column(lhs_type, size, std::move(null_mask), null_count, stream, mr);
   } else {
-    // Create non-nullable column when inputs have no nulls
-    // Use empty rmm::device_buffer{} directly to ensure column is non-nullable
     result =
-      std::make_unique<column>(lhs_type,
-                               size,
-                               rmm::device_buffer{size * cudf::size_of(lhs_type), stream, mr},
-                               rmm::device_buffer{},  // Empty buffer = non-nullable
-                               0,                     // null_count = 0
-                               std::vector<std::unique_ptr<column>>{});
+      cudf::make_fixed_width_column(lhs_type, size, mask_state::UNALLOCATED, stream, mr);
   }
 
   auto result_view = result->mutable_view();
@@ -90,7 +84,7 @@ std::unique_ptr<column> divide_decimal_impl(column_view const& lhs,
     using DecType        = fixed_point<Type, numeric::Radix::BASE_10>;
 
     thrust::transform(
-      rmm::exec_policy(stream),
+      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
       lhs.begin<Type>(),
       lhs.end<Type>(),
       rhs.begin<Type>(),
@@ -108,7 +102,7 @@ std::unique_ptr<column> divide_decimal_impl(column_view const& lhs,
     using DecType        = fixed_point<Type, numeric::Radix::BASE_10>;
 
     thrust::transform(
-      rmm::exec_policy(stream),
+      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
       lhs.begin<Type>(),
       lhs.end<Type>(),
       rhs.begin<Type>(),
@@ -126,7 +120,7 @@ std::unique_ptr<column> divide_decimal_impl(column_view const& lhs,
     using DecType        = fixed_point<Type, numeric::Radix::BASE_10>;
 
     thrust::transform(
-      rmm::exec_policy(stream),
+      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
       lhs.begin<Type>(),
       lhs.end<Type>(),
       rhs.begin<Type>(),
@@ -148,7 +142,7 @@ template <typename DecimalType>
 std::unique_ptr<column> divide_decimal_scalar_impl(column_view const& lhs,
                                                    scalar const& rhs,
                                                    numeric::decimal_rounding_mode rounding_mode,
-                                                   rmm::cuda_stream_view stream,
+                                                   cuda::stream_ref stream,
                                                    rmm::device_async_resource_ref mr)
 {
   using namespace numeric;
@@ -181,22 +175,15 @@ std::unique_ptr<column> divide_decimal_scalar_impl(column_view const& lhs,
         lhs_type, size, cudf::detail::copy_bitmask(lhs, stream, mr), lhs.null_count(), stream, mr);
     }
   } else {
-    // Create non-nullable column when inputs have no nulls
-    // Use empty rmm::device_buffer{} directly to ensure column is non-nullable
     result =
-      std::make_unique<column>(lhs_type,
-                               size,
-                               rmm::device_buffer{size * cudf::size_of(lhs_type), stream, mr},
-                               rmm::device_buffer{},  // Empty buffer = non-nullable
-                               0,                     // null_count = 0
-                               std::vector<std::unique_ptr<column>>{});
+      cudf::make_fixed_width_column(lhs_type, size, mask_state::UNALLOCATED, stream, mr);
   }
 
   auto result_view = result->mutable_view();
 
   // Perform element-wise divide_decimal
   thrust::transform(
-    rmm::exec_policy(stream),
+    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
     lhs.begin<Type>(),
     lhs.end<Type>(),
     result_view.begin<Type>(),
@@ -217,7 +204,7 @@ std::unique_ptr<column> divide_decimal_scalar_impl(column_view const& lhs,
 std::unique_ptr<column> divide_decimal(column_view const& lhs,
                                        column_view const& rhs,
                                        numeric::decimal_rounding_mode rounding_mode,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -242,7 +229,7 @@ std::unique_ptr<column> divide_decimal(column_view const& lhs,
 std::unique_ptr<column> divide_decimal(column_view const& lhs,
                                        scalar const& rhs,
                                        numeric::decimal_rounding_mode rounding_mode,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -271,7 +258,7 @@ std::unique_ptr<column> divide_decimal(column_view const& lhs,
 std::unique_ptr<column> divide_decimal(scalar const& lhs,
                                        column_view const& rhs,
                                        numeric::decimal_rounding_mode rounding_mode,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -308,15 +295,8 @@ std::unique_ptr<column> divide_decimal(scalar const& lhs,
         rhs_type, size, cudf::detail::copy_bitmask(rhs, stream, mr), rhs.null_count(), stream, mr);
     }
   } else {
-    // Create non-nullable column when inputs have no nulls
-    // Use empty rmm::device_buffer{} directly to ensure column is non-nullable
     result =
-      std::make_unique<column>(rhs_type,
-                               size,
-                               rmm::device_buffer{size * cudf::size_of(rhs_type), stream, mr},
-                               rmm::device_buffer{},  // Empty buffer = non-nullable
-                               0,                     // null_count = 0
-                               std::vector<std::unique_ptr<column>>{});
+      cudf::make_fixed_width_column(rhs_type, size, mask_state::UNALLOCATED, stream, mr);
   }
 
   auto result_view = result->mutable_view();
@@ -331,7 +311,7 @@ std::unique_ptr<column> divide_decimal(scalar const& lhs,
     Type lhs_val               = lhs_fp.value();
 
     thrust::transform(
-      rmm::exec_policy(stream),
+      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
       rhs.begin<Type>(),
       rhs.end<Type>(),
       result_view.begin<Type>(),
@@ -350,7 +330,7 @@ std::unique_ptr<column> divide_decimal(scalar const& lhs,
     Type lhs_val               = lhs_fp.value();
 
     thrust::transform(
-      rmm::exec_policy(stream),
+      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
       rhs.begin<Type>(),
       rhs.end<Type>(),
       result_view.begin<Type>(),
@@ -369,7 +349,7 @@ std::unique_ptr<column> divide_decimal(scalar const& lhs,
     Type lhs_val               = lhs_fp.value();
 
     thrust::transform(
-      rmm::exec_policy(stream),
+      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
       rhs.begin<Type>(),
       rhs.end<Type>(),
       result_view.begin<Type>(),

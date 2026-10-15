@@ -340,8 +340,9 @@ std::unique_ptr<table> transform(
  * @brief The type of LTO Binary
  */
 enum class lto_binary_type : uint8_t {
-  LTO_IR,  //< LTO-IR binary
-  FATBIN   //< FATBIN binary
+  LTO_IR,        //< LTO-IR binary
+  FATBIN,        //< FATBIN binary
+  LINKED_KERNEL  //< Fully device-linked CUBIN or FATBIN containing the transform kernel entry
 };
 
 /**
@@ -364,6 +365,12 @@ enum class lto_binary_type : uint8_t {
  *
  * The size of the resulting column is the `row_size` if provided, otherwise it is inferred from
  * the input and pre-allocated output columns.
+ *
+ * If `binary_type` is `lto_binary_type::LINKED_KERNEL`, `udf` must instead be a CUBIN or FATBIN
+ * produced ahead of time by device-linking the UDF with the `cudf_kernel_entry` instance of
+ * `cudf/cpp/src/transform/jit/kernel.cu` that matches the inputs, outputs, null-awareness, and
+ * user-data of this call. The binary is loaded directly, skipping runtime LTO linking. A kernel
+ * instance that does not match the call's inputs and outputs results in undefined behavior.
  *
  * @param udf           The LTO-IR fragment containing the transform function to apply. The UDF must
  * be named `transform` and follow the CUDF UDF ABI

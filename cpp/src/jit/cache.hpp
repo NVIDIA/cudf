@@ -10,12 +10,15 @@
 
 #include <rtcx/rtcx.hpp>
 
+#include <mutex>
+
 namespace CUDF_EXPORT cudf {
 
 struct [[nodiscard]] jit_bundle_t {
  private:
   std::string install_dir_;
   rtcx::cache_t* cache_;
+  mutable std::once_flag installed_;
 
   void ensure_installed() const;
 
@@ -116,5 +119,15 @@ rtcx::blob get_kernel_fragment(std::string const& name,
 kernel get_lto_linked_kernel(std::string const& name,
                              std::span<rtcx::file_fragment const> file_fragments,
                              std::span<rtcx::memory_fragment const> memory_fragments);
+
+/**
+ * @brief Gets the `cudf_kernel_entry` kernel from a fully linked CUBIN or FATBIN
+ *
+ * Loaded libraries are cached in memory by the binary's content hash. They are not written to the
+ * on-disk kernel cache because the caller already owns the linked binary.
+ *
+ * @param binary The linked binary to load
+ */
+kernel get_linked_kernel(std::span<uint8_t const> binary);
 
 }  // namespace CUDF_EXPORT cudf

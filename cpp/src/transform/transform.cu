@@ -649,6 +649,18 @@ void run_lto(std::optional<std::tuple<std::span<uint8_t const>, lto_binary_type,
              cuda::stream_ref stream,
              rmm::device_async_resource_ref mr)
 {
+  auto launch_kernel = [&](cudf::kernel const& kernel) {
+    auto [cols, handles] = to_args(inputs, outputs, stream, mr);
+    auto* input_cols     = reinterpret_cast<column_device_view_core const*>(cols.data());
+    auto* output_cols =
+      reinterpret_cast<mutable_column_device_view_core const*>(input_cols + inputs.size());
+    launch(kernel, row_size, d_stencil, user_data, input_cols, output_cols, d_max_error, stream);
+  };
+
+  if (source_type == lto_binary_type::LINKED_KERNEL) {
+    return launch_kernel(get_linked_kernel(udf_binary));
+  }
+
   auto [in_types, out_types, ptx_in_types, ptx_out_types] = reflect(source_type, inputs, outputs);
 
   std::span<uint8_t const> kernel_fragment;
@@ -677,14 +689,8 @@ void run_lto(std::optional<std::tuple<std::span<uint8_t const>, lto_binary_type,
       .name = nullptr  // nullptr = unnamed fragment: the binary will be used to hash the UDF
     }};
 
-  auto kernel = get_lto_linked_kernel("cudf/cpp/src/transform/jit/kernel.cu", {}, memory_fragments);
-
-  auto [cols, handles] = to_args(inputs, outputs, stream, mr);
-  auto* input_cols     = reinterpret_cast<column_device_view_core const*>(cols.data());
-  auto* output_cols =
-    reinterpret_cast<mutable_column_device_view_core const*>(input_cols + inputs.size());
-  return launch(
-    kernel, row_size, d_stencil, user_data, input_cols, output_cols, d_max_error, stream);
+  launch_kernel(
+    get_lto_linked_kernel("cudf/cpp/src/transform/jit/kernel.cu", {}, memory_fragments));
 }
 
 }  // namespace jit_transform
@@ -1394,8 +1400,11 @@ std::unique_ptr<table> transform_lto(std::span<uint8_t const> udf,
   auto stencil_arg               = stencil.has_value() ? stencil->first : nullptr;
   auto stencil_has_nulls         = stencil.has_value() ? (stencil->second > 0) : false;
 
-  auto precompiled_kernel_fragment = dispatch_lto_kernel_fragment(
-    is_null_aware == null_aware::YES, user_data.has_value(), inputs, output_columns);
+  auto precompiled_kernel_fragment =
+    binary_type == lto_binary_type::LINKED_KERNEL
+      ? std::nullopt
+      : dispatch_lto_kernel_fragment(
+          is_null_aware == null_aware::YES, user_data.has_value(), inputs, output_columns);
 
   cudf::detail::device_scalar<int32_t> d_max_error(
     static_cast<int32_t>(errc::SUCCESS), stream, cudf::get_current_device_resource_ref());

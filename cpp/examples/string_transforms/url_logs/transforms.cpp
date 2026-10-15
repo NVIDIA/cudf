@@ -30,6 +30,7 @@
 #include <iostream>
 #include <limits>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -229,7 +230,7 @@ __device__ int write_url_components(cuda::std::span<char>* protocol,
 
 constexpr std::string_view usage =
   "usage: url_log_transforms INPUT.csv OUTPUT.csv <regex|precompiled> ROWS\n"
-  "       url_log_transforms INPUT.csv OUTPUT.csv <cuda-jit|lto-jit> ROWS "
+  "       url_log_transforms INPUT.csv OUTPUT.csv <cuda-jit|lto-jit|lto-aot> ROWS "
   "<--warm|--cold|--cold-warm-pch>\n"
   "       url_log_transforms <usage|--help>\n";
 
@@ -405,9 +406,18 @@ __device__ int transform(int32_t* output, cudf::string_view input) {
   return std::make_unique<cudf::table>(std::move(result));
 }
 
-// Runs either the runtime-compiled CUDA-string UDFs or their AOT fatbin/LTO counterparts.
+enum class jit_mode { CUDA, LTO, LINKED };
+
+[[nodiscard]] std::span<uint8_t const> embedded_file(std::size_t id)
+{
+  auto range = url_log_fragments::file_ranges[id];
+  return url_log_fragments::files.subspan(range[0], range[1]);
+}
+
+// Runs the runtime-compiled CUDA-string UDFs, their AOT fatbin/LTO counterparts, or kernels that
+// were fully device-linked with those fatbins at build time.
 [[nodiscard]] std::unique_ptr<cudf::table> run_jit(cudf::column_view input,
-                                                   bool use_lto,
+                                                   jit_mode mode,
                                                    cuda::stream_ref stream,
                                                    rmm::device_async_resource_ref mr)
 {
@@ -416,12 +426,15 @@ __device__ int transform(int32_t* output, cudf::string_view input) {
   std::vector<cudf::transform_output> const size_outputs(output_count, size_spec);
   cudf::transform_input inputs[] = {input};
   std::unique_ptr<cudf::table> sizes;
+  auto use_linked  = mode == jit_mode::LINKED;
+  auto binary_type = use_linked ? cudf::lto_binary_type::LINKED_KERNEL
+                                : cudf::lto_binary_type::FATBIN;
 
-  if (use_lto) {
-    auto range    = url_log_fragments::file_ranges[url_log_fragments::url_component_sizes];
-    auto fragment = url_log_fragments::files.subspan(range[0], range[1]);
+  if (mode != jit_mode::CUDA) {
+    auto fragment = embedded_file(use_linked ? url_log_fragments::url_component_sizes_linked
+                                             : url_log_fragments::url_component_sizes);
     sizes         = cudf::transform_lto(fragment,
-                                cudf::lto_binary_type::FATBIN,
+                                binary_type,
                                 cudf::null_aware::NO,
                                 std::nullopt,
                                 inputs,
@@ -461,11 +474,11 @@ __device__ int transform(int32_t* output, cudf::string_view input) {
   cudf::transform_output const output_spec{cudf::data_type{cudf::type_id::STRING},
                                            cudf::output_nullability::ALL_VALID};
   std::vector<cudf::transform_output> const outputs(output_count, output_spec);
-  if (use_lto) {
-    auto range    = url_log_fragments::file_ranges[url_log_fragments::url_component_output];
-    auto fragment = url_log_fragments::files.subspan(range[0], range[1]);
+  if (mode != jit_mode::CUDA) {
+    auto fragment = embedded_file(use_linked ? url_log_fragments::url_component_output_linked
+                                             : url_log_fragments::url_component_output);
     return cudf::transform_lto(fragment,
-                               cudf::lto_binary_type::FATBIN,
+                               binary_type,
                                cudf::null_aware::NO,
                                std::nullopt,
                                inputs,
@@ -503,13 +516,15 @@ try {
   auto input_path  = std::string{argv[1]};
   auto output_path = std::string{argv[2]};
   auto impl        = std::string_view{argv[3]};
-  if (impl != "regex" && impl != "precompiled" && impl != "cuda-jit" && impl != "lto-jit") {
-    throw std::invalid_argument("executor must be regex, precompiled, cuda-jit, or lto-jit");
+  if (impl != "regex" && impl != "precompiled" && impl != "cuda-jit" && impl != "lto-jit" &&
+      impl != "lto-aot") {
+    throw std::invalid_argument(
+      "executor must be regex, precompiled, cuda-jit, lto-jit, or lto-aot");
   }
   auto requested_rows = std::stoll(argv[4]);
-  auto is_jit         = impl == "cuda-jit" || impl == "lto-jit";
+  auto is_jit         = impl == "cuda-jit" || impl == "lto-jit" || impl == "lto-aot";
   if (is_jit && argc != 6) {
-    throw std::invalid_argument("cuda-jit and lto-jit require a warm-up control");
+    throw std::invalid_argument("cuda-jit, lto-jit, and lto-aot require a warm-up control");
   }
   if (!is_jit && argc != 5) {
     throw std::invalid_argument("regex and precompiled do not accept a warm-up control");
@@ -525,7 +540,9 @@ try {
   nvtxRangePush("url_log_process");
   auto process_start = std::chrono::steady_clock::now();
   auto rows          = static_cast<cudf::size_type>(requested_rows);
-  auto use_lto       = impl == "lto-jit";
+  auto mode          = impl == "lto-aot"   ? jit_mode::LINKED
+                       : impl == "lto-jit" ? jit_mode::LTO
+                                           : jit_mode::CUDA;
   auto stream        = cudf::get_default_stream();
   auto upstream_mr   = cudf::get_current_device_resource_ref();
   // Tracks setup, measured work, and output
@@ -557,7 +574,7 @@ try {
     } else if (impl == "precompiled") {
       return run_precompiled(input_view, stream, mr);
     } else {
-      return run_jit(input_view, use_lto, stream, mr);
+      return run_jit(input_view, mode, stream, mr);
     }
   };
 

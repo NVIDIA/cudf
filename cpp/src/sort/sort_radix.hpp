@@ -45,10 +45,12 @@ std::unique_ptr<column> sort_radix(column_view const& input,
  * @param indices The indices to return
  * @param ascending The sort order
  * @param stream The CUDA stream to use
+ * @param temp_mr Device memory resource used for temporary allocations
  */
 void sorted_order_radix(column_view const& input,
                         mutable_column_view& indices,
                         bool ascending,
-                        cuda::stream_ref stream);
+                        cuda::stream_ref stream,
+                        rmm::device_async_resource_ref temp_mr);
 }  // namespace detail
 }  // namespace cudf

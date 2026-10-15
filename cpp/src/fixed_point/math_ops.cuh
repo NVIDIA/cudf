@@ -8,108 +8,117 @@
 #include <cudf/fixed_point/fixed_point.hpp>
 #include <cudf/round.hpp>
 
-#include <cuda/std/type_traits>
-
-#include <cassert>
+#include <cuda/std/cstdint>
+#include <cuda/std/limits>
+#include <cuda/std/optional>
 
 namespace cudf::detail {
 
 /**
+ * @brief Unsigned type used to hold the magnitudes of `Rep` operands during division.
+ *
+ * It is wider than `Rep` where possible, so that rescaling the dividend overflows less often.
+ */
+template <typename Rep>
+struct division_magnitude {
+  using type = __uint128_t;
+};
+
+template <>
+struct division_magnitude<int32_t> {
+  using type = cuda::std::uint64_t;
+};
+
+template <typename Rep>
+using division_magnitude_t = typename division_magnitude<Rep>::type;
+
+/**
+ * @brief Computes `a * b`, returning false instead if the product overflows `U`.
+ */
+template <typename U>
+__device__ inline bool checked_multiply(U a, U b, U& product)
+{
+  if (a != 0 && b > static_cast<U>(~U{0}) / a) { return false; }
+  product = a * b;
+  return true;
+}
+
+/**
+ * @brief Computes `base` to the power `exponent`, returning false instead if it overflows `U`.
+ */
+template <typename U>
+__device__ inline bool checked_power(U base, int32_t exponent, U& power)
+{
+  power = 1;
+  for (int32_t i = 0; i < exponent; ++i) {
+    if (!checked_multiply(power, base, power)) { return false; }
+  }
+  return true;
+}
+
+/**
  * @brief Divides two fixed-point numbers, keeping the scale of the dividend.
  *
- * Similar to Java's `BigDecimal.divide(divisor, roundingMode)`.
+ * Similar to Java's `BigDecimal.divide(divisor, roundingMode)`. The quotient is computed exactly
+ * and then rounded to the scale of `lhs` using `method`.
+ *
+ * Returns no value if `rhs` is zero, if the rounded quotient does not fit in `Rep`, or, for
+ * 128-bit `Rep`, if `lhs` rescaled to the scale of the quotient does not fit in 128 bits.
  *
  * @param lhs The dividend
  * @param rhs The divisor
  * @param method The rounding method to use
- * @return The quotient, with the scale of `lhs`
+ * @return The quotient with the scale of `lhs`, or no value
  */
 template <typename Rep, numeric::Radix Rad>
-__device__ inline numeric::fixed_point<Rep, Rad> divide_decimal(
+__device__ inline cuda::std::optional<numeric::fixed_point<Rep, Rad>> divide_decimal(
   numeric::fixed_point<Rep, Rad> const& lhs,
   numeric::fixed_point<Rep, Rad> const& rhs,
   rounding_method method)
 {
-#if defined(__CUDACC_DEBUG__)
-  assert(rhs.value() != 0 && "division by zero");
-  assert(!numeric::division_overflow<Rep>(lhs.value(), rhs.value()) && "fixed_point overflow");
-#endif
+  using U = division_magnitude_t<Rep>;
 
-  // Dividing at scale `lhs.scale() - rhs.scale()` and rescaling to `lhs.scale()` is the same as
-  // multiplying the dividend by 10^(-rhs.scale()) before dividing.
-  auto const scale_factor = numeric::detail::ipow<Rep, Rad>(-static_cast<int>(rhs.scale()));
+  auto const make_result = [&](Rep value) {
+    return numeric::fixed_point<Rep, Rad>{numeric::scaled_integer<Rep>{value, lhs.scale()}};
+  };
+  auto const magnitude = [](Rep value) {
+    return value < 0 ? static_cast<U>(U{0} - static_cast<U>(value)) : static_cast<U>(value);
+  };
 
-  if (!numeric::multiplication_overflow<Rep>(lhs.value(), scale_factor)) {
-    Rep scaled_dividend = lhs.value() * scale_factor;
-    Rep quotient        = scaled_dividend / rhs.value();
-    Rep remainder       = scaled_dividend % rhs.value();
+  if (rhs.value() == 0) { return cuda::std::nullopt; }
+  if (lhs.value() == 0) { return make_result(0); }
 
-    if (method == rounding_method::HALF_UP) {
-      auto abs_remainder = (remainder < 0) ? -remainder : remainder;
-      auto abs_divisor   = (rhs.value() < 0) ? -rhs.value() : rhs.value();
-      if (abs_remainder * 2 >= abs_divisor) { quotient += (quotient >= 0) ? 1 : -1; }
-    } else if (method == rounding_method::HALF_EVEN) {
-      auto abs_rem_2   = ((remainder < 0) ? -remainder : remainder) * 2;
-      auto abs_divisor = (rhs.value() < 0) ? -rhs.value() : rhs.value();
-      if (abs_rem_2 > abs_divisor || (abs_rem_2 == abs_divisor && (quotient % 2) != 0)) {
-        quotient += (quotient >= 0) ? 1 : -1;
-      }
+  bool const negative = (lhs.value() < 0) != (rhs.value() < 0);
+  U dividend          = magnitude(lhs.value());
+  U divisor           = magnitude(rhs.value());
+
+  // The quotient at the scale of `lhs` is `lhs.value() * radix^(-rhs.scale()) / rhs.value()`.
+  auto const exponent = -static_cast<int32_t>(rhs.scale());
+  auto const radix    = static_cast<U>(Rad);
+  U factor{};
+  if (exponent >= 0) {
+    if (!checked_power(radix, exponent, factor) || !checked_multiply(dividend, factor, dividend)) {
+      return cuda::std::nullopt;
     }
-
-    return numeric::fixed_point<Rep, Rad>{numeric::scaled_integer<Rep>{quotient, lhs.scale()}};
+  } else if (!checked_power(radix, -exponent, factor) ||
+             !checked_multiply(divisor, factor, divisor)) {
+    // The divisor is more than twice the largest possible dividend, so the quotient rounds to 0.
+    return make_result(0);
   }
 
-  if constexpr (cuda::std::is_same_v<Rep, int32_t>) {
-    using WiderRep      = int64_t;
-    WiderRep wide_scale = static_cast<WiderRep>(scale_factor);
-    bool overflow_in_int64 =
-      numeric::multiplication_overflow<WiderRep>(static_cast<WiderRep>(lhs.value()), wide_scale);
+  U quotient            = dividend / divisor;
+  U const remainder     = dividend % divisor;
+  U const rest          = divisor - remainder;
+  bool const round_away = method == rounding_method::HALF_EVEN
+                            ? (remainder > rest || (remainder == rest && quotient % 2 != 0))
+                            : remainder >= rest;
+  if (round_away) { ++quotient; }
 
-    if (!overflow_in_int64) {
-      WiderRep scaled_dividend = static_cast<WiderRep>(lhs.value()) * wide_scale;
-      WiderRep wide_divisor    = static_cast<WiderRep>(rhs.value());
-      WiderRep quotient        = scaled_dividend / wide_divisor;
-      WiderRep remainder       = scaled_dividend % wide_divisor;
+  auto const max_magnitude =
+    static_cast<U>(cuda::std::numeric_limits<Rep>::max()) + (negative ? 1 : 0);
+  if (quotient > max_magnitude) { return cuda::std::nullopt; }
 
-      if (method == rounding_method::HALF_UP) {
-        auto abs_remainder = (remainder < 0) ? -remainder : remainder;
-        auto abs_divisor   = (wide_divisor < 0) ? -wide_divisor : wide_divisor;
-        if (abs_remainder * 2 >= abs_divisor) { quotient += (quotient >= 0) ? 1 : -1; }
-      } else if (method == rounding_method::HALF_EVEN) {
-        auto abs_rem_2   = ((remainder < 0) ? -remainder : remainder) * 2;
-        auto abs_divisor = (wide_divisor < 0) ? -wide_divisor : wide_divisor;
-        if (abs_rem_2 > abs_divisor || (abs_rem_2 == abs_divisor && (quotient % 2) != 0)) {
-          quotient += (quotient >= 0) ? 1 : -1;
-        }
-      }
-
-      return numeric::fixed_point<Rep, Rad>{
-        numeric::scaled_integer<Rep>{static_cast<Rep>(quotient), lhs.scale()}};
-    }
-  }
-
-  using WidestRep           = __int128_t;
-  WidestRep wide_scale      = static_cast<WidestRep>(scale_factor);
-  WidestRep scaled_dividend = static_cast<WidestRep>(lhs.value()) * wide_scale;
-  WidestRep wide_divisor    = static_cast<WidestRep>(rhs.value());
-  WidestRep quotient        = scaled_dividend / wide_divisor;
-  WidestRep remainder       = scaled_dividend % wide_divisor;
-
-  if (method == rounding_method::HALF_UP) {
-    WidestRep abs_rem = (remainder < 0) ? -remainder : remainder;
-    WidestRep abs_div = (wide_divisor < 0) ? -wide_divisor : wide_divisor;
-    if (abs_rem * 2 >= abs_div) { quotient += (quotient >= 0) ? 1 : -1; }
-  } else if (method == rounding_method::HALF_EVEN) {
-    WidestRep abs_rem   = (remainder < 0) ? -remainder : remainder;
-    WidestRep abs_div   = (wide_divisor < 0) ? -wide_divisor : wide_divisor;
-    WidestRep abs_rem_2 = abs_rem * 2;
-    if (abs_rem_2 > abs_div || (abs_rem_2 == abs_div && (quotient % 2) != 0)) {
-      quotient += (quotient >= 0) ? 1 : -1;
-    }
-  }
-
-  return numeric::fixed_point<Rep, Rad>{
-    numeric::scaled_integer<Rep>{static_cast<Rep>(quotient), lhs.scale()}};
+  return make_result(negative ? static_cast<Rep>(U{0} - quotient) : static_cast<Rep>(quotient));
 }
 
 }  // namespace cudf::detail

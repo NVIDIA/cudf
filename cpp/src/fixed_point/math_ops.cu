@@ -6,23 +6,26 @@
 #include "math_ops.cuh"
 
 #include <cudf/column/column.hpp>
+#include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/column/column_view.hpp>
-#include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/valid_if.cuh>
 #include <cudf/fixed_point/math_ops.hpp>
 #include <cudf/scalar/scalar.hpp>
-#include <cudf/table/table_view.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
+#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/std/optional>
 #include <cuda/stream>
-#include <thrust/transform.h>
+#include <thrust/for_each.h>
 
 #include <memory>
 
@@ -30,72 +33,79 @@ namespace cudf {
 namespace detail {
 namespace {
 
-template <typename T>
+template <typename Rep>
+struct column_operand {
+  column_device_view column;
+
+  __device__ bool is_valid(size_type i) const { return column.is_valid(i); }
+  __device__ Rep value(size_type i) const { return column.element<Rep>(i); }
+};
+
+template <typename Rep>
+struct scalar_operand {
+  Rep scalar_value;
+
+  __device__ bool is_valid(size_type) const { return true; }
+  __device__ Rep value(size_type) const { return scalar_value; }
+};
+
+template <typename T, typename LhsOperand, typename RhsOperand>
 struct divide_decimal_fn {
   using Rep = typename T::rep;
 
+  LhsOperand lhs;
+  RhsOperand rhs;
   numeric::scale_type lhs_scale;
   numeric::scale_type rhs_scale;
   rounding_method method;
+  Rep* output;
+  bool* output_valid;
 
-  __device__ Rep operator()(Rep lhs, Rep rhs) const
+  __device__ void operator()(size_type i) const
   {
-    return divide_decimal(T{numeric::scaled_integer<Rep>{lhs, lhs_scale}},
-                          T{numeric::scaled_integer<Rep>{rhs, rhs_scale}},
-                          method)
-      .value();
+    cuda::std::optional<T> quotient;
+    if (lhs.is_valid(i) && rhs.is_valid(i)) {
+      quotient = divide_decimal(T{numeric::scaled_integer<Rep>{lhs.value(i), lhs_scale}},
+                                T{numeric::scaled_integer<Rep>{rhs.value(i), rhs_scale}},
+                                method);
+    }
+    output[i]       = quotient.has_value() ? quotient->value() : Rep{0};
+    output_valid[i] = quotient.has_value();
   }
 };
 
 /**
- * @brief Writes `lhs[i] / rhs[i]` into `output[i]` for every row of `output`.
+ * @brief Divides `lhs` by `rhs` row by row into a new column of type `output_type`.
  *
- * Column operands are passed as column iterators and scalar operands as constant iterators, so
- * all three public overloads share this transform.
+ * A row is null if either operand is null or the division has no result.
  */
-template <typename T, typename LhsIterator, typename RhsIterator>
-void divide_decimal_transform(LhsIterator lhs,
-                              RhsIterator rhs,
-                              numeric::scale_type lhs_scale,
-                              numeric::scale_type rhs_scale,
-                              rounding_method method,
-                              mutable_column_view output,
-                              cuda::stream_ref stream)
+template <typename T, typename LhsOperand, typename RhsOperand>
+std::unique_ptr<column> divide_decimal_rows(LhsOperand lhs,
+                                            RhsOperand rhs,
+                                            numeric::scale_type lhs_scale,
+                                            numeric::scale_type rhs_scale,
+                                            data_type output_type,
+                                            size_type size,
+                                            rounding_method method,
+                                            cuda::stream_ref stream,
+                                            rmm::device_async_resource_ref mr)
 {
   using Rep = typename T::rep;
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                    lhs,
-                    lhs + output.size(),
-                    rhs,
-                    output.begin<Rep>(),
-                    divide_decimal_fn<T>{lhs_scale, rhs_scale, method});
-}
 
-/**
- * @brief Allocates the output of a column-scalar division, with nulls wherever `input` is null,
- * or everywhere if the scalar is invalid.
- */
-std::unique_ptr<column> make_output_column(data_type type,
-                                           column_view const& input,
-                                           bool scalar_is_valid,
-                                           cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
-{
-  auto const size = input.size();
-  if (!scalar_is_valid) {
-    return make_fixed_width_column(
-      type,
-      size,
-      cudf::detail::create_null_mask(size, mask_state::ALL_NULL, stream, mr),
-      size,
-      stream,
-      mr);
-  }
-  if (input.has_nulls()) {
-    return make_fixed_width_column(
-      type, size, cudf::detail::copy_bitmask(input, stream, mr), input.null_count(), stream, mr);
-  }
-  return make_fixed_width_column(type, size, mask_state::UNALLOCATED, stream, mr);
+  auto result = make_fixed_width_column(output_type, size, mask_state::UNALLOCATED, stream, mr);
+  auto valid  = rmm::device_uvector<bool>(size, stream, cudf::get_current_device_resource_ref());
+
+  thrust::for_each_n(
+    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cuda::counting_iterator<size_type>{0},
+    size,
+    divide_decimal_fn<T, LhsOperand, RhsOperand>{
+      lhs, rhs, lhs_scale, rhs_scale, method, result->mutable_view().begin<Rep>(), valid.data()});
+
+  auto [null_mask, null_count] =
+    cudf::detail::valid_if(valid.begin(), valid.end(), cuda::std::identity{}, stream, mr);
+  if (null_count > 0) { result->set_null_mask(std::move(null_mask), null_count); }
+  return result;
 }
 
 struct divide_decimal_dispatch {
@@ -114,25 +124,19 @@ struct divide_decimal_dispatch {
                                      rmm::device_async_resource_ref mr) const
     requires(cudf::is_fixed_point<T>())
   {
-    using Rep = typename T::rep;
+    using Rep        = typename T::rep;
+    auto const d_lhs = column_device_view::create(lhs, stream);
+    auto const d_rhs = column_device_view::create(rhs, stream);
 
-    std::unique_ptr<column> result;
-    if (lhs.has_nulls() || rhs.has_nulls()) {
-      auto [null_mask, null_count] = cudf::detail::bitmask_and(table_view{{lhs, rhs}}, stream, mr);
-      result                       = make_fixed_width_column(
-        lhs.type(), lhs.size(), std::move(null_mask), null_count, stream, mr);
-    } else {
-      result = make_fixed_width_column(lhs.type(), lhs.size(), mask_state::UNALLOCATED, stream, mr);
-    }
-
-    divide_decimal_transform<T>(lhs.begin<Rep>(),
-                                rhs.begin<Rep>(),
-                                numeric::scale_type{lhs.type().scale()},
-                                numeric::scale_type{rhs.type().scale()},
-                                method,
-                                result->mutable_view(),
-                                stream);
-    return result;
+    return divide_decimal_rows<T>(column_operand<Rep>{*d_lhs},
+                                  column_operand<Rep>{*d_rhs},
+                                  numeric::scale_type{lhs.type().scale()},
+                                  numeric::scale_type{rhs.type().scale()},
+                                  lhs.type(),
+                                  lhs.size(),
+                                  method,
+                                  stream,
+                                  mr);
   }
 
   template <typename T>
@@ -143,17 +147,22 @@ struct divide_decimal_dispatch {
                                      rmm::device_async_resource_ref mr) const
     requires(cudf::is_fixed_point<T>())
   {
+    using Rep = typename T::rep;
+    if (!rhs.is_valid(stream)) {
+      return make_fixed_width_column(lhs.type(), lhs.size(), mask_state::ALL_NULL, stream, mr);
+    }
+    auto const d_lhs     = column_device_view::create(lhs, stream);
     auto const rhs_value = static_cast<fixed_point_scalar<T> const&>(rhs).value(stream);
-    auto result          = make_output_column(lhs.type(), lhs, rhs.is_valid(stream), stream, mr);
 
-    divide_decimal_transform<T>(lhs.begin<typename T::rep>(),
-                                cuda::make_constant_iterator(rhs_value),
-                                numeric::scale_type{lhs.type().scale()},
-                                numeric::scale_type{rhs.type().scale()},
-                                method,
-                                result->mutable_view(),
-                                stream);
-    return result;
+    return divide_decimal_rows<T>(column_operand<Rep>{*d_lhs},
+                                  scalar_operand<Rep>{rhs_value},
+                                  numeric::scale_type{lhs.type().scale()},
+                                  numeric::scale_type{rhs.type().scale()},
+                                  lhs.type(),
+                                  lhs.size(),
+                                  method,
+                                  stream,
+                                  mr);
   }
 
   template <typename T>
@@ -164,17 +173,23 @@ struct divide_decimal_dispatch {
                                      rmm::device_async_resource_ref mr) const
     requires(cudf::is_fixed_point<T>())
   {
+    using Rep              = typename T::rep;
+    auto const output_type = data_type{rhs.type().id(), lhs.type().scale()};
+    if (!lhs.is_valid(stream)) {
+      return make_fixed_width_column(output_type, rhs.size(), mask_state::ALL_NULL, stream, mr);
+    }
     auto const lhs_value = static_cast<fixed_point_scalar<T> const&>(lhs).value(stream);
-    auto result          = make_output_column(rhs.type(), rhs, lhs.is_valid(stream), stream, mr);
+    auto const d_rhs     = column_device_view::create(rhs, stream);
 
-    divide_decimal_transform<T>(cuda::make_constant_iterator(lhs_value),
-                                rhs.begin<typename T::rep>(),
-                                numeric::scale_type{lhs.type().scale()},
-                                numeric::scale_type{rhs.type().scale()},
-                                method,
-                                result->mutable_view(),
-                                stream);
-    return result;
+    return divide_decimal_rows<T>(scalar_operand<Rep>{lhs_value},
+                                  column_operand<Rep>{*d_rhs},
+                                  numeric::scale_type{lhs.type().scale()},
+                                  numeric::scale_type{rhs.type().scale()},
+                                  output_type,
+                                  rhs.size(),
+                                  method,
+                                  stream,
+                                  mr);
   }
 };
 
@@ -202,7 +217,7 @@ std::unique_ptr<column> divide_decimal(column_view const& lhs,
                                        rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(cudf::is_fixed_point(lhs.type()), "Column must be decimal type");
-  CUDF_EXPECTS(rhs.type() == lhs.type(), "Scalar type must match column type");
+  CUDF_EXPECTS(rhs.type().id() == lhs.type().id(), "Scalar base type must match column type");
 
   if (lhs.is_empty()) { return make_empty_column(lhs.type()); }
 
@@ -216,9 +231,9 @@ std::unique_ptr<column> divide_decimal(scalar const& lhs,
                                        rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(cudf::is_fixed_point(rhs.type()), "Column must be decimal type");
-  CUDF_EXPECTS(lhs.type() == rhs.type(), "Scalar type must match column type");
+  CUDF_EXPECTS(lhs.type().id() == rhs.type().id(), "Scalar base type must match column type");
 
-  if (rhs.is_empty()) { return make_empty_column(rhs.type()); }
+  if (rhs.is_empty()) { return make_empty_column(data_type{rhs.type().id(), lhs.type().scale()}); }
 
   return type_dispatcher(rhs.type(), divide_decimal_dispatch{}, lhs, rhs, method, stream, mr);
 }

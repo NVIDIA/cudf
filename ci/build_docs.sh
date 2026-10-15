@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 set -euo pipefail
@@ -38,14 +38,6 @@ rapids-print-env
 RAPIDS_DOCS_DIR="$(mktemp -d)"
 export RAPIDS_DOCS_DIR
 
-rapids-logger "Build cuDF Java docs"
-pushd java
-export JDK17_HOME="${CONDA_PREFIX}"
-mvn -B -Pjavadoc-jdk17 -DskipTests javadoc:javadoc-no-fork
-mkdir -p "${RAPIDS_DOCS_DIR}/cudf-java/html"
-mv target/site/apidocs/* "${RAPIDS_DOCS_DIR}/cudf-java/html"
-popd
-
 EXITCODE=0
 trap "EXITCODE=1" ERR
 set +e
@@ -56,6 +48,11 @@ aws s3 cp s3://rapidsai-docs/librmm/html/"${RAPIDS_VERSION_MAJOR_MINOR}"/rmm.tag
 doxygen Doxyfile
 mkdir -p "${RAPIDS_DOCS_DIR}/libcudf/html"
 mv html/* "${RAPIDS_DOCS_DIR}/libcudf/html"
+popd
+
+rapids-logger "Build cuDF Java Doxygen XML"
+pushd java/doxygen
+doxygen Doxyfile
 popd
 
 rapids-logger "Build Python docs"

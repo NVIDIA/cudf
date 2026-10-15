@@ -147,6 +147,8 @@ lexers["pseudo"] = PseudoLexer()
 # -- Custom Extensions ----------------------------------------------------
 sys.path.append(os.path.abspath("./_ext"))
 
+from breathe_java import generate_api_pages  # noqa: E402
+
 # -- General configuration ------------------------------------------------
 
 # If your documentation needs a minimal Sphinx version, state it here.
@@ -158,6 +160,7 @@ sys.path.append(os.path.abspath("./_ext"))
 # ones.
 extensions = [
     "breathe",
+    "breathe_java",
     "sphinx.ext.intersphinx",
     "sphinx.ext.autodoc",
     "sphinx.ext.autosummary",
@@ -281,10 +284,23 @@ def clean_all_xml_files(path):
 
 
 # Breathe Configuration
-breathe_projects = {"libcudf": "../../../cpp/doxygen/xml"}
-for project_path in breathe_projects.values():
-    clean_all_xml_files(project_path)
+breathe_projects = {
+    "libcudf": "../../../cpp/doxygen/xml",
+    "cudf-java": "../../../java/doxygen/xml",
+}
+clean_all_xml_files(breathe_projects["libcudf"])
 breathe_default_project = "libcudf"
+
+# The cuDF Java API is rendered from Doxygen XML using the java domain
+# provided by the breathe_java extension.
+breathe_domain_by_extension = {"java": "java"}
+breathe_java_projects = ["cudf-java"]
+generate_api_pages(
+    breathe_projects["cudf-java"],
+    "java/api",
+    project="cudf-java",
+    title="API Reference",
+)
 
 
 nb_execution_excludepatterns = ["performance-comparisons.ipynb"]
@@ -366,6 +382,8 @@ html_theme_options = {
     "github_url": "https://github.com/NVIDIA/cudf",
     "show_toc_level": 1,
     "navbar_align": "content",
+    # Show every top-level library in the navbar instead of a "More" menu.
+    "header_links_before_dropdown": 7,
     "navbar_center": "navbar-nav, version-switcher, navbar-external-links",
     "navigation_with_keys": True,
     "switcher": {

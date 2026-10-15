@@ -98,6 +98,7 @@ cpp/thirdparty/googletest/
 ## Doxygen
 cpp/doxygen/html
 cpp/doxygen/xml
+java/doxygen/xml
 
 #Java
 target
@@ -171,6 +172,7 @@ dask-worker-space/
 # Sphinx docs & build artifacts
 docs/cudf/source/api_docs/generated/*
 docs/cudf/source/user_guide/api_docs/api/*
+docs/cudf/source/java/api
 docs/cudf/source/user_guide/example_output/*
 docs/cudf/source/user_guide/cudf.*Dtype.*.rst
 _html

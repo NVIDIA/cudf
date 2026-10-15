@@ -99,7 +99,7 @@ jobs:
           - 'cpp/include/**'
           - 'cpp/libcudf_kafka/include/**'
           - 'ci/build_docs.sh'
-          - 'java/pom.xml'
+          - 'java/doxygen/**'
           - 'java/src/main/java/**'
           - 'python/**'
         test_cpp_common:

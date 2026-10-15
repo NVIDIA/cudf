@@ -22,6 +22,8 @@ suite, and is composed of multiple sub-projects:
      - A CUDA C++ library with `Apache Arrow <https://arrow.apache.org/>`_ compliant data structures and fundamental algorithms for tabular data.
    * - :doc:`pylibcudf <pylibcudf/index>`
      - A Python library providing `Cython <https://cython.org/>`_ bindings for libcudf.
+   * - :doc:`cuDF Java <java/index>`
+     - A Java library providing JNI bindings for libcudf.
 
 Accelerated Data Engines and Tools
 ----------------------------------
@@ -68,6 +70,7 @@ to get up-and-running with cuDF.
    cudf_polars/index
    libcudf/index
    pylibcudf/index
+   java/index
 
 .. toctree::
    :maxdepth: 1

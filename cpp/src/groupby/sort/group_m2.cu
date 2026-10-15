@@ -54,15 +54,16 @@ void compute_m2_fn(column_device_view const& values,
                    ResultType* d_result,
                    cuda::stream_ref stream)
 {
-  auto m2_fn = m2_transform<ResultType, decltype(values_iter)>{
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref();
+  auto m2_fn                = m2_transform<ResultType, decltype(values_iter)>{
     values, values_iter, d_means, group_labels.data()};
   auto const itr = cuda::counting_iterator<size_type>{0};
   // Using a temporary buffer for intermediate transform results instead of
   // using the transform-iterator directly in reduce_by_key
   // improves compile-time significantly.
-  auto m2_vals = cuda::device_buffer<ResultType>(
-    stream, cudf::get_current_device_resource_ref(), values.size(), cuda::no_init);
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  auto m2_vals =
+    cuda::device_buffer<ResultType>(stream, mr.get_temporary_mr(), values.size(), cuda::no_init);
+  thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                     itr,
                     itr + values.size(),
                     m2_vals.begin(),
@@ -74,7 +75,8 @@ void compute_m2_fn(column_device_view const& values,
                                     cuda::make_discard_iterator(),
                                     d_result,
                                     cuda::std::plus<ResultType>(),
-                                    stream);
+                                    stream,
+                                    mr.as_temporary());
 }
 
 struct m2_functor {

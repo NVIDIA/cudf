@@ -43,9 +43,10 @@ bool has_nonempty_null_rows(cudf::column_view const& input, cuda::stream_ref str
     return d_input.is_null_nocheck(row_idx) && (offsets[row_idx] != offsets[row_idx + 1]);
   };
 
-  auto const row_begin = cuda::counting_iterator<cudf::size_type>{0};
-  auto const row_end   = row_begin + input.size();
-  return cudf::detail::count_if(row_begin, row_end, is_dirty_row, stream) > 0;
+  auto const row_begin      = cuda::counting_iterator<cudf::size_type>{0};
+  auto const row_end        = row_begin + input.size();
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref();
+  return cudf::detail::count_if(row_begin, row_end, is_dirty_row, stream, mr.as_temporary()) > 0;
 }
 
 }  // namespace

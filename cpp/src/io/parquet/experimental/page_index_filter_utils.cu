@@ -582,10 +582,12 @@ std::pair<std::vector<size_type>, size_type> compute_page_row_offsets(
 
 bool are_all_rows_retained(cudf::column_view const& row_mask, cuda::stream_ref stream)
 {
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref();
   return cudf::detail::all_of(cuda::counting_iterator<cudf::size_type>{0},
                               cuda::counting_iterator{row_mask.size()},
                               row_mask_accessor{row_mask},
-                              stream);
+                              stream,
+                              mr.as_temporary());
 }
 
 thrust::host_vector<bool> compute_row_range_selection_mask(
@@ -785,7 +787,8 @@ std::unique_ptr<column> compute_row_mask_from_page_stats(
                                segment_row_offsets.end(),
                                row_segment_indices.begin(),
                                row_segment_indices.end(),
-                               stream);
+                               stream,
+                               cudf::memory_resources{temp_mr, temp_mr});
 
   // Gather segment-level mask to row-level mask
   auto row_mask = cudf::detail::gather(cudf::table_view{{segment_mask->view()}},

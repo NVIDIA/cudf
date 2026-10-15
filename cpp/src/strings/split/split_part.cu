@@ -31,12 +31,13 @@ rmm::device_uvector<int64_t> find_string_delimiter_positions(strings_column_view
                                                              cudf::string_view delimiter,
                                                              cuda::stream_ref stream)
 {
+  cudf::memory_resources mr        = cudf::get_current_device_resource_ref();
   auto [first_offset, last_offset] = get_first_and_last_offset(input, stream);
   auto const chars_bytes           = last_offset - first_offset;
   auto delimiter_fn =
     string_delimiter_fn{delimiter, chars_bytes, input.chars_begin(stream) + first_offset};
 
-  cudf::detail::device_scalar<int64_t> d_count(0, stream, cudf::get_current_device_resource_ref());
+  cudf::detail::device_scalar<int64_t> d_count(0, stream, mr.get_temporary_mr());
   if (chars_bytes > 0) {
     constexpr int64_t block_size         = 512;
     constexpr size_type bytes_per_thread = 4;
@@ -52,19 +53,21 @@ rmm::device_uvector<int64_t> find_string_delimiter_positions(strings_column_view
                               cuda::counting_iterator<int64_t>{chars_bytes},
                               positions.begin(),
                               delimiter_fn,
-                              stream);
+                              stream,
+                              mr.as_temporary());
   return positions;
 }
 
 rmm::device_uvector<int64_t> find_whitespace_delimiter_positions(strings_column_view const& input,
                                                                  cuda::stream_ref stream)
 {
+  cudf::memory_resources mr        = cudf::get_current_device_resource_ref();
   auto [first_offset, last_offset] = get_first_and_last_offset(input, stream);
   auto const chars_bytes           = last_offset - first_offset;
   auto delimiter_fn =
     whitespace_delimiter_fn{chars_bytes, input.chars_begin(stream) + first_offset};
 
-  cudf::detail::device_scalar<int64_t> d_count(0, stream, cudf::get_current_device_resource_ref());
+  cudf::detail::device_scalar<int64_t> d_count(0, stream, mr.get_temporary_mr());
   if (chars_bytes > 0) {
     constexpr int64_t block_size         = 512;
     constexpr size_type bytes_per_thread = 4;
@@ -80,7 +83,8 @@ rmm::device_uvector<int64_t> find_whitespace_delimiter_positions(strings_column_
                               cuda::counting_iterator<int64_t>{chars_bytes},
                               positions.begin(),
                               delimiter_fn,
-                              stream);
+                              stream,
+                              mr.as_temporary());
   return positions;
 }
 

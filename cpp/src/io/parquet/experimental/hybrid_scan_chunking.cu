@@ -78,7 +78,8 @@ void hybrid_scan_reader_impl::setup_next_pass(
   std::span<bool const> data_page_mask,
   std::optional<cudf::column_view> row_mask)
 {
-  auto const num_passes = _file_itm_data.num_passes();
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref();
+  auto const num_passes     = _file_itm_data.num_passes();
   CUDF_EXPECTS(num_passes == 1,
                "The hybrid scan reader currently only supports single-pass read mode");
 
@@ -176,8 +177,12 @@ void hybrid_scan_reader_impl::setup_next_pass(
       }
       auto chunk_iter = cuda::transform_iterator(pass.chunks.d_begin(),
                                                  parquet::detail::get_chunk_compressed_size{});
-      return cudf::detail::reduce(
-        chunk_iter, chunk_iter + pass.chunks.size(), size_t{0}, cuda::std::plus<size_t>{}, _stream);
+      return cudf::detail::reduce(chunk_iter,
+                                  chunk_iter + pass.chunks.size(),
+                                  size_t{0},
+                                  cuda::std::plus<size_t>{},
+                                  _stream,
+                                  mr.as_temporary());
     }();
     pass.base_mem_size = decomp_dict_data_size + compressed_data_size;
 

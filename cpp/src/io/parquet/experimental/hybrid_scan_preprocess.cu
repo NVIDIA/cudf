@@ -402,11 +402,13 @@ bool hybrid_scan_reader_impl::are_all_rows_pruned(cudf::column_view const& row_m
 {
   CUDF_EXPECTS(row_mask.type().id() == type_id::BOOL8,
                "Input row mask column must be a boolean column");
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref();
   return cudf::detail::all_of(
     cuda::counting_iterator<cudf::size_type>{0},
     cuda::counting_iterator{row_mask.size()},
     is_row_pruned_fn{row_mask.nullable(), row_mask.begin<bool>(), row_mask.null_mask()},
-    stream);
+    stream,
+    mr.as_temporary());
 }
 
 void hybrid_scan_reader_impl::update_row_mask(cudf::column_view const& in_row_mask,

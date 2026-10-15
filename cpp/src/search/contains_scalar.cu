@@ -61,9 +61,10 @@ struct contains_scalar_dispatch {
     // Don't need to check for needle validity. If it is invalid, it should be handled by the caller
     // before dispatching to this function.
 
-    using DType           = device_storage_type_t<Element>;
-    auto const d_haystack = column_device_view::create(haystack, stream);
-    auto const d_needle   = get_scalar_device_view(
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref();
+    using DType               = device_storage_type_t<Element>;
+    auto const d_haystack     = column_device_view::create(haystack, stream);
+    auto const d_needle       = get_scalar_device_view(
       static_cast<cudf::scalar_type_t<Element>&>(const_cast<scalar&>(needle)));
 
     auto const begin =
@@ -77,7 +78,8 @@ struct contains_scalar_dispatch {
                auto needle = get_scalar_value<Element>(d_needle);
                return val_pair.has_value() && (needle == *val_pair);
              },
-             stream) > 0;
+             stream,
+             mr.as_temporary()) > 0;
   }
 
   template <typename Element>
@@ -93,11 +95,12 @@ struct contains_scalar_dispatch {
     // In addition, haystack and needle structure compatibility will be checked later on by
     // constructor of the table comparator.
 
-    auto const haystack_tv   = table_view{{haystack}};
-    auto const temp_mr       = cudf::get_current_device_resource_ref();
-    auto const needle_as_col = make_column_from_scalar(needle, 1, stream, temp_mr);
-    auto const needle_tv     = table_view{{needle_as_col->view()}};
-    auto const has_nulls     = has_nested_nulls(haystack_tv) || has_nested_nulls(needle_tv);
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref();
+    auto const temp_mr        = mr.get_temporary_mr();
+    auto const haystack_tv    = table_view{{haystack}};
+    auto const needle_as_col  = make_column_from_scalar(needle, 1, stream, temp_mr);
+    auto const needle_tv      = table_view{{needle_as_col->view()}};
+    auto const has_nulls      = has_nested_nulls(haystack_tv) || has_nested_nulls(needle_tv);
 
     auto const comparator =
       cudf::detail::row::equality::two_table_comparator(haystack_tv, needle_tv, stream, temp_mr);

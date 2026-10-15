@@ -70,7 +70,9 @@ dremel_data get_encoding(column_view h_col,
                          bool always_nullable,
                          cuda::stream_ref stream)
 {
-  auto get_list_level = [](column_view col) {
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref();
+  auto const temp_mr        = mr.get_temporary_mr();
+  auto get_list_level       = [](column_view col) {
     while (col.type().id() == type_id::STRUCT) {
       col = col.child(0);
     }
@@ -79,8 +81,8 @@ dremel_data get_encoding(column_view h_col,
 
   auto get_empties = [&](column_view col, size_type start, size_type end) {
     auto lcv = lists_column_view(get_list_level(col));
-    rmm::device_uvector<size_type> empties_idx(lcv.size(), stream);
-    rmm::device_uvector<size_type> empties(lcv.size(), stream);
+    rmm::device_uvector<size_type> empties_idx(lcv.size(), stream, temp_mr);
+    rmm::device_uvector<size_type> empties(lcv.size(), stream, temp_mr);
     auto d_off = lcv.offsets().data<int32_t>();
 
     auto empties_idx_end = cudf::detail::copy_if(
@@ -88,13 +90,13 @@ dremel_data get_encoding(column_view h_col,
       cuda::counting_iterator<size_type>{end},
       empties_idx.begin(),
       [d_off] __device__(auto i) -> bool { return d_off[i] == d_off[i + 1]; },
-      stream);
-    auto empties_end =
-      thrust::gather(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                     empties_idx.begin(),
-                     empties_idx_end,
-                     lcv.offsets().begin<int32_t>(),
-                     empties.begin());
+      stream,
+      mr.as_temporary());
+    auto empties_end = thrust::gather(rmm::exec_policy_nosync(stream, temp_mr),
+                                      empties_idx.begin(),
+                                      empties_idx_end,
+                                      lcv.offsets().begin<int32_t>(),
+                                      empties.begin());
 
     auto empties_size = empties_end - empties.begin();
     return std::make_tuple(std::move(empties), std::move(empties_idx), empties_size);
@@ -119,11 +121,8 @@ dremel_data get_encoding(column_view h_col,
   }
   std::unique_ptr<column> empty_list_offset_col;
   if (has_empty_list_offsets) {
-    empty_list_offset_col = make_fixed_width_column(data_type(type_id::INT32),
-                                                    1,
-                                                    mask_state::UNALLOCATED,
-                                                    stream,
-                                                    cudf::get_current_device_resource_ref());
+    empty_list_offset_col = make_fixed_width_column(
+      data_type(type_id::INT32), 1, mask_state::UNALLOCATED, stream, temp_mr);
     CUDF_CUDA_TRY(cudaMemsetAsync(
       empty_list_offset_col->mutable_view().head(), 0, sizeof(int32_t), stream.get()));
     std::function<column_view(column_view const&)> normalize_col = [&](column_view const& col) {
@@ -261,8 +260,7 @@ dremel_data get_encoding(column_view h_col,
     max_vals_size += column_ends[l] - column_offsets[l];
   }
 
-  auto d_nullability = cudf::detail::make_device_uvector_async(
-    nullability, stream, cudf::get_current_device_resource_ref());
+  auto d_nullability = cudf::detail::make_device_uvector_async(nullability, stream, temp_mr);
 
   rmm::device_uvector<uint8_t> rep_level(max_vals_size, stream);
   rmm::device_uvector<uint8_t> def_level(max_vals_size, stream);
@@ -319,16 +317,15 @@ dremel_data get_encoding(column_view h_col,
     auto output_zip_it =
       cuda::make_zip_iterator(cuda::std::make_tuple(rep_level.begin(), def_level.begin()));
 
-    auto ends =
-      thrust::merge_by_key(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                           empties.begin(),
-                           empties.begin() + empties_size,
-                           cuda::counting_iterator{column_offsets[level + 1]},
-                           cuda::counting_iterator{column_ends[level + 1]},
-                           input_parent_zip_it,
-                           input_child_zip_it,
-                           cuda::make_discard_iterator(),
-                           output_zip_it);
+    auto ends = thrust::merge_by_key(rmm::exec_policy_nosync(stream, temp_mr),
+                                     empties.begin(),
+                                     empties.begin() + empties_size,
+                                     cuda::counting_iterator{column_offsets[level + 1]},
+                                     cuda::counting_iterator{column_ends[level + 1]},
+                                     input_parent_zip_it,
+                                     input_child_zip_it,
+                                     cuda::make_discard_iterator(),
+                                     output_zip_it);
 
     curr_rep_values_size = ends.second - output_zip_it;
 
@@ -340,14 +337,14 @@ dremel_data get_encoding(column_view h_col,
         return (i + 1 < size) && (off[i] == off[i + 1]);
       }));
     rmm::device_uvector<size_type> scan_out(offset_size_at_level, stream);
-    thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::exclusive_scan(rmm::exec_policy_nosync(stream, temp_mr),
                            scan_it,
                            scan_it + offset_size_at_level,
                            scan_out.begin());
 
     // Add scan output to existing offsets to get new offsets into merged rep level values
     new_offsets = rmm::device_uvector<size_type>(offset_size_at_level, stream);
-    thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::for_each_n(rmm::exec_policy_nosync(stream, temp_mr),
                        cuda::counting_iterator<cudf::size_type>{0},
                        offset_size_at_level,
                        [off      = lcv.offsets().data<int32_t>() + column_offsets[level],
@@ -358,7 +355,7 @@ dremel_data get_encoding(column_view h_col,
 
     // Set rep level values at level starts to appropriate rep level
     auto scatter_it = cuda::make_constant_iterator(level);
-    thrust::scatter(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::scatter(rmm::exec_policy_nosync(stream, temp_mr),
                     scatter_it,
                     scatter_it + new_offsets.size() - 1,
                     new_offsets.begin(),
@@ -408,16 +405,15 @@ dremel_data get_encoding(column_view h_col,
     auto output_zip_it =
       cuda::make_zip_iterator(cuda::std::make_tuple(rep_level.begin(), def_level.begin()));
 
-    auto ends =
-      thrust::merge_by_key(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                           transformed_empties,
-                           transformed_empties + empties_size,
-                           cuda::counting_iterator<cudf::size_type>{0},
-                           cuda::counting_iterator{curr_rep_values_size},
-                           input_parent_zip_it,
-                           input_child_zip_it,
-                           cuda::make_discard_iterator(),
-                           output_zip_it);
+    auto ends = thrust::merge_by_key(rmm::exec_policy_nosync(stream, temp_mr),
+                                     transformed_empties,
+                                     transformed_empties + empties_size,
+                                     cuda::counting_iterator<cudf::size_type>{0},
+                                     cuda::counting_iterator{curr_rep_values_size},
+                                     input_parent_zip_it,
+                                     input_child_zip_it,
+                                     cuda::make_discard_iterator(),
+                                     output_zip_it);
 
     curr_rep_values_size = ends.second - output_zip_it;
 
@@ -430,14 +426,14 @@ dremel_data get_encoding(column_view h_col,
         return (i + 1 < size) && (off[i] == off[i + 1]);
       }));
     rmm::device_uvector<size_type> scan_out(offset_size_at_level, stream);
-    thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::exclusive_scan(rmm::exec_policy_nosync(stream, temp_mr),
                            scan_it,
                            scan_it + offset_size_at_level,
                            scan_out.begin());
 
     // Add scan output to existing offsets to get new offsets into merged rep level values
     rmm::device_uvector<size_type> temp_new_offsets(offset_size_at_level, stream);
-    thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::for_each_n(rmm::exec_policy_nosync(stream, temp_mr),
                        cuda::counting_iterator<cudf::size_type>{0},
                        offset_size_at_level,
                        [off      = lcv.offsets().data<int32_t>() + column_offsets[level],
@@ -450,7 +446,7 @@ dremel_data get_encoding(column_view h_col,
 
     // Set rep level values at level starts to appropriate rep level
     auto scatter_it = cuda::make_constant_iterator(level);
-    thrust::scatter(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::scatter(rmm::exec_policy_nosync(stream, temp_mr),
                     scatter_it,
                     scatter_it + new_offsets.size() - 1,
                     new_offsets.begin(),

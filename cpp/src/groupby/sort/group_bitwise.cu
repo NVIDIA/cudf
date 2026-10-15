@@ -47,7 +47,8 @@ struct bitwise_group_reduction_functor {
                                         cuda::make_discard_iterator(),
                                         out_iter,
                                         binop,
-                                        stream);
+                                        stream,
+                                        mr);
     };
 
     auto const d_values_ptr       = column_device_view::create(values, stream);

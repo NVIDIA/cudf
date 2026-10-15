@@ -52,7 +52,8 @@ std::unique_ptr<column> group_count_valid(column_view const& values,
                                       cuda::make_discard_iterator(),
                                       result->mutable_view().begin<size_type>(),
                                       cuda::std::plus<size_type>(),
-                                      stream);
+                                      stream,
+                                      mr);
   } else {
     cudf::detail::reduce_by_key_async(group_labels.begin(),
                                       group_labels.end(),
@@ -60,7 +61,8 @@ std::unique_ptr<column> group_count_valid(column_view const& values,
                                       cuda::make_discard_iterator(),
                                       result->mutable_view().begin<size_type>(),
                                       cuda::std::plus<size_type>(),
-                                      stream);
+                                      stream,
+                                      mr);
   }
 
   return result;

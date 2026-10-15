@@ -59,8 +59,12 @@ std::unique_ptr<cudf::column> segmented_nunique(column_view const& col,
       comparator.equal_to<false>(cudf::nullate::DYNAMIC{col.has_nulls()}, null_equality::EQUAL);
 
     auto labels = rmm::device_uvector<size_type>(col.size(), stream, temp_mr);
-    cudf::detail::label_segments(
-      offsets.begin(), offsets.end(), labels.begin(), labels.end(), stream);
+    cudf::detail::label_segments(offsets.begin(),
+                                 offsets.end(),
+                                 labels.begin(),
+                                 labels.end(),
+                                 stream,
+                                 cudf::memory_resources{temp_mr, temp_mr});
     auto fn = is_unique_fn<decltype(row_equal)>{
       *d_col, row_equal, null_handling, offsets.data(), labels.data()};
 

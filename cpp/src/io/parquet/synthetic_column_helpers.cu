@@ -137,8 +137,12 @@ std::unique_ptr<cudf::column> synthesize_source_index_column(
       num_rows_per_source.begin(), num_rows_per_source.end(), host_row_offsets.begin() + 1);
     auto const row_offsets =
       cudf::detail::make_device_uvector_async(host_row_offsets, stream, mr.get_temporary_mr());
-    cudf::detail::label_segments(
-      row_offsets.begin(), row_offsets.end(), col_data.begin(), col_data.end(), stream);
+    cudf::detail::label_segments(row_offsets.begin(),
+                                 row_offsets.end(),
+                                 col_data.begin(),
+                                 col_data.end(),
+                                 stream,
+                                 mr.as_temporary());
     stream.sync();
   }
 

@@ -155,7 +155,8 @@ std::unique_ptr<column> group_covariance(column_view const& values_0,
                                     cuda::make_discard_iterator(),
                                     d_result,
                                     cuda::std::plus<result_type>(),
-                                    stream);
+                                    stream,
+                                    mr);
 
   auto is_null = [ddof, min_periods] __device__(size_type group_size) {
     return not(group_size == 0 or group_size - ddof <= 0 or group_size < min_periods);

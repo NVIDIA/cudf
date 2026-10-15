@@ -245,7 +245,8 @@ wordpiece_vocabulary::wordpiece_vocabulary(cudf::strings_column_view const& inpu
     cuda::counting_iterator{static_cast<cudf::size_type>(sub_map_indices.size())},
     sub_map_indices.begin(),
     copy_pieces_fn{*d_vocabulary},
-    stream);
+    stream,
+    mr);
   sub_map_indices.resize(cuda::std::distance(sub_map_indices.begin(), end), stream);
 
   // build a 2nd map with just the ## prefixed items
@@ -509,7 +510,8 @@ rmm::device_uvector<cudf::size_type> compute_all_tokens(
   wordpiece_vocabulary::wordpiece_vocabulary_impl const& vocabulary,
   cuda::stream_ref stream)
 {
-  auto const d_input_chars = input.chars_begin(stream) + first_offset;
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref();
+  auto const d_input_chars  = input.chars_begin(stream) + first_offset;
 
   // find beginnings of words
   auto d_edges = rmm::device_uvector<int64_t>(chars_size / 2L, stream);
@@ -522,7 +524,8 @@ rmm::device_uvector<cudf::size_type> compute_all_tokens(
       if (idx == 0) { return d_input_chars[idx] == ' '; }
       return (d_input_chars[idx] != ' ' && d_input_chars[idx - 1] == ' ');
     },
-    stream);
+    stream,
+    mr.as_temporary());
 
   auto const edges_count =
     input.size() + 1 + static_cast<int64_t>(cuda::std::distance(d_edges.begin(), edges_end));
@@ -539,7 +542,7 @@ rmm::device_uvector<cudf::size_type> compute_all_tokens(
   // merge in the input offsets to identify words starting each row
   auto d_all_edges = [&] {
     auto d_all_edges = rmm::device_uvector<int64_t>(edges_count, stream);
-    thrust::merge(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::merge(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                   d_offsets,
                   d_offsets + input.size() + 1,
                   d_edges.begin(),
@@ -554,11 +557,10 @@ rmm::device_uvector<cudf::size_type> compute_all_tokens(
   auto const unk_id      = vocabulary.unk_id;
 
   auto d_tokens = rmm::device_uvector<cudf::size_type>(chars_size, stream);
-  thrust::uninitialized_fill(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-    d_tokens.begin(),
-    d_tokens.end(),
-    no_token);
+  thrust::uninitialized_fill(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+                             d_tokens.begin(),
+                             d_tokens.end(),
+                             no_token);
 
   cudf::detail::grid_1d grid{static_cast<cudf::size_type>(d_all_edges.size()), 512};
   tokenize_all_kernel<decltype(map_ref), decltype(sub_map_ref)>

@@ -605,7 +605,8 @@ std::pair<std::unique_ptr<column>, rmm::device_uvector<string_index_pair>> split
                                   cuda::counting_iterator<int64_t>{chars_bytes},
                                   positions.begin(),
                                   delimiter_fn,
-                                  stream);
+                                  stream,
+                                  mr);
       return positions;
     }
   }();

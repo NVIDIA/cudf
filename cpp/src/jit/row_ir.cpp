@@ -887,7 +887,8 @@ bool is_nullable(column_input const& in) { return in.column.nullable(); }
 std::tuple<std::string, null_aware, std::vector<output_nullability>> ast_converter::generate_code(
   target target_id,
   std::span<std::reference_wrapper<ast::expression const> const> expressions,
-  std::string_view function_name)
+  std::string_view function_name,
+  bool force_null_aware)
 {
   CUDF_EXPECTS(!expressions.empty(), "At least one output expression is required");
 
@@ -915,7 +916,7 @@ std::tuple<std::string, null_aware, std::vector<output_nullability>> ast_convert
   // Instead of generating a single null mask or multiple null masks, we make the UDF
   // null-aware and let the UDF handle null propagation for each output.
   auto needs_per_output_nullmask = output_irs_.size() > 1 && has_nullable_inputs;
-  auto generate_null_aware_udf   = is_null_aware || needs_per_output_nullmask;
+  auto generate_null_aware_udf   = force_null_aware || is_null_aware || needs_per_output_nullmask;
 
   instance_.set_has_nulls(generate_null_aware_udf);
 
@@ -998,7 +999,8 @@ transform_args ast_converter::compute_table(
   table_view const& right_table,
   std::string_view function_name,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  rmm::device_async_resource_ref mr,
+  bool force_null_aware)
 {
   ast_converter converter{stream, mr, left_table, right_table};
 
@@ -1006,7 +1008,7 @@ transform_args ast_converter::compute_table(
   // TransformTest/1.DeeplyNestedArithmeticLogicalExpression for reference
 
   auto [code, is_null_aware, output_nullabilities] =
-    converter.generate_code(target_id, expressions, function_name);
+    converter.generate_code(target_id, expressions, function_name, force_null_aware);
   std::vector<transform_input> inputs;
   std::vector<std::unique_ptr<column>> scalar_columns;
   std::vector<std::optional<int32_t>> table_sources;

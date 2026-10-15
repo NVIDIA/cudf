@@ -481,6 +481,11 @@ rtcx_embed_includes(
   cudf/cpp/src/transform/jit INCLUDE_DIRECTORIES cudf/cpp/src
 )
 
+rtcx_embed_includes(
+  cudf_cuda_embed SOURCE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/reductions/jit DEST_DIRECTORY
+  cudf/cpp/src/reductions/jit INCLUDE_DIRECTORIES cudf/cpp/src
+)
+
 get_target_property(LIBCUDACXX_RAW_INCLUDE_DIRS CCCL::libcudacxx INTERFACE_INCLUDE_DIRECTORIES)
 
 foreach(INC_DIR IN LISTS LIBCUDACXX_RAW_INCLUDE_DIRS)
@@ -1012,6 +1017,7 @@ add_library(
   src/reductions/count.cpp
   src/reductions/distinct_count.cu
   src/reductions/histogram.cu
+  src/reductions/jit_reduce.cu
   src/reductions/max.cu
   src/reductions/mean.cu
   src/reductions/min.cu

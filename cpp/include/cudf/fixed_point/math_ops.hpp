@@ -34,6 +34,10 @@ namespace CUDF_EXPORT cudf {
  * with `binary_operator::DIV`, whose output scale is `lhs.scale() - rhs.scale()` and which
  * truncates instead of rounding.
  *
+ * An output element is null if either input element is null, if `rhs[i]` is zero, or if the
+ * rounded quotient does not fit in the output type. For `DECIMAL128`, it is also null if `lhs[i]`
+ * rescaled by `10^(-rhs.scale())` does not fit in 128 bits.
+ *
  * @throw cudf::logic_error if `lhs` and `rhs` have different sizes
  * @throw cudf::logic_error if `lhs` and `rhs` have different type ids
  * @throw cudf::logic_error if `lhs` is not a decimal type
@@ -56,10 +60,13 @@ std::unique_ptr<column> divide_decimal(
  * @brief Divides each element of a decimal column by a decimal scalar, keeping the scale of `lhs`.
  *
  * Each output element is `lhs[i] / rhs`, rounded to the scale of `lhs` using `method`.
- * The output has the same type and scale as `lhs`.
+ * The output has the same type and scale as `lhs`. `rhs` may have a different scale.
+ *
+ * Null outputs follow the same rules as the column-column overload. Every output element is null
+ * if `rhs` is invalid.
  *
  * @throw cudf::logic_error if `lhs` is not a decimal type
- * @throw cudf::logic_error if the type of `rhs` is not the type of `lhs`
+ * @throw cudf::logic_error if `rhs` and `lhs` have different type ids
  *
  * @param lhs The dividend column
  * @param rhs The divisor scalar
@@ -76,19 +83,23 @@ std::unique_ptr<column> divide_decimal(
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
- * @brief Divides a decimal scalar by each element of a decimal column.
+ * @brief Divides a decimal scalar by each element of a decimal column, keeping the scale of `lhs`.
  *
  * Each output element is `lhs / rhs[i]`, rounded to the scale of `lhs` using `method`.
+ * The output has the type id of `rhs` and the scale of `lhs`. `rhs` may have a different scale.
+ *
+ * Null outputs follow the same rules as the column-column overload. Every output element is null
+ * if `lhs` is invalid.
  *
  * @throw cudf::logic_error if `rhs` is not a decimal type
- * @throw cudf::logic_error if the type of `lhs` is not the type of `rhs`
+ * @throw cudf::logic_error if `lhs` and `rhs` have different type ids
  *
  * @param lhs The dividend scalar
  * @param rhs The divisor column
  * @param method The rounding method to use
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned column's device memory
- * @return Column containing the quotients, with the type of `rhs`
+ * @return Column containing the quotients, with the scale of `lhs`
  */
 std::unique_ptr<column> divide_decimal(
   scalar const& lhs,

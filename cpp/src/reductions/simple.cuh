@@ -308,8 +308,11 @@ struct same_element_type_dispatcher {
     if (input.is_empty()) { return cudf::make_empty_scalar_like(input, stream, mr); }
 
     // We will do reduction to find the ARGMIN/ARGMAX index, then return the element at that index.
-    auto const binop_generator =
-      cudf::reduction::detail::arg_minmax_binop_generator::create<Op>(input, stream);
+    auto const binop_generator = cudf::reduction::detail::arg_minmax_binop_generator::create<Op>(
+      input,
+      stream,
+      cudf::memory_resources{cudf::get_current_device_resource_ref(),
+                             cudf::get_current_device_resource_ref()});
     auto const binary_op = cudf::detail::cast_functor<size_type>(binop_generator.binop());
     auto const minmax_idx =
       thrust::reduce(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),

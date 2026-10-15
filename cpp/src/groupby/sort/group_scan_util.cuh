@@ -196,8 +196,11 @@ struct group_scan_functor<K,
     cuda::device_buffer<size_type> gather_map(
       stream, cudf::get_current_device_resource_ref(), values.size(), cuda::no_init);
 
-    auto const binop_generator =
-      cudf::reduction::detail::arg_minmax_binop_generator::create<K>(values, stream);
+    auto const binop_generator = cudf::reduction::detail::arg_minmax_binop_generator::create<K>(
+      values,
+      stream,
+      cudf::memory_resources{cudf::get_current_device_resource_ref(),
+                             cudf::get_current_device_resource_ref()});
     thrust::inclusive_scan_by_key(
       rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
       group_labels.begin(),

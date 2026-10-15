@@ -658,7 +658,6 @@ add_library(
   src/ast/jit/expressions.cpp
   src/ast/operators.cpp
   src/binaryop/binaryop.cpp
-  src/binaryop/decimal_ops.cu
   src/binaryop/compiled/ATan2.cu
   src/binaryop/compiled/Add.cu
   src/binaryop/compiled/BitwiseAnd.cu
@@ -734,6 +733,7 @@ add_library(
   src/filling/fill.cu
   src/filling/repeat.cu
   src/filling/sequence.cu
+  src/fixed_point/math_ops.cu
   src/groupby/common/m2_var_std.cu
   src/groupby/common/null_mask.cu
   src/groupby/common/utils.cpp

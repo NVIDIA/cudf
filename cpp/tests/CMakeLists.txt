@@ -261,11 +261,10 @@ ConfigureTest(CLAMP_TEST replace/clamp_test.cpp)
 
 # ##################################################################################################
 # * fixed_point tests -----------------------------------------------------------------------------
-ConfigureTest(FIXED_POINT_TEST fixed_point/fixed_point_tests.cpp fixed_point/fixed_point_tests.cu)
-
-# ##################################################################################################
-# * decimal_ops tests -----------------------------------------------------------------------------
-ConfigureTest(DECIMAL_OPS_TEST decimal/decimal_ops_test.cpp)
+ConfigureTest(
+  FIXED_POINT_TEST fixed_point/fixed_point_tests.cpp fixed_point/fixed_point_tests.cu
+  fixed_point/math_ops_tests.cpp
+)
 
 # ##################################################################################################
 # * unary tests -----------------------------------------------------------------------------------

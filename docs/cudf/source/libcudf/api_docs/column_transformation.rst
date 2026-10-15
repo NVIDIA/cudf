@@ -10,6 +10,7 @@ Column Transformation
 
    transformation_unaryops
    transformation_binaryops
+   transformation_fixed_point
    transformation_transform
    transformation_replace
    transformation_fill

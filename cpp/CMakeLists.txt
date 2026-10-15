@@ -640,7 +640,6 @@ add_library(
   src/ast/jit/expressions.cpp
   src/ast/operators.cpp
   src/binaryop/binaryop.cpp
-  src/binaryop/decimal_ops.cu
   src/binaryop/compiled/ATan2.cu
   src/binaryop/compiled/Add.cu
   src/binaryop/compiled/BitwiseAnd.cu
@@ -716,6 +715,7 @@ add_library(
   src/filling/fill.cu
   src/filling/repeat.cu
   src/filling/sequence.cu
+  src/fixed_point/math_ops.cu
   src/groupby/common/group_struct_minmax_scan.cu
   src/groupby/common/groupby_helper.cu
   src/groupby/common/groupby_helper_nested.cu

@@ -7,27 +7,35 @@ Breathe only ships directives for the C, C++, Python, PHP and C# domains and
 falls back to the C++ domain for everything else, which cannot parse Java
 declarations (arrays, varargs, ``extends``, ``throws``, ...). This extension
 adds a minimal ``java`` Sphinx domain and teaches Breathe to build Java
-declarations for nodes whose source file has a ``.java`` extension.
+declarations for nodes whose source file has a ``.java`` extension. It also
+adds javadoc-style member summaries, lists of inherited members, deprecation
+badges, and links to JDK types.
 
 Usage in conf.py::
 
     extensions = [..., "breathe_java"]
     breathe_domain_by_extension = {"java": "java"}
-    breathe_java_projects = ["libcudf-java"]
+    breathe_java_projects = ["cudf-java"]
 
 Each project listed in ``breathe_java_projects`` has its Doxygen XML
 preprocessed when the extension is set up (see :func:`clean_java_xml`).
+
+Both Breathe 4 and Breathe 5 are supported. Their renderers and Doxygen
+parsers differ, so everything that touches Breathe's node objects goes through
+the compatibility helpers below, and the summaries, inherited members and
+deprecation information are computed from the XML directly.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import glob
 import os
 import re
 import xml.etree.ElementTree as ET
 from typing import TYPE_CHECKING, Any
 
-from breathe import parser
+import breathe
 from breathe.renderer import sphinxrenderer
 from breathe.renderer.sphinxrenderer import (
     BaseObject,
@@ -35,6 +43,7 @@ from breathe.renderer.sphinxrenderer import (
     SphinxRenderer,
 )
 from docutils import nodes
+from packaging.version import Version
 from sphinx import addnodes
 from sphinx.directives import ObjectDescription
 from sphinx.domains import Domain, ObjType
@@ -49,6 +58,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 DOMAIN = "java"
+
+_BREATHE_GE_5 = Version(breathe.__version__) >= Version("5")
 
 # Modifiers shown in declarations. Doxygen also reports ``native`` and
 # ``synchronized`` in the type, but like javadoc we treat those as
@@ -91,30 +102,268 @@ _TOKEN_RE = re.compile(
     r"|(?P<punct>.)"
 )
 
+# JDK types referenced by the cuDF Java API, linked to the Java 8 API docs
+# (the cuDF jar targets Java 8).
+_JDK_API_URL = "https://docs.oracle.com/javase/8/docs/api/"
+_JDK_TYPES = {
+    "java.io": (
+        "Closeable",
+        "DataInputStream",
+        "DataOutputStream",
+        "File",
+        "IOException",
+        "InputStream",
+        "OutputStream",
+        "Serializable",
+        "UncheckedIOException",
+    ),
+    "java.lang": (
+        "ArithmeticException",
+        "AutoCloseable",
+        "Boolean",
+        "Byte",
+        "Character",
+        "Class",
+        "Double",
+        "Error",
+        "Exception",
+        "Float",
+        "IllegalArgumentException",
+        "IllegalStateException",
+        "IndexOutOfBoundsException",
+        "Integer",
+        "Iterable",
+        "Long",
+        "NullPointerException",
+        "Number",
+        "Object",
+        "Runnable",
+        "RuntimeException",
+        "Short",
+        "String",
+        "Thread",
+        "Throwable",
+        "UnsupportedOperationException",
+        "Void",
+    ),
+    "java.lang.ref": (
+        "PhantomReference",
+        "ReferenceQueue",
+        "SoftReference",
+        "WeakReference",
+    ),
+    "java.math": ("BigDecimal", "BigInteger", "RoundingMode"),
+    "java.nio": ("ByteBuffer",),
+    "java.nio.channels": ("FileChannel", "FileChannel.MapMode"),
+    "java.util": (
+        "ArrayList",
+        "Collection",
+        "EnumSet",
+        "HashMap",
+        "Iterator",
+        "List",
+        "Map",
+        "Map.Entry",
+        "Optional",
+        "Set",
+    ),
+    "java.util.concurrent": ("TimeUnit",),
+    "java.util.concurrent.locks": ("Lock",),
+    "java.util.function": ("BiFunction", "Consumer", "Function", "Supplier"),
+}
+_JDK_ALIASES = {"MapMode": "FileChannel.MapMode", "Entry": "Map.Entry"}
+
+
+# Doxygen refid prefix marking references to JDK types.
+_JDK_REFID_PREFIX = "jdk:"
+
+
+def _jdk_url(name: str) -> str | None:
+    """Return the javadoc URL of a JDK type given by simple or full name."""
+    name = re.sub(r"<.*", "", name).strip()
+    for package, types in _JDK_TYPES.items():
+        if name.startswith(package + "."):
+            simple = name[len(package) + 1 :]
+            if simple in types:
+                return (
+                    f"{_JDK_API_URL}{package.replace('.', '/')}/{simple}.html"
+                )
+    name = _JDK_ALIASES.get(name, name)
+    for package, types in _JDK_TYPES.items():
+        if name in types:
+            return f"{_JDK_API_URL}{package.replace('.', '/')}/{name}.html"
+    return None
+
 
 # ---------------------------------------------------------------------------
-# Doxygen XML preprocessing
+# Breathe 4/5 compatibility
 # ---------------------------------------------------------------------------
 
 
-# Doxygen ids of every compound and member in the Java projects, used to
-# tell references to undocumented Java objects apart from broken references.
-_java_ids: set[str] = set()
+def _value(x) -> str:
+    """Return a Doxygen kind or protection as a string.
+
+    Breathe 5 represents these as enums, Breathe 4 as strings.
+    """
+    return getattr(x, "value", x)
+
+
+def _compound(self: SphinxRenderer, refid: str):
+    """Return ``(file_data, compounddef)`` for the compound with *refid*."""
+    if _BREATHE_GE_5:
+        file_data = self.parse_compound(refid)
+        return file_data, file_data.compounddef[0]
+    file_data = self.compound_parser.parse(refid)
+    return file_data, file_data.compounddef
+
+
+def _member_type(node):
+    return node.type if _BREATHE_GE_5 else node.type_
+
+
+def _renderer_tables() -> list[dict]:
+    """Return the tables Breathe uses to dispatch nodes to visit methods."""
+    names = ("node_handlers", "tagged_node_handlers", "methods")
+    return [
+        getattr(SphinxRenderer, n) for n in names if hasattr(SphinxRenderer, n)
+    ]
+
+
+def _handle_declaration(
+    self: SphinxRenderer, node, objtype, declaration, **kwargs
+):
+    if _BREATHE_GE_5:
+        return self.handle_declaration(node, objtype, declaration, **kwargs)
+    return self.handle_declaration(
+        node, declaration, obj_type=objtype, **kwargs
+    )
+
+
+# ---------------------------------------------------------------------------
+# Doxygen XML preprocessing and the model of the documented API
+# ---------------------------------------------------------------------------
+
+
+@dataclasses.dataclass
+class _Member:
+    id: str
+    compound: str
+    name: str
+    kind: str
+    prot: str
+    static: bool
+    args: str
+    brief: str
+    deprecated: bool
+    enum_constant: bool
+    constructor: bool
+
+    @property
+    def documented(self) -> bool:
+        """Whether the member is rendered in the docs, as javadoc would."""
+        compound = _compounds.get(self.compound)
+        return (
+            compound is not None
+            and compound.documented
+            and self.prot in ("public", "protected")
+            and not self.name.startswith("[")
+            and not (self.constructor and compound.kind == "enum")
+        )
+
+
+@dataclasses.dataclass
+class _Compound:
+    id: str
+    fullname: str
+    kind: str
+    prot: str
+    deprecated: bool
+    members: list[str]
+    #: ``(refid, prot)`` of every member, including inherited ones.
+    all_members: list[tuple[str, str]]
+
+    @property
+    def documented(self) -> bool:
+        return self.prot in ("public", "protected")
+
+
+# The documented Java API, keyed by Doxygen id. Populated by clean_java_xml.
+_members: dict[str, _Member] = {}
+_compounds: dict[str, _Compound] = {}
+
+
+def _xml_text(element: ET.Element | None) -> str:
+    if element is None:
+        return ""
+    return " ".join("".join(element.itertext()).split())
+
+
+def _javadoc_link_text(text: str) -> str:
+    """Show link text as javadoc does: ``Class.member`` and ``member``.
+
+    Javadoc links are written ``Class#member`` and ``#member``.
+    """
+    text = re.sub(r"(?<=\w)#(?=\w)", ".", text)
+    return re.sub(r"(?<!\w)#(?=\w)", "", text)
+
+
+def _normalize_type(text: str) -> str:
+    # Doxygen pads template brackets and array suffixes with spaces.
+    text = re.sub(r"\s*<\s*", "<", text)
+    text = re.sub(r"\s*>", ">", text)
+    text = re.sub(r"\s+\[\]", "[]", text)
+    text = re.sub(r",(?=\S)", ", ", text)
+    return " ".join(text.split())
+
+
+def _source_lines(
+    filename: str, _cache: dict[str, list[str]] = {}
+) -> list[str]:
+    if filename not in _cache:
+        try:
+            with open(filename) as f:
+                _cache[filename] = f.readlines()
+        except OSError:
+            _cache[filename] = []
+    return _cache[filename]
+
+
+def _is_annotated_deprecated(location: ET.Element | None) -> bool:
+    """Whether the declaration at *location* has a ``@Deprecated`` annotation."""
+    if location is None:
+        return False
+    lines = _source_lines(location.get("file", ""))
+    index = int(location.get("line", "0")) - 1
+    if not 0 <= index < len(lines):
+        return False
+    if "@Deprecated" in lines[index]:
+        return True
+    # Annotations on the lines directly above the declaration.
+    index -= 1
+    while index >= 0 and lines[index].strip().startswith("@"):
+        if lines[index].strip().startswith("@Deprecated"):
+            return True
+        index -= 1
+    return False
 
 
 def clean_java_xml(path: str) -> None:
-    """Fix up Doxygen's Java XML for Breathe.
+    """Fix up Doxygen's Java XML for Breathe and build the API model.
 
     - Breathe 5 validates compound kinds against the C++ schema, which has no
       top-level ``enum`` compound. Java enums are rewritten as classes; the
       original kind is still recoverable from the ``enum`` prefix of the id.
     - Doxygen fails to resolve some ``{@link Class#member}`` references,
       leaving them with an empty refid, and emits others with a refid that
-      lacks the compound prefix. Both are repaired where possible, and
-      unresolvable references are replaced by their text.
+      lacks the compound prefix. Both are repaired where possible.
+      References to JDK types become links to the JDK documentation, and
+      other unresolvable references are replaced by their text.
+    - Elements that Breathe 4 cannot parse are replaced: ``{@code ...}`` by
+      ``<computeroutput>``, ``<pre>`` blocks by ``<verbatim>``, and HTML
+      character entities by the characters.
     - Link text is shown as in javadoc, ``Class.member`` instead of
       ``Class#member``.
-    - Doxygen marks package-private members of enums as public.
+    - Doxygen marks package-private classes and members of enums as public.
     """
     trees = {
         fn: ET.parse(fn)
@@ -123,14 +372,15 @@ def clean_java_xml(path: str) -> None:
     }
     member_ids: dict[str, str] = {}
     qualified_ids: dict[str, list[str]] = {}
+    interfaces: set[str] = set()
     for tree in trees.values():
         for compound in tree.getroot().iter("compounddef"):
-            _java_ids.add(compound.get("id"))
             name = compound.findtext("compoundname").replace("::", ".")
             qualified_ids.setdefault(name, []).append(compound.get("id"))
+            if compound.get("kind") == "interface":
+                interfaces.add(name)
         for member in tree.getroot().iter("memberdef"):
             id_ = member.get("id")
-            _java_ids.add(id_)
             member_ids[id_[id_.rindex("_1") :]] = id_
             qualified_ids.setdefault(
                 member.findtext("qualifiedname"), []
@@ -153,34 +403,64 @@ def clean_java_xml(path: str) -> None:
             if compound.get("kind") == "enum":
                 compound.set("kind", "class")
                 changed = True
+            prot = _declared_protection(compound, interfaces)
+            if prot != compound.get("prot"):
+                compound.set("prot", prot)
+                changed = True
             if compound.get("id").startswith("enum"):
                 changed |= _fix_enum_member_protection(compound)
+        # Breathe 4 does not know Doxygen's elements for {@code ...}, <pre>
+        # blocks and HTML character entities.
+        for code in root.iter("javadoccode"):
+            code.tag = "computeroutput"
+            changed = True
+        for pre in root.iter("preformatted"):
+            text, tail = "".join(pre.itertext()), pre.tail
+            pre.clear()
+            pre.tag, pre.text, pre.tail = "verbatim", text, tail
+            changed = True
+        for parent in list(root.iter()):
+            for child in list(parent):
+                if child.tag in _ENTITY_CHARACTERS:
+                    _replace_with_text(
+                        parent, child, _ENTITY_CHARACTERS[child.tag]
+                    )
+                    changed = True
         for parent in list(root.iter()):
             for ref in list(parent):
                 if ref.tag != "ref":
                     continue
-                changed = True
                 refid = ref.get("refid", "")
+                if refid.startswith(_JDK_REFID_PREFIX):
+                    continue
                 if refid.startswith("_1"):
                     refid = member_ids.get(refid, "")
                 elif not refid:
                     refid = resolve(ref.text or "") or ""
                 if ref.text and "#" in ref.text:
-                    ref.text = ref.text.lstrip("#").replace("#", ".")
+                    ref.text = _javadoc_link_text(ref.text)
+                    changed = True
                 if refid:
-                    ref.set("refid", refid)
+                    if refid != ref.get("refid"):
+                        ref.set("refid", refid)
+                        changed = True
                     continue
-                # Replace the reference by its text.
-                index = list(parent).index(ref)
-                text = (ref.text or "") + (ref.tail or "")
-                if index == 0:
-                    parent.text = (parent.text or "") + text
-                else:
-                    previous = parent[index - 1]
-                    previous.tail = (previous.tail or "") + text
-                parent.remove(ref)
+                changed = True
+                for name in (
+                    (ref.text or "").split("(")[0],
+                    re.sub(r"[.#(].*", "", ref.text or ""),
+                ):
+                    if _jdk_url(name):
+                        # Resolved by _resolve_external_java_types. Breathe 4
+                        # cannot parse links (ulink) inside code markup.
+                        ref.set("refid", _JDK_REFID_PREFIX + name)
+                        break
+                if ref.get("refid"):
+                    continue
+                _replace_with_text(parent, ref, ref.text or "")
         if changed:
             tree.write(fn)
+        _add_to_model(root)
 
     index = os.path.join(path, "index.xml")
     with open(index) as f:
@@ -191,6 +471,104 @@ def clean_java_xml(path: str) -> None:
             f.write(new_text)
 
 
+_ENTITY_CHARACTERS = {
+    "ndash": "\u2013",
+    "mdash": "\u2014",
+    "nonbreakablespace": "\u00a0",
+}
+
+
+def _replace_with_text(parent: ET.Element, child: ET.Element, text: str):
+    """Replace the element *child* of *parent* by *text*."""
+    index = list(parent).index(child)
+    text += child.tail or ""
+    if index == 0:
+        parent.text = (parent.text or "") + text
+    else:
+        previous = parent[index - 1]
+        previous.tail = (previous.tail or "") + text
+    parent.remove(child)
+
+
+def _add_to_model(root: ET.Element) -> None:
+    for compound in root.iter("compounddef"):
+        cid = compound.get("id")
+        if not compound.get("language") == "Java":
+            continue
+        kind = _java_kind(cid, compound.get("kind"))
+        member_ids = []
+        for member in compound.iter("memberdef"):
+            id_ = member.get("id")
+            type_ = _normalize_type(_xml_text(member.find("type")))
+            for modifier in (*_SHOWN_MODIFIERS, *_HIDDEN_MODIFIERS):
+                type_ = re.sub(rf"^{modifier}\b\s*", "", type_)
+            detailed = member.find("detaileddescription")
+            _members[id_] = _Member(
+                id=id_,
+                compound=cid,
+                name=member.findtext("name"),
+                kind=member.get("kind"),
+                prot=member.get("prot"),
+                static=member.get("static") == "yes",
+                args=_normalize_type(member.findtext("argsstring") or ""),
+                brief=_xml_text(member.find("briefdescription")),
+                deprecated=(
+                    detailed is not None
+                    and any(
+                        x.get("id", "").startswith("deprecated")
+                        for x in detailed.iter("xrefsect")
+                    )
+                )
+                or _is_annotated_deprecated(member.find("location")),
+                enum_constant=kind == "enum" and not type_,
+                constructor=member.get("kind") == "function" and not type_,
+            )
+            member_ids.append(id_)
+        detailed = compound.find("detaileddescription")
+        _compounds[cid] = _Compound(
+            id=cid,
+            fullname=compound.findtext("compoundname").replace("::", "."),
+            kind=kind,
+            prot=compound.get("prot"),
+            deprecated=(
+                detailed is not None
+                and any(
+                    x.get("id", "").startswith("deprecated")
+                    for x in detailed.iter("xrefsect")
+                )
+            )
+            or _is_annotated_deprecated(compound.find("location")),
+            members=member_ids,
+            all_members=[
+                (m.get("refid"), m.get("prot"))
+                for m in compound.iterfind("listofallmembers/member")
+            ],
+        )
+
+
+def _declared_protection(
+    compound: ET.Element, interfaces: set[str] | None = None
+) -> str:
+    """Return the protection of a class as declared in its source file.
+
+    Doxygen reports package-private classes as public. Classes nested in an
+    interface are implicitly public.
+    """
+    prot = compound.get("prot")
+    if prot != "public":
+        return prot
+    location = compound.find("location")
+    header = _source_header(location.get("file"), int(location.get("line")))
+    if header is None or re.search(r"\b(public|protected|private)\b", header):
+        return prot
+    outer = (
+        compound.findtext("compoundname").replace("::", ".").rpartition(".")[0]
+    )
+    if interfaces is not None and outer in interfaces:
+        return prot
+    return "package"
+
+
 def _fix_enum_member_protection(compound: ET.Element) -> bool:
     """Mark enum members declared without an access modifier as package-private."""
     changed = False
@@ -199,12 +577,11 @@ def _fix_enum_member_protection(compound: ET.Element) -> bool:
             # Enum constants have no type and are always public.
             continue
         location = member.find("location")
-        try:
-            with open(location.get("file")) as f:
-                line = f.readlines()[int(location.get("line")) - 1]
-        except (OSError, IndexError, TypeError, ValueError):
+        lines = _source_lines(location.get("file", ""))
+        index = int(location.get("line", "0")) - 1
+        if not 0 <= index < len(lines):
             continue
-        declaration = line.split(member.findtext("name"), 1)[0]
+        declaration = lines[index].split(member.findtext("name"), 1)[0]
         if not re.search(r"\b(public|protected)\b", declaration):
             member.set("prot", "package")
             changed = True
@@ -237,13 +614,14 @@ def documented_java_classes(path: str) -> dict[str, list[dict[str, str]]]:
         compounddef = ET.parse(os.path.join(path, f"{refid}.xml")).find(
             "./compounddef"
         )
-        if compounddef.get("prot") != "public":
+        # This runs before clean_java_xml, so check the source for
+        # package-private classes too.
+        if _declared_protection(compounddef) != "public":
             continue
-        brief = " ".join(
-            "".join(compounddef.find("./briefdescription").itertext()).split()
+        # This runs before clean_java_xml, so fix up link text here too.
+        brief = _javadoc_link_text(
+            _xml_text(compounddef.find("./briefdescription"))
         )
-        # Show link text as in javadoc, as clean_java_xml does.
-        brief = re.sub(r"(\w)#(\w)", r"\1.\2", brief)
         kind = _java_kind(refid, compounddef.get("kind"))
         location = compounddef.find("./location")
         header = _source_header(
@@ -370,8 +748,9 @@ class JavaObject(ObjectDescription[str]):
 
     The declaration is tokenized rather than parsed: keywords and primitive
     types are highlighted, the declared name is marked up as such, and any
-    other identifier becomes a cross-reference to a Java type, which is
-    rendered as plain text if no documented type of that name exists.
+    other identifier becomes a cross-reference to a Java type, which links to
+    the JDK documentation for JDK types and is rendered as plain text if no
+    documented type of that name exists.
     """
 
     doc_field_types = [
@@ -405,6 +784,8 @@ class JavaObject(ObjectDescription[str]):
     #: Fully qualified name of the declared object, e.g.
     #: ``ai.rapids.cudf.Table.concatenate``. Defaults to the signature.
     fullname: str | None = None
+    #: Whether the declared object is deprecated.
+    deprecated: bool = False
 
     def _name_index(self, tokens: list[tuple[str, str]], name: str) -> int:
         if self.objtype in ("method", "constructor"):
@@ -462,6 +843,11 @@ class JavaObject(ObjectDescription[str]):
             else:
                 signode += self._token_node(kind, text)
             i += 1
+        if self.deprecated:
+            signode += addnodes.desc_sig_space()
+            signode += nodes.inline(
+                "Deprecated", "Deprecated", classes=["java-deprecated-badge"]
+            )
         return fullname
 
     def _token_node(self, kind: str, text: str) -> nodes.Node:
@@ -586,6 +972,14 @@ class JavaObject(ObjectDescription[str]):
                 ("single", f"{short} ({name})", node_id, "", None)
             )
 
+    def run(self) -> list[nodes.Node]:
+        result = super().run()
+        if self.deprecated:
+            for node in result:
+                if isinstance(node, addnodes.desc):
+                    node["classes"].append("java-deprecated")
+        return result
+
     def before_content(self) -> None:
         if self.objtype in ("class", "interface", "enum") and self.names:
             self.env.ref_context.setdefault("java:classes", []).append(
@@ -659,6 +1053,15 @@ class JavaDomain(Domain):
     def resolve_xref(
         self, env, fromdocname, builder, typ, target, node, contnode
     ):
+        if typ == "doxygen":
+            # Breathe registers Doxygen ids as anonymous labels.
+            label = env.get_domain("std").anonlabels.get(target)
+            if label is None:
+                return None
+            docname, label_id = label
+            return make_refnode(
+                builder, fromdocname, docname, label_id, contnode
+            )
         name = self._find(target, node.get("java:scope"))
         if name is None:
             return None
@@ -680,14 +1083,28 @@ class JavaDomain(Domain):
             yield name, name, objtype, docname, node_id, 1
 
 
-def _ignore_unknown_java_types(app, env, node, contnode):
-    # Signatures reference JDK types (String, Optional, ...) and type
-    # parameters that are not documented here. Render those as plain text.
+def _resolve_external_java_types(app, env, node, contnode):
+    target = node.get("reftarget") or ""
+    if target.startswith(_JDK_REFID_PREFIX):
+        name = target[len(_JDK_REFID_PREFIX) :]
+        return nodes.reference(
+            "", "", contnode, refuri=_jdk_url(name), reftitle=name
+        )
     if node.get("refdomain") == DOMAIN and node.get("reftype") == "type":
+        # Link JDK types to their documentation.
+        if (url := _jdk_url(node["reftarget"])) is not None:
+            return nodes.reference(
+                "", "", contnode, refuri=url, reftitle=node["reftarget"]
+            )
+        # Signatures also reference type parameters and package-private
+        # types, which are not documented. Render those as plain text.
         if not node.get("refexplicit"):
             return contnode
     # Javadoc may link to package-private objects, which are not rendered.
-    if node.get("refdomain") == "std" and node.get("reftarget") in _java_ids:
+    if node.get("refdomain") in ("std", DOMAIN) and (
+        node.get("reftarget") in _members
+        or node.get("reftarget") in _compounds
+    ):
         return contnode
     return None
 
@@ -704,40 +1121,50 @@ class JavaBreatheObject(BaseObject, JavaObject):
 _original_create = DomainDirectiveFactory.create
 
 
-# Full name of the next directive created by _create_directive. Breathe
-# reuses one options dict for nested directives, so the name cannot be passed
-# as a directive option.
-_next_fullname: str | None = None
+# Attributes of the next directive created by _create_directive. Breathe
+# reuses one options dict for nested directives, so these cannot be passed as
+# directive options.
+_next_directive_attrs: dict[str, Any] = {}
 
 
 def _create_directive(domain: str, args):
-    global _next_fullname
     if domain != DOMAIN:
         return _original_create(domain, args)
     args = [f"{DOMAIN}:{args[0]}", *args[1:]]
     directive = JavaBreatheObject(*args)
-    directive.fullname, _next_fullname = _next_fullname, None
+    for name, value in _next_directive_attrs.items():
+        setattr(directive, name, value)
+    _next_directive_attrs.clear()
     return directive
 
 
-def _handle_declaration(
-    self: SphinxRenderer, node, objtype, declaration, fullname, **kwargs
-):
-    global _next_fullname
-    _next_fullname = fullname
-    return self.handle_declaration(node, objtype, declaration, **kwargs)
+def _declare(
+    self: SphinxRenderer,
+    node,
+    objtype: str,
+    declaration: str,
+    fullname: str,
+    toc_name: str,
+    deprecated: bool = False,
+    **kwargs,
+) -> list[nodes.Node]:
+    _next_directive_attrs.update(fullname=fullname, deprecated=deprecated)
+    nodes_ = _handle_declaration(self, node, objtype, declaration, **kwargs)
+    # handle_declaration sets these from Doxygen's names.
+    for n in nodes_:
+        if isinstance(n, addnodes.desc):
+            n[0]["_toc_parts"] = tuple(fullname.split("."))
+            n[0]["_toc_name"] = toc_name
+            break
+    return nodes_
 
 
 def _text(renderer: SphinxRenderer, node) -> str:
     if node is None:
         return ""
-    text = "".join(n.astext() for n in renderer.render(node))
-    # Doxygen pads template brackets and array suffixes with spaces.
-    text = re.sub(r"\s*<\s*", "<", text)
-    text = re.sub(r"\s*>", ">", text)
-    text = re.sub(r"\s+\[\]", "[]", text)
-    text = re.sub(r",(?=\S)", ", ", text)
-    return " ".join(text.split())
+    if isinstance(node, str):
+        return _normalize_type(node)
+    return _normalize_type("".join(n.astext() for n in renderer.render(node)))
 
 
 def _split_modifiers(type_: str) -> tuple[list[str], str]:
@@ -752,17 +1179,13 @@ def _split_modifiers(type_: str) -> tuple[list[str], str]:
 
 
 def _protection(node) -> list[str]:
-    prot = node.prot.value if node.prot is not None else "public"
+    prot = _value(node.prot) if node.prot is not None else "public"
     return [prot] if prot in ("public", "protected") else []
 
 
-def _set_toc_name(nodes_: list[nodes.Node], fullname: str, toc_name: str):
-    for node in nodes_:
-        if isinstance(node, addnodes.desc):
-            sig = node[0]
-            sig["_toc_parts"] = tuple(fullname.split("."))
-            sig["_toc_name"] = toc_name
-            return
+def _is_static(node) -> bool:
+    # Breathe 5 parses the attribute as a bool, Breathe 4 leaves it a string.
+    return node.static is True or node.static == "yes"
 
 
 def _source_header(filename: str, line: int) -> str | None:
@@ -772,16 +1195,12 @@ def _source_header(filename: str, line: int) -> str | None:
     sources (e.g. ``AutoCloseable``) is a class or an interface, so the
     ``extends`` and ``implements`` clauses cannot be rebuilt from the XML.
     """
-    try:
-        with open(filename) as f:
-            lines = f.readlines()[line - 1 :]
-    except (OSError, TypeError):
-        return None
+    lines = _source_lines(filename)[int(line) - 1 :]
     header = []
-    for line in lines:
-        line = line.split("//", 1)[0]
-        header.append(line.split("{", 1)[0])
-        if "{" in line:
+    for line_ in lines:
+        line_ = line_.split("//", 1)[0]
+        header.append(line_.split("{", 1)[0])
+        if "{" in line_:
             break
     text = " ".join(" ".join(header).split())
     # Drop annotations, which may precede the modifiers on the same line.
@@ -791,14 +1210,144 @@ def _source_header(filename: str, line: int) -> str | None:
     return text
 
 
+def _ref(
+    refid: str, text: str, classes: list[str] | None = None
+) -> nodes.Node:
+    """Return a link to the Doxygen target *refid*.
+
+    Breathe links Doxygen targets with ``std:ref``, but its resolution
+    replaces the link text by plain text, so the java domain resolves these.
+    """
+    ref = addnodes.pending_xref(
+        "",
+        refdomain=DOMAIN,
+        reftype="doxygen",
+        reftarget=refid,
+        refexplicit=True,
+    )
+    ref += nodes.literal(text, text, classes=classes or [])
+    return ref
+
+
+def _summary_table(title: str, members: list[_Member]) -> list[nodes.Node]:
+    """Return a javadoc-style table of *members* with their summaries."""
+    table = nodes.table(classes=["java-summary"])
+    tgroup = nodes.tgroup(cols=2)
+    table += tgroup
+    tgroup += nodes.colspec(colwidth=40)
+    tgroup += nodes.colspec(colwidth=60)
+    tbody = nodes.tbody()
+    tgroup += tbody
+    for member in members:
+        text = member.name
+        if member.kind == "function":
+            text += member.args or "()"
+        classes = ["java-deprecated"] if member.deprecated else []
+        description = nodes.paragraph()
+        if member.deprecated:
+            description += nodes.emphasis("Deprecated.", "Deprecated.")
+            if member.brief:
+                description += nodes.Text(" ")
+        description += nodes.Text(member.brief)
+        row = nodes.row()
+        row += nodes.entry(
+            "", nodes.paragraph("", "", _ref(member.id, text, classes))
+        )
+        row += nodes.entry("", description)
+        tbody += row
+    rubric = nodes.rubric(text=title, classes=["java-summary-title"])
+    return [rubric, table]
+
+
+def _class_summary(compound: _Compound) -> list[nodes.Node]:
+    """Return summaries of the members of *compound* and those it inherits."""
+    own = [
+        _members[id_]
+        for id_ in compound.members
+        if id_ in _members and _members[id_].documented
+    ]
+
+    def key(member: _Member):
+        return (member.name.lower(), member.args)
+
+    groups = (
+        ("Enum Constant Summary", [m for m in own if m.enum_constant]),
+        (
+            "Field Summary",
+            [m for m in own if m.kind == "variable" and not m.enum_constant],
+        ),
+        ("Constructor Summary", [m for m in own if m.constructor]),
+        (
+            "Method Summary",
+            [m for m in own if m.kind == "function" and not m.constructor],
+        ),
+    )
+    result: list[nodes.Node] = []
+    for title, members in groups:
+        if members:
+            result += _summary_table(title, sorted(members, key=key))
+
+    # Inherited members, grouped by the class that declares them, skipping
+    # overridden ones.
+    declared = {(m.name, m.args) for m in own}
+    inherited: dict[str, dict[str, list[_Member]]] = {}
+    for refid, _ in compound.all_members:
+        member = _members.get(refid)
+        if (
+            member is None
+            or member.compound == compound.id
+            or not member.documented
+            or member.constructor
+            or (member.name, member.args) in declared
+        ):
+            continue
+        kind = "Fields" if member.kind == "variable" else "Methods"
+        by_kind = inherited.setdefault(member.compound, {})
+        by_kind.setdefault(kind, []).append(member)
+    for compound_id, by_kind in inherited.items():
+        base = _compounds[compound_id]
+        for kind in ("Fields", "Methods"):
+            members = by_kind.get(kind)
+            if not members:
+                continue
+            para = nodes.paragraph(classes=["java-inherited"])
+            label = f"{kind} inherited from {base.kind} "
+            para += nodes.strong(label, label)
+            para += _ref(base.id, base.fullname)
+            para += nodes.strong(":", ":")
+            para += nodes.Text(" ")
+            # Like javadoc, list overloaded methods once.
+            seen: dict[str, _Member] = {}
+            for member in sorted(members, key=key):
+                seen.setdefault(member.name, member)
+            for i, member in enumerate(seen.values()):
+                if i:
+                    para += nodes.Text(", ")
+                classes = ["java-deprecated"] if member.deprecated else []
+                para += _ref(member.id, member.name, classes)
+            result.append(para)
+    return result
+
+
+def _insert_summary(rendered: list[nodes.Node], summary: list[nodes.Node]):
+    """Insert *summary* between a class's description and its members."""
+    for i, node in enumerate(rendered):
+        if isinstance(node, nodes.rubric) or (
+            isinstance(node, nodes.container)
+            and "breathe-sectiondef" in node["classes"]
+        ):
+            rendered[i:i] = summary
+            return
+    rendered.extend(summary)
+
+
 def _java_class(self: SphinxRenderer, node) -> list[nodes.Node]:
-    file_data = self.parse_compound(node.refid)
-    nodeDef = file_data.compounddef[0]
+    file_data, nodeDef = _compound(self, node.refid)
     parent_context = self.context.create_child_context(file_data)
     new_context = parent_context.create_child_context(nodeDef)
 
     with sphinxrenderer.WithContext(self, new_context):
-        kind = _java_kind(nodeDef.id, nodeDef.kind.value)
+        kind = _java_kind(nodeDef.id, _value(nodeDef.kind))
         fullname = nodeDef.compoundname.replace("::", ".")
         name = fullname.rpartition(".")[2]
         declaration = _source_header(
@@ -806,27 +1355,43 @@ def _java_class(self: SphinxRenderer, node) -> list[nodes.Node]:
         )
         if declaration is None:
             declaration = " ".join([*_protection(nodeDef), kind, name])
+        compound = _compounds.get(nodeDef.id)
 
         def content(contentnode) -> None:
-            contentnode.extend(self.render(file_data, parent_context))
+            rendered = self.render(file_data, parent_context)
+            # Code blocks in javadoc are Java.
+            for node_ in rendered:
+                if isinstance(node_, nodes.Element):
+                    for block in node_.findall(nodes.literal_block):
+                        block["language"] = "java"
+            if compound is not None:
+                _insert_summary(rendered, _class_summary(compound))
+            contentnode.extend(rendered)
 
-        nodes_ = _handle_declaration(
+        nodes_ = _declare(
             self,
             nodeDef,
             kind,
             declaration,
             fullname,
+            name,
+            deprecated=compound is not None and compound.deprecated,
             content_callback=content,
         )
-        # handle_declaration stores Doxygen's "::"-separated name.
-        _set_toc_name(nodes_, fullname, name)
         if "members-only" in self.context.directive_args[2]:
             return list(nodes_[1][1].children)
         return nodes_
 
 
+def _member_fullname(node) -> str:
+    member = _members.get(node.id)
+    if member is not None and member.compound in _compounds:
+        return f"{_compounds[member.compound].fullname}.{node.name}"
+    return getattr(node, "qualifiedname", None) or node.name
+
+
 def _java_function(self: SphinxRenderer, node) -> list[nodes.Node]:
-    modifiers, type_ = _split_modifiers(_text(self, node.type))
+    modifiers, type_ = _split_modifiers(_text(self, _member_type(node)))
     if node.name.startswith("["):
         # Static initializer blocks are not API.
         return []
@@ -835,7 +1400,7 @@ def _java_function(self: SphinxRenderer, node) -> list[nodes.Node]:
         # Enum constructors are always private.
         return []
     decl = _protection(node)
-    if node.static:
+    if _is_static(node):
         decl.append("static")
     decl += modifiers
     if type_:
@@ -845,18 +1410,23 @@ def _java_function(self: SphinxRenderer, node) -> list[nodes.Node]:
     if node.exceptions:
         decl.append(_text(self, node.exceptions))
 
-    fullname = node.qualifiedname or node.name
-    objtype = "constructor" if is_constructor else "method"
-    nodes_ = _handle_declaration(self, node, objtype, " ".join(decl), fullname)
-    _set_toc_name(nodes_, fullname, node.name + "()")
-    return nodes_
+    member = _members.get(node.id)
+    return _declare(
+        self,
+        node,
+        "constructor" if is_constructor else "method",
+        " ".join(decl),
+        _member_fullname(node),
+        node.name + "()",
+        deprecated=member is not None and member.deprecated,
+    )
 
 
 def _java_variable(self: SphinxRenderer, node) -> list[nodes.Node]:
-    modifiers, type_ = _split_modifiers(_text(self, node.type))
+    modifiers, type_ = _split_modifiers(_text(self, _member_type(node)))
     is_enum_constant = not type_ and node.id.startswith("enum")
     decl = [] if is_enum_constant else _protection(node)
-    if node.static:
+    if _is_static(node):
         decl.append("static")
     decl += modifiers
     if type_:
@@ -866,15 +1436,22 @@ def _java_variable(self: SphinxRenderer, node) -> list[nodes.Node]:
     # constants have no type and their "initializer" is the constructor
     # argument list, which is omitted.
     initializer = _text(self, node.initializer)
-    is_constant = node.static and "final" in modifiers
+    is_constant = _is_static(node) and "final" in modifiers
     if is_constant and initializer and type_ in (*_PRIMITIVES, "String"):
         if not initializer.startswith("="):
             initializer = "= " + initializer
         decl.append(initializer)
 
-    fullname = node.qualifiedname or node.name
-    nodes_ = _handle_declaration(self, node, "field", " ".join(decl), fullname)
-    _set_toc_name(nodes_, fullname, node.name)
+    member = _members.get(node.id)
+    nodes_ = _declare(
+        self,
+        node,
+        "field",
+        " ".join(decl),
+        _member_fullname(node),
+        node.name,
+        deprecated=member is not None and member.deprecated,
+    )
     if is_enum_constant:
         for n in nodes_:
             if isinstance(n, addnodes.desc):
@@ -887,11 +1464,11 @@ def _java_variable(self: SphinxRenderer, node) -> list[nodes.Node]:
 _SECTION_ORDER = [
     (kind, title)
     for kind, title in SphinxRenderer.sections
-    if "attrib" in kind.value
+    if "attrib" in _value(kind)
 ] + [
     (kind, title)
     for kind, title in SphinxRenderer.sections
-    if "attrib" not in kind.value
+    if "attrib" not in _value(kind)
 ]
 
 # Javadoc-style titles for Breathe's member sections.
@@ -908,11 +1485,8 @@ _SECTION_TITLES = {
 
 
 def _java_compound(self: SphinxRenderer, node, *args, **kwargs):
-    kind = self.parse_compound(node.refid).compounddef[0].kind
-    if kind in (
-        parser.DoxCompoundKind.class_,
-        parser.DoxCompoundKind.interface,
-    ):
+    _, compounddef = _compound(self, node.refid)
+    if _value(compounddef.kind) in ("class", "interface"):
         return _java_class(self, node)
     return None
 
@@ -964,17 +1538,17 @@ def _java_sectiondef(self: SphinxRenderer, node, nodes_: list[nodes.Node]):
 
     # Doxygen lists enum constants with fields and constructors with
     # methods; javadoc separates them.
-    kind = parser.DoxSectionKind
-    if node.kind == kind.public_attrib:
+    kind = _value(node.kind)
+    if kind == "public-attrib":
         return _split_section(
             rubric,
             members,
             lambda n: n.get("java:enum-constant"),
             "Enum Constants",
         )
-    if node.kind in (kind.public_func, kind.protected_func):
+    if kind in ("public-func", "protected-func"):
         title = "Constructors"
-        if node.kind == kind.protected_func:
+        if kind == "protected-func":
             title = "Protected Constructors"
         return _split_section(
             rubric, members, lambda n: n.get("objtype") == "constructor", title
@@ -990,13 +1564,22 @@ def _is_java(self: SphinxRenderer, node) -> bool:
     location = getattr(node, "location", None)
     if location is None and getattr(node, "refid", None):
         try:
-            location = self.parse_compound(node.refid).compounddef[0].location
+            location = _compound(self, node.refid)[1].location
         except Exception:
             return False
     return (
         location is not None
         and self.project_info.domain_for_file(location.file) == DOMAIN
     )
+
+
+def _replace_method(name: str, original, method) -> None:
+    setattr(SphinxRenderer, name, method)
+    # Breathe also dispatches through tables of handlers.
+    for table in _renderer_tables():
+        for key, handler in table.items():
+            if handler is original:
+                table[key] = method
 
 
 def _patch(name: str, java_impl, *, post: bool = False) -> None:
@@ -1019,18 +1602,6 @@ def _patch(name: str, java_impl, *, post: bool = False) -> None:
         )
 
     _replace_method(name, original, method)
-
-
-def _replace_method(name: str, original, method) -> None:
-    setattr(SphinxRenderer, name, method)
-    # Breathe also dispatches through handler tables built at class creation.
-    for table in (
-        SphinxRenderer.node_handlers,
-        SphinxRenderer.tagged_node_handlers,
-    ):
-        for key, handler in table.items():
-            if handler is original:
-                table[key] = method
 
 
 def _patch_compounddef() -> None:
@@ -1068,11 +1639,21 @@ def _clean_projects(app: Sphinx, config) -> None:
         clean_java_xml(path)
 
 
+def _add_static_files(app: Sphinx) -> None:
+    if app.builder.format == "html":
+        static = os.path.join(os.path.dirname(__file__), "breathe_java_static")
+        app.config.html_static_path.append(static)
+        app.add_css_file("breathe_java.css")
+
+
 def setup(app: Sphinx) -> dict[str, Any]:
     app.setup_extension("breathe")
     app.add_config_value("breathe_java_projects", [], "env")
     app.add_domain(JavaDomain)
     app.connect("config-inited", _clean_projects)
-    app.connect("missing-reference", _ignore_unknown_java_types, priority=400)
+    app.connect("builder-inited", _add_static_files)
+    app.connect(
+        "missing-reference", _resolve_external_java_types, priority=400
+    )
     _patch_renderer()
     return {"parallel_read_safe": True, "parallel_write_safe": True}

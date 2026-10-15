@@ -1,0 +1,31 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+from rmm.pylibrmm.memory_resource import DeviceMemoryResource
+
+from pylibcudf.column import Column
+from pylibcudf.round import RoundingMethod
+from pylibcudf.scalar import Scalar
+from pylibcudf.utils import CudaStreamLike
+
+def divide_decimal(
+    lhs: Column,
+    rhs: Column,
+    round_method: RoundingMethod = RoundingMethod.HALF_UP,
+    stream: CudaStreamLike | None = None,
+    mr: DeviceMemoryResource | None = None,
+) -> Column: ...
+def divide_decimal_column_scalar(
+    lhs: Column,
+    rhs: Scalar,
+    round_method: RoundingMethod = RoundingMethod.HALF_UP,
+    stream: CudaStreamLike | None = None,
+    mr: DeviceMemoryResource | None = None,
+) -> Column: ...
+def divide_decimal_scalar_column(
+    lhs: Scalar,
+    rhs: Column,
+    round_method: RoundingMethod = RoundingMethod.HALF_UP,
+    stream: CudaStreamLike | None = None,
+    mr: DeviceMemoryResource | None = None,
+) -> Column: ...

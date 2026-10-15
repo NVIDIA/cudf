@@ -10,12 +10,15 @@
 
 #include <rtcx/rtcx.hpp>
 
+#include <mutex>
+
 namespace CUDF_EXPORT cudf {
 
 struct [[nodiscard]] jit_bundle_t {
  private:
   std::string install_dir_;
   rtcx::cache_t* cache_;
+  mutable std::once_flag installed_;
 
   void ensure_installed() const;
 
@@ -116,5 +119,4 @@ rtcx::blob get_kernel_fragment(std::string const& name,
 kernel get_lto_linked_kernel(std::string const& name,
                              std::span<rtcx::file_fragment const> file_fragments,
                              std::span<rtcx::memory_fragment const> memory_fragments);
-
 }  // namespace CUDF_EXPORT cudf

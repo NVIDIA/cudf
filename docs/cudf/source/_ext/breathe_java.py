@@ -1,6 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+# NOTE: This extension was written entirely by an AI coding agent. Its scope is
+# deliberately limited to what is needed to render the cuDF Java API docs; it
+# is not a general-purpose Java support layer for Breathe.
+
 """Render Doxygen XML generated from Java sources with Breathe.
 
 Breathe only ships directives for the C, C++, Python, PHP and C# domains and

@@ -6,12 +6,11 @@ from __future__ import annotations
 import warnings
 from decimal import Decimal
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Self, cast
 
 import numpy as np
 import pyarrow as pa
 from packaging import version
-from typing_extensions import Self
 
 import pylibcudf as plc
 
@@ -38,15 +37,13 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     import pandas as pd
+
     from cudf._typing import (
         ColumnBinaryOperand,
         ColumnLike,
         DtypeObj,
         ScalarLike,
     )
-    // existing
-    from cudf._typing import ColumnBinaryOperand, ColumnLike, Dtype, ScalarLike
-    from cudf.core.buffer import Buffer
     from cudf.core.column.numerical import NumericalColumn
     from cudf.core.column.string import StringColumn
 
@@ -320,7 +317,7 @@ class DecimalColumn(NumericalBaseColumn):
 
         Returns
         -------
-        DecimalBaseColumn
+        DecimalColumn
             Result column with the same scale as this column
 
         Examples
@@ -334,9 +331,6 @@ class DecimalColumn(NumericalBaseColumn):
         >>> # divide_decimal preserves scale
         >>> decimal_result = s1.divide_decimal(s2)
         """
-        # Import the decimal_division module (renamed from decimal_ops)
-        import pylibcudf.decimal_division as decimal_ops
-
         # Type checking and normalization
         reflect, _ = self._check_reflected_op("__div__")
         other, other_cudf_dtype = self._normalize_binop_operand(other)  # type: ignore[assignment]
@@ -348,11 +342,10 @@ class DecimalColumn(NumericalBaseColumn):
                 "Reflected divide_decimal operation is not supported"
             )
 
-        # Map rounding mode string to enum
         if rounding_mode == "HALF_UP":
-            rounding = decimal_ops.DecimalRoundingMode.HALF_UP
+            rounding = plc.round.RoundingMethod.HALF_UP
         elif rounding_mode == "HALF_EVEN":
-            rounding = decimal_ops.DecimalRoundingMode.HALF_EVEN
+            rounding = plc.round.RoundingMethod.HALF_EVEN
         else:
             raise ValueError(f"Invalid rounding mode: {rounding_mode}")
 
@@ -363,19 +356,21 @@ class DecimalColumn(NumericalBaseColumn):
         if isinstance(other, (int, Decimal)):
             # Native Python scalar case
             rhs = _to_plc_scalar(other, self.dtype)
-            result_column = decimal_ops.divide_decimal_column_scalar(
+            result_column = plc.decimal_division.divide_decimal_column_scalar(
                 lhs, rhs, rounding
             )
         elif is_scalar(other) and hasattr(other, "to_pylibcudf"):
             # cudf scalar-like object case
             rhs = other.to_pylibcudf(mode="read")
-            result_column = decimal_ops.divide_decimal_column_scalar(
+            result_column = plc.decimal_division.divide_decimal_column_scalar(
                 lhs, rhs, rounding
             )
         else:
             # Column case
             rhs = other.to_pylibcudf(mode="read")
-            result_column = decimal_ops.divide_decimal(lhs, rhs, rounding)
+            result_column = plc.decimal_division.divide_decimal(
+                lhs, rhs, rounding
+            )
 
         # Convert back to cudf column
         result = ColumnBase.from_pylibcudf(result_column)
@@ -388,7 +383,7 @@ class DecimalColumn(NumericalBaseColumn):
         )
         result.dtype.precision = result_precision
 
-        return cast(Self, result)
+        return cast("Self", result)
 
     # Add alias
     div_decimal = divide_decimal

@@ -1,269 +1,217 @@
-# Copyright (c) 2024-2025, NVIDIA CORPORATION.
-# Implementation of decimal division with scale preservation
-
-from enum import IntEnum
-
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 from libcpp.memory cimport unique_ptr
 from libcpp.utility cimport move
-from .column cimport Column
 from pylibcudf.libcudf.column.column cimport column
-from pylibcudf.libcudf.decimal.decimal_ops cimport (
-    decimal_rounding_mode as cpp_decimal_rounding_mode,
-    divide_decimal as cpp_divide_decimal
+from pylibcudf.libcudf.column.column_view cimport column_view
+from pylibcudf.libcudf.fixed_point.math_ops cimport (
+    divide_decimal as cpp_divide_decimal,
 )
-from pylibcudf.types cimport type_id
-from pylibcudf.scalar cimport Scalar
-from pylibcudf.libcudf.scalar.scalar cimport scalar as cpp_scalar
-from cython.operator cimport dereference
+from pylibcudf.libcudf.round cimport rounding_method
+from pylibcudf.libcudf.scalar.scalar cimport scalar
+
+from rmm.pylibrmm.stream cimport Stream
+from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
+
+from .column cimport Column
+from .scalar cimport Scalar
+from .traits cimport is_fixed_point
+from .utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
+from cuda.bindings.cyruntime cimport cudaStream_t
 
 __all__ = [
-    "DecimalRoundingMode",
     "divide_decimal",
     "divide_decimal_column_scalar",
-    "divide_decimal_scalar_column"
+    "divide_decimal_scalar_column",
 ]
 
 
-class DecimalRoundingMode(IntEnum):
-    """
-    Rounding modes for decimal division.
-
-    Attributes
-    ----------
-    HALF_UP : int
-        Round half away from zero (0.5 rounds to 1, -0.5 rounds to -1)
-    HALF_EVEN : int
-        Round half to even (banker's rounding)
-    """
-    HALF_UP = 0
-    HALF_EVEN = 1
+cdef void _check_decimal(object operand, str side) except *:
+    if operand is None:
+        raise TypeError(f"{side} operand must not be None")
+    typ = operand.type()
+    if not is_fixed_point(typ):
+        raise TypeError(
+            f"{side} operand must be a decimal type, got {typ.id()!r}"
+        )
 
 
 cpdef Column divide_decimal(
     Column lhs,
     Column rhs,
-    rounding_mode=DecimalRoundingMode.HALF_UP
+    rounding_method round_method = rounding_method.HALF_UP,
+    object stream: CudaStreamLike | None = None,
+    DeviceMemoryResource mr=None
 ):
-    """
-    Perform decimal division preserving the dividend's scale.
+    """Divides two decimal columns element-wise, keeping the scale of ``lhs``.
 
-    This function divides two decimal columns while maintaining the scale
-    of the dividend (left operand), similar to Java's BigDecimal.divide()
-    with a specified rounding mode.
+    For details, see :cpp:func:`divide_decimal`.
 
     Parameters
     ----------
     lhs : Column
-        The dividend (left operand) - a decimal column
+        The dividend column. Must be a decimal type.
     rhs : Column
-        The divisor (right operand) - a decimal column or scalar
-    rounding_mode : DecimalRoundingMode, optional
-        The rounding mode to use (default: HALF_UP)
+        The divisor column. Must have the same decimal type as ``lhs``,
+        but may have a different scale.
+    round_method : RoundingMethod, optional
+        How to round the quotient to the scale of ``lhs``.
+        Can be one of { RoundingMethod.HALF_UP, RoundingMethod.HALF_EVEN }
+        (default RoundingMethod.HALF_UP)
+    stream : Stream | None
+        CUDA stream on which to perform the operation.
+    mr : DeviceMemoryResource | None
+        Device memory resource used to allocate the returned column's device memory.
 
     Returns
     -------
     Column
-        Result column with the same scale as the dividend
+        The quotients, with the type and scale of ``lhs``.
 
     Raises
     ------
     TypeError
-        If input columns are not decimal types
-    ValueError
-        If division by zero is attempted
-
-    Examples
-    --------
-    >>> import pylibcudf
-    >>> # Create decimal columns
-    >>> lhs = pylibcudf.column_from_decimal_values([1.23, 4.56], scale=-2)
-    >>> rhs = pylibcudf.column_from_decimal_values([2.0, 3.0], scale=-1)
-    >>> # Divide preserving lhs scale
-    >>> result = divide_decimal(lhs, rhs, DecimalRoundingMode.HALF_UP)
-    >>> # Result has scale -2 (same as lhs)
+        If either operand is None or is not a decimal type.
     """
-    cdef cpp_decimal_rounding_mode cpp_mode
+    _check_decimal(lhs, "Left")
+    _check_decimal(rhs, "Right")
 
-    # Convert Python enum to C++ enum
-    if rounding_mode == DecimalRoundingMode.HALF_UP:
-        cpp_mode = cpp_decimal_rounding_mode.HALF_UP
-    elif rounding_mode == DecimalRoundingMode.HALF_EVEN:
-        cpp_mode = cpp_decimal_rounding_mode.HALF_EVEN
-    else:
-        raise ValueError(f"Invalid rounding mode: {rounding_mode}")
+    cdef unique_ptr[column] c_result
+    cdef Stream _stream = _get_stream(stream)
+    cdef cudaStream_t _cs = _stream.view().get()
+    mr = _get_memory_resource(mr)
 
-    # Check that both columns are decimal types
-    if lhs.type().id() not in [
-        type_id.DECIMAL32, type_id.DECIMAL64, type_id.DECIMAL128
-    ]:
-        raise TypeError(f"Left operand must be a decimal type, got {lhs.type()}")
-    if rhs.type().id() not in [
-        type_id.DECIMAL32, type_id.DECIMAL64, type_id.DECIMAL128
-    ]:
-        raise TypeError(f"Right operand must be a decimal type, got {rhs.type()}")
-
-    # Call the C++ divide_decimal function
-    cdef unique_ptr[column] result
-
+    cdef column_view c_lhs = lhs.view()
+    cdef column_view c_rhs = rhs.view()
     with nogil:
-        result = cpp_divide_decimal(
-            lhs.view(),
-            rhs.view(),
-            cpp_mode
+        c_result = cpp_divide_decimal(
+            c_lhs,
+            c_rhs,
+            round_method,
+            _cs,
+            mr.get_mr()
         )
 
-    return Column.from_libcudf(move(result))
+    return Column.from_libcudf(move(c_result), _stream, mr)
 
 
 cpdef Column divide_decimal_column_scalar(
     Column lhs,
     Scalar rhs,
-    rounding_mode=DecimalRoundingMode.HALF_UP
+    rounding_method round_method = rounding_method.HALF_UP,
+    object stream: CudaStreamLike | None = None,
+    DeviceMemoryResource mr=None
 ):
-    """
-    Perform decimal division of a column by a scalar, preserving the column's scale.
+    """Divides a decimal column by a decimal scalar, keeping the scale of ``lhs``.
 
-    This function divides a decimal column by a decimal scalar while maintaining
-    the scale of the dividend (column), similar to Java's BigDecimal.divide()
-    with a specified rounding mode.
+    For details, see :cpp:func:`divide_decimal`.
 
     Parameters
     ----------
     lhs : Column
-        The dividend column (must be a decimal type)
+        The dividend column. Must be a decimal type.
     rhs : Scalar
-        The divisor scalar (must be a decimal type)
-    rounding_mode : DecimalRoundingMode, default DecimalRoundingMode.HALF_UP
-        The rounding mode to use:
-        - HALF_UP: Round half away from zero
-        - HALF_EVEN: Round half to even (banker's rounding)
+        The divisor. Must have the same decimal type as ``lhs``,
+        but may have a different scale.
+    round_method : RoundingMethod, optional
+        How to round the quotient to the scale of ``lhs``.
+        Can be one of { RoundingMethod.HALF_UP, RoundingMethod.HALF_EVEN }
+        (default RoundingMethod.HALF_UP)
+    stream : Stream | None
+        CUDA stream on which to perform the operation.
+    mr : DeviceMemoryResource | None
+        Device memory resource used to allocate the returned column's device memory.
 
     Returns
     -------
     Column
-        Result column with the same scale as the dividend
+        The quotients, with the type and scale of ``lhs``.
 
     Raises
     ------
     TypeError
-        If either operand is not a decimal type
-    ValueError
-        If an invalid rounding mode is provided
-
-    Examples
-    --------
-    >>> import pylibcudf
-    >>> # Column [10.50, 20.25] / Scalar 2.50
-    >>> # Result: [4.20, 8.10] (scale preserved)
+        If either operand is None or is not a decimal type.
     """
-    cdef cpp_decimal_rounding_mode cpp_mode
+    _check_decimal(lhs, "Left")
+    _check_decimal(rhs, "Right")
 
-    # Convert rounding mode
-    if rounding_mode == DecimalRoundingMode.HALF_UP:
-        cpp_mode = cpp_decimal_rounding_mode.HALF_UP
-    elif rounding_mode == DecimalRoundingMode.HALF_EVEN:
-        cpp_mode = cpp_decimal_rounding_mode.HALF_EVEN
-    else:
-        raise ValueError(f"Invalid rounding mode: {rounding_mode}")
+    cdef unique_ptr[column] c_result
+    cdef Stream _stream = _get_stream(stream)
+    cdef cudaStream_t _cs = _stream.view().get()
+    mr = _get_memory_resource(mr)
 
-    # Check that column is decimal type
-    if lhs.type().id() not in [
-        type_id.DECIMAL32, type_id.DECIMAL64, type_id.DECIMAL128
-    ]:
-        raise TypeError(f"Left operand must be a decimal type, got {lhs.type()}")
-
-    # Check that scalar is decimal type
-    if rhs.type().id() not in [
-        type_id.DECIMAL32, type_id.DECIMAL64, type_id.DECIMAL128
-    ]:
-        raise TypeError(f"Right operand must be a decimal type, got {rhs.type()}")
-
-    # Call the C++ divide_decimal function for column/scalar
-    cdef unique_ptr[column] result
-    cdef const cpp_scalar* scalar_ptr = rhs.get()
-
+    cdef column_view c_lhs = lhs.view()
+    cdef const scalar* c_rhs = rhs.get()
     with nogil:
-        result = cpp_divide_decimal(
-            lhs.view(),
-            dereference(scalar_ptr),
-            cpp_mode
+        c_result = cpp_divide_decimal(
+            c_lhs,
+            c_rhs[0],
+            round_method,
+            _cs,
+            mr.get_mr()
         )
 
-    return Column.from_libcudf(move(result))
+    return Column.from_libcudf(move(c_result), _stream, mr)
 
 
 cpdef Column divide_decimal_scalar_column(
     Scalar lhs,
     Column rhs,
-    rounding_mode=DecimalRoundingMode.HALF_UP
+    rounding_method round_method = rounding_method.HALF_UP,
+    object stream: CudaStreamLike | None = None,
+    DeviceMemoryResource mr=None
 ):
-    """
-    Perform decimal division of a scalar by a column, preserving the scalar's scale.
+    """Divides a decimal scalar by a decimal column, keeping the scale of ``lhs``.
 
-    This function divides a decimal scalar by a decimal column while maintaining
-    the scale of the dividend (scalar), similar to Java's BigDecimal.divide()
-    with a specified rounding mode.
+    For details, see :cpp:func:`divide_decimal`.
 
     Parameters
     ----------
     lhs : Scalar
-        The dividend scalar (must be a decimal type)
+        The dividend. Must be a decimal type.
     rhs : Column
-        The divisor column (must be a decimal type)
-    rounding_mode : DecimalRoundingMode, default DecimalRoundingMode.HALF_UP
-        The rounding mode to use:
-        - HALF_UP: Round half away from zero
-        - HALF_EVEN: Round half to even (banker's rounding)
+        The divisor column. Must have the same decimal type as ``lhs``,
+        but may have a different scale.
+    round_method : RoundingMethod, optional
+        How to round the quotient to the scale of ``lhs``.
+        Can be one of { RoundingMethod.HALF_UP, RoundingMethod.HALF_EVEN }
+        (default RoundingMethod.HALF_UP)
+    stream : Stream | None
+        CUDA stream on which to perform the operation.
+    mr : DeviceMemoryResource | None
+        Device memory resource used to allocate the returned column's device memory.
 
     Returns
     -------
     Column
-        Result column with the same scale as the dividend scalar
+        The quotients, with the type of ``rhs`` and the scale of ``lhs``.
 
     Raises
     ------
     TypeError
-        If either operand is not a decimal type
-    ValueError
-        If an invalid rounding mode is provided
-
-    Examples
-    --------
-    >>> import pylibcudf
-    >>> # Scalar 100.00 / Column [4.00, 5.00, 10.00]
-    >>> # Result: [25.00, 20.00, 10.00] (scale preserved)
+        If either operand is None or is not a decimal type.
     """
-    cdef cpp_decimal_rounding_mode cpp_mode
+    _check_decimal(lhs, "Left")
+    _check_decimal(rhs, "Right")
 
-    # Convert rounding mode
-    if rounding_mode == DecimalRoundingMode.HALF_UP:
-        cpp_mode = cpp_decimal_rounding_mode.HALF_UP
-    elif rounding_mode == DecimalRoundingMode.HALF_EVEN:
-        cpp_mode = cpp_decimal_rounding_mode.HALF_EVEN
-    else:
-        raise ValueError(f"Invalid rounding mode: {rounding_mode}")
+    cdef unique_ptr[column] c_result
+    cdef Stream _stream = _get_stream(stream)
+    cdef cudaStream_t _cs = _stream.view().get()
+    mr = _get_memory_resource(mr)
 
-    # Check that scalar is decimal type
-    if lhs.type().id() not in [
-        type_id.DECIMAL32, type_id.DECIMAL64, type_id.DECIMAL128
-    ]:
-        raise TypeError(f"Left operand must be a decimal type, got {lhs.type()}")
-
-    # Check that column is decimal type
-    if rhs.type().id() not in [
-        type_id.DECIMAL32, type_id.DECIMAL64, type_id.DECIMAL128
-    ]:
-        raise TypeError(f"Right operand must be a decimal type, got {rhs.type()}")
-
-    # Call the C++ divide_decimal function for scalar/column
-    cdef unique_ptr[column] result
-    cdef const cpp_scalar* scalar_ptr = lhs.get()
-
+    cdef const scalar* c_lhs = lhs.get()
+    cdef column_view c_rhs = rhs.view()
     with nogil:
-        result = cpp_divide_decimal(
-            dereference(scalar_ptr),
-            rhs.view(),
-            cpp_mode
+        c_result = cpp_divide_decimal(
+            c_lhs[0],
+            c_rhs,
+            round_method,
+            _cs,
+            mr.get_mr()
         )
 
-    return Column.from_libcudf(move(result))
+    return Column.from_libcudf(move(c_result), _stream, mr)

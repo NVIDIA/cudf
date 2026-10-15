@@ -7,12 +7,12 @@ Live evaluation did not show a material gain or regression. Collect more evidenc
 ## Evaluation Metadata
 
 - Skill: `cudf-query-engine-builder`
-- Evaluation date: 2026-09-29
+- Evaluation date: 2026-10-14
 - Evaluator version: `1.5.6`
 - Agents: Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`), Codex (`openai/openai/gpt-5.5`)
-- Tasks: 2 evaluation tasks (1 positive, 1 negative)
-- Dataset digest: `sha256:907610a19e3fae54e7613006484b6322ea094d9a7ede260c3c5e35112e91848c` (skill-evaluator-dataset-snapshot/1)
-- Attempts per task: 3
+- Tasks: 8 evaluation tasks (7 positive, 1 negative)
+- Dataset digest: `sha256:247cebc82d646141c1d40cb37bee3138aa3ed88f3d764c44df91933fe13bc270` (skill-evaluator-dataset-snapshot/1)
+- Attempts per task: 1
 - Environment: `k8s-sandbox`
 - Tier 2 evidence: required for publication
 - Tier 3 evidence: required for publication
@@ -33,12 +33,12 @@ The three-tier evaluation checks whether the skill:
 
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 99.8% — baseline ran, but no comparable score was available; uplift unavailable | 98.8% — baseline ran, but no comparable score was available; uplift unavailable |
+| Overall | 97.7% — baseline ran, but no comparable score was available; uplift unavailable | 94.7% — baseline ran, but no comparable score was available; uplift unavailable |
 | Security | 100.0% → 100.0% (±0.0 points) | 100.0% → 100.0% (±0.0 points) |
-| Correctness | 100.0% → 100.0% (±0.0 points) | 100.0% → 100.0% (±0.0 points) |
-| Discoverability | 100.0% — baseline ran, but no comparable score was available; uplift unavailable | 95.0% — baseline ran, but no comparable score was available; uplift unavailable |
-| Effectiveness | 100.0% → 100.0% (±0.0 points) | 100.0% → 100.0% (±0.0 points) |
-| Efficiency | 99.2% — baseline ran, but no comparable score was available; uplift unavailable | 98.9% — baseline ran, but no comparable score was available; uplift unavailable |
+| Correctness | 100.0% → 100.0% (±0.0 points) | 97.5% → 100.0% (+2.5 points) |
+| Discoverability | 100.0% — baseline ran, but no comparable score was available; uplift unavailable | 90.0% — baseline ran, but no comparable score was available; uplift unavailable |
+| Effectiveness | 99.7% → 97.9% (-1.8 points) | 91.2% → 91.5% (+0.3 points) |
+| Efficiency | 90.8% — baseline ran, but no comparable score was available; uplift unavailable | 92.1% — baseline ran, but no comparable score was available; uplift unavailable |
 
 **How to read this table:** baseline is the same task attempted without the target skill. Scores are rounded to one decimal; threshold-adjacent values use additional precision so their displayed band matches the verdict. Uplift is derived from those displayed scores and shown in percentage points.
 
@@ -52,13 +52,25 @@ Actual Tier 3 execution usage is reported for every observed agent/case pair and
 
 | Agent | Dataset case | With skill | Without skill | Delta | Change | Coverage |
 |---|---|---:|---:|---:|---:|---|
-| claude-code | All cases | 92,424 | 250,745 | -158,321 | -63.14% | skill 2/2; base 2/2 |
-| claude-code | dataframe-negative | 29,461 | 29,229 | +232 | +0.79% | skill 1/1; base 1/1 |
-| claude-code | missing-engine-input | 62,963 | 221,516 | -158,553 | -71.58% | skill 1/1; base 1/1 |
-| codex | All cases | 73,697 | 82,748 | -9,051 | -10.94% | skill 2/2; base 2/2 |
-| codex | dataframe-negative | 13,506 | 13,243 | +263 | +1.99% | skill 1/1; base 1/1 |
-| codex | missing-engine-input | 60,191 | 69,505 | -9,314 | -13.40% | skill 1/1; base 1/1 |
-| ALL AGENTS | Dataset aggregate | 166,121 | 333,493 | -167,372 | -50.19% | skill 4/4; base 4/4 |
+| claude-code | All cases | 1,387,434 | 1,101,532 | +285,902 | +25.95% | skill 8/8; base 8/8 |
+| claude-code | async-copy-cleanup | 335,304 | 383,983 | -48,679 | -12.68% | skill 1/1; base 1/1 |
+| claude-code | conflicting-query-reference | 163,245 | 75,128 | +88,117 | +117.29% | skill 1/1; base 1/1 |
+| claude-code | dataframe-negative | 35,392 | 35,108 | +284 | +0.81% | skill 1/1; base 1/1 |
+| claude-code | engine-buffer-read-path | 121,324 | 39,594 | +81,730 | +206.42% | skill 1/1; base 1/1 |
+| claude-code | missing-engine-input | 114,061 | 145,217 | -31,156 | -21.45% | skill 1/1; base 1/1 |
+| claude-code | native-result-acceptance | 121,890 | 39,090 | +82,800 | +211.82% | skill 1/1; base 1/1 |
+| claude-code | owning-result-context | 127,798 | 44,708 | +83,090 | +185.85% | skill 1/1; base 1/1 |
+| claude-code | worker-result-handoff | 368,420 | 338,704 | +29,716 | +8.77% | skill 1/1; base 1/1 |
+| codex | All cases | 754,883 | 724,097 | +30,786 | +4.25% | skill 8/8; base 8/8 |
+| codex | async-copy-cleanup | 287,085 | 298,463 | -11,378 | -3.81% | skill 1/1; base 1/1 |
+| codex | conflicting-query-reference | 129,486 | 56,758 | +72,728 | +128.14% | skill 1/1; base 1/1 |
+| codex | dataframe-negative | 13,401 | 13,243 | +158 | +1.19% | skill 1/1; base 1/1 |
+| codex | engine-buffer-read-path | 30,522 | 15,636 | +14,886 | +95.20% | skill 1/1; base 1/1 |
+| codex | missing-engine-input | 44,863 | 27,311 | +17,552 | +64.27% | skill 1/1; base 1/1 |
+| codex | native-result-acceptance | 30,433 | 14,059 | +16,374 | +116.47% | skill 1/1; base 1/1 |
+| codex | owning-result-context | 32,858 | 15,781 | +17,077 | +108.21% | skill 1/1; base 1/1 |
+| codex | worker-result-handoff | 186,235 | 282,846 | -96,611 | -34.16% | skill 1/1; base 1/1 |
+| ALL AGENTS | Dataset aggregate | 2,142,317 | 1,825,629 | +316,688 | +17.35% | skill 16/16; base 16/16 |
 
 Prompt tokens include cached reads, so total tokens are `prompt + completion` (cached is not added twice). The Efficiency score uses `(prompt - cached) + completion`. N/A means the relevant trajectory counters were not available; coverage is never estimated.
 
@@ -68,7 +80,7 @@ Prompt tokens include cached reads, so total tokens are `prompt + completion` (c
 |---|---|---|---|
 | Tier 1 | Static validation | **PASSED WITH OBSERVATIONS** | 11 validator(s); 14 finding(s) |
 | Tier 2 | Semantic deduplication | **PASSED** | 2 validator(s); 0 finding(s) |
-| Tier 3 | Live agent evaluation | **NEUTRAL** | 2 agent(s); 2 task(s) |
+| Tier 3 | Live agent evaluation | **NEUTRAL** | 2 agent(s); 8 task(s) |
 
 ## Findings and Observations
 
@@ -79,7 +91,7 @@ Prompt tokens include cached reads, so total tokens are `prompt + completion` (c
 - **MEDIUM** SCHEMA/body_recommended_section: Missing recommended section: '## Instructions' (`skills/cudf-query-engine-builder/SKILL.md`)
 - **MEDIUM** SCHEMA/body_recommended_section: Missing recommended section: '## Examples' (`skills/cudf-query-engine-builder/SKILL.md`)
 - **LOW** QUALITY/quality_correctness: No examples provided (`skills/cudf-query-engine-builder/SKILL.md`)
-- **LOW** QUALITY/quality_discoverability: Description very long (561 chars, recommend 50-150) (`skills/cudf-query-engine-builder/SKILL.md`)
+- **LOW** QUALITY/quality_discoverability: Description very long (470 chars, recommend 50-150) (`skills/cudf-query-engine-builder/SKILL.md`)
 - 9 additional finding(s) are available in the full evaluation artifacts.
 
 </details>

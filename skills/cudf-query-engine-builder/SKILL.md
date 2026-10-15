@@ -3,7 +3,7 @@ name: cudf-query-engine-builder
 license: CC-BY-4.0 AND Apache-2.0
 metadata:
   author: Joe Sack <jsack@nvidia.com>
-description: Builds a native cuDF proof of concept for a query engine with no working GPU path. Use when an engineer supplies target-engine or adapter code plus a query, operator sequence, or CPU implementation selected for the POC and needs working libcudf C++ or cuDF Java code, a runnable single-GPU program, and a CPU/reference correctness comparison. Do not use for standalone dataframe analysis, cuDF mainline changes, production or deployment integration,  production fallback or I/O policy beyond the single read path the POC needs, or multi-GPU or distributed work.
+description: Build the first native, single-GPU cuDF path in a query engine, or complete its initial adapter. Use for libcudf C++ or cuDF Java implementation, buffer ownership, worker readiness and CPU/reference comparison, including identifying missing POC inputs. Excludes standalone dataframe analysis, cuDF mainline changes, production integration and distributed or multi-GPU execution. Bundled maintainer evaluations use CPU simulations and source review; they do not run CUDA.
 ---
 
 # cuDF query-engine POC builder
@@ -13,6 +13,8 @@ description: Builds a native cuDF proof of concept for a query engine with no wo
 Build the first native cuDF proof of concept in the target engine for a query-engine engineer. Produce working target-engine code, a runnable single-GPU program, and a correctness result, not only advice.
 
 The POC may cover one operator, a sequence of operators, or a query selected for the POC. Do not reduce it to one operator by default. If a smaller increment is needed for feasibility or safe implementation, explain why and preserve the path to the requested POC.
+
+For a request limited to an initial adapter correction or source review, deliver that requested work and state which build, native execution and comparison steps remain unperformed. Source review and CPU simulation cannot establish acceptance of the native POC.
 
 ## Gather inputs and choose sources
 
@@ -41,7 +43,11 @@ Use target-engine code and tests, installed public headers, and version-matched 
 5. State the applicable row-order handling, null and type equality, and floating-point tolerance before comparing the output with the named CPU or reference result.
 6. Fix evidenced defects, then rebuild, rerun, and recompare. Continue until the checks pass or a named blocker remains. Report unsafe boundaries, missing prerequisites, unresolved semantics, and larger engine changes.
 
-Before accepting an asynchronous path, inspect every operation that can throw after GPU work is submitted, including output allocations. Arrange ownership and cleanup so exception unwinding cannot release a buffer before its pending consumers finish. For a synchronous POC, keep those owners outside the throwing scope and establish completion before releasing them on both success and failure. Exercise a recoverable allocation failure while work is pending, assert that no owner is released early, and check a subsequent valid call when the engine promises recovery. Treat a failed ownership or readiness check as a failed POC even when normal output values match.
+Before accepting an asynchronous path, inspect every operation that can throw after submission, including native calls, output allocation and result-wrapper construction. C++ destroys objects declared inside a try block before entering its catch handler: a wait in that handler cannot protect those destroyed owners. Keep input, intermediate and output owners outside the throwing scope, and establish completion before releasing them on failure. On success, wait after the last queued operation, including a device-to-host copy, before the caller reads the result. A wait before the copy does not make its destination ready.
+
+Honor the supplied caller's completion promise even when filtering produces no rows. An empty result can still follow queued work or depend on input readiness. For a result handed between workers, retain its buffer, stream and resource owners and establish the producer-to-consumer dependency. Follow the ownership patterns and validation steps in [cleanup after asynchronous work](references/asynchronous-cleanup.md).
+
+Exercise a recoverable allocation failure while work is pending, assert that no owner is released early, and check a subsequent valid call when the engine promises recovery. Treat a failed ownership or readiness check as a failed POC even when normal output values match.
 
 If a required codebase, toolchain, compatible cuDF runtime, GPU, or reference result is unavailable and prevents a required step, report `BLOCKED`, name the missing prerequisite, preserve completed work, and give the exact next command or check. Do not report the blocked step as run or passed.
 
@@ -74,3 +80,7 @@ Profiling is optional for an initial POC and is never a blocker: if Nsight Syste
 When performance work is requested, profiling belongs in the same tuning loop. Benchmark the same logical work under stated conditions. Obvious code changes may be validated with benchmark results, but broader diagnosis and performance claims require profile evidence. If profiling cannot run, report the blocker rather than inferring bottlenecks from code alone.
 
 A GPU result that remains slower than the CPU result is not automatically a failed POC. Preserve the implementation and report the measurements, profile evidence collected, observed bottlenecks, and remaining engine work.
+
+## Evaluation files
+
+The evals/ directory is for maintainers evaluating this skill. It contains incomplete adapter starters and CPU models used to test host ownership and readiness; these are not cuDF implementations or native-execution evidence. Do not run these fixtures as part of an engineer's POC unless the user requested skill evaluation. Read evals/EVAL.md before evaluating them and use its isolated execution procedure.

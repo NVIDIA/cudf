@@ -8,10 +8,10 @@
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_view.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_radix_sort.cuh>
@@ -65,14 +65,16 @@ struct sorted_order_radix_fn {
   void radix_sort()
   {
     auto d_in   = input.begin<T>();
-    auto output = rmm::device_uvector<T>(input.size(), stream);
-    auto d_out  = output.begin();  // not returned
-    auto seqs   = rmm::device_uvector<cudf::size_type>(input.size(), stream);
+    auto output = cuda::device_buffer<T>(
+      stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
+    auto d_out = output.data();  // not returned
+    auto seqs  = cuda::device_buffer<cudf::size_type>(
+      stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
     thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                      seqs.begin(),
                      seqs.end(),
                      0);
-    auto dv_in  = seqs.begin();
+    auto dv_in  = seqs.data();
     auto dv_out = indices.begin<cudf::size_type>();
 
     auto const n       = input.size();
@@ -102,14 +104,17 @@ struct sorted_order_radix_fn {
   void operator()()
     requires(cudf::is_floating_point<T>())
   {
-    auto pair_in = rmm::device_uvector<float_pair<T>>(input.size(), stream);
-    auto d_in    = pair_in.begin();
+    auto pair_in = cuda::device_buffer<float_pair<T>>(
+      stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
+    auto d_in = pair_in.data();
     // pair_out/d_out is not returned to the caller but used as an intermediate
-    auto pair_out = rmm::device_uvector<float_pair<T>>(input.size(), stream);
-    auto d_out    = pair_out.begin();
-    auto vals     = rmm::device_uvector<size_type>(indices.size(), stream);
-    auto dv_in    = vals.begin();
-    auto dv_out   = indices.begin<cudf::size_type>();
+    auto pair_out = cuda::device_buffer<float_pair<T>>(
+      stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
+    auto d_out = pair_out.data();
+    auto vals  = cuda::device_buffer<size_type>(
+      stream, cudf::get_current_device_resource_ref(), indices.size(), cuda::no_init);
+    auto dv_in  = vals.data();
+    auto dv_out = indices.begin<cudf::size_type>();
 
     auto zip_out = cuda::make_zip_iterator(d_in, dv_in);
     thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),

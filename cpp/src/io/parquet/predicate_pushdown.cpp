@@ -17,8 +17,6 @@
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <cuda/iterator>
-
 #include <algorithm>
 #include <functional>
 #include <numeric>
@@ -130,15 +128,9 @@ std::optional<std::vector<std::vector<size_type>>> aggregate_reader_metadata::ap
       continue;
     }
     // Map each filter column's zeroth-source schema index into every source's schema tree.
-    auto const num_sources         = input_row_group_indices.size();
-    auto per_source_schema_indices = std::vector<int>(num_sources);
-    auto const src_iter            = cuda::counting_iterator<size_t>{0};
-    std::transform(
-      src_iter, src_iter + num_sources, per_source_schema_indices.begin(), [&](size_t src_idx) {
-        return map_schema_index(schema_idx, static_cast<int>(src_idx));
-      });
+    auto const schema_indices_per_source = map_schema_index_to_sources(schema_idx);
     auto [min_col, max_col, is_null_col] = cudf::type_dispatcher<dispatch_storage_type>(
-      dtype, stats_col, per_source_schema_indices, dtype, stream, mr);
+      dtype, stats_col, schema_indices_per_source, dtype, stream, mr);
     columns.push_back(std::move(min_col));
     columns.push_back(std::move(max_col));
     CUDF_EXPECTS(is_null_col.has_value(), "is_null column must be present");
@@ -192,9 +184,16 @@ aggregate_reader_metadata::filter_row_groups(
                                                ? stats_filtered_row_groups.value()
                                                : input_row_group_indices;
 
+  // Timestamp columns stored with another precision in any source cannot use bloom filters
+  auto const mismatched_timestamp_mask = calc_mismatched_timestamp_mask(
+    std::span{output_dtypes.data(), output_dtypes.size()},
+    std::span{output_column_schemas.data(), output_column_schemas.size()});
+
   // Collect equality literals for each input table column for bloom filtering
   auto literals_collector = equality_literals_collector{
-    filter.get(), output_dtypes, output_column_schemas, per_file_metadata[0].schema};
+    filter.get(),
+    output_dtypes,
+    std::span{mismatched_timestamp_mask.data(), mismatched_timestamp_mask.size()}};
 
   // Return early if bloom filters cannot prune any row groups with this filter.
   if (not literals_collector.can_filter()) {
@@ -202,7 +201,8 @@ aggregate_reader_metadata::filter_row_groups(
             {std::make_optional(num_stats_filtered_row_groups), std::nullopt}};
   }
 
-  auto const equality_literals = std::move(literals_collector).get_literals();
+  auto const [equality_literals, equality_operators] =
+    std::move(literals_collector).get_literals_and_operators();
 
   // Collect schema indices of columns with equality predicate(s)
   std::vector<cudf::size_type> equality_col_schemas;
@@ -233,6 +233,7 @@ aggregate_reader_metadata::filter_row_groups(
   auto const bloom_filtered_row_groups = apply_bloom_filters(bloom_filter_data,
                                                              bloom_filter_input_row_groups,
                                                              equality_literals,
+                                                             equality_operators,
                                                              num_stats_filtered_row_groups,
                                                              output_dtypes,
                                                              equality_col_schemas,

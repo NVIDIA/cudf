@@ -193,10 +193,25 @@ class StreamingOptions:
         Env: ``RAPIDSMPF_SPILL_DEVICE_LIMIT``.
         Default: ``"80%"``.
         Category: rapidsmpf.
+    spill_host_limit
+        Limit on the pageable host memory the RapidsMPF buffer resource may
+        reserve, per GPU, as a byte count (e.g. ``"96GiB"``) or a percentage
+        of per-GPU host memory (e.g. ``"10%"``). Independent of
+        ``pinned_max_pool_size``.
+        Env: ``RAPIDSMPF_SPILL_HOST_LIMIT``.
+        Default: unlimited.
+        Category: rapidsmpf.
     periodic_spill_check
         Interval between spill checks (e.g. ``"1ms"``).
         Env: ``RAPIDSMPF_PERIODIC_SPILL_CHECK``.
         Default: ``"1ms"``.
+        Category: rapidsmpf.
+    disk_spill_dir
+        Directory for disk-backed buffers. When set, the RapidsMPF buffer
+        resource gets a disk memory tier whose files live in a subdirectory it
+        owns under this path.
+        Env: ``RAPIDSMPF_DISK_SPILL_DIR``.
+        Default: disabled.
         Category: rapidsmpf.
     unbounded_file_read_cache
         Cache file-read results in the Context's message storage.
@@ -308,6 +323,12 @@ class StreamingOptions:
         Env: ``CUDF_POLARS__EXECUTOR__SINK_TO_DIRECTORY``.
         Default: ``True`` (forced by the streaming engines).
         Category: executor.
+    parallel_sink_batches
+        Run callbacks on each rank for ``sink_batches(maintain_order=False)``.
+        Enable only for callbacks safe to invoke concurrently across ranks.
+        Env: ``CUDF_POLARS__EXECUTOR__PARALLEL_SINK_BATCHES``.
+        Default: ``False``.
+        Category: executor.
     quent_context
         Quent tracing context, or ``None`` to disable tracing.
         Env: ``CUDF_POLARS__EXECUTOR__QUENT_CONTEXT`` (``true``/``false``).
@@ -374,9 +395,13 @@ class StreamingOptions:
     spill_device_limit: str | Unspecified = _opt(
         "rapidsmpf", "RAPIDSMPF_SPILL_DEVICE_LIMIT"
     )
+    spill_host_limit: str | Unspecified = _opt(
+        "rapidsmpf", "RAPIDSMPF_SPILL_HOST_LIMIT"
+    )
     periodic_spill_check: str | Unspecified = _opt(
         "rapidsmpf", "RAPIDSMPF_PERIODIC_SPILL_CHECK"
     )
+    disk_spill_dir: str | Unspecified = _opt("rapidsmpf", "RAPIDSMPF_DISK_SPILL_DIR")
     unbounded_file_read_cache: str | Unspecified = _opt(
         "rapidsmpf", "RAPIDSMPF_UNBOUNDED_FILE_READ_CACHE"
     )
@@ -440,6 +465,9 @@ class StreamingOptions:
     ) = _opt("executor")
     sink_to_directory: bool | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__SINK_TO_DIRECTORY", parse_boolean
+    )
+    parallel_sink_batches: bool | Unspecified = _opt(
+        "executor", "CUDF_POLARS__EXECUTOR__PARALLEL_SINK_BATCHES", parse_boolean
     )
     quent_context: QuentConfig | None | Unspecified = _opt(
         "executor",
@@ -752,6 +780,25 @@ class StreamingOptions:
             help=textwrap.dedent("""\
                 Interval between periodic spill checks (e.g. "1ms").
                 Env: RAPIDSMPF_PERIODIC_SPILL_CHECK. Built-in default: 1ms."""),
+        )
+        g.add_argument(
+            "--spill-host-limit",
+            dest="spill_host_limit",
+            default=None,
+            type=str,
+            help=textwrap.dedent("""\
+                Limit on pageable host memory per GPU, as bytes (e.g. "96GiB")
+                or a percentage of per-GPU host memory (e.g. "10%%").
+                Env: RAPIDSMPF_SPILL_HOST_LIMIT. Built-in default: unlimited."""),
+        )
+        g.add_argument(
+            "--disk-spill-dir",
+            dest="disk_spill_dir",
+            default=None,
+            type=str,
+            help=textwrap.dedent("""\
+                Directory for disk-backed buffers (enables the disk memory tier).
+                Env: RAPIDSMPF_DISK_SPILL_DIR. Built-in default: disabled."""),
         )
         g.add_argument(
             "--unbounded-file-read-cache",

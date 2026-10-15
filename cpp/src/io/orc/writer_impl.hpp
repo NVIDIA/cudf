@@ -231,6 +231,7 @@ enum class writer_state {
                     // destroyed in this state, it should not write the footer.
   DATA_WRITTEN,     // At least one table has been written to the sink; when the writer is closed,
                     // it should write the footer.
+  FAILED,           // A write or close failed after output started; no further writes are allowed.
   CLOSED            // Writer has been closed; no further writes are allowed.
 };
 
@@ -327,17 +328,6 @@ class writer::impl {
    */
   void add_table_to_footer_data(orc_table_view const& orc_table,
                                 std::vector<StripeInformation>& stripes);
-
-  /**
-   * @brief Update writer-level statistics with data from the current table.
-   *
-   * @param num_rows Number of rows in the current table
-   * @param single_table_stats Statistics data from the current table
-   * @param compression_stats Compression statistics from the current table
-   */
-  void update_statistics(size_type num_rows,
-                         intermediate_statistics&& single_table_stats,
-                         std::optional<writer_compression_statistics> const& compression_stats);
 
  private:
   // CUDA stream.

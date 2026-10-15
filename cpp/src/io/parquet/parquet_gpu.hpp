@@ -877,6 +877,18 @@ void decode_page_headers(cudf::device_span<ColumnChunkDesc const> chunks,
                          cuda::stream_ref stream);
 
 /**
+ * @brief Page metadata from the page index to be applied to pages during header parsing.
+ */
+struct page_index_info {
+  int32_t num_rows;
+  int32_t chunk_row;
+  int32_t num_nulls;
+  int32_t num_valids;
+  int32_t str_bytes;
+  bool has_value_info;
+};
+
+/**
  * @brief Decode page headers from corresponding specified page data spans.
  *
  * Empty spans initialize the corresponding logical page descriptor but are not decoded.
@@ -885,6 +897,7 @@ void decode_page_headers(cudf::device_span<ColumnChunkDesc const> chunks,
  * @param[out] pages Device span of pages
  * @param[in] page_data Device span of page data
  * @param[in] chunk_page_offsets List of running count of page locations per column chunk
+ * @param[in] page_indexes Device span of metadata from page index for each logical page.
  * @param[out] error_code Error code for kernel failures
  * @param[in] stream CUDA stream to use
  */
@@ -893,6 +906,7 @@ void decode_page_headers_from_page_data(
   cudf::device_span<PageInfo> pages,
   cudf::device_span<cudf::device_span<uint8_t const> const> page_data,
   cudf::device_span<size_type const> chunk_page_offsets,
+  cudf::device_span<page_index_info const> page_indexes,
   kernel_error::pointer error_code,
   cuda::stream_ref stream);
 

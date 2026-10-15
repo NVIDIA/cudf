@@ -883,8 +883,9 @@ cdef class HybridScanReader:
 
         self._stream = _get_stream(stream)
         self.mr = _get_memory_resource(mr)
-        # keep reference to avoid use-after-free of device spans
+        # keep references to avoid use-after-free of device spans and filter
         self._filter_chunk_data = column_chunk_data
+        self._filter = options._filter
 
         cdef column_view mask_view = row_mask.view()
         with nogil:
@@ -927,6 +928,7 @@ cdef class HybridScanReader:
             more_chunks = self.c_obj.get()[0].has_next_table_chunk()
         if not more_chunks:
             self._filter_chunk_data = None
+            self._filter = None
         return TableWithMetadata.from_libcudf(
             c_result, self._stream, self.mr
         )

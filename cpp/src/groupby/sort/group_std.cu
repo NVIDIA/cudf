@@ -17,9 +17,9 @@
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/stream>
 #include <thrust/for_each.h>
@@ -72,7 +72,8 @@ void reduce_by_key_fn(column_device_view const& values,
   // Using a temporary buffer for intermediate transform results instead of
   // using the transform-iterator directly in thrust::reduce_by_key
   // improves compile-time significantly.
-  auto vars = rmm::device_uvector<ResultType>(values.size(), stream);
+  auto vars = cuda::device_buffer<ResultType>(
+    stream, cudf::get_current_device_resource_ref(), values.size(), cuda::no_init);
   thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                     itr,
                     itr + values.size(),

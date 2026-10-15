@@ -17,6 +17,7 @@
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/iterator>
@@ -45,7 +46,7 @@ size_type compute_group_offsets(table_view const& keys,
   // Using a temporary buffer for intermediate transform results from the iterator containing
   // the comparator speeds up compile-time significantly without much degradation in
   // runtime performance over using the comparator directly in thrust::unique_copy.
-  auto result       = rmm::device_uvector<bool>(size, stream, temp_mr);
+  auto result       = cuda::device_buffer<bool>(stream, temp_mr, size, cuda::no_init);
   auto const itr    = cuda::counting_iterator<size_type>{0};
   auto const row_eq = permuted_row_equality_comparator(d_key_equal, sorted_order);
   auto const ufn    = cudf::detail::unique_copy_fn<decltype(itr), decltype(row_eq)>{

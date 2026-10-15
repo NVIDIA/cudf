@@ -568,7 +568,7 @@ def test_adjust_ordering_locally_sorts_unordered_input(
 
 
 @pytest.mark.spmd
-def test_adjust_ordering_merges_locally_unordered_multi_chunk_output(
+def test_adjust_ordering_concatenates_locally_unordered_chunks(
     spmd_engine: SPMDEngine,
 ) -> None:
     context = spmd_engine.context
@@ -579,7 +579,7 @@ def test_adjust_ordering_merges_locally_unordered_multi_chunk_output(
     stream = context.br().stream_pool.get_stream()
     input_ordering = _make_ordering(
         context,
-        4,
+        [2, 4, 6],
         locally_ordered=False,
         stream=stream,
     )
@@ -589,7 +589,7 @@ def test_adjust_ordering_merges_locally_unordered_multi_chunk_output(
             _adjust_and_collect(
                 context,
                 comm,
-                [_frame([3, 0]), _frame([2, 1]), _frame([7, 5]), _frame([6, 4])],
+                [_frame([1, 0]), _frame([3, 2]), _frame([5, 4]), _frame([7, 6])],
                 input_ordering,
                 output_ordering,
                 collective_id=op_id,

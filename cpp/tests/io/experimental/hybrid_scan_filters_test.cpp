@@ -9,6 +9,7 @@
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/table_utilities.hpp>
 
+#include <cudf/io/datasource.hpp>
 #include <cudf/io/experimental/hybrid_scan.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/io/parquet_io_utils.hpp>
@@ -1351,8 +1352,7 @@ TEST_F(HybridScanFiltersTest, FilterRowGroupsWithDictionary)
     auto filter_expression = cudf::ast::operation(
       cudf::ast::ast_operator::LOGICAL_OR, uint_filter_expression, uint_filter_expression2);
 
-    auto const options =
-      cudf::io::parquet_reader_options::builder().filter(filter_expression).build();
+    auto options = cudf::io::parquet_reader_options::builder().filter(filter_expression).build();
     reader->reset_column_selection();
     EXPECT_TRUE(
       reader->dictionary_pages_byte_ranges(reader->all_row_groups(options), options).empty());
@@ -1361,6 +1361,36 @@ TEST_F(HybridScanFiltersTest, FilterRowGroupsWithDictionary)
     EXPECT_EQ(
       filter_row_groups_with_dictionaries(datasource_ref, reader_ref, options, stream, mr).size(),
       expected_row_groups);
+
+    // AND'ing a `table[2] == "9999"` to the filter must only fetch col2's dictionaries.
+    auto str_value   = cudf::string_scalar("9999", true, stream);
+    auto str_literal = cudf::ast::literal(str_value);
+    auto str_filter  = cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col2_ref, str_literal);
+
+    options.set_filter(str_filter);
+    reader->reset_column_selection();
+    auto const expected_ranges =
+      reader->dictionary_pages_byte_ranges(reader->all_row_groups(options), options);
+    ASSERT_FALSE(expected_ranges.empty());
+
+    auto conjunction =
+      cudf::ast::operation(cudf::ast::ast_operator::LOGICAL_AND, filter_expression, str_filter);
+    options.set_filter(conjunction);
+
+    reader->reset_column_selection();
+    auto const dict_ranges =
+      reader->dictionary_pages_byte_ranges(reader->all_row_groups(options), options);
+
+    ASSERT_EQ(dict_ranges.size(), expected_ranges.size());
+    EXPECT_TRUE(std::equal(dict_ranges.begin(),
+                           dict_ranges.end(),
+                           expected_ranges.begin(),
+                           expected_ranges.end(),
+                           [](auto const& lhs, auto const& rhs) {
+                             return lhs.offset() == rhs.offset() and lhs.size() == rhs.size();
+                           }));
+    EXPECT_TRUE(
+      filter_row_groups_with_dictionaries(datasource_ref, reader_ref, options, stream, mr).empty());
   }
 
   {
@@ -1914,6 +1944,78 @@ TYPED_TEST(RowGroupFilteringWithDictTest, FilterManyLiteralsTyped)
       cudf::ast::ast_operator::LOGICAL_AND, filter_expression12, filter_expression3);
 
     // Check the results
+    auto const options =
+      cudf::io::parquet_reader_options::builder().filter(filter_expression).build();
+    EXPECT_EQ(filter_row_groups_with_dictionaries(datasource_ref, reader_ref, options, stream, mr),
+              expected_row_groups);
+  }
+}
+
+TEST_F(HybridScanFiltersTest, FilterRowGroupsWithDictionaryInt96AndBool)
+{
+  // Two row groups of INT96 timestamps (as written by Spark) on both sides of the epoch, with a
+  // bool column. Row group 0 holds 10 timestamps at multiples of `step`, and row group 1 the same
+  // values shifted by one microsecond, so only the dictionaries can tell them apart. The writer
+  // stores INT96 with microsecond precision, so all values are whole microseconds.
+  auto constexpr rows_per_row_group = 5000;
+  auto constexpr step               = int64_t{1'000'007'000};
+  auto const timestamps             = cudf::detail::make_counting_transform_iterator(0, [](auto i) {
+    auto const row_group = i / rows_per_row_group;
+    return cudf::timestamp_ns{cudf::duration_ns{(i % 10 - 5) * step + row_group * 1000}};
+  });
+  auto const ts_col                 = cudf::test::fixed_width_column_wrapper<cudf::timestamp_ns>(
+    timestamps, timestamps + 2 * rows_per_row_group);
+  auto const trues = cuda::make_constant_iterator(true);
+  auto const bool_col =
+    cudf::test::fixed_width_column_wrapper<bool>(trues, trues + 2 * rows_per_row_group);
+  auto const table = cudf::table_view{{ts_col, bool_col}};
+
+  auto table_metadata = cudf::io::table_input_metadata{table};
+  table_metadata.column_metadata[0].set_name("ts");
+  table_metadata.column_metadata[1].set_name("b");
+
+  std::vector<char> buffer;
+  auto const write_opts =
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, table)
+      .metadata(std::move(table_metadata))
+      .row_group_size_rows(rows_per_row_group)
+      .dictionary_policy(cudf::io::dictionary_policy::ALWAYS)
+      .int96_timestamps(true)
+      .build();
+  cudf::io::write_parquet(write_opts);
+
+  auto stream = cudf::get_default_stream();
+  auto mr     = cudf::get_current_device_resource_ref();
+
+  // Input datasource
+  auto const datasource     = cudf::io::datasource::create(cudf::host_span<std::byte const>(
+    reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()));
+  auto const datasource_ref = std::ref(*datasource);
+
+  // Hybrid scan reader
+  auto const default_options = cudf::io::parquet_reader_options::builder().build();
+  auto const footer_buffer   = cudf::io::parquet::fetch_footer_to_host(*datasource);
+  auto const reader = std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(
+    *footer_buffer, default_options);
+  auto const reader_ref = std::ref(*reader);
+
+  auto const ts_ref       = cudf::ast::column_name_reference("ts");
+  auto const b_ref        = cudf::ast::column_name_reference("b");
+  auto bool_literal_value = cudf::numeric_scalar<bool>(true, true, stream);
+  auto const bool_literal = cudf::ast::literal(bool_literal_value);
+  auto const b_is_true = cudf::ast::operation(cudf::ast::ast_operator::EQUAL, b_ref, bool_literal);
+
+  // Filtering - ts == value AND b == true, where the bool equality is not used for filtering
+  for (auto const& [value, expected_row_groups] :
+       {std::pair{-3 * step, std::vector<cudf::size_type>{0}},
+        std::pair{-3 * step + 1000, std::vector<cudf::size_type>{1}},
+        std::pair{-3 * step + 2000, std::vector<cudf::size_type>{}}}) {
+    auto ts_literal_value = cudf::timestamp_scalar<cudf::timestamp_ns>(
+      cudf::timestamp_ns{cudf::duration_ns{value}}, true, stream);
+    auto const ts_literal = cudf::ast::literal(ts_literal_value);
+    auto const ts_equal = cudf::ast::operation(cudf::ast::ast_operator::EQUAL, ts_ref, ts_literal);
+    auto const filter_expression =
+      cudf::ast::operation(cudf::ast::ast_operator::LOGICAL_AND, ts_equal, b_is_true);
     auto const options =
       cudf::io::parquet_reader_options::builder().filter(filter_expression).build();
     EXPECT_EQ(filter_row_groups_with_dictionaries(datasource_ref, reader_ref, options, stream, mr),

@@ -452,7 +452,7 @@ std::vector<size_t> all_roundtrip_sizes()
           size_t{54},
           size_t{1 << 10},
           size_t{1 << 20},
-          roundtrip_input().size()};
+          size_t{4 << 20}};
 }
 
 // With a harness, the codec calls must allocate only from its temporary resource.

@@ -297,6 +297,7 @@ cdef class ParquetReaderOptions:
         None
         """
         self.c_obj.set_filter(<expression &>dereference(filter.c_obj))
+        self._filter = filter
 
     cpdef void set_source(self, SourceInfo src):
         """
@@ -473,6 +474,7 @@ cdef class ParquetReaderOptionsBuilder:
         ParquetReaderOptionsBuilder
         """
         self.c_obj.filter(<expression &>dereference(filter.c_obj))
+        self._filter = filter
         return self
 
     cpdef ParquetReaderOptionsBuilder columns(self, list col_names: list[str]):
@@ -627,6 +629,7 @@ cdef class ParquetReaderOptionsBuilder:
         )
         parquet_options.c_obj = move(self.c_obj.build())
         parquet_options.source = self.source
+        parquet_options._filter = self._filter
         return parquet_options
 
 
@@ -665,6 +668,7 @@ cdef class ChunkedParquetReader:
     ):
         self._stream = _get_stream(stream)
         self.mr = _get_memory_resource(mr)
+        self._filter = options._filter
         cdef vector[unique_ptr[datasource]] sources
         cdef vector[cpp_FileMetaData] c_metadatas
         cdef vector[cpp_FileMetaData*] metadata_ptrs

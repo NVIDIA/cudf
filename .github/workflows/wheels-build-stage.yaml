@@ -134,42 +134,49 @@ jobs:
         if: inputs.pure-wheel == false
         with:
           if-no-files-found: error
+          compression-level: 0
           name: ${{ steps.build-wheels.outputs.libcudf_artifact_name }}
           path: ${{ steps.build-wheels.outputs.libcudf_output_dir }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: inputs.pure-wheel == false
         with:
           if-no-files-found: error
+          compression-level: 0
           name: ${{ steps.build-wheels.outputs.libcudf_streaming_artifact_name }}
           path: ${{ steps.build-wheels.outputs.libcudf_streaming_output_dir }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: inputs.pure-wheel == false
         with:
           if-no-files-found: error
+          compression-level: 0
           name: ${{ steps.build-wheels.outputs.pylibcudf_artifact_name }}
           path: ${{ steps.build-wheels.outputs.pylibcudf_output_dir }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: inputs.pure-wheel == false
         with:
           if-no-files-found: error
+          compression-level: 0
           name: ${{ steps.build-wheels.outputs.cudf_artifact_name }}
           path: ${{ steps.build-wheels.outputs.cudf_output_dir }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: inputs.pure-wheel == false
         with:
           if-no-files-found: error
+          compression-level: 0
           name: ${{ steps.build-wheels.outputs.cudf_streaming_artifact_name }}
           path: ${{ steps.build-wheels.outputs.cudf_streaming_output_dir }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: inputs.pure-wheel
         with:
           if-no-files-found: error
+          compression-level: 0
           name: ${{ steps.build-wheels.outputs.dask_cudf_artifact_name }}
           path: ${{ steps.build-wheels.outputs.dask_cudf_output_dir }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: inputs.pure-wheel
         with:
           if-no-files-found: error
+          compression-level: 0
           name: ${{ steps.build-wheels.outputs.cudf_polars_artifact_name }}
           path: ${{ steps.build-wheels.outputs.cudf_polars_output_dir }}
       - name: Upload additional artifacts

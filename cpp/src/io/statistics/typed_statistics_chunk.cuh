@@ -17,6 +17,7 @@
 #include "temp_storage_wrapper.cuh"
 
 #include <cudf/fixed_point/fixed_point.hpp>
+#include <cudf/utilities/traits.hpp>
 #include <cudf/wrappers/timestamps.hpp>
 
 #include <cuda/functional>
@@ -47,21 +48,22 @@ class union_member {
 
   template <typename T, typename U>
   __device__ static type<T, U> get(U& val)
-    requires(std::is_integral_v<T> and std::is_unsigned_v<T>)
+    requires(cudf::is_integral<T>() and cudf::is_unsigned<T>())
   {
     return val.u_val;
   }
 
   template <typename T, typename U>
   __device__ static type<T, U> get(U& val)
-    requires(std::is_integral_v<T> and std::is_signed_v<T>)
+    requires(cudf::is_integral<T>() and cudf::is_signed<T>() and
+             not cuda::std::is_same_v<T, __int128_t>)
   {
     return val.i_val;
   }
 
   template <typename T, typename U>
   __device__ static type<T, U> get(U& val)
-    requires(std::is_same_v<T, __int128_t>)
+    requires(cuda::std::is_same_v<T, __int128_t>)
   {
     return val.d128_val;
   }
@@ -249,7 +251,9 @@ get_untyped_chunk(typed_statistics_chunk<T, include_aggregate> const& chunk)
   stat.has_nan    = chunk.has_nan;
   stat.has_sum    = [&]() {
     // invalidate the sum if overflow or underflow is possible
-    if constexpr (std::is_floating_point_v<E> or std::is_integral_v<E>) {
+    // decimals (E == __int128_t) skip this check so decimal128 sum overflow is not detected
+    if constexpr (cuda::std::is_floating_point_v<E> or
+                  (cudf::is_integral<E>() and not cuda::std::is_same_v<E, __int128_t>)) {
       if (!chunk.has_minmax) { return true; }
       return cuda::std::numeric_limits<E>::max() / chunk.non_nulls >=
                static_cast<E>(chunk.maximum_value) and

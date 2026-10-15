@@ -18,10 +18,10 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_merge_sort.cuh>
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/execution>
 #include <cuda/stream>
@@ -187,8 +187,8 @@ struct column_sorted_order_fn {
                                 null_order null_precedence,
                                 cuda::stream_ref stream)
   {
-    auto prefixes =
-      rmm::device_uvector<PrefixKey>(input.size(), stream, cudf::get_current_device_resource_ref());
+    auto prefixes = cuda::device_buffer<PrefixKey>(
+      stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
     auto rows = cuda::counting_iterator<cudf::size_type>{0};
     thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                       rows,
@@ -298,7 +298,8 @@ struct column_sorted_order_fn {
     auto map = ordered_indices->view().template data<size_type>();
     auto itr = cudf::detail::indexalator_factory::make_input_iterator(
       dictionary_column_view(input).indices());
-    auto mapped_indices = rmm::device_uvector<size_type>(input.size(), stream);
+    auto mapped_indices = cuda::device_buffer<size_type>(
+      stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
     thrust::gather(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                    itr,
                    itr + input.size(),

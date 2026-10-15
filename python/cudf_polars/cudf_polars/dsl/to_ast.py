@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from functools import partial, reduce, singledispatch
-from typing import TYPE_CHECKING, TypeAlias, TypedDict, cast
+from typing import TYPE_CHECKING, TypedDict, cast
 
 import polars as pl  # noqa: TC002 (used at runtime for pl.datatypes, pl.Series etc.)
 
@@ -112,10 +112,8 @@ class ExprTransformerState(TypedDict):
     table_ref: plc.expressions.TableReference
 
 
-Transformer: TypeAlias = GenericTransformer[expr.Expr, plc_expr.Expression, ASTState]
-ExprTransformer: TypeAlias = GenericTransformer[
-    expr.Expr, expr.Expr, ExprTransformerState
-]
+type Transformer = GenericTransformer[expr.Expr, plc_expr.Expression, ASTState]
+type ExprTransformer = GenericTransformer[expr.Expr, expr.Expr, ExprTransformerState]
 """Protocol for transformation of Expr nodes."""
 
 

@@ -49,7 +49,6 @@ from cudf_polars.engine import persisted_result, rank_local_store
 from cudf_polars.engine.core import (
     ClusterInfo,
     StreamingEngine,
-    _run_cleanup_steps,
     all_gather_host_data,
     check_reserved_keys,
     evaluate_on_rank,
@@ -75,6 +74,7 @@ from cudf_polars.quent._runtime import (
 from cudf_polars.streaming.actor_graph.collectives.common import reserve_op_id
 from cudf_polars.streaming.actor_graph.utils import set_memory_resource
 from cudf_polars.unstable import unstable
+from cudf_polars.utils.cleanup import run_cleanup_steps
 from cudf_polars.utils.config import (
     MemoryResourceConfig,
     SPMDContext,
@@ -781,7 +781,7 @@ class SPMDEngine(StreamingEngine):
                 steps.append(self._close_quent_controller)
             if comm.nranks > 1:
                 steps.append(lambda: barrier(comm))
-        _run_cleanup_steps("SPMD engine shutdown failed", *steps)
+        run_cleanup_steps("SPMD engine shutdown failed", *steps)
 
     @classmethod
     def from_options(cls, options: StreamingOptions) -> SPMDEngine:

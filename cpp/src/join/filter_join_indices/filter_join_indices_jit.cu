@@ -20,6 +20,7 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 
@@ -29,6 +30,7 @@
 
 #include <cub/device/device_transform.cuh>
 #include <cuco/static_set.cuh>
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/tuple>
 #include <cuda/stream>
@@ -178,7 +180,7 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
 apply_join_semantics(cudf::table_view const& left,
                      cudf::device_span<size_type const> left_indices,
                      cudf::device_span<size_type const> right_indices,
-                     rmm::device_uvector<bool> const& predicate_results,
+                     cudf::device_span<bool const> predicate_results,
                      join_kind join_kind,
                      cuda::stream_ref stream,
                      rmm::device_async_resource_ref mr)
@@ -392,7 +394,8 @@ filter_join_indices_jit(cudf::table_view const& left,
                                          mr);
 
   // Allocate predicate results
-  auto predicate_results = rmm::device_uvector<bool>(left_indices.size(), stream);
+  auto predicate_results = cuda::device_buffer<bool>(
+    stream, cudf::get_current_device_resource_ref(), left_indices.size(), cuda::no_init);
 
   // Launch kernel
   launch_join_filter_kernel(kernel,
@@ -478,7 +481,8 @@ filter_join_indices_jit(cudf::table_view const& left,
     "cudf/cpp/src/join/jit/filter_join_kernel.cu", kernel_name, cuda_source);
 
   // Allocate and compute predicate results
-  auto predicate_results = rmm::device_uvector<bool>(left_indices.size(), stream);
+  auto predicate_results = cuda::device_buffer<bool>(
+    stream, cudf::get_current_device_resource_ref(), left_indices.size(), cuda::no_init);
   launch_join_filter_kernel(kernel,
                             left_indices,
                             right_indices,

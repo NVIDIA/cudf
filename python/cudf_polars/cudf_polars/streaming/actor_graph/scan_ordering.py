@@ -18,7 +18,7 @@ from cudf_streaming.table_chunk import TableChunk
 from cudf_polars.dsl.tracing import nvtx_annotate_cudf_polars
 from cudf_polars.dsl.utils.naming import names_to_indices
 from cudf_polars.streaming.actor_graph.collectives.allgather import AllGatherManager
-from cudf_polars.streaming.actor_graph.collectives.sort import (
+from cudf_polars.streaming.actor_graph.collectives.ordering import (
     _extract_boundaries_from_endpoint_rows as _extract_ordering_boundaries,
 )
 from cudf_polars.streaming.io import ParquetScanTask

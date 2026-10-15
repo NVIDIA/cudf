@@ -11,8 +11,6 @@ from typing import TYPE_CHECKING, Any
 
 from rapidsmpf.streaming.core.leaf_actor import pull_from_channel
 
-import cudf_polars.dsl.tracing
-import cudf_polars.quent._context
 from cudf_polars.dsl.ir import (
     Join,
     Union,
@@ -24,6 +22,7 @@ from cudf_polars.streaming.actor_graph.nodes import (
     metadata_drain_node,
 )
 from cudf_polars.streaming.filter_hint import PushdownFilterHint
+from cudf_polars.streaming.hint_sorted import HintSorted
 from cudf_polars.streaming.over import Over
 from cudf_polars.streaming.partitioning_requests import collect_partitioning_requests
 from cudf_polars.utils.config import SPMDContext
@@ -40,6 +39,7 @@ if TYPE_CHECKING:
     from rapidsmpf.streaming.core.context import Context
     from rapidsmpf.streaming.core.leaf_actor import DeferredMessages
 
+    import cudf_polars.quent._context
     from cudf_polars.dsl.ir import IR, IRExecutionContext
     from cudf_polars.streaming.actor_graph.dispatch import (
         GenState,
@@ -101,46 +101,43 @@ def evaluate_logical_plan(
         )
 
     query_id = uuid.uuid4()
-    with cudf_polars.dsl.tracing.bound_contextvars(
-        cudf_polars_query_id=str(query_id),
-    ):
-        match config_options.executor.cluster:
-            case "spmd" | "default_singleton":
-                from cudf_polars.engine.spmd import (
-                    evaluate_pipeline_spmd_mode,
-                )
+    match config_options.executor.cluster:
+        case "spmd" | "default_singleton":
+            from cudf_polars.engine.spmd import (
+                evaluate_pipeline_spmd_mode,
+            )
 
-                _gpu_result, metadata_collector = evaluate_pipeline_spmd_mode(
-                    ir,
-                    config_options,
-                    collect_metadata=collect_metadata,
-                    query_id=query_id,
-                )
-                result = _gpu_result.to_polars()
-            case "ray":
-                from cudf_polars.engine.ray import (
-                    evaluate_pipeline_ray_mode,
-                )
+            _gpu_result, metadata_collector = evaluate_pipeline_spmd_mode(
+                ir,
+                config_options,
+                collect_metadata=collect_metadata,
+                query_id=query_id,
+            )
+            result = _gpu_result.to_polars()
+        case "ray":
+            from cudf_polars.engine.ray import (
+                evaluate_pipeline_ray_mode,
+            )
 
-                result, metadata_collector = evaluate_pipeline_ray_mode(
-                    ir,
-                    config_options,
-                    collect_metadata=collect_metadata,
-                    query_id=query_id,
-                )
-            case "dask":
-                from cudf_polars.engine.dask import (
-                    evaluate_pipeline_dask_mode,
-                )
+            result, metadata_collector = evaluate_pipeline_ray_mode(
+                ir,
+                config_options,
+                collect_metadata=collect_metadata,
+                query_id=query_id,
+            )
+        case "dask":
+            from cudf_polars.engine.dask import (
+                evaluate_pipeline_dask_mode,
+            )
 
-                result, metadata_collector = evaluate_pipeline_dask_mode(
-                    ir,
-                    config_options,
-                    collect_metadata=collect_metadata,
-                    query_id=query_id,
-                )
-            case other:
-                raise ValueError(f"Unknown cluster mode: {other}")
+            result, metadata_collector = evaluate_pipeline_dask_mode(
+                ir,
+                config_options,
+                collect_metadata=collect_metadata,
+                query_id=query_id,
+            )
+        case other:
+            raise ValueError(f"Unknown cluster mode: {other}")
 
     return result, metadata_collector
 
@@ -180,12 +177,12 @@ def determine_fanout_nodes(
     for node in traversal([ir]):
         if node in unbounded:
             _mark_children_unbounded(node)
-        elif isinstance(node, (Union, Join, Over, PushdownFilterHint)):
+        elif isinstance(node, (Union, Join, Over, HintSorted, PushdownFilterHint)):
             # Union processes children sequentially; Join may broadcast one
             # side; Over buffers (or samples-then-replays) its input before
-            # producing output; PushdownFilterHint similarly might buffer
-            # then replay. In every case the input source needs unbounded
-            # fanout so other consumers don't block it.
+            # producing output; hints may buffer then replay. In every case
+            # the input source needs unbounded fanout so other consumers don't
+            # block it.
             _mark_children_unbounded(node)
         elif len(node.children) > 1:
             # Check if this node is doing any broadcasting.

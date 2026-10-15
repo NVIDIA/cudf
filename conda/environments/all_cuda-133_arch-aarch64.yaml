@@ -46,7 +46,7 @@ dependencies:
 - kvikio==26.12.*,>=0.0.0a0
 - libcufile-dev
 - libkvikio==26.12.*,>=0.0.0a0
-- libnvcomp-dev==5.3.0.16
+- libnvcomp-dev==6.0.0.12
 - libnvjitlink-dev
 - librapidsmpf==26.12.*,>=0.0.0a0
 - librdkafka<2.15.0a0
@@ -92,7 +92,7 @@ dependencies:
 - python-calamine
 - python-confluent-kafka
 - python-xxhash
-- python>=3.11
+- python>=3.12
 - pytorch>=2.10.0
 - pyxlsb
 - rapids-build-backend>=0.4.0,<0.5.0
@@ -113,7 +113,6 @@ dependencies:
 - sphinx>=8.1.0
 - sphinxcontrib-websupport
 - streamz
-- structlog
 - sysroot_linux-aarch64==2.28
 - typing_extensions>=4.0.0
 - ucxx==0.53.*,>=0.0.0a0

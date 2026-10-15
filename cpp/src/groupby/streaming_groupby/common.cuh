@@ -10,6 +10,7 @@
 #include <cudf/detail/cuco_helpers.hpp>
 #include <cudf/detail/row_operator/equality.cuh>
 #include <cudf/detail/row_operator/hashing.cuh>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/groupby.hpp>
 #include <cudf/hashing/detail/default_hash.cuh>
@@ -18,8 +19,6 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/device_uvector.hpp>
 
 #include <cuco/static_set.cuh>
 #include <cuda/buffer>
@@ -278,7 +277,7 @@ auto build_cross_comparators(
     h_eqs.push_back(adapter.comparator);
   }
 
-  return cudf::detail::make_device_uvector(h_eqs, stream, temp_mr);
+  return cudf::detail::make_device_buffer(h_eqs, stream, temp_mr);
 }
 
 /// The impl struct for streaming_groupby. Defined in impl.cu.
@@ -324,7 +323,7 @@ struct streaming_groupby::impl {
 
   /// Companion vector indexed by dense ID, sized to max_distinct_keys.
   /// Each entry is {batch_id, row_in_compacted_batch}.
-  std::unique_ptr<rmm::device_uvector<key_location_t>> _key_loc;
+  std::unique_ptr<cuda::device_buffer<key_location_t>> _key_loc;
 
   std::vector<size_type> _request_first_agg_offset;
   std::vector<aggregation::Kind> _agg_kinds;
@@ -345,7 +344,7 @@ struct streaming_groupby::impl {
    */
   std::unique_ptr<mutable_table_device_view, void (*)(mutable_table_device_view*)> _d_agg_results;
   std::vector<size_type> _value_col_indices;
-  std::unique_ptr<rmm::device_uvector<aggregation::Kind>> _d_agg_kinds;
+  std::unique_ptr<cuda::device_buffer<aggregation::Kind>> _d_agg_kinds;
 
   std::unique_ptr<streaming_set_t> _key_set;
 
@@ -368,7 +367,7 @@ struct streaming_groupby::impl {
   void update_nullable_state(table_view const& batch_keys);
 
   struct batch_insert_result {
-    rmm::device_uvector<size_type> target_indices;
+    cuda::device_buffer<size_type> target_indices;
     size_type new_insertions;
     cuda::device_buffer<std::byte> bitmask_buffer;
   };

@@ -847,8 +847,8 @@ struct RowGroup {
 struct KeyValue {
   /// string key
   std::string key;
-  /// string value
-  std::string value;
+  /// Optional string value; an empty value is serialized as present.
+  std::optional<std::string> value;
 };
 
 /**

@@ -8,6 +8,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/dictionary/dictionary_factories.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/traits.hpp>
 
@@ -17,22 +18,19 @@ struct size_of_helper {
   cudf::data_type type;
   template <typename T>
   constexpr int operator()() const
-    requires(not is_fixed_width<T>())
   {
     CUDF_FAIL("Invalid, non fixed-width element type.");
     return 0;
   }
 
-  template <typename T>
+  template <concepts::fixed_width T>
   constexpr int operator()() const noexcept
-    requires(is_fixed_width<T>() && not is_fixed_point<T>())
   {
     return sizeof(T);
   }
 
-  template <typename T>
+  template <concepts::fixed_point T>
   constexpr int operator()() const noexcept
-    requires(is_fixed_point<T>())
   {
     // Only want the sizeof fixed_point::Rep as fixed_point::scale is stored in data_type
     return sizeof(typename T::rep);

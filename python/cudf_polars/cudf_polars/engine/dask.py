@@ -35,7 +35,6 @@ from cudf_polars.engine import persisted_result, rank_local_store
 from cudf_polars.engine.core import (
     ClusterInfo,
     StreamingEngine,
-    _run_cleanup_steps,
     check_reserved_keys,
     drop_if_replicated,
     evaluate_on_rank,
@@ -58,6 +57,7 @@ from cudf_polars.quent._runtime import (
     QuentWorkerRuntime,
 )
 from cudf_polars.unstable import unstable
+from cudf_polars.utils.cleanup import run_cleanup_steps
 from cudf_polars.utils.config import (
     DaskContext,
     MemoryResourceConfig,
@@ -568,7 +568,7 @@ def _shutdown_dask(
         steps.append(owned_client.close)
     if owned_cluster is not None:
         steps.append(owned_cluster.close)
-    _run_cleanup_steps("Dask engine shutdown failed", *steps)
+    run_cleanup_steps("Dask engine shutdown failed", *steps)
 
 
 def _reset_worker(

@@ -16,6 +16,7 @@ from cudf_polars.dsl.ir import DataFrameScan, IRExecutionContext, MapFunction
 from cudf_polars.dsl.translate import Translator
 from cudf_polars.streaming.base import PartitionInfo
 from cudf_polars.streaming.dispatch import lower_ir_node
+from cudf_polars.streaming.hint_sorted import HintSorted
 from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
@@ -242,8 +243,8 @@ def test_hint_sorted_streaming_lowering_preserves_partitioning() -> None:
 
     lowered, partition_info = lower_ir_node(node, Rec())
 
-    assert isinstance(lowered, MapFunction)
-    assert lowered.name == "hint_sorted"
+    assert isinstance(lowered, HintSorted)
+    assert lowered.options == node.options
     assert partition_info[lowered] is child_partition
 
 

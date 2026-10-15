@@ -16,6 +16,7 @@
 #include <cudf/types.hpp>
 
 #include <cuda/buffer>
+#include <thrust/host_vector.h>
 
 #include <algorithm>
 #include <exception>
@@ -393,14 +394,11 @@ class aggregate_reader_metadata {
   /**
    * @brief Collects Parquet types for the columns with the specified schema indices
    *
-   * @param row_group_indices Lists of row groups, once per source
    * @param column_schemas Schema indices of columns whose types will be collected
    *
    * @return A list of parquet types for the columns matching the provided schema indices
    */
-  [[nodiscard]] std::vector<Type> get_parquet_types(
-    host_span<std::vector<size_type> const> row_group_indices,
-    host_span<int const> column_schemas) const;
+  [[nodiscard]] std::vector<Type> get_parquet_types(std::span<int const> column_schemas) const;
 
   /**
    * @brief Filters the row groups using row bounds (`skip_rows` and `num_rows`)
@@ -461,6 +459,23 @@ class aggregate_reader_metadata {
 
  protected:
   /**
+   * @brief Computes a boolean mask indicating if an output column is a timestamp whose precision in
+   * any source differs from the output precision
+   *
+   * A column is flagged if its Parquet timestamp logical type requires rescaling to the output
+   * clock rate in any source, as sources are not required to store a column with the same
+   * precision.
+   *
+   * @param output_dtypes Output column data types
+   * @param output_column_schemas Output column schema indices
+   *
+   * @return Boolean vector indicating if the output column is a timestamp with mismatched precision
+   * in any source
+   */
+  [[nodiscard]] thrust::host_vector<bool> calc_mismatched_timestamp_mask(
+    std::span<data_type const> output_dtypes, std::span<int const> output_column_schemas) const;
+
+  /**
    * @brief Filters the row groups using stats filter
    *
    * @param input_row_group_indices Lists of input row groups, one per source
@@ -485,7 +500,8 @@ class aggregate_reader_metadata {
    *
    * @param bloom_filter_data Device spans of bloom filter data for each input row group
    * @param input_row_group_indices Lists of input row groups, one per source
-   * @param literals Lists of equality literals, one per each input row group
+   * @param literals Lists of equality literals, one per output column
+   * @param operators Lists of comparison operators for `literals`, one per output column
    * @param total_row_groups Total number of row groups in `input_row_group_indices`
    * @param output_dtypes Datatypes of output columns
    * @param bloom_filter_col_schemas Schema indices of bloom filter columns only
@@ -495,12 +511,13 @@ class aggregate_reader_metadata {
    * @return Surviving row group indices if any of them are filtered.
    */
   [[nodiscard]] std::optional<std::vector<std::vector<size_type>>> apply_bloom_filters(
-    cudf::host_span<cudf::device_span<cuda::std::byte const> const> bloom_filter_data,
-    host_span<std::vector<size_type> const> input_row_group_indices,
-    host_span<std::vector<ast::literal*> const> literals,
+    std::span<cudf::device_span<cuda::std::byte const> const> bloom_filter_data,
+    std::span<std::vector<size_type> const> input_row_group_indices,
+    std::span<std::vector<ast::literal*> const> literals,
+    std::span<std::vector<ast::ast_operator> const> operators,
     size_type total_row_groups,
-    host_span<data_type const> output_dtypes,
-    host_span<int const> bloom_filter_col_schemas,
+    std::span<data_type const> output_dtypes,
+    std::span<int const> bloom_filter_col_schemas,
     std::reference_wrapper<ast::expression const> filter,
     cuda::stream_ref stream) const;
 
@@ -681,6 +698,19 @@ class aggregate_reader_metadata {
    * @return Mapped schema index
    */
   [[nodiscard]] int map_schema_index(int schema_idx, int pfm_idx) const;
+
+  /**
+   * @brief Maps schema index from 0th source file to every source file
+   *
+   * @note Only columns selected by `select_columns` are mapped.
+   *
+   * @throws std::out_of_range if `schema_idx` is not mapped to some source
+   *
+   * @param schema_idx The index of the SchemaElement in the zeroth file.
+   *
+   * @return Mapped schema indices, one per source
+   */
+  [[nodiscard]] std::vector<int> map_schema_index_to_sources(int schema_idx) const;
 
   /**
    * @brief Checks if a field that is REQUIRED in the zeroth source is nullable in another source

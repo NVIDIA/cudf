@@ -19,7 +19,8 @@ help:
 
 clean:
 	@$(SPHINXBUILD) -M $@ "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS) $(O)
-	rm -rf "$(SOURCEDIR)/user_guide/api_docs/api"
+	rm -rf "$(SOURCEDIR)/cudf/api_docs/api"
+	rm -rf "$(SOURCEDIR)/cudf/example_output"
 	rm -rf "$(SOURCEDIR)/java/api"
 
 # Catch-all target: route all unknown targets to Sphinx using the new

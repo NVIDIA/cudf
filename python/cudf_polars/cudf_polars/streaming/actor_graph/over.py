@@ -663,7 +663,10 @@ async def _shuffle_and_reassemble(
     )
 
     forward_shuffle = ShuffleManager(
-        context, comm, forward_modulus, forward_shuffle_collective_id
+        context,
+        comm,
+        forward_modulus,
+        forward_shuffle_collective_id,
     )
     return_shuffle = ShuffleManager(
         context,

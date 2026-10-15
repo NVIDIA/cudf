@@ -6,17 +6,26 @@ from __future__ import annotations
 
 import threading
 from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import TYPE_CHECKING, Literal
 
 from rapidsmpf.shuffler import Shuffler
 
-from cudf_polars.dsl.ir import Distinct, GroupBy, Rolling, Sort
+from cudf_polars.dsl.ir import (
+    CallbackSink,
+    Distinct,
+    GroupBy,
+    Rolling,
+    Sort,
+)
 from cudf_polars.dsl.traversal import traversal
 from cudf_polars.streaming.filter_hint import PushdownFilterHint
+from cudf_polars.streaming.hint_sorted import HintSorted
 from cudf_polars.streaming.io import StreamingScan, StreamingSink
 from cudf_polars.streaming.join import Join
 from cudf_polars.streaming.over import Over
 from cudf_polars.streaming.repartition import Repartition
+from cudf_polars.streaming.rolling import FixedSizeRolling
 from cudf_polars.streaming.shuffle import Shuffle
 
 if TYPE_CHECKING:
@@ -27,33 +36,70 @@ if TYPE_CHECKING:
     from cudf_polars.utils.config import ConfigOptions, StreamingExecutor
 
 
-# Set of available collective IDs
-_collective_id_vacancy: dict[int, None] = dict.fromkeys(
-    range(Shuffler.max_concurrent_shuffles)
-)
-_collective_id_vacancy_lock: threading.Lock = threading.Lock()
+class _CollectiveIDPool:
+    """Pool of vacant collective IDs."""
 
-
-def _get_new_collective_id_unsafe() -> int:
-    # Not thread safe, must be called with _collective_id_vacancy_lock held
-    try:
-        # All ranks must choose the same collective IDs during lowering.
+    def __init__(self) -> None:
         # Since 3.7, dict.popitem() is guaranteed LIFO.
-        collective_id, _ = _collective_id_vacancy.popitem()
-    except KeyError:
-        raise ValueError(
-            f"Cannot shuffle more than {Shuffler.max_concurrent_shuffles} "
-            "times in a single query."
-        ) from None
-    return collective_id
+        self.vacancy: dict[int, None] = dict.fromkeys(
+            range(Shuffler.max_concurrent_shuffles)
+        )
+        self.lock = threading.Lock()
+
+    def acquire_unsafe(self) -> int:
+        # Not thread safe, must be called with self.lock held
+        try:
+            # All ranks must choose the same collective IDs during lowering.
+            collective_id, _ = self.vacancy.popitem()
+        except KeyError:
+            raise ValueError(
+                f"Cannot shuffle more than {Shuffler.max_concurrent_shuffles} "
+                "times in a single query."
+            ) from None
+        return collective_id
+
+    def release_unsafe(self, collective_id: int) -> None:
+        """Release a collective ID back to the vacancy set."""
+        # Not thread safe, must be called with self.lock held
+        if collective_id in self.vacancy:
+            raise ValueError("Restoring ID that exists")
+        self.vacancy[collective_id] = None
 
 
-def _release_collective_id_unsafe(collective_id: int) -> None:
-    """Release a collective ID back to the vacancy set."""
-    # Not thread safe, must be called with _collective_id_vacancy_lock held
-    if collective_id in _collective_id_vacancy:
-        raise ValueError("Restoring ID that exists")
-    _collective_id_vacancy[collective_id] = None
+# Collective IDs are only meaningful relative to a communicator, and all ranks
+# must agree on the IDs chosen. A process-global pool breaks that agreement as
+# soon as the same process takes part in queries on different communicators,
+# so the pool is scoped to the current context (see ``collective_id_scope``).
+_collective_id_pool: ContextVar[_CollectiveIDPool] = ContextVar(
+    "cudf_polars_collective_id_pool"
+)
+
+
+def _current_pool() -> _CollectiveIDPool:
+    """Return the collective ID pool of the current context, creating it if unset."""
+    try:
+        return _collective_id_pool.get()
+    except LookupError:
+        pool = _CollectiveIDPool()
+        _collective_id_pool.set(pool)
+        return pool
+
+
+@contextmanager
+def collective_id_scope() -> Iterator[None]:
+    """
+    Use a fresh collective ID pool for the duration of the block.
+
+    Every query should run in its own scope so that the collective IDs it
+    reserves depend only on the query itself, and not on collectives that
+    other queries in the same process (possibly on other communicators)
+    currently hold.
+    """
+    token = _collective_id_pool.set(_CollectiveIDPool())
+    try:
+        yield
+    finally:
+        _collective_id_pool.reset(token)
 
 
 class ReserveOpIDs:
@@ -71,7 +117,8 @@ class ReserveOpIDs:
     -----
     This context manager:
     1. Identifies all IR nodes that may require collective operations
-    2. Reserves collective IDs from the vacancy pool
+    2. Reserves collective IDs from the current context's pool
+       (see :func:`collective_id_scope`)
     3. Creates a mapping from IR nodes to their reserved IDs
     4. Releases all IDs back to the pool on __exit__
 
@@ -92,23 +139,29 @@ class ReserveOpIDs:
 
         # Find all collective IR nodes.
         collective_types: tuple[type, ...] = (
+            CallbackSink,
             Shuffle,
             Join,
+            HintSorted,
             Repartition,
             StreamingSink,
             StreamingScan,
             Sort,
             Rolling,
+            FixedSizeRolling,
         )
         if self.dynamic_planning_enabled:
             collective_types = (
+                CallbackSink,
                 Shuffle,
                 Join,
+                HintSorted,
                 Repartition,
                 StreamingSink,
                 StreamingScan,
                 Sort,
                 Rolling,
+                FixedSizeRolling,
                 GroupBy,
                 Distinct,
                 Over,
@@ -119,6 +172,7 @@ class ReserveOpIDs:
             node for node in traversal([ir]) if isinstance(node, collective_types)
         ]
         self.collective_id_map: dict[IR, list[int]] = {}
+        self._pool: _CollectiveIDPool | None = None
 
     def __enter__(self) -> dict[IR, list[int]]:
         """
@@ -132,7 +186,8 @@ class ReserveOpIDs:
             collective operations per node.
         """
         # Reserve IDs and map nodes to a list of IDs
-        with _collective_id_vacancy_lock:
+        self._pool = pool = _current_pool()
+        with pool.lock:
             for node in self.collective_nodes:
                 if (
                     isinstance(node, (GroupBy, Distinct))
@@ -140,29 +195,29 @@ class ReserveOpIDs:
                 ):
                     # GroupBy/Distinct need 2 IDs: one for size allgather, one for shuffle
                     self.collective_id_map[node] = [
-                        _get_new_collective_id_unsafe(),
-                        _get_new_collective_id_unsafe(),
+                        pool.acquire_unsafe(),
+                        pool.acquire_unsafe(),
                     ]
                 elif isinstance(node, Join) and self.dynamic_planning_enabled:
                     # Join needs 3 IDs: allgather, left shuffle, right shuffle.
                     self.collective_id_map[node] = [
-                        _get_new_collective_id_unsafe(),
-                        _get_new_collective_id_unsafe(),
-                        _get_new_collective_id_unsafe(),
+                        pool.acquire_unsafe(),
+                        pool.acquire_unsafe(),
+                        pool.acquire_unsafe(),
                     ]
                 elif isinstance(node, Sort):
                     if self.dynamic_planning_enabled:
                         # 3 IDs: size-estimate allgather, boundary allgather, shuffle
                         self.collective_id_map[node] = [
-                            _get_new_collective_id_unsafe(),
-                            _get_new_collective_id_unsafe(),
-                            _get_new_collective_id_unsafe(),
+                            pool.acquire_unsafe(),
+                            pool.acquire_unsafe(),
+                            pool.acquire_unsafe(),
                         ]
                     else:
                         # 2 IDs: boundary allgather, shuffle
                         self.collective_id_map[node] = [
-                            _get_new_collective_id_unsafe(),
-                            _get_new_collective_id_unsafe(),
+                            pool.acquire_unsafe(),
+                            pool.acquire_unsafe(),
                         ]
                 elif isinstance(node, Over) and not node.is_scalar:
                     # Non-scalar Over needs 2 IDs: one for the size AllGather +
@@ -171,11 +226,11 @@ class ReserveOpIDs:
                     # the return shuffle (which overlaps with the forward shuffle
                     # during extract+insert).
                     self.collective_id_map[node] = [
-                        _get_new_collective_id_unsafe(),
-                        _get_new_collective_id_unsafe(),
+                        pool.acquire_unsafe(),
+                        pool.acquire_unsafe(),
                     ]
                 else:
-                    self.collective_id_map[node] = [_get_new_collective_id_unsafe()]
+                    self.collective_id_map[node] = [pool.acquire_unsafe()]
 
         return self.collective_id_map
 
@@ -186,10 +241,12 @@ class ReserveOpIDs:
         exc_tb: TracebackType | None,
     ) -> Literal[False]:
         """Release all reserved collective IDs back to the vacancy pool."""
-        with _collective_id_vacancy_lock:
+        pool = self._pool
+        assert pool is not None
+        with pool.lock:
             for collective_ids in self.collective_id_map.values():
                 for collective_id in collective_ids:
-                    _release_collective_id_unsafe(collective_id)
+                    pool.release_unsafe(collective_id)
         return False
 
 
@@ -206,12 +263,14 @@ def reserve_op_id() -> Iterator[int]:
     Yields
     ------
     collective_id : int
-        A vacant collective ID reserved from the global vacancy pool.
+        A vacant collective ID reserved from the current context's pool
+        (see :func:`collective_id_scope`).
     """
-    with _collective_id_vacancy_lock:
-        collective_id = _get_new_collective_id_unsafe()
+    pool = _current_pool()
+    with pool.lock:
+        collective_id = pool.acquire_unsafe()
     try:
         yield collective_id
     finally:
-        with _collective_id_vacancy_lock:
-            _release_collective_id_unsafe(collective_id)
+        with pool.lock:
+            pool.release_unsafe(collective_id)

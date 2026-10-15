@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from functools import partial
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias, assert_never
+from typing import TYPE_CHECKING, Any, Literal, assert_never
 
 from cudf_streaming import CardinalityEstimator
 from cudf_streaming.channel_metadata import (
@@ -47,13 +47,11 @@ from cudf_polars.streaming.actor_graph.join_planning import JoinPlanningState
 from cudf_polars.streaming.actor_graph.nodes import default_node_multi
 from cudf_polars.streaming.actor_graph.prefilter import (
     JoinPrefilterExecution,
+    RuntimePrefilterStatistics,
     add_bloom_prefilter,
     choose_prefilter,
 )
-from cudf_polars.streaming.actor_graph.tracing import (
-    LOG_TRACES,
-    send_chunk,
-)
+from cudf_polars.streaming.actor_graph.tracing import send_chunk
 from cudf_polars.streaming.actor_graph.utils import (
     CUDF_ROW_LIMIT,
     MAX_ROWS_PER_PARTITION,
@@ -87,7 +85,7 @@ from cudf_polars.streaming.repartition import Repartition
 from cudf_polars.streaming.utils import _concat, partition_range
 
 if TYPE_CHECKING:
-    from collections.abc import MutableMapping
+    from collections.abc import MutableMapping, Sequence
 
     from cudf_streaming.channel_metadata import Ordering
     from rapidsmpf.communicator.communicator import Communicator
@@ -163,10 +161,8 @@ class OrderedJoinStrategy:
     """Join-output ordering metadata."""
 
 
-JoinStrategy: TypeAlias = (
-    BroadcastJoinStrategy | ShuffleJoinStrategy | OrderedJoinStrategy
-)
-OrderedJoinDecision: TypeAlias = Literal[
+type JoinStrategy = BroadcastJoinStrategy | ShuffleJoinStrategy | OrderedJoinStrategy
+type OrderedJoinDecision = Literal[
     "ordered_aligned",
     "ordered_adjust_left",
     "ordered_adjust_right",
@@ -453,7 +449,7 @@ async def broadcast_join(
     target_partition_size: int | None,
     *,
     tracer: ActorTracer | None,
-    trace_stats: dict[str, Any] | None = None,
+    prefilter_statistics: RuntimePrefilterStatistics | None = None,
 ) -> None:
     """
     Execute a broadcast join after initial sampling.
@@ -560,9 +556,9 @@ async def broadcast_join(
             tracer=tracer,
         )
 
-    if trace_stats is not None:
-        trace_stats["input_rows"] = input_rows
-        trace_stats["output_rows"] = output_rows
+    if prefilter_statistics is not None:
+        prefilter_statistics.input_rows = input_rows
+        prefilter_statistics.output_rows = output_rows
     await ch_out.drain(context)
 
 
@@ -579,7 +575,7 @@ def add_prefilter(
     ch_filtered: Channel[TableChunk],
     collective_id: int,
     ir_context: IRExecutionContext,
-    trace_stats: dict[str, Any] | None,
+    prefilter_statistics: RuntimePrefilterStatistics | None,
 ) -> None:
     """Add the actors and channels that apply one selected prefilter."""
     context = execution.context
@@ -596,7 +592,7 @@ def add_prefilter(
             ch_target,
             ch_filtered,
             collective_id,
-            trace_stats,
+            prefilter_statistics,
         )
     elif decision.method == "broadcast_semi_join":
         domain_schema = {key.name: key.value.dtype for key in spec.domain_on}
@@ -623,7 +619,7 @@ def add_prefilter(
                 collective_id,
                 target_partition_size=None,
                 tracer=None,
-                trace_stats=trace_stats,
+                prefilter_statistics=prefilter_statistics,
             )
         )
     else:
@@ -690,7 +686,7 @@ def make_prefilter_execution(
         target = candidate.target.node
         ch_target = execution.join_inputs[target_side]
         ch_filtered: Channel[TableChunk] = context.create_channel()
-        trace_stats = candidate.trace
+        prefilter_statistics = candidate.statistics
 
         add_prefilter(
             execution,
@@ -704,7 +700,7 @@ def make_prefilter_execution(
             ch_filtered=ch_filtered,
             collective_id=collective_ids.prefilter(strategy, target_side),
             ir_context=ir_context,
-            trace_stats=trace_stats,
+            prefilter_statistics=prefilter_statistics,
         )
         execution.replace_join_input(target_side, ch_filtered)
 
@@ -1936,16 +1932,16 @@ async def join_actor(
             collective_ids,
             tracer=tracer,
         )
-        prefilter_traces = []
         for candidate in join_state.candidates:
             if candidate.decision is None:
                 raise ValueError("Join prefilter has no runtime decision")
-            trace = candidate.decision.trace(candidate.spec)
-            prefilter_traces.append(trace)
-            if LOG_TRACES:
-                candidate.trace = trace
-        if tracer is not None and prefilter_traces:
-            tracer.set_extra("join_prefilters", prefilter_traces)
+            if tracer is not None:
+                statistics = RuntimePrefilterStatistics.from_decision_prefilter(
+                    candidate.decision,
+                    candidate.spec,
+                )
+                candidate.statistics = statistics
+                tracer.prefilters.append(statistics)
         left_sample = join_state.left.sample
         right_sample = join_state.right.sample
         if left_sample is None or right_sample is None:
@@ -2075,6 +2071,25 @@ def _use_pwise_join(
     return left_partitioned and right_partitioned
 
 
+def _forward_join_partitioning(
+    ir: Join,
+    child_metadatas: Sequence[ChannelMetadata],
+    context: Context,
+) -> Partitioning | None:
+    """Build partitioning metadata for a partition-wise join."""
+    child_index = 1 if ir.options[0] == "Right" else 0
+    side: Literal["left", "right"] = "left" if child_index == 0 else "right"
+    partitioning = maybe_remap_partitioning(
+        ir,
+        child_metadatas[child_index].partitioning,
+        child_ir=ir.children[child_index],
+        context=context,
+    )
+    if not join_preserves_side_order(ir.options[5], side):
+        partitioning = clear_local_ordering(partitioning)
+    return partitioning
+
+
 @generate_ir_sub_network.register(Join)
 @generate_ir_sub_network.register(JoinWithPrefilter)
 def _(
@@ -2102,7 +2117,6 @@ def _(
 
     if pwise_join:
         # Partition-wise join (use default_node_multi)
-        partitioning_index = 1 if ir.options[0] == "Right" else 0
         actors[ir] = [
             default_node_multi(
                 rec.state["context"],
@@ -2113,7 +2127,7 @@ def _(
                     channels[left].reserve_output_slot(),
                     channels[right].reserve_output_slot(),
                 ),
-                partitioning_index=partitioning_index,
+                partitioning_callback=partial(_forward_join_partitioning, ir),
             )
         ]
         return actors, channels

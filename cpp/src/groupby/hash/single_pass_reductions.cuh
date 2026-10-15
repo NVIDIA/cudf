@@ -456,7 +456,7 @@ struct grouped_reductions_fn {
       if constexpr (Nullable) {
         for (size_type i = 0; i < num_columns; ++i) {
           auto const begin = group_valid.data() + static_cast<std::size_t>(i) * first.num_groups;
-          auto const resources = is_intermediate[i] ? cudf::memory_resources{temp_mr, temp_mr} : mr;
+          auto const resources = is_intermediate[i] ? mr.as_temporary() : mr;
           auto [mask, null_count] =
             make_mask_from_validity(begin, begin + first.num_groups, stream, resources);
           results[i]->set_null_mask(std::move(mask), null_count);

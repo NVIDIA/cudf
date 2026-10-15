@@ -7,6 +7,7 @@
 
 #include <cudf/fixed_point/fixed_point.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/wrappers/dictionary.hpp>
 #include <cudf/wrappers/durations.hpp>
 #include <cudf/wrappers/timestamps.hpp>
@@ -89,25 +90,11 @@ constexpr inline bool has_common_type_v = detail::has_common_type_impl<Ts...>;
 
 /// Checks if a type is a timestamp type.
 template <typename T>
-using is_timestamp_t =
-  cuda::std::disjunction<cuda::std::is_same<cudf::timestamp_D, cuda::std::remove_cv_t<T>>,
-                         cuda::std::is_same<cudf::timestamp_h, cuda::std::remove_cv_t<T>>,
-                         cuda::std::is_same<cudf::timestamp_m, cuda::std::remove_cv_t<T>>,
-                         cuda::std::is_same<cudf::timestamp_s, cuda::std::remove_cv_t<T>>,
-                         cuda::std::is_same<cudf::timestamp_ms, cuda::std::remove_cv_t<T>>,
-                         cuda::std::is_same<cudf::timestamp_us, cuda::std::remove_cv_t<T>>,
-                         cuda::std::is_same<cudf::timestamp_ns, cuda::std::remove_cv_t<T>>>;
+using is_timestamp_t = cuda::std::bool_constant<cudf::concepts::timestamp<T>>;
 
 /// Checks if a type is a duration type.
 template <typename T>
-using is_duration_t =
-  cuda::std::disjunction<cuda::std::is_same<cudf::duration_D, cuda::std::remove_cv_t<T>>,
-                         cuda::std::is_same<cudf::duration_h, cuda::std::remove_cv_t<T>>,
-                         cuda::std::is_same<cudf::duration_m, cuda::std::remove_cv_t<T>>,
-                         cuda::std::is_same<cudf::duration_s, cuda::std::remove_cv_t<T>>,
-                         cuda::std::is_same<cudf::duration_ms, cuda::std::remove_cv_t<T>>,
-                         cuda::std::is_same<cudf::duration_us, cuda::std::remove_cv_t<T>>,
-                         cuda::std::is_same<cudf::duration_ns, cuda::std::remove_cv_t<T>>>;
+using is_duration_t = cuda::std::bool_constant<cudf::concepts::duration<T>>;
 
 /**
  * @brief Indicates whether objects of types `L` and `R` can be relationally
@@ -175,7 +162,7 @@ bool is_equality_comparable(data_type type);
 template <typename T>
 CUDF_HOST_DEVICE constexpr inline bool is_numeric()
 {
-  return cuda::std::is_arithmetic<T>();
+  return concepts::arithmetic<T>;
 }
 
 /**
@@ -205,7 +192,7 @@ bool is_numeric(data_type type);
 template <typename T>
 constexpr inline bool is_index_type()
 {
-  return cuda::std::is_integral_v<T> and not cuda::std::is_same_v<cuda::std::remove_cv_t<T>, bool>;
+  return concepts::integral_not_bool<T>;
 }
 
 /**
@@ -290,7 +277,7 @@ CUDF_HOST_DEVICE constexpr inline bool is_signed_iterator()
 template <typename T>
 CUDF_HOST_DEVICE constexpr inline bool is_integral()
 {
-  return cuda::std::is_integral_v<T>;
+  return cuda::std::integral<T>;
 }
 
 /**
@@ -314,7 +301,7 @@ bool is_integral(data_type type);
 template <typename T>
 constexpr inline bool is_integral_not_bool()
 {
-  return cuda::std::is_integral_v<T> and not cuda::std::is_same_v<cuda::std::remove_cv_t<T>, bool>;
+  return concepts::integral_not_bool<T>;
 }
 
 /**
@@ -338,7 +325,7 @@ bool is_integral_not_bool(data_type type);
 template <typename T>
 constexpr inline bool is_numeric_not_bool()
 {
-  return cudf::is_numeric<T>() and not cuda::std::is_same_v<cuda::std::remove_cv_t<T>, bool>;
+  return concepts::arithmetic_not_bool<T>;
 }
 
 /**
@@ -362,7 +349,7 @@ bool is_numeric_not_bool(data_type type);
 template <typename T>
 CUDF_HOST_DEVICE constexpr inline bool is_floating_point()
 {
-  return cuda::std::is_floating_point_v<T>;
+  return cuda::std::floating_point<T>;
 }
 
 /**
@@ -399,7 +386,7 @@ constexpr inline bool is_byte()
 template <typename T>
 constexpr inline bool is_boolean()
 {
-  return cuda::std::is_same_v<cuda::std::remove_cv_t<T>, bool>;
+  return concepts::boolean<T>;
 }
 
 /**
@@ -421,7 +408,7 @@ bool is_boolean(data_type type);
 template <typename T>
 CUDF_HOST_DEVICE constexpr inline bool is_timestamp()
 {
-  return is_timestamp_t<T>::value;
+  return concepts::timestamp<T>;
 }
 
 /**
@@ -445,13 +432,7 @@ bool is_timestamp(data_type type);
 template <typename T>
 CUDF_HOST_DEVICE constexpr inline bool is_fixed_point()
 {
-  using U = cuda::std::remove_cv_t<T>;
-  return cuda::std::is_same_v<numeric::decimal32, U> ||
-         cuda::std::is_same_v<numeric::decimal64, U> ||
-         cuda::std::is_same_v<numeric::decimal128, U> ||
-         cuda::std::is_same_v<numeric::fixed_point<int32_t, numeric::Radix::BASE_2>, U> ||
-         cuda::std::is_same_v<numeric::fixed_point<int64_t, numeric::Radix::BASE_2>, U> ||
-         cuda::std::is_same_v<numeric::fixed_point<__int128_t, numeric::Radix::BASE_2>, U>;
+  return concepts::fixed_point<T>;
 }
 
 /**
@@ -473,7 +454,7 @@ bool is_fixed_point(data_type type);
 template <typename T>
 CUDF_HOST_DEVICE constexpr inline bool is_duration()
 {
-  return is_duration_t<T>::value;
+  return concepts::duration<T>;
 }
 
 /**
@@ -497,7 +478,7 @@ bool is_duration(data_type type);
 template <typename T>
 CUDF_HOST_DEVICE constexpr inline bool is_chrono()
 {
-  return is_duration<T>() || is_timestamp<T>();
+  return concepts::chrono<T>;
 }
 
 /**
@@ -527,8 +508,7 @@ bool is_chrono(data_type type);
 template <typename T>
 constexpr bool is_rep_layout_compatible()
 {
-  return cudf::is_numeric<T>() or cudf::is_chrono<T>() or cudf::is_boolean<T>() or
-         cudf::is_byte<T>();
+  return concepts::rep_layout_compatible<T>;
 }
 
 /**
@@ -541,7 +521,7 @@ constexpr bool is_rep_layout_compatible()
 template <typename T>
 CUDF_HOST_DEVICE constexpr inline bool is_dictionary()
 {
-  return cuda::std::is_same_v<dictionary32, cuda::std::remove_cv_t<T>>;
+  return concepts::dictionary<T>;
 }
 
 /**
@@ -563,7 +543,7 @@ bool is_dictionary(data_type type);
 template <typename T>
 constexpr inline bool is_dictionary_key()
 {
-  return !is_dictionary<T>() && is_relationally_comparable<T, T>();
+  return concepts::dictionary_key<T>;
 }
 
 /**
@@ -587,9 +567,7 @@ bool is_dictionary_key(data_type type);
 template <typename T>
 CUDF_HOST_DEVICE constexpr inline bool is_fixed_width()
 {
-  // TODO Add fixed width wrapper types
-  // Is a category fixed width?
-  return cudf::is_numeric<T>() || cudf::is_chrono<T>() || cudf::is_fixed_point<T>();
+  return concepts::fixed_width<T>;
 }
 
 /**
@@ -602,8 +580,6 @@ CUDF_HOST_DEVICE constexpr inline bool is_fixed_width()
  * @return false  `type` is variable-width
  */
 bool is_fixed_width(data_type type);
-
-class string_view;
 
 /**
  * @brief Indicates whether the type `T` is a compound type.
@@ -620,10 +596,7 @@ class string_view;
 template <typename T>
 CUDF_HOST_DEVICE constexpr inline bool is_compound()
 {
-  using U = cuda::std::remove_cv_t<T>;
-  return cuda::std::is_same_v<U, cudf::string_view> or
-         cuda::std::is_same_v<U, cudf::dictionary32> or cuda::std::is_same_v<U, cudf::list_view> or
-         cuda::std::is_same_v<U, cudf::struct_view>;
+  return concepts::compound<T>;
 }
 
 /**
@@ -654,8 +627,7 @@ bool is_compound(data_type type);
 template <typename T>
 CUDF_HOST_DEVICE constexpr inline bool is_nested()
 {
-  using U = cuda::std::remove_cv_t<T>;
-  return cuda::std::is_same_v<U, cudf::list_view> || cuda::std::is_same_v<U, cudf::struct_view>;
+  return concepts::nested<T>;
 }
 
 /**

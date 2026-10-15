@@ -11,6 +11,13 @@ RUN_PYLIBCUDF_TESTS="${RUN_PYLIBCUDF_TESTS:-true}"
 RUN_CUDF_TESTS="${RUN_CUDF_TESTS:-true}"
 RUN_CUDF_STREAMING_TESTS="${RUN_CUDF_STREAMING_TESTS:-true}"
 
+pylibcudf_timeout=30m
+cudf_timeout=30m
+if [[ ${RAPIDS_BUILD_TYPE:-} == pull-request ]]; then
+  pylibcudf_timeout=10m
+  cudf_timeout=20m
+fi
+
 # Download the wheel artifacts built in the previous steps.
 LIBCUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_cpp libcudf cudf --cuda "$RAPIDS_CUDA_VERSION")")
 PYLIBCUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python pylibcudf cudf --stable --cuda "$RAPIDS_CUDA_VERSION")")
@@ -54,7 +61,7 @@ if [[ "${RUN_PYLIBCUDF_TESTS}" == "true" || "${RUN_CUDF_TESTS}" == "true" ]]; th
 
     rapids-logger "pytest pylibcudf without optional dependencies"
     pushd python/pylibcudf/tests
-    timeout 30m python -m pytest \
+    timeout "${pylibcudf_timeout}" python -m pytest \
       --cache-clear \
       --numprocesses=8 \
       --dist=worksteal \
@@ -84,7 +91,7 @@ if [[ "${RUN_PYLIBCUDF_TESTS}" == "true" || "${RUN_CUDF_TESTS}" == "true" ]]; th
     if [[ "${RUN_PYLIBCUDF_TESTS}" == "true" ]]; then
       rapids-logger "pytest pylibcudf"
       pushd python/pylibcudf/tests
-      timeout 30m python -m pytest \
+      timeout "${pylibcudf_timeout}" python -m pytest \
         --cache-clear \
         --numprocesses=8 \
         --dist=worksteal \
@@ -94,7 +101,7 @@ if [[ "${RUN_PYLIBCUDF_TESTS}" == "true" || "${RUN_CUDF_TESTS}" == "true" ]]; th
 
     rapids-logger "pytest cudf"
     pushd python/cudf/cudf/tests
-    timeout 30m python -m pytest \
+    timeout "${cudf_timeout}" python -m pytest \
       --cache-clear \
       --junitxml="${RAPIDS_TESTS_DIR}/junit-cudf.xml" \
       --numprocesses=8 \

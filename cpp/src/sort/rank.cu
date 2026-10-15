@@ -20,6 +20,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/algorithm>
@@ -54,7 +55,7 @@ struct unique_functor {
 };
 
 // Assign rank from 1 to n unique values. Equal values get same rank value.
-rmm::device_uvector<size_type> sorted_dense_rank(column_view input_col,
+cuda::device_buffer<size_type> sorted_dense_rank(column_view input_col,
                                                  column_view sorted_order_view,
                                                  cuda::stream_ref stream)
 {
@@ -66,7 +67,8 @@ rmm::device_uvector<size_type> sorted_dense_rank(column_view input_col,
     sorted_order_view.begin<size_type>(), cuda::counting_iterator<size_type>{0});
 
   auto const input_size = input_col.size();
-  rmm::device_uvector<size_type> dense_rank_sorted(input_size, stream);
+  cuda::device_buffer<size_type> dense_rank_sorted(
+    stream, cudf::get_current_device_resource_ref(), input_size, cuda::no_init);
 
   auto const comparator_helper = [&](auto const device_comparator) {
     thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
@@ -124,7 +126,8 @@ void tie_break_ranks_transform(cudf::device_span<size_type const> dense_rank_sor
   auto const input_size = sorted_order_view.size();
   // algorithm: reduce_by_key(dense_rank, 1, n, reduction_tie_breaker)
   // reduction_tie_breaker = min, max, min_count
-  rmm::device_uvector<TieType> tie_sorted(sorted_order_view.size(), stream);
+  cuda::device_buffer<TieType> tie_sorted(
+    stream, cudf::get_current_device_resource_ref(), sorted_order_view.size(), cuda::no_init);
   thrust::reduce_by_key(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                         dense_rank_sorted.begin(),
                         dense_rank_sorted.end(),
@@ -284,12 +287,13 @@ std::unique_ptr<column> rank(column_view const& input,
 
   // dense: All equal values have same rank and rank always increases by 1 between groups
   // acts as key for min, max, average to denote equal value groups
-  rmm::device_uvector<size_type> const dense_rank_sorted =
+  cuda::device_buffer<size_type> const dense_rank_sorted =
     [&method, &input, &sorted_order_view, &stream] {
       if (method != rank_method::FIRST)
         return sorted_dense_rank(input, sorted_order_view, stream);
       else
-        return rmm::device_uvector<size_type>(0, stream);
+        return cuda::device_buffer<size_type>(
+          stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init);
     }();
 
   if (output_type.id() == type_id::FLOAT64) {

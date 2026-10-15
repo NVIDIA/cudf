@@ -340,6 +340,7 @@ def test_validate_cluster() -> None:
         "target_partition_size",
         "broadcast_limit",
         "sink_to_directory",
+        "parallel_sink_batches",
         "client_device_threshold",
         "max_concurrent_io_tasks",
         "num_py_executors",
@@ -996,19 +997,16 @@ def test_join_filter_pushdown_options_from_env(
         "CUDF_POLARS__EXECUTOR__JOIN_FILTER_PUSHDOWN__BLOOM_FILTER_MAX_SIZE",
         "1024",
     )
-    monkeypatch.setenv("CUDF_POLARS__EXECUTOR__JOIN_FILTER_PUSHDOWN__TRACE", "1")
     config = ConfigOptions.from_polars_engine(pl.GPUEngine())
     assert config.executor.join_filter_pushdown is not None
     assert config.executor.join_filter_pushdown.threshold == 0.125
     assert config.executor.join_filter_pushdown.bloom_filter_max_size == 1024
-    assert config.executor.join_filter_pushdown.trace
 
 
 def test_join_filter_pushdown_disabled_from_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("CUDF_POLARS__EXECUTOR__JOIN_FILTER_PUSHDOWN", "0")
-    monkeypatch.setenv("CUDF_POLARS__EXECUTOR__JOIN_FILTER_PUSHDOWN__TRACE", "1")
     config = ConfigOptions.from_polars_engine(pl.GPUEngine())
     assert config.executor.join_filter_pushdown is None
 
@@ -1026,13 +1024,6 @@ def test_validate_join_filter_pushdown_options() -> None:
             pl.GPUEngine(
                 executor="streaming",
                 executor_options={"join_filter_pushdown": {"threshold": 1.5}},
-            )
-        )
-    with pytest.raises(TypeError, match="trace must be"):
-        ConfigOptions.from_polars_engine(
-            pl.GPUEngine(
-                executor="streaming",
-                executor_options={"join_filter_pushdown": {"trace": "bad"}},
             )
         )
     with pytest.raises(TypeError, match="bloom_filter_max_size must be"):
@@ -1069,9 +1060,7 @@ def test_validate_join_filter_pushdown_type() -> None:
 
 
 def test_join_filter_pushdown_from_instance() -> None:
-    options = JoinFilterPushdownOptions(
-        threshold=0.25, bloom_filter_max_size=1024, trace=True
-    )
+    options = JoinFilterPushdownOptions(threshold=0.25, bloom_filter_max_size=1024)
     config = ConfigOptions.from_polars_engine(
         pl.GPUEngine(
             executor="streaming",

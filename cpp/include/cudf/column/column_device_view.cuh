@@ -6,7 +6,6 @@
 
 #include <cudf/column/column_device_view_base.cuh>
 #include <cudf/column/column_view.hpp>
-#include <cudf/detail/utilities/alignment.hpp>
 #include <cudf/lists/list_view.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/structs/struct_view.hpp>
@@ -18,6 +17,7 @@
 #include <rmm/resource_ref.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory>
 #include <cuda/std/utility>
 #include <cuda/stream>
 
@@ -1097,12 +1097,14 @@ ColumnDeviceView* child_columns_to_device_array(ColumnViewIterator child_begin,
                                                 void* h_ptr,
                                                 void* d_ptr)
 {
-  ColumnDeviceView* d_children = detail::align_ptr_for_type<ColumnDeviceView>(d_ptr);
-  auto num_children            = std::distance(child_begin, child_end);
+  auto d_children =
+    static_cast<ColumnDeviceView*>(cuda::align_up(d_ptr, alignof(ColumnDeviceView)));
+  auto num_children = std::distance(child_begin, child_end);
   if (num_children > 0) {
     // The beginning of the memory must be the fixed-sized ColumnDeviceView
     // struct objects in order for d_children to be used as an array.
-    auto h_column = detail::align_ptr_for_type<ColumnDeviceView>(h_ptr);
+    auto h_column =
+      static_cast<ColumnDeviceView*>(cuda::align_up(h_ptr, alignof(ColumnDeviceView)));
     auto d_column = d_children;
 
     // Any child data is assigned past the end of this array: h_end and d_end.

@@ -223,9 +223,7 @@ std::vector<std::unique_ptr<column>> compute_single_pass_aggs(
         kind, compute_reductions_fn{contexts, is_agg_intermediate.subspan(i, end - i)}, stream, mr);
       std::ranges::move(batch, std::back_inserter(results));
     } else {
-      auto const resources = is_agg_intermediate[i] ? cudf::memory_resources{mr.get_temporary_mr(),
-                                                                             mr.get_temporary_mr()}
-                                                    : mr;
+      auto const resources = is_agg_intermediate[i] ? mr.as_temporary() : mr;
       results.push_back(compute_aggregation(kind, ctx, stream, resources));
     }
     i = end;

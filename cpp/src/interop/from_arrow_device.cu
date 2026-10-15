@@ -14,6 +14,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/transform.hpp>
 #include <cudf/detail/unary.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/interop.hpp>
 #include <cudf/strings/detail/strings_column_factories.cuh>
@@ -27,6 +28,7 @@
 #include <rmm/cuda_device.hpp>
 #include <rmm/device_buffer.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/stream>
 
@@ -183,20 +185,24 @@ dispatch_tuple_t dispatch_from_arrow_device::operator()<cudf::string_view>(
     for (auto i = 0L; i < view.n_variadic_buffers; ++i) {
       variadic_ptrs.push_back(reinterpret_cast<char const*>(view.variadic_buffers[i]));
     }
-    auto d_variadic_ptrs = cudf::detail::make_device_uvector_async(
+    auto d_variadic_ptrs = cudf::detail::make_device_buffer_async(
       variadic_ptrs, stream, cudf::get_current_device_resource_ref());
     auto d_ptrs       = d_variadic_ptrs.data();
     auto const d_mask = reinterpret_cast<bitmask_type const*>(input->buffers[validity_buffer_idx]);
     // build strings into gather input form
-    auto d_indices =
-      rmm::device_uvector<cudf::strings::detail::string_index_pair>(size, stream, mr);
+    auto d_indices = cuda::device_buffer<cudf::strings::detail::string_index_pair>(
+      stream, mr, size, cuda::no_init);
     thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                       cuda::counting_iterator<cudf::size_type>{offset},
                       cuda::counting_iterator<cudf::size_type>{offset + size},
-                      d_indices.begin(),
+                      d_indices.data(),
                       binary_view_to_string_index_pair{d_items, d_ptrs, d_mask, skip_mask});
     // gather strings into output column
-    auto out_col = cudf::make_strings_column(d_indices, stream, mr);
+    auto out_col = cudf::make_strings_column(
+      cudf::device_span<cudf::strings::detail::string_index_pair const>{d_indices.data(),
+                                                                        d_indices.size()},
+      stream,
+      mr);
     owned.emplace_back(std::move(out_col));
     cudf::detail::sync_stream(stream);
     return std::make_tuple<column_view, owned_columns_t>(owned.front()->view(), std::move(owned));

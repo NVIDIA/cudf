@@ -82,7 +82,7 @@ std::unique_ptr<column> make_expected_tdigest_column(std::vector<expected_tdiges
                                                      cudf::memory_resources mr)
 {
   auto const temporary_mr        = mr.get_temporary_mr();
-  auto const temporary_resources = cudf::memory_resources{temporary_mr, temporary_mr};
+  auto const temporary_resources = mr.as_temporary();
   std::vector<std::unique_ptr<column>> tdigests;
 
   // make an individual digest

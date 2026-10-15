@@ -11,7 +11,6 @@ context:
   head_rev: '${{ git.head_rev(".")[:8] }}'
   py_abi_min: ${{ env.get("RAPIDS_PY_VERSION") }}
   py_buildstring: ${{ py_abi_min | version_to_buildstring }}
-  py_runtime_latest: "3.14"
 
 package:
   name: pylibcudf
@@ -109,13 +108,6 @@ requirements:
           - libcufile-dev
     by_name:
       - cuda-version
-
-tests:
-  - python:
-      imports:
-        - pylibcudf
-      python_version: ${{ py_runtime_latest }}.*
-      pip_check: false
 
 about:
   homepage: ${{ load_from_file("python/pylibcudf/pyproject.toml").project.urls.Homepage }}

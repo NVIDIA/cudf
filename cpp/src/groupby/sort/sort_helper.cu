@@ -23,6 +23,7 @@
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/stream>
 #include <thrust/transform.h>
 
@@ -252,8 +253,9 @@ std::unique_ptr<table> sort_groupby_helper::unique_keys(cuda::stream_ref stream,
                                                         rmm::device_async_resource_ref mr)
 {
   auto const num_unique_keys = num_groups(stream);
-  auto gather_map            = rmm::device_uvector<size_type>(num_unique_keys, stream);
-  auto const idx_data        = key_sort_order(stream).data<size_type>();
+  auto gather_map            = cuda::device_buffer<size_type>(
+    stream, cudf::get_current_device_resource_ref(), num_unique_keys, cuda::no_init);
+  auto const idx_data = key_sort_order(stream).data<size_type>();
   thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                     group_offsets(stream).begin(),
                     group_offsets(stream).begin() + num_unique_keys,

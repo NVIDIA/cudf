@@ -13,11 +13,11 @@ from cudf_polars.dsl.ir import (
     DataFrameScan,
     GroupBy,
     Join,
-    MapFunction,
     Select,
     Sort,
     Union,
 )
+from cudf_polars.streaming.hint_sorted import HintSorted
 from cudf_polars.streaming.partitioning_requests import (
     NamedOrderKey,
     OrderPartitioningRequest,
@@ -80,14 +80,12 @@ def make_hint_sorted(
     *names: str,
     descending: tuple[bool, ...] | None = None,
     nulls_last: tuple[bool, ...] | None = None,
-) -> MapFunction:
+) -> HintSorted:
     if descending is None:
         descending = (False,) * len(names)
     if nulls_last is None:
         nulls_last = (False,) * len(names)
-    return MapFunction(
-        child.schema, "hint_sorted", (names, descending, nulls_last), child
-    )
+    return HintSorted(child.schema, (names, descending, nulls_last), child)
 
 
 def make_groupby(child: IR, *names: str, maintain_order: bool = False) -> GroupBy:

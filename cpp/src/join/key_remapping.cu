@@ -30,6 +30,7 @@
 
 #include <cooperative_groups.h>
 #include <cuco/static_set.cuh>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/atomic>
@@ -341,7 +342,8 @@ class key_remap_table : public key_remap_table_interface {
                               cudf::bitmask_type const* bitmask_ptr,
                               cuda::stream_ref stream)
   {
-    rmm::device_uvector<cudf::size_type> counts(right_num_rows, stream);
+    cuda::device_buffer<cudf::size_type> counts(
+      stream, cudf::get_current_device_resource_ref(), right_num_rows, cuda::no_init);
     thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                  counts.begin(),
                  counts.end(),

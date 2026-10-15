@@ -5,8 +5,6 @@
 
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 
 import polars as pl
@@ -26,30 +24,35 @@ from cudf_polars import Translator
 from cudf_polars.containers import DataFrame, DataType
 from cudf_polars.dsl import expr
 from cudf_polars.dsl.ir import (
-    DataFrameScan,
     GroupBy,
+    HConcat,
     HStack,
-    IRExecutionContext,
     MapFunction,
     Projection,
     Select,
     Sort,
 )
+from cudf_polars.dsl.traversal import traversal
 from cudf_polars.engine.options import StreamingOptions
-from cudf_polars.streaming.actor_graph.collectives.sort import (
-    _can_sort_chunkwise,
-    _sort_to_order_keys,
+from cudf_polars.streaming.actor_graph.collectives.ordering import (
+    _metadata_has_ordering,
+)
+from cudf_polars.streaming.actor_graph.collectives.sort import _can_sort_chunkwise
+from cudf_polars.streaming.actor_graph.collectives.sort_utils import (
+    sort_to_order_keys,
 )
 from cudf_polars.streaming.actor_graph.core import evaluate_logical_plan
-from cudf_polars.streaming.actor_graph.hint_sorted import extract_hint_sorted_metadata
 from cudf_polars.streaming.actor_graph.utils import (
     NormalizedPartitioning,
     _apply_ordering_metadata,
     _leading_order_keys,
     maybe_remap_partitioning,
 )
+from cudf_polars.streaming.base import StatsCollector
+from cudf_polars.streaming.parallel import lower_ir_graph
 from cudf_polars.utils.config import ConfigOptions
 from cudf_polars.utils.dtypes import make_empty_column
+from cudf_polars.utils.versions import POLARS_VERSION_LT_138
 
 
 @pytest.fixture(scope="module")
@@ -453,6 +456,50 @@ def test_remap_partitioning_hstack_appends_preserves_keys(streaming_engine) -> N
     assert result.local == "inherit"
 
 
+def test_decomposed_select_preserves_row_ordering_metadata(
+    spmd_engine_factory,
+) -> None:
+    engine = spmd_engine_factory(
+        StreamingOptions(
+            max_rows_per_partition=2,
+            dynamic_planning=None,
+            fallback_mode="raise",
+            raise_on_fail=True,
+        )
+    )
+    q = (
+        pl.LazyFrame({"a": [3, 1, 2], "b": [6, 4, 5]})
+        .sort("a")
+        .select("a", (pl.col("b") - pl.col("b").mean()).alias("b_centered"))
+    )
+    ir = Translator(q._ldf.visit(), engine).translate_ir()
+    lowered = lower_ir_graph(
+        ir,
+        ConfigOptions.from_polars_engine(engine),
+        StatsCollector(),
+    ).lowered
+    hconcats = [node for node in traversal([lowered]) if isinstance(node, HConcat)]
+    assert hconcats
+    assert all(node.streaming_safe for node in hconcats)
+
+    metadata_collector = evaluate_logical_plan(
+        ir, ConfigOptions.from_polars_engine(engine), collect_metadata=True
+    )[1]
+
+    assert metadata_collector is not None
+    assert len(metadata_collector) == 1
+    metadata = metadata_collector[0]
+    scheme = metadata.partitioning.inter_rank
+    assert isinstance(scheme, OrderScheme)
+
+    output_cols = list(ir.schema.keys())
+    assert [
+        tuple(key.column_index for key in ordering.keys)
+        for ordering in scheme.orderings
+    ] == [(output_cols.index("a"),)]
+    assert all(ordering.locally_ordered for ordering in scheme.orderings)
+
+
 def test_remap_partitioning_select_drops_key(streaming_engine) -> None:
     part = Partitioning(inter_rank=HashScheme((0, 1), 8), local="inherit")
     result = maybe_remap_partitioning(_make_select_ir(streaming_engine, ("a",)), part)
@@ -551,58 +598,54 @@ def _make_order_scheme(
     )
 
 
-def _hint_sorted_ir() -> MapFunction:
-    schema = {"a": DataType(pl.Int64()), "b": DataType(pl.Int64())}
-    child = DataFrameScan(schema, pl.DataFrame({"a": [1], "b": [2]})._df, None)
-    return MapFunction(schema, "hint_sorted", [[("a", False, False)]], child)
-
-
-async def _extract_hint_sorted_metadata(spmd_engine, metadata: ChannelMetadata):
-    context = spmd_engine.context
-    ch_in = context.create_channel()
-    ch_replay = context.create_channel()
-    result = await extract_hint_sorted_metadata(
-        context,
-        spmd_engine.comm,
-        _hint_sorted_ir(),
-        IRExecutionContext(),
-        metadata,
-        ch_in,
-        ch_replay,
+@pytest.mark.skipif(
+    POLARS_VERSION_LT_138, reason="set_sorted lowers to unsupported hint ir"
+)
+def test_set_sorted_dataframe_extracts_ordering_boundaries(spmd_engine_factory):
+    engine = spmd_engine_factory(
+        StreamingOptions(
+            max_rows_per_partition=1,
+            target_partition_size=1,
+            fallback_mode="raise",
+            raise_on_fail=True,
+        )
     )
-    return (*result, ch_in, ch_replay)
-
-
-def test_hint_sorted_metadata_attaches_single_partition_ordering(spmd_engine) -> None:
-    metadata = ChannelMetadata(local_count=1)
-
-    result, ch_forward, ch_in, ch_replay = asyncio.run(
-        _extract_hint_sorted_metadata(spmd_engine, metadata)
+    q = (
+        pl.LazyFrame({"k": [1, 2, 3], "v": [10, 20, 30]})
+        .set_sorted("k")
+        .sort("k")
+        .select("k")
+    )
+    ir = Translator(q._ldf.visit(), engine).translate_ir()
+    nodes = list(traversal([ir]))
+    assert any(
+        isinstance(node, MapFunction) and node.name == "hint_sorted" for node in nodes
     )
 
-    assert result.partitioning is not None
-    assert isinstance(result.partitioning.inter_rank, OrderScheme)
-    (ordering,) = result.partitioning.inter_rank.orderings
-    assert list(ordering.keys) == [
-        OrderKey(0, plc.types.Order.ASCENDING, plc.types.NullOrder.BEFORE)
-    ]
+    result, metadata_collector = evaluate_logical_plan(
+        ir, ConfigOptions.from_polars_engine(engine), collect_metadata=True
+    )
+
+    assert result["k"].to_list() == [1, 2, 3]
+    assert metadata_collector is not None
+    assert len(metadata_collector) == 1
+    metadata = metadata_collector[0]
+    assert metadata.local_count == 3
+    assert metadata.partitioning is not None
+    assert metadata.partitioning.local == "inherit"
+    assert isinstance(metadata.partitioning.inter_rank, OrderScheme)
+    (ordering,) = metadata.partitioning.inter_rank.orderings
+    assert tuple(key.column_index for key in ordering.keys) == (0,)
     assert ordering.strict_boundaries is True
-    assert ch_forward is ch_in
-    assert ch_forward is not ch_replay
 
-
-def test_hint_sorted_metadata_ignores_multi_partition_without_boundaries(
-    spmd_engine,
-) -> None:
-    metadata = ChannelMetadata(local_count=2)
-
-    result, ch_forward, ch_in, ch_replay = asyncio.run(
-        _extract_hint_sorted_metadata(spmd_engine, metadata)
-    )
-
-    assert result is metadata
-    assert ch_forward is ch_in
-    assert ch_forward is not ch_replay
+    boundaries = ordering.get_boundaries(engine.context.br())
+    boundary_df = DataFrame.from_table(
+        boundaries.table_view(),
+        ["k"],
+        [DataType(pl.Int64())],
+        boundaries.stream,
+    ).to_polars()
+    assert boundary_df["k"].to_list() == [2, 3]
 
 
 def test_apply_ordering_metadata_marks_leading_key_only(spmd_engine) -> None:
@@ -1142,7 +1185,7 @@ def test_get_ordering(
         3, partitioning=Partitioning(inter_rank=scheme, local="inherit")
     )
 
-    order_keys = _sort_to_order_keys(sort_xy)
+    order_keys = sort_to_order_keys(sort_xy)
     partitioning = NormalizedPartitioning.from_keys(
         meta.partitioning, nranks=1, keys=order_keys
     )
@@ -1185,3 +1228,29 @@ def test_get_ordering(
             )
             assert mismatched_nested.get_ordering(level="inter_rank") is None
             assert mismatched_nested.get_ordering(level="local") is None
+
+
+@pytest.mark.parametrize(
+    "scheme_key_count,strict_boundaries,expected",
+    [
+        (1, True, True),
+        (1, False, False),
+        (2, True, True),
+        (2, False, True),
+    ],
+)
+def test_metadata_has_ordering(
+    spmd_engine, scheme_key_count, strict_boundaries, expected
+) -> None:
+    asc, before = plc.types.Order.ASCENDING, plc.types.NullOrder.BEFORE
+    order_keys = (OrderKey(0, asc, before), OrderKey(1, asc, before))
+    scheme = _make_order_scheme(
+        spmd_engine.context,
+        key_indices=tuple(range(scheme_key_count)),
+        strict=strict_boundaries,
+    )
+    metadata = ChannelMetadata(
+        3, partitioning=Partitioning(inter_rank=scheme, local="inherit")
+    )
+
+    assert _metadata_has_ordering(metadata, order_keys) is expected

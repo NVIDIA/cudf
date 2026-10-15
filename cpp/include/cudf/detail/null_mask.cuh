@@ -264,7 +264,6 @@ std::pair<cuda::device_buffer<std::byte>, size_type> bitmask_binop(
   cuda::stream_ref stream,
   cudf::memory_resources mr)
 {
-  auto const temp_mr = mr.get_temporary_mr();
   auto dest_mask =
     cudf::create_null_mask(mask_size_bits, cudf::mask_state::UNINITIALIZED, stream, mr);
   auto null_count =
@@ -276,7 +275,7 @@ std::pair<cuda::device_buffer<std::byte>, size_type> bitmask_binop(
                        masks_begin_bits,
                        mask_size_bits,
                        stream,
-                       cudf::memory_resources{temp_mr, temp_mr});
+                       mr.as_temporary());
 
   return std::pair(std::move(dest_mask), null_count);
 }
@@ -327,7 +326,7 @@ segmented_bitmask_binop(Binop op,
                                                      segment_offsets,
                                                      identity,
                                                      stream,
-                                                     cudf::memory_resources{temp_mr, temp_mr});
+                                                     mr.as_temporary());
 
   return std::pair(std::move(h_destination_masks),
                    cudf::detail::make_std_vector<size_type>(null_counts, stream));
@@ -840,7 +839,6 @@ std::pair<cuda::device_buffer<std::byte>, size_type> segmented_null_mask_reducti
       mr);
   }
 
-  auto const temp_mr = mr.get_temporary_mr();
   auto const segment_valid_counts =
     cudf::detail::segmented_count_bits(bitmask,
                                        first_bit_indices_begin,
@@ -848,7 +846,7 @@ std::pair<cuda::device_buffer<std::byte>, size_type> segmented_null_mask_reducti
                                        last_bit_indices_begin,
                                        cudf::detail::count_bits_policy::SET_BITS,
                                        stream,
-                                       cudf::memory_resources{temp_mr, temp_mr});
+                                       mr.as_temporary());
   auto const length_and_valid_count =
     cuda::make_zip_iterator(segment_length_iterator, segment_valid_counts.begin());
   return cudf::detail::valid_if(

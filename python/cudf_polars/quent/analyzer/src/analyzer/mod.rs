@@ -102,6 +102,10 @@ impl UiAnalyzer for CudfPolarsUiAnalyzer {
         Self::extract_engine_from_events(engine_id, events)
     }
 
+    fn query_initial_group_by_attribute(&self) -> Option<String> {
+        Some("query_group".to_owned())
+    }
+
     fn query_bundle(&self, query_id: Uuid) -> AnalyzerResult<QueryBundle> {
         self.build_query_bundle(query_id)
     }

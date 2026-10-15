@@ -12,6 +12,7 @@
 #include <cudf_test/cudf_gtest.hpp>
 #include <cudf_test/io_metadata_utilities.hpp>
 #include <cudf_test/iterator_utilities.hpp>
+#include <cudf_test/memory_resource_utilities.hpp>
 #include <cudf_test/random.hpp>
 #include <cudf_test/table_utilities.hpp>
 #include <cudf_test/testing_main.hpp>
@@ -27,6 +28,10 @@
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/span.hpp>
+
+#include <rmm/error.hpp>
+#include <rmm/mr/callback_memory_resource.hpp>
+#include <rmm/mr/cuda_memory_resource.hpp>
 
 #include <cuda/iterator>
 
@@ -1185,6 +1190,12 @@ TEST_F(OrcChunkedWriterTest, MismatchedTypes)
   cudf::io::orc_chunked_writer writer(opts);
   writer.write(*table1);
   EXPECT_THROW(writer.write(*table2), cudf::logic_error);
+  writer.close();
+
+  // The mismatched write is rejected without affecting earlier writes
+  auto const result =
+    cudf::io::read_orc(cudf::io::orc_reader_options::builder(cudf::io::source_info{filepath}));
+  CUDF_TEST_EXPECT_TABLES_EQUAL(*result.tbl, *table1);
 }
 
 TEST_F(OrcChunkedWriterTest, ChunkedWritingAfterClosing)
@@ -1213,6 +1224,12 @@ TEST_F(OrcChunkedWriterTest, MismatchedStructure)
   cudf::io::orc_chunked_writer writer(opts);
   writer.write(*table1);
   EXPECT_THROW(writer.write(*table2), cudf::logic_error);
+  writer.close();
+
+  // The mismatched write is rejected without affecting earlier writes
+  auto const result =
+    cudf::io::read_orc(cudf::io::orc_reader_options::builder(cudf::io::source_info{filepath}));
+  CUDF_TEST_EXPECT_TABLES_EQUAL(*result.tbl, *table1);
 }
 
 TEST_F(OrcChunkedWriterTest, ReadStripes)
@@ -1694,6 +1711,23 @@ TEST_F(OrcStatisticsTest, Overflow)
   check_sum_exist(2, false);
   check_sum_exist(3, true);
   check_sum_exist(4, true);
+}
+
+TEST_F(OrcStatisticsTest, Decimal128Sum)
+{
+  // Valid sum that exceeds max() / non_nulls; must still be written
+  std::vector<__int128_t> const vals{__int128_t{1} << 126, 1};
+  dec128_col col{vals.begin(), vals.end(), numeric::scale_type{0}};
+  table_view tbl({col});
+
+  auto const filepath = temp_env->get_temp_filepath("OrcStatsDecimal128Sum.orc");
+  cudf::io::write_orc(
+    cudf::io::orc_writer_options::builder(cudf::io::sink_info{filepath}, tbl).build());
+
+  auto const stats = cudf::io::read_parsed_orc_statistics(cudf::io::source_info{filepath});
+  auto const& ts = std::get<cudf::io::decimal_statistics>(stats.file_stats[1].type_specific_stats);
+  ASSERT_TRUE(ts.sum.has_value());
+  EXPECT_EQ(*ts.sum, "85070591730234615865843651857942052865");
 }
 
 TEST_F(OrcStatisticsTest, HasNull)
@@ -2728,13 +2762,72 @@ TEST_F(OrcChunkedWriterTest, FailedWriteCloseNotThrow)
     cudf::io::chunked_orc_writer_options::builder(cudf::io::sink_info{&sink});
   auto writer = cudf::io::orc_chunked_writer(write_opts);
 
-  try {
-    writer.write(table);
-  } catch (...) {
-    // ignore the exception; we're testing that close() doesn't throw when the only write() fails
+  EXPECT_THROW(writer.write(table), std::runtime_error);
+  EXPECT_THROW(writer.write(table), cudf::logic_error);
+  EXPECT_NO_THROW(writer.close());
+}
+
+TEST_F(OrcChunkedWriterTest, OutOfMemoryRetry)
+{
+  int32_col ints{1, 2, 3};
+  str_col strings{"a", "bb", "ccc"};  // persisting string statistics allocates
+  table_view input{{ints, strings}};
+
+  std::vector<char> out_buffer;
+  std::size_t output_start = 0;
+  bool fail_allocation     = false;
+  // Not the current resource, which is replaced below
+  rmm::mr::cuda_memory_resource upstream;
+  rmm::mr::callback_memory_resource mr{
+    [&](std::size_t bytes, auto stream, void*) -> void* {
+      // An allocation after output starts could fail when the write can no longer be retried
+      EXPECT_EQ(out_buffer.size(), output_start);
+      if (fail_allocation) { throw rmm::bad_alloc{"Injected ORC OOM"}; }
+      return upstream.allocate(stream, bytes, cuda::mr::default_cuda_malloc_alignment);
+    },
+    [&](void* ptr, std::size_t bytes, auto stream, void*) {
+      upstream.deallocate(stream, ptr, bytes, cuda::mr::default_cuda_malloc_alignment);
+    }};
+  {
+    cudf::test::scoped_current_device_resource resource_scope{mr};
+    cudf::io::orc_chunked_writer writer{
+      cudf::io::chunked_orc_writer_options::builder(cudf::io::sink_info{&out_buffer})
+        .enable_statistics(cudf::io::statistics_freq::STATISTICS_ROWGROUP)};
+    writer.write(input);
+    output_start = out_buffer.size();
+
+    fail_allocation = true;
+    EXPECT_THROW(writer.write(input), rmm::bad_alloc);
+    EXPECT_THROW(writer.close(), rmm::bad_alloc);
+    fail_allocation = false;
+    EXPECT_EQ(out_buffer.size(), output_start);
+
+    writer.write(input);
+    output_start = out_buffer.size();
+    writer.close();
   }
 
-  EXPECT_NO_THROW(writer.close());
+  auto const source =
+    cudf::io::source_info{cudf::host_span<char const>{out_buffer.data(), out_buffer.size()}};
+  auto const result   = cudf::io::read_orc(cudf::io::orc_reader_options::builder(source));
+  auto const expected = cudf::concatenate(std::vector<table_view>{input, input});
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected->view(), result.tbl->view());
+
+  // The failed write and close must not leave their chunk in the statistics
+  auto const stats = cudf::io::read_parsed_orc_statistics(source);
+  EXPECT_EQ(stats.stripes_stats.size(), 2ul);
+  ASSERT_EQ(stats.file_stats.size(), 3ul);
+  EXPECT_EQ(*stats.file_stats[0].number_of_values, 6ul);
+
+  auto const& int_stats =
+    std::get<cudf::io::integer_statistics>(stats.file_stats[1].type_specific_stats);
+  EXPECT_EQ(*int_stats.sum, 12);
+
+  auto const& str_stats =
+    std::get<cudf::io::string_statistics>(stats.file_stats[2].type_specific_stats);
+  EXPECT_EQ(*str_stats.minimum, "a");
+  EXPECT_EQ(*str_stats.maximum, "ccc");
+  EXPECT_EQ(*str_stats.sum, 12);
 }
 
 TEST_F(OrcChunkedWriterTest, NoDataInSinkWhenNoWrite)

@@ -25,6 +25,7 @@
 
 #include <cooperative_groups.h>
 #include <cuco/static_set.cuh>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/tuple>
@@ -231,7 +232,8 @@ distinct_hash_join::inner_join(cudf::table_view const& left,
   auto left_indices =
     std::make_unique<rmm::device_uvector<size_type>>(left_table_num_rows, stream, mr);
 
-  auto found_indices     = rmm::device_uvector<size_type>(left_table_num_rows, stream);
+  auto found_indices = cuda::device_buffer<size_type>(
+    stream, cudf::get_current_device_resource_ref(), left_table_num_rows, cuda::no_init);
   auto const found_begin = cuda::make_transform_output_iterator(found_indices.begin(), output_fn{});
 
   auto preprocessed_left = cudf::detail::row::equality::preprocessed_table::create(

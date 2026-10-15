@@ -11,11 +11,13 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/utilities/device_operators.cuh>
 #include <cudf/detail/valid_if.cuh>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <rmm/resource_ref.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/functional>
 #include <cuda/stream>
@@ -68,7 +70,8 @@ struct bitwise_group_reduction_functor {
     }
 
     if (values.has_nulls()) {
-      rmm::device_uvector<bool> validity(num_groups, stream);
+      cuda::device_buffer<bool> validity(
+        stream, cudf::get_current_device_resource_ref(), num_groups, cuda::no_init);
       do_reduction(cudf::detail::make_validity_iterator(*d_values_ptr),
                    validity.begin(),
                    cuda::std::logical_or{});

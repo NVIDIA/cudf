@@ -5,6 +5,7 @@
 
 #include "hybrid_scan_common.hpp"
 #include "hybrid_scan_composer.hpp"
+#include "hybrid_scan_multifile_composer.hpp"
 #include "tests/io/parquet_common.hpp"
 
 #include <cudf_test/base_fixture.hpp>
@@ -32,6 +33,7 @@
 
 #include <cuda/iterator>
 
+#include <array>
 #include <format>
 #include <limits>
 #include <stdexcept>
@@ -553,16 +555,19 @@ TEST_F(HybridScanTest, ConsecutivePrunedPageOffsets)
     auto datasource = cudf::io::datasource::create({filepath});
 
     auto const expected = cudf::concatenate(cudf::slice(input, expected_slices));
-    std::unique_ptr<cudf::table> filter_table;
-    std::unique_ptr<cudf::table> payload_table;
-    ASSERT_NO_THROW(std::tie(filter_table, payload_table) =
-                      hybrid_scan(*datasource, filter, {}, true, stream, mr, aligned_mr));
+    // Read with column chunk-level and page-level payload I/O
+    auto const results =
+      std::array{hybrid_scan(*datasource, filter, {}, true, stream, mr, aligned_mr),
+                 chunked_sparse_hybrid_scan_multifile(
+                   cudf::io::source_info{filepath}, filter, {}, true, stream, mr)};
 
-    CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected->view().select({0}), filter_table->view());
-    CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected->view().select({1, 2, 3, 4}),
-                                       payload_table->view());
-    for (auto const& column : payload_table->view()) {
-      expect_monotonic_offsets(expect_monotonic_offsets, column);
+    for (auto const& [filter_table, payload_table] : results) {
+      CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected->view().select({0}), filter_table->view());
+      CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected->view().select({1, 2, 3, 4}),
+                                         payload_table->view());
+      for (auto const& column : payload_table->view()) {
+        expect_monotonic_offsets(expect_monotonic_offsets, column);
+      }
     }
   };
 

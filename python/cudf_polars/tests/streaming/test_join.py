@@ -262,7 +262,6 @@ def _set_sorted_join_metadata(spmd_engine_factory) -> ChannelMetadata:
 def test_ordered_join_after_set_sorted_inputs(spmd_engine_factory):
     metadata = _set_sorted_join_metadata(spmd_engine_factory)
 
-    assert metadata.local_count == 1
     assert metadata.partitioning is not None
     assert isinstance(metadata.partitioning.inter_rank, OrderScheme)
     assert metadata.partitioning.local == "inherit"

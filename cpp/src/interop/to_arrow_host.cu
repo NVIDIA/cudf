@@ -31,6 +31,7 @@
 #include <rmm/device_buffer.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/iterator>
@@ -408,10 +409,13 @@ struct strings_to_binary_view {
                    d_str.data(),
                    d_str.data() + NANOARROW_BINARY_VIEW_PREFIX_SIZE,
                    item.ref.prefix);
-      auto const offset  = d_offsets[idx];
-      auto const buf_idx = cuda::std::distance(
-        buffer_offsets.begin(),
-        thrust::upper_bound(thrust::seq, buffer_offsets.begin(), buffer_offsets.end(), offset));
+      auto const offset = d_offsets[idx];
+      auto const buf_idx =
+        cuda::std::distance(buffer_offsets.data(),
+                            thrust::upper_bound(thrust::seq,
+                                                buffer_offsets.data(),
+                                                (buffer_offsets.data() + buffer_offsets.size()),
+                                                offset));
       auto const new_offset = offset - (buf_idx == 0 ? 0 : buffer_offsets[buf_idx - 1]);
       item.ref.buffer_index = buf_idx;
       item.ref.offset       = static_cast<int32_t>(new_offset);
@@ -478,11 +482,13 @@ unique_device_array_t to_arrow_host_stringview(cudf::strings_column_view const& 
   // using max/2 here ensures no buffer is greater than 2GB
   constexpr int64_t max_size = std::numeric_limits<int32_t>::max() / 2;
   auto const num_buffers     = cudf::util::div_rounding_up_safe(longer_chars_size, max_size);
-  auto buffer_offsets        = rmm::device_uvector<int64_t>(num_buffers, stream);
+  auto buffer_offsets        = cuda::device_buffer<int64_t>(
+    stream, cudf::get_current_device_resource_ref(), num_buffers, cuda::no_init);
   // copy the bytes for the longer strings into Arrow variadic buffers
   if (longer_chars_size > 0) {
     // compute buffer boundaries (less than 2GB per buffer)
-    auto buffer_indices  = rmm::device_uvector<int64_t>(num_buffers, stream);
+    auto buffer_indices = cuda::device_buffer<int64_t>(
+      stream, cudf::get_current_device_resource_ref(), num_buffers, cuda::no_init);
     auto const bound_itr = make_counting_transform_iterator(
       0, cuda::proclaim_return_type<int64_t>([] __device__(auto idx) {
         return (idx + 1) * max_size;
@@ -492,11 +498,11 @@ unique_device_array_t to_arrow_host_stringview(cudf::strings_column_view const& 
                         d_offsets + longer_strings.size(),
                         bound_itr,
                         bound_itr + num_buffers,
-                        buffer_indices.begin());
+                        buffer_indices.data());
     thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                      buffer_indices.begin(),
-                      buffer_indices.end(),
-                      buffer_offsets.begin(),
+                      buffer_indices.data(),
+                      (buffer_indices.data() + buffer_indices.size()),
+                      buffer_offsets.data(),
                       [d_offsets] __device__(auto idx) { return d_offsets[idx]; });
     auto h_offsets = make_std_vector(buffer_offsets, stream);
 
@@ -515,7 +521,8 @@ unique_device_array_t to_arrow_host_stringview(cudf::strings_column_view const& 
   }
 
   // now build BinaryView objects from the strings in device memory
-  auto d_items = rmm::device_uvector<ArrowBinaryView>(col.size(), stream);
+  auto d_items = cuda::device_buffer<ArrowBinaryView>(
+    stream, cudf::get_current_device_resource_ref(), col.size(), cuda::no_init);
   thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                      cuda::counting_iterator<cudf::size_type>{0},
                      col.size(),

@@ -5,7 +5,8 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any, Literal, cast
+from functools import partial
+from typing import TYPE_CHECKING, Any, cast
 
 from cudf_streaming.channel_metadata import ChannelMetadata
 from cudf_streaming.table_chunk import (
@@ -18,11 +19,12 @@ from rapidsmpf.streaming.core.actor import define_actor
 from rapidsmpf.streaming.core.message import Message
 from rapidsmpf.streaming.core.spillable_messages import SpillableMessages
 
-from cudf_polars.dsl.ir import IR, Empty, Join
+from cudf_polars.dsl.ir import IR, Empty, HConcat
 from cudf_polars.streaming.actor_graph.dispatch import (
     generate_ir_sub_network,
     ir_context_for_node,
 )
+from cudf_polars.streaming.actor_graph.hconcat import build_hconcat_partitioning
 from cudf_polars.streaming.actor_graph.tracing import send_chunk
 from cudf_polars.streaming.actor_graph.utils import (
     ChannelManager,
@@ -32,7 +34,6 @@ from cudf_polars.streaming.actor_graph.utils import (
     clear_local_ordering,
     empty_table_chunk,
     gather_in_task_group,
-    join_preserves_side_order,
     make_spill_function,
     maybe_remap_partitioning,
     process_children,
@@ -42,6 +43,9 @@ from cudf_polars.streaming.actor_graph.utils import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
+
+    from cudf_streaming.channel_metadata import Partitioning
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.streaming.core.channel import Channel
     from rapidsmpf.streaming.core.context import Context
@@ -50,16 +54,10 @@ if TYPE_CHECKING:
     from cudf_polars.dsl.ir import IRExecutionContext
     from cudf_polars.streaming.actor_graph.dispatch import SubNetGenerator
 
-
-def _preserves_local_order(ir: IR, partitioning_index: int | None = None) -> bool:
-    """Return True when this IR node preserves advertised local row order."""
-    if isinstance(ir, Join) and partitioning_index is not None:
-        # partitioning_index is the child whose partitioning we forwarded
-        # (0 = left, 1 = right). Local row order holds only when join
-        # maintain_order covers that side.
-        side: Literal["left", "right"] = "left" if partitioning_index == 0 else "right"
-        return join_preserves_side_order(ir.options[5], side)
-    return ir.preserves_output_order
+    type PartitioningCallback = Callable[
+        [Sequence[ChannelMetadata], Context],
+        Partitioning | None,
+    ]
 
 
 @define_actor()
@@ -104,7 +102,7 @@ async def default_node_single(
         partitioning = maybe_remap_partitioning(
             ir, metadata_in.partitioning, context=context
         )
-        if not _preserves_local_order(ir):
+        if not ir.preserves_output_order:
             partitioning = clear_local_ordering(partitioning)
         metadata_out = ChannelMetadata(
             local_count=metadata_in.local_count,
@@ -133,7 +131,7 @@ async def default_node_multi(
     ch_out: Channel[TableChunk],
     chs_in: tuple[Channel[TableChunk], ...],
     *,
-    partitioning_index: int | None = None,
+    partitioning_callback: PartitioningCallback | None = None,
 ) -> None:
     """
     Pointwise node for rapidsmpf.
@@ -150,9 +148,9 @@ async def default_node_multi(
         The output Channel[TableChunk].
     chs_in
         Tuple of input Channel[TableChunk]s.
-    partitioning_index
-        Index of the input channel to preserve partitioning information for.
-        If None, no partitioning information is preserved.
+    partitioning_callback
+        Optional callback for building output partitioning from child metadata.
+        When None, no partitioning metadata is preserved.
     """
     async with shutdown_on_error(
         context,
@@ -173,22 +171,14 @@ async def default_node_multi(
         child_ordering_metadatas = [
             _leading_order_keys(md_child) for md_child in child_metadatas
         ]
-        for idx, md_child in enumerate(child_metadatas):
+        for md_child in child_metadatas:
             # Use simple "max" rule to determine counts.
             local_count = max(md_child.local_count, local_count)
             # Set "duplicated" to False as soon as we
             # find a non-duplicated child.
             duplicated = duplicated and md_child.duplicated
-            if idx == partitioning_index:
-                # Remap partitioning from child schema to output schema
-                partitioning = maybe_remap_partitioning(
-                    ir,
-                    md_child.partitioning,
-                    child_ir=ir.children[idx],
-                    context=context,
-                )
-                if not _preserves_local_order(ir, partitioning_index):
-                    partitioning = clear_local_ordering(partitioning)
+        if partitioning_callback is not None:
+            partitioning = partitioning_callback(child_metadatas, context)
         metadata = ChannelMetadata(
             local_count=local_count,
             partitioning=partitioning,
@@ -604,6 +594,11 @@ def _(
                 ir_context,
                 channels[ir].reserve_input_slot(),
                 tuple(channels[c].reserve_output_slot() for c in ir.children),
+                partitioning_callback=(
+                    partial(build_hconcat_partitioning, ir)
+                    if isinstance(ir, HConcat) and ir.streaming_safe
+                    else None
+                ),
             )
         ]
 

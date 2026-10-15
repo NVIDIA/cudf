@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Adjust streams between concrete Ordering boundary layouts."""
+"""Ordering metadata and boundary-based stream adjustment utilities."""
 
 from __future__ import annotations
 
@@ -10,6 +10,12 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 import pylibcudf as plc
+from cudf_streaming.channel_metadata import (
+    ChannelMetadata,
+    OrderScheme,
+    Ordering,
+    Partitioning,
+)
 from cudf_streaming.partition_utils import (
     packed_data_from_cudf_packed_columns,
     unpack_and_concat,
@@ -26,17 +32,23 @@ from rapidsmpf.streaming.core.memory_reserve_or_wait import reserve_memory
 from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.containers import DataFrame, DataType
+from cudf_polars.streaming.actor_graph.collectives.allgather import AllGatherManager
 from cudf_polars.streaming.actor_graph.utils import (
     ChunkStore,
     concat_batch,
     empty_table_chunk,
+    recv_metadata,
+    send_metadata,
     shutdown_channels_on_error,
 )
 from cudf_polars.streaming.utils import partition_owner, partition_range
 from cudf_polars.utils.cuda_stream import stream_ordered_after
+from cudf_polars.utils.dtypes import make_empty_column
 
 if TYPE_CHECKING:
-    from cudf_streaming.channel_metadata import Ordering
+    from collections.abc import Sequence
+
+    from cudf_streaming.channel_metadata import OrderKey
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.memory.buffer_resource import BufferResource
     from rapidsmpf.memory.packed_data import PackedData
@@ -49,6 +61,345 @@ if TYPE_CHECKING:
 
 
 _PID_DTYPE = DataType(pl.Int32())
+
+
+@dataclass(frozen=True)
+class OrderSchemePartitioningResult:
+    """OrderScheme partitioning and buffered chunks consumed to derive it."""
+
+    partitioning: Partitioning | None
+    """The extracted partitioning, or ``None`` if extraction was not possible."""
+    chunks: ChunkStore
+    """The consumed chunks, stored in replay order."""
+
+
+def _extract_boundaries_from_endpoint_rows(
+    endpoint_key_rows: plc.Table,
+    num_partitions: int,
+    stream: Stream,
+) -> tuple[plc.Table, bool]:
+    """
+    Extract boundaries from alternating partition endpoint rows.
+
+    Parameters
+    ----------
+    endpoint_key_rows
+        The table containing key-column rows ordered as
+        ``[start0, end0, start1, end1, ...]``.
+    num_partitions
+        The number of partitions.
+    stream
+        The CUDA stream to use for the operation.
+
+    Returns
+    -------
+    The boundaries table and whether they are strict.
+    """
+    # Boundaries are the first endpoint of all partitions except the first.
+    # Strictness compares each partition end with the following partition start.
+    previous_partition_ends = plc.concatenate.concatenate(
+        plc.copying.slice(
+            endpoint_key_rows, list(range(1, 2 * num_partitions - 1)), stream=stream
+        ),
+        stream=stream,
+    )
+    next_partition_starts = plc.concatenate.concatenate(
+        plc.copying.slice(
+            endpoint_key_rows, list(range(2, 2 * num_partitions)), stream=stream
+        ),
+        stream=stream,
+    )
+
+    # Single-kernel row-equality check across all key columns using AST
+    num_cols = previous_partition_ends.num_columns()
+    combined = plc.Table(
+        list(previous_partition_ends.columns()) + list(next_partition_starts.columns())
+    )
+    eq_exprs = [
+        plc.expressions.Operation(
+            plc.expressions.ASTOperator.NULL_EQUAL,
+            plc.expressions.ColumnReference(j),
+            plc.expressions.ColumnReference(num_cols + j),
+        )
+        for j in range(num_cols)
+    ]
+    row_eq_expr = eq_exprs[0]
+    for expr in eq_exprs[1:]:
+        row_eq_expr = plc.expressions.Operation(
+            plc.expressions.ASTOperator.NULL_LOGICAL_AND,
+            row_eq_expr,
+            expr,
+        )
+    row_eq_col = plc.transform.compute_column(combined, row_eq_expr, stream=stream)
+    strict = not plc.reduce.reduce(
+        row_eq_col,
+        plc.aggregation.any(),
+        plc.DataType(plc.TypeId.BOOL8),
+        stream=stream,
+    ).to_py(stream=stream)
+    return next_partition_starts, strict
+
+
+def _metadata_has_ordering(metadata: ChannelMetadata, keys: Sequence[OrderKey]) -> bool:
+    """Return whether metadata already has compatible ordering."""
+    if metadata.partitioning is None:
+        return False
+    scheme = metadata.partitioning.inter_rank
+    keys = tuple(keys)
+    # Exact metadata is always useful. Prefix metadata is only enough for a
+    # longer ordering when its boundaries are strict.
+    return isinstance(scheme, OrderScheme) and any(
+        (
+            len(ordering.keys) == len(keys)
+            or (ordering.strict_boundaries and len(ordering.keys) < len(keys))
+        )
+        and tuple(ordering.keys) == keys[: len(ordering.keys)]
+        for ordering in scheme.orderings
+    )
+
+
+def _with_extracted_ordering(
+    metadata: ChannelMetadata, partitioning: Partitioning | None
+) -> ChannelMetadata:
+    """Return metadata with extracted ordering when extraction succeeded."""
+    if partitioning is None:
+        return metadata
+
+    orderings: list[Ordering] = []
+    if metadata.partitioning is not None and isinstance(
+        metadata.partitioning.inter_rank, OrderScheme
+    ):
+        orderings.extend(metadata.partitioning.inter_rank.orderings)
+
+    scheme = partitioning.inter_rank
+    if isinstance(scheme, OrderScheme):
+        orderings.extend(scheme.orderings)
+
+    return ChannelMetadata(
+        local_count=metadata.local_count,
+        partitioning=Partitioning(OrderScheme(orderings), partitioning.local),
+        duplicated=metadata.duplicated,
+    )
+
+
+def _trivial_ordering_metadata(
+    context: Context,
+    comm: Communicator,
+    schema_ir: IR,
+    metadata: ChannelMetadata,
+    keys: Sequence[OrderKey],
+) -> ChannelMetadata | None:
+    """Attach ordering without scanning data when the boundaries are trivial."""
+    if comm.nranks != 1 or metadata.local_count > 1:
+        return None
+
+    partitioning = metadata.partitioning
+    existing_orderings: list[Ordering] = []
+    if partitioning is not None and isinstance(partitioning.inter_rank, OrderScheme):
+        existing_orderings = list(partitioning.inter_rank.orderings)
+
+    dtypes = tuple(schema_ir.schema.values())
+    stream = context.br().stream_pool.get_stream()
+    boundaries = TableChunk.from_pylibcudf_table(
+        plc.Table(
+            [make_empty_column(dtypes[key.column_index], stream) for key in keys]
+        ),
+        stream,
+        exclusive_view=False,
+        br=context.br(),
+    )
+    ordering = Ordering(keys, boundaries, strict_boundaries=True)
+    return ChannelMetadata(
+        local_count=metadata.local_count,
+        partitioning=Partitioning(
+            OrderScheme([*existing_orderings, ordering]),
+            "inherit",
+        ),
+        duplicated=metadata.duplicated,
+    )
+
+
+async def extract_orderscheme_partitioning(
+    context: Context,
+    comm: Communicator,
+    schema_ir: IR,
+    ir_context: IRExecutionContext,
+    ch_in: Channel[TableChunk],
+    order_keys: Sequence[OrderKey],
+    collective_id: int,
+) -> OrderSchemePartitioningResult:
+    """
+    Extract the partitioning metadata for a sorted channel.
+
+    Parameters
+    ----------
+    context
+        The RapidsMPF context.
+    comm
+        The RapidsMPF communicator.
+    schema_ir
+        The IR reference to use for the boundary table schema.
+    ir_context
+        The IR execution context.
+    ch_in
+        The channel to collect boundaries from.
+    order_keys
+        The order keys associated with the boundaries.
+    collective_id
+        The collective ID for the allgather.
+
+    Returns
+    -------
+    A result containing a ``Partitioning`` whose ``inter_rank`` is an
+    ``OrderScheme`` built from the observed boundaries and ``local`` is
+    ``"inherit"``, or ``None`` if the channel contains insufficient data
+    or the data is not globally sorted. The result also contains the
+    consumed chunks in replay order.
+
+    Notes
+    -----
+    This utility does not collect channel metadata, nor does
+    it push any messages into an output channel. All data
+    messages from the input channel are consumed.
+
+    Boundaries are not collected for empty chunks.
+    """
+    # Collect the first and last row from each non-empty sorted chunk.
+    key_indices = [key.column_index for key in order_keys]
+    endpoint_rows: list[plc.Table] = []
+    chunks = ChunkStore(context)
+    stream = ir_context.get_cuda_stream()
+    row_indices = plc.Column.from_iterable_of_py(
+        [0, -1],
+        plc.DataType(plc.TypeId.INT32),
+        stream=stream,
+    )
+    while (msg := await ch_in.recv(context)) is not None:
+        chunk, _ = await make_table_chunks_available_or_wait(
+            context,
+            TableChunk.from_message(msg, br=context.br()),
+            reserve_extra=0,
+            net_memory_delta=0,
+        )
+        tbl = chunk.table_view()
+        key_tbl = plc.Table([tbl.columns()[index] for index in key_indices])
+        if key_tbl.num_rows() == 0:
+            chunks.insert(Message(msg.sequence_number, chunk))
+            continue
+        with stream_ordered_after(lambda: stream, upstreams=(chunk.stream,)):
+            endpoint_rows.append(
+                plc.copying.gather(
+                    key_tbl,
+                    row_indices,
+                    plc.copying.OutOfBoundsPolicy.DONT_CHECK,
+                    stream=stream,
+                )
+            )
+        chunks.insert(Message(msg.sequence_number, chunk))
+    endpoint_table: plc.Table | None = (
+        plc.concatenate.concatenate(endpoint_rows, stream=stream)
+        if endpoint_rows
+        else None
+    )
+    del endpoint_rows
+
+    # Allgather endpoint rows across all ranks.
+    if comm.nranks > 1:
+        dtypes = tuple(schema_ir.schema.values())
+        local_chunk = (
+            TableChunk.from_pylibcudf_table(
+                endpoint_table, stream, exclusive_view=True, br=context.br()
+            )
+            if endpoint_table is not None
+            else TableChunk.from_pylibcudf_table(
+                plc.Table(
+                    [make_empty_column(dtypes[index], stream) for index in key_indices]
+                ),
+                stream,
+                exclusive_view=False,
+                br=context.br(),
+            )
+        )
+        allgather = AllGatherManager(context, comm, collective_id)
+        with allgather.inserting() as inserter:
+            await inserter.insert(comm.rank, local_chunk)
+        endpoint_table = await allgather.extract_concatenated(
+            stream, ordered=True, ir_context=ir_context
+        )
+
+    # Return None if there are insufficient endpoints to process.
+    if endpoint_table is None or (num_partitions := endpoint_table.num_rows() // 2) < 2:
+        return OrderSchemePartitioningResult(None, chunks)
+
+    # Return None if chunk endpoints are not globally sorted.
+    column_order = [key.order for key in order_keys]
+    null_order = [key.null_order for key in order_keys]
+    if not plc.sorting.is_sorted(
+        endpoint_table, column_order, null_order, stream=stream
+    ):
+        return OrderSchemePartitioningResult(None, chunks)
+
+    # Extract boundaries and construct the Partitioning
+    boundaries, strict = _extract_boundaries_from_endpoint_rows(
+        endpoint_table, num_partitions, stream
+    )
+    del endpoint_table
+    boundaries_chunk = TableChunk.from_pylibcudf_table(
+        boundaries, stream, exclusive_view=True, br=context.br()
+    )
+    return OrderSchemePartitioningResult(
+        Partitioning(
+            inter_rank=OrderScheme(
+                [Ordering(order_keys, boundaries_chunk, strict_boundaries=strict)]
+            ),
+            local="inherit",
+        ),
+        chunks,
+    )
+
+
+async def ensure_ordering_metadata(
+    context: Context,
+    comm: Communicator,
+    schema_ir: IR,
+    ir_context: IRExecutionContext,
+    ch_in: Channel[TableChunk],
+    ch_out: Channel[TableChunk],
+    order_keys: Sequence[OrderKey],
+    collective_id: int,
+) -> None:
+    """Forward a channel, extracting ordering boundaries when metadata lacks them."""
+    metadata = await recv_metadata(ch_in, context)
+    buffered_chunks: ChunkStore | None = None
+
+    if order_keys and not _metadata_has_ordering(metadata, order_keys):
+        if (
+            extracted_metadata := _trivial_ordering_metadata(
+                context, comm, schema_ir, metadata, order_keys
+            )
+        ) is not None:
+            metadata = extracted_metadata
+        else:
+            result = await extract_orderscheme_partitioning(
+                context,
+                comm,
+                schema_ir,
+                ir_context,
+                ch_in,
+                order_keys,
+                collective_id,
+            )
+            metadata = _with_extracted_ordering(metadata, result.partitioning)
+            buffered_chunks = result.chunks
+
+    await send_metadata(ch_out, context, metadata)
+    if buffered_chunks is None:
+        while (msg := await ch_in.recv(context)) is not None:
+            await ch_out.send(context, msg)
+    else:
+        for msg in buffered_chunks:
+            await ch_out.send(context, msg)
+    await ch_out.drain(context)
 
 
 @dataclass(frozen=True)
@@ -480,44 +831,13 @@ async def _assemble_partition(
     schema_ir: IR,
     ir_context: IRExecutionContext,
     chunks: list[TableChunk],
-    ordering: Ordering,
 ) -> TableChunk:
     """Assemble pieces for one output partition."""
     if not chunks:
         return empty_table_chunk(schema_ir, context, ir_context.get_cuda_stream())
-    if not ordering.locally_ordered:
-        return await concat_batch(chunks, context, schema_ir.schema, ir_context)
-
-    reserve_extra = (
-        0 if len(chunks) == 1 else sum(chunk.data_alloc_size() for chunk in chunks)
-    )
-    chunks, extra = await make_table_chunks_available_or_wait(
-        context,
-        chunks,
-        reserve_extra=reserve_extra,
-        net_memory_delta=0,
-    )
-    with opaque_memory_usage(extra):
-        if len(chunks) == 1:
-            return chunks[0]
-        with stream_ordered_after(
-            ir_context.get_cuda_stream,
-            upstreams=tuple(chunk.stream for chunk in chunks),
-        ) as stream:
-            table = plc.merge.merge(
-                [chunk.table_view() for chunk in chunks],
-                [key.column_index for key in ordering.keys],
-                [key.order for key in ordering.keys],
-                [key.null_order for key in ordering.keys],
-                stream=stream,
-                mr=context.br().device_mr,
-            )
-            return TableChunk.from_pylibcudf_table(
-                table,
-                stream,
-                exclusive_view=True,
-                br=context.br(),
-            )
+    if len(chunks) == 1:
+        return chunks[0]
+    return await concat_batch(chunks, context, schema_ir.schema, ir_context)
 
 
 async def _send_remote_partition(
@@ -529,7 +849,6 @@ async def _send_remote_partition(
     npartitions: int,
     pid: int,
     store: ChunkStore | None,
-    output_ordering: Ordering,
 ) -> None:
     """Send one packed payload for one remote-owned output partition."""
     chunks = (
@@ -542,7 +861,6 @@ async def _send_remote_partition(
         schema_ir,
         ir_context,
         chunks,
-        output_ordering,
     )
     stream = chunk.stream
     exchange.insert(
@@ -566,7 +884,6 @@ async def _emit_partition(
     ch_out: Channel[TableChunk],
     pid: int,
     store: ChunkStore | None,
-    output_ordering: Ordering,
 ) -> None:
     """Emit one output partition, using an empty chunk when no data is present."""
     chunks = (
@@ -579,7 +896,6 @@ async def _emit_partition(
         schema_ir,
         ir_context,
         chunks,
-        output_ordering,
     )
     await ch_out.send(context, Message(pid, chunk))
 
@@ -603,7 +919,6 @@ async def _adjust_ordering_impl(
     buffer = _OutputPartitionBuffer(
         context, ch_in, output_boundaries, input_ordering, output_ordering
     )
-
     exchange = None
     if plan.remote_sources or plan.remote_destinations:
         exchange = SparseAlltoall(
@@ -649,7 +964,6 @@ async def _adjust_ordering_impl(
                 plan.npartitions,
                 pid,
                 piece,
-                output_ordering,
             )
         elif owner == comm.rank and piece is not None:
             local_pieces[pid] = piece
@@ -661,7 +975,6 @@ async def _adjust_ordering_impl(
                 ch_out,
                 pid,
                 local_pieces.pop(pid, None),
-                output_ordering,
             )
 
     if exchange is not None:
@@ -706,7 +1019,6 @@ async def _adjust_ordering_impl(
             schema_ir,
             ir_context,
             chunks,
-            output_ordering,
         )
         await ch_out.send(context, Message(pid, chunk))
     await buffer.assert_input_drained()
@@ -754,9 +1066,9 @@ async def adjust_ordering(
     This utility is intentionally narrow and only adjusts data messages. The
     caller is responsible for receiving input metadata and sending output
     metadata. Input rows are assumed to be order-partitioned by
-    ``input_ordering``. Locally unordered chunks are sorted before splitting.
-    When ``output_ordering.locally_ordered`` is true, sorted pieces are merged
-    before emission so complete output partitions are locally ordered.
+    ``input_ordering``. Input chunks arrive in key-range order. Locally
+    unordered chunks are sorted before splitting, and output pieces are
+    concatenated in source order.
 
     The current implementation requires contiguous partition ownership, strict
     output boundaries, and output keys that are a prefix of the input keys.

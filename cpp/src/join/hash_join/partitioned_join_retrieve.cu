@@ -12,6 +12,7 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/sizes_to_offsets_iterator.cuh>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/join/join.hpp>
@@ -22,6 +23,7 @@
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/std/cstdint>
 
 #include <tuple>
@@ -91,14 +93,14 @@ hash_join<Hasher>::partitioned_join_retrieve(join_kind join,
       cudf::detail::row::equality::preprocessed_table::create(left_partition_view, stream, temp_mr);
 
     auto [offsets, output_size] = [&] {
-      auto counts = cudf::detail::make_zeroed_device_uvector_async<size_type>(
+      auto counts = cudf::detail::make_zeroed_device_buffer_async<size_type>(
         static_cast<std::size_t>(partition_size) + 1, stream, temp_mr);
       CUDF_CUDA_TRY(
         cudf::detail::memcpy_async(counts.data(),
                                    match_ctx._match_counts->data() + left_start_idx,
                                    static_cast<std::size_t>(partition_size) * sizeof(size_type),
                                    stream));
-      auto offsets = cudf::detail::make_zeroed_device_uvector_async<cuda::std::int64_t>(
+      auto offsets = cudf::detail::make_zeroed_device_buffer_async<cuda::std::int64_t>(
         static_cast<std::size_t>(partition_size) + 1, stream, temp_mr);
       auto const output_size = cudf::detail::sizes_to_offsets(
         counts.begin(), counts.end(), offsets.begin(), 0, stream, temp_mr);
@@ -106,7 +108,7 @@ hash_join<Hasher>::partitioned_join_retrieve(join_kind join,
       return std::pair(std::move(offsets), output_size);
     }();
 
-    rmm::device_uvector<size_type> probe_groups(partition_size, stream, temp_mr);
+    cuda::device_buffer<size_type> probe_groups(stream, temp_mr, partition_size, cuda::no_init);
     auto const row_bitmask = cudf::detail::bitmask_and(left_partition_view, stream, temp_mr).first;
     auto const valid_rows  = _nulls_equal == null_equality::UNEQUAL
                                ? reinterpret_cast<bitmask_type const*>(row_bitmask.data())

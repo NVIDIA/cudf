@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -19,9 +19,11 @@ class NvcompJni {
    * @param batchSize number of chunks in the batch
    * @param maxChunkSize maximum size of an uncompressed chunk in bytes
    * @param maxTotalSize Upper bound on the total uncompressed size of all chunks
+   * @param stream CUDA stream to use
    * @return The size of required temporary workspace in bytes to compress the batch.
    */
-  static native long batchedLZ4CompressGetTempSize(long batchSize, long maxChunkSize, long maxTotalSize);
+  static native long batchedLZ4CompressGetTempSize(long batchSize, long maxChunkSize, long maxTotalSize,
+      long stream);
 
   /**
    * Get the maximum size any chunk could compress to in a LZ4 batch. This is the minimum amount of
@@ -65,12 +67,14 @@ class NvcompJni {
    * @param numChunks number of chunks in the batch
    * @param maxUncompressedChunkBytes maximum uncompressed size of any chunk in bytes
    * @param maxTotalSize Upper bound on the total uncompressed size of all chunks
+   * @param stream CUDA stream to use
    * @return number of temporary storage bytes needed to decompress the batch
    */
   static native long batchedLZ4DecompressGetTempSize(
       long numChunks,
       long maxUncompressedChunkBytes,
-      long maxTotalSize);
+      long maxTotalSize,
+      long stream);
 
   /**
    * Asynchronously decompress a batch of LZ4-compressed data buffers.
@@ -114,9 +118,11 @@ class NvcompJni {
    * @param batchSize number of chunks in the batch
    * @param maxChunkSize maximum size of an uncompressed chunk in bytes
    * @param maxTotalSize Upper bound on the total uncompressed size of all chunks
+   * @param stream CUDA stream to use
    * @return The size of required temporary workspace in bytes to compress the batch.
    */
-  static native long batchedZstdCompressGetTempSize(long batchSize, long maxChunkSize, long maxTotalSize);
+  static native long batchedZstdCompressGetTempSize(long batchSize, long maxChunkSize, long maxTotalSize,
+      long stream);
 
   /**
    * Get the maximum size any chunk could compress to in a ZSTD batch. This is the minimum
@@ -161,12 +167,14 @@ class NvcompJni {
    * @param numChunks number of chunks in the batch
    * @param maxUncompressedChunkBytes maximum uncompressed size of any chunk in bytes
    * @param maxTotalSize Upper bound on the total uncompressed size of all chunks
+   * @param stream CUDA stream to use
    * @return number of temporary storage bytes needed to decompress the batch
    */
   static native long batchedZstdDecompressGetTempSize(
       long numChunks,
       long maxUncompressedChunkBytes,
-      long maxTotalSize);
+      long maxTotalSize,
+      long stream);
 
   /**
    * Asynchronously decompress a batch of ZSTD-compressed data buffers.

@@ -121,11 +121,8 @@ void hash_compound_agg_finalizer::operator()<aggregation::MEAN>(aggregation cons
                           sum_result.null_count());
   } else if (col.has_nulls()) {  // SUM aggregation is only intermediate result, thus it is
                                  // forced to be non-nullable
-    auto [null_mask, null_count] =
-      make_mask_from_counts(count_result.begin<size_type>(),
-                            count_result.end<size_type>(),
-                            stream,
-                            cudf::memory_resources{mr.get_temporary_mr(), mr.get_temporary_mr()});
+    auto [null_mask, null_count] = make_mask_from_counts(
+      count_result.begin<size_type>(), count_result.end<size_type>(), stream, mr.as_temporary());
     if (null_count > 0) {
       result->set_null_mask(
         cuda::device_buffer<std::byte>{

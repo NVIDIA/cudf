@@ -7,6 +7,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
 TIMEOUT_TOOL_PATH="${SCRIPT_DIR}/timeout_with_stack.py"
+test_timeout=5400
+if [[ ${RAPIDS_BUILD_TYPE:-} == pull-request ]]; then
+    test_timeout=1800
+fi
 DESELECTED_TESTS_FILE="${SCRIPT_DIR}/cudf_polars/polars_test_deselections.txt"
 AARCH64_DESELECTED_TESTS_FILE="${SCRIPT_DIR}/cudf_polars/polars_test_deselections_aarch64.txt"
 INCOMPATIBLE_GLIBC_DESELECTED_TESTS_FILE="${SCRIPT_DIR}/cudf_polars/polars_test_deselections_incompatible_glibc.txt"
@@ -20,6 +24,21 @@ function load_deselected_tests()
             DESELECTED_TESTS+=("${test}")
         fi
     done < "${file}"
+}
+
+function configure_fallback_report()
+{
+    FALLBACK_REPORT_ARGS=()
+    if [[ "${CI:-false}" == "true" && -n "${RAPIDS_ARTIFACTS_DIR:-}" ]]; then
+        mkdir -p "${RAPIDS_ARTIFACTS_DIR}"
+        local report_id
+        report_id=$(python -c 'import uuid; print(uuid.uuid4().hex)')
+        # Matrix jobs can share engine, architecture, and Python/CUDA versions;
+        # a unique suffix prevents the shared uploader overwriting their reports.
+        FALLBACK_REPORT_ARGS=(
+            --inject-gpu-engine-report="${RAPIDS_ARTIFACTS_DIR}/cudf-polars-fallback-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${1}-${report_id}.json"
+        )
+    fi
 }
 
 ENGINE="both"
@@ -77,9 +96,7 @@ else
     PYTEST_MARK_EXPR="not slow"
 fi
 
-# Support invoking run_cudf_polars_pytests.sh outside the script directory
-# Assumption, polars has been cloned in the root of the repo.
-cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")"/../polars/
+cd "${POLARS_DIR:-${SCRIPT_DIR}/../polars}"
 
 DESELECTED_TESTS=()
 load_deselected_tests "${DESELECTED_TESTS_FILE}"
@@ -109,8 +126,9 @@ SQLALCHEMY_SQLITE_URI_WARNING="ignore:Query string argument(s) 'cache', 'mode' a
 
 # Fail fast (-x) rather than trying to continue because failed tests pollute the state
 if [[ "${ENGINE}" == "both" || "${ENGINE}" == "in-memory" ]]; then
+    configure_fallback_report in-memory
     echo "Run polars tests with injected in-memory GPU engine"
-    python "${TIMEOUT_TOOL_PATH}" --enable-python 5400 \
+    python "${TIMEOUT_TOOL_PATH}" --enable-python "${test_timeout}" \
        python -m pytest \
            --import-mode=importlib \
            --cache-clear \
@@ -124,16 +142,18 @@ if [[ "${ENGINE}" == "both" || "${ENGINE}" == "in-memory" ]]; then
            -W "${SQLALCHEMY_SQLITE_URI_WARNING}" \
            "${DESELECTED_TEST_ARGS[@]}" \
            "${PYTEST_ARGS[@]}" \
+           "${FALLBACK_REPORT_ARGS[@]}" \
            py-polars/tests \
            --inject-gpu-engine in-memory
 fi
 
 # TODO(ResourceWarning): https://github.com/NVIDIA/cudf/issues/22181
 if [[ "${ENGINE}" == "both" || "${ENGINE}" == "spmd" ]]; then
+    configure_fallback_report spmd
     echo "Run polars tests with injected SPMD GPU engine, ${BLOCKSIZE} blocksize"
     CUDF_POLARS__EXECUTOR__TARGET_PARTITION_SIZE=805306368 \
     CUDF_POLARS__EXECUTOR__FALLBACK_MODE=silent \
-    python "${TIMEOUT_TOOL_PATH}" --enable-python 5400 \
+    python "${TIMEOUT_TOOL_PATH}" --enable-python "${test_timeout}" \
        python -m pytest \
            --import-mode=importlib \
            --cache-clear \
@@ -148,6 +168,7 @@ if [[ "${ENGINE}" == "both" || "${ENGINE}" == "spmd" ]]; then
            -W "${SQLALCHEMY_SQLITE_URI_WARNING}" \
            "${DESELECTED_TEST_ARGS[@]}" \
            "${PYTEST_ARGS[@]}" \
+           "${FALLBACK_REPORT_ARGS[@]}" \
            py-polars/tests \
            --inject-gpu-engine spmd \
            --inject-gpu-engine-blocksize "${BLOCKSIZE}"

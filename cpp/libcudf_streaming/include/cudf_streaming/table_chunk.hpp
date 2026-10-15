@@ -258,6 +258,9 @@ class table_chunk {
    *
    * @throws rapidsmpf::reservation_error If the total allocation size exceeds the
    * available reservation.
+   * @throws std::invalid_argument If this chunk's data resides on disk and
+   * `reservation` is also for disk memory. Disk-to-disk copies are not supported; use
+   * `move()` to keep the data on disk. An empty chunk copies no data and is not affected.
    */
   [[nodiscard]] table_chunk copy(rapidsmpf::MemoryReservation& reservation) const;
 

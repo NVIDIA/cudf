@@ -15,8 +15,10 @@ import uuid
 from unittest.mock import MagicMock, call
 
 from cudf_polars.quent._context import (
+    ActorBoundQuentIRExecutionState,
     QuentConfig,
     QuentQueryConfig,
+    UnboundQuentIRExecutionState,
     WorkerResources,
 )
 from cudf_polars.quent._runtime import QuentWorkerRuntime
@@ -34,6 +36,21 @@ def test_context_serialization_roundtrip(tmp_path) -> None:
     )
 
     assert QuentConfig._deserialize(context._serialize()) == context
+
+
+def test_ir_execution_state_bind_actor() -> None:
+    actor_id = uuid.uuid4()
+    state = UnboundQuentIRExecutionState(
+        query_worker_state=MagicMock(),
+        operator_id=uuid.uuid4(),
+    )
+
+    actor_state = state.bind_actor(actor_id)
+
+    assert isinstance(actor_state, ActorBoundQuentIRExecutionState)
+    assert actor_state.actor_id == actor_id
+    assert actor_state.query_worker_state is state.query_worker_state
+    assert actor_state.operator_id == state.operator_id
 
 
 def test_worker_resources_declares_inter_rank_channel() -> None:

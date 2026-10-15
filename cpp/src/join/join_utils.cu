@@ -7,6 +7,7 @@
 #include "join_common_utils.hpp"
 
 #include <cudf/detail/algorithms/copy_if.cuh>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/join/join.hpp>
@@ -149,7 +150,7 @@ VectorPair finalize_full_join(VectorPair&& indices,
   // Hash joins mark right rows as part of retrieval and pass those flags here, eliminating an
   // output-sized scatter. Other join implementations use this fallback to derive the same flags
   // from their materialized right indices.
-  auto computed_matches = cudf::detail::make_zeroed_device_uvector_async<size_type>(
+  auto computed_matches = cudf::detail::make_zeroed_device_buffer_async<size_type>(
     right_matches ? 0 : right_table_num_rows, stream, cudf::get_current_device_resource_ref());
   if (!right_matches) {
     thrust::scatter_if(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),

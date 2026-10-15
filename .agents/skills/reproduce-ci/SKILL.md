@@ -71,7 +71,7 @@ gh api repos/NVIDIA/cudf/actions/runs/$RUN_ID/jobs \
 ```
 
 From the job JSON, note:
-- `name` — job name (e.g. `conda-cpp-build / 12.9.1, 3.11, amd64, rockylinux8`)
+- `name` — job name (e.g. `conda-cpp-build / 12.9.2, 3.14, amd64, rockylinux8`)
 - `steps[].name` and `steps[].conclusion` — which steps ran and their outcome
 
 Download the full job log:

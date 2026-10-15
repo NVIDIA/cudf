@@ -17,9 +17,9 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/functional>
 #include <cuda/std/tuple>
@@ -84,8 +84,8 @@ struct group_sum_overflow_fn {
       if (!values.has_nulls()) {
         return {cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), size_type{0}};
       }
-      rmm::device_uvector<bool> group_valid(
-        num_groups, stream, cudf::get_current_device_resource_ref());
+      cuda::device_buffer<bool> group_valid(
+        stream, cudf::get_current_device_resource_ref(), num_groups, cuda::no_init);
       thrust::reduce_by_key(
         rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
         group_labels.begin(),

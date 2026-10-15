@@ -16,7 +16,6 @@ files:
       - clang
       - cuda
       - cuda_version
-      - cudf_polars_trace
       - depends_on_cupy
       - depends_on_cuda_bindings
       - depends_on_dask_cuda
@@ -480,18 +479,6 @@ files:
       - depends_on_dask_cuda
       - test_python_common
       - test_python_cudf_polars
-      - cudf_polars_trace
-  py_trace_cudf_polars:
-    output: pyproject
-    matrix:
-      use_cuda_wheels: ["true"]
-      cuda_suffixed: ["false"]
-    pyproject_dir: python/cudf_polars
-    extras:
-      table: project.optional-dependencies
-      key: trace
-    includes:
-      - cudf_polars_trace
   py_build_dask_cudf:
     output: pyproject
     matrix:
@@ -787,7 +774,7 @@ dependencies:
       - output_types: conda
         packages:
           # Align nvcomp version with rapids-cmake
-          - libnvcomp-dev==5.3.0.16
+          - libnvcomp-dev==6.0.0.12
     specific:
       - output_types: [requirements, constraints, pyproject]
         matrices:
@@ -798,16 +785,16 @@ dependencies:
               cuda: "12.*"
               use_cuda_wheels: "true"
             packages:
-              - nvidia-libnvcomp-cu12==5.3.0.16
+              - nvidia-libnvcomp-cu12==6.0.0.12
           - matrix:
               cuda: "13.*"
               use_cuda_wheels: "true"
             packages:
-              - nvidia-libnvcomp-cu13==5.3.0.16
+              - nvidia-libnvcomp-cu13==6.0.0.12
           - matrix:
               use_cuda_wheels: "true"
             packages:
-              - nvidia-libnvcomp==5.3.0.16
+              - nvidia-libnvcomp==6.0.0.12
   rapids_build_skbuild:
     common:
       - output_types: [conda, requirements, constraints, pyproject]
@@ -1050,10 +1037,6 @@ dependencies:
       - output_types: conda
         matrices:
           - matrix:
-              py: "3.11"
-            packages:
-              - python=3.11
-          - matrix:
               py: "3.12"
             packages:
               - python=3.12
@@ -1067,7 +1050,7 @@ dependencies:
               - python=3.14
           - matrix:
             packages:
-              - python>=3.11
+              - python>=3.12
   run_common:
     common:
       - output_types: [conda, requirements, constraints, pyproject]
@@ -1848,11 +1831,6 @@ dependencies:
       - output_types: [conda, requirements, constraints, pyproject]
         packages:
           - narwhals==2.24.0
-  cudf_polars_trace:
-    common:
-      - output_types: [conda, requirements, constraints, pyproject]
-        packages:
-          - structlog
   test_cudf_pandas_compat:
     specific:
       - output_types: [requirements, constraints]

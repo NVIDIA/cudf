@@ -10,6 +10,7 @@
 #include <cudf/detail/algorithms/reduce.cuh>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 
 #include <cuda/std/cstdint>
@@ -44,7 +45,7 @@ std::size_t hash_join<Hasher>::join_size(cudf::table_view const& left,
 
   auto const temp_mr = cudf::get_current_device_resource_ref();
   auto match_counts =
-    cudf::detail::make_zeroed_device_uvector_async<size_type>(left.num_rows(), stream, temp_mr);
+    cudf::detail::make_zeroed_device_buffer_async<size_type>(left.num_rows(), stream, temp_mr);
   auto const row_bitmask = cudf::detail::bitmask_and(left, stream, temp_mr).first;
   auto const valid_rows  = _nulls_equal == null_equality::UNEQUAL
                              ? reinterpret_cast<bitmask_type const*>(row_bitmask.data())
@@ -90,8 +91,8 @@ std::size_t hash_join<Hasher>::join_size(cudf::table_view const& left,
     left, stream, cudf::get_current_device_resource_ref());
   auto const temp_mr = cudf::get_current_device_resource_ref();
   auto match_counts =
-    cudf::detail::make_zeroed_device_uvector_async<size_type>(left.num_rows(), stream, temp_mr);
-  auto matched_groups = cudf::detail::make_zeroed_device_uvector_async<cuda::std::uint32_t>(
+    cudf::detail::make_zeroed_device_buffer_async<size_type>(left.num_rows(), stream, temp_mr);
+  auto matched_groups = cudf::detail::make_zeroed_device_buffer_async<cuda::std::uint32_t>(
     _right.num_rows(), stream, temp_mr);
   auto matched_build_rows = cudf::detail::device_scalar<cuda::std::uint64_t>(0, stream, temp_mr);
   auto const row_bitmask  = cudf::detail::bitmask_and(left, stream, temp_mr).first;

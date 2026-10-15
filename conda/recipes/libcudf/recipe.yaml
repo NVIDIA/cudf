@@ -9,6 +9,7 @@ context:
   cuda_major: '${{ (env.get("RAPIDS_CUDA_VERSION") | split("."))[0] }}'
   datetime_string: '${{ env.get("RAPIDS_DATETIME_STRING") }}'
   head_rev: '${{ git.head_rev(".")[:8] }}'
+  build_cpp_tests: ${{ env.get("BUILD_CPP_TESTS", default="true") == "true" }}
 
 recipe:
   name: libcudf-split
@@ -37,8 +38,13 @@ cache:
           cmake_args="$cmake_args \"$arg\""
         done
 
+        test_targets=()
+        if [[ "$BUILD_CPP_TESTS" == true ]]; then
+          test_targets=(benchmarks tests)
+        fi
+
         ./build.sh -n -v \
-            libcudf libcudf_kafka libcudf_streaming benchmarks tests \
+            libcudf libcudf_kafka libcudf_streaming "${test_targets[@]}" \
             --build_metrics --incl_cache_stats --allgpuarch \
             --cmake-args="\"-DCUDF_ENABLE_ARROW_S3=ON\" $cmake_args"
       secrets:
@@ -47,6 +53,7 @@ cache:
         - AWS_SESSION_TOKEN
         - SCCACHE_DIST_AUTH_TOKEN
       env:
+        BUILD_CPP_TESTS: ${{ env.get("BUILD_CPP_TESTS", default="true") }}
         CMAKE_C_COMPILER_LAUNCHER: ${{ env.get("CMAKE_C_COMPILER_LAUNCHER") }}
         CMAKE_CUDA_COMPILER_LAUNCHER: ${{ env.get("CMAKE_CUDA_COMPILER_LAUNCHER") }}
         CMAKE_CXX_COMPILER_LAUNCHER: ${{ env.get("CMAKE_CXX_COMPILER_LAUNCHER") }}
@@ -258,6 +265,7 @@ outputs:
       name: libcudf-example
       version: ${{ version }}
     build:
+      skip: not build_cpp_tests
       script:
         content: |
           ./cpp/examples/build.sh --install
@@ -337,6 +345,7 @@ outputs:
       name: libcudf-tests
       version: ${{ version }}
     build:
+      skip: not build_cpp_tests
       script:
         - cmake --install cpp/build --component testing
         - cmake --install cpp/libcudf_kafka/build --component testing
@@ -386,6 +395,7 @@ outputs:
       name: libcudf-streaming-tests
       version: ${{ version }}
     build:
+      skip: not build_cpp_tests
       script:
         - cmake --install cpp/libcudf_streaming/build --component testing
         - cmake --install cpp/libcudf_streaming/build --component benchmarking

@@ -116,8 +116,11 @@ hash_join<Hasher>::hash_join(cudf::table_view const& right,
   // Hashing and comparing variable-width rows again can dominate construction. Cache one
   // representative index per row for keys containing lists or strings, including within structs.
   auto const cache_representatives = std::any_of(right.begin(), right.end(), has_list_or_string);
-  auto representatives             = rmm::device_uvector<size_type>{
-    cache_representatives ? static_cast<std::size_t>(right.num_rows()) : 0, stream, temp_mr};
+  auto representatives             = cuda::device_buffer<size_type>(
+    stream,
+    temp_mr,
+    cache_representatives ? static_cast<std::size_t>(right.num_rows()) : 0,
+    cuda::no_init);
   auto build = [&](auto equality, auto hasher) {
     launch_hash_csr_build_count_kernel(right.num_rows(),
                                        valid_rows,
@@ -147,7 +150,8 @@ hash_join<Hasher>::hash_join(cudf::table_view const& right,
                                                 stream.get()));
   }
   // The output array is not needed until the scan workspace has been released.
-  _impl->_values.resize(right.num_rows(), stream);
+  _impl->_values =
+    cuda::device_buffer<size_type>(stream, _impl->_mr, right.num_rows(), cuda::no_init);
   // Reuse each cumulative end as a scatter cursor. Once all rows in a group have been
   // scattered, its cursor is the group's exclusive begin. No per-row positions are retained.
   if (cache_representatives) {

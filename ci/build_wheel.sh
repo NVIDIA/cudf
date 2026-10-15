@@ -15,7 +15,7 @@ AUDITWHEEL_EXCLUDES=(
   --exclude libcudf.so
   --exclude libcudf_streaming.so
   --exclude libkvikio.so
-  --exclude libnvcomp.so.5
+  --exclude libnvcomp.so.6
   --exclude librapids_logger.so
   --exclude librapidsmpf.so
   --exclude librmm.so
@@ -61,9 +61,9 @@ add_wheel_constraint() {
   ./ci/check_symbols.sh "${LIBCUDF_LIBRARY}"
 
   if [[ "${RAPIDS_CUDA_MAJOR}" == "12" ]]; then
-    libcudf_max_wheel_size=700M
+    libcudf_max_wheel_size=650M
   else
-    libcudf_max_wheel_size=350M
+    libcudf_max_wheel_size=300M
   fi
   finalize_package_wheel \
     libcudf \
@@ -85,7 +85,7 @@ wait_for_builds "$!" libcudf-serial-build.log
   finalize_package_wheel \
     libcudf_streaming \
     python/libcudf_streaming \
-    100M \
+    2M \
     "$(rapids-artifact-name wheel_cpp libcudf-streaming cudf --cuda "${RAPIDS_CUDA_VERSION}")"
 
   add_wheel_constraint libcudf-streaming "${RAPIDS_WHEEL_BLD_OUTPUT_DIR}/libcudf_streaming_*.whl"
@@ -110,7 +110,7 @@ export RAPIDS_PY_API="cp${RAPIDS_PY_VERSION//./}"
   finalize_package_wheel \
     pylibcudf \
     python/pylibcudf \
-    20M \
+    10M \
     "$(rapids-artifact-name wheel_python pylibcudf cudf --stable --cuda "${RAPIDS_CUDA_VERSION}")"
 
   add_wheel_constraint pylibcudf "${RAPIDS_WHEEL_BLD_OUTPUT_DIR}/pylibcudf_*.whl"
@@ -126,7 +126,7 @@ wait_for_builds "$!" pylibcudf-serial-build.log
   finalize_package_wheel \
     cudf \
     python/cudf \
-    15M \
+    5M \
     "$(rapids-artifact-name wheel_python cudf cudf --stable --cuda "${RAPIDS_CUDA_VERSION}")"
 ) &
 cudf_pid=$!
@@ -147,7 +147,7 @@ cudf_pid=$!
   finalize_package_wheel \
     cudf_streaming \
     python/cudf_streaming \
-    75M \
+    2M \
     "$(rapids-artifact-name wheel_python cudf-streaming cudf --stable --cuda "${RAPIDS_CUDA_VERSION}")"
 ) &
 streaming_pid=$!

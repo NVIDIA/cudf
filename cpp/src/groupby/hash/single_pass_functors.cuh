@@ -34,10 +34,11 @@ struct compute_single_pass_aggs_base_fn {
  * This functor writes output to the final dense output table, using the given pre-computed target
  * indices. In addition, all aggregations for all rows are computed concurrently without any order.
  */
+template <typename Iterator>
 struct compute_single_pass_aggs_dense_output_fn : compute_single_pass_aggs_base_fn {
-  size_type const* target_indices;
+  Iterator target_indices;
 
-  compute_single_pass_aggs_dense_output_fn(size_type const* target_indices,
+  compute_single_pass_aggs_dense_output_fn(Iterator target_indices,
                                            aggregation::Kind const* aggs,
                                            table_device_view const& input_values,
                                            mutable_table_device_view const& output_values)

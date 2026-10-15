@@ -18,6 +18,7 @@
 
 #include <rmm/device_buffer.hpp>
 
+#include <cuda/buffer>
 #include <thrust/gather.h>
 
 namespace cudf::groupby::detail {
@@ -124,7 +125,8 @@ std::unique_ptr<column> group_merge_histogram(column_view const& values,
   // Concatenate the histograms corresponding to the same key values.
   // That is equivalent to creating a new lists column (view) from the input lists column
   // with new offsets gathered as below.
-  auto new_offsets = rmm::device_uvector<size_type>(num_groups + 1, stream);
+  auto new_offsets = cuda::device_buffer<size_type>(
+    stream, cudf::get_current_device_resource_ref(), num_groups + 1, cuda::no_init);
   thrust::gather(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                  group_offsets.begin(),
                  group_offsets.end(),
@@ -132,7 +134,8 @@ std::unique_ptr<column> group_merge_histogram(column_view const& values,
                  new_offsets.begin());
 
   // Generate labels for the new lists.
-  auto key_labels = rmm::device_uvector<size_type>(histogram_cv.size(), stream);
+  cuda::device_buffer<size_type> key_labels(
+    stream, cudf::get_current_device_resource_ref(), histogram_cv.size(), cuda::no_init);
   cudf::detail::label_segments(
     new_offsets.begin(), new_offsets.end(), key_labels.begin(), key_labels.end(), stream);
 

@@ -1031,6 +1031,7 @@ def _(node: plrs._ir_nodes.HConcat, translator: Translator, schema: Schema) -> i
         schema,
         False,  # noqa: FBT003
         strict,
+        False,  # noqa: FBT003
         *(translator.translate_ir(n=n) for n in node.inputs),
     )
 
@@ -1038,6 +1039,14 @@ def _(node: plrs._ir_nodes.HConcat, translator: Translator, schema: Schema) -> i
 @_translate_ir.register
 def _(node: plrs._ir_nodes.Sink, translator: Translator, schema: Schema) -> ir.IR:
     payload = json.loads(node.payload)
+    if callback := payload.get("Callback"):
+        return ir.CallbackSink(
+            schema,
+            bytes(callback["function"]),
+            callback["chunk_size"],
+            callback["maintain_order"],
+            translator.translate_ir(n=node.input),
+        )
     try:
         file = payload["File"]
         sink_kind_options = file[

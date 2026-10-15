@@ -3,11 +3,7 @@
 
 from __future__ import annotations
 
-import dataclasses
-import datetime
-import json
 import re
-from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -29,14 +25,9 @@ from cudf_polars.streaming.explain import (
     explain_query,
     factor_str,
     format_partition_plan_table,
-    serialize_query,
 )
 from cudf_polars.testing.asserts import assert_gpu_result_equal
 from cudf_polars.testing.io import make_lazy_frame, make_partitioned_source
-from cudf_polars.utils.versions import POLARS_VERSION_LT_141
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 @pytest.fixture(scope="module")
@@ -153,36 +144,9 @@ def test_explain_pushdown_filter_hint_in_dynamic_physical_plan():
 
     logical = explain_query(query, engine, physical=False)
     physical = explain_query(query, engine, physical=True)
-    logical_serialized = serialize_query(query, engine, physical=False)
-    physical_serialized = serialize_query(query, engine, physical=True)
 
     assert "PUSHDOWN FILTER HINT ('key',) ('key',)" in logical
     assert "prefilters=('JoinInputDomain',)" in physical
-    expected_properties = {
-        "target_on": ["key"],
-        "domain_on": ["key"],
-        "nulls_equal": False,
-        "placement": "join_input",
-    }
-    assert any(
-        node.type == "PushdownFilterHint" and node.properties == expected_properties
-        for node in logical_serialized.nodes.values()
-    )
-    assert any(
-        node.type == "JoinWithPrefilter"
-        and node.properties["prefilters"]
-        == [
-            {
-                "type": "Prefilter",
-                "target_side": "right",
-                "target_on": ["key"],
-                "domain_on": ["key"],
-                "nulls_equal": False,
-                "domain": {"type": "JoinInputDomain", "side": "left"},
-            }
-        ]
-        for node in physical_serialized.nodes.values()
-    )
 
 
 def test_explain_logical_plan_with_sort(tmp_path, df):
@@ -514,208 +478,6 @@ def test_explain_logical_io_then_concat_then_groupby(explain_engine, tmp_path, k
     elif kind == "frame":
         assert re.search(r"DATAFRAMESCAN.*row_count='~3'", repr)
     # CSV has no row_count annotation in explain output
-
-
-def test_serialize_query():
-    left = pl.LazyFrame({"a": ["a", "b", "a"], "b": [1, 2, 3]})
-    right = pl.LazyFrame({"a": ["a", "b", "c"], "c": [4, 5, 6]})
-
-    q = (
-        left.join(right, on="a", how="inner")
-        .group_by("a")
-        .agg(pl.col("b").sum(), pl.col("c").max())
-    )
-    engine = pl.GPUEngine(executor="streaming", raise_on_fail=True)
-    dag = serialize_query(q, engine)
-
-    # We don't know the exact node IDs, but we can check the structure.
-    assert len(dag.roots) == 1
-    node_types = sorted({x.type for x in dag.nodes.values()})
-    if POLARS_VERSION_LT_141:
-        assert node_types == [
-            "DataFrameScan",
-            "GroupBy",
-            "Join",
-            "Projection",
-            "Select",
-        ]
-        assert len(dag.nodes) == 6
-        assert len(dag.partition_info) == 6
-    else:
-        # polars >= 1.41 elides the post-aggregation SimpleProjection, so there
-        # is no Projection node and one fewer node overall.
-        assert node_types == ["DataFrameScan", "GroupBy", "Join", "Select"]
-        assert len(dag.nodes) == 5
-        assert len(dag.partition_info) == 5
-    node_ids = set(dag.nodes)
-
-    for node_id, node in dag.nodes.items():
-        assert node.id == node_id
-        assert node_id in node_ids
-        assert set(node.children) <= node_ids
-
-        match node.type:
-            case "DataFrameScan":
-                assert node.children == []
-                assert node.schema == {"a": "STRING", "b": "INT64"} or node.schema == {
-                    "a": "STRING",
-                    "c": "INT64",
-                }
-                assert node_id not in dag.roots
-
-            case "Projection":
-                assert len(node.children) == 1
-                assert node.schema == {"b": "INT64", "c": "INT64", "a": "STRING"}
-                assert node.properties == {}
-
-            case "GroupBy":
-                assert len(node.children) == 1
-                assert node.schema == {"a": "STRING", "b": "INT64", "c": "INT64"}
-                assert node.properties == {"keys": ["a"]}
-                assert node_id not in dag.roots
-
-            case "Select":
-                assert len(node.children) == 1
-                assert node.schema == {"a": "STRING", "b": "INT64", "c": "INT64"}
-                assert node.properties == {"columns": ["a", "b", "c"]}
-                assert node_id in dag.roots
-
-            case "Join":
-                assert len(node.children) == 2
-                assert node.schema == {"a": "STRING", "b": "INT64", "c": "INT64"}
-                assert node.properties == {
-                    "how": "Inner",
-                    "left_on": ["a"],
-                    "right_on": ["a"],
-                }
-                assert node_id not in dag.roots
-
-    # smoke test to ensure that the output is JSON serializable
-    json.dumps(dataclasses.asdict(dag))
-
-
-@pytest.mark.parametrize("predicate", [None, pl.col("a") > 1])
-def test_scan_properties(tmp_path: Path, predicate: pl.Expr | None):
-    root = tmp_path.joinpath("test.parquet")
-    root.mkdir(parents=True, exist_ok=True)
-    for path in ["a", "b", "c"]:
-        pl.DataFrame({"a": [1, 2, 3]}).write_parquet(root / path)
-
-    q = pl.scan_parquet(tmp_path / "test.parquet")
-    expected_properties: dict[str, Any] = {
-        "prefix": f"{root}/",
-        "typ": "parquet",
-        "predicate": None,
-        "task_count": 1,
-    }
-    if predicate is not None:
-        q = q.filter(predicate)
-        expected_properties["predicate"] = {
-            "type": "NamedExpr",
-            "name": "a",
-            "value": {
-                "left": {"name": "a", "type": "Col"},
-                "op": "GREATER",
-                "right": {"type": "Literal", "value": {"type": "int", "value": 1}},
-            },
-        }
-    engine = pl.GPUEngine(executor="streaming", raise_on_fail=True)
-    dag = serialize_query(q, engine)
-
-    node = dag.nodes[dag.roots[0]]
-    assert node.type == "StreamingScan"
-    assert node.properties == expected_properties
-
-
-@pytest.mark.parametrize("descending", [False, True])
-def test_sort_properties(*, descending: bool):
-    q = pl.LazyFrame({"a": [1, 3, 2]}).sort("a", descending=descending)
-    dag = serialize_query(q, pl.GPUEngine(executor="streaming"))
-
-    order = "DESCENDING" if descending else "ASCENDING"
-    node = dag.nodes[dag.roots[0]]
-    assert node.type == "Sort"
-    assert node.properties == {"by": ["a"], "order": [order]}
-
-
-@pytest.mark.parametrize(
-    "predicate, expected",
-    [
-        (
-            pl.col("a") > 1,
-            {
-                "predicate": "a",
-                "op": "GREATER",
-                "left": {"type": "Col", "name": "a"},
-                "right": {"type": "Literal", "value": {"type": "int", "value": 1}},
-            },
-        ),
-        (
-            pl.col("a") == pl.col("b"),
-            {
-                "predicate": "a",
-                "op": "EQUAL",
-                "left": {"type": "Col", "name": "a"},
-                "right": {"type": "Col", "name": "b"},
-            },
-        ),
-    ],
-)
-def test_filter_properties(predicate: pl.Expr, expected: dict):
-    q = pl.LazyFrame({"a": [1, 2, 3], "b": [2, 2, 2]}).filter(predicate)
-    dag = serialize_query(q, pl.GPUEngine(executor="streaming"))
-
-    node = dag.nodes[dag.roots[0]]
-    assert node.type == "Filter"
-    assert node.properties == expected
-
-
-@pytest.mark.parametrize(
-    "value, expected",
-    [
-        (datetime.datetime(2026, 1, 1), "2026-01-01T00:00:00"),
-        (datetime.date(2026, 1, 1), "2026-01-01"),
-        (1, 1),
-        (1.0, 1.0),
-        (True, True),
-        ("a", "a"),
-    ],
-)
-def test_serialize_filter_literal(value: Any, expected: str):
-    q = pl.LazyFrame({"a": value}).filter(pl.col("a") > value)
-    dag = serialize_query(q, pl.GPUEngine(executor="streaming"))
-    node = dag.nodes[dag.roots[0]]
-    type_name = type(value).__name__
-
-    assert node.type == "Filter"
-    assert node.properties == {
-        "predicate": "a",
-        "op": "GREATER",
-        "left": {"type": "Col", "name": "a"},
-        "right": {
-            "type": "Literal",
-            "value": {"type": type_name, "value": expected},
-        },
-    }
-
-
-def test_select_properties():
-    q = pl.LazyFrame({"a": [1, 2, 3]}).select(pl.col("a") + 1)
-    dag = serialize_query(q, pl.GPUEngine(executor="streaming"))
-
-    node = dag.nodes[dag.roots[0]]
-    assert node.type == "Select"
-    assert node.properties == {"columns": ["a"]}
-
-
-def test_hstack_properties():
-    left = pl.LazyFrame({"a": [1, 2, 3]})
-    q = left.with_columns(pl.col("a"), (pl.col("a") + 1).alias("b"))
-    dag = serialize_query(q, pl.GPUEngine(executor="streaming"))
-
-    node = dag.nodes[dag.roots[0]]
-    assert node.type == "HStack"
-    assert node.properties == {"columns": ["a", "b"]}
 
 
 def test_predicate_to_str_col():

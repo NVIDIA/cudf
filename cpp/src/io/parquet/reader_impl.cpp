@@ -246,25 +246,23 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
   // create this before we fork streams
   kernel_error error_code(_stream);
 
-  // Both halves of the delta routing decision, taken in one walk so they cannot drift apart. The
-  // second is the complement of the skip that `decode_delta_binary_kernel` applies per page: if it
-  // ever came out false while some page still needed level decoding, that page would be decoded by
-  // neither kernel.
-  auto has_flat_nz_map     = false;
-  auto needs_level_decoder = false;
+  // Compute both routing flags in one walk over the pages. `unmapped_kernel_mask` ORs the kernel
+  // masks of pages without a map, so each level-decoding kernel is launched only if its bit is set.
+  // It must match the per-page skip in those kernels, or a page could be decoded by neither.
+  auto has_flat_nz_map               = false;
+  std::uint32_t unmapped_kernel_mask = 0;
   std::for_each(subpass.pages.host_begin(), subpass.pages.host_end(), [&](PageInfo const& page) {
     auto const mapped = _nz_map_enabled && page.has_nz_map(nz_map_kind::DELTA_FLAT);
     has_flat_nz_map |= mapped;
-    needs_level_decoder |=
-      BitAnd(page.kernel_mask, decode_kernel_mask::DELTA_BINARY) != 0 && not mapped;
+    if (not mapped) { unmapped_kernel_mask |= static_cast<std::uint32_t>(page.kernel_mask); }
   });
 
-  // The producer and the consumer that reads its output share a stream, so the other decoders
-  // overlap with them rather than queueing behind them.
+  // The producer gets its own stream, so the other decoders overlap with it.
   int const nkernels = std::bitset<32>(kernel_mask).count();
   auto streams       = cudf::detail::fork_streams(_stream, nkernels + (has_flat_nz_map ? 1 : 0));
-  // Only forked when there is a map to produce. Without one there is nothing to order, and
-  // `decode_delta_binary` ignores the stream, so this stands in rather than aliasing a decoder's.
+  // Only forked when there is a map to produce. Without one there is nothing to order, and the
+  // launchers ignore the consumer streams below, so `_stream` stands in rather than aliasing a
+  // decoder's stream.
   auto const nz_map_stream = has_flat_nz_map ? streams.back() : _stream;
 
   if (has_flat_nz_map) {
@@ -276,6 +274,15 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
                            level_type_size,
                            nz_map_stream);
   }
+
+  // Each consumer gets a stream forked from the producer's, so it runs after the producer while the
+  // consumers overlap with each other and with the level-decoding kernels.
+  constexpr std::size_t num_consumers = 2;
+  auto const consumer_streams         = has_flat_nz_map
+                                          ? cudf::detail::fork_streams(nz_map_stream, num_consumers)
+                                          : std::vector<cuda::stream_ref>(num_consumers, _stream);
+  auto const dlba_consumer_stream     = consumer_streams[0];
+  auto const delta_consumer_stream    = consumer_streams[1];
 
   int s_idx = 0;
 
@@ -358,20 +365,27 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
 
   // launch delta length byte array decoder
   if (BitAnd(kernel_mask, decode_kernel_mask::DELTA_LENGTH_BA) != 0) {
+    auto const dlba_stream = streams[s_idx++];
+    auto const needs_levels =
+      BitAnd(unmapped_kernel_mask, decode_kernel_mask::DELTA_LENGTH_BA) != 0;
     decode_delta_length_byte_array(subpass.pages,
                                    pass.chunks,
                                    num_rows,
                                    skip_rows,
                                    level_type_size,
                                    subpass_page_mask_span(),
+                                   has_flat_nz_map,
+                                   needs_levels,
                                    initial_str_offsets,
                                    error_code.data(),
-                                   streams[s_idx++]);
+                                   dlba_stream,
+                                   dlba_consumer_stream);
   }
 
   // launch delta binary decoder
   if (BitAnd(kernel_mask, decode_kernel_mask::DELTA_BINARY) != 0) {
     auto const delta_stream = streams[s_idx++];
+    auto const needs_levels = BitAnd(unmapped_kernel_mask, decode_kernel_mask::DELTA_BINARY) != 0;
     decode_delta_binary(subpass.pages,
                         pass.chunks,
                         num_rows,
@@ -379,10 +393,10 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
                         level_type_size,
                         subpass_page_mask_span(),
                         has_flat_nz_map,
-                        needs_level_decoder,
+                        needs_levels,
                         error_code.data(),
                         delta_stream,
-                        nz_map_stream);
+                        delta_consumer_stream);
   }
 
   // launch byte stream split decoder
@@ -471,6 +485,7 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
 
   // synchronize the streams
   cudf::detail::join_streams(streams, _stream);
+  if (has_flat_nz_map) { cudf::detail::join_streams(consumer_streams, _stream); }
 
   // the delta_temp_buf in the subpass struct can be freed now
   subpass.delta_temp_buf = cuda::device_buffer<uint8_t>(

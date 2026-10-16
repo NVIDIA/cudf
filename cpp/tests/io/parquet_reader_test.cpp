@@ -50,6 +50,9 @@ using ParquetDecompressionTest = DecompressionTest<ParquetReaderTest>;
 
 namespace {
 
+// Selects the nz map decode path. Removed once the feature is on by default.
+constexpr char const* nz_map_env_var = "LIBCUDF_PARQUET_NZ_MAP";
+
 auto page_boundary_slices(cudf::size_type const num_rows)
 {
   return std::array<std::pair<cudf::size_type, cudf::size_type>, 5>{
@@ -103,11 +106,9 @@ TEST_F(ParquetReaderTest, NzMapMatchesLevelDecoder)
   // The nz map is a second decode path selected by an env var: the same file must read
   // identically with it on and off.
   //
-  // DELTA_BINARY_PACKED because it is the only encoding with a consumer at this point in the
-  // series, and nullable so that the map itself is exercised. A required column gets one too, but
-  // takes the consumer's identity-map path, where no map is allocated.
-  static constexpr char const* nz_map_env_var = "LIBCUDF_PARQUET_NZ_MAP";
-
+  // One column per encoding that has a consumer at this point in the series, both nullable so
+  // that the map itself is exercised. A required column gets one too, but takes the consumer's
+  // identity-map path, where no map is allocated.
   constexpr int num_rows = 50000;
   auto const values      = cudf::detail::make_counting_transform_iterator(
     0, [](auto i) { return static_cast<int32_t>(i * 3 - 7); });
@@ -124,8 +125,15 @@ TEST_F(ParquetReaderTest, NzMapMatchesLevelDecoder)
     cudf::detail::make_counting_transform_iterator(0, [](auto) { return true; });
   cudf::test::fixed_width_column_wrapper<int32_t> const no_nulls_col{
     values, values + num_rows, all_valid};
+  // Varying lengths so the length stream is not a single repeated delta, and a different null
+  // pattern from the columns above so the two maps are not identical.
+  auto const strings = cudf::detail::make_counting_transform_iterator(
+    0, [](auto i) { return std::string(1 + (i % 37), static_cast<char>('a' + (i % 26))); });
+  auto const str_valids =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return (i % 5) != 0; });
+  cudf::test::strings_column_wrapper const str_col{strings, strings + num_rows, str_valids};
   // A nested column the classifier declines, so its pages stay on the level-decoding kernel while
-  // the flat ones above go to the consumer. The two must partition the pages between them.
+  // the flat ones above go to the consumers. They must partition the pages between them.
   auto const list_offsets = cudf::detail::make_counting_transform_iterator(
     cudf::size_type{0}, [](auto row) { return static_cast<cudf::size_type>(2 * row); });
   auto const nested_col = cudf::make_lists_column(
@@ -137,14 +145,17 @@ TEST_F(ParquetReaderTest, NzMapMatchesLevelDecoder)
     0,
     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
-  auto const expected = table_view({nullable_col, required_col, no_nulls_col, nested_col->view()});
+  auto const expected =
+    table_view({nullable_col, required_col, no_nulls_col, str_col, nested_col->view()});
 
   auto input_metadata = cudf::io::table_input_metadata{expected};
   for (auto& col_meta : input_metadata.column_metadata) {
     col_meta.set_encoding(cudf::io::column_encoding::DELTA_BINARY_PACKED);
   }
-  // The list's leaf carries the encoding; the list column itself is not a leaf.
-  input_metadata.column_metadata[3].child(1).set_encoding(
+  // The string column and the list's leaf carry their own encodings.
+  input_metadata.column_metadata[3].set_encoding(
+    cudf::io::column_encoding::DELTA_LENGTH_BYTE_ARRAY);
+  input_metadata.column_metadata[4].child(1).set_encoding(
     cudf::io::column_encoding::DELTA_BINARY_PACKED);
 
   std::vector<char> buffer;
@@ -1764,7 +1775,7 @@ TEST_F(ParquetReaderTest, DeltaBinaryLargeMiniBlockSkipRows)
 
 TEST_F(ParquetReaderTest, DeltaByteArrayLargeMiniBlock96)
 {
-  // DELTA_BYTE_ARRAY pages with mini-blocks larger than 64 values. The string-size prepass
+  // DELTA_BYTE_ARRAY pages with mini-blocks larger than 64 values. The string-size pass
   // reads decoded lengths back per warp-size pass, so any mini-block size is supported.
   auto const strings = delta_test_strings(141, true);
   delta_large_mini_block_string_read_test(build_delta_byte_array_parquet(strings, 384, 4), strings);
@@ -1905,6 +1916,94 @@ TEST_F(ParquetReaderTest, DeltaLengthByteArrayOddPassCountFullBlock)
   delta_large_mini_block_string_read_test(file, strings, 130, 200);
 }
 
+TEST_F(ParquetReaderTest, NzMapNarrowDeltaBlock)
+{
+  // Reads DELTA_LENGTH_BYTE_ARRAY with the nz map off and on, using DELTA blocks of 32 and 64
+  // values (narrower than the spec's minimum of 128, but accepted by init_binary_block) and a
+  // 256-value mini-block, which takes more than one pass per batch.
+  auto const strings = delta_test_strings(301, false);
+
+  // Each setting is traced, so a failure says which decode path caused it.
+  auto const read_both_arms = [&](std::vector<uint8_t> const& file,
+                                  int64_t skip                            = 0,
+                                  std::optional<cudf::size_type> num_rows = std::nullopt) {
+    {
+      SCOPED_TRACE("nz map off");
+      tmp_env_var const env{nz_map_env_var, "0"};
+      delta_large_mini_block_string_read_test(file, strings, skip, num_rows);
+    }
+    {
+      SCOPED_TRACE("nz map on");
+      tmp_env_var const env{nz_map_env_var, "1"};
+      delta_large_mini_block_string_read_test(file, strings, skip, num_rows);
+    }
+  };
+
+  for (auto const& [block_size, mini_block_count] : {std::pair{32, 1}, std::pair{64, 2}}) {
+    auto const file = build_delta_length_byte_array_parquet(strings, block_size, mini_block_count);
+    read_both_arms(file);
+    read_both_arms(file, 70);
+    read_both_arms(file, 70, 90);
+  }
+
+  // A 256-value mini-block is wider than a batch, so the consumer's producer warp decodes several
+  // passes per batch. Read with a leading skip and a bounded tail.
+  auto const wide = build_delta_length_byte_array_parquet(strings, 256, 1);
+  read_both_arms(wide, 70);
+  read_both_arms(wide, 70, 90);
+}
+
+TEST_F(ParquetReaderTest, NzMapRejectsShortDeltaStream)
+{
+  // Each page here, except the controls at the end, has more rows than its delta stream declares
+  // values, and the read must fail. The nz map consumers would otherwise fill the missing rows with
+  // values that were never decoded, without reporting an error.
+  namespace pq = cudf::io::parquet;
+  tmp_env_var const env{nz_map_env_var, "1"};
+
+  auto const dlba_file =
+    [](std::vector<int64_t> const& lengths, std::string const& chars, int rows) {
+      auto body = encode_delta_binary_packed(lengths, 128, 4);
+      body.insert(body.end(), chars.begin(), chars.end());
+      return wrap_single_page_parquet(
+        body, rows, pq::Type::BYTE_ARRAY, pq::Encoding::DELTA_LENGTH_BYTE_ARRAY, true);
+    };
+  auto const read = [](std::vector<uint8_t> const& file) {
+    return cudf::io::read_parquet(delta_fixture_reader_options(file, 0, std::nullopt));
+  };
+
+  // Two lengths but three or four rows. The decoder's cursor jumps a whole mini-block, past 3 and
+  // 4, after its first pass, so only the count check catches them.
+  EXPECT_THROW(read(dlba_file({1, 2}, "abc", 3)), cudf::logic_error);
+  EXPECT_THROW(read(dlba_file({1, 2}, "abc", 4)), cudf::logic_error);
+  // More rows than the first mini-block covers.
+  EXPECT_THROW(read(dlba_file({1, 2}, "abc", 200)), cudf::logic_error);
+  // A stream holding only its first value, stored in the header, and one declaring no values.
+  EXPECT_THROW(read(dlba_file({3}, "abc", 2)), cudf::logic_error);
+  EXPECT_THROW(read(dlba_file({}, "", 1)), cudf::logic_error);
+
+  // The same for the DELTA_BINARY_PACKED consumer, which would read buffer slots never written.
+  auto const binary = wrap_single_page_parquet(encode_delta_binary_packed({10, 11}, 128, 4),
+                                               4,
+                                               pq::Type::INT64,
+                                               pq::Encoding::DELTA_BINARY_PACKED,
+                                               false);
+  EXPECT_THROW(read(binary), cudf::logic_error);
+
+  // These must still read: a stream with exactly as many values as rows, and a bounded read that
+  // needs fewer values than the stream holds.
+  {
+    auto const result = read(dlba_file({3}, "abc", 1));
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(result.tbl->view().column(0),
+                                   cudf::test::strings_column_wrapper{"abc"});
+  }
+  {
+    auto const strings = delta_test_strings(301, false);
+    auto const file    = build_delta_length_byte_array_parquet(strings, 128, 4);
+    delta_large_mini_block_string_read_test(file, strings, 0, 90);
+  }
+}
+
 TEST_F(ParquetReaderTest, DeltaBinaryListMiniBlock64)
 {
   // LIST<INT64> with 64 values/mini-block. The leading-skip read resumes the delta decoder
@@ -1978,6 +2077,45 @@ TEST_F(ParquetReaderTest, DeltaBinaryUnsupportedMiniBlockGeometry)
                                              false);
   EXPECT_THROW(cudf::io::read_parquet(delta_fixture_reader_options(file, 0, std::nullopt)),
                cudf::logic_error);
+}
+
+TEST_F(ParquetReaderTest, DeltaHeaderCountsTooLarge)
+{
+  // DELTA headers whose block size or value count exceed INT32_MAX must be rejected. Each passes
+  // the divisibility checks, but the decoder's 32-bit index would either step by zero (2^32
+  // truncates `values_per_mb` to 0) or wrap around before reaching `value_count`, so the string
+  // decoders would loop forever looking for the end of the stream.
+  namespace pq             = cudf::io::parquet;
+  constexpr uint64_t two31 = uint64_t{1} << 31;
+  struct header {
+    uint64_t block_size;
+    int64_t value_count;
+  };
+  for (auto const [block_size, value_count] :
+       {header{2 * two31, 3},
+        header{two31, static_cast<int64_t>(two31) + 2},
+        header{two31 - 32, 2 * static_cast<int64_t>(two31) - 10}}) {
+    SCOPED_TRACE("block_size " + std::to_string(block_size) + ", value_count " +
+                 std::to_string(value_count));
+
+    // The header, then a min delta of 0 and one bit width of 0 for the single mini-block, then the
+    // characters.
+    auto body = encode_delta_binary_header(block_size, 1, value_count, 1);
+    body.insert(body.end(), {0, 0, 'a', 'b', 'c'});
+
+    auto const strings = wrap_single_page_parquet(
+      body, 3, pq::Type::BYTE_ARRAY, pq::Encoding::DELTA_LENGTH_BYTE_ARRAY, true);
+    auto const ints =
+      wrap_single_page_parquet(body, 3, pq::Type::INT64, pq::Encoding::DELTA_BINARY_PACKED, false);
+
+    for (auto const* const nz_map : {"0", "1"}) {
+      tmp_env_var const env{nz_map_env_var, nz_map};
+      EXPECT_THROW(cudf::io::read_parquet(delta_fixture_reader_options(strings, 0, std::nullopt)),
+                   cudf::logic_error);
+      EXPECT_THROW(cudf::io::read_parquet(delta_fixture_reader_options(ints, 0, std::nullopt)),
+                   cudf::logic_error);
+    }
+  }
 }
 
 TEST_F(ParquetReaderTest, DeltaBinaryListLargeMiniBlockLeafNulls)

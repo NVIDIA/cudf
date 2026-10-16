@@ -9,6 +9,7 @@
 
 #include <cooperative_groups/reduce.h>
 #include <cooperative_groups/scan.h>
+#include <cuda/std/limits>
 
 #include <climits>
 
@@ -176,7 +177,14 @@ struct delta_binary_decoder {
     // Validate the header against the DELTA_BINARY_PACKED spec: the mini-block count must evenly
     // divide the block size, and each mini-block must hold a multiple of 32 values. The decoders
     // rely on the latter to advance from one mini-block to the next.
-    if (mini_block_count == 0 or block_size == 0 or (block_size % mini_block_count) != 0 or
+    //
+    // `block_size` and `value_count` are checked against `max_count` because the decoder steps
+    // `current_value_idx` (32 bits) by `values_per_mb` until it reaches `value_count`. With both at
+    // most INT32_MAX that sum cannot wrap, so `find_end_of_block` always finishes. Parquet stores a
+    // page's value count as int32, so a valid page never exceeds it.
+    constexpr uleb128_t max_count = cuda::std::numeric_limits<int32_t>::max();
+    if (mini_block_count == 0 or block_size == 0 or block_size > max_count or
+        value_count > max_count or (block_size % mini_block_count) != 0 or
         ((block_size / mini_block_count) % delta_mini_block_size_multiple) != 0) {
       error         = true;
       value_count   = 0;
@@ -197,6 +205,13 @@ struct delta_binary_decoder {
     if (value_count > 1) { init_mini_block(false); }
   }
 
+  // Byte length of one mini-block at `bits` per value. Computed in 64 bits because `bits` comes
+  // from the page unchecked, so `bits * values_per_mb` can overflow 32.
+  [[nodiscard]] inline __device__ uint64_t mini_block_bytes(uint32_t bits) const
+  {
+    return static_cast<uint64_t>(bits) * values_per_mb / CHAR_BIT;
+  }
+
   // skip to the start of the next mini-block. should only be called on thread 0.
   // calls init_binary_block if currently on the last mini-block in a block.
   // is_decode indicates whether this is being called from initialization code (false) or
@@ -209,12 +224,12 @@ struct delta_binary_decoder {
 
     // just set pointer to start of next mini_block
     if (cur_mb < mini_block_count - 1) {
-      cur_mb_start += cur_bitwidths[cur_mb] * values_per_mb / CHAR_BIT;
+      cur_mb_start += mini_block_bytes(cur_bitwidths[cur_mb]);
       cur_mb++;
     }
     // out of mini-blocks, start a new block
     else {
-      block_start = cur_mb_start + cur_bitwidths[cur_mb] * values_per_mb / CHAR_BIT;
+      block_start = cur_mb_start + mini_block_bytes(cur_bitwidths[cur_mb]);
       init_mini_block(is_decode);
     }
   }

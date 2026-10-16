@@ -86,7 +86,7 @@ std::unique_ptr<column> divide_decimal(
  * @brief Divides a decimal scalar by each element of a decimal column, keeping the scale of `lhs`.
  *
  * Each output element is `lhs / rhs[i]`, rounded to the scale of `lhs` using `method`.
- * The output has the type id of `rhs` and the scale of `lhs`. `rhs` may have a different scale.
+ * The output has the same type and scale as `lhs`. `rhs` may have a different scale.
  *
  * Null outputs follow the same rules as the column-column overload. Every output element is null
  * if `lhs` is invalid.
@@ -99,7 +99,7 @@ std::unique_ptr<column> divide_decimal(
  * @param method The rounding method to use
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned column's device memory
- * @return Column containing the quotients, with the scale of `lhs`
+ * @return Column containing the quotients, with the type of `lhs`
  */
 std::unique_ptr<column> divide_decimal(
   scalar const& lhs,

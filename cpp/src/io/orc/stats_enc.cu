@@ -243,7 +243,8 @@ CUDF_KERNEL void __launch_bounds__(encode_threads_per_block)
   gpu_encode_statistics(uint8_t* blob_bfr,
                         statistics_merge_group* groups,
                         statistics_chunk const* chunks,
-                        uint32_t statistics_count)
+                        uint32_t statistics_count,
+                        bool write_legacy_timestamp_bounds)
 {
   __shared__ __align__(8) stats_state_s state_g[encode_chunks_per_block];
   auto t                 = threadIdx.x;
@@ -412,12 +413,13 @@ CUDF_KERNEL void __launch_bounds__(encode_threads_per_block)
             auto const [max_ms, max_ns_remainder] =
               split_nanosecond_timestamp(s->chunk.max_value.i_val);
 
-            // Statistics stay on the input instants regardless of the writer timezone; only the
-            // data stream is re-based. Apache writes only the UTC pair, and its reader prefers
-            // that pair when both are present, so the legacy pair is for pre-ORC-135 readers,
-            // which resolve it against their own timezone.
-            cur = pb_put_int(cur, 1, min_ms);  // minimum
-            cur = pb_put_int(cur, 2, max_ms);  // maximum
+            // The values are on the writer's wall clock, as Apache's are. The legacy pair holds
+            // instants, which readers convert to the wall clock, so it only equals the UTC pair
+            // when writing UTC. Apache writes only the UTC pair, and readers prefer it.
+            if (write_legacy_timestamp_bounds) {
+              cur = pb_put_int(cur, 1, min_ms);  // minimum
+              cur = pb_put_int(cur, 2, max_ms);  // maximum
+            }
             cur = pb_put_int(cur, 3, min_ms);  // minimumUtc
             cur = pb_put_int(cur, 4, max_ms);  // maximumUtc
 
@@ -481,19 +483,22 @@ void orc_init_statistics_buffersize(statistics_merge_group* groups,
  * @param[in,out] groups Statistics merge groups
  * @param[in,out] chunks Statistics data
  * @param[in] statistics_count Number of statistics buffers
+ * @param[in] write_legacy_timestamp_bounds Whether to write the pre-ORC-135 `minimum` and
+ * `maximum` timestamp fields alongside `minimumUtc` and `maximumUtc`
  * @param[in] stream CUDA stream used for device memory operations and kernel launches
  */
 void orc_encode_statistics(uint8_t* blob_bfr,
                            statistics_merge_group* groups,
                            statistics_chunk const* chunks,
                            uint32_t statistics_count,
+                           bool write_legacy_timestamp_bounds,
                            cuda::stream_ref stream)
 {
   auto const num_blocks =
     cudf::util::div_rounding_up_safe(statistics_count, encode_chunks_per_block);
   dim3 dim_block(encode_threads_per_chunk, encode_chunks_per_block);
   gpu_encode_statistics<<<num_blocks, dim_block, 0, stream.get()>>>(
-    blob_bfr, groups, chunks, statistics_count);
+    blob_bfr, groups, chunks, statistics_count, write_legacy_timestamp_bounds);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 

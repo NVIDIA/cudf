@@ -10,6 +10,7 @@
 
 #include <cudf/ast/expressions.hpp>
 #include <cudf/column/column.hpp>
+#include <cudf/join/asof_join.hpp>
 #include <cudf/join/conditional_join.hpp>
 #include <cudf/join/direct_join.hpp>
 #include <cudf/join/filtered_join.hpp>
@@ -56,6 +57,31 @@ class JoinTest : public cudf::test::BaseFixture {
 TEST_F(JoinTest, InnerJoin)
 {
   cudf::inner_join(table0, table1, cudf::null_equality::EQUAL, cudf::test::get_default_stream());
+}
+
+TEST_F(JoinTest, AsofJoin)
+{
+  auto const stream = cudf::test::get_default_stream();
+  cudf::test::fixed_width_column_wrapper<int32_t> right_on{1, 3, 5};
+  cudf::test::fixed_width_column_wrapper<int32_t> left_on{2, 5};
+  cudf::test::strings_column_wrapper right_by{"a", "a", "b"};
+  cudf::test::strings_column_wrapper left_by{"a", "b"};
+
+  cudf::experimental::asof_join ungrouped(cudf::table_view{}, right_on, stream);
+  [[maybe_unused]] auto ungrouped_result =
+    ungrouped.join(cudf::table_view{},
+                   left_on,
+                   cudf::experimental::asof_join_strategy::BACKWARD,
+                   cudf::experimental::asof_join_exact_matches::YES,
+                   stream);
+
+  cudf::experimental::asof_join grouped(cudf::table_view{{right_by}}, right_on, stream);
+  [[maybe_unused]] auto grouped_result =
+    grouped.join(cudf::table_view{{left_by}},
+                 left_on,
+                 cudf::experimental::asof_join_strategy::BACKWARD,
+                 cudf::experimental::asof_join_exact_matches::YES,
+                 stream);
 }
 
 TEST_F(JoinTest, StreamingHashJoin)

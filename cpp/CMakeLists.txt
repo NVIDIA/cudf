@@ -924,6 +924,7 @@ add_library(
   src/jit/parser.cpp
   src/jit/row_ir.cpp
   src/jit/util.cpp
+  src/join/asof_join.cu
   src/join/conditional_join.cu
   src/join/cross_join.cu
   src/join/direct_join.cu

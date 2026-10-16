@@ -124,12 +124,27 @@ TEST_F(TextBytePairEncoding, BPE_Empty)
   EXPECT_EQ(0, results->size());
 }
 
+TEST_F(TextBytePairEncoding, BPE_AllEmptyRows)
+{
+  auto mpt         = cudf::test::strings_column_wrapper({"i s", "i t"});
+  auto merge_pairs = nvtext::load_merge_pairs(cudf::strings_column_view(mpt));
+  auto input       = cudf::test::strings_column_wrapper({"", "", ""}, {true, false, true});
+  auto results     = nvtext::byte_pair_encoding(cudf::strings_column_view(input), *merge_pairs);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(results->view(), input);
+}
+
 TEST_F(TextBytePairEncoding, BPE_Error)
 {
   auto empty = cudf::make_empty_column(cudf::type_id::STRING);
   EXPECT_THROW(nvtext::load_merge_pairs(cudf::strings_column_view(*empty)), cudf::logic_error);
   auto null_pairs = cudf::test::strings_column_wrapper({"", ""}, {true, false});
   EXPECT_THROW(nvtext::load_merge_pairs(cudf::strings_column_view(null_pairs)), cudf::logic_error);
+  auto duplicates = cudf::test::strings_column_wrapper({"a b", "c d", "ab c", "c d", "e f"});
+  EXPECT_THROW(nvtext::load_merge_pairs(cudf::strings_column_view(duplicates)),
+               std::invalid_argument);
+  // same strings split differently are not duplicates
+  auto not_duplicates = cudf::test::strings_column_wrapper({"a bc", "ab c", "abc d"});
+  EXPECT_NO_THROW(nvtext::load_merge_pairs(cudf::strings_column_view(not_duplicates)));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -364,4 +379,26 @@ TEST_F(TextBytePairEncoding, SingleLongRow)
     s += alphabet[ch(rng)];
   }
   check_against_reference(pairs, {s});
+}
+
+TEST_F(TextBytePairEncoding, NonEmptyNulls)
+{
+  // null rows may contain chars data; output must be the same as with sanitized nulls
+  auto mpt = cudf::test::strings_column_wrapper({"e n", "i t", "i s", "t h", "th is"});
+  auto mp  = nvtext::load_merge_pairs(cudf::strings_column_view(mpt));
+
+  auto input    = cudf::test::strings_column_wrapper({"thisit", std::string(20000, 'x'), "isit"});
+  auto contents = input.release()->release();
+  // mark row 1 null without clearing its chars
+  auto null_mask  = cudf::test::detail::make_null_mask(cudf::test::iterators::null_at(1),
+                                                      cudf::test::iterators::null_at(1) + 3);
+  auto with_nulls = cudf::make_strings_column(3,
+                                              std::move(contents.children.front()),
+                                              std::move(*contents.data),
+                                              1,
+                                              std::move(null_mask.first));
+
+  auto results  = nvtext::byte_pair_encoding(cudf::strings_column_view(with_nulls->view()), *mp);
+  auto expected = cudf::test::strings_column_wrapper({"this it", "", "is it"}, {true, false, true});
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(results->view(), expected);
 }

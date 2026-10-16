@@ -32,7 +32,13 @@ struct bpe_merge_pairs {
   /**
    * @brief Construct a new bpe merge pairs object
    *
-   * @param input The input file containing the BPE merge pairs
+   * Each merge pair is stored as two consecutive rows of `input`:
+   * the left half at row `2i` and the right half at row `2i+1`
+   * where `i` is the pair's rank.
+   *
+   * @throw std::invalid_argument if `input` contains duplicate pairs
+   *
+   * @param input Strings column of merge pair halves
    * @param stream CUDA stream used for device memory operations and kernel launches.
    * @param mr Device memory resource used to allocate the device memory
    */
@@ -43,7 +49,11 @@ struct bpe_merge_pairs {
   /**
    * @brief Construct a new bpe merge pairs object
    *
-   * @param input The input column of strings
+   * See @ref nvtext::load_merge_pairs for the format of `input`.
+   *
+   * @throw std::invalid_argument if `input` contains duplicate pairs
+   *
+   * @param input Strings column with one merge pair per row
    * @param stream CUDA stream used for device memory operations and kernel launches.
    * @param mr Device memory resource used to allocate the device memory
    */
@@ -62,9 +72,8 @@ struct bpe_merge_pairs {
 /**
  * @brief Create a nvtext::bpe_merge_pairs from a strings column
  *
- * The input column should contain a unique pair of strings per line separated by
- * a single space. An incorrect format or non-unique entries will result in
- * undefined behavior.
+ * The input column should contain a unique pair of strings per row separated by
+ * a single space. An incorrect format will result in undefined behavior.
  *
  * Example:
  * @code{.pseudo}
@@ -73,11 +82,11 @@ struct bpe_merge_pairs {
  * // the mps object can be passed to the byte_pair_encoding API
  * @endcode
  *
- * The pairs are expected to be ordered in the file by their rank
- * relative to each other. A pair earlier in the file has priority over
- * any pairs below it.
+ * The pairs are expected to be ordered by their rank relative to each other.
+ * A pair in an earlier row has priority over any pairs in later rows.
  *
  * @throw cudf::logic_error if `merge_pairs` is empty or contains nulls
+ * @throw std::invalid_argument if `merge_pairs` contains duplicate pairs
  *
  * @param merge_pairs Column containing the unique merge pairs
  * @param stream CUDA stream used for device memory operations and kernel launches
@@ -92,21 +101,28 @@ std::unique_ptr<bpe_merge_pairs> load_merge_pairs(
 /**
  * @brief Byte pair encode the input strings.
  *
- * The encoding algorithm rebuilds each string by matching substrings
- * in the `merge_pairs` table and iteratively removing the minimum ranked pair
- * until no pairs are left. Then, the separator is inserted between the remaining
- * pairs before the result is joined to make the output string.
+ * Each string starts as a sequence of individual UTF-8 characters (tokens).
+ * The adjacent pair of tokens with the lowest rank in the `merge_pairs` table is
+ * merged (all non-overlapping occurrences, left to right) and this repeats until
+ * no adjacent pair appears in the table. The separator is then inserted between
+ * the remaining tokens to build the output string.
+ *
+ * Characters such as spaces that do not appear in the table remain individual
+ * tokens and so are also surrounded by separators. Tables such as GPT-2's expect
+ * the input to be byte-level mapped (e.g. space as `Ġ`) before encoding.
  *
  * @code{.pseudo}
- * merge_pairs = ["e n", "i t", "i s", "e s", "en t", "c e", "es t", "en ce", "t est", "s ent"]
+ * merge_pairs = ["e n", "i t", "i s", "e s", "en t", "c e", "es t", "en ce",
+ *                "t h", "h i", "th is", "t est", "s i", "s ent"]
  * mps = load_merge_pairs(merge_pairs)
  * input = ["test sentence", "thisis test"]
  * result = byte_pair_encoding(input, mps)
- * result is now ["test sent ence", "this is test"]
+ * result is now ["test   sent ence", "this is   test"]
  * @endcode
  *
- * @throw cudf::logic_error if `merge_pairs` is empty
- * @throw cudf::logic_error if `separator` is invalid
+ * Null rows result in null output rows.
+ *
+ * @throw cudf::logic_error if `separator` is invalid or is not a single byte
  *
  * @param input Strings to encode.
  * @param merges_pairs Created by a call to @ref nvtext::load_merge_pairs.

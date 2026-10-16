@@ -112,6 +112,8 @@ def test_byte_pair_encoding_nulls_and_slices(merge_pairs):
 def test_byte_pair_encoding_empty(merge_pairs):
     result = encode([], merge_pairs)
     assert_column_eq(result, pa.array([], type=pa.string()))
+    result = encode(["", None, ""], merge_pairs)
+    assert_column_eq(result, pa.array(["", None, ""]))
 
 
 def test_byte_pair_encoding_rank_order():
@@ -163,6 +165,10 @@ def test_byte_pair_encoding_random(seed):
 
 
 def test_byte_pair_encoding_errors(merge_pairs):
+    with pytest.raises(ValueError, match="unique"):
+        plc.nvtext.byte_pair_encode.BPEMergePairs(
+            plc.Column.from_arrow(pa.array(["a b", "c d", "a b"]))
+        )
     for separator in ["", "ab", "é"]:
         with pytest.raises(RuntimeError, match="separator"):
             encode(["thisisit"], merge_pairs, separator)

@@ -173,10 +173,9 @@ struct divide_decimal_dispatch {
                                      rmm::device_async_resource_ref mr) const
     requires(cudf::is_fixed_point<T>())
   {
-    using Rep              = typename T::rep;
-    auto const output_type = data_type{rhs.type().id(), lhs.type().scale()};
+    using Rep = typename T::rep;
     if (!lhs.is_valid(stream)) {
-      return make_fixed_width_column(output_type, rhs.size(), mask_state::ALL_NULL, stream, mr);
+      return make_fixed_width_column(lhs.type(), rhs.size(), mask_state::ALL_NULL, stream, mr);
     }
     auto const lhs_value = static_cast<fixed_point_scalar<T> const&>(lhs).value(stream);
     auto const d_rhs     = column_device_view::create(rhs, stream);
@@ -185,7 +184,7 @@ struct divide_decimal_dispatch {
                                   column_operand<Rep>{*d_rhs},
                                   numeric::scale_type{lhs.type().scale()},
                                   numeric::scale_type{rhs.type().scale()},
-                                  output_type,
+                                  lhs.type(),
                                   rhs.size(),
                                   method,
                                   stream,
@@ -236,7 +235,7 @@ std::unique_ptr<column> divide_decimal(scalar const& lhs,
                "Column and scalar must be decimal type");
   CUDF_EXPECTS(lhs.type().id() == rhs.type().id(), "Scalar base type must match column type");
 
-  if (rhs.is_empty()) { return make_empty_column(data_type{rhs.type().id(), lhs.type().scale()}); }
+  if (rhs.is_empty()) { return make_empty_column(lhs.type()); }
 
   return type_dispatcher(rhs.type(), divide_decimal_dispatch{}, lhs, rhs, method, stream, mr);
 }

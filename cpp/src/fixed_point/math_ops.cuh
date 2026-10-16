@@ -44,15 +44,18 @@ __device__ inline bool checked_multiply(U a, U b, U& product)
 }
 
 /**
- * @brief Computes `base` to the power `exponent`, returning false instead if it overflows `U`.
+ * @brief Computes `Rad` to the non-negative power `exponent`, returning false instead if it
+ * overflows `U`.
  */
-template <typename U>
-__device__ inline bool checked_power(U base, int32_t exponent, U& power)
+template <typename U, numeric::Radix Rad>
+__device__ inline bool checked_power(int32_t exponent, U& power)
 {
-  power = 1;
-  for (int32_t i = 0; i < exponent; ++i) {
-    if (!checked_multiply(power, base, power)) { return false; }
-  }
+  // The largest exponent for which `Rad^exponent` fits in `U`
+  constexpr int32_t max_exponent = Rad == numeric::Radix::BASE_2
+                                     ? cuda::std::numeric_limits<U>::digits - 1
+                                     : cuda::std::numeric_limits<U>::digits10;
+  if (exponent > max_exponent) { return false; }
+  power = numeric::detail::ipow<U, Rad>(exponent);
   return true;
 }
 
@@ -94,13 +97,12 @@ __device__ inline cuda::std::optional<numeric::fixed_point<Rep, Rad>> divide_dec
 
   // The quotient at the scale of `lhs` is `lhs.value() * radix^(-rhs.scale()) / rhs.value()`.
   auto const exponent = -static_cast<int32_t>(rhs.scale());
-  auto const radix    = static_cast<U>(Rad);
   U factor{};
   if (exponent >= 0) {
-    if (!checked_power(radix, exponent, factor) || !checked_multiply(dividend, factor, dividend)) {
+    if (!checked_power<U, Rad>(exponent, factor) || !checked_multiply(dividend, factor, dividend)) {
       return cuda::std::nullopt;
     }
-  } else if (!checked_power(radix, -exponent, factor) ||
+  } else if (!checked_power<U, Rad>(-exponent, factor) ||
              !checked_multiply(divisor, factor, divisor)) {
     // The divisor is more than twice the largest possible dividend, so the quotient rounds to 0.
     return make_result(0);

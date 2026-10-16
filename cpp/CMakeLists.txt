@@ -1489,18 +1489,6 @@ endif()
 
 rapids_cuda_set_runtime(cudf USE_STATIC ON)
 
-file(
-  WRITE "${CUDF_BINARY_DIR}/fatbin.ld"
-  [=[
-SECTIONS
-{
-  .nvFatBinSegment : { *(.nvFatBinSegment) }
-  .nv_fatbin : { *(.nv_fatbin) }
-}
-]=]
-)
-target_link_options(cudf PRIVATE "$<HOST_LINK:${CUDF_BINARY_DIR}/fatbin.ld>")
-
 add_library(cudf::cudf ALIAS cudf)
 
 # ##################################################################################################

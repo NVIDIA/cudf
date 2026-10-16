@@ -497,6 +497,36 @@ def _close_quent_worker(
         mp_ctx.quent_worker_runtime = None
 
 
+def _update_quent_on_worker(
+    quent_context: cudf_polars.quent.QuentConfig | None,
+    collector_address: str | None,
+    *,
+    uid: str,
+    dask_worker: distributed.Worker | None = None,
+) -> None:
+    """Replace one worker's Quent runtime (or clear it when both args are ``None``)."""
+    assert dask_worker is not None
+    mp_ctx: _WorkerContext | None = getattr(
+        dask_worker, f"_cudf_polars_mp_context_{uid}", None
+    )
+    if mp_ctx is None:
+        return
+    if mp_ctx.quent_worker_runtime is not None:
+        mp_ctx.quent_worker_runtime.close()
+        mp_ctx.quent_worker_runtime = None
+    if quent_context is not None and collector_address is not None:
+        assert mp_ctx.comm is not None
+        worker_id = uuid.uuid4()
+        mp_ctx.quent_worker_runtime = QuentWorkerRuntime.create(
+            quent_context,
+            collector_address,
+            worker_id=worker_id,
+            rank=mp_ctx.comm.rank,
+            nranks=mp_ctx.comm.nranks,
+            instance_name=f"DaskWorker-rank{mp_ctx.comm.rank}",
+        )
+
+
 def _teardown_worker(
     *, uid: str, dask_worker: distributed.Worker | None = None
 ) -> None:
@@ -1208,8 +1238,6 @@ class DaskEngine(StreamingEngine):
             engine_options=engine_options,
         )
         executor_options = executor_options or {}
-        if "quent_context" in existing_executor_options:
-            executor_options.setdefault("quent_context", existing_quent_context)
         if "kvikio_nthreads" in existing_executor_options:
             executor_options.setdefault(
                 "kvikio_nthreads", existing_executor_options["kvikio_nthreads"]
@@ -1243,6 +1271,20 @@ class DaskEngine(StreamingEngine):
             rapidsmpf_options_as_bytes,
         )
 
+        # Handle quent_context change.
+        new_quent_context: cudf_polars.quent.QuentConfig | None = executor_options.get(
+            "quent_context", existing_quent_context
+        )
+        self._update_quent(new_quent_context, existing_quent_context, executor_options)
+        new_ctx = DaskContext(
+            client=ctx.client,
+            rapidsmpf_id=ctx.rapidsmpf_id,
+            quent_controller_runtime=self._quent_runtime,
+            owned_client=ctx.owned_client,
+            owned_cluster=ctx.owned_cluster,
+        )
+        self._dask_context = new_ctx
+
         # Re-run ``StreamingEngine.__init__`` on the existing instance to
         # reconfigure the polars ``GPUEngine`` layer (``self.config``,
         # ``self.device``, etc.) with the new options. Pass the existing
@@ -1253,10 +1295,41 @@ class DaskEngine(StreamingEngine):
             executor_options={
                 **executor_options,
                 "cluster": "dask",
-                "dask_context": ctx,
+                "dask_context": new_ctx,
             },
             engine_options={**engine_options, "memory_resource": None},
             exit_stack=self._exit_stack,
+        )
+
+    def _quent_close(self) -> None:
+        """Clear Quent worker runtimes on all Dask workers, then close the controller."""
+        ctx = self._dask_ctx
+        # Workers first so the collector can drain before we close it.
+        ctx.client.run(
+            functools.partial(_update_quent_on_worker, None, None, uid=ctx.rapidsmpf_id)
+        )
+        if self._quent_runtime is not None:
+            self._quent_runtime.close()
+            self._quent_runtime = None
+
+    def _quent_open(self, quent_context: cudf_polars.quent.QuentConfig) -> None:
+        """Start a new Quent collector, connect workers, create controller."""
+        ctx = self._dask_ctx
+        quent_collector = cudf_polars.quent._runtime.start_collector(
+            quent_context.run_root
+        )
+        collector_address = quent_collector.address
+        assert collector_address is not None
+        ctx.client.run(
+            functools.partial(
+                _update_quent_on_worker,
+                quent_context,
+                collector_address,
+                uid=ctx.rapidsmpf_id,
+            )
+        )
+        self._quent_runtime = QuentControllerRuntime.create(
+            quent_context, collector_address, backend="dask", collector=quent_collector
         )
 
     @classmethod

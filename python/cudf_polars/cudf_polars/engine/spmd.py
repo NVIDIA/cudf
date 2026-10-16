@@ -768,19 +768,61 @@ class SPMDEngine(StreamingEngine):
             finally:
                 self._quent_runtime = None
 
+    def _quent_close(self) -> None:
+        """Close SPMD Quent runtimes: barrier → workers → barrier → controller → barrier."""
+        assert self._comm is not None
+        comm = self._comm
+        if comm.nranks > 1:
+            barrier(comm)
+        self._close_quent_worker()
+        if comm.nranks > 1:
+            barrier(comm)
+        if comm.rank == 0:
+            self._close_quent_controller()
+        if comm.nranks > 1:
+            barrier(comm)
+
+    def _quent_open(self, quent_context: cudf_polars.quent.QuentConfig) -> None:
+        """Start SPMD Quent runtimes for ``quent_context``."""
+        assert self._comm is not None
+        assert self._ctx is not None
+        comm = self._comm
+        collector_address: str = ""
+        if comm.rank == 0:
+            quent_collector = cudf_polars.quent._runtime.start_collector(
+                quent_context.run_root
+            )
+            _collector_cleanup = contextlib.ExitStack()
+            _collector_cleanup.callback(quent_collector.close)
+            collector_address = quent_collector.address
+        quent_context, collector_address = synchronize_quent_configuration(
+            comm=comm,
+            context=self._ctx,
+            quent_config=quent_context,
+            collector_address=collector_address,
+        )
+        if comm.rank == 0:
+            self._quent_runtime = QuentControllerRuntime.create(
+                quent_context,
+                collector_address,
+                backend="spmd",
+                collector=quent_collector,
+            )
+            _collector_cleanup.pop_all()
+        self._quent_worker_runtime = QuentWorkerRuntime.create(
+            quent_context,
+            collector_address,
+            worker_id=self._quent_worker_id,
+            rank=comm.rank,
+            nranks=comm.nranks,
+            instance_name=f"rank-{comm.rank}",
+        )
+
     def _shutdown_spmd(self) -> None:
         """Run collective cleanup before local resources unwind."""
         steps: list[Callable[[], object]] = [self._drop_persisted]
         if self._quent_worker_runtime is not None:
-            assert self._comm is not None
-            comm = self._comm
-            steps.append(self._close_quent_worker)
-            if comm.nranks > 1:
-                steps.append(lambda: barrier(comm))
-            if comm.rank == 0:
-                steps.append(self._close_quent_controller)
-            if comm.nranks > 1:
-                steps.append(lambda: barrier(comm))
+            steps.append(self._quent_close)
         run_cleanup_steps("SPMD engine shutdown failed", *steps)
 
     @classmethod
@@ -990,8 +1032,6 @@ class SPMDEngine(StreamingEngine):
             engine_options=engine_options,
         )
         executor_options = executor_options or {}
-        if "quent_context" in existing_executor_options:
-            executor_options.setdefault("quent_context", existing_quent_context)
         if "kvikio_nthreads" in existing_executor_options:
             executor_options.setdefault(
                 "kvikio_nthreads", existing_executor_options["kvikio_nthreads"]
@@ -1007,11 +1047,16 @@ class SPMDEngine(StreamingEngine):
             request_ceiling=executor_options["kvikio_request_ceiling"],
         )
         engine_options = engine_options or {}
-        quent_context: cudf_polars.quent.QuentConfig | None = executor_options.get(
-            "quent_context"
+        new_quent_context: cudf_polars.quent.QuentConfig | None = executor_options.get(
+            "quent_context", existing_quent_context
         )
+        quent_changing = new_quent_context != existing_quent_context
         rapidsmpf_options = resolve_rapidsmpf_options(rapidsmpf_options)
         self.rapidsmpf_options = rapidsmpf_options
+
+        # Tear down Quent runtimes before the Context rebuild if they're changing.
+        if quent_changing:
+            self._quent_close()
 
         # Collective: synchronize all ranks before tearing down the Context.
         if self._comm.nranks > 1:
@@ -1041,8 +1086,12 @@ class SPMDEngine(StreamingEngine):
         self._mr = self._ctx.br().device_mr_adaptor()
         rmm.mr.set_current_device_resource(self._mr)
 
+        # Start new Quent runtimes after the Context is rebuilt.
+        self._update_quent(new_quent_context, existing_quent_context, executor_options)
         engine_id = (
-            quent_context.engine_id if quent_context is not None else uuid.uuid4()
+            new_quent_context.engine_id
+            if new_quent_context is not None
+            else uuid.uuid4()
         )
 
         # Re-run ``StreamingEngine.__init__`` on the existing instance to

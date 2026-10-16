@@ -396,6 +396,31 @@ class RankActor:
             return
         self._quent_worker_runtime.close()
 
+    def update_quent(
+        self,
+        quent_context: cudf_polars.quent.QuentConfig | None,
+        collector_address: str | None,
+    ) -> None:
+        """
+        Replace this actor's Quent worker runtime.
+
+        Pass ``None`` for both arguments to clear an existing runtime
+        without starting a new one.
+        """
+        if self._quent_worker_runtime is not None:
+            self._quent_worker_runtime.close()
+            self._quent_worker_runtime = None
+        if quent_context is not None and collector_address is not None:
+            assert self._comm is not None
+            self._quent_worker_runtime = QuentWorkerRuntime.create(
+                quent_context,
+                collector_address,
+                worker_id=self._worker_id,
+                rank=self._comm.rank,
+                nranks=self._nranks,
+                instance_name=f"RankActor-{self._worker_id.hex[:8]}",
+            )
+
     def reset(
         self,
         *,
@@ -1049,8 +1074,6 @@ class RayEngine(StreamingEngine):
             engine_options=engine_options,
         )
         executor_options = executor_options or {}
-        if "quent_context" in existing_executor_options:
-            executor_options.setdefault("quent_context", existing_quent_context)
         if "kvikio_nthreads" in existing_executor_options:
             executor_options.setdefault(
                 "kvikio_nthreads", existing_executor_options["kvikio_nthreads"]
@@ -1084,6 +1107,12 @@ class RayEngine(StreamingEngine):
             ]
         )
 
+        # Handle quent_context change.
+        new_quent_context: cudf_polars.quent.QuentConfig | None = executor_options.get(
+            "quent_context", existing_quent_context
+        )
+        self._update_quent(new_quent_context, existing_quent_context, executor_options)
+
         # Re-run ``StreamingEngine.__init__`` on the existing instance to
         # reconfigure the polars ``GPUEngine`` layer (``self.config``,
         # ``self.device``, etc.) with the new options. Pass the existing
@@ -1100,6 +1129,33 @@ class RayEngine(StreamingEngine):
             },
             engine_options=engine_options,
             exit_stack=self._exit_stack,
+        )
+
+    def _quent_close(self) -> None:
+        """Clear Quent worker runtimes on all actors, then close the controller."""
+        assert self._rank_actors is not None
+        # Workers first so the collector can drain before we close it.
+        ray.get([rank.update_quent.remote(None, None) for rank in self._rank_actors])
+        if self._quent_runtime is not None:
+            self._quent_runtime.close()
+            self._quent_runtime = None
+
+    def _quent_open(self, quent_context: cudf_polars.quent.QuentConfig) -> None:
+        """Start a new Quent collector, connect actors, create controller."""
+        assert self._rank_actors is not None
+        quent_collector = cudf_polars.quent._runtime.start_collector(
+            quent_context.run_root
+        )
+        collector_address = quent_collector.address
+        assert collector_address is not None
+        ray.get(
+            [
+                rank.update_quent.remote(quent_context, collector_address)
+                for rank in self._rank_actors
+            ]
+        )
+        self._quent_runtime = QuentControllerRuntime.create(
+            quent_context, collector_address, backend="ray", collector=quent_collector
         )
 
     @classmethod

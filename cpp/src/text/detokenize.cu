@@ -11,6 +11,7 @@
 #include <cudf/detail/indexalator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/sorting.hpp>
+#include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/strings/detail/strings_children.cuh>
 #include <cudf/strings/detail/utilities.cuh>
 #include <cudf/strings/string_view.cuh>
@@ -22,8 +23,7 @@
 
 #include <nvtext/tokenize.hpp>
 
-#include <rmm/device_uvector.hpp>
-
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/stream>
 
@@ -86,7 +86,7 @@ struct index_changed_fn {
  * @param tokens_counts Token counts for each row
  * @param stream CUDA stream used for kernel launches
  */
-rmm::device_uvector<cudf::size_type> create_token_row_offsets(
+cuda::device_buffer<cudf::size_type> create_token_row_offsets(
   cudf::column_view const& row_indices,
   cudf::column_view const& sorted_indices,
   cudf::size_type tokens_counts,
@@ -101,7 +101,8 @@ rmm::device_uvector<cudf::size_type> create_token_row_offsets(
                            fn,
                            stream);
 
-  auto tokens_offsets = rmm::device_uvector<cudf::size_type>(output_count + 1, stream);
+  auto tokens_offsets = cuda::device_buffer<cudf::size_type>(
+    stream, cudf::get_current_device_resource_ref(), output_count + 1, cuda::no_init);
 
   cudf::detail::copy_if_async(cuda::counting_iterator<cudf::size_type>{0},
                               cuda::counting_iterator<cudf::size_type>{tokens_counts},
@@ -110,7 +111,10 @@ rmm::device_uvector<cudf::size_type> create_token_row_offsets(
                               stream);
 
   // set the last element to the total number of tokens
-  tokens_offsets.set_element(output_count, tokens_counts, stream);
+  cudf::detail::cuda_memcpy<cudf::size_type>(
+    cudf::device_span<cudf::size_type>(tokens_offsets.data() + output_count, 1),
+    cudf::host_span<cudf::size_type const>(&tokens_counts, 1),
+    stream);
   return tokens_offsets;
 }
 

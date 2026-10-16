@@ -23,6 +23,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/stream>
@@ -159,7 +160,8 @@ std::unique_ptr<cudf::column> ngrams_tokenize(cudf::strings_column_view const& s
 
   // get the token positions (in bytes) per string
   // Ex. start/end pairs: [(0,1),(2,4),(5,8), (0,2),(3,4)]
-  rmm::device_uvector<position_pair> token_positions(total_tokens, stream);
+  cuda::device_buffer<position_pair> token_positions(
+    stream, cudf::get_current_device_resource_ref(), total_tokens, cuda::no_init);
   auto d_token_positions = token_positions.data();
   thrust::for_each_n(
     rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
@@ -199,7 +201,8 @@ std::unique_ptr<cudf::column> ngrams_tokenize(cudf::strings_column_view const& s
     cudf::detail::offsetalator_factory::make_input_iterator(chars_offsets->view());
 
   // This will contain the size in bytes of each ngram to generate
-  rmm::device_uvector<cudf::size_type> ngram_sizes(total_ngrams, stream);
+  cuda::device_buffer<cudf::size_type> ngram_sizes(
+    stream, cudf::get_current_device_resource_ref(), total_ngrams, cuda::no_init);
 
   // build output chars column
   rmm::device_uvector<char> chars(output_chars_size, stream, mr);

@@ -22,6 +22,7 @@
 #include <nvtext/replace.hpp>
 
 #include <cuda/atomic>
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/functional>
 #include <cuda/std/iterator>
@@ -290,9 +291,11 @@ std::unique_ptr<cudf::column> replace_helper(ReplacerFn replacer,
 
   // divide up long strings into shorter strings by finding new sub-offsets at delimiters
   auto sub_count   = chars_size / LS_SUB_BLOCK_SIZE;
-  auto tmp_offsets = rmm::device_uvector<int64_t>(sub_count + input.size() + 1, stream);
+  auto tmp_offsets = cuda::device_buffer<int64_t>(
+    stream, cudf::get_current_device_resource_ref(), sub_count + input.size() + 1, cuda::no_init);
   {
-    rmm::device_uvector<int64_t> sub_offsets(sub_count, stream);
+    cuda::device_buffer<int64_t> sub_offsets(
+      stream, cudf::get_current_device_resource_ref(), sub_count, cuda::no_init);
     auto const count_itr = cuda::counting_iterator<int64_t>{0};
     thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                       count_itr,
@@ -314,12 +317,14 @@ std::unique_ptr<cudf::column> replace_helper(ReplacerFn replacer,
                   sub_offsets.begin(),
                   sub_offsets.begin() + sub_count,
                   tmp_offsets.begin());
-    tmp_offsets.resize(sub_count + input.size() + 1, stream);
     stream.sync();  // protect against destruction of sub_offsets
   }
 
+  // only the first sub_count + input.size() + 1 entries of tmp_offsets are valid
+  auto const tmp_offsets_size = static_cast<std::size_t>(sub_count + input.size() + 1);
+
   // cobble together a column_view of type STRING using the original data and the tmp offsets
-  auto const tmp_size    = static_cast<cudf::size_type>(tmp_offsets.size()) - 1;
+  auto const tmp_size    = static_cast<cudf::size_type>(tmp_offsets_size) - 1;
   auto const children    = std::vector<cudf::column_view>({cudf::column_view(
     cudf::data_type{cudf::type_id::INT64}, tmp_size + 1, tmp_offsets.data(), nullptr, 0)});
   auto const tmp_strings = cudf::column_view(
@@ -327,16 +332,18 @@ std::unique_ptr<cudf::column> replace_helper(ReplacerFn replacer,
   auto const d_tmp_strings = cudf::column_device_view::create(tmp_strings, stream);
 
   // compute indices to the actual output rows
-  auto indices = rmm::device_uvector<cudf::size_type>(tmp_offsets.size(), stream);
+  auto indices = cuda::device_buffer<cudf::size_type>(
+    stream, cudf::get_current_device_resource_ref(), tmp_offsets_size, cuda::no_init);
   thrust::upper_bound(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                       input_offsets,
                       input_offsets + input.size() + 1,
                       tmp_offsets.begin(),
-                      tmp_offsets.end(),
+                      tmp_offsets.begin() + tmp_offsets_size,
                       indices.begin());
 
   // initialize the output row sizes
-  auto d_sizes = rmm::device_uvector<cudf::size_type>(input.size(), stream);
+  auto d_sizes = cuda::device_buffer<cudf::size_type>(
+    stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
   thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                d_sizes.begin(),
                d_sizes.end(),

@@ -150,7 +150,7 @@ std::unique_ptr<rmm::device_uvector<cudf::size_type>> build_suffix_array_fn(
   rmm::device_async_resource_ref mr)
 {
   auto const size = static_cast<cudf::size_type>(chars_span.size()) - min_width + (min_width > 0);
-  auto indices    = rmm::device_uvector<cudf::size_type>(size, stream);
+  auto indices    = rmm::device_uvector<cudf::size_type>(size, stream, mr);
 
   auto const cmp_op = sort_comparator_fn{chars_span};
   auto const seq    = cuda::counting_iterator<cudf::size_type>{0};
@@ -172,7 +172,8 @@ std::unique_ptr<cudf::column> resolve_duplicates_fn(
   cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
-  auto sizes = rmm::device_uvector<int16_t>(indices.size(), stream);
+  auto sizes = cuda::device_buffer<int16_t>(
+    stream, cudf::get_current_device_resource_ref(), indices.size(), cuda::no_init);
 
   // locate candidate duplicates within the suffix array
   thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
@@ -187,7 +188,8 @@ std::unique_ptr<cudf::column> resolve_duplicates_fn(
                   sizes.begin(),
                   sizes.end(),
                   0);
-  auto dup_indices = rmm::device_uvector<cudf::size_type>(dup_count, stream);
+  auto dup_indices = cuda::device_buffer<cudf::size_type>(
+    stream, cudf::get_current_device_resource_ref(), dup_count, cuda::no_init);
 
   // remove the non-candidate entries from indices and sizes
   thrust::remove_copy_if(
@@ -197,12 +199,11 @@ std::unique_ptr<cudf::column> resolve_duplicates_fn(
     cuda::counting_iterator<cudf::size_type>{0},
     dup_indices.begin(),
     [d_sizes = sizes.data()] __device__(cudf::size_type idx) -> bool { return d_sizes[idx] == 0; });
-  auto end =
-    thrust::remove(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                   sizes.begin(),
-                   sizes.end(),
-                   0);
-  sizes.resize(cuda::std::distance(sizes.begin(), end), stream);
+  // the first dup_count entries of sizes are now aligned with dup_indices
+  thrust::remove(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                 sizes.begin(),
+                 sizes.end(),
+                 0);
 
   // sort the resulting indices/sizes for overlap filtering
   thrust::sort_by_key(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
@@ -211,8 +212,8 @@ std::unique_ptr<cudf::column> resolve_duplicates_fn(
                       sizes.begin());
 
   // produce final duplicates for make_strings_column and collapse any overlapping candidates
-  auto duplicates =
-    rmm::device_uvector<cudf::strings::detail::string_index_pair>(dup_count, stream);
+  auto duplicates = cuda::device_buffer<cudf::strings::detail::string_index_pair>(
+    stream, cudf::get_current_device_resource_ref(), dup_count, cuda::no_init);
   thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                     cuda::counting_iterator<cudf::size_type>{0},
                     cuda::counting_iterator{static_cast<cudf::size_type>(dup_indices.size())},
@@ -220,36 +221,28 @@ std::unique_ptr<cudf::column> resolve_duplicates_fn(
                     collapse_overlaps_fn{chars_span.data(), dup_indices.data(), sizes.data()});
 
   // filter out the remaining non-viable candidates
-  duplicates.resize(
-    cuda::std::distance(
-      duplicates.begin(),
-      thrust::remove(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                     duplicates.begin(),
-                     duplicates.end(),
-                     string_index{nullptr, 0})),
-    stream);
+  auto duplicates_end =
+    thrust::remove(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                   duplicates.begin(),
+                   duplicates.end(),
+                   string_index{nullptr, 0});
 
   // sort the result by size descending (should be very fast)
   thrust::sort(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                duplicates.begin(),
-               duplicates.end(),
+               duplicates_end,
                [] __device__(auto lhs, auto rhs) -> bool { return lhs.second > rhs.second; });
 
   // ironically remove duplicates from the sorted list
-  duplicates.resize(
-    cuda::std::distance(
-      duplicates.begin(),
-      thrust::unique(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                     duplicates.begin(),
-                     duplicates.end(),
-                     [] __device__(auto lhs, auto rhs) -> bool {
-                       return cudf::string_view(lhs.first, lhs.second) ==
-                              cudf::string_view(rhs.first, rhs.second);
-                     })),
-    stream);
+  duplicates_end = thrust::unique(
+    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    duplicates.begin(),
+    duplicates_end,
+    [] __device__(auto lhs, auto rhs) -> bool {
+      return cudf::string_view(lhs.first, lhs.second) == cudf::string_view(rhs.first, rhs.second);
+    });
 
-  return cudf::strings::detail::make_strings_column(
-    duplicates.begin(), duplicates.end(), stream, mr);
+  return cudf::strings::detail::make_strings_column(duplicates.begin(), duplicates_end, stream, mr);
 }
 
 }  // namespace
@@ -436,20 +429,23 @@ std::unique_ptr<cudf::column> resolve_duplicates_pair_impl(
 
   // vectorized lower-bound and upper-bound of prefix strings improves performance of the
   // transform(find_duplicates_fn) by 2x
-  auto prefixes = rmm::device_uvector<uint32_t>(indices2.size(), stream);  // 4x input2
+  auto prefixes = cuda::device_buffer<uint32_t>(
+    stream, cudf::get_current_device_resource_ref(), indices2.size(), cuda::no_init);  // 4x input2
   thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                     itr2,
                     end2,
                     prefixes.begin(),
                     string_to_prefix_fn{});
-  auto lb_ids = rmm::device_uvector<cudf::size_type>(indices1.size(), stream);  // 4x input1
+  auto lb_ids = cuda::device_buffer<cudf::size_type>(
+    stream, cudf::get_current_device_resource_ref(), indices1.size(), cuda::no_init);  // 4x input1
   thrust::lower_bound(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                       prefixes.begin(),
                       prefixes.end(),
                       itr1,
                       end1,
                       lb_ids.begin());
-  auto ub_ids = rmm::device_uvector<cudf::size_type>(indices1.size(), stream);  // 4x input1
+  auto ub_ids = cuda::device_buffer<cudf::size_type>(
+    stream, cudf::get_current_device_resource_ref(), indices1.size(), cuda::no_init);  // 4x input1
   thrust::upper_bound(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                       prefixes.begin(),
                       prefixes.end(),
@@ -460,7 +456,8 @@ std::unique_ptr<cudf::column> resolve_duplicates_pair_impl(
   // resolve duplicates by searching for input2 with strings from input1
   auto fd_fn =
     find_duplicates_fn{chars_span1, chars_span2, min_width, indices1, indices2, lb_ids, ub_ids};
-  auto sizes = rmm::device_uvector<int16_t>(indices1.size(), stream);  // 2x input1
+  auto sizes = cuda::device_buffer<int16_t>(
+    stream, cudf::get_current_device_resource_ref(), indices1.size(), cuda::no_init);  // 2x input1
   thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                     cuda::counting_iterator<cudf::size_type>{0},
                     cuda::counting_iterator{static_cast<cudf::size_type>(sizes.size())},
@@ -476,7 +473,8 @@ std::unique_ptr<cudf::column> resolve_duplicates_pair_impl(
                   sizes.begin(),
                   sizes.end(),
                   0);
-  auto dup_indices = rmm::device_uvector<cudf::size_type>(dup_count, stream);
+  auto dup_indices = cuda::device_buffer<cudf::size_type>(
+    stream, cudf::get_current_device_resource_ref(), dup_count, cuda::no_init);
 
   // remove the non-candidate entries from indices and sizes
   thrust::remove_copy_if(
@@ -486,12 +484,11 @@ std::unique_ptr<cudf::column> resolve_duplicates_pair_impl(
     cuda::counting_iterator<cudf::size_type>{0},
     dup_indices.begin(),
     [d_sizes = sizes.data()] __device__(cudf::size_type idx) -> bool { return d_sizes[idx] == 0; });
-  auto end =
-    thrust::remove(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                   sizes.begin(),
-                   sizes.end(),
-                   0);
-  sizes.resize(cuda::std::distance(sizes.begin(), end), stream);
+  // the first dup_count entries of sizes are now aligned with dup_indices
+  thrust::remove(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                 sizes.begin(),
+                 sizes.end(),
+                 0);
 
   // sort the resulting indices/sizes for overlap filtering
   thrust::sort_by_key(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
@@ -500,8 +497,8 @@ std::unique_ptr<cudf::column> resolve_duplicates_pair_impl(
                       sizes.begin());
 
   // produce final duplicates for make_strings_column and collapse any overlapping candidates
-  auto duplicates =
-    rmm::device_uvector<cudf::strings::detail::string_index_pair>(dup_count, stream);
+  auto duplicates = cuda::device_buffer<cudf::strings::detail::string_index_pair>(
+    stream, cudf::get_current_device_resource_ref(), dup_count, cuda::no_init);
   thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                     cuda::counting_iterator<cudf::size_type>{0},
                     cuda::counting_iterator{static_cast<cudf::size_type>(dup_indices.size())},
@@ -509,36 +506,28 @@ std::unique_ptr<cudf::column> resolve_duplicates_pair_impl(
                     collapse_overlaps_fn{chars_span1.data(), dup_indices.data(), sizes.data()});
 
   // filter out the remaining non-viable candidates
-  duplicates.resize(
-    cuda::std::distance(
-      duplicates.begin(),
-      thrust::remove(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                     duplicates.begin(),
-                     duplicates.end(),
-                     string_index{nullptr, 0})),
-    stream);
+  auto duplicates_end =
+    thrust::remove(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                   duplicates.begin(),
+                   duplicates.end(),
+                   string_index{nullptr, 0});
 
   // sort result by size descending (should be very fast)
   thrust::sort(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                duplicates.begin(),
-               duplicates.end(),
+               duplicates_end,
                [] __device__(auto lhs, auto rhs) -> bool { return lhs.second > rhs.second; });
 
   // ironically remove duplicates from the sorted list
-  duplicates.resize(
-    cuda::std::distance(
-      duplicates.begin(),
-      thrust::unique(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                     duplicates.begin(),
-                     duplicates.end(),
-                     [] __device__(auto lhs, auto rhs) -> bool {
-                       return cudf::string_view(lhs.first, lhs.second) ==
-                              cudf::string_view(rhs.first, rhs.second);
-                     })),
-    stream);
+  duplicates_end = thrust::unique(
+    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    duplicates.begin(),
+    duplicates_end,
+    [] __device__(auto lhs, auto rhs) -> bool {
+      return cudf::string_view(lhs.first, lhs.second) == cudf::string_view(rhs.first, rhs.second);
+    });
 
-  return cudf::strings::detail::make_strings_column(
-    duplicates.begin(), duplicates.end(), stream, mr);
+  return cudf::strings::detail::make_strings_column(duplicates.begin(), duplicates_end, stream, mr);
 }
 }  // namespace
 

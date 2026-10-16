@@ -3,18 +3,28 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "parquet/parquet_io.hpp"
+#include "q01_query.hpp"
 #include "utilities.hpp"
 
 #include <benchmarks/common/memory_stats.hpp>
 
-#include <cudf/ast/expressions.hpp>
-#include <cudf/binaryop.hpp>
-#include <cudf/column/column.hpp>
-#include <cudf/scalar/scalar.hpp>
-#include <cudf/scalar/scalar_factories.hpp>
-#include <cudf/utilities/memory_resource.hpp>
-
 #include <nvbench/nvbench.cuh>
+
+#include <memory>
+#include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+
+#ifdef CUDF_WITH_VORTEX
+#include "local_io.hpp"
+#include "reference/q1_reference.hpp"
+#include "vortex/vortex_io.hpp"
+#endif
+
+using ndsh::q1::execute_q1;
+using ndsh::q1::q1_columns;
 
 /**
  * @file q01.cpp
@@ -45,115 +55,12 @@
  *    l_linestatus;
  */
 
-/**
- * @brief Calculate the discount price column
- *
- * @param discount The discount column
- * @param extendedprice The extended price column
- * @param stream The CUDA stream used for device memory operations and kernel launches.
- * @param mr Device memory resource used to allocate the returned column's device memory.
- */
-[[nodiscard]] std::unique_ptr<cudf::column> calculate_disc_price(
-  cudf::column_view const& discount,
-  cudf::column_view const& extendedprice,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
-{
-  auto const one = discount.type().id() == cudf::type_id::DECIMAL64
-                     ? cudf::make_fixed_point_scalar<numeric::decimal64>(1L, numeric::scale_type{0})
-                     : cudf::make_fixed_width_scalar<double>(1);
-  auto const one_minus_discount =
-    cudf::binary_operation(*one, discount, cudf::binary_operator::SUB, discount.type(), stream, mr);
-  return cudf::binary_operation(extendedprice,
-                                one_minus_discount->view(),
-                                cudf::binary_operator::MUL,
-                                discount.type(),
-                                stream,
-                                mr);
-}
-
-/**
- * @brief Calculate the charge column
- *
- * @param tax The tax column
- * @param disc_price The discount price column
- * @param stream The CUDA stream used for device memory operations and kernel launches.
- * @param mr Device memory resource used to allocate the returned column's device memory.
- */
-[[nodiscard]] std::unique_ptr<cudf::column> calculate_charge(
-  cudf::column_view const& tax,
-  cudf::column_view const& disc_price,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
-{
-  auto const one = tax.type().id() == cudf::type_id::DECIMAL64
-                     ? cudf::make_fixed_point_scalar<numeric::decimal64>(1L, numeric::scale_type{0})
-                     : cudf::make_fixed_width_scalar<double>(1);
-  auto const one_plus_tax =
-    cudf::binary_operation(*one, tax, cudf::binary_operator::ADD, tax.type(), stream, mr);
-  return cudf::binary_operation(
-    disc_price, one_plus_tax->view(), cudf::binary_operator::MUL, tax.type(), stream, mr);
-}
-
 void run_ndsh_q1(nvbench::state& state, cudf::io::source_info const& source)
 {
-  // Define the column projections and filter predicate for `lineitem` table
-  std::vector<std::string> const lineitem_cols = {"l_returnflag",
-                                                  "l_linestatus",
-                                                  "l_quantity",
-                                                  "l_extendedprice",
-                                                  "l_discount",
-                                                  "l_shipdate",
-                                                  "l_orderkey",
-                                                  "l_tax"};
-  auto const shipdate_ref                      = cudf::ast::column_reference(std::distance(
-    lineitem_cols.begin(), std::find(lineitem_cols.begin(), lineitem_cols.end(), "l_shipdate")));
-  auto shipdate_upper =
-    cudf::timestamp_scalar<cudf::timestamp_D>(days_since_epoch(1998, 9, 2), true);
-  auto const shipdate_upper_literal = cudf::ast::literal(shipdate_upper);
-  auto const lineitem_pred          = std::make_unique<cudf::ast::operation>(
-    cudf::ast::ast_operator::LESS_EQUAL, shipdate_ref, shipdate_upper_literal);
-
-  // Read out the `lineitem` table from parquet file
-  auto lineitem = read_parquet(source, lineitem_cols, std::move(lineitem_pred));
-
-  // Calculate the discount price and charge columns and append to lineitem table
-  auto disc_price =
-    calculate_disc_price(lineitem->column("l_discount"), lineitem->column("l_extendedprice"));
-  auto charge = calculate_charge(lineitem->column("l_tax"), disc_price->view());
-  (*lineitem).append(disc_price, "disc_price").append(charge, "charge");
-
-  // Perform the group by operation
-  auto const groupedby_table = apply_groupby(
-    lineitem,
-    groupby_context_t{
-      {"l_returnflag", "l_linestatus"},
-      {
-        {"l_extendedprice",
-         {{cudf::aggregation::Kind::SUM, "sum_base_price"},
-          {cudf::aggregation::Kind::MEAN, "avg_price"}}},
-        {"l_quantity",
-         {{cudf::aggregation::Kind::SUM, "sum_qty"}, {cudf::aggregation::Kind::MEAN, "avg_qty"}}},
-        {"l_discount",
-         {
-           {cudf::aggregation::Kind::MEAN, "avg_disc"},
-         }},
-        {"disc_price",
-         {
-           {cudf::aggregation::Kind::SUM, "sum_disc_price"},
-         }},
-        {"charge",
-         {{cudf::aggregation::Kind::SUM, "sum_charge"},
-          {cudf::aggregation::Kind::COUNT_ALL, "count_order"}}},
-      }});
-
-  // Perform the order by operation
-  auto const orderedby_table = apply_orderby(groupedby_table,
-                                             {"l_returnflag", "l_linestatus"},
-                                             {cudf::order::ASCENDING, cudf::order::ASCENDING});
-
-  // Write query result to a parquet file
-  orderedby_table->to_parquet("q1.parquet");
+  execute_q1([&](auto const& columns,
+                 auto const& predicate) { return read_parquet(source, columns, predicate); },
+             false,
+             [](auto const& result) { result->to_parquet("q1.parquet"); });
 }
 
 void ndsh_q1(nvbench::state& state)
@@ -186,3 +93,70 @@ NVBENCH_BENCH(ndsh_q1)
   .set_name("ndsh_q1")
   .add_string_axis("filename", {""})
   .add_float64_axis("scale_factor", {0.01, 0.1, 1});
+
+#ifdef CUDF_WITH_VORTEX
+namespace {
+
+struct q1_files {
+  ndsh::local_table_files tables;
+  ndsh::q1_reference_result reference;
+
+  explicit q1_files(double scale_factor)
+  {
+    cuda::stream_ref const stream = cudf::get_default_stream();
+    ndsh::vortex_io io{stream.get()};
+    for_each_generated_table(
+      scale_factor, {"lineitem"}, [&](auto const& name, table_with_names const& generated) {
+        CUDF_EXPECTS(generated.table().num_columns() == 16, "Q1 fixture requires full lineitem");
+        tables.write(name, generated, io);
+        reference = ndsh::q1_cpu_reference(generated.select(q1_columns), stream);
+        for (bool use_vortex : {false, true}) {
+          auto input =
+            ndsh::read_local_file(tables.path(name, use_vortex), use_vortex, io, q1_columns);
+          ndsh::check_projection(generated.select(q1_columns), *input, q1_columns);
+          auto result = execute_q1(
+            [&](auto const&, auto const&) { return std::move(input); }, true, ndsh::take_result);
+          ndsh::check_q1_result(reference, *result, stream);
+        }
+        CUDF_CUDA_TRY(cudaDeviceSynchronize());
+      });
+    CUDF_CUDA_TRY(cudaDeviceSynchronize());
+  }
+};
+
+void ndsh_q1_local(nvbench::state& state)
+{
+  auto const options = ndsh::local_options{state, 1};
+  if (!options.supported(state)) { return; }
+  auto const& files = ndsh::local_fixture<q1_files>(state.get_float64("scale_factor"));
+  ndsh::local_benchmark benchmark{state, files.tables, options};
+  auto read = [&](auto const&...) { return benchmark.read("lineitem", q1_columns); };
+
+  {
+    auto input = read();
+    benchmark.check_projection("lineitem", q1_columns, *input);
+    auto result = execute_q1(
+      [&](auto const&, auto const&) { return std::move(input); }, true, ndsh::take_result);
+    ndsh::check_q1_result(files.reference, *result, benchmark.stream);
+    CUDF_CUDA_TRY(cudaDeviceSynchronize());
+  }
+  benchmark.exec(
+    read,
+    [&] { return execute_q1(read, true, ndsh::take_result); },
+    "File size",
+    "ndsh_q1_local_timed");
+  ndsh::add_count(state, "ndsh/q1/matched_rows", "Q1 matched rows", files.reference.matched);
+  ndsh::add_count(state, "ndsh/q1/groups", "Q1 groups", files.reference.groups.size());
+}
+
+}  // namespace
+
+// NVBench varies the first axis fastest; keep scale last to reuse the one-scale fixture cache.
+NVBENCH_BENCH(ndsh_q1_local)
+  .set_name("ndsh_q1_local")
+  .add_string_axis("format", {"parquet", "vortex"})
+  .add_string_axis("workload", {"read", "q1"})
+  .add_string_axis("cache", {"warm", "cold"})
+  .add_string_axis("io", {"buffered"})
+  .add_float64_axis("scale_factor", {0.01, 0.1, 1, 10});
+#endif

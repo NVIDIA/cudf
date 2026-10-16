@@ -13,7 +13,7 @@
 #include <cudf/detail/gather.hpp>
 #include <cudf/detail/groupby.hpp>
 #include <cudf/detail/groupby/group_replace_nulls.hpp>
-#include <cudf/detail/groupby/sort_helper.hpp>
+#include <cudf/detail/groupby/groupby_helper.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/dictionary/dictionary_column_view.hpp>
@@ -49,28 +49,8 @@ groupby::groupby(table_view const& keys,
 {
 }
 
-// Select hash vs. sort groupby implementation
-std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> groupby::dispatch_aggregation(
-  std::span<aggregation_request const> requests,
-  cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
-{
-  // If sort groupby has been called once on this groupby object, then
-  // always use sort groupby from now on. Because once keys are sorted,
-  // all the aggs that can be done by hash groupby are efficiently done by
-  // sort groupby as well.
-  // Only use hash groupby if the keys aren't sorted and all requests can be
-  // satisfied with a hash implementation
-  if (_keys_are_sorted == sorted::NO and not _helper and
-      detail::hash::can_use_hash_groupby(requests)) {
-    return detail::hash::groupby(_keys, requests, _include_null_keys, stream, mr);
-  } else {
-    return sort_aggregate(requests, stream, mr);
-  }
-}
-
 // Destructor
-// Needs to be in source file because sort_groupby_helper was forward declared
+// Needs to be in source file because groupby_helper was forward declared
 groupby::~groupby() = default;
 
 namespace {
@@ -241,7 +221,7 @@ std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> groupby::aggr
 
   if (_keys.num_rows() == 0) { return {empty_like(_keys), empty_results(requests, stream, mr)}; }
 
-  return dispatch_aggregation(requests, stream, mr);
+  return detail::hash::groupby(requests, helper(mr), stream, mr);
 }
 
 // Compute scan requests
@@ -263,7 +243,7 @@ std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> groupby::scan
     return std::pair(empty_like(_keys), empty_results(requests, stream, mr));
   }
 
-  return sort_scan(requests, stream, mr);
+  return scan_grouped(requests, stream, mr);
 }
 
 groupby::groups groupby::get_groups(table_view values,
@@ -271,14 +251,15 @@ groupby::groups groupby::get_groups(table_view values,
                                     rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
-  auto grouped_keys = helper().sorted_keys(stream, mr);
+  auto& grouping    = helper(mr);
+  auto grouped_keys = grouping.grouped_keys(stream, mr);
 
-  auto const& group_offsets       = helper().group_offsets(stream);
+  auto const& group_offsets       = grouping.group_offsets(stream, mr);
   auto const group_offsets_vector = cudf::detail::make_std_vector(group_offsets, stream);
 
   if (not values.is_empty()) {
     auto grouped_values = cudf::detail::gather(values,
-                                               helper().key_sort_order(stream),
+                                               grouping.grouped_order(false, stream, mr),
                                                cudf::out_of_bounds_policy::DONT_CHECK,
                                                cudf::negative_index_policy::NOT_ALLOWED,
                                                stream,
@@ -304,7 +285,11 @@ std::pair<std::unique_ptr<table>, std::unique_ptr<table>> groupby::replace_nulls
 
   if (values.is_empty()) { return std::pair(empty_like(_keys), empty_like(values)); }
 
-  auto const& group_labels = helper().group_labels(stream);
+  auto& grouping           = helper(mr);
+  auto const grouped_order = grouping.grouped_order(true, stream, mr);
+  auto const order         = device_span<size_type const>{grouped_order.begin<size_type>(),
+                                                          static_cast<std::size_t>(grouped_order.size())};
+  auto const& group_labels = grouping.group_labels(stream, mr);
   std::vector<std::unique_ptr<column>> results;
   results.reserve(values.num_columns());
   std::transform(
@@ -312,24 +297,22 @@ std::pair<std::unique_ptr<table>, std::unique_ptr<table>> groupby::replace_nulls
     cuda::counting_iterator{values.num_columns()},
     std::back_inserter(results),
     [&](auto i) {
-      bool nullable       = values.column(i).nullable();
-      auto final_mr       = nullable ? cudf::get_current_device_resource_ref() : mr;
-      auto grouped_values = helper().grouped_values(values.column(i), stream, final_mr);
-      return nullable ? detail::group_replace_nulls(
-                          *grouped_values, group_labels, replace_policies[i], stream, mr)
-                      : std::move(grouped_values);
+      return values.column(i).nullable()
+               ? detail::group_replace_nulls(
+                   values.column(i), order, group_labels, replace_policies[i], stream, mr)
+               : grouping.grouped_values(values.column(i), stream, mr);
     });
 
-  return std::pair(std::move(helper().sorted_keys(stream, mr)),
+  return std::pair(std::move(grouping.grouped_keys(stream, mr)),
                    std::make_unique<table>(std::move(results)));
 }
 
-// Get the sort helper object
-detail::sort::sort_groupby_helper& groupby::helper()
+// Get the grouping helper object
+detail::groupby_helper& groupby::helper(cudf::memory_resources mr)
 {
   if (_helper) return *_helper;
-  _helper = std::make_unique<detail::sort::sort_groupby_helper>(
-    _keys, _include_null_keys, _keys_are_sorted, _null_precedence);
+  _helper =
+    std::make_unique<detail::groupby_helper>(_keys, _include_null_keys, _keys_are_sorted, mr);
   return *_helper;
 };
 
@@ -352,20 +335,22 @@ std::pair<std::unique_ptr<table>, std::unique_ptr<table>> groupby::shift(
                           }),
                "values and fill_value should have the same type.",
                cudf::data_type_error);
+  auto& grouping = helper(mr);
+  grouping.grouped_order(false, stream, mr);
   std::vector<std::unique_ptr<column>> results;
-  auto const& group_offsets = helper().group_offsets(stream);
+  auto const& group_offsets = grouping.group_offsets(stream, mr);
   std::transform(
     cuda::counting_iterator<cudf::size_type>{0},
     cuda::counting_iterator{values.num_columns()},
     std::back_inserter(results),
     [&](size_type i) {
       auto grouped_values =
-        helper().grouped_values(values.column(i), stream, cudf::get_current_device_resource_ref());
+        grouping.grouped_values(values.column(i), stream, cudf::get_current_device_resource_ref());
       return cudf::detail::segmented_shift(
         grouped_values->view(), group_offsets, offsets[i], fill_values[i].get(), stream, mr);
     });
 
-  return std::pair(helper().sorted_keys(stream, mr),
+  return std::pair(grouping.grouped_keys(stream, mr),
                    std::make_unique<cudf::table>(std::move(results)));
 }
 

@@ -218,8 +218,11 @@ struct aggregate_result_functor;
  * framework through a set of ``get*`` accessors, as well as calling other built-in groupby
  * aggregations through the ``compute_aggregation`` function.
  *
- * @note The derived class can only perform sort-based groupby aggregations. Hash-based groupby
- * aggregations require more complex data structure and is not yet supported.
+ * @note Within an aggregation request, grouping metadata and cached value views are shared with
+ * the built-in aggregations.
+ * `get_grouped_values()` preserves input row order within each group. A separate view with values
+ * sorted within each group is computed when `get_sorted_grouped_values()` or a built-in aggregation
+ * that requires value ordering requests it. Repeated calls to that accessor reuse the sorted view.
  *
  * Example:
  * @code{.cpp}
@@ -346,6 +349,8 @@ struct groupby_host_udf : host_udf_base {
   /**
    * @brief Access the input values grouped according to the input keys and sorted within each
    * group.
+   *
+   * Requesting this view does not change the input row order preserved by `get_grouped_values()`.
    *
    * @return The sorted grouped values column.
    */

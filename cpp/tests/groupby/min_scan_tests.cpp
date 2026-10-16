@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -147,7 +147,7 @@ struct GroupByMinScanFixedPointTest : public cudf::test::BaseFixture {};
 
 TYPED_TEST_SUITE(GroupByMinScanFixedPointTest, cudf::test::FixedPointTypes);
 
-TYPED_TEST(GroupByMinScanFixedPointTest, GroupBySortMinScanDecimalAsValue)
+TYPED_TEST(GroupByMinScanFixedPointTest, MinScanDecimalAsValue)
 {
   using namespace numeric;
   using decimalXX  = TypeParam;

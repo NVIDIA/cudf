@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,6 +11,10 @@
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/aggregation.hpp>
+#include <cudf/copying.hpp>
+#include <cudf/sorting.hpp>
+
+#include <cstddef>
 
 using namespace cudf::test::iterators;
 
@@ -159,32 +163,36 @@ TYPED_TEST(groupby_var_test, dictionary)
                   cudf::make_variance_aggregation<cudf::groupby_aggregation>());
 }
 
-// This test ensures that the same results are produced by the sort-based and
-// hash-based implementations of groupby-variance.
-TYPED_TEST(groupby_var_test, sort_vs_hash)
+using groupby_var_mixed_test = groupby_var_test<double>;
+
+TEST_F(groupby_var_mixed_test, SeparateAndCombinedRequests)
 {
-  using K = int32_t;
-  using V = double;
-
-  cudf::test::fixed_width_column_wrapper<K> keys{50, 30, 90, 80};
-  cudf::test::fixed_width_column_wrapper<V> vals{380.0, 370.0, 24.0, 26.0};
-
-  cudf::groupby::groupby gb_obj(cudf::table_view({keys}));
-
-  auto agg1 = cudf::make_variance_aggregation<cudf::groupby_aggregation>();
-
-  std::vector<cudf::groupby::aggregation_request> requests;
-  requests.emplace_back();
+  cudf::test::fixed_width_column_wrapper<int32_t> keys{2, 1, 2, 1};
+  cudf::test::fixed_width_column_wrapper<double> vals{5.0, 6.0, 3.0, 2.0};
+  cudf::test::fixed_width_column_wrapper<int32_t> expected_keys{1, 2};
+  cudf::test::fixed_width_column_wrapper<double> expected_variance{8.0, 2.0};
+  cudf::test::fixed_width_column_wrapper<double> expected_quantile{3.0, 3.5};
+  cudf::groupby::groupby gb_obj(cudf::table_view{{keys}});
+  std::vector<cudf::groupby::aggregation_request> requests(1);
   requests[0].values = vals;
-  requests[0].aggregations.push_back(std::move(agg1));
+  requests[0].aggregations.push_back(cudf::make_variance_aggregation<cudf::groupby_aggregation>());
 
-  auto result1 = gb_obj.aggregate(requests);
-
-  // This agg forces a sort groupby.
-  auto agg2 = cudf::make_quantile_aggregation<cudf::groupby_aggregation>({0.25});
-  requests[0].aggregations.push_back(std::move(agg2));
-
-  auto result2 = gb_obj.aggregate(requests);
-
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result1.second[0].results[0], *result2.second[0].results[0]);
+  // Sorting values for quantiles must preserve variance on the reused grouping.
+  for (bool const with_quantile : {false, true}) {
+    if (with_quantile) {
+      requests[0].aggregations.push_back(
+        cudf::make_quantile_aggregation<cudf::groupby_aggregation>({0.25}));
+    }
+    auto result = gb_obj.aggregate(requests);
+    ASSERT_EQ(result.second.size(), 1);
+    ASSERT_EQ(result.second[0].results.size(), with_quantile ? 2 : 1);
+    auto order       = cudf::sorted_order(result.first->view());
+    auto sorted_keys = cudf::gather(result.first->view(), *order);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_keys, sorted_keys->get_column(0));
+    for (std::size_t i = 0; i < result.second[0].results.size(); ++i) {
+      auto values = cudf::gather(cudf::table_view{{*result.second[0].results[i]}}, *order);
+      CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(i == 0 ? expected_variance : expected_quantile,
+                                          values->get_column(0));
+    }
+  }
 }

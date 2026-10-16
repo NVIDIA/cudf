@@ -30,10 +30,7 @@ namespace CUDF_EXPORT cudf {
 //! `groupby` APIs
 namespace groupby {
 namespace detail {
-namespace sort {
-struct sort_groupby_helper;
-
-}  // namespace sort
+struct groupby_helper;
 }  // namespace detail
 
 /**
@@ -85,6 +82,13 @@ struct aggregation_result {
 
 /**
  * @brief Groups values by keys and computes aggregations on those groups.
+ *
+ * Aggregations, scans, and other grouped operations share grouping metadata. Keys not declared
+ * presorted are grouped by hashing; keys declared presorted are grouped by comparing adjacent rows.
+ *
+ * Order-sensitive operations, such as NTH_ELEMENT and COLLECT_LIST, preserve input row order
+ * within each group. Aggregations that require values in sorted order, such as QUANTILE and
+ * MEDIAN, sort values within each group as needed.
  */
 class groupby {
  public:
@@ -99,9 +103,10 @@ class groupby {
    * @brief Construct a groupby object with the specified `keys`
    *
    * If the `keys` are already sorted, better performance may be achieved by
-   * passing `keys_are_sorted == true` and indicating the  ascending/descending
-   * order of each column and null order in  `column_order` and
-   * `null_precedence`, respectively.
+   * passing `keys_are_sorted == sorted::YES`: equal keys are then expected to be
+   * adjacent and are grouped by comparing neighboring rows instead of hashing.
+   * Input sortedness is not detected or checked. Operations still build grouping metadata
+   * and filter rows with null keys when `null_handling == null_policy::EXCLUDE`.
    *
    * @note This object does *not* maintain the lifetime of `keys`. It is the
    * user's responsibility to ensure the `groupby` object does not outlive the
@@ -111,12 +116,13 @@ class groupby {
    * @param null_handling Indicates whether rows in `keys` that contain
    * NULL values should be included
    * @param keys_are_sorted Indicates whether rows in `keys` are already sorted
-   * @param column_order If `keys_are_sorted == YES`, indicates whether each
-   * column is ascending/descending. If empty, assumes all  columns are
-   * ascending. Ignored if `keys_are_sorted == false`.
-   * @param null_precedence If `keys_are_sorted == YES`, indicates the ordering
-   * of null values in each column. Else, ignored. If empty, assumes all columns
-   * use `null_order::AFTER`. Ignored if `keys_are_sorted == false`.
+   * @param column_order If `keys_are_sorted == sorted::YES`, indicates whether each
+   * column is ascending/descending. Grouping presorted keys only relies on equal
+   * keys being adjacent, so this does not affect the result. Ignored if
+   * `keys_are_sorted == sorted::NO`.
+   * @param null_precedence If `keys_are_sorted == sorted::YES`, indicates the ordering
+   * of null values in each column. Like `column_order`, this does not affect the
+   * result. Ignored if `keys_are_sorted == sorted::NO`.
    */
   explicit groupby(table_view const& keys,
                    null_policy null_handling                      = null_policy::EXCLUDE,
@@ -203,8 +209,8 @@ class groupby {
    * `keys` given to groupby object. Element `i` across all aggregation results
    * belongs to the group at row `i` in the group labels table.
    *
-   * The order of the rows in the group labels is arbitrary. Furthermore,
-   * successive `groupby::scan` calls may return results in different orders.
+   * Groups appear in arbitrary order, while rows within each group retain their input order.
+   * Successive `groupby::scan` calls may return groups in different orders.
    *
    * @throws cudf::logic_error If `requests[i].values.size() !=
    * keys.num_rows()`.
@@ -304,6 +310,8 @@ class groupby {
    * a table of grouped keys and a table of grouped values. In addition, it holds
    * a vector of integer offsets into the rows of the tables, such that
    * `offsets[i+1] - offsets[i]` gives the size of group `i`.
+   *
+   * Rows within each group keep their input order; the order of the groups is arbitrary.
    */
   struct groups {
     std::unique_ptr<table> keys;     ///< Table of grouped keys
@@ -335,9 +343,9 @@ class groupby {
    * in group `j` that precedes or follows `value[i]`. If a non-null value is not found in the
    * specified direction, `value[i]` is left NULL.
    *
-   * The returned pair contains a column of the sorted keys and the result column. In result column,
-   * values of the same group are in contiguous memory. In each group, the order of values maintain
-   * their original order. The order of groups are not guaranteed.
+   * The returned pair contains a column of the grouped keys and the result column. In result
+   * column, values of the same group are in contiguous memory. In each group, the order of values
+   * maintain their original order. The order of groups are not guaranteed.
    *
    * Example:
    * @code{.pseudo}
@@ -362,7 +370,7 @@ class groupby {
    * @param[in] stream CUDA stream used for device memory operations and kernel launches.
    * @param[in] mr Device memory resource used to allocate device memory of the returned column
    *
-   * @return Pair that contains a table with the sorted keys and the result column
+   * @return Pair that contains a table with the grouped keys and the result column
    */
   std::pair<std::unique_ptr<table>, std::unique_ptr<table>> replace_nulls(
     table_view const& values,
@@ -380,34 +388,23 @@ class groupby {
   std::vector<null_order> _null_precedence{};            ///< If keys are sorted,
                                                          ///< indicates null order
                                                          ///< of each column
-  std::unique_ptr<detail::sort::sort_groupby_helper>
-    _helper;  ///< Helper object
-              ///< used by sort based implementation
+  std::unique_ptr<detail::groupby_helper> _helper;       ///< Cached grouping metadata
 
   /**
-   * @brief Get the sort helper object
+   * @brief Get the grouping helper object
    *
    * The object is constructed on first invocation and subsequent invocations
-   * of this function return the memoized object.
+   * of this function return the memoized object. The first invocation retains the
+   * temporary resource for cached grouping data.
+   *
+   * @param mr Memory resources for the operation that initializes the helper
    */
-  detail::sort::sort_groupby_helper& helper();
+  detail::groupby_helper& helper(cudf::memory_resources mr);
 
   /**
-   * @brief Dispatches to the appropriate implementation to satisfy the
-   * aggregation requests.
+   * @brief Compute scan requests over the cached groups.
    */
-  std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> dispatch_aggregation(
-    std::span<aggregation_request const> requests,
-    cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr);
-
-  // Sort-based groupby
-  std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> sort_aggregate(
-    std::span<aggregation_request const> requests,
-    cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr);
-
-  std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> sort_scan(
+  std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> scan_grouped(
     std::span<scan_request const> requests,
     cuda::stream_ref stream,
     rmm::device_async_resource_ref mr);
@@ -463,7 +460,7 @@ struct streaming_aggregation_request {
  * inside the hash set, which must fit in `cudf::size_type`.
  *
  * All column types (including variable-width types such as strings, lists, and structs)
- * are supported for key columns.  Only hash-based aggregation kinds are supported; use
+ * are supported for key columns. Streaming supports the aggregation kinds listed below; use
  * `is_streaming_groupby_supported()` to query a specific (value type, aggregation kind)
  * combination.
  *

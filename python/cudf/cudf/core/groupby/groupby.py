@@ -19,7 +19,7 @@ import pyarrow as pa
 import pylibcudf as plc
 
 from cudf.api.types import is_list_like, is_scalar
-from cudf.core._internals import aggregation, sorting
+from cudf.core._internals import aggregation, copying, sorting
 from cudf.core.abc import Serializable
 from cudf.core.column import access_columns
 from cudf.core.column.column import (
@@ -631,6 +631,7 @@ class GroupBy(Serializable, Reducible, Scannable):
         self._dropna = dropna
         self._group_keys = group_keys
         self._selection = None
+        self._group_ordering: tuple[list[int], ColumnBase | None] | None = None
 
         if isinstance(self._by, _Grouping):
             self._by._obj = self.obj
@@ -652,20 +653,18 @@ class GroupBy(Serializable, Reducible, Scannable):
         group_names, offsets, _, grouped_values = self._grouped()
         if isinstance(group_names, Index):
             group_names = group_names.to_pandas()
-        if self._sort or len(offsets) <= 2:
+        if (
+            self._sort
+            or get_option("mode.pandas_compatible")
+            or len(offsets) <= 2
+        ):
             order = range(len(offsets) - 1)
         else:
-            # libcudf returns groups sorted by key, but with ``sort=False``
-            # pandas iterates groups in order of first appearance. Reorder by
-            # the earliest original row position in each group (group order
-            # matches between the two ``_groups`` calls since the grouping is
-            # identical).
+            # Preserve the iterator's first-appearance ordering used by
+            # ngroup and stack without ordering other native group results.
             pos_offsets, _, (positions,) = self._groups(
                 [self._range_column_from_obj]
             )
-            # Gather the earliest original row position of each group and sort
-            # the groups by it entirely on the device; only the small ``order``
-            # array (one entry per group) is copied back to the host.
             first_pos = positions.take(as_column(pos_offsets[:-1]))
             order = first_pos.argsort().to_numpy()
         for i in order:
@@ -955,10 +954,20 @@ class GroupBy(Serializable, Reducible, Scannable):
         return self._groupby_manager
 
     def _groups(
-        self, values: Iterable[ColumnBase]
+        self, values: Iterable[ColumnBase], *, order_groups: bool | None = None
     ) -> tuple[list[int], list[ColumnBase], list[ColumnBase]]:
+        if order_groups is None:
+            order_groups = self._sort or get_option("mode.pandas_compatible")
         # Materialize iterator to avoid consuming it during access context setup
         values_list = list(values)
+        # First-appearance ordering needs the input position of every grouped
+        # row. Gather a range column along with the values instead of grouping
+        # a second time.
+        need_positions = (
+            order_groups and not self._sort and self._group_ordering is None
+        )
+        if need_positions:
+            values_list.append(self._range_column_from_obj)
         key_dtypes = [col.dtype for col in self.grouping._key_columns]
         value_dtypes = [col.dtype for col in values_list]
         with access_columns(*values_list, mode="read", scope="internal"):
@@ -973,25 +982,78 @@ class GroupBy(Serializable, Reducible, Scannable):
                     plc_table
                 )
 
-        return (
-            offsets,
+        key_columns = [
+            ColumnBase.create(col, dtype)
+            for col, dtype in zip(
+                grouped_keys.columns(), key_dtypes, strict=True
+            )
+        ]
+        value_columns = (
             [
                 ColumnBase.create(col, dtype)
                 for col, dtype in zip(
-                    grouped_keys.columns(), key_dtypes, strict=True
+                    grouped_values.columns(), value_dtypes, strict=True
                 )
-            ],
-            (
-                [
-                    ColumnBase.create(col, dtype)
-                    for col, dtype in zip(
-                        grouped_values.columns(), value_dtypes, strict=True
-                    )
-                ]
-                if grouped_values is not None
-                else []
-            ),
+            ]
+            if grouped_values is not None
+            else []
         )
+        positions = value_columns.pop() if need_positions else None
+        if not order_groups or len(offsets) <= 2:
+            return offsets, key_columns, value_columns
+
+        # Cache the requested group order, preserving row order within each group.
+        if self._group_ordering is None:
+            group_starts = as_column(offsets[:-1])
+            if self._sort:
+                group_names = _index_from_data(
+                    {
+                        i: col.take(group_starts)
+                        for i, col in enumerate(key_columns)
+                    }
+                )
+                group_order = cp.asnumpy(group_names.argsort())
+            else:
+                assert positions is not None
+                first_positions = positions.take(group_starts)
+                group_order = first_positions.argsort().to_numpy()
+
+            if np.array_equal(group_order, np.arange(len(offsets) - 1)):
+                self._group_ordering = (offsets, None)
+            else:
+                old_offsets = np.asarray(offsets, dtype=SIZE_TYPE_DTYPE)
+                sizes = np.diff(old_offsets)[group_order]
+                new_offsets = np.zeros_like(old_offsets)
+                np.cumsum(sizes, out=new_offsets[1:])
+                # Every row of a group moves by the same amount, so repeat the
+                # per-group shift over the group sizes and add it to the new
+                # positions.
+                shifts = Index(
+                    old_offsets[:-1][group_order] - new_offsets[:-1]
+                )
+                row_order = cp.arange(offsets[-1], dtype=SIZE_TYPE_DTYPE)
+                row_order += shifts.repeat(sizes).values
+                self._group_ordering = (
+                    new_offsets.tolist(),
+                    as_column(row_order),
+                )
+
+        offsets, row_order = self._group_ordering
+        if row_order is not None:
+            columns = key_columns + value_columns
+            reordered = [
+                ColumnBase.create(col, original.dtype)
+                for col, original in zip(
+                    copying.gather(columns, row_order),  # type: ignore[arg-type]
+                    columns,
+                    strict=True,
+                )
+            ]
+            key_columns, value_columns = (
+                reordered[: len(key_columns)],
+                reordered[len(key_columns) :],
+            )
+        return offsets, key_columns, value_columns
 
     def _aggregate(
         self, values: tuple[ColumnBase, ...], aggregations
@@ -1390,12 +1452,11 @@ class GroupBy(Serializable, Reducible, Scannable):
 
         result = DataFrame._from_data(data, index=result_index)
 
-        if self._sort:
+        is_scan = _is_all_scan_aggregate(normalized_aggs)
+        if self._sort and not is_scan:
             result = result.sort_index()
         else:
-            if get_option(
-                "mode.pandas_compatible"
-            ) and not _is_all_scan_aggregate(normalized_aggs):
+            if get_option("mode.pandas_compatible") and not is_scan:
                 # Even with `sort=False`, pandas guarantees that
                 # groupby preserves the order of rows within each group.
                 left_cols = self.grouping.keys.drop_duplicates()._columns
@@ -1464,7 +1525,6 @@ class GroupBy(Serializable, Reducible, Scannable):
                     )
                 )
 
-        is_scan = _is_all_scan_aggregate(normalized_aggs)
         if not self._as_index and not is_scan:
             result = result.reset_index()
         if is_scan:
@@ -1696,7 +1756,9 @@ class GroupBy(Serializable, Reducible, Scannable):
         # into the grouping, but that probably requires a new
         # aggregation scheme in libcudf. This is probably "fast
         # enough" for most reasonable input sizes.
-        _, offsets, _, group_values = self._grouped()
+        _, offsets, _, group_values = self._grouped(
+            order_groups=False if preserve_order else None
+        )
         group_offsets = np.asarray(offsets, dtype=SIZE_TYPE_DTYPE)
         size_per_group = np.diff(group_offsets)
         # "Out of bounds" n for the group size either means no entries
@@ -1724,7 +1786,9 @@ class GroupBy(Serializable, Reducible, Scannable):
             # Can't use _mimic_pandas_order because we need to
             # subsample the gather map from the full input ordering,
             # rather than permuting the gather map of the output.
-            _, _, (ordering,) = self._groups([self._range_column_from_obj])
+            _, _, (ordering,) = self._groups(
+                [self._range_column_from_obj], order_groups=False
+            )
             # Invert permutation from original order to groups on the
             # subset of entries we want.
             gather_map = ordering.take(to_take).argsort()
@@ -2145,7 +2209,6 @@ class GroupBy(Serializable, Reducible, Scannable):
         # Get the groups
         # TODO: convince Cython to convert the std::vector offsets
         # into a numpy array directly, rather than a list.
-        # TODO: this uses the sort-based groupby, could one use hash-based?
         _, offsets, _, group_values = self._grouped()
         group_offsets = np.asarray(offsets, dtype=SIZE_TYPE_DTYPE)
         size_per_group = np.diff(group_offsets)
@@ -2256,11 +2319,14 @@ class GroupBy(Serializable, Reducible, Scannable):
         )
         return cls(obj, grouping, **kwargs)
 
-    def _grouped(self, *, include_groups: bool = True):
+    def _grouped(
+        self, *, include_groups: bool = True, order_groups: bool | None = None
+    ):
         from cudf.core.dataframe import DataFrame
 
         offsets, grouped_key_cols, grouped_value_cols = self._groups(
-            itertools.chain(self.obj.index._columns, self.obj._columns)
+            itertools.chain(self.obj.index._columns, self.obj._columns),
+            order_groups=order_groups,
         )
         grouped_keys = _index_from_data(dict(enumerate(grouped_key_cols)))
         if isinstance(self.grouping.keys, MultiIndex):
@@ -2281,7 +2347,7 @@ class GroupBy(Serializable, Reducible, Scannable):
                     selection is None or col_name not in selection
                 ):
                     del grouped_values[col_name]
-        group_names = grouped_keys.unique().sort_values()
+        group_names = grouped_keys.take(as_column(offsets[:-1]))
         return (group_names, offsets, grouped_keys, grouped_values)
 
     def _normalize_aggs(
@@ -2561,11 +2627,11 @@ class GroupBy(Serializable, Reducible, Scannable):
                 # Every chunk result is indexed like its input chunk, i.e.
                 # the UDF acted as a transform. pandas restores the original
                 # row order in this case (GroupBy._concat_objects) regardless
-                # of ``sort``. The concatenated chunks are in key-sorted
+                # of ``sort``. The concatenated chunks are in Python's
                 # group order, so gather back through the inverse of the
                 # grouping permutation.
                 _, _, (positions,) = self._groups(
-                    [self._range_column_from_obj]
+                    [self._range_column_from_obj], order_groups=True
                 )
                 result = result.take(positions.argsort().values)
         return result
@@ -2710,36 +2776,8 @@ class GroupBy(Serializable, Reducible, Scannable):
         if not callable(func):
             raise TypeError(f"type {type(func)} is not callable")
         group_names, offsets, group_keys, grouped_values = self._grouped(
-            include_groups=include_groups
+            include_groups=include_groups, order_groups=True
         )
-
-        if not self._sort and len(offsets) > 2:
-            # libcudf returns groups sorted by key, but with ``sort=False``
-            # pandas processes groups in order of first appearance. Permute
-            # the grouped layout accordingly so both engines and the result
-            # assembly see pandas' iteration order.
-            pos_offsets, _, (positions,) = self._groups(
-                [self._range_column_from_obj]
-            )
-            first_pos = positions.take(as_column(pos_offsets[:-1]))
-            group_order = first_pos.argsort().to_numpy()
-            sizes = np.diff(np.asarray(offsets, dtype=SIZE_TYPE_DTYPE))
-            row_order = as_column(
-                np.concatenate(
-                    [
-                        np.arange(
-                            offsets[i], offsets[i + 1], dtype=SIZE_TYPE_DTYPE
-                        )
-                        for i in group_order
-                    ]
-                )
-            )
-            group_names = group_names.take(group_order)
-            group_keys = group_keys.take(row_order)
-            grouped_values = grouped_values.take(row_order)
-            new_offsets = np.zeros(len(sizes) + 1, dtype=SIZE_TYPE_DTYPE)
-            np.cumsum(sizes[group_order], out=new_offsets[1:])
-            offsets = new_offsets.tolist()
 
         if engine == "auto":
             if _can_be_jitted(grouped_values, func, args):
@@ -2767,10 +2805,9 @@ class GroupBy(Serializable, Reducible, Scannable):
         else:
             raise ValueError(f"Unsupported engine '{engine}'")
 
-        # No final sort: group-keyed results are already produced in
-        # sorted group-key order, and pandas preserves the UDF's
-        # within-group row order (and a transform's original row order)
-        # regardless of ``sort`` (pandas GH52444).
+        # Group-keyed results already use the requested group order. Preserve
+        # the UDF's within-group row order and a transform's original row
+        # order regardless of ``sort`` (pandas GH52444).
         if self._as_index is False:
             result = result.reset_index()
         return result
@@ -2968,10 +3005,10 @@ class GroupBy(Serializable, Reducible, Scannable):
               Speed
               count   mean  std    min    25%    50%    75%    max
         Score
-        30        1  370.0  NaN  370.0  370.0  370.0  370.0  370.0
         50        1  380.0  NaN  380.0  380.0  380.0  380.0  380.0
-        80        1   26.0  NaN   26.0   26.0   26.0   26.0   26.0
+        30        1  370.0  NaN  370.0  370.0  370.0  370.0  370.0
         90        1   24.0  NaN   24.0   24.0   24.0   24.0   24.0
+        80        1   26.0  NaN   26.0   26.0   26.0   26.0   26.0
 
         """
         if percentiles is not None:
@@ -3101,7 +3138,7 @@ class GroupBy(Serializable, Reducible, Scannable):
     def _cov_or_corr(self, func, method_name):
         """
         Internal function that is called by either corr() or cov()
-        for sort groupby correlation and covariance computations,
+        for groupby correlation and covariance computations,
         respectively.
         """
         # create expanded dataframe consisting all combinations of the
@@ -3685,7 +3722,9 @@ class GroupBy(Serializable, Reducible, Scannable):
         # result coming back from libcudf has null_count few rows than
         # the input, so we must produce an ordering from the full
         # input range.
-        _, _, (ordering,) = self._groups([self._range_column_from_obj])
+        _, _, (ordering,) = self._groups(
+            [self._range_column_from_obj], order_groups=False
+        )
         if self._dropna and any(
             c.has_nulls(include_nan=True) > 0
             for c in self.grouping._key_columns

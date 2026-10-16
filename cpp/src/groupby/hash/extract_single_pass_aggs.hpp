@@ -15,15 +15,15 @@
 namespace cudf::groupby::detail::hash {
 
 /**
- * @brief Extract single pass aggregations from the given aggregation requests.
+ * @brief Extract primitive reductions from the given aggregation requests.
  *
- * During extraction, compound (i.e., multi-pass) aggregations will be replaced by their
- * corresponding single pass aggregations dependencies. For example, a MEAN aggregation will be
+ * During extraction, compound aggregations will be replaced by their primitive reduction
+ * dependencies. For example, a MEAN aggregation will be
  * replaced by a SUM and a COUNT_VALID aggregation.
  *
  * For some single-pass aggregations, we also try to reduce overhead by forcing their results
  * columns to be non-nullable. For example, a SUM aggregation needed only as the intermediate result
- * for M2 aggregation will not need to have a nullmask to avoid the extra nullmask update and null
+ * for MEAN aggregation will not need to have a nullmask to avoid the extra nullmask update and null
  * count computation overhead.
  *
  * @param requests The aggregation requests

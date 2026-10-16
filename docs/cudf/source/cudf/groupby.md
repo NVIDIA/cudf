@@ -82,6 +82,11 @@ a
 ```
 ````
 
+The `sort` option controls the order of group keys in the result. It does not
+select a different grouping implementation or sort the values within each group.
+Operations that depend on row order, such as `nth` and list collection, use the
+original order of rows within each group.
+
 ### Grouping by index levels
 
 You can also group by one or more levels of a MultiIndex:

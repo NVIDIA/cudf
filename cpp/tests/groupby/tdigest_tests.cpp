@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,8 +10,10 @@
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/aggregation.hpp>
+#include <cudf/copying.hpp>
 #include <cudf/detail/tdigest/tdigest.hpp>
 #include <cudf/filling.hpp>
+#include <cudf/sorting.hpp>
 #include <cudf/tdigest/tdigest_column_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -39,8 +41,10 @@ struct tdigest_gen_grouped {
     std::vector<std::unique_ptr<cudf::groupby_aggregation>> aggregations;
     aggregations.push_back(cudf::make_tdigest_aggregation<cudf::groupby_aggregation>(delta));
     requests.push_back({values, std::move(aggregations)});
-    auto result = gb.aggregate(requests);
-    return std::move(result.second[0].results[0]);
+    auto result      = gb.aggregate(requests);
+    auto const order = cudf::sorted_order(result.first->view());
+    return std::move(
+      cudf::gather(cudf::table_view{{result.second[0].results[0]->view()}}, *order)->release()[0]);
   }
 
   template <
@@ -123,7 +127,9 @@ TYPED_TEST(TDigestAllTypes, AllNull)
   cudf::test::tdigest_simple_all_nulls_aggregation<T>(tdigest_groupby_simple_op{});
 }
 
-TYPED_TEST(TDigestAllTypes, LargeGroups)
+struct TDigestTest : public cudf::test::BaseFixture {};
+
+TEST_F(TDigestTest, LargeGroups)
 {
   auto _values = cudf::test::generate_standardized_percentile_distribution(
     cudf::data_type{cudf::type_id::FLOAT64});
@@ -190,8 +196,6 @@ TYPED_TEST(TDigestAllTypes, LargeGroups)
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*result.second[0].results[0], *merged_parts);
 }
 
-struct TDigestTest : public cudf::test::BaseFixture {};
-
 TEST_F(TDigestTest, EmptyMixed)
 {
   cudf::test::fixed_width_column_wrapper<double> values{
@@ -216,7 +220,10 @@ TEST_F(TDigestTest, EmptyMixed)
                                               {FCW{50.0, 60.0}, FCW{1.0, 1.0}, 50.0, 60.0},
                                               {FCW{}, FCW{}, 0, 0}});
 
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result.second[0].results[0], *expected);
+  auto const order = cudf::sorted_order(result.first->view());
+  auto const ordered =
+    cudf::gather(cudf::table_view{{result.second[0].results[0]->view()}}, *order);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(ordered->get_column(0), *expected);
 }
 
 template <typename Func>
@@ -711,7 +718,9 @@ std::unique_ptr<cudf::table> do_agg(
   EXPECT_EQ(result.second[0].results.size(), 1);
   result_columns.push_back(std::move(result.second[0].results[0]));
 
-  return std::make_unique<cudf::table>(std::move(result_columns));
+  auto output      = cudf::table{std::move(result_columns)};
+  auto const order = cudf::sorted_order(cudf::table_view{{output.view().column(0)}});
+  return cudf::gather(output.view(), *order);
 }
 }  // namespace
 

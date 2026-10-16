@@ -36,6 +36,7 @@ namespace cudf::detail {
  * @param result Device-accessible iterator to start of output values
  * @param predicate Unary predicate that returns true for elements to copy
  * @param stream CUDA stream to use
+ * @param mr Memory resources whose temporary resource is used for scratch allocations
  * @return Iterator pointing to the end of the output range
  */
 template <typename InputIterator,
@@ -47,17 +48,16 @@ OutputIterator copy_if(InputIterator begin,
                        StencilIterator stencil,
                        OutputIterator result,
                        Predicate predicate,
-                       cuda::stream_ref stream)
+                       cuda::stream_ref stream,
+                       cudf::memory_resources mr = cudf::get_current_device_resource_ref())
 {
   auto const num_items = cuda::std::distance(begin, end);
 
-  auto num_selected =
-    cudf::detail::device_scalar<cuda::std::size_t>(stream, cudf::get_current_device_resource_ref());
+  auto num_selected = cudf::detail::device_scalar<cuda::std::size_t>(stream, mr.get_temporary_mr());
 
-  auto env =
-    cuda::std::execution::env{cuda::std::execution::prop{cuda::get_stream_t{}, stream},
-                              cuda::std::execution::prop{cuda::mr::get_memory_resource_t{},
-                                                         cudf::get_current_device_resource_ref()}};
+  auto env = cuda::std::execution::env{
+    cuda::std::execution::prop{cuda::get_stream_t{}, stream},
+    cuda::std::execution::prop{cuda::mr::get_memory_resource_t{}, mr.get_temporary_mr()}};
   CUDF_CUDA_TRY(cub::DeviceSelect::FlaggedIf(
     begin, stencil, result, num_selected.data(), num_items, predicate, env));
 

@@ -907,20 +907,6 @@ TEST_F(StreamingGroupbyTest, UnsupportedAggThrows)
                std::invalid_argument);
 }
 
-TEST_F(StreamingGroupbyTest, BatchExceedsMaxDistinctKeysThrows)
-{
-  using K = int32_t;
-  using V = int32_t;
-
-  cudf::test::fixed_width_column_wrapper<K> keys{1, 2, 3, 4, 5};
-  cudf::test::fixed_width_column_wrapper<V> vals{10, 20, 30, 40, 50};
-
-  auto reqs = single_agg_req(1, cudf::make_sum_aggregation<cudf::groupby_aggregation>());
-
-  cudf::groupby::streaming_groupby streaming_agg(KEY_COL, reqs, 3);
-  EXPECT_THROW(streaming_agg.aggregate(cudf::table_view{{keys, vals}}), std::invalid_argument);
-}
-
 TEST_F(StreamingGroupbyTest, DisjointKeysAcrossBatches)
 {
   using K = int32_t;

@@ -12,6 +12,7 @@
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/column/column_view.hpp>
+#include <cudf/detail/aggregation/aggregation.hpp>
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
@@ -36,15 +37,19 @@ namespace cudf::groupby::detail::hash {
 
 namespace {
 
+constexpr bool is_batched_reduction(aggregation::Kind kind)
+{
+  return cudf::detail::is_sum_product_agg(kind) || kind == aggregation::MIN ||
+         kind == aggregation::MAX;
+}
+
 struct compute_reduction_fn {
   reduction_context const& ctx;
 
   template <aggregation::Kind K>
   std::unique_ptr<column> operator()(cuda::stream_ref stream, cudf::memory_resources mr) const
   {
-    if constexpr (K == aggregation::SUM || K == aggregation::PRODUCT ||
-                  K == aggregation::SUM_OF_SQUARES || K == aggregation::MIN ||
-                  K == aggregation::MAX || K == aggregation::ARGMIN || K == aggregation::ARGMAX ||
+    if constexpr (is_batched_reduction(K) || K == aggregation::ARGMIN || K == aggregation::ARGMAX ||
                   K == aggregation::SUM_OVERFLOW) {
       return compute_reduction<K>(ctx, stream, mr);
     } else {
@@ -61,8 +66,7 @@ struct compute_reductions_fn {
   std::vector<std::unique_ptr<column>> operator()(cuda::stream_ref stream,
                                                   cudf::memory_resources mr) const
   {
-    if constexpr (K == aggregation::SUM || K == aggregation::SUM_OF_SQUARES ||
-                  K == aggregation::PRODUCT || K == aggregation::MIN || K == aggregation::MAX) {
+    if constexpr (is_batched_reduction(K)) {
       return compute_reductions<K>(contexts, is_intermediate, stream, mr);
     } else {
       CUDF_FAIL("Unsupported batched hash groupby aggregation");
@@ -87,8 +91,10 @@ std::unique_ptr<column> compute_aggregation(aggregation::Kind kind,
 
 bool is_single_pass_agg_supported(data_type values_type, aggregation::Kind kind)
 {
-  if (cudf::is_nested(values_type)) { return false; }
   if (kind == aggregation::COUNT_VALID || kind == aggregation::COUNT_ALL) { return true; }
+  if (cudf::is_nested(values_type)) {
+    return kind == aggregation::ARGMIN || kind == aggregation::ARGMAX;
+  }
   if (values_type.id() == type_id::EMPTY) { return false; }
   return type_dispatcher(values_type,
                          [kind]<typename T>() { return is_reduction_supported<T>(kind); });
@@ -98,7 +104,7 @@ std::vector<std::unique_ptr<column>> compute_single_pass_aggs(
   table_view const& values,
   host_span<aggregation::Kind const> agg_kinds,
   std::span<int8_t const> is_agg_intermediate,
-  grouped_rows const& grouped,
+  group_reduction_plan const& grouped,
   cuda::stream_ref stream,
   cudf::memory_resources mr)
 {
@@ -163,10 +169,7 @@ std::vector<std::unique_ptr<column>> compute_single_pass_aggs(
   // Keep each same-input fused run intact; otherwise batch adjacent compatible reductions.
   auto const batch_end = [&](std::size_t begin, data_type values_type, bool nullable) {
     auto const kind = agg_kinds[begin];
-    if (kind != aggregation::SUM && kind != aggregation::SUM_OF_SQUARES &&
-        kind != aggregation::PRODUCT && kind != aggregation::MIN && kind != aggregation::MAX) {
-      return begin + 1;
-    }
+    if (!is_batched_reduction(kind)) { return begin + 1; }
     auto end = begin + 1;
     while (end < num_aggs && agg_kinds[end] == kind) {
       auto const& col = values.column(end);

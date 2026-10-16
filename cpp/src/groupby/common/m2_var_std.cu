@@ -3,12 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "groupby/common/utils.hpp"
 #include "m2_var_std.hpp"
 
 #include <cudf/column/column_factories.hpp>
 #include <cudf/column/column_view.hpp>
 #include <cudf/detail/aggregation/aggregation.hpp>
-#include <cudf/detail/valid_if.cuh>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
@@ -18,7 +18,6 @@
 #include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/cmath>
-#include <cuda/std/functional>
 #include <cuda/stream>
 #include <thrust/tabulate.h>
 
@@ -144,7 +143,7 @@ std::unique_ptr<column> compute_variance_std(TransformFunc&& transform_fn,
                    transform_fn);
 
   auto [null_mask, null_count] =
-    cudf::detail::valid_if(validity.begin(), validity.end(), cuda::std::identity{}, stream, mr);
+    make_mask_from_validity(validity.data(), validity.data() + validity.size(), stream, mr);
   if (null_count > 0) { output->set_null_mask(std::move(null_mask), null_count); }
 
   return output;

@@ -51,13 +51,15 @@ namespace cudf::detail {
  * @param label_begin The beginning of the output label range.
  * @param label_end The end of the output label range.
  * @param stream CUDA stream used for device memory operations and kernel launches.
+ * @param mr Memory resources whose temporary resource is used for scratch allocations.
  */
 template <typename InputIterator, typename OutputIterator>
 void label_segments(InputIterator offsets_begin,
                     InputIterator offsets_end,
                     OutputIterator label_begin,
                     OutputIterator label_end,
-                    cuda::stream_ref stream)
+                    cuda::stream_ref stream,
+                    cudf::memory_resources mr = cudf::get_current_device_resource_ref())
 {
   auto const num_labels = cuda::std::distance(label_begin, label_end);
 
@@ -69,10 +71,7 @@ void label_segments(InputIterator offsets_begin,
   // When the output array is not empty, always fill it with `0` value first.
   using OutputType = cuda::std::iter_value_t<OutputIterator>;
   thrust::uninitialized_fill(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-    label_begin,
-    label_end,
-    OutputType{0});
+    rmm::exec_policy_nosync(stream, mr.get_temporary_mr()), label_begin, label_end, OutputType{0});
 
   // If the offsets array has no more than 2 offset values, there will be at max 1 segment.
   // In such cases, the output will just be an array of all `0` values (which we already filled).
@@ -81,7 +80,7 @@ void label_segments(InputIterator offsets_begin,
   // very large segment.
   if (cuda::std::distance(offsets_begin, offsets_end) <= 2) { return; }
 
-  thrust::for_each(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::for_each(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                    offsets_begin + 1,  // exclude the first offset value
                    offsets_end - 1,    // exclude the last offset value
                    [num_labels = static_cast<cuda::std::iter_value_t<InputIterator>>(num_labels),
@@ -98,10 +97,8 @@ void label_segments(InputIterator offsets_begin,
                      // output.
                      if (dst_idx < num_labels) { atomicAdd(&output[dst_idx], OutputType{1}); }
                    });
-  thrust::inclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                         label_begin,
-                         label_end,
-                         label_begin);
+  thrust::inclusive_scan(
+    rmm::exec_policy_nosync(stream, mr.get_temporary_mr()), label_begin, label_end, label_begin);
 }
 
 /**

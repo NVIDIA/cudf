@@ -33,13 +33,14 @@ constexpr bool is_reduction_supported(aggregation::Kind kind)
     case aggregation::PRODUCT: return cudf::detail::is_valid_aggregation<T, aggregation::PRODUCT>();
     case aggregation::SUM_OF_SQUARES:
       return cudf::detail::is_valid_aggregation<T, aggregation::SUM_OF_SQUARES>();
+    case aggregation::M2: return cudf::is_numeric<T>() && !cudf::is_fixed_point<T>();
     case aggregation::SUM_OVERFLOW:
       return cudf::detail::is_valid_aggregation<T, aggregation::SUM_OVERFLOW>();
     // Target-type validity alone does not constrain extrema's storage or comparisons.
     case aggregation::MIN:
     case aggregation::MAX: return cudf::is_fixed_width<T>() && is_relationally_comparable<T, T>();
     case aggregation::ARGMIN:
-    case aggregation::ARGMAX: return is_relationally_comparable<T, T>();
+    case aggregation::ARGMAX: return is_relationally_comparable<T, T>() || cudf::is_nested<T>();
     default: return false;
   }
 }
@@ -57,7 +58,7 @@ bool is_single_pass_agg_supported(data_type values_type, aggregation::Kind kind)
  * Small groups use scalar folds, bounded groups use warp reductions, and long groups
  * use block-reduced chunks. Group IDs preserve the original output order.
  */
-struct grouped_rows {
+struct group_reduction_plan {
   device_span<size_type const> rows;     ///< Input row index at each grouped position
   device_span<size_type const> offsets;  ///< Group boundaries in rows
   cuda::device_buffer<size_type>
@@ -78,10 +79,10 @@ struct grouped_rows {
  * @param mr Device memory resources used to allocate the returned arrays and temporary storage
  * @return Grouped rows with the arrays required by the chosen reduction strategy
  */
-grouped_rows make_grouped_rows(device_span<size_type const> rows,
-                               device_span<size_type const> offsets,
-                               cuda::stream_ref stream,
-                               cudf::memory_resources mr);
+group_reduction_plan make_group_reduction_plan(device_span<size_type const> rows,
+                                               device_span<size_type const> offsets,
+                                               cuda::stream_ref stream,
+                                               cudf::memory_resources mr);
 
 /**
  * @brief Computes one single-pass aggregation per values column as a reduction over the grouped
@@ -101,7 +102,7 @@ std::vector<std::unique_ptr<column>> compute_single_pass_aggs(
   table_view const& values,
   host_span<aggregation::Kind const> agg_kinds,
   std::span<int8_t const> is_agg_intermediate,
-  grouped_rows const& grouped,
+  group_reduction_plan const& grouped,
   cuda::stream_ref stream,
   cudf::memory_resources mr);
 

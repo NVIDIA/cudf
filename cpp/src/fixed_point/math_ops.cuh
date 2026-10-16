@@ -36,10 +36,10 @@ using division_magnitude_t = typename division_magnitude<Rep>::type;
  * @brief Computes `a * b`, returning false instead if the product overflows `U`.
  */
 template <typename U>
-__device__ inline bool checked_multiply(U a, U b, U& product)
+__device__ inline bool checked_multiply(U& result, U a, U b)
 {
   if (a != 0 && b > static_cast<U>(~U{0}) / a) { return false; }
-  product = a * b;
+  result = a * b;
   return true;
 }
 
@@ -48,14 +48,14 @@ __device__ inline bool checked_multiply(U a, U b, U& product)
  * overflows `U`.
  */
 template <typename U, numeric::Radix Rad>
-__device__ inline bool checked_power(int32_t exponent, U& power)
+__device__ inline bool checked_power(U& result, int32_t exponent)
 {
   // The largest exponent for which `Rad^exponent` fits in `U`
   constexpr int32_t max_exponent = Rad == numeric::Radix::BASE_2
                                      ? cuda::std::numeric_limits<U>::digits - 1
                                      : cuda::std::numeric_limits<U>::digits10;
   if (exponent > max_exponent) { return false; }
-  power = numeric::detail::ipow<U, Rad>(exponent);
+  result = numeric::detail::ipow<U, Rad>(exponent);
   return true;
 }
 
@@ -99,11 +99,11 @@ __device__ inline cuda::std::optional<numeric::fixed_point<Rep, Rad>> divide_dec
   auto const exponent = -static_cast<int32_t>(rhs.scale());
   U factor{};
   if (exponent >= 0) {
-    if (!checked_power<U, Rad>(exponent, factor) || !checked_multiply(dividend, factor, dividend)) {
+    if (!checked_power<U, Rad>(factor, exponent) || !checked_multiply(dividend, dividend, factor)) {
       return cuda::std::nullopt;
     }
-  } else if (!checked_power<U, Rad>(-exponent, factor) ||
-             !checked_multiply(divisor, factor, divisor)) {
+  } else if (!checked_power<U, Rad>(factor, -exponent) ||
+             !checked_multiply(divisor, divisor, factor)) {
     // The divisor is more than twice the largest possible dividend, so the quotient rounds to 0.
     return make_result(0);
   }

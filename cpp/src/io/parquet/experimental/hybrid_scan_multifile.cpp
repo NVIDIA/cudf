@@ -127,7 +127,8 @@ hybrid_scan_multifile::filter_column_chunks_byte_ranges(
   parquet_reader_options const& options)
 {
   CUDF_FUNC_RANGE();
-  return _impl->filter_column_chunks_byte_ranges(row_group_indices, options);
+  return _impl->column_chunks_byte_ranges<read_columns_mode::FILTER_COLUMNS>(row_group_indices,
+                                                                             options);
 }
 
 table_with_metadata hybrid_scan_multifile::materialize_filter_columns(
@@ -140,7 +141,7 @@ table_with_metadata hybrid_scan_multifile::materialize_filter_columns(
   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
-  return _impl->materialize_filter_columns(
+  return _impl->materialize_table<read_columns_mode::FILTER_COLUMNS>(
     row_group_indices, column_chunk_data, row_mask, mask_data_pages, options, stream, mr);
 }
 
@@ -150,7 +151,8 @@ hybrid_scan_multifile::payload_column_chunks_byte_ranges(
   parquet_reader_options const& options)
 {
   CUDF_FUNC_RANGE();
-  return _impl->payload_column_chunks_byte_ranges(row_group_indices, options);
+  return _impl->column_chunks_byte_ranges<read_columns_mode::PAYLOAD_COLUMNS>(row_group_indices,
+                                                                              options);
 }
 
 std::pair<std::vector<text::byte_range_info>, std::vector<size_type>>
@@ -161,7 +163,7 @@ hybrid_scan_multifile::payload_pages_byte_ranges(
   cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
-  return _impl->payload_pages_byte_ranges(row_group_indices, row_mask, options, stream);
+  return _impl->sparse_payload_pages_byte_ranges(row_group_indices, row_mask, options, stream);
 }
 
 table_with_metadata hybrid_scan_multifile::materialize_payload_columns(
@@ -174,7 +176,7 @@ table_with_metadata hybrid_scan_multifile::materialize_payload_columns(
   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
-  return _impl->materialize_payload_columns(
+  return _impl->materialize_table<read_columns_mode::PAYLOAD_COLUMNS>(
     row_group_indices, column_chunk_data, row_mask, mask_data_pages, options, stream, mr);
 }
 
@@ -184,7 +186,8 @@ hybrid_scan_multifile::all_column_chunks_byte_ranges(
   parquet_reader_options const& options)
 {
   CUDF_FUNC_RANGE();
-  return _impl->all_column_chunks_byte_ranges(row_group_indices, options);
+  return _impl->column_chunks_byte_ranges<read_columns_mode::ALL_COLUMNS>(row_group_indices,
+                                                                          options);
 }
 
 table_with_metadata hybrid_scan_multifile::materialize_all_columns(
@@ -195,7 +198,13 @@ table_with_metadata hybrid_scan_multifile::materialize_all_columns(
   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
-  return _impl->materialize_all_columns(row_group_indices, column_chunk_data, options, stream, mr);
+  return _impl->materialize_table<read_columns_mode::ALL_COLUMNS>(row_group_indices,
+                                                                  column_chunk_data,
+                                                                  cudf::column_view{},
+                                                                  use_data_page_mask::NO,
+                                                                  options,
+                                                                  stream,
+                                                                  mr);
 }
 
 void hybrid_scan_multifile::setup_chunking_for_filter_columns(
@@ -210,22 +219,22 @@ void hybrid_scan_multifile::setup_chunking_for_filter_columns(
   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
-  _impl->setup_chunking_for_filter_columns(chunk_read_limit,
-                                           pass_read_limit,
-                                           row_group_indices,
-                                           row_mask,
-                                           mask_data_pages,
-                                           column_chunk_data,
-                                           options,
-                                           stream,
-                                           mr);
+  _impl->setup_chunked_table_materialization<read_columns_mode::FILTER_COLUMNS>(chunk_read_limit,
+                                                                                pass_read_limit,
+                                                                                row_group_indices,
+                                                                                column_chunk_data,
+                                                                                row_mask,
+                                                                                mask_data_pages,
+                                                                                options,
+                                                                                stream,
+                                                                                mr);
 }
 
 table_with_metadata hybrid_scan_multifile::materialize_filter_columns_chunk(
   cudf::mutable_column_view& row_mask)
 {
   CUDF_FUNC_RANGE();
-  return _impl->materialize_filter_columns_chunk(row_mask);
+  return _impl->materialize_table_chunk<read_columns_mode::FILTER_COLUMNS>(row_mask);
 }
 
 void hybrid_scan_multifile::setup_chunking_for_payload_columns(
@@ -240,15 +249,15 @@ void hybrid_scan_multifile::setup_chunking_for_payload_columns(
   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
-  _impl->setup_chunking_for_payload_columns(chunk_read_limit,
-                                            pass_read_limit,
-                                            row_group_indices,
-                                            row_mask,
-                                            mask_data_pages,
-                                            column_chunk_data,
-                                            options,
-                                            stream,
-                                            mr);
+  _impl->setup_chunked_table_materialization<read_columns_mode::PAYLOAD_COLUMNS>(chunk_read_limit,
+                                                                                 pass_read_limit,
+                                                                                 row_group_indices,
+                                                                                 column_chunk_data,
+                                                                                 row_mask,
+                                                                                 mask_data_pages,
+                                                                                 options,
+                                                                                 stream,
+                                                                                 mr);
 }
 
 void hybrid_scan_multifile::setup_chunking_for_payload_columns(
@@ -262,15 +271,15 @@ void hybrid_scan_multifile::setup_chunking_for_payload_columns(
   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
-  _impl->setup_chunking_for_payload_columns(
-    chunk_read_limit, pass_read_limit, row_group_indices, row_mask, page_data, options, stream, mr);
+  _impl->setup_chunked_sparse_payload_materialization(
+    chunk_read_limit, pass_read_limit, row_group_indices, page_data, row_mask, options, stream, mr);
 }
 
 table_with_metadata hybrid_scan_multifile::materialize_payload_columns_chunk(
   cudf::column_view const& row_mask)
 {
   CUDF_FUNC_RANGE();
-  return _impl->materialize_payload_columns_chunk(row_mask);
+  return _impl->materialize_table_chunk<read_columns_mode::PAYLOAD_COLUMNS>(row_mask);
 }
 
 void hybrid_scan_multifile::setup_chunking_for_all_columns(
@@ -283,14 +292,21 @@ void hybrid_scan_multifile::setup_chunking_for_all_columns(
   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
-  _impl->setup_chunking_for_all_columns(
-    chunk_read_limit, pass_read_limit, row_group_indices, column_chunk_data, options, stream, mr);
+  _impl->setup_chunked_table_materialization<read_columns_mode::ALL_COLUMNS>(chunk_read_limit,
+                                                                             pass_read_limit,
+                                                                             row_group_indices,
+                                                                             column_chunk_data,
+                                                                             cudf::column_view{},
+                                                                             use_data_page_mask::NO,
+                                                                             options,
+                                                                             stream,
+                                                                             mr);
 }
 
 table_with_metadata hybrid_scan_multifile::materialize_all_columns_chunk()
 {
   CUDF_FUNC_RANGE();
-  return _impl->materialize_all_columns_chunk();
+  return _impl->materialize_table_chunk<read_columns_mode::ALL_COLUMNS>(cudf::column_view{});
 }
 
 bool hybrid_scan_multifile::has_next_table_chunk() { return _impl->has_next_table_chunk(); }

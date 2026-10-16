@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "join_test_fixtures.hpp"
+
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
@@ -37,16 +39,7 @@ using strcol_wrapper = cudf::test::strings_column_wrapper;
 using column_vector  = std::vector<std::unique_ptr<cudf::column>>;
 using Table          = cudf::table;
 
-enum class join_implementation { FILTERED_JOIN, MARK_JOIN, MARK_JOIN_PREFILTER };
-
-struct SemiAntiJoinTest : public cudf::test::BaseFixture,
-                          public ::testing::WithParamInterface<join_implementation> {};
-
 namespace {
-[[nodiscard]] bool use_mark_join(join_implementation implementation)
-{
-  return implementation != join_implementation::FILTERED_JOIN;
-}
 
 [[nodiscard]] cudf::join_prefilter prefilter_mode(join_implementation implementation)
 {
@@ -421,38 +414,6 @@ TEST_P(SemiAntiJoinTest, SemiJoinEmptyTables)
   }
 }
 
-TEST_P(SemiAntiJoinTest, AntiSemiJoinLargeExtentOverflowPrevention)
-{
-  auto const implementation = GetParam();
-  if (use_mark_join(implementation)) { GTEST_SKIP(); }
-  // Test validates size_t extent can handle bucket storage sizes that would
-  // overflow int32_t extent when compute_bucket_storage_size() uses low load factors
-  constexpr cudf::size_type table_size = 10000000;  // 10M rows
-  constexpr double load_factor         = 0.004;     // Hash table extent would be ~2.5B
-
-  // Compile-time validation
-  constexpr auto expected_bucket_size = static_cast<size_t>(table_size / load_factor);
-  static_assert(expected_bucket_size > std::numeric_limits<cudf::size_type>::max(),
-                "Bucket storage size should be significant");
-
-  // Create test tables and validate semi join operations succeed
-  auto const init = cudf::numeric_scalar<cudf::size_type>{0};
-  auto right_col  = cudf::sequence(table_size, init, cudf::numeric_scalar<cudf::size_type>{1});
-
-  auto right_table = cudf::table_view{{right_col->view()}};
-  cudf::table empty_left_table{};
-
-  // Test with load factors that would cause overflow in int32_t extent
-  EXPECT_NO_THROW({
-    cudf::filtered_join obj(
-      right_table, cudf::null_equality::EQUAL, load_factor, cudf::get_default_stream());
-    auto result = obj.semi_join(
-      empty_left_table, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
-    result = obj.anti_join(
-      empty_left_table, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
-  });
-}
-
 TEST_F(SemiAntiJoinTest, PrefilterNullableColumnsNullsEqual)
 {
   column_wrapper<int32_t> left_col0{{1, 2, 3, 4, 5}, {true, false, true, true, false}};
@@ -573,16 +534,6 @@ TEST_F(SemiAntiJoinTest, MarkJoinMemoryResource)
     left, cudf::null_equality::EQUAL, cudf::join_prefilter::YES, cudf::get_default_stream(), mr);
 
   EXPECT_GT(mr.get_bytes_counter().peak, 0);
-}
-
-std::string test_name(join_implementation implementation)
-{
-  switch (implementation) {
-    case join_implementation::FILTERED_JOIN: return "FilteredJoin";
-    case join_implementation::MARK_JOIN: return "MarkJoin";
-    case join_implementation::MARK_JOIN_PREFILTER: return "MarkJoinPrefilter";
-  }
-  return "Unknown";
 }
 
 INSTANTIATE_TEST_SUITE_P(JoinImpl,

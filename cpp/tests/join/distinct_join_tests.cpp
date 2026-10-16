@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "join_test_fixtures.hpp"
+
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/table_utilities.hpp>
@@ -37,39 +39,6 @@ std::unique_ptr<rmm::device_uvector<cudf::size_type>> get_left_indices(cudf::siz
     sequence, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
   return std::make_unique<rmm::device_uvector<cudf::size_type>>(std::move(indices));
 }
-
-struct DistinctJoinTest : public cudf::test::BaseFixture {
-  void compare_to_reference(
-    cudf::table_view const& right_table,
-    cudf::table_view const& left_table,
-    std::pair<std::unique_ptr<rmm::device_uvector<cudf::size_type>>,
-              std::unique_ptr<rmm::device_uvector<cudf::size_type>>> const& result,
-    cudf::table_view const& expected_table,
-    cudf::out_of_bounds_policy oob_policy = cudf::out_of_bounds_policy::DONT_CHECK)
-  {
-    auto const& [probe_join_indices, build_join_indices] = result;
-
-    auto build_indices_span = cudf::device_span<cudf::size_type const>{*build_join_indices};
-    auto probe_indices_span = cudf::device_span<cudf::size_type const>{*probe_join_indices};
-
-    auto build_indices_col = cudf::column_view{build_indices_span};
-    auto probe_indices_col = cudf::column_view{probe_indices_span};
-
-    auto joined_cols = cudf::gather(left_table, probe_indices_col, oob_policy)->release();
-    auto right_cols  = cudf::gather(right_table, build_indices_col, oob_policy)->release();
-
-    joined_cols.insert(joined_cols.end(),
-                       std::make_move_iterator(right_cols.begin()),
-                       std::make_move_iterator(right_cols.end()));
-    auto joined_table        = std::make_unique<cudf::table>(std::move(joined_cols));
-    auto result_sort_order   = cudf::sorted_order(joined_table->view());
-    auto sorted_joined_table = cudf::gather(joined_table->view(), *result_sort_order);
-
-    auto expected_sort_order = cudf::sorted_order(expected_table);
-    auto sorted_expected     = cudf::gather(expected_table, *expected_sort_order);
-    CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*sorted_expected, *sorted_joined_table);
-  }
-};
 
 TEST_F(DistinctJoinTest, IntegerInnerJoin)
 {
@@ -731,34 +700,4 @@ TEST_F(DistinctJoinTest, InvalidLoadFactor)
   // Test load factor > 1
   EXPECT_THROW(cudf::distinct_hash_join(t0, cudf::null_equality::EQUAL, 1.1),
                std::invalid_argument);
-}
-
-TEST_F(DistinctJoinTest, DistinctLargeExtentOverflowPrevention)
-{
-  // Test that validates size_t extent can handle hash table sizes that would
-  // overflow int32_t extent when load_factor < 1.0
-
-  // Use a table size that when divided by low load factor would exceed INT32_MAX
-  // if using int32_t extent, but should work fine with size_t extent
-  constexpr cudf::size_type table_size = 10000000;  // 10M rows
-  constexpr double load_factor         = 0.004;     // Hash table extent would be ~2.5B
-
-  // Validate our test assumptions
-  constexpr auto expected_hash_size = static_cast<size_t>(table_size / load_factor);
-  static_assert(expected_hash_size > std::numeric_limits<cudf::size_type>::max(),
-                "Hash table size should be significant");
-
-  auto const init = cudf::numeric_scalar<cudf::size_type>{0};
-  auto build_col  = cudf::sequence(table_size, init, cudf::numeric_scalar<cudf::size_type>{1});
-
-  auto right_table = cudf::table_view{{build_col->view()}};
-  cudf::table empty_probe_table{};
-
-  // This should succeed with size_t extent - would have failed with int32_t extent
-  // in scenarios approaching the overflow boundary
-  EXPECT_NO_THROW({
-    auto distinct_join = cudf::distinct_hash_join(
-      right_table, cudf::null_equality::EQUAL, load_factor, cudf::get_default_stream());
-    auto result = distinct_join.inner_join(empty_probe_table);
-  });
 }

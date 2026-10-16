@@ -80,7 +80,10 @@ impl CudfPolarsUiAnalyzer {
                         kind: CapacityKind::Occupancy,
                         quantity: "bytes".to_owned(),
                     }],
-                    display_order: vec![FsmTypeSelection::All],
+                    display_order: vec![
+                        FsmTypeSelection::All,
+                        FsmTypeSelection::Type(EVALUATE_ENTITY_TYPE.to_owned()),
+                    ],
                 },
             ),
             (
@@ -204,7 +207,11 @@ impl CudfPolarsUiAnalyzer {
                     },
                     FsmStateTypeDecl {
                         name: "running".to_owned(),
-                        usages: vec!["processor".to_owned(), "channel".to_owned()],
+                        usages: vec![
+                            "processor".to_owned(),
+                            "device_memory".to_owned(),
+                            "channel".to_owned(),
+                        ],
                     },
                     FsmStateTypeDecl {
                         name: "completed".to_owned(),

@@ -46,15 +46,15 @@ namespace CUDF_EXPORT cudf {
  * @param rhs The divisor column
  * @param method The rounding method to use
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column's device memory
+ * @param mr Memory resources used for temporary allocations and the returned column
  * @return Column containing the quotients, with the type of `lhs`
  */
 std::unique_ptr<column> divide_decimal(
   column_view const& lhs,
   column_view const& rhs,
-  rounding_method method            = rounding_method::HALF_UP,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  rounding_method method    = rounding_method::HALF_UP,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Divides each element of a decimal column by a decimal scalar, keeping the scale of `lhs`.
@@ -72,15 +72,15 @@ std::unique_ptr<column> divide_decimal(
  * @param rhs The divisor scalar
  * @param method The rounding method to use
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column's device memory
+ * @param mr Memory resources used for temporary allocations and the returned column
  * @return Column containing the quotients, with the type of `lhs`
  */
 std::unique_ptr<column> divide_decimal(
   column_view const& lhs,
   scalar const& rhs,
-  rounding_method method            = rounding_method::HALF_UP,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  rounding_method method    = rounding_method::HALF_UP,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Divides a decimal scalar by each element of a decimal column, keeping the scale of `lhs`.
@@ -98,15 +98,15 @@ std::unique_ptr<column> divide_decimal(
  * @param rhs The divisor column
  * @param method The rounding method to use
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column's device memory
+ * @param mr Memory resources used for temporary allocations and the returned column
  * @return Column containing the quotients, with the type of `lhs`
  */
 std::unique_ptr<column> divide_decimal(
   scalar const& lhs,
   column_view const& rhs,
-  rounding_method method            = rounding_method::HALF_UP,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  rounding_method method    = rounding_method::HALF_UP,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 }  // namespace CUDF_EXPORT cudf

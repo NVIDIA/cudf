@@ -201,9 +201,10 @@ std::unique_ptr<column> divide_decimal(column_view const& lhs,
                                        cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr)
 {
-  CUDF_EXPECTS(lhs.size() == rhs.size(), "Column sizes must match");
+  CUDF_EXPECTS(cudf::is_fixed_point(lhs.type()) && cudf::is_fixed_point(rhs.type()),
+               "Columns must be decimal type");
   CUDF_EXPECTS(lhs.type().id() == rhs.type().id(), "Column base types must match");
-  CUDF_EXPECTS(cudf::is_fixed_point(lhs.type()), "Columns must be decimal type");
+  CUDF_EXPECTS(lhs.size() == rhs.size(), "Column sizes must match");
 
   if (lhs.is_empty()) { return make_empty_column(lhs.type()); }
 
@@ -216,7 +217,8 @@ std::unique_ptr<column> divide_decimal(column_view const& lhs,
                                        cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr)
 {
-  CUDF_EXPECTS(cudf::is_fixed_point(lhs.type()), "Column must be decimal type");
+  CUDF_EXPECTS(cudf::is_fixed_point(lhs.type()) && cudf::is_fixed_point(rhs.type()),
+               "Column and scalar must be decimal type");
   CUDF_EXPECTS(rhs.type().id() == lhs.type().id(), "Scalar base type must match column type");
 
   if (lhs.is_empty()) { return make_empty_column(lhs.type()); }
@@ -230,7 +232,8 @@ std::unique_ptr<column> divide_decimal(scalar const& lhs,
                                        cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr)
 {
-  CUDF_EXPECTS(cudf::is_fixed_point(rhs.type()), "Column must be decimal type");
+  CUDF_EXPECTS(cudf::is_fixed_point(lhs.type()) && cudf::is_fixed_point(rhs.type()),
+               "Column and scalar must be decimal type");
   CUDF_EXPECTS(lhs.type().id() == rhs.type().id(), "Scalar base type must match column type");
 
   if (rhs.is_empty()) { return make_empty_column(data_type{rhs.type().id(), lhs.type().scale()}); }

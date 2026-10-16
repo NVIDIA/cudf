@@ -38,9 +38,9 @@ namespace CUDF_EXPORT cudf {
  * rounded quotient does not fit in the output type. For `DECIMAL128`, it is also null if `lhs[i]`
  * rescaled by `10^(-rhs.scale())` does not fit in 128 bits.
  *
- * @throw cudf::logic_error if `lhs` and `rhs` have different sizes
+ * @throw cudf::logic_error if `lhs` or `rhs` is not a decimal type
  * @throw cudf::logic_error if `lhs` and `rhs` have different type ids
- * @throw cudf::logic_error if `lhs` is not a decimal type
+ * @throw cudf::logic_error if `lhs` and `rhs` have different sizes
  *
  * @param lhs The dividend column
  * @param rhs The divisor column
@@ -65,7 +65,7 @@ std::unique_ptr<column> divide_decimal(
  * Null outputs follow the same rules as the column-column overload. Every output element is null
  * if `rhs` is invalid.
  *
- * @throw cudf::logic_error if `lhs` is not a decimal type
+ * @throw cudf::logic_error if `lhs` or `rhs` is not a decimal type
  * @throw cudf::logic_error if `rhs` and `lhs` have different type ids
  *
  * @param lhs The dividend column
@@ -91,7 +91,7 @@ std::unique_ptr<column> divide_decimal(
  * Null outputs follow the same rules as the column-column overload. Every output element is null
  * if `lhs` is invalid.
  *
- * @throw cudf::logic_error if `rhs` is not a decimal type
+ * @throw cudf::logic_error if `lhs` or `rhs` is not a decimal type
  * @throw cudf::logic_error if `lhs` and `rhs` have different type ids
  *
  * @param lhs The dividend scalar

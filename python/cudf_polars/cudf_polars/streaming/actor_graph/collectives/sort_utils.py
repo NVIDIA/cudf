@@ -12,7 +12,7 @@ import pylibcudf as plc
 from cudf_streaming.channel_metadata import OrderKey, OrderScheme, Ordering
 from cudf_streaming.table_chunk import TableChunk
 
-from cudf_polars.containers import Column, DataFrame, DataType
+from cudf_polars.containers import DataFrame, DataType
 from cudf_polars.dsl.expr import Col
 from cudf_polars.dsl.ir import Empty
 from cudf_polars.dsl.utils.naming import names_to_indices, unique_names
@@ -167,30 +167,12 @@ def select_local_split_candidates(
     df = df.select(by)
     name_gen = unique_names(df.column_names)
     part_id_dtype = DataType(pl.UInt32())
-    if df.num_rows == 0:
-        # Return empty DataFrame with the correct column names and dtypes
-        return DataFrame(
-            [
-                *df.columns,
-                Column(
-                    plc.column_factories.make_empty_column(
-                        part_id_dtype.plc_type, stream=df.stream
-                    ),
-                    dtype=part_id_dtype,
-                    name=next(name_gen),
-                ),
-                Column(
-                    plc.column_factories.make_empty_column(
-                        part_id_dtype.plc_type, stream=df.stream
-                    ),
-                    dtype=part_id_dtype,
-                    name=next(name_gen),
-                ),
-            ],
-            stream=df.stream,
-        )
-
-    candidates = [i * df.num_rows // num_partitions for i in range(num_partitions)]
+    # No candidates from an empty chunk: gathering at row 0 would be out of bounds.
+    candidates = (
+        [i * df.num_rows // num_partitions for i in range(num_partitions)]
+        if df.num_rows > 0
+        else []
+    )
     row_id = plc.Column.from_iterable_of_py(
         candidates, part_id_dtype.plc_type, stream=df.stream
     )

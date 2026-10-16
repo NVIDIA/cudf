@@ -24,6 +24,9 @@ from cudf_polars.dsl.expr import Col, NamedExpr
 from cudf_polars.dsl.ir import Sort
 from cudf_polars.dsl.utils.naming import names_to_indices, unique_names
 from cudf_polars.streaming.actor_graph.collectives.allgather import AllGatherManager
+from cudf_polars.streaming.actor_graph.collectives.external_sort import (
+    global_sort_external,
+)
 from cudf_polars.streaming.actor_graph.collectives.shuffle import ShuffleManager
 from cudf_polars.streaming.actor_graph.collectives.sort_utils import (
     build_order_scheme,
@@ -499,6 +502,23 @@ async def sort_actor(
                 ch_out,
                 ch_in,
                 metadata_in,
+                tracer=tracer,
+            )
+            return
+
+        if executor.sort_strategy == "external":
+            await global_sort_external(
+                context,
+                comm,
+                ir,
+                ir_context,
+                ch_in,
+                ch_out,
+                metadata_in,
+                by,
+                num_partitions,
+                executor,
+                collective_ids,
                 tracer=tracer,
             )
             return

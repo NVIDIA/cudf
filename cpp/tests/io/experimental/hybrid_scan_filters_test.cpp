@@ -8,11 +8,13 @@
 
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/table_utilities.hpp>
+#include <cudf_test/type_lists.hpp>
 
 #include <cudf/io/datasource.hpp>
 #include <cudf/io/experimental/hybrid_scan.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/io/parquet_io_utils.hpp>
+#include <cudf/io/parquet_metadata.hpp>
 #include <cudf/io/text/byte_range_info.hpp>
 #include <cudf/stream_compaction.hpp>
 #include <cudf/table/table_view.hpp>
@@ -25,6 +27,7 @@
 #include <src/io/parquet/parquet_gpu.hpp>
 
 #include <algorithm>
+#include <bit>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -1629,9 +1632,9 @@ TEST_F(HybridScanFiltersTest, FilterRowGroupsWithDictionary)
 template <typename T>
 struct RowGroupFilteringWithDictTest : public HybridScanFiltersTest {};
 
-// Booleans and fixed-point types are not supported for dictionary based filtering
+// Booleans are not supported for dictionary based filtering
 using DictionaryTestTypes =
-  cudf::test::RemoveIf<cudf::test::ContainedIn<cudf::test::Types<bool>>, SupportedTestTypesJIT>;
+  cudf::test::RemoveIf<cudf::test::ContainedIn<cudf::test::Types<bool>>, SupportedTestTypesAST>;
 
 TYPED_TEST_SUITE(RowGroupFilteringWithDictTest, DictionaryTestTypes);
 
@@ -1649,13 +1652,13 @@ TYPED_TEST(RowGroupFilteringWithDictTest, FilterFewLiteralsTyped)
     std::get<1>(create_parquet_with_stats<T, num_concat, is_constant_strings, is_nullable>(
       100, cudf::io::compression_type::ZSTD));
 
-  // For string tests use `col2` containing constant "0100" and for temporal types use `col1`
-  // containing low cardinality descending values. For all other types use `col0`
+  // For string tests use `col2` containing constant "0100" and for temporal and fixed-point types
+  // use `col1` containing low cardinality descending values. For all other types use `col0`
   // containing ascending values.
   auto col_name = [&]() {
     if (cuda::std::is_same_v<T, cudf::string_view>) {
       return cudf::ast::column_name_reference("col2");
-    } else if (cudf::is_duration<T>() or cudf::is_timestamp<T>()) {
+    } else if (cudf::is_duration<T>() or cudf::is_timestamp<T>() or cudf::is_fixed_point<T>()) {
       return cudf::ast::column_name_reference("col1");
     } else {
       return cudf::ast::column_name_reference("col0");
@@ -1666,7 +1669,7 @@ TYPED_TEST(RowGroupFilteringWithDictTest, FilterFewLiteralsTyped)
   auto col_ref = [&]() {
     if (cuda::std::is_same_v<T, cudf::string_view>) {
       return cudf::ast::column_reference(2);
-    } else if (cudf::is_duration<T>() or cudf::is_timestamp<T>()) {
+    } else if (cudf::is_duration<T>() or cudf::is_timestamp<T>() or cudf::is_fixed_point<T>()) {
       return cudf::ast::column_reference(1);
     } else {
       return cudf::ast::column_reference(0);
@@ -1704,6 +1707,10 @@ TYPED_TEST(RowGroupFilteringWithDictTest, FilterFewLiteralsTyped)
     } else if constexpr (std::is_same_v<T, cudf::string_view>) {
       // table[2] == "0100"
       return cudf::string_scalar("0100", true, stream);  // i (0-200)
+    } else if constexpr (cudf::is_fixed_point<T>()) {
+      // table[1] == -25
+      return cudf::fixed_point_scalar<T>(
+        -25, numeric::scale_type{0}, true, stream);  // (10000 - i)/100 (100 to -99)
     } else {
       // table[0] == 0 or 100u
       return cudf::numeric_scalar<T>(
@@ -1721,6 +1728,9 @@ TYPED_TEST(RowGroupFilteringWithDictTest, FilterFewLiteralsTyped)
       } else if constexpr (cudf::is_chrono<T>() or cuda::std::is_signed_v<T>) {
         return std::vector<cudf::size_type>{
           1, 2};  // Descending temporal and signed value (100) is present in RGs: 1,2
+      } else if constexpr (cudf::is_fixed_point<T>()) {
+        return std::vector<cudf::size_type>{
+          2};  // Descending fixed-point value (-25) is present in RG: 2
       } else {
         return std::vector<cudf::size_type>{2};  // Ascending value (100) is present in RG: 1
       }
@@ -1776,13 +1786,13 @@ TYPED_TEST(RowGroupFilteringWithDictTest, FilterManyLiteralsTyped)
     std::get<1>(create_parquet_with_stats<T, num_concat, is_constant_strings, is_nullable>(
       100, cudf::io::compression_type::NONE));
 
-  // For string tests use `col2` containing constant "0100" and for temporal types use `col1`
-  // containing low cardinality descending values. For all other types use `col0`
+  // For string tests use `col2` containing constant "0100" and for temporal and fixed-point types
+  // use `col1` containing low cardinality descending values. For all other types use `col0`
   // containing ascending values.
   auto col_name = [&]() {
     if (cuda::std::is_same_v<T, cudf::string_view>) {
       return cudf::ast::column_name_reference("col2");
-    } else if (cudf::is_duration<T>() or cudf::is_timestamp<T>()) {
+    } else if (cudf::is_duration<T>() or cudf::is_timestamp<T>() or cudf::is_fixed_point<T>()) {
       return cudf::ast::column_name_reference("col1");
     } else {
       return cudf::ast::column_name_reference("col0");
@@ -1793,7 +1803,7 @@ TYPED_TEST(RowGroupFilteringWithDictTest, FilterManyLiteralsTyped)
   auto col_ref = [&]() {
     if (cuda::std::is_same_v<T, cudf::string_view>) {
       return cudf::ast::column_reference(2);
-    } else if (cudf::is_duration<T>() or cudf::is_timestamp<T>()) {
+    } else if (cudf::is_duration<T>() or cudf::is_timestamp<T>() or cudf::is_fixed_point<T>()) {
       return cudf::ast::column_reference(1);
     } else {
       return cudf::ast::column_reference(0);
@@ -1831,6 +1841,10 @@ TYPED_TEST(RowGroupFilteringWithDictTest, FilterManyLiteralsTyped)
     } else if constexpr (std::is_same_v<T, cudf::string_view>) {
       // table[2] == "0100"
       return cudf::string_scalar("0100", true, stream);  // i (0-200)
+    } else if constexpr (cudf::is_fixed_point<T>()) {
+      // table[1] == -75
+      return cudf::fixed_point_scalar<T>(
+        -75, numeric::scale_type{0}, true, stream);  // (10000 - i)/100 (100 to -99)
     } else {
       // table[0] == -100 or 100u
       return cudf::numeric_scalar<T>(
@@ -1849,6 +1863,10 @@ TYPED_TEST(RowGroupFilteringWithDictTest, FilterManyLiteralsTyped)
     } else if constexpr (std::is_same_v<T, cudf::string_view>) {
       // table[2] == "0050"
       return cudf::string_scalar("0050", true, stream);  // i (0-200)
+    } else if constexpr (cudf::is_fixed_point<T>()) {
+      // table[1] == -25
+      return cudf::fixed_point_scalar<T>(
+        -25, numeric::scale_type{0}, true, stream);  // (10000 - i)/100 (100 to -99)
     } else {
       // table[0] == -50 or 50u
       return cudf::numeric_scalar<T>(
@@ -1867,6 +1885,10 @@ TYPED_TEST(RowGroupFilteringWithDictTest, FilterManyLiteralsTyped)
     } else if constexpr (std::is_same_v<T, cudf::string_view>) {
       // table[2] == "0025"
       return cudf::string_scalar("0025", true, stream);  // i (0-200)
+    } else if constexpr (cudf::is_fixed_point<T>()) {
+      // table[1] == 25
+      return cudf::fixed_point_scalar<T>(
+        25, numeric::scale_type{0}, true, stream);  // (10000 - i)/100 (100 to -99)
     } else {
       // table[0] == -25 or 25u
       return cudf::numeric_scalar<T>(
@@ -1887,6 +1909,9 @@ TYPED_TEST(RowGroupFilteringWithDictTest, FilterManyLiteralsTyped)
       } else if constexpr (cuda::std::is_signed_v<T>) {
         return std::vector<cudf::size_type>{0,
                                             1};  // Signed ascending values present in two RGs: 0,1
+      } else if constexpr (cudf::is_fixed_point<T>()) {
+        return std::vector<cudf::size_type>{
+          1, 2, 3};  // Descending fixed-point values (25, -25, -75) present in RGs: 1,2,3
       } else {
         return std::vector<cudf::size_type>{
           0, 1, 2};  // Ascending values present in three RGs: 0,1,2
@@ -2312,3 +2337,113 @@ INSTANTIATE_TEST_SUITE_P(Compression,
                          DictionaryFilterGapTest,
                          ::testing::Values(cudf::io::compression_type::NONE,
                                            cudf::io::compression_type::ZSTD));
+
+template <typename T>
+struct ByteArrayDecimalDictTest : public HybridScanFiltersTest {};
+
+TYPED_TEST_SUITE(ByteArrayDecimalDictTest, cudf::test::FixedPointTypes);
+
+TYPED_TEST(ByteArrayDecimalDictTest, FilterRowGroups)
+{
+  using T = TypeParam;
+
+  // Minimal big-endian BYTE_ARRAY decimals; row group 1 holds row group 0's 10 values plus one
+  auto constexpr rows_per_row_group = 5000;
+  auto constexpr step               = int64_t{70'001};
+  auto constexpr scale              = 2;
+  auto constexpr precision          = cuda::std::is_same_v<T, numeric::decimal32>   ? 9
+                                      : cuda::std::is_same_v<T, numeric::decimal64> ? 18
+                                                                                    : 38;
+
+  auto stream = cudf::get_default_stream();
+  auto mr     = cudf::get_current_device_resource_ref();
+
+  // Write the decimals as a binary column, since no writer produces BYTE_ARRAY decimals
+  auto const filepath = temp_env->get_temp_filepath("FilterByteArrayDecimals.parquet");
+  {
+    auto const byte_array_decimals =
+      cudf::detail::make_counting_transform_iterator(0, [](int64_t i) {
+        auto const value = (i % 10 - 5) * step + i / rows_per_row_group;
+        // Fewest bytes that hold the magnitude bits plus a sign bit
+        auto const magnitude = static_cast<uint64_t>(value < 0 ? ~value : value);
+        auto const num_bytes = std::bit_width(magnitude) / 8 + 1;
+        std::string bytes(num_bytes, '\0');
+        for (auto b = 0; b < num_bytes; ++b) {
+          bytes[num_bytes - 1 - b] = static_cast<char>(value >> (8 * b));
+        }
+        return bytes;
+      });
+
+    auto const col = cudf::test::strings_column_wrapper(
+      byte_array_decimals, byte_array_decimals + 2 * rows_per_row_group);
+    auto const table = cudf::table_view{{col}};
+
+    auto metadata = cudf::io::table_input_metadata{table};
+    metadata.column_metadata[0].set_name("dec").set_output_as_binary(true);
+
+    cudf::io::write_parquet(
+      cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, table)
+        .metadata(std::move(metadata))
+        .row_group_size_rows(rows_per_row_group)
+        .dictionary_policy(cudf::io::dictionary_policy::ALWAYS)
+        .build(),
+      stream);
+
+    stream.sync();
+  }
+
+  // Annotate the binary column as a decimal in file metadata
+  auto const datasources   = cudf::io::make_datasources(cudf::io::source_info{filepath});
+  auto metadata            = cudf::io::read_parquet_footers(datasources).front();
+  auto& schema             = metadata.schema[1];
+  schema.converted_type    = cudf::io::parquet::ConvertedType::DECIMAL;
+  schema.decimal_scale     = scale;
+  schema.decimal_precision = precision;
+  schema.logical_type      = cudf::io::parquet::LogicalType{
+    cudf::io::parquet::DecimalType{.scale = scale, .precision = precision}};
+
+  // Create the reader with annotated footer
+  auto const reader = std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(
+    metadata, cudf::io::parquet_reader_options::builder().build());
+
+  auto const col_ref            = cudf::ast::column_name_reference("dec");
+  auto const make_literal_value = [&](int64_t value) {
+    return cudf::fixed_point_scalar<T>(
+      static_cast<typename T::rep>(value), numeric::scale_type{-scale}, true, stream);
+  };
+
+  for (auto const& [value, expected_row_groups] :
+       {std::pair{-3 * step, std::vector<cudf::size_type>{0}},
+        std::pair{-3 * step + 1, std::vector<cudf::size_type>{1}},
+        std::pair{-3 * step + 2, std::vector<cudf::size_type>{}}}) {
+    auto literal_value = make_literal_value(value);
+    auto const literal = cudf::ast::literal(literal_value);
+    auto const filter_expression =
+      cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col_ref, literal);
+    auto const options =
+      cudf::io::parquet_reader_options::builder().filter(filter_expression).build();
+    EXPECT_EQ(
+      filter_row_groups_with_dictionaries(*datasources.front(), *reader, options, stream, mr),
+      expected_row_groups);
+  }
+
+  // Many literals path - only row group 1 should survive
+  {
+    auto literal_value0 = make_literal_value(-3 * step + 1);
+    auto literal_value1 = make_literal_value(-3 * step + 2);
+    auto literal_value2 = make_literal_value(-3 * step + 3);
+    auto const literal0 = cudf::ast::literal(literal_value0);
+    auto const literal1 = cudf::ast::literal(literal_value1);
+    auto const literal2 = cudf::ast::literal(literal_value2);
+    auto const equal0   = cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col_ref, literal0);
+    auto const equal1   = cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col_ref, literal1);
+    auto const equal2   = cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col_ref, literal2);
+    auto const equal01  = cudf::ast::operation(cudf::ast::ast_operator::LOGICAL_OR, equal0, equal1);
+    auto const equal012 =
+      cudf::ast::operation(cudf::ast::ast_operator::LOGICAL_OR, equal01, equal2);
+    auto const options = cudf::io::parquet_reader_options::builder().filter(equal012).build();
+    EXPECT_EQ(
+      filter_row_groups_with_dictionaries(*datasources.front(), *reader, options, stream, mr),
+      std::vector<cudf::size_type>{1});
+  }
+}

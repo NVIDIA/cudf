@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import decimal
 import io
 
 import pyarrow as pa
@@ -1034,6 +1035,57 @@ def test_hybrid_scan_dictionary_page_filter_long_strings() -> None:
             ASTOperator.EQUAL,
             ColumnNameReference("s"),
             Literal(plc.Scalar.from_arrow(pa.scalar(f"{prefix}{value}"))),
+        )
+        assert (
+            _filter_row_groups_with_dictionary_pages(
+                reader, options, parquet_bytes, filter_expression
+            )
+            == expected
+        )
+
+
+@pytest.mark.parametrize(
+    "arrow_type,literal_type",
+    [
+        (pa.decimal128(9, 2), pa.decimal32(9, 2)),  # 4 byte FLBA
+        (pa.decimal128(12, 2), pa.decimal64(12, 2)),  # 6 byte FLBA
+    ],
+)
+def test_hybrid_scan_filter_row_groups_with_dictionary_pages_short_flba_decimals(
+    arrow_type, literal_type
+) -> None:
+    """Decimals in FIXED_LEN_BYTE_ARRAY shorter than their cudf storage type
+    (pyarrow's default) are big-endian and must be sign-extended.
+    """
+    # Negative values. Row group 0 holds -0.55 and row group 1 does not.
+    evens = [
+        decimal.Decimal((i % 50) * 2 - 60).scaleb(-2) for i in range(1000)
+    ]
+    with_odd = [
+        decimal.Decimal(-55).scaleb(-2) if i % 50 == 1 else v
+        for i, v in enumerate(evens)
+    ]
+    buf = io.BytesIO()
+    pq.write_table(
+        pa.table({"c": pa.array(with_odd + evens, arrow_type)}),
+        buf,
+        row_group_size=len(evens),
+        use_dictionary=True,
+    )
+    parquet_bytes = buf.getvalue()
+    options = plc.io.parquet.ParquetReaderOptions.builder(
+        plc.io.SourceInfo([io.BytesIO(parquet_bytes)])
+    ).build()
+    reader = HybridScanReader(extract_parquet_footer(parquet_bytes), options)
+
+    for value, expected in [(-55, [0]), (-53, [])]:
+        literal = pa.array([decimal.Decimal(value).scaleb(-2)], literal_type)[
+            0
+        ]
+        filter_expression = Operation(
+            ASTOperator.EQUAL,
+            ColumnNameReference("c"),
+            Literal(plc.Scalar.from_arrow(literal)),
         )
         assert (
             _filter_row_groups_with_dictionary_pages(

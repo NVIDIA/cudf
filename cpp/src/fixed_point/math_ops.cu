@@ -10,7 +10,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/column/column_view.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
-#include <cudf/detail/valid_if.cuh>
+#include <cudf/detail/transform.hpp>
 #include <cudf/fixed_point/math_ops.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/utilities/error.hpp>
@@ -18,9 +18,9 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/optional>
@@ -88,23 +88,26 @@ std::unique_ptr<column> divide_decimal_rows(LhsOperand lhs,
                                             size_type size,
                                             rounding_method method,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cudf::memory_resources mr)
 {
   using Rep = typename T::rep;
 
-  auto result = make_fixed_width_column(output_type, size, mask_state::UNALLOCATED, stream, mr);
-  auto valid  = rmm::device_uvector<bool>(size, stream, cudf::get_current_device_resource_ref());
+  auto result =
+    make_fixed_width_column(output_type, size, mask_state::UNALLOCATED, stream, mr.get_output_mr());
+  auto valid = cuda::device_buffer<bool>(stream, mr.get_temporary_mr(), size, cuda::no_init);
 
   thrust::for_each_n(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
     cuda::counting_iterator<size_type>{0},
     size,
     divide_decimal_fn<T, LhsOperand, RhsOperand>{
       lhs, rhs, lhs_scale, rhs_scale, method, result->mutable_view().begin<Rep>(), valid.data()});
 
-  auto [null_mask, null_count] =
-    cudf::detail::valid_if(valid.begin(), valid.end(), cuda::std::identity{}, stream, mr);
-  if (null_count > 0) { result->set_null_mask(std::move(null_mask), null_count); }
+  auto [null_mask, null_count] = cudf::detail::bools_to_mask(
+    column_view{data_type{type_id::BOOL8}, size, valid.data(), nullptr, 0},
+    stream,
+    mr.get_output_mr());
+  if (null_count > 0) { result->set_null_mask(std::move(*null_mask), null_count); }
   return result;
 }
 
@@ -121,7 +124,7 @@ struct divide_decimal_dispatch {
                                      column_view const& rhs,
                                      rounding_method method,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr) const
+                                     cudf::memory_resources mr) const
     requires(cudf::is_fixed_point<T>())
   {
     using Rep        = typename T::rep;
@@ -144,12 +147,13 @@ struct divide_decimal_dispatch {
                                      scalar const& rhs,
                                      rounding_method method,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr) const
+                                     cudf::memory_resources mr) const
     requires(cudf::is_fixed_point<T>())
   {
     using Rep = typename T::rep;
     if (!rhs.is_valid(stream)) {
-      return make_fixed_width_column(lhs.type(), lhs.size(), mask_state::ALL_NULL, stream, mr);
+      return make_fixed_width_column(
+        lhs.type(), lhs.size(), mask_state::ALL_NULL, stream, mr.get_output_mr());
     }
     auto const d_lhs     = column_device_view::create(lhs, stream);
     auto const rhs_value = static_cast<fixed_point_scalar<T> const&>(rhs).value(stream);
@@ -170,12 +174,13 @@ struct divide_decimal_dispatch {
                                      column_view const& rhs,
                                      rounding_method method,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr) const
+                                     cudf::memory_resources mr) const
     requires(cudf::is_fixed_point<T>())
   {
     using Rep = typename T::rep;
     if (!lhs.is_valid(stream)) {
-      return make_fixed_width_column(lhs.type(), rhs.size(), mask_state::ALL_NULL, stream, mr);
+      return make_fixed_width_column(
+        lhs.type(), rhs.size(), mask_state::ALL_NULL, stream, mr.get_output_mr());
     }
     auto const lhs_value = static_cast<fixed_point_scalar<T> const&>(lhs).value(stream);
     auto const d_rhs     = column_device_view::create(rhs, stream);
@@ -198,7 +203,7 @@ std::unique_ptr<column> divide_decimal(column_view const& lhs,
                                        column_view const& rhs,
                                        rounding_method method,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cudf::memory_resources mr)
 {
   CUDF_EXPECTS(cudf::is_fixed_point(lhs.type()) && cudf::is_fixed_point(rhs.type()),
                "Columns must be decimal type");
@@ -214,7 +219,7 @@ std::unique_ptr<column> divide_decimal(column_view const& lhs,
                                        scalar const& rhs,
                                        rounding_method method,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cudf::memory_resources mr)
 {
   CUDF_EXPECTS(cudf::is_fixed_point(lhs.type()) && cudf::is_fixed_point(rhs.type()),
                "Column and scalar must be decimal type");
@@ -229,7 +234,7 @@ std::unique_ptr<column> divide_decimal(scalar const& lhs,
                                        column_view const& rhs,
                                        rounding_method method,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cudf::memory_resources mr)
 {
   CUDF_EXPECTS(cudf::is_fixed_point(lhs.type()) && cudf::is_fixed_point(rhs.type()),
                "Column and scalar must be decimal type");
@@ -246,7 +251,7 @@ std::unique_ptr<column> divide_decimal(column_view const& lhs,
                                        column_view const& rhs,
                                        rounding_method method,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::divide_decimal(lhs, rhs, method, stream, mr);
@@ -256,7 +261,7 @@ std::unique_ptr<column> divide_decimal(column_view const& lhs,
                                        scalar const& rhs,
                                        rounding_method method,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::divide_decimal(lhs, rhs, method, stream, mr);
@@ -266,7 +271,7 @@ std::unique_ptr<column> divide_decimal(scalar const& lhs,
                                        column_view const& rhs,
                                        rounding_method method,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::divide_decimal(lhs, rhs, method, stream, mr);

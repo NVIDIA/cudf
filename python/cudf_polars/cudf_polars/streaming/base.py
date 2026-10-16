@@ -17,6 +17,14 @@ if TYPE_CHECKING:
     from cudf_polars.dsl.ir import IR
 
 
+# cuDF column/concatenate row limit (int32). Lives here, rather than in
+# streaming.actor_graph.utils (its original home), so that streaming.select
+# can use it too without importing the actor_graph package -- that package's
+# __init__ eagerly imports a chain that leads back to streaming.parallel,
+# which is what imports streaming.select in the first place.
+CUDF_ROW_LIMIT = 2**31 - 1
+
+
 class PartitionInfo:
     """Partitioning information."""
 

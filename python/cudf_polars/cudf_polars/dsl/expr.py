@@ -36,7 +36,12 @@ from cudf_polars.dsl.expressions.sorting import Sort, SortBy
 from cudf_polars.dsl.expressions.string import StringFunction
 from cudf_polars.dsl.expressions.struct import StructFunction
 from cudf_polars.dsl.expressions.ternary import Ternary
-from cudf_polars.dsl.expressions.unary import Cast, Len, UnaryFunction
+from cudf_polars.dsl.expressions.unary import (
+    Cast,
+    Len,
+    OverflowCheckedCast,
+    UnaryFunction,
+)
 
 __all__ = [
     "Agg",
@@ -57,6 +62,7 @@ __all__ = [
     "Literal",
     "LiteralColumn",
     "NamedExpr",
+    "OverflowCheckedCast",
     "RollingWindow",
     "Skew",
     "Slice",

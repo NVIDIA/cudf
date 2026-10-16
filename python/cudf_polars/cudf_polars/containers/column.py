@@ -48,6 +48,18 @@ __all__: list[str] = ["Column"]
 _FLOAT64_DECIMAL_PRECISION = 17
 
 
+_INTEGER_RANGES: dict[plc.TypeId, tuple[int, int, str]] = {
+    plc.TypeId.INT8: (-(2**7), 2**7 - 1, "i8"),
+    plc.TypeId.INT16: (-(2**15), 2**15 - 1, "i16"),
+    plc.TypeId.INT32: (-(2**31), 2**31 - 1, "i32"),
+    plc.TypeId.INT64: (-(2**63), 2**63 - 1, "i64"),
+    plc.TypeId.UINT8: (0, 2**8 - 1, "u8"),
+    plc.TypeId.UINT16: (0, 2**16 - 1, "u16"),
+    plc.TypeId.UINT32: (0, 2**32 - 1, "u32"),
+    plc.TypeId.UINT64: (0, 2**64 - 1, "u64"),
+}
+
+
 class Column:
     """An immutable column with sortedness metadata."""
 
@@ -274,7 +286,38 @@ class Column:
             return True
         return False
 
-    def astype(self, dtype: DataType, stream: Stream, *, strict: bool = True) -> Column:
+    def _raise_if_integer_cast_overflows(self, dtype: DataType, stream: Stream) -> None:
+        """
+        Raise if casting this integer column to ``dtype`` would change a value.
+
+        libcudf's cast wraps on overflow; polars' strict cast raises. Widening
+        casts (source range contained in the target range) are skipped, so
+        they pay nothing. Otherwise one min/max reduction is enough since
+        nulls are skipped and stay null.
+        """
+        src = _INTEGER_RANGES.get(self.obj.type().id())
+        dst = _INTEGER_RANGES.get(dtype.plc_type.id())
+        if src is None or dst is None or (dst[0] <= src[0] and src[1] <= dst[1]):
+            return
+        lo, hi = plc.reduce.minmax(self.obj, stream=stream)
+        if not lo.is_valid(stream=stream):  # empty or all null
+            return
+        lo_py, hi_py = lo.to_py(stream=stream), hi.to_py(stream=stream)
+        if lo_py < dst[0] or hi_py > dst[1]:
+            raise InvalidOperationError(
+                f"conversion from `{src[2]}` to `{dst[2]}` failed in column "
+                f"'{self.name}': values in [{lo_py}, {hi_py}] do not fit "
+                f"in [{dst[0]}, {dst[1]}]"
+            )
+
+    def astype(
+        self,
+        dtype: DataType,
+        stream: Stream,
+        *,
+        strict: bool = True,
+        check_overflow: bool = False,
+    ) -> Column:
         """
         Cast the column to as the requested dtype.
 
@@ -288,6 +331,9 @@ class Column:
         strict
             If True, raise an error if the cast is unsupported.
             If False, return nulls for unsupported casts.
+        check_overflow
+            If True, raise an error if an integer cast to a narrower integer
+            type would change a value. libcudf otherwise wraps on overflow.
 
         Returns
         -------
@@ -427,6 +473,8 @@ class Column:
                 name=self.name,
             )
         else:
+            if check_overflow:
+                self._raise_if_integer_cast_overflows(dtype, stream)
             result = Column(
                 plc.unary.cast(self.obj, plc_dtype, stream=stream),
                 dtype=dtype,

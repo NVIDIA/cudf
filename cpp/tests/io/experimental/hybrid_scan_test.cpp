@@ -33,8 +33,10 @@
 
 #include <cuda/iterator>
 
+#include <algorithm>
 #include <array>
 #include <format>
+#include <iterator>
 #include <limits>
 #include <stdexcept>
 
@@ -1378,6 +1380,32 @@ TEST_F(HybridScanTest, ChunkedReadRowMaskPerPass)
                                       stream,
                                       mr)
         .tbl);
+
+    // Read payload columns again using page-level (sparse) I/O in chunks and expect a match
+    auto const page_byte_ranges =
+      reader->sparse_payload_pages_byte_ranges(row_group_indices, row_mask_view, options, stream);
+    auto [page_buffers, page_data, page_tasks] =
+      cudf::io::parquet::fetch_byte_ranges_to_device_async(
+        *datasource,
+        page_byte_ranges,
+        cudf::io::parquet::io_submission_policy::SERIALIZE,
+        stream,
+        mr);
+    page_tasks.get();
+
+    auto constexpr chunk_read_limit = 1024;
+    reader->setup_chunked_sparse_payload_materialization(
+      chunk_read_limit, 0, row_group_indices, page_data, row_mask_view, options, stream, mr);
+    auto sparse_chunks = std::vector<std::unique_ptr<cudf::table>>{};
+    while (reader->has_next_table_chunk()) {
+      sparse_chunks.push_back(reader->materialize_payload_columns_chunk(row_mask_view).tbl);
+    }
+    auto sparse_chunk_views = std::vector<cudf::table_view>{};
+    std::ranges::transform(sparse_chunks,
+                           std::back_inserter(sparse_chunk_views),
+                           [](auto const& chunk) { return chunk->view(); });
+    CUDF_TEST_EXPECT_TABLES_EQUIVALENT(payload_tables.back()->view(),
+                                       cudf::concatenate(sparse_chunk_views)->view());
   };
 
   // Split the row groups into two passes and materialize each pass independently

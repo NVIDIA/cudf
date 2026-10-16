@@ -11,6 +11,7 @@
 #include <cudf/ast/detail/expression_transformer.hpp>
 #include <cudf/ast/expressions.hpp>
 #include <cudf/column/column_factories.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -20,6 +21,8 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
+
+#include <cuda/buffer>
 
 #include <bit>
 #include <numeric>
@@ -257,7 +260,7 @@ class stats_caster_base {
 
     static inline std::tuple<rmm::device_uvector<char>,
                              rmm::device_uvector<size_type>,
-                             rmm::device_uvector<size_type>>
+                             cuda::device_buffer<size_type>>
     make_strings_children(cudf::host_span<cudf::string_view const> host_strings,
                           cudf::host_span<char const> host_chars,
                           cuda::stream_ref stream,
@@ -274,7 +277,7 @@ class stats_caster_base {
       }
       auto d_chars   = cudf::detail::make_device_uvector_async(host_chars, stream, mr);
       auto d_offsets = cudf::detail::make_device_uvector_async(offsets, stream, mr);
-      auto d_sizes   = cudf::detail::make_device_uvector_async(sizes, stream, mr);
+      auto d_sizes   = cudf::detail::make_device_buffer_async(sizes, stream, mr);
       stream.sync();  // ensures the vectors are not destroyed before the copy is completed
       return {std::move(d_chars), std::move(d_offsets), std::move(d_sizes)};
     }

@@ -13,6 +13,7 @@
 #include <cudf/detail/labeling/label_segments.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/transform.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/host_vector.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -33,6 +34,7 @@
 #include <cub/device/device_radix_sort.cuh>
 #include <cub/device/device_select.cuh>
 #include <cub/device/device_transform.cuh>
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/algorithm>
 #include <cuda/std/bit>
@@ -354,12 +356,15 @@ constexpr auto min_segments_for_device_offsets = 1024;
 
 /**
  * @brief Compute segment row offsets via pairwise `std::set_union` fold on the host, then H2D.
+ *
+ * TODO: Change this to a resizable buffer if/when https://github.com/NVIDIA/cccl/issues/12051
+ * is implemented
  */
-[[nodiscard]] rmm::device_uvector<size_type> compute_segment_row_offsets_host(
-  std::span<page_statistics_input const> inputs,
-  std::size_t total_page_row_offsets,
-  cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+[[nodiscard]] std::pair<cuda::device_buffer<size_type>, std::size_t>
+compute_segment_row_offsets_host(std::span<page_statistics_input const> inputs,
+                                 std::size_t total_page_row_offsets,
+                                 cuda::stream_ref stream,
+                                 rmm::device_async_resource_ref mr)
 {
   auto all_page_row_offsets =
     cudf::detail::make_empty_pinned_vector<size_type>(total_page_row_offsets, stream);
@@ -385,17 +390,21 @@ constexpr auto min_segments_for_device_offsets = 1024;
   all_page_row_offsets.erase(std::unique(all_page_row_offsets.begin(), all_page_row_offsets.end()),
                              all_page_row_offsets.end());
 
-  return cudf::detail::make_device_uvector_async(all_page_row_offsets, stream, mr);
+  return {cudf::detail::make_device_buffer_async(all_page_row_offsets, stream, mr),
+          all_page_row_offsets.size()};
 }
 
 /**
  * @brief Compute segment row offsets by sort+unique on page row offsets.
+ *
+ * TODO: Change this to a resizable buffer if/when https://github.com/NVIDIA/cccl/issues/12051
+ * is implemented
  */
-[[nodiscard]] rmm::device_uvector<size_type> compute_segment_row_offsets_device(
-  cudf::device_span<size_type const> all_page_row_offsets,
-  size_type total_rows,
-  cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+[[nodiscard]] std::pair<cuda::device_buffer<size_type>, std::size_t>
+compute_segment_row_offsets_device(cudf::device_span<size_type const> all_page_row_offsets,
+                                   size_type total_rows,
+                                   cuda::stream_ref stream,
+                                   rmm::device_async_resource_ref mr)
 {
   auto const temp_mr   = cudf::get_current_device_resource_ref();
   auto const num_items = static_cast<cuda::std::int64_t>(all_page_row_offsets.size());
@@ -403,25 +412,25 @@ constexpr auto min_segments_for_device_offsets = 1024;
   auto const env       = cuda::std::execution::env{cuda::stream_ref{stream.get()}, mr_prop};
 
   // Offsets are non-negative and at most `total_rows`, so only their low bits need sorting.
-  auto sorted_offsets = rmm::device_uvector<size_type>(num_items, stream, temp_mr);
+  auto sorted_offsets = cuda::device_buffer<size_type>(stream, temp_mr, num_items, cuda::no_init);
   auto const end_bit  = static_cast<int>(cuda::std::bit_width(static_cast<uint32_t>(total_rows)));
   CUDF_CUDA_TRY(cub::DeviceRadixSort::SortKeys(
     all_page_row_offsets.data(), sorted_offsets.data(), num_items, 0, end_bit, env));
 
-  auto segment_row_offsets = rmm::device_uvector<size_type>(num_items, stream, mr);
+  auto segment_row_offsets = cuda::device_buffer<size_type>(stream, mr, num_items, cuda::no_init);
   auto num_unique          = cudf::detail::device_scalar<cuda::std::int64_t>(stream, temp_mr);
   CUDF_CUDA_TRY(cub::DeviceSelect::Unique(
     sorted_offsets.data(), segment_row_offsets.data(), num_unique.data(), num_items, env));
-  segment_row_offsets.resize(num_unique.value(stream), stream);
+  auto const num_offsets = static_cast<std::size_t>(num_unique.value(stream));
 
-  return segment_row_offsets;
+  return {std::move(segment_row_offsets), num_offsets};
 }
 
 /**
  * @brief Compute per-input page maps in one kernel. Returns a row-major `num_inputs x
  * num_segments` buffer where entry `[i, s]` is the page in input `i` containing segment `s`.
  */
-[[nodiscard]] rmm::device_uvector<size_type> compute_segment_page_maps(
+[[nodiscard]] cuda::device_buffer<size_type> compute_segment_page_maps(
   cudf::device_span<size_type const> all_page_row_offsets,
   cudf::device_span<size_type const> input_slice_bounds,
   cudf::device_span<size_type const> segment_row_offsets,
@@ -431,7 +440,8 @@ constexpr auto min_segments_for_device_offsets = 1024;
   auto const num_inputs   = input_slice_bounds.size() - 1;
   auto const num_segments = segment_row_offsets.size() - 1;
 
-  auto page_maps = rmm::device_uvector<size_type>(num_inputs * num_segments, stream, mr);
+  auto page_maps =
+    cuda::device_buffer<size_type>(stream, mr, num_inputs * num_segments, cuda::no_init);
 
   // One thread per (input, segment) pair. `upper_bound` finds the containing page. Segments are
   // built from the union of all page boundaries, so containment is guaranteed.
@@ -601,8 +611,9 @@ thrust::host_vector<bool> compute_row_range_selection_mask(
   auto const mr                 = cudf::get_current_device_resource_ref();
   auto const tree_level_offsets = compute_fenwick_tree_level_offsets(total_rows, max_page_size);
   auto const num_levels         = static_cast<cudf::size_type>(tree_level_offsets.size());
-  auto tree_levels_data         = rmm::device_uvector<bool>(tree_level_offsets.back(), stream, mr);
-  auto host_tree_level_ptrs     = cudf::detail::make_pinned_vector_async<bool*>(num_levels, stream);
+  auto tree_levels_data =
+    cuda::device_buffer<bool>(stream, mr, tree_level_offsets.back(), cuda::no_init);
+  auto host_tree_level_ptrs = cudf::detail::make_pinned_vector_async<bool*>(num_levels, stream);
   // The zeroth level is the row mask itself, read through its accessor
   auto const d_row_mask   = row_mask_accessor{row_mask};
   host_tree_level_ptrs[0] = nullptr;
@@ -632,7 +643,7 @@ thrust::host_vector<bool> compute_row_range_selection_mask(
     });
 
   auto const num_ranges    = static_cast<cudf::size_type>(page_row_offsets.size() - 1);
-  auto device_results      = rmm::device_uvector<bool>(num_ranges, stream, mr);
+  auto device_results      = cuda::device_buffer<bool>(stream, mr, num_ranges, cuda::no_init);
   auto pinned_page_offsets = cudf::detail::make_pinned_vector(page_row_offsets, stream);
   auto page_offsets = cudf::detail::make_device_uvector_async(pinned_page_offsets, stream, mr);
   thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
@@ -710,17 +721,19 @@ std::unique_ptr<column> compute_row_mask_from_page_stats(
   });
 
   auto const all_page_row_offsets =
-    cudf::detail::make_device_uvector_async(host_all_page_row_offsets, stream, temp_mr);
+    cudf::detail::make_device_buffer_async(host_all_page_row_offsets, stream, temp_mr);
   auto const input_slice_bounds =
-    cudf::detail::make_device_uvector_async(host_input_slice_bounds, stream, temp_mr);
+    cudf::detail::make_device_buffer_async(host_input_slice_bounds, stream, temp_mr);
 
   // Sorted, deduplicated union of all page boundaries. Host fold for small totals, device
   // sort+unique for larger.
-  auto const segment_row_offsets =
+  auto const [segment_row_offsets_storage, num_offsets] =
     total_page_row_offsets >= min_segments_for_device_offsets
       ? compute_segment_row_offsets_device(all_page_row_offsets, total_rows, stream, temp_mr)
       : compute_segment_row_offsets_host(inputs, total_page_row_offsets, stream, temp_mr);
 
+  auto const segment_row_offsets =
+    cudf::device_span<size_type const>{segment_row_offsets_storage.data(), num_offsets};
   auto const num_segments = static_cast<size_type>(segment_row_offsets.size() - 1);
 
   // Compute all input columns' page maps in a single kernel launch.
@@ -780,7 +793,8 @@ std::unique_ptr<column> compute_row_mask_from_page_stats(
   }
 
   // Compute row-level segment indices
-  auto row_segment_indices = rmm::device_uvector<size_type>(total_rows, stream, temp_mr);
+  auto row_segment_indices =
+    cuda::device_buffer<size_type>(stream, temp_mr, total_rows, cuda::no_init);
   cudf::detail::label_segments(segment_row_offsets.begin(),
                                segment_row_offsets.end(),
                                row_segment_indices.begin(),

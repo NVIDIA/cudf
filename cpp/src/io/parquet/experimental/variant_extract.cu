@@ -26,13 +26,14 @@
 #include <cudf/structs/structs_column_view.hpp>
 #include <cudf/utilities/bit.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <rmm/device_buffer.hpp>
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/numeric>
@@ -1401,9 +1402,9 @@ std::unique_ptr<column> get_variant_field(column_view const& variant_column,
   cudf::lists_column_device_view meta_lists_device_view(*meta_device_view);
   cudf::lists_column_device_view val_lists_device_view(*val_device_view);
 
-  rmm::device_uvector<size_type> d_sizes(num_rows, stream, temp_mr);
+  cuda::device_buffer<size_type> d_sizes(stream, temp_mr, num_rows, cuda::no_init);
   // Caches the per-row intra-value byte offset
-  rmm::device_uvector<size_type> d_src_offsets(num_rows, stream, temp_mr);
+  cuda::device_buffer<size_type> d_src_offsets(stream, temp_mr, num_rows, cuda::no_init);
   auto null_mask =
     variant_column.nullable()
       ? cudf::detail::copy_bitmask(variant_column, stream, mr)

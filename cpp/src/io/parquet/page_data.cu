@@ -9,6 +9,7 @@
 
 #include <cudf/detail/algorithms/reduce.cuh>
 #include <cudf/detail/utilities/batched_memcpy.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 
 #include <rmm/exec_policy.hpp>
 
@@ -572,16 +573,16 @@ void write_final_offsets(host_span<size_type const> offsets,
                          cuda::stream_ref stream)
 {
   // Copy offsets to device and create an iterator
-  auto d_src_data = cudf::detail::make_device_uvector_async(
+  auto d_src_data = cudf::detail::make_device_buffer_async(
     offsets, stream, cudf::get_current_device_resource_ref());
   // Iterator for the source (scalar) data
   auto src_iter = cuda::transform_iterator(
     cuda::counting_iterator<std::size_t>{0},
     cuda::proclaim_return_type<cudf::size_type*>(
-      [src = d_src_data.begin()] __device__(std::size_t i) { return src + i; }));
+      [src = d_src_data.data()] __device__(std::size_t i) { return src + i; }));
 
   // Copy buffer addresses to device and create an iterator
-  auto d_dst_addrs = cudf::detail::make_device_uvector_async(
+  auto d_dst_addrs = cudf::detail::make_device_buffer_async(
     buff_addrs, stream, cudf::get_current_device_resource_ref());
   // size_iter is simply a constant iterator of sizeof(size_type) bytes.
   auto size_iter = cuda::make_constant_iterator(sizeof(size_type));

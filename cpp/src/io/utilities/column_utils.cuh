@@ -38,13 +38,16 @@ namespace io {
  * @return Device array containing leaf column device views
  */
 template <typename ColumnDescriptor>
-rmm::device_uvector<column_device_view> create_leaf_column_device_views(
+cuda::device_buffer<column_device_view> create_leaf_column_device_views(
   typename cudf::device_span<ColumnDescriptor> col_desc,
   table_device_view const& parent_table_device_view,
   cuda::stream_ref stream)
 {
-  rmm::device_uvector<column_device_view> leaf_column_views(parent_table_device_view.num_columns(),
-                                                            stream);
+  auto leaf_column_views = cuda::device_buffer<column_device_view>{
+    stream,
+    cudf::get_current_device_resource_ref(),
+    static_cast<std::size_t>(parent_table_device_view.num_columns()),
+    cuda::no_init};
   auto leaf_columns = cudf::device_span<column_device_view>{leaf_column_views};
 
   auto iter = cuda::counting_iterator<size_type>{0};

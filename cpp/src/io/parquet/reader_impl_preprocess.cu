@@ -17,6 +17,7 @@
 #include <cudf/detail/labeling/label_segments.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/batched_memset.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/utilities/error.hpp>
@@ -24,6 +25,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <thrust/fill.h>
 #include <thrust/scan.h>
@@ -88,7 +90,8 @@ void reader_impl::build_string_dict_indices()
   auto& pass = *_pass_itm_data;
 
   // compute number of indices per chunk and a summed total
-  rmm::device_uvector<size_t> str_dict_index_count(pass.chunks.size() + 1, _stream);
+  cuda::device_buffer<size_t> str_dict_index_count(
+    _stream, cudf::get_current_device_resource_ref(), pass.chunks.size() + 1, cuda::no_init);
   thrust::fill(rmm::exec_policy_nosync(_stream, cudf::get_current_device_resource_ref()),
                str_dict_index_count.begin(),
                str_dict_index_count.end(),
@@ -107,7 +110,7 @@ void reader_impl::build_string_dict_indices()
   if (total_str_dict_indexes == 0) { return; }
 
   // convert to offsets
-  rmm::device_uvector<size_t>& str_dict_index_offsets = str_dict_index_count;
+  cuda::device_buffer<size_t>& str_dict_index_offsets = str_dict_index_count;
   thrust::exclusive_scan(rmm::exec_policy_nosync(_stream, cudf::get_current_device_resource_ref()),
                          str_dict_index_offsets.begin(),
                          str_dict_index_offsets.end(),
@@ -115,7 +118,7 @@ void reader_impl::build_string_dict_indices()
                          0);
 
   // allocate and distribute pointers
-  pass.str_dict_index = cudf::detail::make_zeroed_device_uvector_async<string_index_pair>(
+  pass.str_dict_index = cudf::detail::make_zeroed_device_buffer_async<string_index_pair>(
     total_str_dict_indexes, _stream, cudf::get_current_device_resource_ref());
 
   auto iter = cuda::counting_iterator<size_t>{0};
@@ -533,7 +536,8 @@ void reader_impl::compute_page_string_offset_indices(size_t skip_rows, size_t nu
 
   // Compute the number of offsets per page on the GPU using batch_size from nesting info
   auto const num_pages = subpass.pages.size();
-  rmm::device_uvector<size_t> d_page_offset_counts(num_pages, _stream);
+  cuda::device_buffer<size_t> d_page_offset_counts(
+    _stream, cudf::get_current_device_resource_ref(), num_pages, cuda::no_init);
 
   thrust::transform(rmm::exec_policy_nosync(_stream, cudf::get_current_device_resource_ref()),
                     cuda::counting_iterator<size_t>{0},
@@ -542,7 +546,8 @@ void reader_impl::compute_page_string_offset_indices(size_t skip_rows, size_t nu
                     compute_page_offset_count{subpass.pages, pass.chunks, skip_rows, num_rows});
 
   // Compute prefix sum (exclusive scan) to get indices for each page
-  subpass.page_string_offset_indices = rmm::device_uvector<size_t>(num_pages, _stream);
+  subpass.page_string_offset_indices = cuda::device_buffer<size_t>(
+    _stream, cudf::get_current_device_resource_ref(), num_pages, cuda::no_init);
   thrust::exclusive_scan(rmm::exec_policy_nosync(_stream, cudf::get_current_device_resource_ref()),
                          d_page_offset_counts.begin(),
                          d_page_offset_counts.end(),
@@ -556,7 +561,8 @@ void reader_impl::compute_page_string_offset_indices(size_t skip_rows, size_t nu
                                                       _stream);
 
   // Allocate the string offset buffer
-  subpass.string_offset_buffer = rmm::device_uvector<uint32_t>(total_num_offsets, _stream, _mr);
+  subpass.string_offset_buffer =
+    cuda::device_buffer<uint32_t>(_stream, _mr, total_num_offsets, cuda::no_init);
 
   // Set the string offset buffer for non-dictionary, non-FLBA string columns
   for (size_t col_idx = 0; col_idx < pass.chunks.size(); ++col_idx) {
@@ -675,7 +681,7 @@ void reader_impl::read_compressed_data()
 
   // Zero out the vector before `decode_page_headers` as it may not write every byte of the buffer,
   // and`sort_pages` copies `PageInfo` as whole objects.
-  auto unsorted_pages = cudf::detail::make_zeroed_device_uvector_async<PageInfo>(
+  auto unsorted_pages = cudf::detail::make_zeroed_device_buffer_async<PageInfo>(
     total_pages, _stream, cudf::get_current_device_resource_ref());
 
   // decoding of column/page information
@@ -1131,7 +1137,7 @@ void reader_impl::allocate_columns(read_mode mode, size_t skip_rows, size_t num_
                          [](auto& l, auto& r) { return l.nesting_depth < r.nesting_depth; }))
         .nesting_depth;
 
-    auto const d_cols_info = cudf::detail::make_device_uvector_async(
+    auto const d_cols_info = cudf::detail::make_device_buffer_async(
       h_cols_info, _stream, cudf::get_current_device_resource_ref());
 
     // Vector to store page sizes for each column at each depth
@@ -1154,7 +1160,8 @@ void reader_impl::allocate_columns(read_mode mode, size_t skip_rows, size_t num_
         : num_keys_per_col * std::max<size_t>(1, max_keys_per_iter / num_keys_per_col);
 
     // Size iterator. Indexes pages by sorted order
-    rmm::device_uvector<size_t> size_input{num_keys_per_iter, _stream};
+    cuda::device_buffer<size_t> size_input(
+      _stream, cudf::get_current_device_resource_ref(), num_keys_per_iter, cuda::no_init);
 
     // To keep track of the starting key of an iteration
     size_t key_start = 0;
@@ -1293,7 +1300,8 @@ cudf::detail::host_vector<size_t> reader_impl::calculate_page_string_offsets()
 
   auto page_keys = make_page_key_iterator(subpass.pages);
 
-  rmm::device_uvector<size_t> d_col_sizes(_input_columns.size(), _stream);
+  cuda::device_buffer<size_t> d_col_sizes(
+    _stream, cudf::get_current_device_resource_ref(), _input_columns.size(), cuda::no_init);
 
   // use page_index to fetch page string sizes in the proper order
   auto val_iter = cuda::transform_iterator(subpass.pages.device_begin(),
@@ -1308,7 +1316,8 @@ cudf::detail::host_vector<size_t> reader_impl::calculate_page_string_offsets()
     cuda::make_tabulate_output_iterator(set_str_offset_fn{subpass.pages.device_ptr()}));
 
   // now sum up page sizes
-  rmm::device_uvector<int> reduce_keys(d_col_sizes.size(), _stream);
+  cuda::device_buffer<int> reduce_keys(
+    _stream, cudf::get_current_device_resource_ref(), d_col_sizes.size(), cuda::no_init);
   cudf::detail::reduce_by_key(page_keys,
                               page_keys + subpass.pages.size(),
                               val_iter,

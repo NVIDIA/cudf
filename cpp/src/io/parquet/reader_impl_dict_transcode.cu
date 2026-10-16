@@ -10,6 +10,7 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/batched_memset.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/host_vector.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/dictionary/detail/encode.hpp>
@@ -440,9 +441,9 @@ void reader_impl::assemble_dict_transcoded_columns(
 
       // Device copies of the per-chunk row/key boundaries, reused by the strided key gather below
       // and by `remap_dict_indices_by_chunk`.
-      auto const d_row_offsets = cudf::detail::make_device_uvector_async(
+      auto const d_row_offsets = cudf::detail::make_device_buffer_async(
         chunk_row_offsets, _stream, get_current_device_resource_ref());
-      auto const d_key_counts_prefix = cudf::detail::make_device_uvector_async(
+      auto const d_key_counts_prefix = cudf::detail::make_device_buffer_async(
         key_counts_prefix, _stream, get_current_device_resource_ref());
 
       // Host source for the strided gather's per-chunk base offsets. Declared at iteration scope
@@ -471,7 +472,7 @@ void reader_impl::assemble_dict_transcoded_columns(
                        cuda::counting_iterator{chunk_indices.size()},
                        key_base_offsets.begin(),
                        [&](size_t k) { return key_offset_of(k); });
-        auto const d_key_base_offsets = cudf::detail::make_device_uvector_async(
+        auto const d_key_base_offsets = cudf::detail::make_device_buffer_async(
           key_base_offsets, _stream, get_current_device_resource_ref());
 
         auto const keys_begin = cudf::detail::make_counting_transform_iterator(

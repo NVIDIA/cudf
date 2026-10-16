@@ -228,5 +228,10 @@ std::unique_ptr<column> filter_characters_of_type(strings_column_view const& inp
     input, types_to_remove, replacement, types_to_keep, stream, mr);
 }
 
+std::uint8_t const* get_character_flags_table(cuda::stream_ref stream)
+{
+  return detail::get_character_flags_table(stream);
+}
+
 }  // namespace strings
 }  // namespace cudf

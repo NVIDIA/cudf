@@ -10,6 +10,8 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cstdint>
+
 /**
  * @file
  * @brief APIs for identifying and filtering strings by character type
@@ -108,6 +110,21 @@ std::unique_ptr<column> filter_characters_of_type(
   string_character_types types_to_keep = string_character_types::ALL_TYPES,
   cuda::stream_ref stream              = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr    = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Returns a pointer to device memory holding the static character flags table.
+ *
+ * The table is a static lookup indexed by Unicode code-point (values up to 0xFFFF),
+ * where each entry is a bitmask classifying the character. The bits correspond to the
+ * values in @ref string_character_types (for example `DECIMAL`, `ALPHA`, `SPACE`).
+ *
+ * On first call the table is copied into device memory and cached; subsequent calls
+ * return the cached pointer. This call is thread-safe.
+ *
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @return Device memory pointer to the character flags table
+ */
+std::uint8_t const* get_character_flags_table(cuda::stream_ref stream = cudf::get_default_stream());
 
 /** @} */  // end of doxygen group
 }  // namespace strings

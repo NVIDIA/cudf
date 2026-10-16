@@ -13,6 +13,7 @@
 #include <cudf/detail/transform.hpp>
 #include <cudf/fixed_point/math_ops.hpp>
 #include <cudf/scalar/scalar.hpp>
+#include <cudf/scalar/scalar_device_view.cuh>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
@@ -41,13 +42,20 @@ struct column_operand {
   __device__ Rep value(size_type i) const { return column.element<Rep>(i); }
 };
 
-template <typename Rep>
+template <typename T>
 struct scalar_operand {
-  Rep scalar_value;
+  fixed_point_scalar_device_view<T> scalar;
 
-  __device__ bool is_valid(size_type) const { return true; }
-  __device__ Rep value(size_type) const { return scalar_value; }
+  __device__ bool is_valid(size_type) const { return scalar.is_valid(); }
+  __device__ typename T::rep value(size_type) const { return scalar.rep(); }
 };
+
+template <typename T>
+scalar_operand<T> make_scalar_operand(scalar const& s)
+{
+  return scalar_operand<T>{
+    get_scalar_device_view(static_cast<fixed_point_scalar<T>&>(const_cast<scalar&>(s)))};
+}
 
 template <typename T, typename LhsOperand, typename RhsOperand>
 struct divide_decimal_fn {
@@ -150,16 +158,11 @@ struct divide_decimal_dispatch {
                                      cudf::memory_resources mr) const
     requires(cudf::is_fixed_point<T>())
   {
-    using Rep = typename T::rep;
-    if (!rhs.is_valid(stream)) {
-      return make_fixed_width_column(
-        lhs.type(), lhs.size(), mask_state::ALL_NULL, stream, mr.get_output_mr());
-    }
-    auto const d_lhs     = column_device_view::create(lhs, stream);
-    auto const rhs_value = static_cast<fixed_point_scalar<T> const&>(rhs).value(stream);
+    using Rep        = typename T::rep;
+    auto const d_lhs = column_device_view::create(lhs, stream);
 
     return divide_decimal_rows<T>(column_operand<Rep>{*d_lhs},
-                                  scalar_operand<Rep>{rhs_value},
+                                  make_scalar_operand<T>(rhs),
                                   numeric::scale_type{lhs.type().scale()},
                                   numeric::scale_type{rhs.type().scale()},
                                   lhs.type(),
@@ -177,15 +180,10 @@ struct divide_decimal_dispatch {
                                      cudf::memory_resources mr) const
     requires(cudf::is_fixed_point<T>())
   {
-    using Rep = typename T::rep;
-    if (!lhs.is_valid(stream)) {
-      return make_fixed_width_column(
-        lhs.type(), rhs.size(), mask_state::ALL_NULL, stream, mr.get_output_mr());
-    }
-    auto const lhs_value = static_cast<fixed_point_scalar<T> const&>(lhs).value(stream);
-    auto const d_rhs     = column_device_view::create(rhs, stream);
+    using Rep        = typename T::rep;
+    auto const d_rhs = column_device_view::create(rhs, stream);
 
-    return divide_decimal_rows<T>(scalar_operand<Rep>{lhs_value},
+    return divide_decimal_rows<T>(make_scalar_operand<T>(lhs),
                                   column_operand<Rep>{*d_rhs},
                                   numeric::scale_type{lhs.type().scale()},
                                   numeric::scale_type{rhs.type().scale()},

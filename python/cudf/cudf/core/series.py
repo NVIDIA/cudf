@@ -3043,7 +3043,7 @@ class Series(SingleColumnFrame, IndexedFrame):
         >>> ser1 = cudf.Series([0.9, 0.13, 0.62])
         >>> ser2 = cudf.Series([0.12, 0.26, 0.51])
         >>> ser1.corr(ser2, method="pearson")
-        np.float64(-0.20454263717316126)
+        np.float64(-0.20454263717316123)
         >>> ser1.corr(ser2, method="spearman")
         np.float64(-0.5)
         """

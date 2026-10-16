@@ -4,6 +4,7 @@
  */
 
 #include "common.cuh"
+#include "partial_aggregates.cuh"
 
 #include <cudf/detail/aggregation/device_aggregators.cuh>
 #include <cudf/detail/copy.hpp>
@@ -14,7 +15,6 @@
 
 #include <rmm/exec_policy.hpp>
 
-#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/stream>
 #include <thrust/for_each.h>
@@ -24,77 +24,17 @@
 
 namespace cudf::groupby {
 
-namespace {
-
-/**
- * @brief Element aggregator for merging intermediate results.
- */
-struct merge_element_aggregator {
-  template <typename Source, aggregation::Kind k>
-  __device__ void operator()(mutable_column_device_view target,
-                             size_type target_index,
-                             column_device_view source,
-                             size_type source_index) const noexcept
-  {
-    if constexpr (!cudf::detail::is_valid_aggregation<Source, k>()) {
-      return;
-    } else {
-      if constexpr (k != aggregation::COUNT_ALL) {
-        if (source.is_null(source_index)) { return; }
-      }
-      if constexpr (!(k == aggregation::COUNT_VALID || k == aggregation::COUNT_ALL)) {
-        if (target.is_null(target_index)) { target.set_valid(target_index); }
-      }
-
-      if constexpr (k == aggregation::COUNT_VALID || k == aggregation::COUNT_ALL) {
-        using Target = cudf::detail::target_type_t<Source, k>;
-        cudf::detail::atomic_add(&target.element<Target>(target_index),
-                                 source.element<Target>(source_index));
-      } else if constexpr (k == aggregation::SUM_OF_SQUARES) {
-        using Target = cudf::detail::target_type_t<Source, k>;
-        cudf::detail::atomic_add(&target.element<Target>(target_index),
-                                 static_cast<Target>(source.element<Source>(source_index)));
-      } else {
-        cudf::detail::update_target_element<Source, k>{}(
-          target, target_index, source, source_index);
-      }
-    }
-  }
-};
-
-template <typename Iterator>
-struct merge_single_pass_aggs_fn {
-  Iterator target_indices;
-  aggregation::Kind const* aggs;
-  table_device_view source_values;
-  mutable_table_device_view target_values;
-
-  __device__ void operator()(int64_t idx) const
-  {
-    auto const num_rows       = source_values.num_rows();
-    auto const source_row_idx = static_cast<size_type>(idx % num_rows);
-    if (auto const target_row_idx = target_indices[source_row_idx];
-        target_row_idx != cudf::detail::CUDF_SIZE_TYPE_SENTINEL) {
-      auto const col_idx     = static_cast<size_type>(idx / num_rows);
-      auto const& source_col = source_values.column(col_idx);
-      auto const& target_col = target_values.column(col_idx);
-      cudf::detail::dispatch_type_and_aggregation(source_col.type(),
-                                                  aggs[col_idx],
-                                                  merge_element_aggregator{},
-                                                  target_col,
-                                                  target_row_idx,
-                                                  source_col,
-                                                  source_row_idx);
-    }
-  }
-};
-
-}  // namespace
-
 void streaming_groupby::impl::do_merge(impl const& other, cuda::stream_ref stream)
 {
-  // `other` is only read from, so a single lock on this object's insertion state is enough.
-  std::lock_guard const lock{_insert_mutex};
+  // Register the source read while both objects' host bookkeeping is stable. std::lock
+  // avoids opposite-direction merge deadlocks; self-merge acquires its mutex only once.
+  std::unique_lock lock{_insert_mutex, std::defer_lock};
+  std::unique_lock source_lock{other._insert_mutex, std::defer_lock};
+  if (this == &other) {
+    lock.lock();
+  } else {
+    std::lock(lock, source_lock);
+  }
 
   ensure_not_invalidated();
   CUDF_EXPECTS(!other._invalidated.load(std::memory_order_relaxed),
@@ -119,32 +59,57 @@ void streaming_groupby::impl::do_merge(impl const& other, cuda::stream_ref strea
                "Cannot merge streaming_groupby objects with different null handling policies.",
                std::invalid_argument);
 
-  auto const mr = cudf::get_current_device_resource_ref();
+  auto const mr          = cudf::get_current_device_resource_ref();
+  bool insertion_started = false;
+  try {
+    // Source writes and earlier source reads must precede this snapshot. A later source
+    // writer/resize observes record_result_read below before these locks are released.
+    other._aggregate_done.wait(stream);
+    auto other_keys           = other.gather_distinct_keys(stream, mr);
+    auto const other_key_view = other_keys->view();
+    update_nullable_state(other_key_view);
+    if (!_key_set) { create_key_set(stream); }
+    _insert_done.wait(stream);
+    insertion_started  = true;
+    auto const targets = probe_and_insert(other_key_view, false, stream);
+    _insert_done.record(stream);
+    _results_read_done.wait(stream);
 
-  auto other_keys           = other.gather_distinct_keys(stream, mr);
-  auto const other_key_view = other_keys->view();
-
-  update_nullable_state(other_key_view);
-
-  if (!_key_set) { create_key_set(stream); }
-
-  _insert_done.wait(stream);
-  auto result = probe_and_insert(other_key_view, stream);
-  _insert_done.record(stream);
-
-  // Merge aggregation values using dense target indices.  We only read from
-  // `other._agg_results`; no need to deep-copy the source rows like keys.
-  auto const other_aggs_view =
-    cudf::detail::slice(other._agg_results->view(), {0, other_distinct_keys}, stream).front();
-  auto const d_source = table_device_view::create(other_aggs_view, stream);
-
-  auto const num_agg_cols = static_cast<int64_t>(_agg_kinds.size());
-  thrust::for_each_n(
-    rmm::exec_policy_nosync(stream, mr),
-    cuda::counting_iterator<int64_t>(0),
-    static_cast<int64_t>(other_distinct_keys) * num_agg_cols,
-    merge_single_pass_aggs_fn{
-      result.target_indices.begin(), _d_agg_kinds->data(), *d_source, *_d_agg_results});
+    std::unique_ptr<table> source_snapshot;
+    auto source_partials_per_group = other._partials_per_group;
+    auto source_capacity           = other._aggregate_capacity;
+    auto const other_aggs_view     = [&] {
+      if (this == &other) {
+        // Partials collapse into the first partial. A self-merge must snapshot first so its first
+        // partial cannot observe contributions concurrently arriving from other partials.
+        source_snapshot           = other.gather_agg_results(stream, mr);
+        source_partials_per_group = 1;
+        source_capacity           = other_distinct_keys;
+        return source_snapshot->view();
+      }
+      return other._agg_results->view();
+    }();
+    auto const d_source = table_device_view::create(other_aggs_view, stream);
+    auto const d_target = mutable_table_device_view::create(_agg_results->mutable_view(), stream);
+    thrust::for_each_n(
+      rmm::exec_policy_nosync(stream, mr),
+      cuda::counting_iterator<int64_t>(0),
+      static_cast<int64_t>(other_distinct_keys) * source_partials_per_group * _agg_kinds.size(),
+      merge_partial_aggs_fn{targets.data(),
+                            source_capacity,
+                            other_distinct_keys,
+                            source_partials_per_group,
+                            _d_agg_kinds->data(),
+                            *d_source,
+                            *d_target});
+    record_aggregate_completion(stream);
+    other.record_result_read(stream);
+  } catch (...) {
+    if (insertion_started) { _invalidated = true; }
+    // Source reads must finish before unlocking source bookkeeping even on failure.
+    static_cast<void>(cudaStreamSynchronize(stream.get()));
+    throw;
+  }
 }
 
 }  // namespace cudf::groupby

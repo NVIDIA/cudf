@@ -146,6 +146,6 @@ static void bench_streaming_groupby_decimal128_sum(nvbench::state& state)
 
 NVBENCH_BENCH(bench_streaming_groupby_decimal128_sum)
   .set_name("streaming_decimal128_sum")
-  .add_int64_power_of_two_axis("num_rows", {20, 24})
-  .add_int64_power_of_two_axis("batch_size", {12, 16, 20})
+  .add_int64_axis("num_rows", {100'000'000})
+  .add_int64_axis("batch_size", {100'000, 1'000'000, 10'000'000, 100'000'000})
   .add_int64_axis("cardinality", {128, 4'096});

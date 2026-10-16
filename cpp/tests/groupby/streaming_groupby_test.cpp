@@ -1009,7 +1009,7 @@ TEST_F(StreamingGroupbyTest, InternalDuplicatesDoNotCorruptStaging)
   using V = int32_t;
 
   // Batch 1: key 1 is a duplicate at position 1, so key 3 ends up at position 3
-  // (_num_unique_keys == 3).  Without the fix, batch 2 writes at offset 3, overwriting
+  // (three distinct keys).  Without the fix, batch 2 writes at offset 3, overwriting
   // the canonical slot for key 3 with key 4, making them appear identical.
   cudf::test::fixed_width_column_wrapper<K> keys1{1, 1, 2, 3};
   cudf::test::fixed_width_column_wrapper<V> vals1{10, 10, 20, 30};

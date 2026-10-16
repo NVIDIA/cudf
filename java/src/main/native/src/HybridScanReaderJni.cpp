@@ -251,7 +251,8 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_HybridScanReader_filterColumnCh
     auto* wrapper = reinterpret_cast<hybrid_scan_reader_wrapper*>(handle);
     auto holder   = make_row_group_span(env, j_row_groups);
     auto ranges =
-      wrapper->reader->filter_column_chunks_byte_ranges(holder.span(), wrapper->options);
+      wrapper->reader->column_chunks_byte_ranges<exp_pq::read_columns_mode::FILTER_COLUMNS>(
+        holder.span(), wrapper->options);
     return ranges_to_jlong_array(env, ranges);
   }
   JNI_CATCH(env, nullptr);
@@ -268,7 +269,8 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_HybridScanReader_payloadColumnC
     auto* wrapper = reinterpret_cast<hybrid_scan_reader_wrapper*>(handle);
     auto holder   = make_row_group_span(env, j_row_groups);
     auto ranges =
-      wrapper->reader->payload_column_chunks_byte_ranges(holder.span(), wrapper->options);
+      wrapper->reader->column_chunks_byte_ranges<exp_pq::read_columns_mode::PAYLOAD_COLUMNS>(
+        holder.span(), wrapper->options);
     return ranges_to_jlong_array(env, ranges);
   }
   JNI_CATCH(env, nullptr);
@@ -284,7 +286,9 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_HybridScanReader_allColumnChunk
     cudf::jni::auto_set_device(env);
     auto* wrapper = reinterpret_cast<hybrid_scan_reader_wrapper*>(handle);
     auto holder   = make_row_group_span(env, j_row_groups);
-    auto ranges   = wrapper->reader->all_column_chunks_byte_ranges(holder.span(), wrapper->options);
+    auto ranges =
+      wrapper->reader->column_chunks_byte_ranges<exp_pq::read_columns_mode::ALL_COLUMNS>(
+        holder.span(), wrapper->options);
     return ranges_to_jlong_array(env, ranges);
   }
   JNI_CATCH(env, nullptr);

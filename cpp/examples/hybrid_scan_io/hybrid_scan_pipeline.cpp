@@ -37,6 +37,8 @@
 namespace {
 
 using table_ptr = std::unique_ptr<cudf::table>;
+using cudf::io::parquet::experimental::read_columns_mode;
+using cudf::io::parquet::experimental::use_data_page_mask;
 
 enum class split_strategy : uint8_t {
   ROW_GROUPS  = 0,  //< Split by row groups
@@ -118,14 +120,21 @@ struct hybrid_scan_fn {
     }
 
     auto const all_column_chunk_byte_ranges =
-      reader->all_column_chunks_byte_ranges(row_groups_indices, options);
+      reader->column_chunks_byte_ranges<read_columns_mode::ALL_COLUMNS>(row_groups_indices,
+                                                                        options);
     auto [all_column_chunk_buffers, all_column_chunk_data, all_col_read_tasks] =
       fetch_byte_ranges_async(datasource, all_column_chunk_byte_ranges, stream, mr);
     all_col_read_tasks.get();
-    table.get() = std::move(
-      reader
-        ->materialize_all_columns(row_groups_indices, all_column_chunk_data, options, stream, mr)
-        .tbl);
+    table.get() =
+      std::move(reader
+                  ->materialize_table<read_columns_mode::ALL_COLUMNS>(row_groups_indices,
+                                                                      all_column_chunk_data,
+                                                                      {},
+                                                                      use_data_page_mask::NO,
+                                                                      options,
+                                                                      stream,
+                                                                      mr)
+                  .tbl);
     stream.sync();
   }
 };

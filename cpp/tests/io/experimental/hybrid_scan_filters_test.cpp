@@ -35,6 +35,9 @@
 #include <string>
 #include <vector>
 
+using cudf::io::parquet::experimental::read_columns_mode;
+using cudf::io::parquet::experimental::use_data_page_mask;
+
 // Base test fixture for tests
 struct HybridScanFiltersTest : public cudf::test::BaseFixture {};
 
@@ -913,21 +916,22 @@ TEST_F(HybridScanFiltersTest, RowMaskNullsAreRetained)
   ASSERT_EQ(row_mask->size(), table.num_rows());
   ASSERT_EQ(row_mask->null_count(), table.num_rows());
 
-  auto const byte_ranges = reader.filter_column_chunks_byte_ranges(row_groups, options);
+  auto const byte_ranges =
+    reader.column_chunks_byte_ranges<read_columns_mode::FILTER_COLUMNS>(row_groups, options);
   auto [column_buffers, column_data, read_tasks] =
     cudf::io::parquet::fetch_byte_ranges_to_device_async(
       *datasource, byte_ranges, cudf::io::parquet::io_submission_policy::SERIALIZE, stream, mr);
   read_tasks.get();
 
   auto row_mask_view = row_mask->mutable_view();
-  auto result =
-    reader.materialize_filter_columns(row_groups,
-                                      column_data,
-                                      row_mask_view,
-                                      cudf::io::parquet::experimental::use_data_page_mask::YES,
-                                      options,
-                                      stream,
-                                      mr);
+  auto result        = reader.materialize_table<read_columns_mode::FILTER_COLUMNS>(
+    row_groups,
+    column_data,
+    row_mask_view,
+    cudf::io::parquet::experimental::use_data_page_mask::YES,
+    options,
+    stream,
+    mr);
 
   auto const expected = cudf::test::fixed_width_column_wrapper<double>{{0.0, 0.0}, {false, false}};
   CUDF_TEST_EXPECT_TABLES_EQUAL(cudf::table_view{{expected}}, result.tbl->view());
@@ -968,14 +972,15 @@ TEST_F(HybridScanFiltersTest, OffsetIndexOnlyDataPageMask)
   auto const stream        = cudf::get_default_stream();
   auto const mr            = cudf::get_current_device_resource_ref();
   auto const byte_ranges =
-    offset_only_reader.payload_column_chunks_byte_ranges(selected_row_groups, options);
+    offset_only_reader.column_chunks_byte_ranges<read_columns_mode::PAYLOAD_COLUMNS>(
+      selected_row_groups, options);
   auto [column_buffers, column_data, read_tasks] =
     cudf::io::parquet::fetch_byte_ranges_to_device_async(
       *datasource, byte_ranges, cudf::io::parquet::io_submission_policy::SERIALIZE, stream, mr);
   read_tasks.get();
 
   // Materialization maps the row mask to pages using only offset index, then applies the row mask.
-  auto const result = offset_only_reader.materialize_payload_columns(
+  auto const result = offset_only_reader.materialize_table<read_columns_mode::PAYLOAD_COLUMNS>(
     selected_row_groups,
     column_data,
     row_mask_view,
@@ -997,19 +1002,21 @@ TEST_F(HybridScanFiltersTest, OffsetIndexOnlyDataPageMask)
   auto no_index_reader = cudf::io::parquet::experimental::hybrid_scan_reader(metadata, options);
   auto const no_index_row_groups = no_index_reader.all_row_groups(options);
   auto const no_index_ranges =
-    no_index_reader.payload_column_chunks_byte_ranges(no_index_row_groups, options);
+    no_index_reader.column_chunks_byte_ranges<read_columns_mode::PAYLOAD_COLUMNS>(
+      no_index_row_groups, options);
   auto [no_index_buffers, no_index_data, no_index_tasks] =
     cudf::io::parquet::fetch_byte_ranges_to_device_async(
       *datasource, no_index_ranges, cudf::io::parquet::io_submission_policy::SERIALIZE, stream, mr);
   no_index_tasks.get();
-  auto const no_index_result = no_index_reader.materialize_payload_columns(
-    no_index_row_groups,
-    no_index_data,
-    row_mask_view,
-    cudf::io::parquet::experimental::use_data_page_mask::YES,
-    options,
-    stream,
-    mr);
+  auto const no_index_result =
+    no_index_reader.materialize_table<read_columns_mode::PAYLOAD_COLUMNS>(
+      no_index_row_groups,
+      no_index_data,
+      row_mask_view,
+      cudf::io::parquet::experimental::use_data_page_mask::YES,
+      options,
+      stream,
+      mr);
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected->view(), no_index_result.tbl->view());
 }
 
@@ -1045,7 +1052,8 @@ TEST_F(HybridScanFiltersTest, NoOffsetIndexListColumns)
   auto const stream             = cudf::get_default_stream();
   auto const mr                 = cudf::get_current_device_resource_ref();
   auto const list_byte_ranges =
-    list_reader.payload_column_chunks_byte_ranges(list_row_groups, options);
+    list_reader.column_chunks_byte_ranges<read_columns_mode::PAYLOAD_COLUMNS>(list_row_groups,
+                                                                              options);
   auto [list_buffers, list_data, list_tasks] = cudf::io::parquet::fetch_byte_ranges_to_device_async(
     *list_datasource,
     list_byte_ranges,
@@ -1054,7 +1062,7 @@ TEST_F(HybridScanFiltersTest, NoOffsetIndexListColumns)
     mr);
   list_tasks.get();
 
-  auto const list_result = list_reader.materialize_payload_columns(
+  auto const list_result = list_reader.materialize_table<read_columns_mode::PAYLOAD_COLUMNS>(
     list_row_groups,
     list_data,
     list_row_mask_view,

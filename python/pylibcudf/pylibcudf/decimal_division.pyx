@@ -188,7 +188,7 @@ cpdef Column divide_decimal_scalar_column(
     Returns
     -------
     Column
-        The quotients, with the type of ``rhs`` and the scale of ``lhs``.
+        The quotients, with the type and scale of ``lhs``.
 
     Raises
     ------

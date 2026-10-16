@@ -3069,13 +3069,20 @@ def test_parquet_reader_brotli(datadir):
     assert_eq(expect, got)
 
 
-def test_parquet_reader_one_level_list(datadir):
-    fname = datadir / "one_level_list.parquet"
+@pytest.mark.parametrize(
+    "fname", ["one_level_list.parquet", "one_level_list_in_struct.parquet"]
+)
+def test_parquet_reader_one_level_list(datadir, fname):
+    fname = datadir / fname
 
     expect = pd.read_parquet(fname)
     got = cudf.read_parquet(fname)
 
     assert_eq(expect, got)
+
+    with cudf.option_context("io.parquet.low_memory", True):
+        got = cudf.read_parquet([fname] * 3, _chunk_read_limit=160)
+    assert_eq(pd.concat([expect] * 3, ignore_index=True), got)
 
 
 def test_parquet_reader_binary_decimal(datadir):

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Utilities for grouped aggregations."""
@@ -16,19 +16,19 @@ from cudf_polars.dsl.utils.naming import unique_names
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-    from typing import Any
 
     from cudf_polars.dsl import expr
-    from cudf_polars.typing import Schema
+    from cudf_polars.typing import Schema, Slice as Zlice
 
 __all__ = ["rewrite_groupby"]
 
 
 def rewrite_groupby(
-    node: Any,
     schema: Schema,
     keys: Sequence[expr.NamedExpr],
     aggs: Sequence[expr.NamedExpr],
+    maintain_order: bool,  # noqa: FBT001
+    zlice: Zlice | None,
     inp: ir.IR,
 ) -> ir.IR:
     """
@@ -36,14 +36,16 @@ def rewrite_groupby(
 
     Parameters
     ----------
-    node
-        The polars groupby plan node.
     schema
         Schema of the groupby plan node.
     keys
         Grouping keys.
     aggs
         Originally requested aggregations.
+    maintain_order
+        Whether groups are produced in order of first appearance.
+    zlice
+        Optional slice of the result.
     inp
         Input plan node to the groupby.
 
@@ -73,8 +75,8 @@ def rewrite_groupby(
             schema,
             plc.stream_compaction.DuplicateKeepOption.KEEP_ANY,
             None,
-            node.options.slice,
-            node.maintain_order,
+            zlice,
+            maintain_order,
             ir.Select(schema, keys, True, inp),  # noqa: FBT003
         )
 
@@ -91,8 +93,8 @@ def rewrite_groupby(
         group_schema,
         keys,
         aggs,
-        node.maintain_order,
-        node.options.slice,
+        maintain_order,
+        zlice,
         inp,
     )
     return apply_post_evaluation(inp)

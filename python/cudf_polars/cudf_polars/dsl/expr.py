@@ -24,6 +24,10 @@ from cudf_polars.dsl.expressions.base import (
 from cudf_polars.dsl.expressions.binaryop import BinOp
 from cudf_polars.dsl.expressions.boolean import BooleanFunction
 from cudf_polars.dsl.expressions.datetime import TemporalFunction
+from cudf_polars.dsl.expressions.dynamic import (
+    DynamicWindowEnd,
+    DynamicWindowStart,
+)
 from cudf_polars.dsl.expressions.literal import Literal, LiteralColumn
 from cudf_polars.dsl.expressions.rolling import (
     FixedSizeRollingWindow,
@@ -45,6 +49,8 @@ __all__ = [
     "Cast",
     "Col",
     "ColRef",
+    "DynamicWindowEnd",
+    "DynamicWindowStart",
     "ErrorExpr",
     "Expr",
     "Filter",

@@ -1065,6 +1065,76 @@ def test_remap_partitioning_order_scheme_truncates_prefix_key(spmd_engine):
     assert boundary_df["ts_bucket"].to_list() == [1_000_000, 2_000_000]
 
 
+@pytest.mark.parametrize(
+    "closed, offset, expected",
+    [
+        ("left", "0i", [100, 110]),
+        ("right", "0i", [100, 100]),
+        ("left", "3i", [103, 103]),
+    ],
+)
+def test_remap_partitioning_order_scheme_adds_dynamic_window_ordering(
+    spmd_engine, closed, offset, expected
+):
+    engine = pl.GPUEngine(executor="in-memory", raise_on_fail=True)
+    q = (
+        pl.LazyFrame({"t": [1], "v": [1]})
+        .group_by_dynamic("t", every="10i", closed=closed, offset=offset)
+        .agg(pl.col("v").sum())
+    )
+    ir = Translator(q._ldf.visit(), engine).translate_ir()
+    (hstack,) = (node for node in traversal([ir]) if isinstance(node, HStack))
+    (start,) = hstack.columns
+    index = list(hstack.schema).index("t")
+    part = Partitioning(
+        inter_rank=_make_order_scheme(
+            spmd_engine.context, key_indices=(index,), values=(105, 110), strict=True
+        ),
+        local="inherit",
+    )
+
+    result = maybe_remap_partitioning(hstack, part, context=spmd_engine.context)
+
+    assert result is not None
+    assert isinstance(result.inter_rank, OrderScheme)
+    orderings = result.inter_rank.orderings
+    start_index = list(hstack.schema).index(start.name)
+    assert [o.keys[0].column_index for o in orderings] == [index, start_index]
+    assert [o.strict_boundaries for o in orderings] == [True, False]
+    boundaries = orderings[1].get_boundaries(spmd_engine.context.br())
+    boundary_df = DataFrame.from_table(
+        boundaries.table_view(),
+        [start.name],
+        [hstack.schema[start.name]],
+        boundaries.stream,
+    ).to_polars()
+    assert boundary_df[start.name].to_list() == expected
+
+
+def test_remap_partitioning_order_scheme_ignores_grouped_dynamic_window(spmd_engine):
+    # The window start also depends on the group keys, which the boundaries lack.
+    engine = pl.GPUEngine(executor="in-memory", raise_on_fail=True)
+    q = (
+        pl.LazyFrame({"t": [1], "g": [1], "v": [1]})
+        .group_by_dynamic("t", every="10i", group_by="g")
+        .agg(pl.col("v").sum())
+    )
+    ir = Translator(q._ldf.visit(), engine).translate_ir()
+    (hstack,) = (node for node in traversal([ir]) if isinstance(node, HStack))
+    part = Partitioning(
+        inter_rank=_make_order_scheme(
+            spmd_engine.context, key_indices=(0,), values=(105, 110), strict=True
+        ),
+        local="inherit",
+    )
+
+    result = maybe_remap_partitioning(hstack, part, context=spmd_engine.context)
+
+    assert result is not None
+    assert isinstance(result.inter_rank, OrderScheme)
+    assert [o.keys[0].column_index for o in result.inter_rank.orderings] == [0]
+
+
 def test_remap_partitioning_order_scheme_ignores_unordered_truncate(spmd_engine):
     engine = pl.GPUEngine(executor="in-memory", raise_on_fail=True)
     hstack = Translator(

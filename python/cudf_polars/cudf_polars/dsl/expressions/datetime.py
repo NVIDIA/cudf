@@ -716,6 +716,34 @@ def _plan_truncate(dtype: DataType, every: str) -> _TruncatePlan:
     return _TruncatePlan(_TruncateMethod.FIXED, every_ticks, 0, on_date=False)
 
 
+def _plan_integer_truncate(every: int) -> _TruncatePlan:
+    """
+    Plan flooring an INT64 column to a multiple of ``every``.
+
+    This is the integer counterpart of :func:`_plan_truncate`, used for
+    integer-indexed ``group_by_dynamic`` windows (``"Ni"`` durations).
+
+    Parameters
+    ----------
+    every
+        Positive bucket width.
+
+    Returns
+    -------
+    The device computation, evaluated with :func:`_truncate`.
+
+    Raises
+    ------
+    NotImplementedError
+        If ``every`` is too large to floor without integer overflow.
+    """
+    if every <= 1:
+        return _TruncatePlan(_TruncateMethod.IDENTITY, 0, 0, on_date=False)
+    if every > _MAX_TRUNCATE_TICKS:
+        raise NotImplementedError(f"Integer truncation with every={every}")
+    return _TruncatePlan(_TruncateMethod.FIXED, every, 0, on_date=False)
+
+
 def _plan_unit_truncate(
     every: str,
     months: int,

@@ -45,7 +45,10 @@ def test_translation_assert_raises(engine: pl.GPUEngine):
     class E(Exception):
         pass
 
-    unsupported = df.group_by_dynamic("time", every="1d").agg(pl.col("n").sum())
+    # Python UDFs never run on the GPU.
+    unsupported = df.select(
+        pl.col("n").map_batches(lambda s: s * 2, return_dtype=pl.Int64)
+    )
     # Unsupported query should raise NotImplementedError
     assert_ir_translation_raises(unsupported, engine, NotImplementedError)
 

@@ -38,7 +38,13 @@ from rapidsmpf.streaming.coll.allgather import AllGather
 from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.containers import DataFrame
-from cudf_polars.dsl.expr import Cast, Col, NamedExpr, TemporalFunction
+from cudf_polars.dsl.expr import (
+    Cast,
+    Col,
+    DynamicWindowStart,
+    NamedExpr,
+    TemporalFunction,
+)
 from cudf_polars.dsl.ir import (
     Filter,
     GroupBy,
@@ -510,8 +516,18 @@ def _ordering_derivation(ne: NamedExpr) -> tuple[str, bool] | None:
     """
     Return derivation metadata for supported one-column ordering derivations.
 
-    This is intentionally narrow for now: only temporal truncation is recognized.
+    This is intentionally narrow for now: only temporal truncation and the
+    ``group_by_dynamic`` window start (without group keys) are recognized.
+    Both are non-decreasing in their source column.
     """
+    if isinstance(ne.value, DynamicWindowStart):
+        # Group keys are also children, for the sortedness check, but the
+        # boundaries hold only the ordering keys, so it cannot be evaluated.
+        (source, *keys) = ne.value.children
+        if keys or not isinstance(source, Col):
+            return None
+        # Window starts of boundaries may repeat, so they are non-strict.
+        return source.name, False
     source_name = _truncate_source_name(ne.value)
     if source_name is None:
         return None

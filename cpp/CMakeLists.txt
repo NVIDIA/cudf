@@ -578,20 +578,9 @@ endfunction()
 # amortize the cost of JIT compilation for kernels that have matching signatures
 function(precompile_string_kernel_fragments)
   list(APPEND CUDF_PRECOMPILE_STRING_OUTPUT_PHYSICAL_TYPES uint8_t uint16_t uint32_t uint64_t
-       cuda::std::span<char>
+       cudf::mutable_string_view
   )
-  list(
-    APPEND
-    CUDF_PRECOMPILE_STRING_OUTPUT_COLUMN_TYPES
-    cudf::mutable_column_device_view_core
-    cudf::mutable_column_device_view_core
-    cudf::mutable_column_device_view_core
-    cudf::mutable_column_device_view_core
-    cudf::jit::mutable_strings_column_device_view
-  )
-  foreach(OUTPUT_TYPE OUTPUT_COLUMN_TYPE IN ZIP_LISTS CUDF_PRECOMPILE_STRING_OUTPUT_PHYSICAL_TYPES
-                      CUDF_PRECOMPILE_STRING_OUTPUT_COLUMN_TYPES
-  )
+  foreach(OUTPUT_TYPE IN LISTS CUDF_PRECOMPILE_STRING_OUTPUT_PHYSICAL_TYPES)
     # Pre-compile for up to 8 output columns
     foreach(OUTPUT_INDICES IN ITEMS "0" "0;1" "0;1;2" "0;1;2;3" "0;1;2;3;4" "0;1;2;3;4;5"
                                     "0;1;2;3;4;5;6" "0;1;2;3;4;5;6;7"
@@ -609,7 +598,7 @@ function(precompile_string_kernel_fragments)
         list(
           APPEND
           OUTPUT_ACCESSORS
-          "cudf::jit::column_accessor<${OUTPUT_INDEX}ULL, ${OUTPUT_COLUMN_TYPE}, ${OUTPUT_TYPE}, false, 0>"
+          "cudf::jit::column_accessor<${OUTPUT_INDEX}ULL, cudf::mutable_column_device_view_core, ${OUTPUT_TYPE}, false, 0>"
         )
         list(APPEND OUTPUT_POINTERS "${OUTPUT_TYPE} *")
       endforeach()
@@ -922,6 +911,7 @@ add_library(
   src/jit/cache.cpp
   src/jit/helpers.cpp
   src/jit/parser.cpp
+  src/jit/reflect.cpp
   src/jit/row_ir.cpp
   src/jit/util.cpp
   src/join/conditional_join.cu

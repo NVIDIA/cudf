@@ -205,17 +205,17 @@ __device__ int compute_url_component_sizes(int32_t* protocol_size,
 // Builds the output UDF from the same parser so both CUDA passes use identical ranges.
 std::string const url_component_output_udf = std::string{R"***(
 // Copies the six parsed URL components into their preallocated string buffers.
-__device__ int write_url_components(cuda::std::span<char>* protocol,
-                                    cuda::std::span<char>* host,
-                                    cuda::std::span<char>* port,
-                                    cuda::std::span<char>* path,
-                                    cuda::std::span<char>* query,
-                                    cuda::std::span<char>* fragment,
+__device__ int write_url_components(cudf::mutable_string_view* protocol,
+                                    cudf::mutable_string_view* host,
+                                    cudf::mutable_string_view* port,
+                                    cudf::mutable_string_view* path,
+                                    cudf::mutable_string_view* query,
+                                    cudf::mutable_string_view* fragment,
                                     cudf::string_view input) {
 )***"} + parse_url_udf + R"***(
   url_ranges ranges;
   if (!parse_url(&ranges)) { return 0; }
-  cuda::std::span<char>* outputs[] = {protocol, host, port, path, query, fragment};
+  cudf::mutable_string_view* outputs[] = {protocol, host, port, path, query, fragment};
   range32 components[]     = {
     ranges.protocol, ranges.host, ranges.port, ranges.path, ranges.query, ranges.fragment};
   for (auto component = 0; component < 6; ++component) {

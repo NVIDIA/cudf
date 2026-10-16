@@ -54,10 +54,9 @@ def expected(df, n, take_head, preserve_order):
             else:
                 return g.tail(n=n)
         else:
-            # We groupby "a" which is the first column. This
-            # possibly relies on an implementation detail that for
-            # integer group keys, cudf produces groups in sorted
-            # (ascending) order.
+            # Build the reference in ascending key order. The comparison
+            # below normalizes group order while preserving row order
+            # within every group.
             keyfunc = operator.itemgetter(0)
             if take_head or n == 0:
                 # Head does group[:n] as does tail for n == 0
@@ -88,6 +87,9 @@ def test_head_tail(df, n, take_head, expected, preserve_order):
         actual = df.groupby("a").head(n=n, preserve_order=preserve_order)
     else:
         actual = df.groupby("a").tail(n=n, preserve_order=preserve_order)
+    if not preserve_order:
+        # Native sort=False does not guarantee a particular group order.
+        actual = actual.to_pandas().sort_values("a", kind="stable")
     assert_eq(actual, expected)
 
 

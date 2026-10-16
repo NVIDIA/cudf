@@ -737,10 +737,11 @@ add_library(
   src/groupby/common/null_mask.cu
   src/groupby/common/utils.cpp
   src/groupby/groupby.cu
-  src/groupby/hash/compute_groupby.cu
+  src/groupby/hash/compute_groupby.cpp
   src/groupby/hash/compute_single_pass_aggs.cpp
   src/groupby/hash/compute_single_pass_aggs.cu
   src/groupby/hash/extract_single_pass_aggs.cpp
+  src/groupby/hash/group_keys.cu
   src/groupby/hash/groupby.cu
   src/groupby/hash/hash_compound_agg_finalizer.cu
   src/groupby/hash/output_utils.cu

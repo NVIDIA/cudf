@@ -3427,6 +3427,77 @@ def test_parquet_columns_and_range_index(columns):
     assert_eq(expected, got, check_index_type=True)
 
 
+@pytest.mark.parametrize(
+    "index",
+    [
+        pd.RangeIndex(0, 6),
+        pd.RangeIndex(100, 106, name="a"),
+        pd.RangeIndex(0, 12, 2),
+        pd.RangeIndex(10, -2, -2, name="a"),
+    ],
+)
+@pytest.mark.parametrize(
+    "kwargs, rows",
+    [
+        ({"skip_rows": 1}, slice(1, None)),
+        ({"nrows": 2}, slice(0, 2)),
+        ({"skip_rows": 4, "nrows": 5}, slice(4, None)),
+        ({"nrows": 10}, slice(None)),
+    ],
+)
+def test_parquet_skip_rows_nrows_range_index(index, kwargs, rows):
+    pdf = pd.DataFrame({"x": [1, 2, 3, 4, 5, 6]}, index=index)
+    buffer = BytesIO()
+    pdf.to_parquet(buffer, row_group_size=2)
+
+    expected = pdf.iloc[rows]
+    got = cudf.read_parquet(buffer, **kwargs)
+
+    assert_eq(expected, got)
+
+
+@pytest.mark.parametrize(
+    "kwargs, rows",
+    [
+        ({"skip_rows": 1}, slice(1, None)),
+        ({"skip_rows": 1, "nrows": 2}, slice(1, 3)),
+        ({"skip_rows": 4, "nrows": 5}, slice(4, 9)),
+        ({"skip_rows": 8, "nrows": 10}, slice(8, None)),
+    ],
+)
+def test_parquet_skip_rows_nrows_multiple_files(tmp_path, kwargs, rows):
+    pdf = pd.DataFrame({"x": [1, 2, 3, 4, 5, 6]})
+    fname = tmp_path / "default_index.parquet"
+    pdf.to_parquet(fname)
+
+    expected = pd.concat([pdf, pdf], ignore_index=True).iloc[rows]
+    got = cudf.read_parquet([fname, fname], **kwargs)
+
+    assert_eq(expected, got)
+
+
+@pytest.mark.parametrize(
+    "kwargs, rows",
+    [
+        ({"row_groups": [1]}, [2, 3]),
+        ({"row_groups": [2, 0]}, [4, 5, 0, 1]),
+        ({"filters": [("x", ">", 4)]}, [4, 5]),
+    ],
+)
+def test_parquet_row_groups_stepped_range_index(tmp_path, kwargs, rows):
+    pdf = pd.DataFrame(
+        {"x": [1, 2, 3, 4, 5, 6]}, index=pd.RangeIndex(0, 12, 2)
+    )
+    fname = tmp_path / "stepped_index.parquet"
+    pdf.to_parquet(fname, row_group_size=2)
+
+    # Row groups are indexed by row position, as for a default index
+    expected = pdf.reset_index(drop=True).iloc[rows]
+    got = cudf.read_parquet(fname, **kwargs)
+
+    assert_eq(expected, got)
+
+
 def test_parquet_nested_struct_list():
     buffer = BytesIO()
     data = {

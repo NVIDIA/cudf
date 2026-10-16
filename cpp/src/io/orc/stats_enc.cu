@@ -363,8 +363,9 @@ CUDF_KERNEL void __launch_bounds__(encode_threads_per_block)
             sz += (pb_put_uint(cur, 1, min_size) - cur) + min_size +
                   (pb_put_uint(cur, 1, max_size) - cur) + max_size;
           }
-          auto const sum_size = fixed_point_string_size(s->chunk.sum.d128_val, scale);
-          sz += (pb_put_uint(cur, 1, sum_size) - cur) + sum_size;
+          auto const sum_size =
+            s->chunk.has_sum ? fixed_point_string_size(s->chunk.sum.d128_val, scale) : 0;
+          if (s->chunk.has_sum) { sz += (pb_put_uint(cur, 1, sum_size) - cur) + sum_size; }
 
           cur[0] = 6 * 8 + ProtofType::FIXEDLEN;
           cur    = pb_encode_uint(cur + 1, sz);
@@ -373,7 +374,9 @@ CUDF_KERNEL void __launch_bounds__(encode_threads_per_block)
             cur = pb_put_decimal(cur, 1, s->chunk.min_value.d128_val, scale, min_size);  //  minimum
             cur = pb_put_decimal(cur, 2, s->chunk.max_value.d128_val, scale, max_size);  // maximum
           }
-          cur = pb_put_decimal(cur, 3, s->chunk.sum.d128_val, scale, sum_size);  // sum
+          if (s->chunk.has_sum) {
+            cur = pb_put_decimal(cur, 3, s->chunk.sum.d128_val, scale, sum_size);  // sum
+          }
         }
         break;
       case dtype_date32:

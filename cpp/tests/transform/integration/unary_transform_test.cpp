@@ -331,7 +331,7 @@ TEST_F(UnaryOperationIntegrationTest, Transform_INT32_INT32)
   //
   // @cuda.jit(device=True)
   // def op(a):
-  //         return a * a - a
+  //         return int32(a * a - a)
   //
   // # Define argument types for the function
   // arg_types = (int32, )
@@ -378,7 +378,7 @@ TEST_F(UnaryOperationIntegrationTest, Transform_INT32_INT32)
 	cvt.s64.s32 	%rd2, %r1;
 	mul.wide.s32 	%rd3, %r1, %r1;
 	sub.s64 	%rd4, %rd3, %rd2;
-	st.u64 	[%rd1], %rd4;
+	st.u32 	[%rd1], %rd4;
 	mov.u32 	%r2, 0;
 	st.param.b32 	[func_retval0+0], %r2;
 	ret;
@@ -424,7 +424,7 @@ __device__ inline void f(
   //
   // @cuda.jit(device=True)
   // def op(a):
-  //         return (a - 32) if (a > 96 and a < 123) else a
+  //         return int8((a - 32) if (a > 96 and a < 123) else a)
   //
   // # Define argument types for the function
   // arg_types = (int8, )
@@ -480,11 +480,11 @@ __device__ inline void f(
 
 $L__BB0_2:
 	add.s64 	%rd4, %rd1, -32;
-	st.u64 	[%rd2], %rd4;
+	st.u8 	[%rd2], %rd4;
 	bra.uni 	$L__BB0_3;
 
 $L__BB0_1:
-	st.u64 	[%rd2], %rd1;
+	st.u8 	[%rd2], %rd1;
 
 $L__BB0_3:
 	mov.u32 	%r1, 0;

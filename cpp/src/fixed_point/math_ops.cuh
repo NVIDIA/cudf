@@ -8,6 +8,8 @@
 #include <cudf/fixed_point/fixed_point.hpp>
 #include <cudf/round.hpp>
 
+#include <cuda/cmath>
+#include <cuda/numeric>
 #include <cuda/std/cstdint>
 #include <cuda/std/limits>
 #include <cuda/std/optional>
@@ -31,17 +33,6 @@ struct division_magnitude<int32_t> {
 
 template <typename Rep>
 using division_magnitude_t = typename division_magnitude<Rep>::type;
-
-/**
- * @brief Computes `a * b`, returning false instead if the product overflows `U`.
- */
-template <typename U>
-__device__ inline bool checked_multiply(U& result, U a, U b)
-{
-  if (a != 0 && b > static_cast<U>(~U{0}) / a) { return false; }
-  result = a * b;
-  return true;
-}
 
 /**
  * @brief Computes `Rad` to the non-negative power `exponent`, returning false instead if it
@@ -84,9 +75,7 @@ __device__ inline cuda::std::optional<numeric::fixed_point<Rep, Rad>> divide_and
   auto const make_result = [&](Rep value) {
     return numeric::fixed_point<Rep, Rad>{numeric::scaled_integer<Rep>{value, lhs.scale()}};
   };
-  auto const magnitude = [](Rep value) {
-    return value < 0 ? static_cast<U>(U{0} - static_cast<U>(value)) : static_cast<U>(value);
-  };
+  auto const magnitude = [](Rep value) { return static_cast<U>(cuda::uabs(value)); };
 
   if (rhs.value() == 0) { return cuda::std::nullopt; }
   if (lhs.value() == 0) { return make_result(0); }
@@ -99,11 +88,12 @@ __device__ inline cuda::std::optional<numeric::fixed_point<Rep, Rad>> divide_and
   auto const exponent = -static_cast<int32_t>(rhs.scale());
   U factor{};
   if (exponent >= 0) {
-    if (!checked_power<U, Rad>(factor, exponent) || !checked_multiply(dividend, dividend, factor)) {
+    if (!checked_power<U, Rad>(factor, exponent) ||
+        cuda::mul_overflow(dividend, dividend, factor)) {
       return cuda::std::nullopt;
     }
   } else if (!checked_power<U, Rad>(factor, -exponent) ||
-             !checked_multiply(divisor, divisor, factor)) {
+             cuda::mul_overflow(divisor, divisor, factor)) {
     // The divisor is more than twice the largest possible dividend, so the quotient rounds to 0.
     return make_result(0);
   }
@@ -116,11 +106,11 @@ __device__ inline cuda::std::optional<numeric::fixed_point<Rep, Rad>> divide_and
                             : remainder >= rest;
   if (round_away) { ++quotient; }
 
-  auto const max_magnitude =
-    static_cast<U>(cuda::std::numeric_limits<Rep>::max()) + (negative ? 1 : 0);
-  if (quotient > max_magnitude) { return cuda::std::nullopt; }
+  auto const result =
+    negative ? cuda::sub_overflow<Rep>(Rep{0}, quotient) : cuda::overflow_cast<Rep>(quotient);
+  if (result.overflow) { return cuda::std::nullopt; }
 
-  return make_result(negative ? static_cast<Rep>(U{0} - quotient) : static_cast<Rep>(quotient));
+  return make_result(result.value);
 }
 
 }  // namespace cudf::detail

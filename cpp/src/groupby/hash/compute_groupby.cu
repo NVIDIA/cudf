@@ -509,32 +509,11 @@ std::unique_ptr<table> compute_groupby(table_view const& keys,
   }
 
   if (has_compound_aggs) {
-    // Requested M2 results must be cached on the output resource before VARIANCE or STD asks
-    // for an intermediate M2, regardless of the order of requests on a shared values column.
+    // M2 and COUNT_VALID are already cached in output order. The shared finalizer can
+    // retain its raw-moment fallback for streaming while ordinary groupby reuses these results.
     for (auto const& request : requests) {
       auto const finalizer = hash_compound_agg_finalizer(request.values, cache, stream, mr);
       for (auto const& agg : request.aggregations) {
-        if (agg->kind == aggregation::M2) {
-          cudf::detail::aggregation_dispatcher(agg->kind, finalizer, *agg);
-        }
-      }
-    }
-    for (auto const& request : requests) {
-      auto const& agg_v = request.aggregations;
-      auto const& col   = request.values;
-
-      // The finalizers only combine the single-pass results with linear transformations such as
-      // addition/multiplication (e.g. for variance/stddev); they do not aggregate further.
-      auto const finalizer = hash_compound_agg_finalizer(col, cache, stream, mr);
-      for (auto&& agg : agg_v) {
-        if (agg->kind == aggregation::VARIANCE || agg->kind == aggregation::STD) {
-          // Explicit M2 outputs were finalized above. Any missing M2 is only an intermediate
-          // for this ordinary groupby; the shared finalizer also serves streaming groupby.
-          auto const m2_agg = make_m2_aggregation();
-          auto const m2_finalizer =
-            hash_compound_agg_finalizer(col, cache, stream, temporary_resources);
-          cudf::detail::aggregation_dispatcher(m2_agg->kind, m2_finalizer, *m2_agg);
-        }
         cudf::detail::aggregation_dispatcher(agg->kind, finalizer, *agg);
       }
     }

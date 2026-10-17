@@ -29,6 +29,7 @@ template <typename T>
 constexpr bool is_reduction_supported(aggregation::Kind kind)
 {
   switch (kind) {
+    case aggregation::M2: return cudf::is_numeric<T>() && !cudf::is_fixed_point<T>();
     case aggregation::SUM: return cudf::detail::is_valid_aggregation<T, aggregation::SUM>();
     case aggregation::PRODUCT: return cudf::detail::is_valid_aggregation<T, aggregation::PRODUCT>();
     case aggregation::SUM_OF_SQUARES:

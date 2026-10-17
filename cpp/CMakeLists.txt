@@ -745,6 +745,7 @@ add_library(
   src/groupby/hash/hash_compound_agg_finalizer.cu
   src/groupby/hash/output_utils.cu
   src/groupby/hash/single_pass_argminmax.cu
+  src/groupby/hash/single_pass_m2.cu
   src/groupby/hash/single_pass_minmax.cu
   src/groupby/hash/single_pass_product.cu
   src/groupby/hash/single_pass_sum_overflow.cu

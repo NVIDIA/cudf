@@ -77,8 +77,7 @@ simple_aggregation_collector::operator()<aggregation::MEAN>(data_type col_type,
 std::vector<std::unique_ptr<aggregation>> collect_m2_simple_aggs()
 {
   std::vector<std::unique_ptr<aggregation>> aggs;
-  aggs.push_back(make_sum_of_squares_aggregation());
-  aggs.push_back(make_sum_aggregation());
+  aggs.push_back(make_m2_aggregation());
   // COUNT_VALID
   aggs.push_back(make_count_aggregation());
   return aggs;
@@ -108,12 +107,29 @@ simple_aggregation_collector::operator()<aggregation::STD>(data_type, aggregatio
   return collect_m2_simple_aggs();
 }
 
+// Streaming retains raw moments; ordinary HashCSR reduces the statistical state directly.
+auto collect_simple_aggs(data_type type, aggregation const& agg, aggregation_mode mode)
+{
+  if (mode == aggregation_mode::STREAMING_ATOMIC &&
+      (agg.kind == aggregation::M2 || agg.kind == aggregation::VARIANCE ||
+       agg.kind == aggregation::STD)) {
+    std::vector<std::unique_ptr<aggregation>> aggs;
+    aggs.push_back(make_sum_of_squares_aggregation());
+    aggs.push_back(make_sum_aggregation());
+    aggs.push_back(make_count_aggregation());
+    return aggs;
+  }
+  return cudf::detail::aggregation_dispatcher(agg.kind, simple_aggregation_collector{}, type, agg);
+}
+
 std::tuple<table_view,
            cudf::detail::host_vector<aggregation::Kind>,
            std::vector<std::unique_ptr<aggregation>>,
            std::vector<int8_t>,
            bool>
-extract_single_pass_aggs(std::span<aggregation_request const> requests, cuda::stream_ref stream)
+extract_single_pass_aggs(std::span<aggregation_request const> requests,
+                         cuda::stream_ref stream,
+                         aggregation_mode mode)
 {
   auto agg_kinds = cudf::detail::make_empty_host_vector<aggregation::Kind>(requests.size(), stream);
   std::vector<column_view> columns;
@@ -157,8 +173,7 @@ extract_single_pass_aggs(std::span<aggregation_request const> requests, cuda::st
                                ? cudf::dictionary_column_view(request.values).keys().type()
                                : request.values.type();
     for (auto const& agg : input_aggs) {
-      auto spass_aggs = cudf::detail::aggregation_dispatcher(
-        agg->kind, simple_aggregation_collector{}, values_type, *agg);
+      auto spass_aggs = collect_simple_aggs(values_type, *agg, mode);
       if (spass_aggs.size() > 1 || !spass_aggs.front()->is_equal(*agg)) {
         has_compound_aggs = true;
       }
@@ -177,10 +192,10 @@ extract_single_pass_aggs(std::span<aggregation_request const> requests, cuda::st
 }
 
 std::vector<aggregation::Kind> get_simple_aggregations(groupby_aggregation const& agg,
-                                                       data_type values_type)
+                                                       data_type values_type,
+                                                       aggregation_mode mode)
 {
-  auto aggs = cudf::detail::aggregation_dispatcher(
-    agg.kind, simple_aggregation_collector{}, values_type, agg);
+  auto aggs = collect_simple_aggs(values_type, agg, mode);
   std::vector<aggregation::Kind> agg_kinds;
   std::ranges::transform(
     aggs, std::back_inserter(agg_kinds), [](auto const& a) { return a->kind; });

@@ -1099,16 +1099,21 @@ std::pair<cuda::device_buffer<cudf::bitmask_type>, cudf::size_type> create_rando
   }
   CUDF_EXPECTS(*null_probability >= 0.0 and *null_probability <= 1.0,
                "Null probability must be within the range [0.0, 1.0]");
+  // TODO: pass a memory resources object once all benchmark utils are ported
+  auto stream = cudf::get_default_stream();
+  cudf::memory_resources mr{cudf::get_current_device_resource_ref()};
   if (*null_probability == 0.0f) {
-    return {cudf::create_null_mask(size, cudf::mask_state::ALL_VALID), 0};
+    return {cudf::create_null_mask(size, cudf::mask_state::ALL_VALID, stream, mr.get_output_mr()),
+            0};
   } else if (*null_probability == 1.0) {
-    return {cudf::create_null_mask(size, cudf::mask_state::ALL_NULL), size};
+    return {cudf::create_null_mask(size, cudf::mask_state::ALL_NULL, stream, mr.get_output_mr()),
+            size};
   } else {
     return cudf::detail::valid_if(cuda::counting_iterator<cudf::size_type>{0},
                                   cuda::counting_iterator<cudf::size_type>{size},
                                   bool_generator{seed, 1.0 - *null_probability},
-                                  cudf::get_default_stream(),
-                                  cudf::get_current_device_resource_ref());
+                                  stream,
+                                  mr);
   }
 }
 

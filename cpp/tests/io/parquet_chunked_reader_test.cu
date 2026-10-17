@@ -609,6 +609,77 @@ TEST_F(ParquetChunkedReaderTest, TestChunkedReadWithPlainListOfStringSpanningPag
   }
 }
 
+TEST_F(ParquetChunkedReaderTest, TestChunkedReadDeltaByteArrayWithPageIndex)
+{
+  // Regression test for #24389, where DELTA_BYTE_ARRAY strings read from files with a page index
+  // came back with their lengths but without their characters. Reads a string column and a
+  // FIXED_LEN_BYTE_ARRAY column whole and in chunks, with V1 and V2 page headers.
+  auto constexpr num_rows   = 50'000;
+  auto constexpr flba_width = 16;
+
+  auto const values = cudf::detail::make_counting_transform_iterator(0, [](auto i) {
+    return "prefix_" + std::to_string(i % 1'000) + "_suffix_" + std::to_string(i);
+  });
+  auto const valids =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 7 != 3; });
+  auto const strings = cudf::purge_nonempty_nulls(strings_col(values, values + num_rows, valids));
+
+  // The FIXED_LEN_BYTE_ARRAY column is a list of `flba_width` bytes per row, written as binary.
+  std::vector<cudf::size_type> flba_offsets{0};
+  std::vector<uint8_t> flba_bytes;
+  for (auto i = 0; i < num_rows; ++i) {
+    if (valids[i]) {
+      for (auto j = 0; j < flba_width; ++j) {
+        flba_bytes.push_back(static_cast<uint8_t>(j < 8 ? i / 1'000 + j : i * 131 + j * 17));
+      }
+    }
+    flba_offsets.push_back(static_cast<cudf::size_type>(flba_bytes.size()));
+  }
+  auto [flba_null_mask, flba_null_count] =
+    cudf::test::detail::make_null_mask(valids, valids + num_rows);
+  auto const flba = cudf::make_lists_column(
+    num_rows,
+    cudf::test::fixed_width_column_wrapper<cudf::size_type>(flba_offsets.begin(),
+                                                            flba_offsets.end())
+      .release(),
+    cudf::test::fixed_width_column_wrapper<uint8_t>(flba_bytes.begin(), flba_bytes.end()).release(),
+    flba_null_count,
+    std::move(flba_null_mask));
+  auto const expected = cudf::table_view{{*strings, *flba}};
+
+  cudf::io::table_input_metadata metadata(expected);
+  metadata.column_metadata[0].set_encoding(cudf::io::column_encoding::DELTA_BYTE_ARRAY);
+  metadata.column_metadata[1]
+    .set_encoding(cudf::io::column_encoding::DELTA_BYTE_ARRAY)
+    .set_type_length(flba_width)
+    .set_output_as_binary(true);
+
+  for (auto const v2_headers : {false, true}) {
+    SCOPED_TRACE(v2_headers ? "V2 headers" : "V1 headers");
+    auto const filepath =
+      temp_env->get_temp_filepath(std::string{"TestChunkedReadDeltaByteArrayWithPageIndex"} +
+                                  (v2_headers ? "_v2" : "_v1") + ".parquet");
+    cudf::io::write_parquet(
+      cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
+        .metadata(metadata)
+        .stats_level(cudf::io::statistics_freq::STATISTICS_COLUMN)
+        .write_v2_headers(v2_headers)
+        .max_page_size_rows(5'000)
+        .build());
+
+    auto const whole = cudf::io::read_parquet(
+      cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath}).build());
+    CUDF_TEST_EXPECT_TABLES_EQUAL(expected, whole.tbl->view());
+
+    for (auto const input_limit : {0, 400'000}) {
+      SCOPED_TRACE("input limit " + std::to_string(input_limit));
+      auto const [result, num_chunks] = chunked_read(filepath, 200'000, input_limit);
+      EXPECT_GT(num_chunks, 1);
+      CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result->view());
+    }
+  }
+}
+
 TEST_F(ParquetChunkedReaderTest, TestChunkedReadWithStringPrecise)
 {
   auto constexpr num_rows = 60'000;

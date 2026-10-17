@@ -569,7 +569,13 @@ CUDF_KERNEL void __launch_bounds__(preprocess_block_size)
     is_bounds_page(s->setup.page, s->setup.col.start_row, min_row, num_rows, has_repetition);
 
   // if we have size info, then we only need to do this for bounds pages
-  if (pp->has_value_info && !is_bounds_pg) { return; }
+  if (pp->has_value_info && !is_bounds_pg) {
+    // pages read in full decode every value, so restore the end value cleared above
+    if (t == 0 && is_page_contained(s->setup.page, s->setup.col.start_row, min_row, num_rows)) {
+      pp->end_val = pp->num_valids;
+    }
+    return;
+  }
 
   // Zero out everything and return early if the page is pruned
   if (not page_mask.empty() and not page_mask[page_idx]) {

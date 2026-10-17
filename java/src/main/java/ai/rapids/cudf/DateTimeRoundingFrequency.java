@@ -1,12 +1,17 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2024, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
 
 package ai.rapids.cudf;
 
+/**
+ * The unit to which timestamps are rounded.
+ * Used by {@link ColumnView#dateTimeCeil}, {@link ColumnView#dateTimeFloor} and
+ * {@link ColumnView#dateTimeRound}.
+ */
 public enum DateTimeRoundingFrequency {
   DAY(0),
   HOUR(1),

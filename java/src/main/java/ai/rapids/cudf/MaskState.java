@@ -1,11 +1,14 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2019, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
 package ai.rapids.cudf;
 
+/**
+ * The allocation and initialization state of a null mask, mirroring libcudf's mask_state.
+ */
 enum MaskState {
   UNALLOCATED(0),
   UNINITIALIZED(1),

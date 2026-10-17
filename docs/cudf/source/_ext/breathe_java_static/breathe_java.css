@@ -1,0 +1,36 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Styles for the cuDF Java API reference rendered by the breathe_java extension.
+ */
+
+/* Member summary tables. */
+table.java-summary {
+  width: 100%;
+}
+
+/* "Methods inherited from class ..." lists. */
+p.java-inherited code {
+  white-space: nowrap;
+}
+
+/* Deprecated members: a badge in the signature, struck-through links. */
+.java-deprecated-badge {
+  display: inline-block;
+  margin-left: 0.5em;
+  padding: 0 0.5em;
+  border-radius: 0.25rem;
+  font-family: var(--pst-font-family-base);
+  font-size: 0.75em;
+  font-weight: 600;
+  line-height: 1.6;
+  vertical-align: middle;
+  color: var(--pst-color-on-surface, var(--pst-color-text-base));
+  background-color: var(--pst-color-warning-bg, var(--pst-color-surface));
+  border: 1px solid var(--pst-color-warning);
+}
+
+code.java-deprecated {
+  text-decoration: line-through;
+}

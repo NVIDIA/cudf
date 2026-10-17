@@ -1,9 +1,14 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 package ai.rapids.cudf;
 
+/**
+ * Bit flags that select the RMM memory allocation strategy.
+ * Combine flags with bitwise OR and pass the result to
+ * {@link Rmm#initialize(int, Rmm.LogConf, long)}.
+ */
 public class RmmAllocationMode {
   /**
    * Use cudaMalloc for allocation

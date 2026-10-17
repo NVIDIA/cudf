@@ -1,6 +1,6 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2021, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
@@ -10,6 +10,10 @@ package ai.rapids.cudf;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+/**
+ * Base writer options that add a compression type and key-value file metadata.
+ * Extended by {@link ParquetWriterOptions} and {@link ORCWriterOptions}.
+ */
 public class CompressionMetadataWriterOptions extends ColumnWriterOptions.StructColumnWriterOptions {
   private final CompressionType compressionType;
   private final Map<String, String> metadata;

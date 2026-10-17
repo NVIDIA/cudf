@@ -65,18 +65,6 @@ struct column_accessor {
     return column(cols).template nullable_element<element_type>(map_index(row));
   }
 
-  static __device__ void set_null_mask_word(auto const* __restrict__ cols,
-                                            size_type word_index,
-                                            bitmask_type word)
-    requires(!as_scalar)
-  {
-    auto* mask = column(cols).null_mask();
-
-    if (mask == nullptr) { return; }
-
-    mask[word_index] = word;
-  }
-
   static __device__ void assign(auto const* __restrict__ cols, size_type row, element_type value)
     requires(!as_scalar)
   {

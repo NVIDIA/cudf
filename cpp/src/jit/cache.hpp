@@ -10,6 +10,8 @@
 
 #include <rtcx/rtcx.hpp>
 
+#include <functional>
+
 namespace CUDF_EXPORT cudf {
 
 struct [[nodiscard]] jit_bundle_t {
@@ -99,22 +101,36 @@ kernel get_kernel(std::string const& name,
  * @param headers Contents of any additional embedded header files to include during compilation
  * @param kernel_instance String identifier for the specific kernel instance being requested (used
  * for caching)
+ * @param name_expressions Global kernel expressions that must be retained in the fragment
  */
 rtcx::blob get_kernel_fragment(std::string const& name,
                                std::string const& source_file_id,
                                std::span<char const* const> header_include_names,
                                std::span<char const* const> headers,
-                               std::string const& kernel_instance);
+                               std::string const& kernel_instance,
+                               std::span<char const* const> name_expressions = {});
 
 /**
  * @brief Gets a kernel by linking together embedded binary fragments
  * @param name Debug name for the kernel (used for caching and logging)
  * @param file_fragments Paths of the fragments to link together to form the kernel
  * @param memory_fragments Memory fragments to link
- * @param extra_options Additional linking options
  */
 kernel get_lto_linked_kernel(std::string const& name,
                              std::span<rtcx::file_fragment const> file_fragments,
                              std::span<rtcx::memory_fragment const> memory_fragments);
+
+/**
+ * @brief Gets an LTO-linked kernel without resolving its fragments on an executable-cache hit.
+ *
+ * The source identity must cover every generated fragment; the embedded bundle covers static
+ * sources and headers. The supplier's owning blobs remain alive until linking completes.
+ * @param name Debug and cache identity for the linked kernel
+ * @param source_identity Complete identity of generated fragment sources
+ * @param get_fragments Supplier of LTO IR blobs, invoked only on an executable-cache miss
+ */
+kernel get_lto_linked_kernel(std::string const& name,
+                             std::string const& source_identity,
+                             std::function<std::vector<rtcx::blob>()> const& get_fragments);
 
 }  // namespace CUDF_EXPORT cudf

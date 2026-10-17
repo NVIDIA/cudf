@@ -1,10 +1,9 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #pragma once
-#include <cudf/column/column_device_view_base.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/types.hpp>
 
@@ -28,17 +27,25 @@ __device__ inline bool warp_elect(unsigned int mask)
 
 namespace jit {
 
-template <typename Out>
-__device__ void warp_compact_validity(unsigned int active_mask,
-                                      mutable_column_device_view_core const* outcols,
-                                      size_type row,
-                                      bool is_valid)
+__device__ inline void warp_compact_validity(unsigned int active_mask,
+                                             bitmask_type* null_mask,
+                                             size_type row,
+                                             bool is_valid)
 {
   auto null_word = __ballot_sync(active_mask, is_valid);
   // use warp-elect to make sure we only issue one memory transaction per warp
-  if (warp_elect(active_mask)) {
-    Out::set_null_mask_word(outcols, row / cudf::detail::warp_size, null_word);
+  if (null_mask != nullptr && warp_elect(active_mask)) {
+    null_mask[row / cudf::detail::warp_size] = null_word;
   }
+}
+
+template <typename Out, typename Column>
+__device__ void warp_compact_validity(unsigned int active_mask,
+                                      Column const* outcols,
+                                      size_type row,
+                                      bool is_valid)
+{
+  warp_compact_validity(active_mask, Out::column(outcols).null_mask(), row, is_valid);
 }
 
 }  // namespace jit

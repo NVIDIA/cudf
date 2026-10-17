@@ -13,6 +13,7 @@
 #include <cudf/ast/expressions.hpp>
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_view.hpp>
+#include <cudf/copying.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/filling.hpp>
 #include <cudf/scalar/scalar.hpp>
@@ -24,6 +25,7 @@
 #include <rmm/cuda_stream.hpp>
 
 #include <cuda/iterator>
+#include <cuda_runtime_api.h>
 
 #include <array>
 #include <functional>
@@ -44,6 +46,170 @@ template <typename T>
 using decimal_column_wrapper = cudf::test::fixed_point_column_wrapper<typename T::rep>;
 
 struct JITExpressionTest : public cudf::test::BaseFixture {};
+
+TEST_F(JITExpressionTest, LtoKernelCacheIdentity)
+{
+  constexpr auto max = std::numeric_limits<int32_t>::max();
+  auto a             = column_wrapper<int32_t>{{1, max, 3}, {1, 1, 0}};
+  auto b             = column_wrapper<int32_t>{2, 1, 4};
+  auto expected_sub  = column_wrapper<int32_t>{{-1, max - 1, 0}, {1, 1, 0}};
+  auto expected_null = column_wrapper<int32_t>{{3, 0, 0}, {1, 0, 0}};
+  auto table         = cudf::table_view{{a, b}};
+  auto tree          = cudf::ast::tree{};
+  auto a_ref         = cudf::ast::column_reference(0);
+  auto b_ref         = cudf::ast::column_reference(1);
+  auto& subtract     = cudf::ast::jit::operation(tree, cudf::ast::jit::op::SUB, {a_ref, b_ref});
+  auto& nullified    = cudf::ast::jit::operation(
+    tree, cudf::ast::jit::op::ADD_OVERFLOW, {a_ref, b_ref}, cudf::error_policy::NULLIFY);
+
+  std::array<std::reference_wrapper<cudf::ast::expression const>, 2> expressions{subtract,
+                                                                                 nullified};
+  auto result = cudf::compute_table_jit(table, expressions);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_sub, result->view().column(0), VERBOSITY);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_null, result->view().column(1), VERBOSITY);
+
+  auto expected_mul = column_wrapper<int32_t>{{2, max, 0}, {1, 1, 0}};
+  auto& multiply    = cudf::ast::jit::operation(tree, cudf::ast::jit::op::MUL, {a_ref, b_ref});
+  std::array<std::reference_wrapper<cudf::ast::expression const>, 2> second_expressions{multiply,
+                                                                                        subtract};
+  auto second_result = cudf::compute_table_jit(table, second_expressions);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_mul, second_result->view().column(0), VERBOSITY);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_sub, second_result->view().column(1), VERBOSITY);
+
+  // Revisiting an earlier operation after another kernel is cached catches identity collisions.
+  auto repeated_result = cudf::compute_table_jit(table, expressions);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_sub, repeated_result->view().column(0), VERBOSITY);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_null, repeated_result->view().column(1), VERBOSITY);
+}
+
+TEST_F(JITExpressionTest, LtoErrorPropagation)
+{
+  auto safe     = column_wrapper<int32_t>{{1, 2, 3}, {1, 1, 0}};
+  auto overflow = column_wrapper<int32_t>{{1, std::numeric_limits<int32_t>::max(), 3}, {1, 1, 0}};
+  auto rhs      = column_wrapper<int32_t>{2, 1, 4};
+  auto expected = column_wrapper<int32_t>{{3, 3, 0}, {1, 1, 0}};
+  auto tree     = cudf::ast::tree{};
+  auto a_ref    = cudf::ast::column_reference(0);
+  auto b_ref    = cudf::ast::column_reference(1);
+  auto rhs_ref  = cudf::ast::column_reference(2);
+  auto& first   = cudf::ast::jit::operation(
+    tree, cudf::ast::jit::op::ADD_OVERFLOW, {a_ref, rhs_ref}, cudf::error_policy::PROPAGATE);
+  auto& second = cudf::ast::jit::operation(
+    tree, cudf::ast::jit::op::ADD_OVERFLOW, {b_ref, rhs_ref}, cudf::error_policy::PROPAGATE);
+  std::array<std::reference_wrapper<cudf::ast::expression const>, 2> expressions{first, second};
+  std::vector<cudf::column_view> inputs{safe, safe, rhs};
+  auto result = cudf::compute_table_jit(cudf::table_view{inputs}, expressions);
+  for (auto const& output : result->view()) {
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, output, VERBOSITY);
+  }
+
+  // Isolating each output's failure prevents an earlier error from masking a later one.
+  for (auto const index : {0, 1}) {
+    SCOPED_TRACE(index);
+    inputs[index] = overflow;
+    EXPECT_THROW(cudf::compute_table_jit(cudf::table_view{inputs}, expressions),
+                 cudf::evaluation_error);
+    inputs[index] = safe;
+  }
+  inputs[1] = overflow;
+  EXPECT_THROW(cudf::compute_column_jit(cudf::table_view{inputs}, second), cudf::evaluation_error);
+}
+
+TEST_F(JITExpressionTest, LtoNullableGridStrideAndTails)
+{
+  int device{}, multiprocessors{}, threads_per_multiprocessor{};
+  ASSERT_EQ(cudaSuccess, cudaGetDevice(&device));
+  ASSERT_EQ(cudaSuccess,
+            cudaDeviceGetAttribute(&multiprocessors, cudaDevAttrMultiProcessorCount, device));
+  ASSERT_EQ(cudaSuccess,
+            cudaDeviceGetAttribute(
+              &threads_per_multiprocessor, cudaDevAttrMaxThreadsPerMultiProcessor, device));
+  // Exceed the occupancy grid's resident-thread capacity to exercise repeated loop iterations.
+  auto const large_rows = 2 * multiprocessors * threads_per_multiprocessor + 31;
+  auto values           = cudf::detail::make_counting_transform_iterator(0, [](auto i) -> int32_t {
+    return i % 67 == 0 ? std::numeric_limits<int32_t>::max() : i % 251 - 100;
+  });
+  auto validity =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 7 != 0; });
+  auto expected_sub =
+    cudf::detail::make_counting_transform_iterator(0, [values](auto i) { return values[i] - 1; });
+  auto expected_add = cudf::detail::make_counting_transform_iterator(
+    0, [values](auto i) { return i % 67 == 0 ? 0 : values[i] + 1; });
+  auto add_validity = cudf::detail::make_counting_transform_iterator(
+    0, [](auto i) { return i % 7 != 0 && i % 67 != 0; });
+  auto scalar     = cudf::numeric_scalar<int32_t>(1);
+  auto tree       = cudf::ast::tree{};
+  auto input_ref  = cudf::ast::column_reference(0);
+  auto& literal   = tree.push(cudf::ast::literal(scalar));
+  auto& subtract  = cudf::ast::jit::operation(tree, cudf::ast::jit::op::SUB, {input_ref, literal});
+  auto& nullified = cudf::ast::jit::operation(
+    tree, cudf::ast::jit::op::ADD_OVERFLOW, {input_ref, literal}, cudf::error_policy::NULLIFY);
+  std::array<std::reference_wrapper<cudf::ast::expression const>, 2> expressions{subtract,
+                                                                                 nullified};
+  for (auto const rows : std::array{31, 32, 33, large_rows}) {
+    SCOPED_TRACE(rows);
+    auto input               = column_wrapper<int32_t>(values, values + rows, validity);
+    auto expected_sub_column = column_wrapper<int32_t>(expected_sub, expected_sub + rows, validity);
+    auto expected_add_column =
+      column_wrapper<int32_t>(expected_add, expected_add + rows, add_validity);
+    auto result = cudf::compute_table_jit(cudf::table_view{{input}}, expressions);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_sub_column, result->view().column(0), VERBOSITY);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_add_column, result->view().column(1), VERBOSITY);
+  }
+}
+
+TEST_F(JITExpressionTest, LtoSlicedInputsAndScalars)
+{
+  std::vector<float> values(70);
+  std::vector<double> doubles(70);
+  std::vector<bool> flags(70);
+  std::vector<bool> validity(70);
+  for (size_t i = 0; i < values.size(); ++i) {
+    values[i]   = static_cast<float>(i);
+    doubles[i]  = static_cast<double>(i);
+    flags[i]    = i % 2 == 0;
+    validity[i] = i % 7 != 0;
+  }
+  auto floats        = column_wrapper<float>(values.begin(), values.end(), validity.begin());
+  auto wide          = column_wrapper<double>(doubles.begin(), doubles.end(), validity.begin());
+  auto booleans      = column_wrapper<bool>(flags.begin(), flags.end(), validity.begin());
+  auto input         = cudf::slice(cudf::table_view{{floats, wide, booleans}}, {3, 68}).front();
+  auto scalar        = cudf::numeric_scalar<float>(2);
+  auto wide_scalar   = cudf::numeric_scalar<double>(2);
+  auto tree          = cudf::ast::tree{};
+  auto float_ref     = cudf::ast::column_reference(0);
+  auto double_ref    = cudf::ast::column_reference(1);
+  auto bool_ref      = cudf::ast::column_reference(2);
+  auto& literal      = tree.push(cudf::ast::literal(scalar));
+  auto& wide_literal = tree.push(cudf::ast::literal(wide_scalar));
+  auto& add = cudf::ast::jit::operation(tree, cudf::ast::jit::op::ADD, {float_ref, literal});
+  auto& wide_add =
+    cudf::ast::jit::operation(tree, cudf::ast::jit::op::ADD, {double_ref, wide_literal});
+  std::array<std::reference_wrapper<cudf::ast::expression const>, 3> expressions{
+    add, wide_add, bool_ref};
+  auto result = cudf::compute_table_jit(input, expressions);
+  for (auto& value : values) {
+    value += 2;
+  }
+  for (auto& value : doubles) {
+    value += 2;
+  }
+  auto expected_float =
+    column_wrapper<float>(values.begin() + 3, values.begin() + 68, validity.begin() + 3);
+  auto expected_double =
+    column_wrapper<double>(doubles.begin() + 3, doubles.begin() + 68, validity.begin() + 3);
+  auto expected_bool =
+    column_wrapper<bool>(flags.begin() + 3, flags.begin() + 68, validity.begin() + 3);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_float, result->view().column(0), VERBOSITY);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_double, result->view().column(1), VERBOSITY);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_bool, result->view().column(2), VERBOSITY);
+
+  scalar.set_valid_async(false);
+  auto null_result = cudf::compute_table_jit(input, expressions);
+  EXPECT_EQ(input.num_rows(), null_result->view().column(0).null_count());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_double, null_result->view().column(1), VERBOSITY);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_bool, null_result->view().column(2), VERBOSITY);
+}
 
 TEST_F(JITExpressionTest, Coalesce)
 {

@@ -793,6 +793,7 @@ add_library(
   src/groupby/streaming_groupby/insert_subsequent.cu
   src/groupby/streaming_groupby/insert_subsequent_nested.cu
   src/groupby/streaming_groupby/merge.cu
+  src/groupby/streaming_groupby/shared_memory_aggregate.cu
   src/hash/md5_hash.cu
   src/hash/murmurhash3_x86_32.cu
   src/hash/murmurhash3_x64_128.cu

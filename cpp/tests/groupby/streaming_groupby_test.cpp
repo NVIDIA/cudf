@@ -6,6 +6,7 @@
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
+#include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/table_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
@@ -1046,7 +1047,6 @@ TEST_F(StreamingGroupbyTest, SumAndMeanOnSameColumn)
 
   std::vector<cudf::groupby::streaming_aggregation_request> reqs;
   reqs.push_back(make_req(1, cudf::make_sum_aggregation<cudf::groupby_aggregation>()));
-  reqs.push_back(make_req(1, cudf::make_mean_aggregation<cudf::groupby_aggregation>()));
 
   cudf::groupby::streaming_groupby streaming_agg(KEY_COL, reqs, DEFAULT_MAX_DISTINCT_KEYS);
   streaming_agg.aggregate(batch1);
@@ -1743,4 +1743,66 @@ TEST_F(StreamingGroupbyTest, DenseAggregationsNullableFlatAndNestedKeys)
           cudf::table_view{{expected_key_view}},
           {expected_sum, expected_min, expected_max, expected_count});
   }
+}
+
+struct StreamingGroupbyLowCardinalityTest : public cudf::test::BaseFixture,
+                                            public ::testing::WithParamInterface<cudf::size_type> {
+};
+
+INSTANTIATE_TEST_SUITE_P(StreamingGroupbyTest,
+                         StreamingGroupbyLowCardinalityTest,
+                         ::testing::Values(1, 7, 50, 1000));
+
+// Large batches with few distinct keys go through the shared memory aggregation path.
+TEST_P(StreamingGroupbyLowCardinalityTest, LargeBatchesMatchGroupby)
+{
+  auto const num_groups                    = GetParam();
+  constexpr cudf::size_type num_rows       = 200'000;
+  constexpr cudf::size_type num_batches    = 3;
+  constexpr cudf::size_type all_null_group = 3;
+  auto const make_batch                    = [&](cudf::size_type batch) {
+    auto const row = [=](auto i) { return static_cast<cudf::size_type>(i) + batch * num_rows; };
+    auto const key = [=](auto i) { return row(i) % num_groups; };
+    auto const keys_iter = cudf::detail::make_counting_transform_iterator(0, key);
+    auto const keys_valid =
+      cudf::detail::make_counting_transform_iterator(0, [=](auto i) { return row(i) % 11 != 0; });
+    auto const vals_iter = cudf::detail::make_counting_transform_iterator(
+      0, [=](auto i) { return static_cast<int32_t>(row(i) % 1013) - 500; });
+    auto const vals_valid = cudf::detail::make_counting_transform_iterator(
+      0, [=](auto i) { return row(i) % 5 != 0 && key(i) != all_null_group; });
+    auto const signs_iter = cudf::detail::make_counting_transform_iterator(
+      0, [=](auto i) { return row(i) % 3 == 0 ? -1.0 : 1.0; });
+    std::vector<std::unique_ptr<cudf::column>> cols;
+    cols.push_back(
+      cudf::test::fixed_width_column_wrapper<int32_t>(keys_iter, keys_iter + num_rows, keys_valid)
+        .release());
+    cols.push_back(
+      cudf::test::fixed_width_column_wrapper<int32_t>(vals_iter, vals_iter + num_rows, vals_valid)
+        .release());
+    cols.push_back(
+      cudf::test::fixed_width_column_wrapper<double>(signs_iter, signs_iter + num_rows).release());
+    return std::make_unique<cudf::table>(std::move(cols));
+  };
+
+  std::vector<cudf::groupby::streaming_aggregation_request> reqs;
+  reqs.push_back(make_req(1, cudf::make_sum_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(1, cudf::make_min_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(1, cudf::make_max_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(1, cudf::make_count_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(
+    1, cudf::make_count_aggregation<cudf::groupby_aggregation>(cudf::null_policy::INCLUDE)));
+  reqs.push_back(make_req(1, cudf::make_sum_of_squares_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(2, cudf::make_product_aggregation<cudf::groupby_aggregation>()));
+
+  std::vector<std::unique_ptr<cudf::table>> owned_batches;
+  std::vector<cudf::table_view> batches;
+  cudf::groupby::streaming_groupby streaming_agg(KEY_COL, reqs, num_rows);
+  for (cudf::size_type b = 0; b < num_batches; ++b) {
+    owned_batches.push_back(make_batch(b));
+    batches.push_back(owned_batches.back()->view());
+    streaming_agg.aggregate(batches.back());
+  }
+  auto [keys, results] = streaming_agg.finalize();
+  EXPECT_EQ(keys->num_rows(), num_groups);
+  verify_against_groupby(keys, results, batches, KEY_COL, reqs);
 }

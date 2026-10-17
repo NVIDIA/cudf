@@ -5,6 +5,7 @@
 
 #include "common.cuh"
 #include "groupby/hash/single_pass_functors.cuh"
+#include "shared_memory_aggregate.hpp"
 
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/table/table_view.hpp>
@@ -20,6 +21,7 @@
 #include <limits>
 #include <mutex>
 #include <string>
+#include <utility>
 
 namespace cudf::groupby {
 
@@ -43,7 +45,7 @@ void streaming_groupby::impl::do_aggregate(table_view const& data, cuda::stream_
   // The transient key encoding is only valid while a single insertion is in flight, so
   // insertion is serialized across concurrent callers on the host and, via the event, on the
   // device.  The aggregation below is per-group atomic and runs unserialized.
-  auto const result = [&] {
+  auto const [result, num_groups] = [&] {
     std::lock_guard const lock{_insert_mutex};
 
     // Re-check under the lock: another caller may have invalidated the object since the
@@ -61,11 +63,26 @@ void streaming_groupby::impl::do_aggregate(table_view const& data, cuda::stream_
     _insert_done.wait(stream);
     auto inserted = probe_and_insert(batch_keys, stream);
     _insert_done.record(stream);
-    return inserted;
+    // Every target index of this batch is below the distinct key count observed here, even if
+    // concurrent callers insert more keys once the lock is released.
+    return std::pair{std::move(inserted), _distinct_keys.load(std::memory_order_relaxed)};
   }();
 
   auto const values_view = data.select(_value_col_indices);
   auto const d_values    = table_device_view::create(values_view, stream);
+
+  if (detail::streaming::shared_memory_aggregate(batch_size,
+                                                 result.target_indices.data(),
+                                                 num_groups,
+                                                 values_view,
+                                                 _agg_results->view(),
+                                                 *d_values,
+                                                 *_d_agg_results,
+                                                 _agg_kinds,
+                                                 _d_agg_kinds->data(),
+                                                 stream)) {
+    return;
+  }
 
   auto const temp_mr      = cudf::get_current_device_resource_ref();
   auto const num_agg_cols = static_cast<int64_t>(_agg_kinds.size());

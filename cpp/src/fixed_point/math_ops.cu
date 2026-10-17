@@ -9,16 +9,15 @@
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/column/column_view.hpp>
+#include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/transform.hpp>
 #include <cudf/fixed_point/math_ops.hpp>
 #include <cudf/scalar/scalar.hpp>
-#include <cudf/scalar/scalar_device_view.cuh>
 #include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
-#include <cudf/utilities/type_dispatcher.hpp>
 
 #include <rmm/exec_policy.hpp>
 
@@ -34,35 +33,12 @@ namespace cudf {
 namespace detail {
 namespace {
 
-template <typename T>
-struct column_operand {
-  column_device_view column;
-
-  __device__ bool is_valid(size_type i) const { return column.is_valid(i); }
-  __device__ T value(size_type i) const { return column.element<T>(i); }
-};
-
-template <typename T>
-struct scalar_operand {
-  fixed_point_scalar_device_view<T> scalar;
-
-  __device__ bool is_valid(size_type) const { return scalar.is_valid(); }
-  __device__ T value(size_type) const { return scalar.value(); }
-};
-
-template <typename T>
-scalar_operand<T> make_scalar_operand(scalar const& s)
-{
-  return scalar_operand<T>{
-    get_scalar_device_view(static_cast<fixed_point_scalar<T>&>(const_cast<scalar&>(s)))};
-}
-
-template <typename T, typename LhsOperand, typename RhsOperand>
+template <cudf::concepts::fixed_point T, typename LhsIterator, typename RhsIterator>
 struct divide_decimal_fn {
   using Rep = typename T::rep;
 
-  LhsOperand lhs;
-  RhsOperand rhs;
+  LhsIterator lhs;
+  RhsIterator rhs;
   rounding_method method;
   Rep* output;
   bool* output_valid;
@@ -70,8 +46,8 @@ struct divide_decimal_fn {
   __device__ void operator()(size_type i) const
   {
     cuda::std::optional<T> quotient;
-    if (lhs.is_valid(i) && rhs.is_valid(i)) {
-      quotient = divide_and_round(lhs.value(i), rhs.value(i), method);
+    if (auto const l = lhs[i]) {
+      if (auto const r = rhs[i]) { quotient = divide_and_round(*l, *r, method); }
     }
     output[i]       = quotient.has_value() ? quotient->value() : Rep{0};
     output_valid[i] = quotient.has_value();
@@ -79,13 +55,14 @@ struct divide_decimal_fn {
 };
 
 /**
- * @brief Divides `lhs` by `rhs` row by row into a new column of type `output_type`.
+ * @brief Divides `lhs[i]` by `rhs[i]` for each row into a new column of type `output_type`.
  *
- * A row is null if either operand is null or the division has no result.
+ * The iterators yield `cuda::std::optional<T>`. A row is null if either operand is null or the
+ * division has no result.
  */
-template <typename T, typename LhsOperand, typename RhsOperand>
-std::unique_ptr<column> divide_decimal_rows(LhsOperand lhs,
-                                            RhsOperand rhs,
+template <cudf::concepts::fixed_point T, typename LhsIterator, typename RhsIterator>
+std::unique_ptr<column> divide_decimal_impl(LhsIterator lhs,
+                                            RhsIterator rhs,
                                             data_type output_type,
                                             size_type size,
                                             rounding_method method,
@@ -101,7 +78,7 @@ std::unique_ptr<column> divide_decimal_rows(LhsOperand lhs,
   thrust::for_each_n(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                      cuda::counting_iterator<size_type>{0},
                      size,
-                     divide_decimal_fn<T, LhsOperand, RhsOperand>{
+                     divide_decimal_fn<T, LhsIterator, RhsIterator>{
                        lhs, rhs, method, result->mutable_view().begin<Rep>(), valid.data()});
 
   auto [null_mask, null_count] = cudf::detail::bools_to_mask(
@@ -112,69 +89,19 @@ std::unique_ptr<column> divide_decimal_rows(LhsOperand lhs,
   return result;
 }
 
-struct divide_decimal_dispatch {
-  template <typename T, typename... Args>
-  std::unique_ptr<column> operator()(Args&&...) const
-    requires(not cudf::concepts::fixed_point<T>)
-  {
-    CUDF_FAIL("divide_decimal only supports decimal types");
+/**
+ * @brief Calls `fn.template operator()<T>()` with the decimal type `T` matching `type`.
+ */
+template <typename Fn>
+std::unique_ptr<column> dispatch_decimal(data_type type, Fn&& fn)
+{
+  switch (type.id()) {
+    case type_id::DECIMAL32: return fn.template operator()<numeric::decimal32>();
+    case type_id::DECIMAL64: return fn.template operator()<numeric::decimal64>();
+    case type_id::DECIMAL128: return fn.template operator()<numeric::decimal128>();
+    default: CUDF_FAIL("divide_decimal only supports decimal types");
   }
-
-  template <cudf::concepts::fixed_point T>
-  std::unique_ptr<column> operator()(column_view const& lhs,
-                                     column_view const& rhs,
-                                     rounding_method method,
-                                     cuda::stream_ref stream,
-                                     cudf::memory_resources mr) const
-  {
-    auto const d_lhs = column_device_view::create(lhs, stream);
-    auto const d_rhs = column_device_view::create(rhs, stream);
-
-    return divide_decimal_rows<T>(column_operand<T>{*d_lhs},
-                                  column_operand<T>{*d_rhs},
-                                  lhs.type(),
-                                  lhs.size(),
-                                  method,
-                                  stream,
-                                  mr);
-  }
-
-  template <cudf::concepts::fixed_point T>
-  std::unique_ptr<column> operator()(column_view const& lhs,
-                                     scalar const& rhs,
-                                     rounding_method method,
-                                     cuda::stream_ref stream,
-                                     cudf::memory_resources mr) const
-  {
-    auto const d_lhs = column_device_view::create(lhs, stream);
-
-    return divide_decimal_rows<T>(column_operand<T>{*d_lhs},
-                                  make_scalar_operand<T>(rhs),
-                                  lhs.type(),
-                                  lhs.size(),
-                                  method,
-                                  stream,
-                                  mr);
-  }
-
-  template <cudf::concepts::fixed_point T>
-  std::unique_ptr<column> operator()(scalar const& lhs,
-                                     column_view const& rhs,
-                                     rounding_method method,
-                                     cuda::stream_ref stream,
-                                     cudf::memory_resources mr) const
-  {
-    auto const d_rhs = column_device_view::create(rhs, stream);
-
-    return divide_decimal_rows<T>(make_scalar_operand<T>(lhs),
-                                  column_operand<T>{*d_rhs},
-                                  lhs.type(),
-                                  rhs.size(),
-                                  method,
-                                  stream,
-                                  mr);
-  }
-};
+}
 
 }  // namespace
 
@@ -191,7 +118,18 @@ std::unique_ptr<column> divide_decimal(column_view const& lhs,
 
   if (lhs.is_empty()) { return make_empty_column(lhs.type()); }
 
-  return type_dispatcher(lhs.type(), divide_decimal_dispatch{}, lhs, rhs, method, stream, mr);
+  return dispatch_decimal(lhs.type(), [&]<typename T>() {
+    auto const d_lhs = column_device_view::create(lhs, stream);
+    auto const d_rhs = column_device_view::create(rhs, stream);
+    return divide_decimal_impl<T>(
+      make_optional_iterator<T>(*d_lhs, nullate::DYNAMIC{lhs.has_nulls()}),
+      make_optional_iterator<T>(*d_rhs, nullate::DYNAMIC{rhs.has_nulls()}),
+      lhs.type(),
+      lhs.size(),
+      method,
+      stream,
+      mr);
+  });
 }
 
 std::unique_ptr<column> divide_decimal(column_view const& lhs,
@@ -206,7 +144,17 @@ std::unique_ptr<column> divide_decimal(column_view const& lhs,
 
   if (lhs.is_empty()) { return make_empty_column(lhs.type()); }
 
-  return type_dispatcher(lhs.type(), divide_decimal_dispatch{}, lhs, rhs, method, stream, mr);
+  return dispatch_decimal(lhs.type(), [&]<typename T>() {
+    auto const d_lhs = column_device_view::create(lhs, stream);
+    return divide_decimal_impl<T>(
+      make_optional_iterator<T>(*d_lhs, nullate::DYNAMIC{lhs.has_nulls()}),
+      make_optional_iterator<T>(rhs, nullate::YES{}),
+      lhs.type(),
+      lhs.size(),
+      method,
+      stream,
+      mr);
+  });
 }
 
 std::unique_ptr<column> divide_decimal(scalar const& lhs,
@@ -221,7 +169,17 @@ std::unique_ptr<column> divide_decimal(scalar const& lhs,
 
   if (rhs.is_empty()) { return make_empty_column(lhs.type()); }
 
-  return type_dispatcher(rhs.type(), divide_decimal_dispatch{}, lhs, rhs, method, stream, mr);
+  return dispatch_decimal(rhs.type(), [&]<typename T>() {
+    auto const d_rhs = column_device_view::create(rhs, stream);
+    return divide_decimal_impl<T>(
+      make_optional_iterator<T>(lhs, nullate::YES{}),
+      make_optional_iterator<T>(*d_rhs, nullate::DYNAMIC{rhs.has_nulls()}),
+      lhs.type(),
+      rhs.size(),
+      method,
+      stream,
+      mr);
+  });
 }
 
 }  // namespace detail

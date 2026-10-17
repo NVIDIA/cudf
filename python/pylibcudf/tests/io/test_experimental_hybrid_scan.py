@@ -488,7 +488,8 @@ def test_hybrid_scan_payload_page_mask_without_page_index(
     simple_parquet_table: pa.Table,
     num_rows: int,
 ) -> None:
-    """Test payload page pruning without a page index set up on the reader."""
+    """Test payload page pruning without a page index set up on the reader,
+    then page-level (sparse) I/O once the page index is set up."""
     reader = simple_hybrid_scan_reader
     row_groups = reader.all_row_groups(simple_parquet_options)
 
@@ -554,6 +555,51 @@ def test_hybrid_scan_payload_page_mask_without_page_index(
         chunked_rows.extend(to_rows(chunk.tbl))
     synchronize_stream()
     assert chunked_rows == expected_rows
+
+    # Page-level (sparse) I/O requires the offset index from the page index
+    with pytest.raises(RuntimeError):
+        reader.sparse_payload_pages_byte_ranges(
+            row_groups, row_mask, simple_parquet_options
+        )
+    page_index = reader.page_index_byte_range()
+    reader.setup_page_index(
+        memoryview(simple_parquet_bytes)[
+            page_index.offset : page_index.offset + page_index.size
+        ]
+    )
+
+    # Fetch only the surviving pages, passing None for pruned ones
+    page_ranges = reader.sparse_payload_pages_byte_ranges(
+        row_groups, row_mask, simple_parquet_options
+    )
+    assert any(r.size == 0 for r in page_ranges)
+    page_data = [
+        None
+        if r.size == 0
+        else plc.gpumemoryview(
+            rmm.DeviceBuffer.to_device(
+                memoryview(simple_parquet_bytes)[r.offset : r.offset + r.size],
+                plc.utils._get_stream(),
+            )
+        )
+        for r in page_ranges
+    ]
+    synchronize_stream()
+
+    reader.setup_chunked_sparse_payload_materialization(
+        256,
+        0,
+        row_groups,
+        page_data,
+        row_mask,
+        simple_parquet_options,
+    )
+    sparse_rows = []
+    while reader.has_next_table_chunk():
+        chunk = reader.materialize_payload_columns_chunk(row_mask)
+        sparse_rows.extend(to_rows(chunk.tbl))
+    synchronize_stream()
+    assert sparse_rows == expected_rows
 
 
 @pytest.mark.parametrize("stream", [None, Stream()])

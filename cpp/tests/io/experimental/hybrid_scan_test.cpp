@@ -33,8 +33,10 @@
 
 #include <cuda/iterator>
 
+#include <algorithm>
 #include <array>
 #include <format>
+#include <iterator>
 #include <limits>
 #include <stdexcept>
 
@@ -280,9 +282,12 @@ TEST_F(HybridScanTest, PageIndexOverflowThrows)
       column.offset_index_length = 8;
     }
 
-    // Reset the reader with the corrupted metadata
-    reader =
-      std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(file_metadata, options);
+    // Reset the reader with the corrupted metadata, by copy or by move
+    reader = corruption_type == CorruptionType::COLUMN_INDEX
+               ? std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(
+                   file_metadata, options)
+               : std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(
+                   std::move(file_metadata), options);
 
     // Check for overflow error
     EXPECT_THROW(std::ignore = reader->page_index_byte_range(), std::overflow_error);
@@ -1104,13 +1109,16 @@ TEST_F(HybridScanTest, SharedMetadataFromFileMetaDataMatchesReadParquet)
   auto const footer_buffer = cudf::io::parquet::fetch_footer_to_host(*datasource);
   auto const seed_reader =
     std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(*footer_buffer, options);
-  auto const file_metadata = seed_reader->parquet_metadata();
+  auto file_metadata = seed_reader->parquet_metadata();
 
-  auto const metadata =
+  // Build shared metadata from the FileMetaData by copy and by move
+  auto const copied_metadata =
     cudf::io::parquet::experimental::hybrid_scan_metadata{file_metadata, options};
+  auto const moved_metadata =
+    cudf::io::parquet::experimental::hybrid_scan_metadata{std::move(file_metadata), options};
 
-  // Two readers sharing the FileMetaData-derived metadata each produce the correct table.
-  auto const read_all_columns = [&] {
+  // Readers from either FileMetaData-derived metadata each produce the correct table.
+  auto const read_all_columns = [&](auto const& metadata) {
     auto const reader =
       std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(metadata);
     auto const row_groups       = reader->all_row_groups(options);
@@ -1121,8 +1129,8 @@ TEST_F(HybridScanTest, SharedMetadataFromFileMetaDataMatchesReadParquet)
     return reader->materialize_all_columns(row_groups, data, options, stream, mr).tbl;
   };
 
-  auto const table_a = read_all_columns();
-  auto const table_b = read_all_columns();
+  auto const table_a = read_all_columns(copied_metadata);
+  auto const table_b = read_all_columns(moved_metadata);
 
   auto const expected =
     cudf::io::read_parquet(
@@ -1378,6 +1386,32 @@ TEST_F(HybridScanTest, ChunkedReadRowMaskPerPass)
                                       stream,
                                       mr)
         .tbl);
+
+    // Read payload columns again using page-level (sparse) I/O in chunks and expect a match
+    auto const page_byte_ranges =
+      reader->sparse_payload_pages_byte_ranges(row_group_indices, row_mask_view, options, stream);
+    auto [page_buffers, page_data, page_tasks] =
+      cudf::io::parquet::fetch_byte_ranges_to_device_async(
+        *datasource,
+        page_byte_ranges,
+        cudf::io::parquet::io_submission_policy::SERIALIZE,
+        stream,
+        mr);
+    page_tasks.get();
+
+    auto constexpr chunk_read_limit = 1024;
+    reader->setup_chunked_sparse_payload_materialization(
+      chunk_read_limit, 0, row_group_indices, page_data, row_mask_view, options, stream, mr);
+    auto sparse_chunks = std::vector<std::unique_ptr<cudf::table>>{};
+    while (reader->has_next_table_chunk()) {
+      sparse_chunks.push_back(reader->materialize_payload_columns_chunk(row_mask_view).tbl);
+    }
+    auto sparse_chunk_views = std::vector<cudf::table_view>{};
+    std::ranges::transform(sparse_chunks,
+                           std::back_inserter(sparse_chunk_views),
+                           [](auto const& chunk) { return chunk->view(); });
+    CUDF_TEST_EXPECT_TABLES_EQUIVALENT(payload_tables.back()->view(),
+                                       cudf::concatenate(sparse_chunk_views)->view());
   };
 
   // Split the row groups into two passes and materialize each pass independently

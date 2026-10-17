@@ -7,6 +7,7 @@ from libc.stdint cimport int32_t, uint64_t
 from libcpp.memory cimport make_unique, unique_ptr
 from libcpp.utility cimport move
 from libcpp.vector cimport vector
+import pylibcudf as plc
 from pylibcudf.libcudf.types cimport null_order as cpp_null_order
 from pylibcudf.libcudf.types cimport order as cpp_order
 from pylibcudf.table cimport Table
@@ -154,15 +155,40 @@ cdef class Ordering:
         ret._handle = move(ordering)
         return ret
 
-    def as_strict(self) -> Ordering:
-        """Return an equivalent ``Ordering`` with strict boundaries."""
-        return Ordering.from_cpp(
-            cpp_Ordering(
-                self._handle.keys,
-                self._handle.boundaries,
-                True,
-                self._handle.locally_ordered,
+    def as_strict(self, BufferResource br not None) -> Ordering:
+        """Return a strict ``Ordering`` with duplicate boundaries removed."""
+        if self.strict_boundaries:
+            return self
+        boundaries = self.get_boundaries(br)
+        boundary_table = boundaries.table_view()
+        n_columns = boundary_table.num_columns()
+        stream = boundaries.stream
+        unique_boundaries = plc.stream_compaction.unique(
+            boundary_table,
+            list(range(n_columns)),
+            plc.stream_compaction.DuplicateKeepOption.KEEP_FIRST,
+            plc.types.NullEquality.EQUAL,
+            stream=stream,
+        )
+        if unique_boundaries.num_rows() == boundary_table.num_rows():
+            return Ordering.from_cpp(
+                cpp_Ordering(
+                    self._handle.keys,
+                    self._handle.boundaries,
+                    True,
+                    self._handle.locally_ordered,
+                )
             )
+        return Ordering(
+            self.keys,
+            TableChunk.from_pylibcudf_table(
+                unique_boundaries,
+                stream,
+                exclusive_view=True,
+                br=br,
+            ),
+            strict_boundaries=True,
+            locally_ordered=self.locally_ordered,
         )
 
     @property

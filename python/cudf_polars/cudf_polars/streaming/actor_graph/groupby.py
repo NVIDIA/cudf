@@ -577,7 +577,7 @@ async def _ordered_adjust_reduce(
         partial_input_ordering = partial_input_ordering.with_locally_ordered(
             locally_ordered=False
         )
-    partial_output_ordering = partial_input_ordering.as_strict()
+    partial_output_ordering = partial_input_ordering.as_strict(context.br())
     ch_local = context.create_channel()
     ch_adjusted = context.create_channel()
     adjusted_metadata = _adjusted_ordering_metadata(

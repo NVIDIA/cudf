@@ -507,20 +507,6 @@ inline __device__ bool parse_valid_page_header(byte_stream_s* bs)
 }
 
 /**
- * @brief Zero out page header info
- *
- * @param bs Byte stream
- */
-void __forceinline__ __device__ zero_out_page_header_info(byte_stream_s* bs)
-{
-  cuda::std::memset(&bs->page, 0, sizeof(bs->page));
-  // Apply non-zero defaults
-  bs->page.skipped_values = -1;
-  bs->page.is_compressed  = true;
-  bs->page.kernel_mask    = decode_kernel_mask::NONE;
-}
-
-/**
  * @brief Kernel for outputting page headers from the specified column chunks
  *
  * @param[in] chunks Device span of column chunks
@@ -561,7 +547,7 @@ void __launch_bounds__(decode_page_headers_block_size)
     bs->base = bs->cur = bs->ck.compressed_data;
     bs->end            = bs->base + bs->ck.compressed_size;
     // Clear page header info before writing known fields
-    zero_out_page_header_info(bs);
+    reset_page_info(bs->page);
     bs->page.chunk_idx      = chunk_idx;
     bs->page.src_col_schema = bs->ck.src_col_schema;
   });
@@ -799,7 +785,7 @@ struct decode_from_page_data_fn {
     bs.end           = page_span.data() + page_span.size();
 
     // Clear the logical page descriptor.
-    zero_out_page_header_info(&bs);
+    reset_page_info(bs.page);
 
     bs.page.chunk_idx      = chunk_idx;
     bs.page.src_col_schema = bs.ck.src_col_schema;

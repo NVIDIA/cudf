@@ -470,10 +470,13 @@ filter_join_indices_output_size(
  * ```
  * The first parameter is a pointer to a bool that the function must set to `true` or `false`.
  * The remaining parameters correspond to columns in the left table followed by the right table.
+ * The function may return `cudf::errc` instead of `void` to report evaluation errors.
+ * Return `cudf::errc::SUCCESS` when evaluation succeeds.
  *
  * @throw std::invalid_argument if join_kind is not INNER_JOIN, LEFT_JOIN, or FULL_JOIN.
  * @throw std::invalid_argument if left_indices and right_indices have different sizes.
  * @throw cudf::jit_compilation_error if predicate_code fails to compile.
+ * @throw cudf::evaluation_error if the predicate reports an evaluation error.
  *
  * @param left The left table for predicate evaluation (conditional columns only).
  * @param right The right table for predicate evaluation (conditional columns only).
@@ -509,6 +512,7 @@ filter_join_indices_jit(
  * The input-map contract and join semantics are the same as `filter_join_indices`.
  *
  * @throw std::invalid_argument if join_kind is not INNER_JOIN, LEFT_JOIN, or FULL_JOIN.
+ * @throw cudf::evaluation_error if the predicate reports an evaluation error.
  *
  * @param left The left table for predicate evaluation
  * @param right The right table for predicate evaluation

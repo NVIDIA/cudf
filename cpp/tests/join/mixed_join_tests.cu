@@ -9,6 +9,7 @@
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/ast/expressions.hpp>
+#include <cudf/ast/jit/udf.hpp>
 #include <cudf/column/column_view.hpp>
 #include <cudf/join/conditional_join.hpp>
 #include <cudf/join/hash_join.hpp>
@@ -25,9 +26,13 @@
 #include <thrust/host_vector.h>
 #include <thrust/sort.h>
 
+#include <cudf_test_fragments.hpp>
+
 #include <algorithm>
+#include <cstdint>
 #include <numeric>
 #include <random>
+#include <span>
 #include <sstream>
 #include <stdexcept>
 #include <tuple>
@@ -1013,6 +1018,73 @@ TEST_F(MixedInnerJoinTest2, JitOnlyPredicate)
   //   (1,1): 0b0011^0b0111 = popcount 1 → PASS
   //   (2,2): 0b0111^0b0001 = popcount 2 → FAIL
   //   (3,3): 0b1111^0b0000 = popcount 4 → FAIL
+  auto left_view  = cudf::column_view(cudf::data_type{cudf::type_to_id<cudf::size_type>()},
+                                     result.first->size(),
+                                     result.first->data(),
+                                     nullptr,
+                                     0);
+  auto right_view = cudf::column_view(cudf::data_type{cudf::type_to_id<cudf::size_type>()},
+                                      result.second->size(),
+                                      result.second->data(),
+                                      nullptr,
+                                      0);
+  auto left_host  = cudf::test::to_host<cudf::size_type>(left_view).first;
+  auto right_host = cudf::test::to_host<cudf::size_type>(right_view).first;
+
+  std::vector<std::pair<cudf::size_type, cudf::size_type>> actual_pairs;
+  for (size_t i = 0; i < left_host.size(); ++i) {
+    actual_pairs.emplace_back(left_host[i], right_host[i]);
+  }
+  std::sort(actual_pairs.begin(), actual_pairs.end());
+
+  std::vector<std::pair<cudf::size_type, cudf::size_type>> expected_pairs{{0, 0}, {1, 1}};
+  EXPECT_EQ(actual_pairs, expected_pairs);
+}
+
+TEST_F(MixedInnerJoinTest2, UdfCallPredicate)
+{
+  // The popcount predicate of JitOnlyPredicate as an AST expression: the device function it calls,
+  // compiled ahead of time to LTO-IR, is linked into the join filter kernel with the comparison
+  // around it.
+  auto left_eq_col  = cudf::test::fixed_width_column_wrapper<int32_t>{0, 1, 2, 3};
+  auto right_eq_col = cudf::test::fixed_width_column_wrapper<int32_t>{0, 1, 2, 3};
+  auto left_cond  = cudf::test::fixed_width_column_wrapper<int32_t>{0b0001, 0b0011, 0b0111, 0b1111};
+  auto right_cond = cudf::test::fixed_width_column_wrapper<int32_t>{0b0000, 0b0111, 0b0001, 0b0000};
+
+  auto left_equality     = cudf::table_view{{left_eq_col}};
+  auto right_equality    = cudf::table_view{{right_eq_col}};
+  auto left_conditional  = cudf::table_view{{left_cond}};
+  auto right_conditional = cudf::table_view{{right_cond}};
+
+  cudf::hash_join hash_joiner(right_equality, cudf::null_equality::EQUAL);
+  auto hash_result = hash_joiner.inner_join(left_equality);
+
+  // transform/fragments/ast_udf_callees.cu
+  auto const range = cudf_test_fragments::file_ranges[cudf_test_fragments::ast_udf_callees];
+  auto const xor_popcount =
+    cudf::ast::jit::device_binary{cudf_test_fragments::files.subspan(range[0], range[1]),
+                                  cudf::lto_binary_type::FATBIN,
+                                  "lto_xor_popcount",
+                                  true};
+
+  auto tree       = cudf::ast::tree{};
+  auto left_ref   = cudf::ast::column_reference(0, cudf::ast::table_reference::LEFT);
+  auto right_ref  = cudf::ast::column_reference(0, cudf::ast::table_reference::RIGHT);
+  auto one        = cudf::numeric_scalar<int32_t>(1);
+  auto& one_value = tree.push(cudf::ast::literal(one));
+  auto& popcount  = cudf::ast::jit::call(
+    tree, xor_popcount, cudf::data_type{cudf::type_id::INT32}, {left_ref, right_ref});
+  auto& predicate =
+    tree.push(cudf::ast::operation(cudf::ast::ast_operator::LESS_EQUAL, popcount, one_value));
+
+  auto result =
+    cudf::filter_join_indices_jit(left_conditional,
+                                  right_conditional,
+                                  cudf::device_span<cudf::size_type const>(*hash_result.first),
+                                  cudf::device_span<cudf::size_type const>(*hash_result.second),
+                                  predicate,
+                                  cudf::join_kind::INNER_JOIN);
+
   auto left_view  = cudf::column_view(cudf::data_type{cudf::type_to_id<cudf::size_type>()},
                                      result.first->size(),
                                      result.first->data(),

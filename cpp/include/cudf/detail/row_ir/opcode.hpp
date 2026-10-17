@@ -109,6 +109,10 @@ enum class [[nodiscard]] opcode : int32_t {
   SINH,
   TAN,
   TANH,
+
+  /// Call of a consumer-supplied device function (`cudf::ast::jit::call`). Its arity and types come
+  /// from the call node, not from the operator table.
+  UDF_CALL,
 };
 
 template <opcode op>
@@ -292,6 +296,40 @@ __device__ constexpr auto evaluate(cuda::std::optional<T>... args)
 
     return optional_value_t{opcode_evaluator<op>::eval(args.value()...)};
   }
+}
+
+/**
+ * @brief Calls a consumer device function `F` with the signature `cudf::errc F(R* out, T... in)`.
+ *
+ * @return The value `F` wrote, or the error code it returned
+ */
+template <auto F, typename R, typename... T>
+__device__ constexpr cuda::std::expected<R, cudf::errc> invoke_udf(T... args)
+{
+  R out{};
+  auto const status = F(&out, args...);
+  if (status != cudf::errc::SUCCESS) { return cuda::std::unexpected{status}; }
+  return out;
+}
+
+// UDF call over non-nullable values.
+template <auto F, typename R, typename... T>
+__device__ constexpr cuda::std::expected<R, cudf::errc> evaluate_udf(T... args)
+  requires(!cudf::detail::ops::nullable<T> && ...)
+{
+  return invoke_udf<F, R>(args...);
+}
+
+// UDF call over nullable values: a row with a null argument skips the call, and its result is null.
+template <auto F, typename R, typename... T>
+__device__ constexpr cuda::std::expected<cuda::std::optional<R>, cudf::errc> evaluate_udf(
+  cuda::std::optional<T>... args)
+{
+  using result_t = cuda::std::expected<cuda::std::optional<R>, cudf::errc>;
+  if ((!args.has_value() || ...)) { return result_t{cuda::std::optional<R>{}}; }
+  auto result = invoke_udf<F, R>(args.value()...);
+  if (!result.has_value()) { return result_t{cuda::std::unexpected{result.error()}}; }
+  return result_t{cuda::std::optional<R>{*result}};
 }
 
 }  // namespace detail::row_ir

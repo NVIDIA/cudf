@@ -5,8 +5,10 @@
 
 #pragma once
 
+#include "segmented_string_sort.cuh"
 #include "sort.hpp"
 #include "sort_radix.hpp"
+#include "string_sort_config.hpp"
 
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/detail/indexalator.cuh>
@@ -129,12 +131,22 @@ struct string_prefix_comparator {
   null_order null_precedence{};
 };
 
+struct identity_element_transform {
+  template <typename T>
+  __device__ T operator()(T value, size_type) const
+  {
+    return value;
+  }
+};
+
 /**
  * @brief Comparator functor needed for single column sort.
  *
  * @tparam Column element type.
  */
-template <typename T>
+template <typename T,
+          typename Nullate          = nullate::DYNAMIC,
+          typename ElementTransform = identity_element_transform>
 struct simple_comparator {
   __device__ bool operator()(size_type lhs, size_type rhs)
   {
@@ -147,15 +159,16 @@ struct simple_comparator {
       }
     }
 
-    auto const left_element  = d_column.element<T>(lhs);
-    auto const right_element = d_column.element<T>(rhs);
+    auto const left_element  = transform(d_column.element<T>(lhs), lhs);
+    auto const right_element = transform(d_column.element<T>(rhs), rhs);
     return relational_compare(left_element, right_element) ==
            (ascending ? weak_ordering::LESS : weak_ordering::GREATER);
   }
   column_device_view const d_column;
-  bool has_nulls;
+  Nullate has_nulls;
   bool ascending;
   null_order null_precedence{};
+  [[no_unique_address]] ElementTransform transform{};
 };
 
 template <sort_method method>
@@ -230,6 +243,61 @@ struct column_sorted_order_fn {
     }
   }
 
+  template <bool has_nulls>
+  void segmented_sorted_order_config(column_view const& input,
+                                     column_device_view const& keys,
+                                     mutable_column_view& indices,
+                                     bool ascending,
+                                     null_order null_precedence,
+                                     segmented_string_sort_config const& config,
+                                     cuda::stream_ref stream)
+  {
+    using nullability = std::conditional_t<has_nulls, nullate::YES, nullate::NO>;
+    auto const comp =
+      simple_comparator<string_view, nullability>{keys, nullability{}, ascending, null_precedence};
+    segmented_string_sort::sorted_order(
+      input, indices, ascending, null_precedence, comp, config, stream);
+  }
+
+  template <bool has_nulls>
+  void segmented_sorted_order_impl(column_view const& input,
+                                   column_device_view const& keys,
+                                   mutable_column_view& indices,
+                                   bool ascending,
+                                   null_order null_precedence,
+                                   cuda::stream_ref stream)
+  {
+    auto const& config = configured_segmented_string_sort();
+    segmented_sorted_order_config<has_nulls>(
+      input, keys, indices, ascending, null_precedence, config, stream);
+  }
+
+  void segmented_sorted_order(column_view const& input,
+                              mutable_column_view& indices,
+                              bool ascending,
+                              null_order null_precedence,
+                              cuda::stream_ref stream)
+  {
+    // Avoid segmented state for trivial stable results. The chars pointer recognizes all-empty
+    // input without synchronizing, and the eight-byte path requires at least one valid row.
+    auto const all_values_equal =
+      not input.has_nulls() and strings_column_view{input}.chars_begin(stream) == nullptr;
+    if (input.size() < 2 or input.null_count() == input.size() or all_values_equal) {
+      thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                       indices.begin<size_type>(),
+                       indices.end<size_type>(),
+                       size_type{0});
+      return;
+    }
+
+    auto keys = column_device_view::create(input, stream);
+    if (input.has_nulls()) {
+      segmented_sorted_order_impl<true>(input, *keys, indices, ascending, null_precedence, stream);
+    } else {
+      segmented_sorted_order_impl<false>(input, *keys, indices, ascending, null_precedence, stream);
+    }
+  }
+
  public:
   /**
    * @brief Sorts a single column with a relationally comparable type.
@@ -250,10 +318,20 @@ struct column_sorted_order_fn {
                     cuda::stream_ref stream)
   {
     if constexpr (std::is_same_v<T, string_view>) {
-      prefix_sorted_order<uint64_t>(input, indices, ascending, null_precedence, stream);
+      switch (configured_string_sort_algorithm()) {
+        case string_sort_algorithm::SEGMENTED:
+        case string_sort_algorithm::SEGMENTED_RLE:
+          segmented_sorted_order(input, indices, ascending, null_precedence, stream);
+          break;
+        case string_sort_algorithm::PREFIX:
+          prefix_sorted_order<uint64_t>(input, indices, ascending, null_precedence, stream);
+          break;
+      }
+      return;
     } else {
       auto keys = column_device_view::create(input, stream);
-      auto comp = simple_comparator<T>{*keys, input.has_nulls(), ascending, null_precedence};
+      auto comp = simple_comparator<T>{
+        *keys, nullate::DYNAMIC{input.has_nulls()}, ascending, null_precedence};
       merge_sort(indices, comp, stream);
     }
   }

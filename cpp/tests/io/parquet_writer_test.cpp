@@ -2384,6 +2384,42 @@ TEST_F(ParquetWriterTest, DeltaBinaryNzIdxTailIteration33)
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
 }
 
+TEST_F(ParquetWriterTest, DeltaBinaryMixedMiniBlockWidths)
+{
+  // Regression test for INT64 DELTA_BINARY_PACKED blocks that mix mini-blocks packed with 32-bit
+  // and with 64-bit scratch words. Runs of 96 slowly increasing values separated by jumps wider
+  // than 32 bits give the blocks of every page both kinds of mini-blocks, in every arrangement.
+  // The scratch regions of the two kinds of warps used to overlap and corrupt the written values.
+  constexpr int num_rows   = 100'000;
+  constexpr int run_length = 96;
+
+  std::mt19937_64 engine{31337};
+  std::uniform_int_distribution<int64_t> jump{int64_t{1} << 40, int64_t{1} << 50};
+  std::uniform_int_distribution<int64_t> step{0, (int64_t{1} << 10) - 1};
+  std::vector<int64_t> values(num_rows);
+  int64_t value = 0;
+  for (int i = 0; i < num_rows; ++i) {
+    value += (i % run_length == 0) ? jump(engine) : step(engine);
+    values[i] = value;
+  }
+  auto const col      = column_wrapper<int64_t>{values.begin(), values.end(), no_nulls()};
+  auto const expected = table_view({col});
+
+  cudf::io::table_input_metadata expected_metadata(expected);
+  expected_metadata.column_metadata[0].set_encoding(cudf::io::column_encoding::DELTA_BINARY_PACKED);
+
+  auto const filepath = temp_env->get_temp_filepath("DeltaBinaryMixedMiniBlockWidths.parquet");
+  cudf::io::parquet_writer_options out_opts =
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
+      .metadata(expected_metadata);
+  cudf::io::write_parquet(out_opts);
+
+  cudf::io::parquet_reader_options in_opts =
+    cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath});
+  auto result = cudf::io::read_parquet(in_opts);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
+}
+
 std::pair<std::unique_ptr<cudf::table>, cudf::io::table_input_metadata>
 make_byte_stream_split_table(bool as_struct)
 {

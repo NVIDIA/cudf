@@ -56,7 +56,8 @@ __device__ constexpr int rolling_idx(int index) { return rolling_index<buffer_si
 // Version of bit packer that can handle up to 64 bits values.
 // T is the type to use for processing. if nbits <= 32 use uint32_t, otherwise unsigned long long
 // (not uint64_t because of atomicOr's typing). allowing this to be selectable since there's a
-// measurable impact to using the wider types.
+// measurable impact to using the wider types. temp_space must hold warp_size unsigned long long
+// words for each warp of the block, whichever type the warp uses.
 template <typename scratch_type>
 inline __device__ void bitpack_mini_block(
   uint8_t* dst, uleb128_t val, uint32_t count, uint8_t nbits, void* temp_space)
@@ -70,7 +71,10 @@ inline __device__ void bitpack_mini_block(
   auto const lane_id = threadIdx.x % warp_size;
   auto const warp_id = threadIdx.x / warp_size;
 
-  auto const scratch = reinterpret_cast<scratch_type*>(temp_space) + warp_id * warp_size;
+  // The warps of a block can pack their mini-blocks with different scratch types, so each warp
+  // gets a region of `warp_size` 64-bit words. Regions sized by `scratch_type` would overlap.
+  auto const scratch = reinterpret_cast<scratch_type*>(
+    static_cast<unsigned long long*>(temp_space) + warp_id * warp_size);
 
   // zero out scratch
   scratch[lane_id] = 0;

@@ -282,9 +282,12 @@ TEST_F(HybridScanTest, PageIndexOverflowThrows)
       column.offset_index_length = 8;
     }
 
-    // Reset the reader with the corrupted metadata
-    reader =
-      std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(file_metadata, options);
+    // Reset the reader with the corrupted metadata, by copy or by move
+    reader = corruption_type == CorruptionType::COLUMN_INDEX
+               ? std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(
+                   file_metadata, options)
+               : std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(
+                   std::move(file_metadata), options);
 
     // Check for overflow error
     EXPECT_THROW(std::ignore = reader->page_index_byte_range(), std::overflow_error);
@@ -1106,13 +1109,16 @@ TEST_F(HybridScanTest, SharedMetadataFromFileMetaDataMatchesReadParquet)
   auto const footer_buffer = cudf::io::parquet::fetch_footer_to_host(*datasource);
   auto const seed_reader =
     std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(*footer_buffer, options);
-  auto const file_metadata = seed_reader->parquet_metadata();
+  auto file_metadata = seed_reader->parquet_metadata();
 
-  auto const metadata =
+  // Build shared metadata from the FileMetaData by copy and by move
+  auto const copied_metadata =
     cudf::io::parquet::experimental::hybrid_scan_metadata{file_metadata, options};
+  auto const moved_metadata =
+    cudf::io::parquet::experimental::hybrid_scan_metadata{std::move(file_metadata), options};
 
-  // Two readers sharing the FileMetaData-derived metadata each produce the correct table.
-  auto const read_all_columns = [&] {
+  // Readers from either FileMetaData-derived metadata each produce the correct table.
+  auto const read_all_columns = [&](auto const& metadata) {
     auto const reader =
       std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(metadata);
     auto const row_groups       = reader->all_row_groups(options);
@@ -1123,8 +1129,8 @@ TEST_F(HybridScanTest, SharedMetadataFromFileMetaDataMatchesReadParquet)
     return reader->materialize_all_columns(row_groups, data, options, stream, mr).tbl;
   };
 
-  auto const table_a = read_all_columns();
-  auto const table_b = read_all_columns();
+  auto const table_a = read_all_columns(copied_metadata);
+  auto const table_b = read_all_columns(moved_metadata);
 
   auto const expected =
     cudf::io::read_parquet(

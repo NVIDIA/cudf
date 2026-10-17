@@ -130,6 +130,14 @@ class hybrid_scan_metadata {
   hybrid_scan_metadata(FileMetaData const& parquet_metadata, parquet_reader_options const& options);
 
   /**
+   * @brief Take ownership of pre-populated Parquet file metadata
+   *
+   * @param parquet_metadata Pre-populated Parquet file metadata
+   * @param options Parquet reader options
+   */
+  hybrid_scan_metadata(FileMetaData&& parquet_metadata, parquet_reader_options const& options);
+
+  /**
    * @brief Destructor for the shared Parquet metadata
    */
   ~hybrid_scan_metadata();
@@ -423,6 +431,15 @@ class hybrid_scan_reader {
    * @param options Parquet reader options
    */
   explicit hybrid_scan_reader(FileMetaData const& parquet_metadata,
+                              parquet_reader_options const& options);
+
+  /**
+   * @brief Constructor that takes ownership of pre-populated Parquet file metadata
+   *
+   * @param parquet_metadata Pre-populated Parquet file metadata
+   * @param options Parquet reader options
+   */
+  explicit hybrid_scan_reader(FileMetaData&& parquet_metadata,
                               parquet_reader_options const& options);
 
   /**

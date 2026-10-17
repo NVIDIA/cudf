@@ -71,7 +71,7 @@ struct divide_decimal_fn {
   {
     cuda::std::optional<T> quotient;
     if (lhs.is_valid(i) && rhs.is_valid(i)) {
-      quotient = divide_decimal(lhs.value(i), rhs.value(i), method);
+      quotient = divide_and_round(lhs.value(i), rhs.value(i), method);
     }
     output[i]       = quotient.has_value() ? quotient->value() : Rep{0};
     output_valid[i] = quotient.has_value();

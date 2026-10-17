@@ -74,7 +74,7 @@ __device__ inline bool checked_power(U& result, int32_t exponent)
  * @return The quotient with the scale of `lhs`, or no value
  */
 template <typename Rep, numeric::Radix Rad>
-__device__ inline cuda::std::optional<numeric::fixed_point<Rep, Rad>> divide_decimal(
+__device__ inline cuda::std::optional<numeric::fixed_point<Rep, Rad>> divide_and_round(
   numeric::fixed_point<Rep, Rad> const& lhs,
   numeric::fixed_point<Rep, Rad> const& rhs,
   rounding_method method)

@@ -854,6 +854,41 @@ __device__ inline bool is_literal_run(int const run_header) { return (run_header
 __device__ inline bool is_repeated_run(int const run_header) { return !is_literal_run(run_header); }
 
 /**
+ * @brief Count all headers while retaining decoded descriptors in bounded per-chunk scratch.
+ *
+ * Scratch contains equally sized slices, one per chunk. A chunk that exceeds its capacity
+ * continues counting but stops storing descriptors; finish_page_headers reparses it instead.
+ * Dictionary pages also consume scratch slots. No capacity estimate is required for correctness.
+ *
+ * @param[in,out] chunks Input column chunks; receives exact data/dictionary page counts
+ * @param[out] scratch Temporary descriptors, with a size divisible by the chunk count
+ * @param[out] error_code Header parsing errors
+ * @param[in] stream CUDA stream to use
+ */
+void count_and_decode_page_headers(cudf::device_span<ColumnChunkDesc> chunks,
+                                   cudf::device_span<PageInfo> scratch,
+                                   kernel_error::pointer error_code,
+                                   cuda::stream_ref stream);
+
+/**
+ * @brief Materialize dictionary-first descriptors into exact-size output for each chunk.
+ *
+ * Copies retained descriptors for chunks that fit; reparses overflowing chunks completely.
+ * Must follow count_and_decode_page_headers with the same scratch storage and chunk ordering.
+ *
+ * @param[in] chunks Column chunks with exact page counts
+ * @param[in] scratch Per-chunk descriptors retained by the fused count/parse pass
+ * @param[out] chunk_pages Exact-size output storage for each chunk
+ * @param[out] error_code Header parsing errors
+ * @param[in] stream CUDA stream to use
+ */
+void finish_page_headers(cudf::device_span<ColumnChunkDesc const> chunks,
+                         cudf::device_span<PageInfo const> scratch,
+                         cudf::device_span<chunk_page_info> chunk_pages,
+                         kernel_error::pointer error_code,
+                         cuda::stream_ref stream);
+
+/**
  * @brief Launches kernel for counting page headers from column chunk data buffers
  *
  * @param[in] chunks Device span of column chunks

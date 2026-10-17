@@ -429,6 +429,7 @@ ConfigureTest(
   copying/gather_struct_tests.cpp
   copying/gather_tests.cpp
   copying/get_value_tests.cpp
+  copying/fused_for_tests.cpp
   copying/pack_tests.cpp
   copying/purge_nonempty_nulls_tests.cpp
   copying/sample_tests.cpp

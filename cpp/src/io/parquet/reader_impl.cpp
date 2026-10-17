@@ -427,8 +427,9 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
   // synchronize the streams
   cudf::detail::join_streams(streams, _stream);
 
-  // the delta_temp_buf in the subpass struct can be freed now
-  subpass.delta_temp_buf.release();
+  // the delta_temp_buf in the subpass struct can be freed now. later output chunks of the subpass
+  // resize it again, so replace it with an empty buffer rather than releasing it.
+  subpass.delta_temp_buf = rmm::device_uvector<uint8_t>(0, _stream);
 
   subpass.pages.device_to_host_async(_stream);
   page_nesting.device_to_host_async(_stream);

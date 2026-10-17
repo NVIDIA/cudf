@@ -380,15 +380,14 @@ std::unique_ptr<table> stable_segmented_sort_by_key(
  * @param topk_order The desired sort order for the top k values.
  *                   Default is high to low.
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column's device memory
+ * @param mr Memory resources used for temporary allocations and the returned column
  * @return A column with the top k values of the input column.
  */
-std::unique_ptr<column> top_k(
-  column_view const& col,
-  size_type k,
-  order topk_order                  = order::DESCENDING,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+std::unique_ptr<column> top_k(column_view const& col,
+                              size_type k,
+                              order topk_order          = order::DESCENDING,
+                              cuda::stream_ref stream   = cudf::get_default_stream(),
+                              cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Computes the indices of the top k values of a column
@@ -403,15 +402,15 @@ std::unique_ptr<column> top_k(
  * @param topk_order The desired sort order for the top k values.
  *                   Default is high to low.
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column's device memory
+ * @param mr Memory resources used for temporary allocations and the returned column
  * @return Indices of the top k values of the input column
  */
 std::unique_ptr<column> top_k_order(
   column_view const& col,
   size_type k,
-  order topk_order                  = order::DESCENDING,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  order topk_order          = order::DESCENDING,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Computes the top k values within each segment of a column
@@ -419,6 +418,7 @@ std::unique_ptr<column> top_k_order(
  * Returns the top k values (largest or smallest) within each segment of the given column.
  * The values within each segment may not necessarily be sorted.
  * If a segment contain less than k elements then all values for that segment are returned.
+ * Ties at the k boundary may select any of the tied rows.
  *
  * @code{.pseudo}
  * Example:
@@ -449,16 +449,16 @@ std::unique_ptr<column> top_k_order(
  * @param topk_order DESCENDING is the largest k values (default).
  *                   ASCENDING is the smallest k values.
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column's device memory
+ * @param mr Memory resources used for temporary allocations and the returned column
  * @return A column with the top k values of the input column.
  */
 std::unique_ptr<column> segmented_top_k(
   column_view const& col,
   column_view const& segment_offsets,
   size_type k,
-  order topk_order                  = order::DESCENDING,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  order topk_order          = order::DESCENDING,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Computes the indices of the top k values within each segment of a column
@@ -466,6 +466,7 @@ std::unique_ptr<column> segmented_top_k(
  * The indices will represent the top k elements within each segment but may not represent
  * those elements as k sorted values.
  * If a segment contain less than k elements then all values for that segment are returned.
+ * Ties at the k boundary may select any of the tied rows, in any order.
  *
  * @code{.pseudo}
  * Example:
@@ -496,16 +497,16 @@ std::unique_ptr<column> segmented_top_k(
  * @param topk_order DESCENDING is the indices of the largest k values (default).
  *                   ASCENDING is the indices of the smallest k values.
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column's device memory
+ * @param mr Memory resources used for temporary allocations and the returned column
  * @return Indices of the top k values of the input column
  */
 std::unique_ptr<column> segmented_top_k_order(
   column_view const& col,
   column_view const& segment_offsets,
   size_type k,
-  order topk_order                  = order::DESCENDING,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  order topk_order          = order::DESCENDING,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 }  // namespace CUDF_EXPORT cudf

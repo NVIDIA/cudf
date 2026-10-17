@@ -1211,11 +1211,15 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
         # type-cast to self.dtype.
         to_replace_col = as_column(to_replace)
         if null_cast_dtype is not None and to_replace_col.is_all_null:
-            to_replace_col = to_replace_col.astype(null_cast_dtype)
+            to_replace_col = column_empty(
+                len(to_replace_col), dtype=null_cast_dtype
+            )
 
         replacement_col = as_column(replacement)
         if null_cast_dtype is not None and replacement_col.is_all_null:
-            replacement_col = replacement_col.astype(null_cast_dtype)
+            replacement_col = column_empty(
+                len(replacement_col), dtype=null_cast_dtype
+            )
 
         if type(to_replace_col) is not type(replacement_col):
             raise TypeError(
@@ -1257,14 +1261,14 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
             old_col, new_col
         )
 
-        replaced = self
+        filled = None
         if old_plc.null_count() == 1:
             old_isnull_plc = plc.unary.is_null(old_plc)
             (filtered_column,) = plc.stream_compaction.apply_retention_mask(
                 plc.Table([new_plc]), old_isnull_plc
             ).columns()
             replacement_for_null = filtered_column.to_scalar().to_py()
-            replaced = replaced.fillna(replacement_for_null)
+            filled = self.fillna(replacement_for_null)
 
             old_plc, new_plc = plc.stream_compaction.drop_nulls(
                 plc.Table([old_plc, new_plc]),
@@ -1272,12 +1276,23 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
                 keep_threshold=1,
             ).columns()
 
-        with replaced.access(mode="read", scope="internal"):
+        with self.access(mode="read", scope="internal"):
             result_plc = plc.replace.find_and_replace_all(
-                replaced.plc_column,
+                self.plc_column,
                 old_plc,
                 new_plc,
             )
+        if filled is not None:
+            # Take the fill value only where fillna filled self (nulls, and
+            # NaN for floats), so it is not replaced again by another entry
+            # of the mapping
+            isnull = self.isnull()
+            with access_columns(filled, isnull, mode="read", scope="internal"):
+                result_plc = plc.copying.copy_if_else(
+                    filled.plc_column,
+                    result_plc,
+                    isnull.plc_column,
+                )
         return ColumnBase.create(result_plc, result_dtype)
 
     def find_and_replace(

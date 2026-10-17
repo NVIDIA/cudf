@@ -63,13 +63,8 @@ __device__ cuda::std::pair<int, int> page_bounds(
   int const max_depth = s->setup.col.max_nesting_depth;
   int const max_def   = s->nesting.nesting_info[max_depth - 1].max_def_level;
 
-  auto const pp = &s->setup.page;
-  // Clamp to decoded level count; for chunked reads we may have decoded fewer values than
-  // num_input_values (skip_rows/num_rows), and the level buffers are only that large.
-  int const actual_num_values =
-    (pp->num_decoded_level_values > 0)
-      ? cuda::std::min(pp->num_input_values, pp->num_decoded_level_values)
-      : pp->num_input_values;
+  auto const pp               = &s->setup.page;
+  int const actual_num_values = num_values_with_decoded_levels(*pp, s->setup.col);
 
   // can skip all this if we know there are no nulls
   if (max_def == 0 && !is_bounds_pg) {

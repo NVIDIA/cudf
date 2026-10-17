@@ -657,6 +657,28 @@ inline __device__ void store_validity(int valid_map_offset,
 }
 
 /**
+ * @brief Returns the number of values of a page whose levels can be read from its decoded levels
+ *
+ * With skip_rows/num_rows, the levels of a page without lists are only decoded up to the end of
+ * the rows being read, and not at all for a page outside them, in which case the page has no
+ * decoded level buffers. Neither do pruned pages. Pages of columns without levels have all of their
+ * values. Whether a column has levels must match compute_page_level_decode_sizes().
+ *
+ * @param page The page
+ * @param chunk The column chunk of the page
+ *
+ * @return The number of values of the page with decoded levels
+ */
+inline __device__ int num_values_with_decoded_levels(PageInfo const& page,
+                                                     ColumnChunkDesc const& chunk)
+{
+  bool const has_levels =
+    chunk.max_level[level_type::DEFINITION] > 0 or chunk.max_level[level_type::REPETITION] > 0;
+  return has_levels ? cuda::std::min(page.num_input_values, page.num_decoded_level_values)
+                    : page.num_input_values;
+}
+
+/**
  * @brief Compute the nesting bounds within the hierarchy to add values to, and the definition level
  * D to which we should considered them null or not.
  *
@@ -683,16 +705,11 @@ inline __device__ void get_nesting_bounds(int& start_depth,
                                           int32_t target_input_value_count,
                                           int t)
 {
-  start_depth = -1;
-  end_depth   = -1;
-  d           = -1;
-  // Clamp to decoded level count; for chunked reads the level buffers may be
-  // smaller than num_input_values when skip_rows/num_rows reduces the range.
-  auto const actual_num_values =
-    (s->setup.page.num_decoded_level_values > 0)
-      ? cuda::std::min(s->setup.page.num_input_values, s->setup.page.num_decoded_level_values)
-      : s->setup.page.num_input_values;
-  auto const max_idx = cuda::std::min(target_input_value_count, actual_num_values);
+  start_depth                  = -1;
+  end_depth                    = -1;
+  d                            = -1;
+  auto const actual_num_values = num_values_with_decoded_levels(s->setup.page, s->setup.col);
+  auto const max_idx           = cuda::std::min(target_input_value_count, actual_num_values);
   if (input_value_count + t < max_idx) {
     int const index = input_value_count + t;
     d = (def != nullptr) ? def[index] : s->setup.col.max_level[level_type::DEFINITION];

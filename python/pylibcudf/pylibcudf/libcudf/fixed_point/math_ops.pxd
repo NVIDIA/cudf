@@ -1,0 +1,37 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+from libcpp.memory cimport unique_ptr
+from pylibcudf.exception_handler cimport libcudf_exception_handler
+from pylibcudf.libcudf.column.column cimport column
+from pylibcudf.libcudf.column.column_view cimport column_view
+from pylibcudf.libcudf.round cimport rounding_method
+from pylibcudf.libcudf.scalar.scalar cimport scalar
+
+from cuda.bindings.cyruntime cimport cudaStream_t
+from rmm.librmm.memory_resource cimport device_async_resource_ref
+
+
+cdef extern from "cudf/fixed_point/math_ops.hpp" namespace "cudf" nogil:
+    cdef unique_ptr[column] divide_decimal(
+        const column_view& lhs,
+        const column_view& rhs,
+        rounding_method method,
+        cudaStream_t stream,
+        device_async_resource_ref mr
+    ) except +libcudf_exception_handler
+
+    cdef unique_ptr[column] divide_decimal(
+        const column_view& lhs,
+        const scalar& rhs,
+        rounding_method method,
+        cudaStream_t stream,
+        device_async_resource_ref mr
+    ) except +libcudf_exception_handler
+
+    cdef unique_ptr[column] divide_decimal(
+        const scalar& lhs,
+        const column_view& rhs,
+        rounding_method method,
+        cudaStream_t stream,
+        device_async_resource_ref mr
+    ) except +libcudf_exception_handler

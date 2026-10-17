@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 # TODO: Verify consistent usage of relative/absolute imports in pylibcudf.
@@ -10,6 +10,7 @@ from . cimport (
     contiguous_split,
     copying,
     datetime,
+    decimal_division,
     expressions,
     filling,
     groupby,
@@ -62,6 +63,7 @@ __all__ = [
     "concatenate",
     "copying",
     "datetime",
+    "decimal_division",
     "expressions",
     "filling",
     "gpumemoryview",

@@ -82,7 +82,7 @@ TEST_F(TextBytePairEncoding, BytePairEncodingSeparator)
     {"Ġthe test sentence", "test Ġthe sentence", "Ġthetest sentence", "testĠthesentence"});
   auto sv = cudf::strings_column_view(input);
 
-  auto results = nvtext::byte_pair_encoding(sv, *merge_pairs, std::string_view("$"));
+  auto results = nvtext::byte_pair_encoding(sv, *merge_pairs, cudf::string_scalar("$"));
 
   auto expected = cudf::test::strings_column_wrapper({"Ġthe$ $test$ $sent$ence",
                                                       "test$ $Ġthe$ $sent$ence",

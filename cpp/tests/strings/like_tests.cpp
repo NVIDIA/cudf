@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -7,6 +7,7 @@
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
 
+#include <cudf/scalar/scalar.hpp>
 #include <cudf/strings/contains.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 
@@ -405,5 +406,6 @@ TEST_F(StringsLikeTests, Errors)
   auto patterns          = cudf::test::strings_column_wrapper({"3", ""}, {true, false});
   auto const sv_patterns = cudf::strings_column_view(patterns);
   EXPECT_THROW(cudf::strings::like(sv, sv_patterns), std::invalid_argument);
-  EXPECT_THROW(cudf::strings::like(sv, sv_patterns, std::string_view("ee")), std::invalid_argument);
+  EXPECT_THROW(cudf::strings::like(sv, sv_patterns, cudf::string_scalar("ee")),
+               std::invalid_argument);
 }

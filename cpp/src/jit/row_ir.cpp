@@ -694,7 +694,7 @@ void node::instantiate(instance_context& ctx)
 
       if (op_ == opcode::RESCALE) {
         scale_reference_ = input_reference{ctx.add_input(cudf::numeric_scalar<int32_t>{
-          target_scale_.value_or(0), ctx.get_stream(), ctx.get_mr()})};
+          target_scale_.value_or(0), true, ctx.get_stream(), ctx.get_mr()})};
         arg_types.emplace_back(cudf::type_id::INT32);
       }
 

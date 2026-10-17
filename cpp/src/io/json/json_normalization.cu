@@ -7,6 +7,7 @@
 
 #include <cudf/detail/device_scalar.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/detail/json.hpp>
 #include <cudf/types.hpp>
@@ -394,7 +395,8 @@ std::
                             normalize_whitespace::TransduceToNormalizedWS{}),
                           stream);
 
-  rmm::device_uvector<size_type> outbuf_indices(inbuf.size(), stream, mr);
+  cuda::device_buffer<size_type> outbuf_indices_storage(stream, mr, inbuf.size(), cuda::no_init);
+  auto outbuf_indices = device_span<size_type>{outbuf_indices_storage};
   cudf::detail::device_scalar<SymbolOffsetT> outbuf_indices_size(stream, mr);
   parser.Transduce(inbuf.data(),
                    static_cast<SymbolOffsetT>(inbuf.size()),
@@ -405,7 +407,7 @@ std::
                    stream);
 
   auto const num_deletions = outbuf_indices_size.value(stream);
-  outbuf_indices.resize(num_deletions, stream);
+  outbuf_indices           = outbuf_indices.subspan(0, num_deletions);
 
   // now these indices need to be removed
   // TODO: is there a better way to do this?
@@ -422,7 +424,7 @@ std::
       ref.fetch_add(-1, cuda::std::memory_order_relaxed);
     });
 
-  auto stencil = cudf::detail::make_zeroed_device_uvector_async<bool>(
+  auto stencil = cudf::detail::make_zeroed_device_buffer_async<bool>(
     static_cast<std::size_t>(inbuf_size), stream, cudf::get_current_device_resource_ref());
   thrust::scatter(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                   cuda::make_constant_iterator(true),

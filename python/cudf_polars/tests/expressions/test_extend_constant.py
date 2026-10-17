@@ -48,7 +48,7 @@ def test_extend_constant_negative_n(engine: pl.GPUEngine, n: int | pl.Expr) -> N
     lf = pl.LazyFrame({"a": [1, 2, 3]})
     q = lf.select(pl.col("a").extend_constant(0, n))
     with pytest.raises(pl.exceptions.InvalidOperationError):
-        q.collect()
+        q.collect(engine="in-memory")
     if is_streaming_engine(engine):
         with pytest.RaisesGroup(pl.exceptions.InvalidOperationError):
             q.collect(engine=engine)

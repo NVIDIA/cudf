@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 from cudf_polars.dsl import expr
-from cudf_polars.dsl.expr import Col, Len
+from cudf_polars.dsl.expr import Col, GroupedWindow, Len
 from cudf_polars.dsl.ir import Empty, HConcat, HStack, Projection, Scan, Select, Union
 from cudf_polars.dsl.traversal import traversal
 from cudf_polars.dsl.utils.naming import unique_names
@@ -500,7 +500,8 @@ def _(
         return new_node, partition_info
 
     if not any(
-        isinstance(expr, (Col, Len)) for expr in traversal([e.value for e in ir.exprs])
+        isinstance(expr, (Col, GroupedWindow, Len))
+        for expr in traversal([e.value for e in ir.exprs])
     ):
         # Special Case: Selection does not depend on any columns.
         new_node = ir.reconstruct([input_ir := Empty({})])

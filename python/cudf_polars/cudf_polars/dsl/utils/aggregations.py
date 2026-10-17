@@ -479,6 +479,8 @@ def decompose_single_agg(
                 )
                 else expr.Col(agg.dtype, name)
             )
+            if agg.name == "sum" and agg.options:
+                return [(named_expr, True)], expr.NamedExpr(name, col)
             # Polars semantics for sum differ by context:
             # - GROUPBY: sum(all-null group) => 0; sum(empty group) => 0  (fill-null)
             # - ROLLING: sum(all-null window) => null; sum(empty window) => 0 (fill only if empty)
@@ -487,7 +489,10 @@ def decompose_single_agg(
             # product uses an identity of 1 (empty/all-null product is 1 in polars).
             identity = 1 if agg.name == "product" else 0
             return [(named_expr, True)], expr.NamedExpr(
-                name, replace_nulls(col, identity, is_top=is_top)
+                name,
+                replace_nulls(
+                    col, identity, is_top=is_top or context == ExecutionContext.GROUPBY
+                ),
             )
         elif agg.name in {"mean", "median", "quantile", "std", "var"}:
             post_agg_col: expr.Expr = expr.Col(

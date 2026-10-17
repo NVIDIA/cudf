@@ -19,7 +19,7 @@ from typing import (
 
 import polars as pl
 import polars.datatypes
-from polars import polars as plrs  # type: ignore[attr-defined]
+from polars import _plr as plrs
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -64,7 +64,6 @@ type PolarsIR = Union[
     plrs._ir_nodes.MapFunction,
     plrs._ir_nodes.Union,
     plrs._ir_nodes.HConcat,
-    plrs._ir_nodes.ExtContext,
 ]
 
 type PolarsExpr = Union[

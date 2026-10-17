@@ -7,12 +7,11 @@ from __future__ import annotations
 
 import contextlib
 import os
-import textwrap
-import time
 import warnings
+from dataclasses import dataclass
 from functools import cache, partial
 from threading import Lock
-from typing import TYPE_CHECKING, Literal, assert_never, overload
+from typing import TYPE_CHECKING, assert_never
 
 import nvtx
 from cuda.bindings import runtime
@@ -34,7 +33,6 @@ from cudf_polars.utils.config import (
     _env_get_int,
     get_total_device_memory,
 )
-from cudf_polars.utils.timer import Timer
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -129,37 +127,11 @@ def default_memory_resource(
         return mr
 
 
-@contextlib.contextmanager
-def set_memory_resource(
+def _resolve_memory_resource(
     mr: rmm.mr.DeviceMemoryResource | None,
     memory_resource_config: MemoryResourceConfig | None,
     executor: ExecutorType,
-) -> Generator[rmm.mr.DeviceMemoryResource, None, None]:
-    """
-    Set the current memory resource for an execution block.
-
-    Parameters
-    ----------
-    mr
-        Memory resource to use. If `None`, calls :func:`default_memory_resource`
-        to obtain an mr on the currently active device.
-    memory_resource_config
-        Memory resource configuration to use when a concrete memory resource.
-        is not provided. If ``None``, the default memory resource is used.
-    executor
-        Executor configuration.
-
-    Returns
-    -------
-    Memory resource used.
-
-    Notes
-    -----
-    At exit, the memory resource is restored to whatever was current
-    at entry. If a memory resource is provided, it must be valid to
-    use with the currently active device.
-    """
-    previous = rmm.mr.get_current_device_resource()
+) -> rmm.mr.DeviceMemoryResource:
     if mr is None:
         # Use cuda async by default with the streaming executor.
         if (
@@ -187,11 +159,71 @@ def set_memory_resource(
             memory_resource_config=memory_resource_config,
         )
 
-    rmm.mr.set_current_device_resource(mr)
+    return mr
+
+
+@dataclass
+class _MemoryResourceScope:
+    mr: rmm.mr.DeviceMemoryResource | None = None
+    previous: rmm.mr.DeviceMemoryResource | None = None
+    depth: int = 0
+
+
+_MEMORY_RESOURCE_SCOPE = _MemoryResourceScope()
+_MEMORY_RESOURCE_LOCK = Lock()
+
+
+@contextlib.contextmanager
+def set_memory_resource(
+    mr: rmm.mr.DeviceMemoryResource | None,
+    memory_resource_config: MemoryResourceConfig | None,
+    executor: ExecutorType,
+) -> Generator[rmm.mr.DeviceMemoryResource, None, None]:
+    """
+    Set the current memory resource for an execution block.
+
+    Parameters
+    ----------
+    mr
+        Memory resource to use. If `None`, calls :func:`default_memory_resource`
+        to obtain an mr on the currently active device.
+    memory_resource_config
+        Memory resource configuration to use when a concrete memory resource.
+        is not provided. If ``None``, the default memory resource is used.
+    executor
+        Executor configuration.
+
+    Returns
+    -------
+    Memory resource used.
+
+    Notes
+    -----
+    The current memory resource is process-global, so execution blocks that
+    overlap in time (for example, queries collected from several threads)
+    share one resource. The first block to enter installs it, and the last
+    block to exit restores whatever was current at that first entry. A block
+    that enters while another is active uses the resource that is already
+    installed.
+    """
+    with _MEMORY_RESOURCE_LOCK:
+        scope = _MEMORY_RESOURCE_SCOPE
+        if scope.depth == 0:
+            scope.previous = rmm.mr.get_current_device_resource()
+            scope.mr = _resolve_memory_resource(mr, memory_resource_config, executor)
+            rmm.mr.set_current_device_resource(scope.mr)
+        scope.depth += 1
+        active = scope.mr
+    assert active is not None
     try:
-        yield mr
+        yield active
     finally:
-        rmm.mr.set_current_device_resource(previous)
+        with _MEMORY_RESOURCE_LOCK:
+            scope.depth -= 1
+            if scope.depth == 0:
+                assert scope.previous is not None
+                rmm.mr.set_current_device_resource(scope.previous)
+                scope.mr = scope.previous = None
 
 
 # libcudf doesn't support executing on multiple devices from within the same process.
@@ -240,50 +272,18 @@ def set_device(device: int | None) -> Generator[int, None, None]:
             gpu.setDevice(current)
 
 
-@overload
 def _callback(
     ir: IR,
     with_columns: list[str] | None,
     pyarrow_predicate: str | None,
     n_rows: int | None,
-    should_time: Literal[False],
     *,
     memory_resource: rmm.mr.DeviceMemoryResource | None,
     config_options: ConfigOptions,
-    timer: Timer | None,
-) -> pl.DataFrame: ...
-
-
-@overload
-def _callback(
-    ir: IR,
-    with_columns: list[str] | None,
-    pyarrow_predicate: str | None,
-    n_rows: int | None,
-    should_time: Literal[True],
-    *,
-    memory_resource: rmm.mr.DeviceMemoryResource | None,
-    config_options: ConfigOptions,
-    timer: Timer | None,
-) -> tuple[pl.DataFrame, list[tuple[int, int, str]]]: ...
-
-
-def _callback(
-    ir: IR,
-    with_columns: list[str] | None,
-    pyarrow_predicate: str | None,
-    n_rows: int | None,
-    should_time: bool,  # noqa: FBT001
-    *,
-    memory_resource: rmm.mr.DeviceMemoryResource | None,
-    config_options: ConfigOptions,
-    timer: Timer | None,
-) -> pl.DataFrame | tuple[pl.DataFrame, list[tuple[int, int, str]]]:
+) -> pl.DataFrame:
     assert with_columns is None
     assert pyarrow_predicate is None
     assert n_rows is None
-    if timer is not None:
-        assert should_time
 
     with (
         nvtx.annotate(message="ExecuteIR", domain=CUDF_POLARS_NVTX_DOMAIN),
@@ -297,22 +297,11 @@ def _callback(
     ):
         if config_options.executor.name == "in-memory":
             context = IRExecutionContext()
-            df = ir.evaluate(cache={}, timer=timer, context=context).to_polars()
+            df = ir.evaluate(cache={}, context=context).to_polars()
             gpu_executed.set(True)
-            if timer is None:
-                return df
-            else:
-                return df, timer.timings
+            return df
         elif config_options.executor.name == "streaming":
             from cudf_polars.streaming.parallel import evaluate_streaming
-
-            if timer is not None:
-                msg = textwrap.dedent("""\
-                    LazyFrame.profile() is not supported with the streaming executor.
-                    To profile execution with the streaming executor, use NVIDIA
-                    NSight Systems with the 'streaming' scheduler.
-                    """)
-                raise NotImplementedError(msg)
 
             df = evaluate_streaming(ir, config_options)
             gpu_executed.set(True)
@@ -320,9 +309,7 @@ def _callback(
         assert_never(config_options.executor)
 
 
-def execute_with_cudf(
-    nt: NodeTraverser, duration_since_start: int | None, *, config: GPUEngine
-) -> None:
+def execute_with_cudf(nt: NodeTraverser, *, config: GPUEngine) -> None:
     """
     A post optimization callback that attempts to execute the plan with cudf.
 
@@ -330,10 +317,6 @@ def execute_with_cudf(
     ----------
     nt
         NodeTraverser
-
-    duration_since_start
-        Time since the user started executing the query (or None if no
-        profiling should occur).
 
     config
         GPUEngine object. Configuration is available as ``engine.config``.
@@ -351,19 +334,11 @@ def execute_with_cudf(
     """
     # Translation can decline a plan before the execution callback is installed.
     gpu_attempted.set(True)
-    if duration_since_start is None:
-        timer = None
-    else:
-        start = time.monotonic_ns()
-        timer = Timer(start - duration_since_start)
-
     memory_resource = config.memory_resource
 
     with nvtx.annotate(message="ConvertIR", domain=CUDF_POLARS_NVTX_DOMAIN):
         translator = Translator(nt, config)
         ir = translator.translate_ir()
-        if timer is not None:
-            timer.store(start, time.monotonic_ns(), "gpu-ir-translation")
 
         exception = translator.unsupported_operations_error()
         if exception is not None:
@@ -380,6 +355,5 @@ def execute_with_cudf(
                     ir,
                     memory_resource=memory_resource,
                     config_options=translator.config_options,
-                    timer=timer,
                 )
             )

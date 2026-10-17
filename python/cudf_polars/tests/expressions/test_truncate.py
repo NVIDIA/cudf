@@ -7,12 +7,8 @@ import pytest
 import polars as pl
 
 from cudf_polars.testing.asserts import assert_gpu_result_equal
-from cudf_polars.utils.versions import POLARS_VERSION_LT_139
 
 
-@pytest.mark.skipif(
-    POLARS_VERSION_LT_139, reason="truncate is not supported in polars <1.39"
-)
 @pytest.mark.parametrize(
     "series",
     [

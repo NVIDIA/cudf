@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import threading
 from typing import TYPE_CHECKING, Any, cast
 
 import kvikio
@@ -878,6 +879,34 @@ def test_memory_resource(memory_resource, memory_resource_config) -> None:
             assert result is memory_resource
         else:  # pragma: no cover; Unreachable
             raise ValueError("Unreachable")
+
+
+def test_memory_resource_overlapping_scopes() -> None:
+    executor = ConfigOptions.from_polars_engine(pl.GPUEngine()).executor
+    original = rmm.mr.get_current_device_resource()
+    first_entered = threading.Event()
+    second_entered = threading.Event()
+    first_may_exit = threading.Event()
+    seen: list[rmm.mr.DeviceMemoryResource] = []
+
+    def first() -> None:
+        with set_memory_resource(None, None, executor) as mr:
+            seen.append(mr)
+            first_entered.set()
+            second_entered.wait()
+            first_may_exit.wait()
+
+    thread = threading.Thread(target=first)
+    thread.start()
+    first_entered.wait()
+    with set_memory_resource(None, None, executor) as mr:
+        seen.append(mr)
+        second_entered.set()
+        first_may_exit.set()
+        thread.join()
+        assert rmm.mr.get_current_device_resource() is mr
+    assert seen[0] is seen[1]
+    assert rmm.mr.get_current_device_resource() is original
 
 
 def test_memory_resource_config_from_env(monkeypatch: pytest.MonkeyPatch) -> None:

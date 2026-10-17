@@ -45,6 +45,11 @@ EXPECTED_FAILURES: Mapping[str, str] = {
     "tests/expr_and_series/pandas_str_dtypes_test.py::test_pandas_str_types[left_dtype29-right_dtype29-result_dtype29]": "cudf.pandas returns a different pandas string dtype than the test expects.",
     "tests/expr_and_series/pandas_str_dtypes_test.py::test_pandas_str_types[left_dtype30-right_dtype30-result_dtype30]": "cudf.pandas returns a different pandas string dtype than the test expects.",
     "tests/expr_and_series/pandas_str_dtypes_test.py::test_pandas_str_types[left_dtype31-right_dtype31-result_dtype31]": "cudf.pandas returns a different pandas string dtype than the test expects.",
+    "tests/frame/interchange_native_namespace_test.py::test_interchange": "Polars 2.0 removed the dataframe interchange protocol (`__dataframe__`).",
+    "tests/frame/interchange_schema_test.py::test_interchange_schema": "Polars 2.0 removed the dataframe interchange protocol (`__dataframe__`).",
+    "tests/frame/interchange_schema_test.py::test_interchange_schema_float16": "Polars 2.0 removed the dataframe interchange protocol (`__dataframe__`).",
+    "tests/frame/interchange_schema_test.py::test_invalid": "Polars 2.0 removed the dataframe interchange protocol (`__dataframe__`).",
+    "tests/frame/interchange_to_arrow_test.py::test_interchange_to_arrow": "Polars 2.0 removed the dataframe interchange protocol (`__dataframe__`).",
     "tests/frame/select_test.py::test_select_boolean_cols": "NVIDIA/cudf#19421: selecting boolean columns raises a length-mismatch error.",
     "tests/frame/select_test.py::test_select_boolean_cols_multi_group_by": "NVIDIA/cudf#19421: selecting boolean columns raises a length-mismatch error.",
     "tests/frame/top_k_test.py::test_top_k[pandas]": "cudf.pandas top_k returns rows in a different order.",
@@ -53,6 +58,7 @@ EXPECTED_FAILURES: Mapping[str, str] = {
     "tests/series_only/from_iterable_test.py::test_series_from_iterable[polars-cudf.pandas.fast_slow_proxy._FunctionProxy-String]": "cudf.pandas Series constructor rejects nullable/pyarrow-backed arrays produced via the fast-slow proxy.",
     "tests/series_only/from_iterable_test.py::test_series_from_iterable[polars-cudf.pandas.fast_slow_proxy._FunctionProxy-no-dtype]": "cudf.pandas Series constructor rejects nullable/pyarrow-backed arrays produced via the fast-slow proxy.",
     "tests/testing/assert_frame_equal_test.py::test_self_equal[pandas]": "Narwhals maps cudf.pandas nested dtypes to Object, so assert_series_equal falls back to an undefined element-wise comparison.",
+    "tests/v1_test.py::test_get_level": "Polars 2.0 removed the dataframe interchange protocol (`__dataframe__`).",
 }
 
 

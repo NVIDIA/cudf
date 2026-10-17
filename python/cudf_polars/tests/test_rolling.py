@@ -14,7 +14,6 @@ from cudf_polars.testing.asserts import (
     assert_ir_translation_raises,
 )
 from cudf_polars.testing.engine_utils import is_streaming_engine
-from cudf_polars.utils.versions import POLARS_VERSION_LT_136
 
 
 @pytest.fixture(params=[False, True], ids=["nosort", "sort"])
@@ -189,10 +188,7 @@ def test_orderby_nulls_raises_computeerror(engine: pl.GPUEngine):
             q.collect(engine=engine)
 
 
-@pytest.mark.xfail(
-    condition=not POLARS_VERSION_LT_136,
-    reason="polars raises now",
-)
+@pytest.mark.xfail(reason="polars raises now")
 def test_rolling_nested_raises(in_memory_engine):
     q = (
         pl.LazyFrame(

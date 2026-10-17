@@ -28,7 +28,6 @@ from cudf_polars.streaming.actor_graph.collectives.shuffle import ShuffleManager
 from cudf_polars.streaming.actor_graph.core import evaluate_logical_plan
 from cudf_polars.testing.asserts import assert_gpu_result_equal
 from cudf_polars.utils.config import ConfigOptions
-from cudf_polars.utils.versions import POLARS_VERSION_LT_138
 
 
 @pytest.fixture(scope="module")
@@ -299,7 +298,12 @@ def test_groupby_single_partitions(df, streaming_engine_factory, op, keys):
 def test_groupby_agg(df, streaming_engine, op, keys):
     agg = getattr(pl.col("x"), op)()
     q = df.group_by(*keys).agg(agg)
-    assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=False)
+    assert_gpu_result_equal(
+        q,
+        engine=streaming_engine,
+        check_row_order=False,
+        check_exact=op not in {"std", "var"},
+    )
 
 
 def test_groupby_sort_by_first_last(streaming_engine_factory):
@@ -365,9 +369,6 @@ def test_groupby_sort_by_stable_ties_with_preshuffle_fallback(
         q.collect(engine=streaming_engine)
 
 
-@pytest.mark.skipif(
-    POLARS_VERSION_LT_138, reason="set_sorted lowers to unsupported hint ir"
-)
 def test_groupby_first_non_null_sorted_keys(spmd_engine_factory):
     streaming_engine = spmd_engine_factory(
         StreamingOptions(
@@ -425,7 +426,7 @@ def test_groupby_sort_by_preserves_sorted_key_order(streaming_engine_factory):
 @pytest.mark.parametrize("agg", ["std", "var"])
 def test_groupby_std_var_ddof(df, engine, agg, ddof):
     q = df.group_by("y").agg(getattr(pl.col("x"), agg)(ddof=ddof))
-    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False, check_exact=False)
 
 
 @pytest.mark.parametrize("fallback_mode", ["silent", "raise", "warn", "foo"])

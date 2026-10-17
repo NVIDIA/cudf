@@ -82,7 +82,7 @@ def assert_gpu_result_equal(
         If GPU collection failed in some way.
     """
     gpu_kwargs = collect_kwargs or {}
-    cpu_kwargs = gpu_kwargs | (polars_collect_kwargs or {})
+    cpu_kwargs = {"engine": "in-memory"} | gpu_kwargs | (polars_collect_kwargs or {})
 
     # These keywords are correct, but mypy doesn't see that.
     # the 'misc' is for 'error: Keywords must be strings'

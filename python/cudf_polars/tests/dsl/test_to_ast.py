@@ -69,7 +69,7 @@ def test_compute_column(expr, df):
 
     assert isinstance(ir, ir_nodes.Select)
     table = ir.children[0].evaluate(
-        cache={}, timer=None, context=IRExecutionContext(get_cuda_stream=lambda: stream)
+        cache={}, context=IRExecutionContext(get_cuda_stream=lambda: stream)
     )
     name_to_index = {c.name: i for i, c in enumerate(table.columns)}
 

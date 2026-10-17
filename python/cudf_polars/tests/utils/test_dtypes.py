@@ -10,7 +10,7 @@ import polars as pl
 import pylibcudf as plc
 
 from cudf_polars.containers import DataType
-from cudf_polars.utils.dtypes import is_order_preserving_cast
+from cudf_polars.utils.dtypes import can_cast, is_order_preserving_cast
 
 INT8 = plc.DataType(plc.TypeId.INT8)
 INT16 = plc.DataType(plc.TypeId.INT16)
@@ -22,6 +22,8 @@ UINT32 = plc.DataType(plc.TypeId.UINT32)
 UINT64 = plc.DataType(plc.TypeId.UINT64)
 FLOAT32 = plc.DataType(plc.TypeId.FLOAT32)
 FLOAT64 = plc.DataType(plc.TypeId.FLOAT64)
+LIST = plc.DataType(plc.TypeId.LIST)
+STRUCT = plc.DataType(plc.TypeId.STRUCT)
 
 
 @pytest.mark.parametrize(
@@ -61,3 +63,9 @@ def test_is_order_preserving_cast():
     assert not is_order_preserving_cast(INT16, INT8)  # Bigger type
     assert not is_order_preserving_cast(INT8, UINT8)  # Different signedness
     assert not is_order_preserving_cast(FLOAT64, FLOAT32)  # Smaller float
+
+
+def test_can_cast_nested():
+    assert not can_cast(LIST, LIST)
+    assert not can_cast(LIST, STRUCT)
+    assert can_cast(INT8, INT16)

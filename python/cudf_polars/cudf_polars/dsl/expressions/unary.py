@@ -17,7 +17,6 @@ from cudf_polars.dsl.expressions.base import ExecutionContext, Expr
 from cudf_polars.dsl.expressions.literal import Literal, LiteralColumn
 from cudf_polars.dsl.utils.reshape import broadcast
 from cudf_polars.utils import dtypes, sorting
-from cudf_polars.utils.versions import POLARS_VERSION_LT_136
 
 if TYPE_CHECKING:
     from cudf_polars.containers import DataFrame
@@ -280,7 +279,7 @@ class UnaryFunction(Expr):
                         f"'horizontal_mean' expects numeric expressions, found "
                         f"(dtype={typ})"
                     )
-        if self.name == "mode" and not POLARS_VERSION_LT_136:
+        if self.name == "mode":
             (maintain_order,) = self.options
             if maintain_order:
                 raise NotImplementedError(
@@ -899,19 +898,21 @@ class UnaryFunction(Expr):
                 round_mode,
             ) = self.options
             (values,) = (child.evaluate(df, context=context) for child in self.children)
-            return Column(
-                plc.round.round(
-                    values.obj,
-                    decimal_places,
-                    (
-                        plc.round.RoundingMethod.HALF_EVEN
-                        if round_mode == "half_to_even"
-                        else plc.round.RoundingMethod.HALF_UP
-                    ),
-                    stream=df.stream,
+            rounded = plc.round.round(
+                values.obj,
+                decimal_places,
+                (
+                    plc.round.RoundingMethod.HALF_EVEN
+                    if round_mode == "half_to_even"
+                    else plc.round.RoundingMethod.HALF_UP
                 ),
-                dtype=self.dtype,
-            ).sorted_like(values)  # pragma: no cover
+                stream=df.stream,
+            )
+            return (
+                Column(rounded, dtype=self.dtype)
+                .astype(self.dtype, stream=df.stream)
+                .sorted_like(values)
+            )  # pragma: no cover
         elif self.name == "round_sig_figs":
             column = self.children[0].evaluate(df, context=context)
             (digits,) = self.options

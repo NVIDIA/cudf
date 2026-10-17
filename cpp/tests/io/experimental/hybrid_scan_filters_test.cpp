@@ -21,6 +21,7 @@
 #include <cudf/utilities/span.hpp>
 
 #include <cuda/iterator>
+#include <cuda/std/type_traits>
 
 #include <src/io/parquet/parquet_gpu.hpp>
 
@@ -796,7 +797,7 @@ TYPED_TEST(PageFilteringWithPageIndexStats, FilterPages)
     // Half the pages (unsigned) or 3/4th the pages (signed) should be filtered out by the page
     // index filter
     auto constexpr expected_surviving_rows =
-      (num_concat * num_ordered_rows) / (std::is_signed_v<T> ? 4 : 2);
+      (num_concat * num_ordered_rows) / (cuda::std::is_signed_v<T> ? 4 : 2);
     test_filter_data_pages_with_stats(filter_expression, expected_surviving_rows);
   }
 
@@ -810,7 +811,7 @@ TYPED_TEST(PageFilteringWithPageIndexStats, FilterPages)
     // Half the pages (unsigned) or 3/4th the pages (signed) should be filtered out by the page
     // index filter
     auto constexpr expected_surviving_rows =
-      (num_concat * num_ordered_rows) / (std::is_signed_v<T> ? 4 : 2);
+      (num_concat * num_ordered_rows) / (cuda::std::is_signed_v<T> ? 4 : 2);
     test_filter_data_pages_with_stats(filter_expression, expected_surviving_rows);
   }
 
@@ -1707,7 +1708,7 @@ TYPED_TEST(RowGroupFilteringWithDictTest, FilterFewLiteralsTyped)
     } else {
       // table[0] == 0 or 100u
       return cudf::numeric_scalar<T>(
-        (100 - 100 * std::is_signed_v<T>), true, stream);  // i/100 (-100-100/ 0-200)
+        (100 - 100 * cuda::std::is_signed_v<T>), true, stream);  // i/100 (-100-100/ 0-200)
     }
   }();
 
@@ -1834,7 +1835,7 @@ TYPED_TEST(RowGroupFilteringWithDictTest, FilterManyLiteralsTyped)
     } else {
       // table[0] == -100 or 100u
       return cudf::numeric_scalar<T>(
-        (100 - 200 * std::is_signed_v<T>), true, stream);  // i/100 (-100-100/ 0-200)
+        (100 - 200 * cuda::std::is_signed_v<T>), true, stream);  // i/100 (-100-100/ 0-200)
     }
   }();
 
@@ -1852,7 +1853,7 @@ TYPED_TEST(RowGroupFilteringWithDictTest, FilterManyLiteralsTyped)
     } else {
       // table[0] == -50 or 50u
       return cudf::numeric_scalar<T>(
-        (50 - 100 * std::is_signed_v<T>), true, stream);  // i/100 (-100-100/ 0-200)
+        (50 - 100 * cuda::std::is_signed_v<T>), true, stream);  // i/100 (-100-100/ 0-200)
     }
   }();
 
@@ -1870,7 +1871,7 @@ TYPED_TEST(RowGroupFilteringWithDictTest, FilterManyLiteralsTyped)
     } else {
       // table[0] == -25 or 25u
       return cudf::numeric_scalar<T>(
-        (25 - 50 * std::is_signed_v<T>), true, stream);  // i/100 (-100-100/ 0-200)
+        (25 - 50 * cuda::std::is_signed_v<T>), true, stream);  // i/100 (-100-100/ 0-200)
     }
   }();
 

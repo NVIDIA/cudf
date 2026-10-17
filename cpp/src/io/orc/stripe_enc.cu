@@ -28,6 +28,7 @@
 #include <cuda/cmath>
 #include <cuda/functional>
 #include <cuda/std/limits>
+#include <cuda/std/type_traits>
 #include <cuda/stream>
 
 namespace cudf::io::orc::detail {
@@ -409,7 +410,7 @@ static __device__ uint32_t IntegerRLE(
       vmax = block_reduce(temp_storage).Reduce(vmax, cuda::maximum{});
       if (t == 0) {
         uint32_t mode1_w, mode2_w;
-        typename std::make_unsigned<T>::type vrange_mode1, vrange_mode2;
+        typename cuda::std::make_unsigned<T>::type vrange_mode1, vrange_mode2;
         block_vmin = static_cast<uint64_t>(vmin);
         if constexpr (sizeof(T) > 4) {
           vrange_mode1 = (is_signed) ? max(zigzag(vmin), zigzag(vmax)) : vmax;
@@ -467,7 +468,7 @@ static __device__ uint32_t IntegerRLE(
         }
         dst += 2;
 
-        typename std::make_unsigned<T>::type zzv0 = v0;
+        typename cuda::std::make_unsigned<T>::type zzv0 = v0;
         if (t < literal_run) { zzv0 = zigzag(v0); }
         if (literal_w < 8) {
           StoreBitsBigEndian(dst, zzv0, literal_w, literal_run, t);

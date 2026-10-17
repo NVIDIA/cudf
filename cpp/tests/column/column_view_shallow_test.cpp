@@ -13,6 +13,7 @@
 #include <cudf/utilities/traits.hpp>
 
 #include <cuda/iterator>
+#include <cuda/std/type_traits>
 
 #include <memory>
 #include <type_traits>
@@ -210,10 +211,10 @@ TYPED_TEST(ColumnViewShallowTests, shallow_hash_slice)
 
   // column_view, bit_cast         = diff hash
   {
-    if constexpr (std::is_integral_v<TypeParam> and not std::is_same_v<TypeParam, bool>) {
-      using newType    = std::conditional_t<std::is_signed_v<TypeParam>,
-                                            std::make_unsigned_t<TypeParam>,
-                                            std::make_signed_t<TypeParam>>;
+    if constexpr (cuda::std::is_integral_v<TypeParam> and not std::is_same_v<TypeParam, bool>) {
+      using newType    = std::conditional_t<cuda::std::is_signed_v<TypeParam>,
+                                            cuda::std::make_unsigned_t<TypeParam>,
+                                            cuda::std::make_signed_t<TypeParam>>;
       auto new_type    = cudf::data_type(cudf::type_to_id<newType>());
       auto col_bitcast = cudf::bit_cast(col_view, new_type);
       EXPECT_NE(shallow_hash(col_view), shallow_hash(col_bitcast));
@@ -377,10 +378,10 @@ TYPED_TEST(ColumnViewShallowTests, is_shallow_equivalent_slice)
 
   // column_view, bit_cast         = diff hash
   {
-    if constexpr (std::is_integral_v<TypeParam> and not std::is_same_v<TypeParam, bool>) {
-      using newType    = std::conditional_t<std::is_signed_v<TypeParam>,
-                                            std::make_unsigned_t<TypeParam>,
-                                            std::make_signed_t<TypeParam>>;
+    if constexpr (cuda::std::is_integral_v<TypeParam> and not std::is_same_v<TypeParam, bool>) {
+      using newType    = std::conditional_t<cuda::std::is_signed_v<TypeParam>,
+                                            cuda::std::make_unsigned_t<TypeParam>,
+                                            cuda::std::make_signed_t<TypeParam>>;
       auto new_type    = cudf::data_type(cudf::type_to_id<newType>());
       auto col_bitcast = cudf::bit_cast(col_view, new_type);
       EXPECT_FALSE(is_shallow_equivalent(col_view, col_bitcast));

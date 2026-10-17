@@ -902,7 +902,7 @@ constexpr bool is_sum_product_agg(aggregation::Kind k)
 
 // Summing/Multiplying integers of any type, always use int64_t accumulator
 template <typename Source, aggregation::Kind k>
-  requires(std::is_integral_v<Source> && is_sum_product_agg(k))
+  requires(cuda::std::is_integral_v<Source> && is_sum_product_agg(k))
 struct target_type_impl<Source, k> {
   using type = int64_t;
 };
@@ -1109,7 +1109,7 @@ struct target_type_impl<SourceType, aggregation::HOST_UDF> {
 template <typename Source>
 struct target_type_impl<Source,
                         aggregation::BITWISE_AGG,
-                        std::enable_if_t<std::is_integral_v<Source>>> {
+                        std::enable_if_t<cuda::std::is_integral_v<Source>>> {
   using type = Source;
 };
 

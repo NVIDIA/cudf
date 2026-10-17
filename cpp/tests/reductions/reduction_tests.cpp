@@ -24,6 +24,7 @@
 #include <cudf/wrappers/timestamps.hpp>
 
 #include <cuda/iterator>
+#include <cuda/std/type_traits>
 
 #include <algorithm>
 #include <iterator>
@@ -36,7 +37,7 @@ using reduce_aggregation = cudf::reduce_aggregation;
 template <typename T>
 auto convert_int(int value)
 {
-  if (std::is_unsigned_v<T>) value = std::abs(value);
+  if (cuda::std::is_unsigned_v<T>) value = std::abs(value);
   if constexpr (cudf::is_timestamp_t<T>::value) {
     return T{typename T::duration(value)};
   } else {
@@ -79,7 +80,8 @@ std::vector<T> replace_nulls(std::vector<T> const& values,
 template <typename T>
 struct ReductionTest : public cudf::test::BaseFixture {
   // Sum/Prod/SumOfSquare never support non arithmetics
-  static constexpr bool ret_non_arithmetic = (std::is_arithmetic_v<T> || std::is_same_v<T, bool>);
+  static constexpr bool ret_non_arithmetic =
+    (cuda::std::is_arithmetic_v<T> || std::is_same_v<T, bool>);
 
   ReductionTest() {}
 
@@ -1607,7 +1609,7 @@ TYPED_TEST(ReductionTest, Median)
   cudf::test::fixed_width_column_wrapper<T> col(v.begin(), v.end());
   double expected_value = [] {
     if (std::is_same_v<T, bool>) return 1.0;
-    if (std::is_signed_v<T>) return 3.0;
+    if (cuda::std::is_signed_v<T>) return 3.0;
     return 13.5;
   }();
   EXPECT_EQ(this
@@ -1619,7 +1621,7 @@ TYPED_TEST(ReductionTest, Median)
   auto col_odd              = cudf::split(col, {1})[1];
   double expected_value_odd = [] {
     if (std::is_same_v<T, bool>) return 1.0;
-    if (std::is_signed_v<T>) return 0.0;
+    if (cuda::std::is_signed_v<T>) return 0.0;
     return 14.0;
   }();
   EXPECT_EQ(this
@@ -1632,7 +1634,7 @@ TYPED_TEST(ReductionTest, Median)
   cudf::test::fixed_width_column_wrapper<T> col_nulls = construct_null_column(v, host_bools);
   double expected_null_value                          = [] {
     if (std::is_same_v<T, bool>) return 1.0;
-    if (std::is_signed_v<T>) return 0.0;
+    if (cuda::std::is_signed_v<T>) return 0.0;
     return 13.0;
   }();
 
@@ -1645,7 +1647,7 @@ TYPED_TEST(ReductionTest, Median)
   auto col_nulls_odd             = cudf::split(col_nulls, {1})[1];
   double expected_null_value_odd = [] {
     if (std::is_same_v<T, bool>) return 1.0;
-    if (std::is_signed_v<T>) return -6.5;
+    if (cuda::std::is_signed_v<T>) return -6.5;
     return 13.5;
   }();
   EXPECT_EQ(this
@@ -1667,7 +1669,7 @@ TYPED_TEST(ReductionTest, Quantile)
 
   // test without nulls
   cudf::test::fixed_width_column_wrapper<T> col(v.begin(), v.end());
-  double expected_value0 = std::is_same_v<T, bool> || std::is_unsigned_v<T> ? v[4] : v[6];
+  double expected_value0 = std::is_same_v<T, bool> || cuda::std::is_unsigned_v<T> ? v[4] : v[6];
   EXPECT_EQ(
     this
       ->template reduction_test<double>(
@@ -3100,7 +3102,7 @@ TYPED_TEST(DictionaryReductionTest, Median)
               ->template reduction_test<double>(
                 col, *cudf::make_median_aggregation<reduce_aggregation>(), output_type)
               .first,
-            (std::is_signed_v<T>) ? 3.0 : 13.5);
+            (cuda::std::is_signed_v<T>) ? 3.0 : 13.5);
 
   // test with nulls
   std::vector<bool> validity({true, true, true, false, true, true, true, true});
@@ -3109,7 +3111,7 @@ TYPED_TEST(DictionaryReductionTest, Median)
               ->template reduction_test<double>(
                 col_nulls, *cudf::make_median_aggregation<reduce_aggregation>(), output_type)
               .first,
-            (std::is_signed_v<T>) ? 0.0 : 13.0);
+            (cuda::std::is_signed_v<T>) ? 0.0 : 13.0);
 }
 
 TYPED_TEST(DictionaryReductionTest, Quantile)
@@ -3122,7 +3124,7 @@ TYPED_TEST(DictionaryReductionTest, Quantile)
 
   // test without nulls
   cudf::test::dictionary_column_wrapper<T> col(v.begin(), v.end());
-  double expected_value = std::is_same_v<T, bool> || std::is_unsigned_v<T> ? 0.0 : -20.0;
+  double expected_value = std::is_same_v<T, bool> || cuda::std::is_unsigned_v<T> ? 0.0 : -20.0;
   EXPECT_EQ(
     this
       ->template reduction_test<double>(

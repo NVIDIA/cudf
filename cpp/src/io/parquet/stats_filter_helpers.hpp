@@ -23,6 +23,7 @@
 #include <cudf/utilities/traits.hpp>
 
 #include <cuda/std/concepts>
+#include <cuda/std/type_traits>
 
 #include <bit>
 #include <numeric>
@@ -59,12 +60,7 @@ class stats_caster_base {
     CUDF_EXPECTS(stats_size <= sizeof(T),
                  "Parquet reader encountered a statistics vector larger than the type's size");
 
-    // Use std::type_identity to defer and avoid instantiating std::make_unsigned<__int128_t>::type
-    // which is not a standard integer type
-    // NOLINTNEXTLINE(modernize-type-traits)
-    using UnsignedT    = std::conditional_t<std::is_same_v<T, __int128_t>,
-                                            std::type_identity<unsigned __int128>,
-                                            std::make_unsigned<T>>::type;
+    using UnsignedT    = cuda::std::make_unsigned_t<T>;
     auto const payload = std::span{stats_val, stats_size};
     auto value         = std::accumulate(
       payload.begin(), payload.end(), UnsignedT{0}, [](UnsignedT acc, uint8_t byte) {

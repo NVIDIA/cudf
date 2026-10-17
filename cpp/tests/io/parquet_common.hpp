@@ -16,6 +16,8 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <cuda/std/type_traits>
+
 #include <random>
 #include <string>
 #include <string_view>
@@ -211,17 +213,17 @@ namespace testdata {
 
 // ----- most numerics
 template <typename T>
-std::enable_if_t<std::is_arithmetic_v<T> && !std::is_same_v<T, bool>,
+std::enable_if_t<cuda::std::is_arithmetic_v<T> && !std::is_same_v<T, bool>,
                  cudf::test::fixed_width_column_wrapper<T>>
 ascending();
 
 template <typename T>
-std::enable_if_t<std::is_arithmetic_v<T> && !std::is_same_v<T, bool>,
+std::enable_if_t<cuda::std::is_arithmetic_v<T> && !std::is_same_v<T, bool>,
                  cudf::test::fixed_width_column_wrapper<T>>
 descending();
 
 template <typename T>
-std::enable_if_t<std::is_arithmetic_v<T> && !std::is_same_v<T, bool>,
+std::enable_if_t<cuda::std::is_arithmetic_v<T> && !std::is_same_v<T, bool>,
                  cudf::test::fixed_width_column_wrapper<T>>
 unordered();
 

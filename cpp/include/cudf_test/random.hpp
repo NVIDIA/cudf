@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -7,6 +7,8 @@
 
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/traits.hpp>
+
+#include <cuda/std/type_traits>
 
 #include <random>
 
@@ -16,7 +18,7 @@ namespace test {
 template <typename T, typename Enable = void>
 struct uniform_distribution_impl {};
 template <typename T>
-struct uniform_distribution_impl<T, std::enable_if_t<std::is_integral_v<T>>> {
+struct uniform_distribution_impl<T, std::enable_if_t<cuda::std::is_integral_v<T>>> {
   using type = std::uniform_int_distribution<T>;
 };
 

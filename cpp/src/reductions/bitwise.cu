@@ -5,6 +5,8 @@
 
 #include "simple.cuh"
 
+#include <cuda/std/type_traits>
+
 namespace cudf::reduction::detail {
 
 namespace {
@@ -17,7 +19,7 @@ namespace {
  */
 template <type_id t>
 struct dispatch_void_if_non_integral {
-  using type = std::conditional_t<std::is_integral_v<id_to_type<t>>, id_to_type<t>, void>;
+  using type = std::conditional_t<cuda::std::is_integral_v<id_to_type<t>>, id_to_type<t>, void>;
 };
 
 }  // namespace

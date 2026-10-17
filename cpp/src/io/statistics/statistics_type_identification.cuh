@@ -107,10 +107,11 @@ struct dependent_false : std::false_type {};
 template <typename T>
 class extrema_type {
  private:
-  using integral_extrema_type = typename std::conditional_t<std::is_signed_v<T>, int64_t, uint64_t>;
+  using integral_extrema_type =
+    typename std::conditional_t<cuda::std::is_signed_v<T>, int64_t, uint64_t>;
 
   using arithmetic_extrema_type =
-    typename std::conditional_t<std::is_integral_v<T>, integral_extrema_type, double>;
+    typename std::conditional_t<cuda::std::is_integral_v<T>, integral_extrema_type, double>;
 
   using non_arithmetic_extrema_type = typename std::conditional_t<
     cudf::is_fixed_point<T>() or cudf::is_duration<T>() or cudf::is_timestamp<T>(),
@@ -132,18 +133,19 @@ class extrema_type {
  public:
   // Does type T have an extrema?
   static constexpr bool is_supported =
-    std::is_arithmetic_v<T> or std::is_same_v<T, string_view> or cudf::is_duration<T>() or
+    cuda::std::is_arithmetic_v<T> or std::is_same_v<T, string_view> or cudf::is_duration<T>() or
     cudf::is_timestamp<T>() or cudf::is_fixed_point<T>() or std::is_same_v<T, byte_array_view>;
 
-  using type = typename std::
-    conditional_t<std::is_arithmetic_v<T>, arithmetic_extrema_type, non_arithmetic_extrema_type>;
+  using type = typename std::conditional_t<cuda::std::is_arithmetic_v<T>,
+                                           arithmetic_extrema_type,
+                                           non_arithmetic_extrema_type>;
 
   /**
    * @brief Function that converts an element of a leaf column into its extrema type
    */
   __device__ static type convert(T const& val)
   {
-    if constexpr (std::is_arithmetic_v<T> or std::is_same_v<T, string_view> or
+    if constexpr (cuda::std::is_arithmetic_v<T> or std::is_same_v<T, string_view> or
                   std::is_same_v<T, byte_array_view>) {
       return val;
     } else if constexpr (cudf::is_fixed_point<T>()) {
@@ -168,10 +170,10 @@ template <typename T>
 class aggregation_type {
  private:
   using integral_aggregation_type =
-    typename std::conditional_t<std::is_signed_v<T>, int64_t, uint64_t>;
+    typename std::conditional_t<cuda::std::is_signed_v<T>, int64_t, uint64_t>;
 
   using arithmetic_aggregation_type =
-    typename std::conditional_t<std::is_integral_v<T>, integral_aggregation_type, double>;
+    typename std::conditional_t<cuda::std::is_integral_v<T>, integral_aggregation_type, double>;
 
   using non_arithmetic_aggregation_type = typename std::conditional_t<
     cudf::is_fixed_point<T>() or cudf::is_duration<T>() or
@@ -192,11 +194,11 @@ class aggregation_type {
 
  public:
   // Does type T aggregate?
-  static constexpr bool is_supported = std::is_arithmetic_v<T> or std::is_same_v<T, string_view> or
-                                       cudf::is_duration<T>() or cudf::is_fixed_point<T>() or
-                                       std::is_same_v<T, byte_array_view>;
+  static constexpr bool is_supported =
+    cuda::std::is_arithmetic_v<T> or std::is_same_v<T, string_view> or cudf::is_duration<T>() or
+    cudf::is_fixed_point<T>() or std::is_same_v<T, byte_array_view>;
 
-  using type = typename std::conditional_t<std::is_arithmetic_v<T>,
+  using type = typename std::conditional_t<cuda::std::is_arithmetic_v<T>,
                                            arithmetic_aggregation_type,
                                            non_arithmetic_aggregation_type>;
 
@@ -207,7 +209,7 @@ class aggregation_type {
   {
     if constexpr (std::is_same_v<T, string_view> or std::is_same_v<T, byte_array_view>) {
       return val.size_bytes();
-    } else if constexpr (std::is_integral_v<T>) {
+    } else if constexpr (cuda::std::is_integral_v<T>) {
       return val;
     } else if constexpr (cuda::std::is_floating_point_v<T>) {
       return cuda::std::isnan(val) ? 0 : val;

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -7,6 +7,8 @@
 
 #include <cudf/detail/integral_math.cuh>
 #include <cudf/utilities/traits.hpp>
+
+#include <cuda/std/type_traits>
 
 #include <cmath>
 
@@ -42,8 +44,8 @@ struct Mul {
            // _deps/libcudacxx-src/include/cuda/std/detail/libcxx/include/chrono(917): error:
            // identifier "cuda::std::__3::ratio<(long)86400000000l, (long)1l> ::num" is undefined in
            // device code
-           (is_duration<TypeLhs>() and std::is_integral<TypeRhs>()) or
-           (std::is_integral<TypeLhs>() and is_duration<TypeRhs>()) or
+           (is_duration<TypeLhs>() and cuda::std::is_integral<TypeRhs>()) or
+           (cuda::std::is_integral<TypeLhs>() and is_duration<TypeRhs>()) or
            (is_fixed_point<TypeLhs>() and is_numeric<TypeRhs>()) or
            (is_numeric<TypeLhs>() and is_fixed_point<TypeRhs>());
   }
@@ -61,7 +63,8 @@ struct Div {
   {
     return has_common_type_v<TypeLhs, TypeRhs> or
            // FIXME: without this, compilation error on chrono:917
-           (is_duration<TypeLhs>() and (std::is_integral<TypeRhs>() or is_duration<TypeRhs>())) or
+           (is_duration<TypeLhs>() and
+            (cuda::std::is_integral<TypeRhs>() or is_duration<TypeRhs>())) or
            (is_fixed_point<TypeLhs>() and is_numeric<TypeRhs>()) or
            (is_numeric<TypeLhs>() and is_fixed_point<TypeRhs>());
   }
@@ -113,7 +116,8 @@ struct Mod {
            // FIXME: without this, compilation error
            //_deps/libcudacxx-src/include/cuda/std/detail/libcxx/include/chrono(1337):
            // error : expression must have integral or unscoped enum type
-           (is_duration<TypeLhs>() and (std::is_integral<TypeRhs>() or is_duration<TypeRhs>()));
+           (is_duration<TypeLhs>() and
+            (cuda::std::is_integral<TypeRhs>() or is_duration<TypeRhs>()));
   }
   template <typename T1, typename T2>
   __device__ inline auto operator()(T1 const& lhs, T2 const& rhs) -> decltype(lhs % rhs)
@@ -142,13 +146,13 @@ struct PMod {
   // code does not work - it is having trouble deciding between float/double overloads
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y)
-    requires(std::is_integral_v<std::common_type_t<TypeLhs, TypeRhs>>)
+    requires(cuda::std::is_integral_v<std::common_type_t<TypeLhs, TypeRhs>>)
   {
     using common_t = std::common_type_t<TypeLhs, TypeRhs>;
     auto xconv     = static_cast<common_t>(x);
     auto yconv     = static_cast<common_t>(y);
     auto rem       = xconv % yconv;
-    if constexpr (std::is_signed_v<decltype(rem)>)
+    if constexpr (cuda::std::is_signed_v<decltype(rem)>)
       if (rem < 0) rem = (rem + yconv) % yconv;
     return rem;
   }
@@ -177,7 +181,7 @@ struct PMod {
 struct PyMod {
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(((x % y) + y) % y)
-    requires(std::is_integral_v<std::common_type_t<TypeLhs, TypeRhs>> or
+    requires(cuda::std::is_integral_v<std::common_type_t<TypeLhs, TypeRhs>> or
              (cudf::is_fixed_point<TypeLhs>() and std::is_same_v<TypeLhs, TypeRhs>))
   {
     return ((x % y) + y) % y;
@@ -212,7 +216,7 @@ struct Pow {
 struct IntPow {
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> TypeLhs
-    requires(std::is_integral_v<TypeLhs> and std::is_integral_v<TypeRhs>)
+    requires(cuda::std::is_integral_v<TypeLhs> and cuda::std::is_integral_v<TypeRhs>)
   {
     return cudf::detail::integral_pow(x, y);
   }

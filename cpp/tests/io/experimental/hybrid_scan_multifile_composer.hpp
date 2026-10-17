@@ -10,6 +10,7 @@
 #include <cudf/table/table.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cstddef>
 #include <memory>
 #include <optional>
 #include <string>
@@ -121,5 +122,25 @@ std::unique_ptr<cudf::table> chunked_hybrid_scan_multifile_single_step(
   cudf::ast::operation const& filter_expression,
   std::optional<std::vector<std::string>> const& column_names,
   bool case_sensitive_names,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr);
+
+/**
+ * @brief Read all columns of parquet sources with the hybrid scan multifile reader in passes of row
+ * groups from `construct_row_group_passes`, each materialized in chunks
+ *
+ * @throws cudf::logic_error if a chunk other than the first one of a pass is empty
+ *
+ * @param source_info Input source info containing one or more Parquet sources
+ * @param chunk_read_limit Limit on the size of each output chunk, or 0 for no limit
+ * @param pass_read_limit Limit on the memory used to read each pass, or 0 for no limit
+ * @param stream CUDA stream for hybrid scan reader
+ * @param mr Device memory resource
+ * @return Output chunks, in order
+ */
+std::vector<std::unique_ptr<cudf::table>> chunked_hybrid_scan_multifile_passes(
+  cudf::io::source_info const& source_info,
+  std::size_t chunk_read_limit,
+  std::size_t pass_read_limit,
   cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);

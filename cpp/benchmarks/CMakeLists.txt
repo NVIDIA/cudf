@@ -374,6 +374,35 @@ ConfigureNVBench(VARIANT_NVBENCH io/parquet/experimental/variant/extract.cpp)
 ConfigureNVBench(PARQUET_MULTITHREAD_READER_NVBENCH io/parquet/parquet_reader_multithread.cpp)
 
 # ##################################################################################################
+# * parquet fuzz test -----------------------------------------------------------------------------
+
+# Fuzz test of the Parquet writer and readers, built with the benchmarks because it uses the
+# benchmark data generator.
+add_executable(
+  PARQUET_FUZZ
+  io/parquet/fuzz/checked_read.cpp
+  io/parquet/fuzz/data_generation.cpp
+  io/parquet/fuzz/parquet_fuzz.cpp
+  ${CUDF_SOURCE_DIR}/tests/io/parquet_common.cpp
+  ${CUDF_SOURCE_DIR}/tests/io/experimental/hybrid_scan_common.cpp
+  ${CUDF_SOURCE_DIR}/tests/io/experimental/hybrid_scan_multifile_composer.cpp
+)
+set_target_properties(
+  PARQUET_FUZZ
+  PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<BUILD_INTERFACE:${CUDF_BINARY_DIR}/benchmarks>"
+             INSTALL_RPATH "\$ORIGIN/../../../lib"
+)
+target_link_libraries(
+  PARQUET_FUZZ PRIVATE cudf_datagen $<TARGET_NAME_IF_EXISTS:conda_env> cudf::cudftestutil_objects
+)
+install(
+  TARGETS PARQUET_FUZZ
+  COMPONENT testing
+  DESTINATION bin/benchmarks/libcudf
+  EXCLUDE_FROM_ALL
+)
+
+# ##################################################################################################
 # * cudftable reader benchmark
 # --------------------------------------------------------------------------
 ConfigureNVBench(CUDFTABLE_READER_NVBENCH io/cudftable/cudftable_reader.cpp)

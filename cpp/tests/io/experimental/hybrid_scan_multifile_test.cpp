@@ -103,6 +103,12 @@ void test_hybrid_scan_multifile(std::vector<cudf::column_view> const& columns,
   auto const chunked_all_table = chunked_hybrid_scan_multifile_single_step(
     source_info, filter_expression, {}, case_sensitive_names, stream, mr);
 
+  // Unfiltered, in the smallest passes and small chunks
+  auto const unfiltered = cudf::io::read_parquet(
+    cudf::io::parquet_reader_options::builder(source_info).build(), stream, mr);
+  auto const passes_table = concatenate_tables(
+    chunked_hybrid_scan_multifile_passes(source_info, 64 * 1024, 1, stream, mr), stream, mr);
+
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected.tbl->select({0}), filter_table->view());
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected.tbl->select({0}), chunked_filter_table->view());
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected.tbl->select({0}), sparse_filter_table->view());
@@ -119,6 +125,7 @@ void test_hybrid_scan_multifile(std::vector<cudf::column_view> const& columns,
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(chunked_payload_table->view(), sparse_payload_table->view());
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected.tbl->view(), all_table->view());
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected.tbl->view(), chunked_all_table->view());
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(unfiltered.tbl->view(), passes_table->view());
 }
 
 }  // namespace

@@ -111,26 +111,14 @@ auto write_file(std::vector<std::unique_ptr<cudf::column>>& input_columns,
 
 auto chunked_read(cudf::io::chunked_parquet_reader const& reader)
 {
-  auto num_chunks = 0;
-  auto out_tables = std::vector<std::unique_ptr<cudf::table>>{};
-
-  do {
-    auto chunk = reader.read_chunk();
-    // If the input file is empty, the first call to `read_chunk` will return an empty table.
-    // Thus, we only check for non-empty output table from the second call.
-    if (num_chunks > 0) {
-      CUDF_EXPECTS(chunk.tbl->num_rows() != 0, "Number of rows in the new chunk is zero.");
-    }
-    ++num_chunks;
-    out_tables.emplace_back(std::move(chunk.tbl));
-  } while (reader.has_next());
+  auto const out_tables = read_all_chunks(reader);
 
   auto out_tviews = std::vector<cudf::table_view>{};
   for (auto const& tbl : out_tables) {
     out_tviews.emplace_back(tbl->view());
   }
 
-  return std::pair(cudf::concatenate(out_tviews), num_chunks);
+  return std::pair(cudf::concatenate(out_tviews), static_cast<int>(out_tables.size()));
 }
 
 auto chunked_read(cudf::io::parquet_reader_options const& read_opts,

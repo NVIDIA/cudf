@@ -324,6 +324,22 @@ cudf::io::parquet::PageHeader read_page_header(std::unique_ptr<cudf::io::datasou
   return page_hdr;
 }
 
+std::vector<std::unique_ptr<cudf::table>> read_all_chunks(
+  cudf::io::chunked_parquet_reader const& reader)
+{
+  auto chunks = std::vector<std::unique_ptr<cudf::table>>{};
+  do {
+    auto chunk = reader.read_chunk();
+    // If the input file is empty, the first call to `read_chunk` will return an empty table.
+    // Thus, we only check for non-empty output table from the second call.
+    if (not chunks.empty()) {
+      CUDF_EXPECTS(chunk.tbl->num_rows() != 0, "Number of rows in the new chunk is zero.");
+    }
+    chunks.emplace_back(std::move(chunk.tbl));
+  } while (reader.has_next());
+  return chunks;
+}
+
 // =============================================================================
 // ---- test data for stats sort order tests
 

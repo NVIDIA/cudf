@@ -9,12 +9,57 @@
 
 #include <cudf/io/experimental/hybrid_scan_multifile.hpp>
 #include <cudf/io/parquet.hpp>
+#include <cudf/utilities/error.hpp>
 
+#include <algorithm>
 #include <cstddef>
+#include <iterator>
 #include <memory>
 #include <vector>
 
 using cudf::io::parquet::experimental::use_data_page_mask;
+
+namespace {
+
+/**
+ * @brief Materializes all (or selected) columns of the given row groups in chunks
+ *
+ * @throws cudf::logic_error if the options have no filter and a chunk other than the first one is
+ * empty
+ */
+std::vector<std::unique_ptr<cudf::table>> chunked_materialize_all_columns(
+  cudf::io::parquet::experimental::hybrid_scan_multifile& reader,
+  multifile_inputs const& inputs,
+  cudf::host_span<std::vector<cudf::size_type> const> row_groups,
+  std::size_t chunk_read_limit,
+  std::size_t pass_read_limit,
+  cudf::io::parquet_reader_options const& options,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr)
+{
+  auto all_column_chunks = fetch_multisource_device_data(
+    inputs, reader.all_column_chunks_byte_ranges(row_groups, options), stream, mr);
+  reader.setup_chunking_for_all_columns(chunk_read_limit,
+                                        pass_read_limit,
+                                        row_groups,
+                                        all_column_chunks.flat_spans,
+                                        options,
+                                        stream,
+                                        mr);
+
+  auto tables = std::vector<std::unique_ptr<cudf::table>>{};
+  while (reader.has_next_table_chunk()) {
+    auto chunk = reader.materialize_all_columns_chunk().tbl;
+    // Without a filter, only the first chunk can be empty, so this also ends a reader that never
+    // finishes
+    CUDF_EXPECTS(options.get_filter().has_value() or tables.empty() or chunk->num_rows() > 0,
+                 "Number of rows in the new chunk is zero.");
+    tables.push_back(std::move(chunk));
+  }
+  return tables;
+}
+
+}  // namespace
 
 std::tuple<std::unique_ptr<cudf::table>, std::unique_ptr<cudf::table>> hybrid_scan_multifile(
   cudf::io::source_info const& source_info,
@@ -249,20 +294,39 @@ std::unique_ptr<cudf::table> chunked_hybrid_scan_multifile_single_step(
   auto constexpr chunk_read_limit = std::size_t{256 * 1024};
   auto constexpr pass_read_limit  = std::size_t{1024 * 1024};
 
-  auto all_column_chunks = fetch_multisource_device_data(
-    inputs, reader.all_column_chunks_byte_ranges(row_groups, options), stream, mr);
-  reader.setup_chunking_for_all_columns(chunk_read_limit,
-                                        pass_read_limit,
-                                        row_groups,
-                                        all_column_chunks.flat_spans,
-                                        options,
-                                        stream,
-                                        mr);
+  return concatenate_tables(
+    chunked_materialize_all_columns(
+      reader, inputs, row_groups, chunk_read_limit, pass_read_limit, options, stream, mr),
+    stream,
+    mr);
+}
+
+std::vector<std::unique_ptr<cudf::table>> chunked_hybrid_scan_multifile_passes(
+  cudf::io::source_info const& source_info,
+  std::size_t chunk_read_limit,
+  std::size_t pass_read_limit,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr)
+{
+  auto const options = cudf::io::parquet_reader_options::builder().build();
+
+  auto inputs = multifile_inputs(source_info);
+  auto reader =
+    cudf::io::parquet::experimental::hybrid_scan_multifile{inputs.footer_byte_spans, options};
+  setup_page_indexes(reader, inputs);
+
+  auto const passes = reader.construct_row_group_passes(
+    cudf::io::parquet::experimental::read_columns_mode::ALL_COLUMNS,
+    reader.all_row_groups(options),
+    pass_read_limit,
+    options);
 
   auto tables = std::vector<std::unique_ptr<cudf::table>>{};
-  while (reader.has_next_table_chunk()) {
-    tables.push_back(reader.materialize_all_columns_chunk().tbl);
+  for (auto const& pass : passes) {
+    auto pass_tables = chunked_materialize_all_columns(
+      reader, inputs, pass, chunk_read_limit, pass_read_limit, options, stream, mr);
+    std::move(pass_tables.begin(), pass_tables.end(), std::back_inserter(tables));
   }
 
-  return concatenate_tables(std::move(tables), stream, mr);
+  return tables;
 }

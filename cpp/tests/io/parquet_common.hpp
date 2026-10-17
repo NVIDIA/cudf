@@ -11,11 +11,13 @@
 
 #include <cudf/column/column.hpp>
 #include <cudf/io/datasource.hpp>
+#include <cudf/io/parquet.hpp>
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <memory>
 #include <random>
 #include <string>
 #include <string_view>
@@ -137,6 +139,12 @@ cudf::io::parquet::Statistics const& get_statistics(cudf::io::parquet::ColumnChu
 // throws cudf::logic_error if the page_loc data is invalid.
 cudf::io::parquet::PageHeader read_page_header(std::unique_ptr<cudf::io::datasource> const& source,
                                                cudf::io::parquet::PageLocation const& page_loc);
+
+// read all chunks of a chunked reader, in order.
+// throws cudf::logic_error if a chunk other than the first one is empty. the first one is empty
+// when there are no rows to read.
+std::vector<std::unique_ptr<cudf::table>> read_all_chunks(
+  cudf::io::chunked_parquet_reader const& reader);
 
 // make a random validity iterator
 inline auto random_validity(std::mt19937& engine)

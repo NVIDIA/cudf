@@ -312,3 +312,19 @@ TYPED_TEST(FixedPointDivideDecimalTest, NullRowsAreNotDivided)
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *cudf::divide_decimal(lhs, rhs));
 }
+
+TYPED_TEST(FixedPointDivideDecimalTest, AllNullColumnGivesAllNulls)
+{
+  using T          = TypeParam;
+  auto const scale = numeric::scale_type{-2};
+
+  auto const valid    = fp_wrapper<T>{{100, 200}, scale};
+  auto const all_null = fp_wrapper<T>{{100, 200}, {0, 0}, scale};
+  auto const scalar   = cudf::make_fixed_point_scalar<T>(100, scale);
+  auto const expected = fp_wrapper<T>{{0, 0}, {0, 0}, scale};
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *cudf::divide_decimal(all_null, valid));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *cudf::divide_decimal(valid, all_null));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *cudf::divide_decimal(all_null, *scalar));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *cudf::divide_decimal(*scalar, all_null));
+}

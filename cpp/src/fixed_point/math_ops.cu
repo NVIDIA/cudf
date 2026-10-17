@@ -90,6 +90,22 @@ std::unique_ptr<column> divide_decimal_impl(LhsIterator lhs,
 }
 
 /**
+ * @brief Returns true if every element of `input` is null.
+ */
+bool all_null(column_view const& input) { return input.null_count() == input.size(); }
+
+/**
+ * @brief Returns a column of `size` null elements of type `type`.
+ */
+std::unique_ptr<column> make_all_null_column(data_type type,
+                                             size_type size,
+                                             cuda::stream_ref stream,
+                                             cudf::memory_resources mr)
+{
+  return make_fixed_width_column(type, size, mask_state::ALL_NULL, stream, mr.get_output_mr());
+}
+
+/**
  * @brief Calls `fn.template operator()<T>()` with the decimal type `T` matching `type`.
  */
 template <typename Fn>
@@ -117,6 +133,9 @@ std::unique_ptr<column> divide_decimal(column_view const& lhs,
   CUDF_EXPECTS(lhs.size() == rhs.size(), "Column sizes must match");
 
   if (lhs.is_empty()) { return make_empty_column(lhs.type()); }
+  if (all_null(lhs) || all_null(rhs)) {
+    return make_all_null_column(lhs.type(), lhs.size(), stream, mr);
+  }
 
   return dispatch_decimal(lhs.type(), [&]<typename T>() {
     auto const d_lhs = column_device_view::create(lhs, stream);
@@ -143,6 +162,7 @@ std::unique_ptr<column> divide_decimal(column_view const& lhs,
   CUDF_EXPECTS(rhs.type().id() == lhs.type().id(), "Scalar base type must match column type");
 
   if (lhs.is_empty()) { return make_empty_column(lhs.type()); }
+  if (all_null(lhs)) { return make_all_null_column(lhs.type(), lhs.size(), stream, mr); }
 
   return dispatch_decimal(lhs.type(), [&]<typename T>() {
     auto const d_lhs = column_device_view::create(lhs, stream);
@@ -168,6 +188,7 @@ std::unique_ptr<column> divide_decimal(scalar const& lhs,
   CUDF_EXPECTS(lhs.type().id() == rhs.type().id(), "Scalar base type must match column type");
 
   if (rhs.is_empty()) { return make_empty_column(lhs.type()); }
+  if (all_null(rhs)) { return make_all_null_column(lhs.type(), rhs.size(), stream, mr); }
 
   return dispatch_decimal(rhs.type(), [&]<typename T>() {
     auto const d_rhs = column_device_view::create(rhs, stream);

@@ -41,6 +41,7 @@ def partition_and_pack(
     Channel ch_out not None,
     object columns_to_hash not None,
     int num_partitions,
+    uint32_t seed = cpp_DEFAULT_HASH_SEED,
 ):
     """
     Asynchronously partition and pack table chunks.
@@ -66,6 +67,8 @@ def partition_and_pack(
         Indices of input columns to hash when computing partition assignments.
     num_partitions
         Number of output partitions to create.
+    seed
+        Optional seed for the hash function.
 
     Returns
     -------
@@ -93,7 +96,7 @@ def partition_and_pack(
             _columns_to_hash,
             num_partitions,
             cpp_HASH_MURMUR3,
-            cpp_DEFAULT_HASH_SEED,
+            seed,
         )
     return CppActor.from_handle(
         make_unique[cpp_Actor](move(_ret)), owner = None

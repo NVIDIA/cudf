@@ -10,6 +10,7 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/row_operator/common_utils.cuh>
 #include <cudf/detail/row_operator/equality.cuh>
+#include <cudf/hashing/detail/hashing.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
@@ -35,7 +36,7 @@ void filtered_join::insert_right_table_nested(cuda::stream_ref stream)
   auto const hashes =
     cudf::hashing::detail::murmurhash3_x86_32(_preprocessed_right,
                                               _right.num_rows(),
-                                              cudf::DEFAULT_HASH_SEED,
+                                              hashing::detail::DEFAULT_ALGORITHM_HASH_SEED,
                                               stream,
                                               cudf::get_current_device_resource_ref());
   auto const hasher = precomputed_hash{hashes->view().data<hash_value_type>()};

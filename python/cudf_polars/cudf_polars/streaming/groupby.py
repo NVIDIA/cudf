@@ -59,6 +59,8 @@ _GB_AGG_SUPPORTED = (
     "std",
     "var",
     "item",
+    "first",
+    "last",
     "first_non_null",
 )
 
@@ -69,6 +71,8 @@ _GB_AGG_REDUCTIONS = {
     "max": "max",
     "n_unique": "sum",
     "item": "item",
+    "first": "first",
+    "last": "last",
     "first_non_null": "first_non_null",
 }
 
@@ -133,6 +137,15 @@ def _has_stable_sorted_agg(exprs: Iterable[NamedExpr]) -> bool:
     """Return True if any expression requires stable sorted aggregation."""
     return any(
         isinstance(expr, SortedAgg) and expr.options[0]
+        for ne in exprs
+        for expr in traversal([ne.value])
+    )
+
+
+def _has_order_sensitive_agg(exprs: Iterable[NamedExpr]) -> bool:
+    """Return True if reducing an aggregation must preserve input order."""
+    return any(
+        isinstance(expr, Agg) and expr.name in {"first", "last", "first_non_null"}
         for ne in exprs
         for expr in traversal([ne.value])
     )
@@ -506,14 +519,15 @@ def _(
 
     # Preshuffle ir.child if needed
     if need_preshuffle:
-        if _has_stable_sorted_agg(ir.agg_requests):
+        if _has_stable_sorted_agg(ir.agg_requests) or _has_order_sensitive_agg(
+            ir.agg_requests
+        ):
             return _lower_ir_fallback(
                 ir,
                 rec,
                 msg=(
-                    "Streaming group_by does not yet preserve input-order ties "
-                    "for sort_by(..., maintain_order=True) when another "
-                    "aggregation requires repartitioning."
+                    "Streaming group_by does not preserve input order when an "
+                    "order-sensitive aggregation requires repartitioning."
                 ),
             )
         child = Shuffle(

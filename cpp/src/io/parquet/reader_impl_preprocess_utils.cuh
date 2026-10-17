@@ -262,7 +262,12 @@ struct compute_page_num_rows_from_chunk_rows {
     if (i < pages.size() - 1 && (pages[i + 1].chunk_idx == page.chunk_idx)) {
       page.num_rows = pages[i + 1].chunk_row - page.chunk_row;
     } else {
-      page.num_rows = chunk.num_rows - page.chunk_row;
+      // The chunk's row count can end before the last page does (row bounds), so this can cut the
+      // page short. Mark it as `set_final_row_count` does, so that the page still counts as a
+      // bounds page and string sizes are not taken from the page index for the whole page.
+      auto const rows_left      = static_cast<int32_t>(chunk.num_rows - page.chunk_row);
+      page.is_num_rows_adjusted = page.is_num_rows_adjusted or (page.num_rows != rows_left);
+      page.num_rows             = rows_left;
     }
   }
 };

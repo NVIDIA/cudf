@@ -14,6 +14,7 @@
 #include <cudf/fixed_point/math_ops.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/scalar/scalar_device_view.cuh>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
@@ -22,7 +23,6 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
-#include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/optional>
 #include <cuda/stream>
@@ -115,18 +115,17 @@ std::unique_ptr<column> divide_decimal_rows(LhsOperand lhs,
 struct divide_decimal_dispatch {
   template <typename T, typename... Args>
   std::unique_ptr<column> operator()(Args&&...) const
-    requires(not cudf::is_fixed_point<T>())
+    requires(not cudf::concepts::fixed_point<T>)
   {
     CUDF_FAIL("divide_decimal only supports decimal types");
   }
 
-  template <typename T>
+  template <cudf::concepts::fixed_point T>
   std::unique_ptr<column> operator()(column_view const& lhs,
                                      column_view const& rhs,
                                      rounding_method method,
                                      cuda::stream_ref stream,
                                      cudf::memory_resources mr) const
-    requires(cudf::is_fixed_point<T>())
   {
     auto const d_lhs = column_device_view::create(lhs, stream);
     auto const d_rhs = column_device_view::create(rhs, stream);
@@ -140,13 +139,12 @@ struct divide_decimal_dispatch {
                                   mr);
   }
 
-  template <typename T>
+  template <cudf::concepts::fixed_point T>
   std::unique_ptr<column> operator()(column_view const& lhs,
                                      scalar const& rhs,
                                      rounding_method method,
                                      cuda::stream_ref stream,
                                      cudf::memory_resources mr) const
-    requires(cudf::is_fixed_point<T>())
   {
     auto const d_lhs = column_device_view::create(lhs, stream);
 
@@ -159,13 +157,12 @@ struct divide_decimal_dispatch {
                                   mr);
   }
 
-  template <typename T>
+  template <cudf::concepts::fixed_point T>
   std::unique_ptr<column> operator()(scalar const& lhs,
                                      column_view const& rhs,
                                      rounding_method method,
                                      cuda::stream_ref stream,
                                      cudf::memory_resources mr) const
-    requires(cudf::is_fixed_point<T>())
   {
     auto const d_rhs = column_device_view::create(rhs, stream);
 

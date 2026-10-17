@@ -66,7 +66,7 @@ std::unique_ptr<column> divide_decimal(
  * if `rhs` is invalid.
  *
  * @throw cudf::logic_error if `lhs` or `rhs` is not a decimal type
- * @throw cudf::logic_error if `rhs` and `lhs` have different type ids
+ * @throw cudf::logic_error if `lhs` and `rhs` have different type ids
  *
  * @param lhs The dividend column
  * @param rhs The divisor scalar

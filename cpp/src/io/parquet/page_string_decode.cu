@@ -440,11 +440,15 @@ __device__ cuda::std::pair<size_t, size_t> totalDeltaByteArraySize(uint8_t const
   // every `db->` access, so the suffix warp reads prefix state (and vice versa) while the other
   // warp writes it, which compute-sanitizer racecheck reports as a cross-warp hazard.
   auto const traverse = [&](delta_binary_decoder& db) {
-    // initialize with first value (which is stored in last_value)
-    if (lane_id == 0 && start_value == 0) { total_bytes = db.last_value; }
+    // The first value is stored in the block header rather than in a mini-block. Count it in the
+    // total if it is in range, and in the max length in any case, since the decoder copies the
+    // strings before `start_value` (including the first one) into a buffer sized by it.
+    auto const first_len =
+      db.value_count > 0 ? static_cast<uleb128_t>(db.first_value) : uleb128_t{0};
+    if (lane_id == 0 && start_value == 0 && start_value < end_value) { total_bytes = first_len; }
 
     uleb128_t lane_sum = 0;
-    uleb128_t lane_max = 0;
+    uleb128_t lane_max = lane_id == 0 ? first_len : 0;
     while (db.current_value_idx < end_value && db.current_value_idx < db.num_encoded_values(true)) {
       if (not db.advance_past_first_value(warp)) { break; }
 

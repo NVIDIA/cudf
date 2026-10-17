@@ -359,3 +359,28 @@ TEST(FixedPointDivideDecimal128Test, DivisorWiderThan64Bits)
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *cudf::divide_decimal(lhs, rhs));
 }
+
+TEST(FixedPointDivideDecimalErrorTest, InvalidInputs)
+{
+  auto const scale   = numeric::scale_type{0};
+  auto const dec32   = cudf::test::fixed_point_column_wrapper<int32_t>{{100, 200}, scale};
+  auto const dec64   = cudf::test::fixed_point_column_wrapper<int64_t>{{100, 200}, scale};
+  auto const short32 = cudf::test::fixed_point_column_wrapper<int32_t>{{100}, scale};
+  auto const ints    = cudf::test::fixed_width_column_wrapper<int32_t>{100, 200};
+
+  EXPECT_THROW(cudf::divide_decimal(dec32, dec64), cudf::logic_error);
+  EXPECT_THROW(cudf::divide_decimal(dec32, short32), cudf::logic_error);
+  EXPECT_THROW(cudf::divide_decimal(ints, ints), cudf::logic_error);
+  EXPECT_THROW(cudf::divide_decimal(dec32, ints), cudf::logic_error);
+
+  auto const dec32_scalar = cudf::make_fixed_point_scalar<numeric::decimal32>(100, scale);
+  auto const dec64_scalar = cudf::make_fixed_point_scalar<numeric::decimal64>(100, scale);
+  auto const int_scalar   = cudf::numeric_scalar<int32_t>(100);
+
+  EXPECT_THROW(cudf::divide_decimal(dec32, *dec64_scalar), cudf::logic_error);
+  EXPECT_THROW(cudf::divide_decimal(*dec64_scalar, dec32), cudf::logic_error);
+  EXPECT_THROW(cudf::divide_decimal(ints, *dec32_scalar), cudf::logic_error);
+  EXPECT_THROW(cudf::divide_decimal(*dec32_scalar, ints), cudf::logic_error);
+  EXPECT_THROW(cudf::divide_decimal(dec32, int_scalar), cudf::logic_error);
+  EXPECT_THROW(cudf::divide_decimal(int_scalar, dec32), cudf::logic_error);
+}

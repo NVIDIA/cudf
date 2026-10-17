@@ -328,3 +328,34 @@ TYPED_TEST(FixedPointDivideDecimalTest, AllNullColumnGivesAllNulls)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *cudf::divide_decimal(all_null, *scalar));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *cudf::divide_decimal(*scalar, all_null));
 }
+
+TYPED_TEST(FixedPointDivideDecimalTest, RescaledDividendAround64Bits)
+{
+  using T   = TypeParam;
+  using Rep = typename T::rep;
+  if constexpr (sizeof(Rep) < sizeof(int64_t)) {
+    GTEST_SKIP() << "Rescaled decimal32 dividends always fit in 64 bits";
+  } else {
+    // Rescaled by 10, the first dividend is 2^64 - 6 and the second is 2^64 + 4.
+    auto const lhs = fp_wrapper<T>{{Rep{1'844'674'407'370'955'161}, Rep{1'844'674'407'370'955'162}},
+                                   numeric::scale_type{0}};
+    auto const rhs = fp_wrapper<T>{{30, 30}, numeric::scale_type{-1}};
+    auto const expected = fp_wrapper<T>{
+      {Rep{614'891'469'123'651'720}, Rep{614'891'469'123'651'721}}, numeric::scale_type{0}};
+
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *cudf::divide_decimal(lhs, rhs));
+  }
+}
+
+TEST(FixedPointDivideDecimal128Test, DivisorWiderThan64Bits)
+{
+  using Rep         = __int128_t;
+  auto const two_64 = Rep{1} << 64;
+
+  // (2^64 - 1) / (2^64 + 2) rounds up to 1. Truncating the divisor to 64 bits would give 2^63.
+  auto const lhs      = fp_wrapper<numeric::decimal128>{{two_64 - 1}, numeric::scale_type{0}};
+  auto const rhs      = fp_wrapper<numeric::decimal128>{{two_64 + 2}, numeric::scale_type{0}};
+  auto const expected = fp_wrapper<numeric::decimal128>{{1}, numeric::scale_type{0}};
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *cudf::divide_decimal(lhs, rhs));
+}

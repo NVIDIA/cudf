@@ -1,0 +1,25 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+#include <cudf/column/column_device_view.cuh>
+#include <cudf/dictionary/dictionary_column_view.hpp>
+#include <cudf/hashing/detail/murmurhash3_x86_32.cuh>
+#include <cudf/strings/string_view.cuh>
+
+#include <cuda/std/limits>
+
+extern "C" __device__ cudf::hash_value_type cudf_murmurhash3_x86_32_rtcx_dictionary_string(
+  cudf::column_device_view column, uint32_t seed, bool nullable, cudf::size_type row_index)
+{
+  if (nullable && column.is_null(row_index)) {
+    return cuda::std::numeric_limits<cudf::hash_value_type>::max();
+  }
+
+  auto const keys = column.child(cudf::dictionary_column_view::keys_column_index);
+  auto const key_index =
+    static_cast<cudf::size_type>(column.element<cudf::dictionary32>(row_index));
+  return cudf::hashing::detail::MurmurHash3_x86_32<cudf::string_view>{seed}(
+    keys.element<cudf::string_view>(key_index));
+}

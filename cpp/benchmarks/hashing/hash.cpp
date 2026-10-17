@@ -6,14 +6,21 @@
 #include <benchmarks/common/generate_input.hpp>
 #include <benchmarks/common/memory_stats.hpp>
 
+#include <cudf/dictionary/encode.hpp>
 #include <cudf/hashing.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/error.hpp>
 
 #include <nvbench/nvbench.cuh>
 
+#ifdef CUDF_ENABLE_MURMURHASH3_RTCX_EXPERIMENT
+#include "hash/murmurhash3_x86_32_rtcx.hpp"
+#endif
+
 #include <array>
+#include <cstdlib>
 #include <initializer_list>
 #include <optional>
 #include <string>
@@ -23,10 +30,11 @@
 
 namespace {
 
-enum class column_type { UNKNOWN, MIXED, INT64, DOUBLE, DECIMAL128, STRING, LIST, STRUCT };
+enum class column_type { UNKNOWN, MIXED, INT32, INT64, DOUBLE, DECIMAL128, STRING, LIST, STRUCT };
 
 constexpr auto column_types = std::to_array<std::pair<column_type, std::string_view>>({
   {column_type::MIXED, "mixed"},
+  {column_type::INT32, "int32"},
   {column_type::INT64, "int64"},
   {column_type::DOUBLE, "double"},
   {column_type::DECIMAL128, "decimal128"},
@@ -91,6 +99,7 @@ static void bench_hash(nvbench::state& state)
       case column_type::MIXED:
         return cycle_dtypes({cudf::type_id::INT64, cudf::type_id::STRING}, num_cols);
       case column_type::INT64: return cycle_dtypes({cudf::type_id::INT64}, num_cols);
+      case column_type::INT32: return cycle_dtypes({cudf::type_id::INT32}, num_cols);
       case column_type::DOUBLE: return cycle_dtypes({cudf::type_id::FLOAT64}, num_cols);
       case column_type::DECIMAL128: return cycle_dtypes({cudf::type_id::DECIMAL128}, num_cols);
       case column_type::STRING: return cycle_dtypes({cudf::type_id::STRING}, num_cols);
@@ -197,3 +206,143 @@ NVBENCH_BENCH(bench_hash)
   .add_int64_axis("num_cols", {2, 64})
   .add_float64_axis("nulls", {0.0, 0.1})
   .add_string_axis("hash_name", {"spark_murmurhash3_x86_32"});
+
+NVBENCH_BENCH(bench_hash)
+  .set_name("murmurhash_int32")
+  .add_int64_axis("num_rows", {65536, 16777216})
+  .add_string_axis("data_type", {"int32"})
+  .add_int64_axis("num_cols", {1, 8})
+  .add_float64_axis("nulls", {0.0, 0.1})
+  .add_string_axis("hash_name", {"murmurhash3_x86_32"});
+
+static void bench_string_murmurhash3(nvbench::state& state)
+{
+  auto const use_rtcx = state.get_string("implementation") == "rtcx";
+#ifdef CUDF_MURMURHASH3_RTCX_ONLY
+  if (!use_rtcx) {
+    state.skip("CUB implementation is absent from this measurement build");
+    return;
+  }
+#endif
+#ifndef CUDF_ENABLE_MURMURHASH3_RTCX_EXPERIMENT
+  if (use_rtcx) {
+    state.skip("RTCX build option is disabled");
+    return;
+  }
+#endif
+  // Isolate each implementation from both the caller's environment and earlier benchmark states.
+  struct scoped_opt_in {
+    std::optional<std::string> previous;
+    explicit scoped_opt_in(bool enabled)
+    {
+      if (auto const* value = std::getenv("LIBCUDF_MURMURHASH3_RTCX_ENABLED")) { previous = value; }
+      setenv("LIBCUDF_MURMURHASH3_RTCX_ENABLED", enabled ? "ON" : "OFF", 1);
+    }
+    ~scoped_opt_in()
+    {
+      if (previous) {
+        setenv("LIBCUDF_MURMURHASH3_RTCX_ENABLED", previous->c_str(), 1);
+      } else {
+        unsetenv("LIBCUDF_MURMURHASH3_RTCX_ENABLED");
+      }
+    }
+  } opt_in{use_rtcx};
+  auto const num_rows          = static_cast<cudf::size_type>(state.get_int64("num_rows"));
+  auto const num_cols          = static_cast<cudf::size_type>(state.get_int64("num_cols"));
+  auto const cardinality       = static_cast<cudf::size_type>(state.get_int64("cardinality"));
+  auto const max_string_length = static_cast<cudf::size_type>(state.get_int64("max_string_length"));
+  auto const nulls             = state.get_float64("nulls");
+
+  data_profile const profile =
+    data_profile_builder()
+      .cardinality(cardinality)
+      .distribution(cudf::type_id::STRING, distribution_id::NORMAL, 0, max_string_length)
+      .null_probability(nulls == 0.0 ? std::nullopt : std::optional<double>{nulls});
+  auto const data =
+    create_random_table(std::vector(num_cols, cudf::type_id::STRING), row_count{num_rows}, profile);
+
+#ifdef CUDF_ENABLE_MURMURHASH3_RTCX_EXPERIMENT
+  CUDF_EXPECTS(cudf::hashing::detail::murmurhash3_x86_32_rtcx_enabled(data->view()) == use_rtcx,
+               "String benchmark selected the wrong implementation");
+#endif
+
+  auto const stream = cudf::get_default_stream();
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
+  state.add_global_memory_reads<nvbench::int8_t>(data->alloc_size());
+  state.add_global_memory_writes<nvbench::uint32_t>(num_rows);
+
+  // Keep one-time RTCX planner/linker work out of the timed samples.
+  auto warmup = cudf::hashing::murmurhash3_x86_32(data->view());
+  CUDF_CUDA_TRY(cudaStreamSynchronize(stream.get()));
+
+#ifdef CUDF_ENABLE_MURMURHASH3_RTCX_EXPERIMENT
+  auto const cache_size = cudf::hashing::detail::murmurhash3_x86_32_rtcx_cache_size();
+  CUDF_EXPECTS(!use_rtcx || cache_size > 0, "RTCX warmup did not populate the launcher cache");
+#endif
+
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+  state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
+    auto result = cudf::hashing::murmurhash3_x86_32(data->view());
+  });
+#ifdef CUDF_ENABLE_MURMURHASH3_RTCX_EXPERIMENT
+  CUDF_EXPECTS(cudf::hashing::detail::murmurhash3_x86_32_rtcx_cache_size() == cache_size,
+               "Steady-state string samples unexpectedly created another launcher");
+#endif
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
+}
+
+NVBENCH_BENCH(bench_string_murmurhash3)
+  .set_name("hashing_string")
+  .add_string_axis("implementation", {"cub", "rtcx"})
+  .add_int64_axis("num_rows", {65536, 16777216})
+  .add_int64_axis("num_cols", {1, 8})
+  .add_int64_axis("cardinality", {32, 4096})
+  .add_int64_axis("max_string_length", {8, 64})
+  .add_float64_axis("nulls", {0.0, 0.1});
+
+static void bench_dictionary_string_murmurhash3(nvbench::state& state)
+{
+  auto const num_rows    = static_cast<cudf::size_type>(state.get_int64("num_rows"));
+  auto const num_cols    = static_cast<cudf::size_type>(state.get_int64("num_cols"));
+  auto const cardinality = static_cast<cudf::size_type>(state.get_int64("cardinality"));
+  auto const nulls       = state.get_float64("nulls");
+  bool const no_nulls    = nulls == 0.0;
+
+  data_profile const profile =
+    data_profile_builder()
+      .cardinality(cardinality)
+      .null_probability(no_nulls ? std::nullopt : std::optional<double>{nulls});
+  auto strings =
+    create_random_table(std::vector(num_cols, cudf::type_id::STRING), row_count{num_rows}, profile);
+  auto dictionary_columns = std::vector<std::unique_ptr<cudf::column>>{};
+  dictionary_columns.reserve(num_cols);
+  for (auto const& column : strings->view()) {
+    dictionary_columns.push_back(cudf::dictionary::encode(column));
+  }
+  auto const data = std::make_unique<cudf::table>(std::move(dictionary_columns));
+
+  auto stream = cudf::get_default_stream();
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
+  state.add_global_memory_reads<nvbench::int8_t>(data->alloc_size());
+  state.add_global_memory_writes<nvbench::uint32_t>(num_rows);
+
+  // Keep one-time RTCX planner/linker work out of the timed samples. This is also a warm-up for
+  // the legacy path, so the benchmark compares steady-state hash execution.
+  auto warmup = cudf::hashing::murmurhash3_x86_32(data->view());
+  CUDF_CUDA_TRY(cudaStreamSynchronize(stream.get()));
+
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+  state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
+    auto result = cudf::hashing::murmurhash3_x86_32(data->view());
+  });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
+}
+
+NVBENCH_BENCH(bench_dictionary_string_murmurhash3)
+  .set_name("hashing_dictionary_string")
+  .add_int64_axis("num_rows", {65536, 16777216})
+  .add_int64_axis("num_cols", {1, 8})
+  .add_int64_axis("cardinality", {32, 4096})
+  .add_float64_axis("nulls", {0.0, 0.1});

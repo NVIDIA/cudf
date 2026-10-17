@@ -1,0 +1,19 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+#include <cudf/detail/row_operator/hashing.cuh>
+#include <cudf/detail/utilities/grid_1d.cuh>
+#include <cudf/hashing/detail/murmurhash3_x86_32.cuh>
+
+using hasher_type = cudf::detail::row::hash::device_row_hasher<
+  cudf::hashing::detail::MurmurHash3_x86_32, cudf::nullate::DYNAMIC>;
+
+// Preserve non-specialized and preprocessed-table semantics without retaining a CUB kernel.
+extern "C" __global__ void cudf_murmurhash3_x86_32_rtcx_generic_entry(
+  cudf::hash_value_type* output, cudf::size_type num_rows, hasher_type hasher)
+{
+  auto const row_index = cudf::detail::grid_1d::global_thread_id();
+  if (row_index < num_rows) { output[row_index] = hasher(row_index); }
+}

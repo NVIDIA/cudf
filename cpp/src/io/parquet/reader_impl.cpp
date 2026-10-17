@@ -427,8 +427,9 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
   // synchronize the streams
   cudf::detail::join_streams(streams, _stream);
 
-  // the delta_temp_buf in the subpass struct can be freed now
-  subpass.delta_temp_buf.release();
+  // the delta_temp_buf in the subpass struct can be freed now. later output chunks of the subpass
+  // resize it again, so replace it with an empty buffer rather than releasing it.
+  subpass.delta_temp_buf = rmm::device_uvector<uint8_t>(0, _stream);
 
   subpass.pages.device_to_host_async(_stream);
   page_nesting.device_to_host_async(_stream);
@@ -754,8 +755,9 @@ table_with_metadata reader_impl::read_chunk_internal(read_mode mode)
   // PageNestingInfo::batch_size for each level of nesting, for each page, taking row bounds into
   // account. PageInfo::skipped_values, which tells us where to start decoding in the input to
   // respect the user bounds. It is only necessary to do this second pass if uses_custom_row_bounds
-  // is set (if the user has specified artificial bounds).
-  if (uses_custom_row_bounds(mode)) {
+  // is set (if the user has specified artificial bounds) and there are lists, since the results are
+  // not used otherwise.
+  if (uses_custom_row_bounds(mode) and subpass.has_lists) {
     compute_page_sizes(subpass.pages,
                        pass.chunks,
                        subpass_page_mask_span(),

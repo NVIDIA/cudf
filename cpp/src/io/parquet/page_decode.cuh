@@ -1052,6 +1052,35 @@ enum class page_processing_stage {
 };
 
 /**
+ * @brief Determine whether a page has no rows to process and needs no local state to tell.
+ *
+ * In the chunked reader, the per-chunk kernels are launched over all pages of a subpass while each
+ * output chunk only covers some of its rows. Deciding from the global page that such a page has
+ * nothing to do avoids loading its full local state, which otherwise dominates the cost of every
+ * additional output chunk.
+ *
+ * Only pages of columns without lists and with cacheable nesting info are considered. A list page
+ * may carry values for a row that starts on an earlier page, and pages with deeper nesting keep
+ * their nesting counts in global memory, which the full setup resets.
+ *
+ * @param page The global page
+ * @param chunk The column chunk of the page
+ * @param min_row Absolute index of the first requested row
+ * @param num_rows Number of requested rows
+ *
+ * @return True if the page has no rows to process for the requested range
+ */
+inline __device__ bool is_flat_page_without_rows(PageInfo const& page,
+                                                 ColumnChunkDesc const& chunk,
+                                                 size_t min_row,
+                                                 size_t num_rows)
+{
+  return chunk.max_level[level_type::REPETITION] == 0 and
+         page.nesting_info_size <= max_cacheable_nesting_decode_info and
+         not page_has_rows_to_process(page, chunk.start_row, min_row, num_rows, false);
+}
+
+/**
  * @brief Sets up block-local page state information from the global pages.
  *
  * @param[in, out] s The local page state to be filled in
@@ -1076,6 +1105,30 @@ inline __device__ bool setup_local_page_info(auto* const s,
 {
   int t = threadIdx.x;
 
+  // Decide from the global page whether it needs any local state. Kernels are launched over all
+  // pages, so this avoids loading the state of dictionary pages, of pages the filter rejects, and,
+  // past the preprocessing stage, of pages of flat columns without rows in the requested range.
+  // All threads of the block read the same global fields, so they all take the same path. The
+  // null counts of skipped decoded pages are zeroed as the full setup below would (the
+  // null_count_back_copier copies its zeroed counts back), since they are summed over all pages of
+  // the subpass.
+  bool const is_rejected = (p->flags & PAGEINFO_FLAGS_DICTIONARY) != 0 or not filter(*p);
+  bool const is_out_of_range =
+    not is_rejected and stage != page_processing_stage::PREPROCESS and
+    is_flat_page_without_rows(*p, chunks[p->chunk_idx], min_row, num_rows);
+  if (is_rejected or is_out_of_range) {
+    if constexpr (requires { s->nesting; }) {
+      if (is_out_of_range and stage == page_processing_stage::DECODE) {
+        for (int depth = t; depth < p->num_output_nesting_levels; depth += blockDim.x) {
+          p->nesting_decode[depth].null_count = 0;
+        }
+      }
+      if (!t) { s->nesting.nesting_info = nullptr; }
+      __syncthreads();
+    }
+    return false;
+  }
+
   // Fetch page info
   if (!t) {
     s->setup.page = *p;
@@ -1083,11 +1136,6 @@ inline __device__ bool setup_local_page_info(auto* const s,
     s->setup.col = chunks[s->setup.page.chunk_idx];
   }
   __syncthreads();
-
-  // return false if this is a dictionary page or it does not pass the filter condition
-  if ((s->setup.page.flags & PAGEINFO_FLAGS_DICTIONARY) != 0 || !filter(s->setup.page)) {
-    return false;
-  }
 
   // our starting row (absolute index) is
   // col.start_row == absolute row index

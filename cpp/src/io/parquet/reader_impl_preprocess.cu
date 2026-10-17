@@ -861,6 +861,7 @@ void reader_impl::preprocess_subpass_pages(read_mode mode, size_t chunk_read_lim
     }
     if (has_lists) { break; }
   }
+  subpass.has_lists = has_lists;
 
   // in some cases we will need to do further preprocessing of pages.
   // - if we have lists, the num_rows field in PageInfo will be incorrect coming out of the file

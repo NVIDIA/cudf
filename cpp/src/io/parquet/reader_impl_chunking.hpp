@@ -122,8 +122,8 @@ struct subpass_intermediate_data {
   // in preprocess_subpass_pages() and reused across all output chunks in the subpass.
   rmm::device_uvector<uint32_t> string_offset_buffer;
 
-  // temporary space for DELTA_BYTE_ARRAY decoding. this only needs to live until
-  // gpu::DecodeDeltaByteArray returns.
+  // temporary space for DELTA_BYTE_ARRAY decoding. it is sized for each output chunk and freed
+  // once the chunk is decoded.
   rmm::device_uvector<uint8_t> delta_temp_buf;
 
   // for each column in the file (indexed by _input_columns.size())
@@ -146,6 +146,10 @@ struct subpass_intermediate_data {
   // during processing. notably, page_buf will not be allocated to hold a compacted
   // copy of the pages specific to the subpass.
   bool single_subpass{false};
+
+  // whether any of the columns being read has a list parent. the page sizes trimmed to the row
+  // bounds of each output chunk are only used for these columns.
+  bool has_lists{false};
 };
 
 /**

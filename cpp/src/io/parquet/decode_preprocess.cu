@@ -386,6 +386,10 @@ CUDF_KERNEL void __launch_bounds__(preprocess_block_size)
   // whether or not we have repetition levels (lists)
   bool has_repetition = chunks[pp->chunk_idx].max_level[level_type::REPETITION] > 0;
 
+  // In the trim pass, only pages with lists need their sizes trimmed to the row bounds. The sizes
+  // of other pages are not used, so return before loading their local state.
+  if (not is_base_pass and not has_repetition) { return; }
+
   // setup page info
   if (!setup_local_page_info(
         s, pp, chunks, min_row, num_rows, all_types_filter{}, page_processing_stage::PREPROCESS)) {

@@ -948,6 +948,9 @@ uint32_t get_aggregated_decode_kernel_mask(cudf::detail::hostdevice_span<PageInf
  *   if we are using custom user bounds (skip_rows / num_rows)
  * - We need to determine actual number of top level rows per page
  *
+ * When `compute_num_rows` is false, the sizes are trimmed to `min_row` and `num_rows` only for pages
+ * of columns with lists. Pages of other columns are left unchanged, as their trimmed sizes are not
+ * used.
  *
  * @param pages All pages to be decoded
  * @param chunks All chunks to be decoded

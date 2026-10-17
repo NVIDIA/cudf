@@ -188,6 +188,56 @@ jobs:
     with:
       docs-projects: cudf,dask-cudf,libcudf
       dry-run: false
+  cudf-polars-quent-build-matrix:
+    uses: rapidsai/shared-workflows/.github/workflows/compute-matrix.yaml@main
+    with:
+      build_type: ${{ inputs.build_type || 'branch' }}
+      matrix_name: conda-python-build
+      # abi3-py312 wheels only need one build per architecture/platform.
+      matrix_filter: 'map(select(.PY_VER == "3.12" and .CUDA_VER == "12.9.2"))'
+  cudf-polars-quent:
+    needs: [build-details, telemetry-setup, cudf-polars-quent-build-matrix]
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: read
+      pull-requests: read
+    secrets: inherit # zizmor: ignore[secrets-inherit]
+    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.cudf-polars-quent-build-matrix.outputs.matrix) }}
+    with:
+      build_type: ${{ inputs.build_type || 'branch' }}
+      branch: ${{ inputs.branch }}
+      build-datetime: ${{ needs.build-details.outputs.build-datetime }}
+      date: ${{ inputs.date }}
+      sha: ${{ inputs.sha }}
+      node_type: cpu8
+      arch: ${{ matrix.ARCH }}
+      container_image: "rapidsai/ci-conda:26.12-cuda${{ matrix.CUDA_VER }}-${{ matrix.LINUX_VER }}-py${{ matrix.PY_VER }}"
+      script: "ci/test_cudf_polars_quent.sh"
+      file_to_upload: "python/cudf_polars/quent/bridge/target/wheels/*.whl"
+      artifact-name: "cudf_wheel_python_cudf-polars-quent_${{ matrix.ARCH == 'amd64' && 'x86_64' || 'aarch64' }}_abi3"
+  wheel-publish-cudf-polars-quent:
+    needs: cudf-polars-quent
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: read
+      pull-requests: read
+    secrets: inherit # zizmor: ignore[secrets-inherit]
+    uses: rapidsai/shared-workflows/.github/workflows/wheels-publish.yaml@main
+    with:
+      build_type: ${{ inputs.build_type || 'branch' }}
+      branch: ${{ inputs.branch }}
+      sha: ${{ inputs.sha }}
+      date: ${{ inputs.date }}
+      package-name: cudf_polars_quent
+      package-type: python
+      publish-wheel-search-key: cudf_wheel_python_cudf-polars-quent
   wheel-build:
     needs: [build-details, telemetry-setup]
     permissions:
@@ -396,6 +446,7 @@ jobs:
       - upload-conda
       - wheel-publish-cudf
       - wheel-publish-cudf-polars
+      - wheel-publish-cudf-polars-quent
       - wheel-publish-dask-cudf
       - wheel-publish-libcudf
       - wheel-publish-pylibcudf

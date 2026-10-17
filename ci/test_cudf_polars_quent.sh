@@ -7,6 +7,8 @@ set -euo pipefail
 # Support invoking this script outside the repository root.
 cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")"/../
 
+rapids-generate-version > VERSION
+
 rapids-logger "Create cudf-polars Quent test environment"
 . /opt/conda/etc/profile.d/conda.sh
 

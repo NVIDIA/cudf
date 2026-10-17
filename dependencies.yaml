@@ -1293,6 +1293,7 @@ dependencies:
       - output_types: conda
         packages:
           - maturin>=1.14,<2
+          - packaging
           - rust=1.97
   test_python_narwhals:
     common:

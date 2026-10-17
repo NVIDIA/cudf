@@ -72,7 +72,7 @@ std::unique_ptr<cudf::table> perform_left_join(
  */
 [[nodiscard]] std::unique_ptr<cudf::column> calculate_l_suppkey(
   cudf::column_view const& l_partkey,
-  cudf::size_type scale_factor,
+  double scale_factor,
   cudf::size_type num_rows,
   cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
@@ -88,7 +88,7 @@ std::unique_ptr<cudf::table> perform_left_join(
  */
 [[nodiscard]] std::unique_ptr<cudf::column> calculate_ps_suppkey(
   cudf::column_view const& ps_partkey,
-  cudf::size_type scale_factor,
+  double scale_factor,
   cudf::size_type num_rows,
   cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());

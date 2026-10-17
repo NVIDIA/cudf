@@ -8,11 +8,13 @@
 #include <benchmarks/common/ndsh_data_generator/ndsh_data_generator.hpp>
 #include <benchmarks/common/nvtx_ranges.hpp>
 #include <benchmarks/common/table_utilities.hpp>
+#include <benchmarks/fixture/nvbench_fixture.hpp>
 
 #include <cudf/column/column_factories.hpp>
 #include <cudf/copying.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/groupby.hpp>
+#include <cudf/join/filtered_join.hpp>
 #include <cudf/join/join.hpp>
 #include <cudf/reduction.hpp>
 #include <cudf/sorting.hpp>
@@ -27,7 +29,9 @@
 #include <algorithm>
 #include <cstdlib>
 #include <ctime>
+#include <filesystem>
 #include <iterator>
+#include <numeric>
 #include <unordered_set>
 
 namespace {
@@ -91,7 +95,49 @@ std::unordered_map<std::string, std::vector<std::string> const> const SCHEMAS = 
   {"customer", CUSTOMER_SCHEMA},
   {"nation", NATION_SCHEMA},
   {"region", REGION_SCHEMA}};
+
+std::vector<cudf::size_type> column_ids(std::unique_ptr<table_with_names> const& table,
+                                        std::vector<std::string> const& columns)
+{
+  std::vector<cudf::size_type> result;
+  std::transform(
+    columns.begin(), columns.end(), std::back_inserter(result), [&](auto const& column) {
+      return table->column_id(column);
+    });
+  return result;
+}
+
+std::unique_ptr<table_with_names> apply_left_filter_join(
+  std::unique_ptr<table_with_names> const& left_input,
+  std::unique_ptr<table_with_names> const& right_input,
+  std::vector<std::string> const& left_on,
+  std::vector<std::string> const& right_on,
+  cudf::null_equality compare_nulls,
+  bool semi_join)
+{
+  auto const stream         = cudf::get_default_stream();
+  auto const left_selected  = left_input->table().select(column_ids(left_input, left_on));
+  auto const right_selected = right_input->table().select(column_ids(right_input, right_on));
+  cudf::filtered_join join{
+    right_selected, compare_nulls, stream, cudf::get_current_device_resource_ref()};
+  auto indices = semi_join ? join.semi_join(left_selected) : join.anti_join(left_selected);
+  auto const indices_view = cudf::column_view{cudf::device_span<cudf::size_type const>{*indices}};
+  auto result =
+    cudf::gather(left_input->table(), indices_view, cudf::out_of_bounds_policy::DONT_CHECK);
+  return std::make_unique<table_with_names>(std::move(result), left_input->column_names());
+}
 }  // namespace
+
+query_mode query_mode_from_string(std::string const& str)
+{
+  if (str == "end_to_end") {
+    return query_mode::END_TO_END;
+  } else if (str == "compute_only") {
+    return query_mode::COMPUTE_ONLY;
+  } else {
+    CUDF_FAIL("unrecognized query mode: " + str);
+  }
+}
 
 cudf::table_view table_with_names::table() const { return tbl->view(); }
 
@@ -144,6 +190,14 @@ void table_with_names::to_parquet(std::string const& filepath) const
   builder.metadata(table_input_metadata);
   auto const options = builder.build();
   cudf::io::write_parquet(options);
+}
+
+std::unique_ptr<table_with_names> apply_projection(std::unique_ptr<table_with_names> const& table,
+                                                   std::vector<std::string> const& columns)
+{
+  CUDF_BENCHMARK_RANGE();
+  auto result = std::make_unique<cudf::table>(table->select(columns));
+  return std::make_unique<table_with_names>(std::move(result), columns);
 }
 
 std::unique_ptr<cudf::table> join_and_gather(cudf::table_view const& left_input,
@@ -213,6 +267,60 @@ std::unique_ptr<table_with_names> apply_inner_join(
   return std::make_unique<table_with_names>(std::move(table), merged_column_names);
 }
 
+std::unique_ptr<table_with_names> apply_left_join(
+  std::unique_ptr<table_with_names> const& left_input,
+  std::unique_ptr<table_with_names> const& right_input,
+  std::vector<std::string> const& left_on,
+  std::vector<std::string> const& right_on,
+  cudf::null_equality compare_nulls)
+{
+  CUDF_BENCHMARK_RANGE();
+  auto const left_selected  = left_input->table().select(column_ids(left_input, left_on));
+  auto const right_selected = right_input->table().select(column_ids(right_input, right_on));
+  auto const [left_indices, right_indices] =
+    cudf::left_join(left_selected, right_selected, compare_nulls);
+  auto const left_indices_view =
+    cudf::column_view{cudf::device_span<cudf::size_type const>{*left_indices}};
+  auto const right_indices_view =
+    cudf::column_view{cudf::device_span<cudf::size_type const>{*right_indices}};
+  auto left_result =
+    cudf::gather(left_input->table(), left_indices_view, cudf::out_of_bounds_policy::DONT_CHECK);
+  auto right_result =
+    cudf::gather(right_input->table(), right_indices_view, cudf::out_of_bounds_policy::NULLIFY);
+  auto joined_columns = left_result->release();
+  auto right_columns  = right_result->release();
+  joined_columns.insert(joined_columns.end(),
+                        std::make_move_iterator(right_columns.begin()),
+                        std::make_move_iterator(right_columns.end()));
+  std::vector<std::string> column_names = left_input->column_names();
+  column_names.insert(
+    column_names.end(), right_input->column_names().begin(), right_input->column_names().end());
+  return std::make_unique<table_with_names>(
+    std::make_unique<cudf::table>(std::move(joined_columns)), std::move(column_names));
+}
+
+std::unique_ptr<table_with_names> apply_left_semi_join(
+  std::unique_ptr<table_with_names> const& left_input,
+  std::unique_ptr<table_with_names> const& right_input,
+  std::vector<std::string> const& left_on,
+  std::vector<std::string> const& right_on,
+  cudf::null_equality compare_nulls)
+{
+  CUDF_BENCHMARK_RANGE();
+  return apply_left_filter_join(left_input, right_input, left_on, right_on, compare_nulls, true);
+}
+
+std::unique_ptr<table_with_names> apply_left_anti_join(
+  std::unique_ptr<table_with_names> const& left_input,
+  std::unique_ptr<table_with_names> const& right_input,
+  std::vector<std::string> const& left_on,
+  std::vector<std::string> const& right_on,
+  cudf::null_equality compare_nulls)
+{
+  CUDF_BENCHMARK_RANGE();
+  return apply_left_filter_join(left_input, right_input, left_on, right_on, compare_nulls, false);
+}
+
 std::unique_ptr<table_with_names> apply_filter(std::unique_ptr<table_with_names> const& table,
                                                cudf::ast::operation const& predicate)
 {
@@ -230,6 +338,28 @@ std::unique_ptr<table_with_names> apply_mask(std::unique_ptr<table_with_names> c
   return std::make_unique<table_with_names>(std::move(result_table), table->column_names());
 }
 
+std::unique_ptr<table_with_names> apply_distinct(std::unique_ptr<table_with_names> const& table)
+{
+  CUDF_BENCHMARK_RANGE();
+  std::vector<cudf::size_type> keys(table->table().num_columns());
+  std::iota(keys.begin(), keys.end(), 0);
+  auto result = cudf::distinct(table->table(), keys);
+  return std::make_unique<table_with_names>(std::move(result), table->column_names());
+}
+
+std::unique_ptr<table_with_names> apply_slice(std::unique_ptr<table_with_names> const& table,
+                                              cudf::size_type begin,
+                                              cudf::size_type end)
+{
+  CUDF_BENCHMARK_RANGE();
+  auto const num_rows = table->table().num_rows();
+  begin               = std::clamp(begin, cudf::size_type{0}, num_rows);
+  end                 = std::clamp(end, begin, num_rows);
+  auto const view     = cudf::slice(table->table(), {begin, end}).front();
+  auto result         = std::make_unique<cudf::table>(view);
+  return std::make_unique<table_with_names>(std::move(result), table->column_names());
+}
+
 std::unique_ptr<table_with_names> apply_groupby(std::unique_ptr<table_with_names> const& table,
                                                 groupby_context_t const& ctx)
 {
@@ -245,12 +375,21 @@ std::unique_ptr<table_with_names> apply_groupby(std::unique_ptr<table_with_names
       if (agg.first == cudf::aggregation::Kind::SUM) {
         requests.back().aggregations.push_back(
           cudf::make_sum_aggregation<cudf::groupby_aggregation>());
+      } else if (agg.first == cudf::aggregation::Kind::MIN) {
+        requests.back().aggregations.push_back(
+          cudf::make_min_aggregation<cudf::groupby_aggregation>());
+      } else if (agg.first == cudf::aggregation::Kind::MAX) {
+        requests.back().aggregations.push_back(
+          cudf::make_max_aggregation<cudf::groupby_aggregation>());
       } else if (agg.first == cudf::aggregation::Kind::MEAN) {
         requests.back().aggregations.push_back(
           cudf::make_mean_aggregation<cudf::groupby_aggregation>());
       } else if (agg.first == cudf::aggregation::Kind::COUNT_ALL) {
         requests.back().aggregations.push_back(
-          cudf::make_count_aggregation<cudf::groupby_aggregation>());
+          cudf::make_count_aggregation<cudf::groupby_aggregation>(cudf::null_policy::INCLUDE));
+      } else if (agg.first == cudf::aggregation::Kind::NUNIQUE) {
+        requests.back().aggregations.push_back(
+          cudf::make_nunique_aggregation<cudf::groupby_aggregation>());
       } else {
         throw std::runtime_error("Unsupported aggregation");
       }
@@ -292,8 +431,24 @@ std::unique_ptr<table_with_names> apply_reduction(cudf::column_view const& colum
                                                   std::string const& col_name)
 {
   CUDF_BENCHMARK_RANGE();
-  auto const agg            = cudf::make_sum_aggregation<cudf::reduce_aggregation>();
-  auto const result         = cudf::reduce(column, *agg, column.type());
+  std::unique_ptr<cudf::reduce_aggregation> agg;
+  auto output_type = column.type();
+  if (agg_kind == cudf::aggregation::Kind::SUM) {
+    agg = cudf::make_sum_aggregation<cudf::reduce_aggregation>();
+  } else if (agg_kind == cudf::aggregation::Kind::MIN) {
+    agg = cudf::make_min_aggregation<cudf::reduce_aggregation>();
+  } else if (agg_kind == cudf::aggregation::Kind::MAX) {
+    agg = cudf::make_max_aggregation<cudf::reduce_aggregation>();
+  } else if (agg_kind == cudf::aggregation::Kind::MEAN) {
+    agg         = cudf::make_mean_aggregation<cudf::reduce_aggregation>();
+    output_type = cudf::data_type{cudf::type_id::FLOAT64};
+  } else if (agg_kind == cudf::aggregation::Kind::COUNT_ALL) {
+    agg = cudf::make_count_aggregation<cudf::reduce_aggregation>(cudf::null_policy::INCLUDE);
+    output_type = cudf::data_type{cudf::type_id::INT32};
+  } else {
+    throw std::runtime_error("Unsupported aggregation");
+  }
+  auto const result         = cudf::reduce(column, *agg, output_type);
   cudf::size_type const len = 1;
   auto col                  = cudf::make_column_from_scalar(*result, len);
   std::vector<std::unique_ptr<cudf::column>> columns;
@@ -452,4 +607,28 @@ void generate_parquet_data_sources(double scale_factor,
     auto region = cudf::datagen::generate_region(stream, managed_pool_mr);
     write_to_parquet_device_buffer(region, SCHEMAS.at("region"), sources.at("region"));
   }
+
+  if (write_ndsh_results()) {
+    auto const input_directory =
+      std::filesystem::path{cudf::benchmark_output_directory()} / "input";
+    std::filesystem::create_directories(input_directory);
+    for (auto& [name, source] : sources) {
+      auto const path = input_directory / (name + ".parquet");
+      if (not std::filesystem::exists(path)) {
+        read_parquet(source.make_source_info())->to_parquet(path.string());
+      }
+    }
+  }
+}
+
+bool write_ndsh_results() { return not cudf::benchmark_output_directory().empty(); }
+
+void write_ndsh_result(table_with_names const& result, std::string const& query_name)
+{
+  static std::unordered_set<std::string> written_results;
+  if (not written_results.insert(query_name).second) { return; }
+  auto const result_directory =
+    std::filesystem::path{cudf::benchmark_output_directory()} / "results";
+  std::filesystem::create_directories(result_directory);
+  result.to_parquet((result_directory / (query_name + ".parquet")).string());
 }

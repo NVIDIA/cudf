@@ -902,6 +902,8 @@ add_library(
   src/io/parquet/writer_impl_helpers.cpp
   src/io/parquet/decode_fixed.cu
   src/io/parquet/decode_pruned_pages.cu
+  src/io/protobuf/protobuf.cu
+  src/io/protobuf/protobuf_builders.cu
   src/io/statistics/orc_column_statistics.cu
   src/io/statistics/parquet_column_statistics.cu
   src/io/text/byte_range_info.cpp

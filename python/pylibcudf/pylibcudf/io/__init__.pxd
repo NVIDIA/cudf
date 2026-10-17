@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 # CSV is removed since it is def not cpdef (to force kw-only arguments)
@@ -10,6 +10,7 @@ from . cimport (
     orc,
     parquet,
     parquet_metadata,
+    protobuf,
     text,
     timezone,
     types,

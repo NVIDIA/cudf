@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from contextvars import ContextVar
 
+from cudf_polars.testing.observation import record_signal
+
 fallback_used: ContextVar[bool] = ContextVar("cudf_polars_fallback_used", default=False)
 gpu_attempted: ContextVar[bool] = ContextVar("cudf_polars_gpu_attempted", default=False)
 gpu_executed: ContextVar[bool] = ContextVar("cudf_polars_gpu_executed", default=False)
@@ -14,4 +16,4 @@ gpu_executed: ContextVar[bool] = ContextVar("cudf_polars_gpu_executed", default=
 
 def record_fallback() -> None:
     """Record that the active test's query fell back to Polars CPU execution."""
-    fallback_used.set(True)
+    record_signal("fallback", fallback_used)

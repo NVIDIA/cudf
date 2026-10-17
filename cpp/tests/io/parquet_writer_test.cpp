@@ -2495,6 +2495,76 @@ TEST_F(ParquetWriterTest, ByteStreamSplitStruct)
   CUDF_TEST_EXPECT_TABLES_EQUAL(*expected, result.tbl->view());
 }
 
+TEST_F(ParquetWriterTest, SmallIntegersByteStreamSplit)
+{
+  constexpr cudf::size_type num_rows = 1000;
+  // 8- and 16-bit integers are stored as INT32, so the reader has to narrow the four byte streams
+  // of each value to the column type
+  auto const int8_values =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return (i % 256) - 128; });
+  auto const int16_values =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i * 65 - 32768; });
+  auto const uint8_values =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 256; });
+  auto const uint16_values =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i * 65; });
+  auto const validity = cudf::test::iterators::nulls_at_multiples_of(7);
+
+  column_wrapper<int8_t> int8_col(int8_values, int8_values + num_rows, validity);
+  column_wrapper<int16_t> int16_col(int16_values, int16_values + num_rows, validity);
+  // Without nulls, so that the values are copied directly
+  column_wrapper<uint8_t> uint8_col(uint8_values, uint8_values + num_rows);
+  column_wrapper<uint16_t> uint16_col(uint16_values, uint16_values + num_rows, validity);
+  // The list and struct columns use the decode kernels for lists and for nesting without lists
+  using int16_lists = cudf::test::lists_column_wrapper<int16_t>;
+  int16_lists int16_list_col{
+    {{{-32768, 1, 32767}, cudf::test::iterators::null_at(1)}, {}, {-2, 300}, {7}},
+    cudf::test::iterators::null_at(3)};
+  column_wrapper<int8_t> struct_int8_child{{-128, 0, 127, 5}};
+  column_wrapper<uint16_t> struct_uint16_child{{0, 300, 65535, 5}};
+  auto struct_col =
+    cudf::test::structs_column_wrapper{{struct_int8_child, struct_uint16_child}}.release();
+  auto const flat     = table_view{{int8_col, int16_col, uint8_col, uint16_col}};
+  auto const nested   = table_view{{int16_list_col, *struct_col}};
+  auto const encoding = cudf::io::column_encoding::BYTE_STREAM_SPLIT;
+
+  cudf::io::table_input_metadata flat_metadata(flat);
+  for (auto& column : flat_metadata.column_metadata) {
+    column.set_encoding(encoding);
+  }
+  cudf::io::table_input_metadata nested_metadata(nested);
+  nested_metadata.column_metadata[0].child(1).set_encoding(encoding);
+  nested_metadata.column_metadata[1].child(0).set_encoding(encoding);
+  nested_metadata.column_metadata[1].child(1).set_encoding(encoding);
+
+  for (auto const& [name, expected, metadata] :
+       {std::tuple{"flat", flat, flat_metadata}, std::tuple{"nested", nested, nested_metadata}}) {
+    SCOPED_TRACE(name);
+    std::vector<char> buffer;
+    cudf::io::write_parquet(
+      cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, expected)
+        .metadata(metadata)
+        .build());
+    auto const buffer_span = cudf::host_span<std::byte const>{
+      reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()};
+
+    // Check that the writer used BYTE_STREAM_SPLIT for every column
+    auto const source = cudf::io::datasource::create(buffer_span);
+    cudf::io::parquet::FileMetaData fmd;
+    read_footer(source, &fmd);
+    for (auto const& chunk : fmd.row_groups[0].columns) {
+      EXPECT_NE(std::find(chunk.meta_data.encodings.begin(),
+                          chunk.meta_data.encodings.end(),
+                          cudf::io::parquet::Encoding::BYTE_STREAM_SPLIT),
+                chunk.meta_data.encodings.end());
+    }
+
+    auto const result = cudf::io::read_parquet(
+      cudf::io::parquet_reader_options::builder(cudf::io::source_info{buffer_span}).build());
+    CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
+  }
+}
+
 TEST_F(ParquetWriterTest, DecimalByteStreamSplit)
 {
   constexpr cudf::size_type num_rows = 100;

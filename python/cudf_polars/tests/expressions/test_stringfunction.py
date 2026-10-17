@@ -1059,3 +1059,25 @@ def test_escape_regex(engine: pl.GPUEngine, data):
     lf = pl.LazyFrame({"a": pl.Series(data, dtype=pl.String)})
     q = lf.select(pl.col("a").str.escape_regex())
     assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        pl.col("s").str.contains(""),
+        pl.col("s").str.find(""),
+        pl.col("s").str.head(0),
+        pl.col("s").str.tail(0),
+        pl.col("s").cast(pl.Int64, strict=False),
+    ],
+)
+def test_sliced_input_with_nulls(engine: pl.GPUEngine, expr):
+    # sort().slice() hands the expression a column with a nonzero offset.
+    ldf = pl.LazyFrame(
+        {
+            "s": ["0", None, "2", "3", "x", "5", None, "7", "x", "9"],
+            "k": range(10),
+        }
+    )
+    q = ldf.sort("k").slice(3, 6).select(expr)
+    assert_gpu_result_equal(q, engine=engine)

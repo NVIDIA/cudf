@@ -500,10 +500,7 @@ class StringFunction(Expr):
                     column.size,
                     stream=df.stream,
                 )
-                if column.obj.null_mask():
-                    result = result.with_mask(
-                        column.obj.null_mask(), column.obj.null_count()
-                    )
+                result = column.apply_null_mask(result, df.stream)
                 return Column(result, dtype=self.dtype)
             else:
                 return Column(
@@ -580,9 +577,8 @@ class StringFunction(Expr):
         elif self.name is StringFunction.Name.Find:
             literal, _ = self.options
             (child, expr) = self.children
-            plc_column = child.evaluate(df, context=context).obj
-            input_null_mask = plc_column.null_mask()
-            input_null_count = plc_column.null_count()
+            column = child.evaluate(df, context=context)
+            plc_column = column.obj
             if literal:
                 assert isinstance(expr, Literal)
                 plc_column = plc.strings.find.find(
@@ -605,8 +601,9 @@ class StringFunction(Expr):
                     plc_column.size(),
                     stream=df.stream,
                 )
-                plc_column = plc_column.with_mask(input_null_mask, input_null_count)
-                return Column(plc_column, dtype=self.dtype)
+                return Column(
+                    column.apply_null_mask(plc_column, df.stream), dtype=self.dtype
+                )
             else:
                 plc_column = plc.strings.findall.find_re(
                     plc_column, self._regex_program, stream=df.stream
@@ -1000,10 +997,7 @@ class StringFunction(Expr):
                     column.size,
                     stream=df.stream,
                 )
-                if column.obj.null_mask():
-                    result = result.with_mask(
-                        column.obj.null_mask(), column.obj.null_count()
-                    )
+                result = column.apply_null_mask(result, df.stream)
                 return Column(result, self.dtype)
 
             if self.name is StringFunction.Name.Tail:

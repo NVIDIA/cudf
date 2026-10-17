@@ -13,11 +13,10 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
 
-import distributed
 import distributed.system
 import kvikio
-import pynvml
 import ucxx._lib.libucxx as ucx_api
+from cuda.core import system
 
 import polars as pl
 
@@ -95,8 +94,7 @@ def _get_visible_gpu_ids() -> list[str]:
     cvd = os.environ.get("CUDA_VISIBLE_DEVICES")
     if cvd is not None:
         return [d.strip() for d in cvd.split(",") if d.strip()]
-    pynvml.nvmlInit()
-    return [str(i) for i in range(pynvml.nvmlDeviceGetCount())]
+    return [str(i) for i in range(system.Device.get_device_count())]
 
 
 _nanny_preload_counter = 0

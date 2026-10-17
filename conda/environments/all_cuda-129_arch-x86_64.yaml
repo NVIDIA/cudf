@@ -17,7 +17,8 @@ dependencies:
 - cmake>=4.0
 - cramjam
 - croaring==4.4.2
-- cuda-bindings>=12.9.3,<13.0
+- cuda-bindings>=12.9.6,<13.0
+- cuda-core>=1.0.0,<2.0
 - cuda-cudart-dev
 - cuda-cupti-dev
 - cuda-nvcc
@@ -70,7 +71,6 @@ dependencies:
 - numexpr
 - numpy>=2.0,<3.0
 - numpydoc
-- nvidia-ml-py>=12
 - nvtx>=0.2.1
 - odfpy
 - openpyxl

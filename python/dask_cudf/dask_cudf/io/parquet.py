@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -45,24 +45,23 @@ _DEVICE_SIZE_CACHE: int | None = None
 
 def _get_device_size():
     try:
-        # Use PyNVML to find the worker device size.
-        import pynvml
+        # Use NVML to find the worker device size.
+        from cuda.core import system
 
-        pynvml.nvmlInit()
-        index = os.environ.get("CUDA_VISIBLE_DEVICES", "0").split(",")[0]
-        if index and not index.isnumeric():
+        index_or_uuid = os.environ.get("CUDA_VISIBLE_DEVICES", "0").split(",")[
+            0
+        ]
+        if index_or_uuid and not index_or_uuid.isnumeric():
             # This means index is UUID. This works for both MIG and non-MIG device UUIDs.
-            handle = pynvml.nvmlDeviceGetHandleByUUID(str.encode(index))
-            if pynvml.nvmlDeviceIsMigDeviceHandle(handle):
-                handle = pynvml.nvmlDeviceGetDeviceHandleFromMigDeviceHandle(
-                    handle
-                )
+            device = system.Device(uuid=index_or_uuid)
+            if device.mig.is_mig_device:
+                device = device.mig.parent
         else:
             # This is a device index
-            handle = pynvml.nvmlDeviceGetHandleByIndex(int(index))
-        return pynvml.nvmlDeviceGetMemoryInfo(handle).total
+            device = system.Device(index=int(index_or_uuid))
+        return device.memory_info.total
 
-    except (ValueError, pynvml.NVMLError_NotSupported):
+    except (ValueError, system.NotSupportedError):
         # Fall back to a conservative 8GiB default
         return 8 * 1024**3
 

@@ -501,6 +501,7 @@ files:
       - numpy_run
       - run_common
       - run_dask_cudf
+      - depends_on_cuda_bindings
       - depends_on_cudf
       - depends_on_cupy
   py_test_dask_cudf:
@@ -1074,11 +1075,11 @@ dependencies:
           - matrix:
               cuda: "12.*"
             packages:
-              - cuda-bindings>=12.9.3,<13.0
+              - cuda-bindings>=12.9.6,<13.0
           # fallback to CUDA 13 versions if 'cuda' is '13.*' or not provided
           - matrix:
             packages:
-              - cuda-bindings>=13.0.2,<14.0
+              - cuda-bindings>=13.3.0,<14.0
   run_cudf:
     common:
       - output_types: [conda, requirements, constraints, pyproject]
@@ -1088,12 +1089,12 @@ dependencies:
           - nvtx>=0.2.1
           - packaging
           - rich
+          - cuda-core>=1.0.0,<2.0
   run_cudf_polars:
     common:
       - output_types: [conda, requirements, constraints, pyproject]
         packages:
-          # 'nvidia-ml-py' provides the 'pynvml' module
-          - &nvidia_ml_py nvidia-ml-py>=12
+          - cuda-core>=1.0.0,<2.0
           - packaging
           - polars>=1.35,<1.45
           - typing_extensions>=4.0.0
@@ -1106,7 +1107,7 @@ dependencies:
     common:
       - output_types: [conda, requirements, constraints, pyproject]
         packages:
-          - *nvidia_ml_py
+          - cuda-core>=1.0.0,<2.0
           - rapids-dask-dependency==26.12.*,>=0.0.0a0
   run_custreamz:
     common:
@@ -1170,12 +1171,12 @@ dependencies:
               dependencies: "oldest"
               cuda: "12.*"
             packages:
-              - cuda-bindings==12.9.3
+              - cuda-bindings==12.9.6
           - matrix:
               dependencies: "oldest"
               cuda: "13.*"
             packages:
-              - cuda-bindings==13.0.2
+              - cuda-bindings==13.3.0
           - matrix:
             packages:
       - output_types: [requirements, constraints]

@@ -33,9 +33,8 @@ requirements:
   run:
     - python
     - cudf =${{ version }}
-    # 'nvidia-ml-py' provides the 'pynvml' module
-    - nvidia-ml-py>=12
     - rapids-dask-dependency =${{ minor_version }}
+    - cuda-core>=1.0.0,<2.0
 
 about:
   homepage: ${{ load_from_file("python/dask_cudf/pyproject.toml").project.urls.Homepage }}

@@ -15,6 +15,7 @@
 #include <cudf/utilities/bit.hpp>
 #include <cudf/utilities/error.hpp>
 
+#include <cub/block/block_reduce.cuh>
 #include <cuda/std/algorithm>
 #include <cuda/std/cstdint>
 #include <cuda/std/utility>
@@ -131,6 +132,7 @@ CUDF_KERNEL void hash_csr_probe_count_kernel(size_type num_rows,
                                              bitmask_type const* valid_rows,
                                              size_type* probe_groups,
                                              size_type* match_counts,
+                                             cuda::std::uint64_t* match_counts_sum,
                                              cuda::std::uint32_t* matched_groups,
                                              cuda::std::uint64_t* matched_build_rows,
                                              hash_table_ref map,
@@ -139,6 +141,7 @@ CUDF_KERNEL void hash_csr_probe_count_kernel(size_type num_rows,
                                              Hasher hasher)
 {
   auto const stride = grid_1d::grid_stride();
+  cuda::std::uint64_t thread_matches = 0;
   for (auto row = grid_1d::global_thread_id(); row < num_rows; row += stride) {
     auto const index = static_cast<size_type>(row);
     auto group       = size_type{CUDF_SIZE_TYPE_SENTINEL};
@@ -151,9 +154,9 @@ CUDF_KERNEL void hash_csr_probe_count_kernel(size_type num_rows,
     if (probe_groups != nullptr) {
       probe_groups[index] = found ? static_cast<size_type>(group) : CUDF_SIZE_TYPE_SENTINEL;
     }
-    if (match_counts != nullptr) {
-      match_counts[index] = IsOuter ? cuda::std::max(count, size_type{1}) : count;
-    }
+    auto const match_count = IsOuter ? cuda::std::max(count, size_type{1}) : count;
+    if (match_counts != nullptr) { match_counts[index] = match_count; }
+    thread_matches += static_cast<cuda::std::uint64_t>(match_count);
 
     // Only right and full joins consume the matched-row tally, and `matched_groups` is null for
     // every other kind, so this whole block compiles away outside outer joins rather than costing
@@ -169,6 +172,16 @@ CUDF_KERNEL void hash_csr_probe_count_kernel(size_type num_rows,
             .fetch_add(static_cast<cuda::std::uint64_t>(count), cuda::memory_order_relaxed);
         }
       }
+    }
+  }
+
+  if (match_counts_sum != nullptr) {
+    using block_reduce = cub::BlockReduce<cuda::std::uint64_t, hash_csr_block_size>;
+    __shared__ typename block_reduce::TempStorage temp_storage;
+    auto const block_matches = block_reduce(temp_storage).Sum(thread_matches);
+    if (threadIdx.x == 0) {
+      cuda::atomic_ref<cuda::std::uint64_t, cuda::thread_scope_device>{*match_counts_sum}.fetch_add(
+        block_matches, cuda::memory_order_relaxed);
     }
   }
 }
@@ -227,6 +240,7 @@ void launch_hash_csr_probe_count_kernel(size_type num_rows,
                                         bitmask_type const* valid_rows,
                                         size_type* probe_groups,
                                         size_type* match_counts,
+                                        cuda::std::uint64_t* match_counts_sum,
                                         cuda::std::uint32_t* matched_groups,
                                         cuda::std::uint64_t* matched_build_rows,
                                         hash_table_ref map,
@@ -242,6 +256,7 @@ void launch_hash_csr_probe_count_kernel(size_type num_rows,
                                                                            valid_rows,
                                                                            probe_groups,
                                                                            match_counts,
+                                                                           match_counts_sum,
                                                                            matched_groups,
                                                                            matched_build_rows,
                                                                            map,
@@ -287,6 +302,7 @@ extern template void launch_hash_csr_build_count_kernel<hash_csr_nested_equal, h
     bitmask_type const*,                                                         \
     size_type*,                                                                  \
     size_type*,                                                                  \
+    cuda::std::uint64_t*,                                                        \
     cuda::std::uint32_t*,                                                        \
     cuda::std::uint64_t*,                                                        \
     hash_table_ref,                                                              \

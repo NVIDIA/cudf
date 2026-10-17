@@ -158,7 +158,7 @@ std::vector<FileMetaData> aggregate_reader_metadata::parquet_metadatas() const
 }
 
 void aggregate_reader_metadata::setup_page_indexes(
-  cudf::host_span<cudf::host_span<uint8_t const> const> page_index_bytes)
+  std::span<cudf::host_span<uint8_t const> const> page_index_bytes)
 {
   CUDF_EXPECTS(page_index_bytes.size() == per_file_metadata.size(),
                "Page index byte span count must equal the number of sources");

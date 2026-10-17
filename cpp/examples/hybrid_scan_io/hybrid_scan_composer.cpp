@@ -28,6 +28,8 @@
  */
 
 using cudf::io::parquet::experimental::hybrid_scan_reader;
+using cudf::io::parquet::experimental::read_columns_mode;
+using cudf::io::parquet::experimental::use_data_page_mask;
 
 namespace {
 
@@ -238,7 +240,8 @@ std::unique_ptr<cudf::table> single_step_materialize(
   timer timer;
 
   auto const all_column_chunk_byte_ranges =
-    reader.all_column_chunks_byte_ranges(current_row_group_indices, options);
+    reader.column_chunks_byte_ranges<read_columns_mode::ALL_COLUMNS>(current_row_group_indices,
+                                                                     options);
 
   nvtxRangePush("fetch_all_col_byte_ranges");
   auto [all_column_chunk_buffers, all_column_chunk_data, all_column_chunk_read_tasks] =
@@ -247,8 +250,13 @@ std::unique_ptr<cudf::table> single_step_materialize(
   nvtxRangePop();
 
   auto read_table = reader
-                      .materialize_all_columns(
-                        current_row_group_indices, all_column_chunk_data, options, stream, mr)
+                      .materialize_table<read_columns_mode::ALL_COLUMNS>(current_row_group_indices,
+                                                                         all_column_chunk_data,
+                                                                         {},
+                                                                         use_data_page_mask::NO,
+                                                                         options,
+                                                                         stream,
+                                                                         mr)
                       .tbl;
 
   if (verbose) { timer.print_elapsed_millis(); }
@@ -313,7 +321,8 @@ std::unique_ptr<cudf::table> two_step_materialize(
 
   // Get column chunk byte ranges from the reader
   auto const filter_column_chunk_byte_ranges =
-    reader.filter_column_chunks_byte_ranges(current_row_group_indices, options);
+    reader.column_chunks_byte_ranges<read_columns_mode::FILTER_COLUMNS>(current_row_group_indices,
+                                                                        options);
   nvtxRangePush("fetch_filter_col_byte_ranges");
   auto [filter_column_chunk_buffers, filter_column_chunk_data, filter_col_read_tasks] =
     fetch_byte_ranges_async(datasource, filter_column_chunk_byte_ranges, stream, mr);
@@ -323,7 +332,7 @@ std::unique_ptr<cudf::table> two_step_materialize(
   auto row_mask_mutable_view = row_mask->mutable_view();
   auto filter_table =
     reader
-      .materialize_filter_columns(
+      .materialize_table<read_columns_mode::FILTER_COLUMNS>(
         current_row_group_indices,
         filter_column_chunk_data,
         row_mask_mutable_view,
@@ -351,7 +360,8 @@ std::unique_ptr<cudf::table> two_step_materialize(
 
   // Get column chunk byte ranges from the reader
   auto const payload_column_chunk_byte_ranges =
-    reader.payload_column_chunks_byte_ranges(current_row_group_indices, options);
+    reader.column_chunks_byte_ranges<read_columns_mode::PAYLOAD_COLUMNS>(current_row_group_indices,
+                                                                         options);
   nvtxRangePush("fetch_payload_col_byte_ranges");
   auto [payload_column_chunk_buffers, payload_column_chunk_data, payload_col_read_tasks] =
     fetch_byte_ranges_async(datasource, payload_column_chunk_byte_ranges, stream, mr);
@@ -360,7 +370,7 @@ std::unique_ptr<cudf::table> two_step_materialize(
 
   auto payload_table =
     reader
-      .materialize_payload_columns(
+      .materialize_table<read_columns_mode::PAYLOAD_COLUMNS>(
         current_row_group_indices,
         payload_column_chunk_data,
         row_mask->view(),

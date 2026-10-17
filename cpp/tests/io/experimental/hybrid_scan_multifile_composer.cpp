@@ -14,6 +14,7 @@
 #include <memory>
 #include <vector>
 
+using cudf::io::parquet::experimental::read_columns_mode;
 using cudf::io::parquet::experimental::use_data_page_mask;
 
 std::tuple<std::unique_ptr<cudf::table>, std::unique_ptr<cudf::table>> hybrid_scan_multifile(
@@ -40,25 +41,33 @@ std::tuple<std::unique_ptr<cudf::table>, std::unique_ptr<cudf::table>> hybrid_sc
   auto row_mask = reader.build_row_mask_with_page_index_stats(row_groups, options, stream, mr);
 
   auto filter_column_chunks = fetch_multisource_device_data(
-    inputs, reader.filter_column_chunks_byte_ranges(row_groups, options), stream, mr);
+    inputs,
+    reader.column_chunks_byte_ranges<read_columns_mode::FILTER_COLUMNS>(row_groups, options),
+    stream,
+    mr);
   auto row_mask_view = row_mask->mutable_view();
-  auto filter_result = reader.materialize_filter_columns(row_groups,
-                                                         filter_column_chunks.flat_spans,
-                                                         row_mask_view,
-                                                         use_data_page_mask::YES,
-                                                         options,
-                                                         stream,
-                                                         mr);
+  auto filter_result =
+    reader.materialize_table<read_columns_mode::FILTER_COLUMNS>(row_groups,
+                                                                filter_column_chunks.flat_spans,
+                                                                row_mask_view,
+                                                                use_data_page_mask::YES,
+                                                                options,
+                                                                stream,
+                                                                mr);
 
   auto payload_column_chunks = fetch_multisource_device_data(
-    inputs, reader.payload_column_chunks_byte_ranges(row_groups, options), stream, mr);
-  auto payload_result = reader.materialize_payload_columns(row_groups,
-                                                           payload_column_chunks.flat_spans,
-                                                           row_mask_view,
-                                                           use_data_page_mask::YES,
-                                                           options,
-                                                           stream,
-                                                           mr);
+    inputs,
+    reader.column_chunks_byte_ranges<read_columns_mode::PAYLOAD_COLUMNS>(row_groups, options),
+    stream,
+    mr);
+  auto payload_result =
+    reader.materialize_table<read_columns_mode::PAYLOAD_COLUMNS>(row_groups,
+                                                                 payload_column_chunks.flat_spans,
+                                                                 row_mask_view,
+                                                                 use_data_page_mask::YES,
+                                                                 options,
+                                                                 stream,
+                                                                 mr);
 
   return std::tuple{std::move(filter_result.tbl), std::move(payload_result.tbl)};
 }
@@ -86,9 +95,13 @@ std::unique_ptr<cudf::table> hybrid_scan_multifile_single_step(
   auto const row_groups = reader.filter_row_groups_with_stats(input_row_groups, options, stream);
 
   auto all_column_chunks = fetch_multisource_device_data(
-    inputs, reader.all_column_chunks_byte_ranges(row_groups, options), stream, mr);
+    inputs,
+    reader.column_chunks_byte_ranges<read_columns_mode::ALL_COLUMNS>(row_groups, options),
+    stream,
+    mr);
   return reader
-    .materialize_all_columns(row_groups, all_column_chunks.flat_spans, options, stream, mr)
+    .materialize_table<read_columns_mode::ALL_COLUMNS>(
+      row_groups, all_column_chunks.flat_spans, {}, use_data_page_mask::NO, options, stream, mr)
     .tbl;
 }
 
@@ -124,34 +137,44 @@ chunked_hybrid_scan_multifile(cudf::io::source_info const& source_info,
   auto payload_tables = std::vector<std::unique_ptr<cudf::table>>{};
 
   auto filter_column_chunks = fetch_multisource_device_data(
-    inputs, reader.filter_column_chunks_byte_ranges(row_groups, options), stream, mr);
+    inputs,
+    reader.column_chunks_byte_ranges<read_columns_mode::FILTER_COLUMNS>(row_groups, options),
+    stream,
+    mr);
   auto row_mask_view = row_mask->mutable_view();
-  reader.setup_chunking_for_filter_columns(chunk_read_limit,
-                                           pass_read_limit,
-                                           row_groups,
-                                           row_mask_view,
-                                           use_data_page_mask::YES,
-                                           filter_column_chunks.flat_spans,
-                                           options,
-                                           stream,
-                                           mr);
+  reader.setup_chunked_table_materialization<read_columns_mode::FILTER_COLUMNS>(
+    chunk_read_limit,
+    pass_read_limit,
+    row_groups,
+    filter_column_chunks.flat_spans,
+    row_mask_view,
+    use_data_page_mask::YES,
+    options,
+    stream,
+    mr);
   while (reader.has_next_table_chunk()) {
-    filter_tables.push_back(reader.materialize_filter_columns_chunk(row_mask_view).tbl);
+    filter_tables.push_back(
+      reader.materialize_table_chunk<read_columns_mode::FILTER_COLUMNS>(row_mask_view).tbl);
   }
 
   auto payload_column_chunks = fetch_multisource_device_data(
-    inputs, reader.payload_column_chunks_byte_ranges(row_groups, options), stream, mr);
-  reader.setup_chunking_for_payload_columns(chunk_read_limit,
-                                            pass_read_limit,
-                                            row_groups,
-                                            row_mask_view,
-                                            use_data_page_mask::YES,
-                                            payload_column_chunks.flat_spans,
-                                            options,
-                                            stream,
-                                            mr);
+    inputs,
+    reader.column_chunks_byte_ranges<read_columns_mode::PAYLOAD_COLUMNS>(row_groups, options),
+    stream,
+    mr);
+  reader.setup_chunked_table_materialization<read_columns_mode::PAYLOAD_COLUMNS>(
+    chunk_read_limit,
+    pass_read_limit,
+    row_groups,
+    payload_column_chunks.flat_spans,
+    row_mask_view,
+    use_data_page_mask::YES,
+    options,
+    stream,
+    mr);
   while (reader.has_next_table_chunk()) {
-    payload_tables.push_back(reader.materialize_payload_columns_chunk(row_mask_view).tbl);
+    payload_tables.push_back(
+      reader.materialize_table_chunk<read_columns_mode::PAYLOAD_COLUMNS>(row_mask_view).tbl);
   }
 
   return std::tuple{concatenate_tables(std::move(filter_tables), stream, mr),
@@ -189,35 +212,41 @@ chunked_sparse_hybrid_scan_multifile(
   auto payload_tables = std::vector<std::unique_ptr<cudf::table>>{};
 
   auto filter_column_chunks = fetch_multisource_device_data(
-    inputs, reader.filter_column_chunks_byte_ranges(row_groups, options), stream, mr);
+    inputs,
+    reader.column_chunks_byte_ranges<read_columns_mode::FILTER_COLUMNS>(row_groups, options),
+    stream,
+    mr);
   auto row_mask_view = row_mask->mutable_view();
-  reader.setup_chunking_for_filter_columns(chunk_read_limit,
-                                           pass_read_limit,
-                                           row_groups,
-                                           row_mask_view,
-                                           use_data_page_mask::YES,
-                                           filter_column_chunks.flat_spans,
-                                           options,
-                                           stream,
-                                           mr);
+  reader.setup_chunked_table_materialization<read_columns_mode::FILTER_COLUMNS>(
+    chunk_read_limit,
+    pass_read_limit,
+    row_groups,
+    filter_column_chunks.flat_spans,
+    row_mask_view,
+    use_data_page_mask::YES,
+    options,
+    stream,
+    mr);
   while (reader.has_next_table_chunk()) {
-    filter_tables.push_back(reader.materialize_filter_columns_chunk(row_mask_view).tbl);
+    filter_tables.push_back(
+      reader.materialize_table_chunk<read_columns_mode::FILTER_COLUMNS>(row_mask_view).tbl);
   }
 
   auto const payload_page_ranges =
-    reader.payload_pages_byte_ranges(row_groups, row_mask->view(), options, stream);
+    reader.sparse_payload_pages_byte_ranges(row_groups, row_mask->view(), options, stream);
   auto payload_page_data = fetch_multisource_device_data(inputs, payload_page_ranges, stream, mr);
 
-  reader.setup_chunking_for_payload_columns(chunk_read_limit,
-                                            pass_read_limit,
-                                            row_groups,
-                                            row_mask->view(),
-                                            payload_page_data.flat_spans,
-                                            options,
-                                            stream,
-                                            mr);
+  reader.setup_chunked_sparse_payload_materialization(chunk_read_limit,
+                                                      pass_read_limit,
+                                                      row_groups,
+                                                      payload_page_data.flat_spans,
+                                                      row_mask->view(),
+                                                      options,
+                                                      stream,
+                                                      mr);
   while (reader.has_next_table_chunk()) {
-    payload_tables.push_back(reader.materialize_payload_columns_chunk(row_mask->view()).tbl);
+    payload_tables.push_back(
+      reader.materialize_table_chunk<read_columns_mode::PAYLOAD_COLUMNS>(row_mask->view()).tbl);
   }
 
   return std::tuple{concatenate_tables(std::move(filter_tables), stream, mr),
@@ -250,18 +279,24 @@ std::unique_ptr<cudf::table> chunked_hybrid_scan_multifile_single_step(
   auto constexpr pass_read_limit  = std::size_t{1024 * 1024};
 
   auto all_column_chunks = fetch_multisource_device_data(
-    inputs, reader.all_column_chunks_byte_ranges(row_groups, options), stream, mr);
-  reader.setup_chunking_for_all_columns(chunk_read_limit,
-                                        pass_read_limit,
-                                        row_groups,
-                                        all_column_chunks.flat_spans,
-                                        options,
-                                        stream,
-                                        mr);
+    inputs,
+    reader.column_chunks_byte_ranges<read_columns_mode::ALL_COLUMNS>(row_groups, options),
+    stream,
+    mr);
+  reader.setup_chunked_table_materialization<read_columns_mode::ALL_COLUMNS>(
+    chunk_read_limit,
+    pass_read_limit,
+    row_groups,
+    all_column_chunks.flat_spans,
+    {},
+    use_data_page_mask::NO,
+    options,
+    stream,
+    mr);
 
   auto tables = std::vector<std::unique_ptr<cudf::table>>{};
   while (reader.has_next_table_chunk()) {
-    tables.push_back(reader.materialize_all_columns_chunk().tbl);
+    tables.push_back(reader.materialize_table_chunk<read_columns_mode::ALL_COLUMNS>({}).tbl);
   }
 
   return concatenate_tables(std::move(tables), stream, mr);

@@ -24,6 +24,8 @@
 namespace {
 
 using cudf::io::parquet::experimental::hybrid_scan_reader;
+using cudf::io::parquet::experimental::read_columns_mode;
+using cudf::io::parquet::experimental::use_data_page_mask;
 
 std::unique_ptr<hybrid_scan_reader> setup_reader(cudf::io::datasource& datasource,
                                                  cudf::io::parquet_reader_options const& options)
@@ -133,7 +135,8 @@ std::unique_ptr<cudf::table> single_step_materialize(
   rmm::device_async_resource_ref mr)
 {
   auto const all_column_chunk_byte_ranges =
-    reader.all_column_chunks_byte_ranges(current_row_group_indices, options);
+    reader.column_chunks_byte_ranges<read_columns_mode::ALL_COLUMNS>(current_row_group_indices,
+                                                                     options);
   auto [all_column_chunk_buffers, all_column_chunk_data, all_column_chunk_read_tasks] =
     cudf::io::parquet::fetch_byte_ranges_to_device_async(
       datasource,
@@ -144,7 +147,13 @@ std::unique_ptr<cudf::table> single_step_materialize(
   all_column_chunk_read_tasks.get();
 
   return reader
-    .materialize_all_columns(current_row_group_indices, all_column_chunk_data, options, stream, mr)
+    .materialize_table<read_columns_mode::ALL_COLUMNS>(current_row_group_indices,
+                                                       all_column_chunk_data,
+                                                       {},
+                                                       use_data_page_mask::NO,
+                                                       options,
+                                                       stream,
+                                                       mr)
     .tbl;
 }
 

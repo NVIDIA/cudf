@@ -33,6 +33,9 @@
 
 namespace {
 
+using cudf::io::parquet::experimental::read_columns_mode;
+using cudf::io::parquet::experimental::use_data_page_mask;
+
 /**
  * @brief Copy fixed-width column data to a host vector
  */
@@ -255,9 +258,12 @@ TEST_F(HybridScanMultifileFiltersTest, MismatchedNullabilityDoesNotLeakIntoMetad
 
   auto const row_groups = reader.all_row_groups(options);
   auto column_data      = fetch_multisource_device_data(
-    inputs, reader.all_column_chunks_byte_ranges(row_groups, options), stream, mr);
-  auto const result =
-    reader.materialize_all_columns(row_groups, column_data.flat_spans, options, stream, mr);
+    inputs,
+    reader.column_chunks_byte_ranges<read_columns_mode::ALL_COLUMNS>(row_groups, options),
+    stream,
+    mr);
+  auto const result = reader.materialize_table<read_columns_mode::ALL_COLUMNS>(
+    row_groups, column_data.flat_spans, {}, use_data_page_mask::NO, options, stream, mr);
 
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected.tbl->view(), result.tbl->view());
   EXPECT_TRUE(result.tbl->view().column(0).nullable());
@@ -271,9 +277,20 @@ TEST_F(HybridScanMultifileFiltersTest, MismatchedNullabilityDoesNotLeakIntoMetad
   auto reader_from_metadata =
     cudf::io::parquet::experimental::hybrid_scan_multifile{std::move(metadatas), options};
   auto downstream_column_data = fetch_multisource_device_data(
-    inputs, reader_from_metadata.all_column_chunks_byte_ranges(row_groups, options), stream, mr);
-  auto const downstream_result = reader_from_metadata.materialize_all_columns(
-    row_groups, downstream_column_data.flat_spans, options, stream, mr);
+    inputs,
+    reader_from_metadata.column_chunks_byte_ranges<read_columns_mode::ALL_COLUMNS>(row_groups,
+                                                                                   options),
+    stream,
+    mr);
+  auto const downstream_result =
+    reader_from_metadata.materialize_table<read_columns_mode::ALL_COLUMNS>(
+      row_groups,
+      downstream_column_data.flat_spans,
+      {},
+      use_data_page_mask::NO,
+      options,
+      stream,
+      mr);
 
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected.tbl->view(), downstream_result.tbl->view());
   EXPECT_EQ(col0_repetition_type(reader_from_metadata.parquet_metadatas()),
@@ -707,9 +724,9 @@ TEST_F(HybridScanMultifileFiltersTest, SparsePayloadPagesWithoutOffsetIndexes)
   auto const row_groups = reader.all_row_groups(options);
   auto const row_mask   = reader.build_all_true_row_mask(row_groups, stream, mr);
 
-  EXPECT_THROW(
-    std::ignore = reader.payload_pages_byte_ranges(row_groups, row_mask->view(), options, stream),
-    cudf::logic_error);
+  EXPECT_THROW(std::ignore = reader.sparse_payload_pages_byte_ranges(
+                 row_groups, row_mask->view(), options, stream),
+               cudf::logic_error);
 }
 
 template <typename T>

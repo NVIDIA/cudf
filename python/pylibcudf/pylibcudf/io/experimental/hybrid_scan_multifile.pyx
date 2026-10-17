@@ -151,7 +151,7 @@ cdef class HybridScanMultiFile:
             metadatas.push_back(metadata.c_obj.get()[0])
         with nogil:
             reader.c_obj = make_unique[cpp_hybrid_scan_multifile](
-                host_span[const_FileMetaData](
+                std_span[const_FileMetaData](
                     <const_FileMetaData*>metadatas.data(), metadatas.size()
                 ),
                 options.c_obj
@@ -211,7 +211,7 @@ cdef class HybridScanMultiFile:
                 )
         with nogil:
             self.c_obj.get()[0].setup_page_indexes(
-                host_span[const_host_span_const_uint8_t](
+                std_span[const_host_span_const_uint8_t](
                     <const_host_span_const_uint8_t*>spans.data(), spans.size()
                 )
             )
@@ -252,7 +252,7 @@ cdef class HybridScanMultiFile:
         cdef size_type result
         with nogil:
             result = self.c_obj.get()[0].total_rows_in_row_groups(
-                host_span[const_vector_size_type](
+                std_span[const_vector_size_type](
                     <const_vector_size_type*>row_group_indices.c_obj.data(),
                     row_group_indices.c_obj.size()
                 )
@@ -290,7 +290,7 @@ cdef class HybridScanMultiFile:
         cdef vector[vector[size_type]] filtered
         with nogil:
             filtered = self.c_obj.get()[0].filter_row_groups_with_byte_range(
-                host_span[const_vector_size_type](
+                std_span[const_vector_size_type](
                     <const_vector_size_type*>row_group_indices.c_obj.data(),
                     row_group_indices.c_obj.size()
                 ),
@@ -324,7 +324,7 @@ cdef class HybridScanMultiFile:
         cdef vector[vector[size_type]] filtered
         with nogil:
             filtered = self.c_obj.get()[0].filter_row_groups_with_stats(
-                host_span[const_vector_size_type](
+                std_span[const_vector_size_type](
                     <const_vector_size_type*>row_group_indices.c_obj.data(),
                     row_group_indices.c_obj.size()
                 ),
@@ -355,7 +355,7 @@ cdef class HybridScanMultiFile:
         cdef pair[vector[byte_range_info], vector[size_type]] c_result
         with nogil:
             c_result = self.c_obj.get()[0].bloom_filters_byte_ranges(
-                host_span[const_vector_size_type](
+                std_span[const_vector_size_type](
                     <const_vector_size_type*>row_group_indices.c_obj.data(),
                     row_group_indices.c_obj.size()
                 ),
@@ -389,7 +389,7 @@ cdef class HybridScanMultiFile:
         cdef pair[vector[byte_range_info], vector[size_type]] c_result
         with nogil:
             c_result = self.c_obj.get()[0].dictionary_pages_byte_ranges(
-                host_span[const_vector_size_type](
+                std_span[const_vector_size_type](
                     <const_vector_size_type*>row_group_indices.c_obj.data(),
                     row_group_indices.c_obj.size()
                 ),
@@ -427,7 +427,7 @@ cdef class HybridScanMultiFile:
         cdef unique_ptr[column] c_result
         with nogil:
             c_result = self.c_obj.get()[0].build_all_true_row_mask(
-                host_span[const_vector_size_type](
+                std_span[const_vector_size_type](
                     <const_vector_size_type*>row_group_indices.c_obj.data(),
                     row_group_indices.c_obj.size()
                 ),
@@ -466,7 +466,7 @@ cdef class HybridScanMultiFile:
         cdef unique_ptr[column] c_result
         with nogil:
             c_result = self.c_obj.get()[0].build_row_mask_with_page_index_stats(
-                host_span[const_vector_size_type](
+                std_span[const_vector_size_type](
                     <const_vector_size_type*>row_group_indices.c_obj.data(),
                     row_group_indices.c_obj.size()
                 ),
@@ -499,7 +499,7 @@ cdef class HybridScanMultiFile:
         cdef pair[vector[byte_range_info], vector[size_type]] c_result
         with nogil:
             c_result = self.c_obj.get()[0].all_column_chunks_byte_ranges(
-                host_span[const_vector_size_type](
+                std_span[const_vector_size_type](
                     <const_vector_size_type*>row_group_indices.c_obj.data(),
                     row_group_indices.c_obj.size()
                 ),
@@ -547,11 +547,11 @@ cdef class HybridScanMultiFile:
         cdef table_with_metadata c_result
         with nogil:
             c_result = self.c_obj.get()[0].materialize_all_columns(
-                host_span[const_vector_size_type](
+                std_span[const_vector_size_type](
                     <const_vector_size_type*>row_group_indices.c_obj.data(),
                     row_group_indices.c_obj.size()
                 ),
-                host_span[const_device_span_const_uint8_t](
+                std_span[const_device_span_const_uint8_t](
                     <const_device_span_const_uint8_t*>spans_vec.data(),
                     spans_vec.size()
                 ),
@@ -596,7 +596,7 @@ cdef class HybridScanMultiFile:
         cdef pair[vector[byte_range_info], vector[size_type]] c_result
         with nogil:
             c_result = move(self.c_obj.get()[0].payload_pages_byte_ranges(
-                host_span[const_vector_size_type](
+                std_span[const_vector_size_type](
                     <const_vector_size_type*>row_group_indices.c_obj.data(),
                     row_group_indices.c_obj.size()
                 ),
@@ -665,12 +665,12 @@ cdef class HybridScanMultiFile:
             self.c_obj.get()[0].setup_chunking_for_payload_columns(
                 chunk_read_limit,
                 pass_read_limit,
-                host_span[const_vector_size_type](
+                std_span[const_vector_size_type](
                     <const_vector_size_type*>row_group_indices.c_obj.data(),
                     row_group_indices.c_obj.size()
                 ),
                 mask_view,
-                host_span[const_device_span_const_uint8_t](
+                std_span[const_device_span_const_uint8_t](
                     <const_device_span_const_uint8_t*>spans_vec.data(),
                     spans_vec.size()
                 ),

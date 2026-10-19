@@ -33,6 +33,7 @@
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/logger.hpp>
 #include <cudf/table/table_device_view.cuh>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/device_uvector.hpp>
@@ -45,6 +46,7 @@
 #include <thrust/fill.h>
 
 #include <algorithm>
+#include <concepts>
 #include <cstring>
 #include <format>
 #include <functional>
@@ -326,18 +328,16 @@ struct leaf_schema_fn {
   bool timestamp_is_utc;
   bool write_arrow_schema;
 
-  template <typename T>
+  template <cudf::concepts::boolean T>
   void operator()()
-    requires(std::is_same_v<T, bool>)
   {
     col_schema.type        = Type::BOOLEAN;
     col_schema.stats_dtype = statistics_dtype::dtype_bool;
     // BOOLEAN needs no converted or logical type
   }
 
-  template <typename T>
+  template <std::same_as<int8_t> T>
   void operator()()
-    requires(std::is_same_v<T, int8_t>)
   {
     col_schema.type           = Type::INT32;
     col_schema.converted_type = ConvertedType::INT_8;
@@ -345,9 +345,8 @@ struct leaf_schema_fn {
     col_schema.logical_type   = LogicalType{IntType{8, true}};
   }
 
-  template <typename T>
+  template <std::same_as<int16_t> T>
   void operator()()
-    requires(std::is_same_v<T, int16_t>)
   {
     col_schema.type           = Type::INT32;
     col_schema.converted_type = ConvertedType::INT_16;
@@ -355,27 +354,24 @@ struct leaf_schema_fn {
     col_schema.logical_type   = LogicalType{IntType{16, true}};
   }
 
-  template <typename T>
+  template <std::same_as<int32_t> T>
   void operator()()
-    requires(std::is_same_v<T, int32_t>)
   {
     col_schema.type        = Type::INT32;
     col_schema.stats_dtype = statistics_dtype::dtype_int32;
     // INT32 needs no converted or logical type
   }
 
-  template <typename T>
+  template <std::same_as<int64_t> T>
   void operator()()
-    requires(std::is_same_v<T, int64_t>)
   {
     col_schema.type        = Type::INT64;
     col_schema.stats_dtype = statistics_dtype::dtype_int64;
     // INT64 needs no converted or logical type
   }
 
-  template <typename T>
+  template <std::same_as<uint8_t> T>
   void operator()()
-    requires(std::is_same_v<T, uint8_t>)
   {
     col_schema.type           = Type::INT32;
     col_schema.converted_type = ConvertedType::UINT_8;
@@ -383,9 +379,8 @@ struct leaf_schema_fn {
     col_schema.logical_type   = LogicalType{IntType{8, false}};
   }
 
-  template <typename T>
+  template <std::same_as<uint16_t> T>
   void operator()()
-    requires(std::is_same_v<T, uint16_t>)
   {
     col_schema.type           = Type::INT32;
     col_schema.converted_type = ConvertedType::UINT_16;
@@ -393,9 +388,8 @@ struct leaf_schema_fn {
     col_schema.logical_type   = LogicalType{IntType{16, false}};
   }
 
-  template <typename T>
+  template <std::same_as<uint32_t> T>
   void operator()()
-    requires(std::is_same_v<T, uint32_t>)
   {
     col_schema.type           = Type::INT32;
     col_schema.converted_type = ConvertedType::UINT_32;
@@ -403,9 +397,8 @@ struct leaf_schema_fn {
     col_schema.logical_type   = LogicalType{IntType{32, false}};
   }
 
-  template <typename T>
+  template <std::same_as<uint64_t> T>
   void operator()()
-    requires(std::is_same_v<T, uint64_t>)
   {
     col_schema.type           = Type::INT64;
     col_schema.converted_type = ConvertedType::UINT_64;
@@ -413,27 +406,24 @@ struct leaf_schema_fn {
     col_schema.logical_type   = LogicalType{IntType{64, false}};
   }
 
-  template <typename T>
+  template <std::same_as<float> T>
   void operator()()
-    requires(std::is_same_v<T, float>)
   {
     col_schema.type        = Type::FLOAT;
     col_schema.stats_dtype = statistics_dtype::dtype_float32;
     // FLOAT needs no converted or logical type
   }
 
-  template <typename T>
+  template <std::same_as<double> T>
   void operator()()
-    requires(std::is_same_v<T, double>)
   {
     col_schema.type        = Type::DOUBLE;
     col_schema.stats_dtype = statistics_dtype::dtype_float64;
     // DOUBLE needs no converted or logical type
   }
 
-  template <typename T>
+  template <cudf::concepts::string_view T>
   void operator()()
-    requires(std::is_same_v<T, cudf::string_view>)
   {
     col_schema.type = Type::BYTE_ARRAY;
     if (col_meta.is_enabled_output_as_binary()) {
@@ -446,9 +436,8 @@ struct leaf_schema_fn {
     }
   }
 
-  template <typename T>
+  template <std::same_as<cudf::timestamp_D> T>
   void operator()()
-    requires(std::is_same_v<T, cudf::timestamp_D>)
   {
     col_schema.type           = Type::INT32;
     col_schema.converted_type = ConvertedType::DATE;
@@ -456,9 +445,8 @@ struct leaf_schema_fn {
     col_schema.logical_type   = LogicalType{LogicalType::DATE};
   }
 
-  template <typename T>
+  template <std::same_as<cudf::timestamp_s> T>
   void operator()()
-    requires(std::is_same_v<T, cudf::timestamp_s>)
   {
     col_schema.type        = (timestamp_is_int96) ? Type::INT96 : Type::INT64;
     col_schema.stats_dtype = statistics_dtype::dtype_timestamp64;
@@ -469,9 +457,8 @@ struct leaf_schema_fn {
     }
   }
 
-  template <typename T>
+  template <std::same_as<cudf::timestamp_ms> T>
   void operator()()
-    requires(std::is_same_v<T, cudf::timestamp_ms>)
   {
     col_schema.type        = (timestamp_is_int96) ? Type::INT96 : Type::INT64;
     col_schema.stats_dtype = statistics_dtype::dtype_timestamp64;
@@ -481,9 +468,8 @@ struct leaf_schema_fn {
     }
   }
 
-  template <typename T>
+  template <std::same_as<cudf::timestamp_us> T>
   void operator()()
-    requires(std::is_same_v<T, cudf::timestamp_us>)
   {
     col_schema.type        = (timestamp_is_int96) ? Type::INT96 : Type::INT64;
     col_schema.stats_dtype = statistics_dtype::dtype_timestamp64;
@@ -493,9 +479,8 @@ struct leaf_schema_fn {
     }
   }
 
-  template <typename T>
+  template <std::same_as<cudf::timestamp_ns> T>
   void operator()()
-    requires(std::is_same_v<T, cudf::timestamp_ns>)
   {
     col_schema.type           = (timestamp_is_int96) ? Type::INT96 : Type::INT64;
     col_schema.converted_type = std::nullopt;
@@ -509,9 +494,8 @@ struct leaf_schema_fn {
     }
   }
 
-  template <typename T>
+  template <std::same_as<cudf::duration_D> T>
   void operator()()
-    requires(std::is_same_v<T, cudf::duration_D>)
   {
     // duration_D is based on int32_t and not a valid arrow duration type so simply convert to
     // time32(ms).
@@ -522,9 +506,8 @@ struct leaf_schema_fn {
     col_schema.logical_type   = LogicalType{TimeType{timestamp_is_utc, TimeUnit::MILLIS}};
   }
 
-  template <typename T>
+  template <std::same_as<cudf::duration_s> T>
   void operator()()
-    requires(std::is_same_v<T, cudf::duration_s>)
   {
     // If writing arrow schema, no logical type nor converted type is necessary
     if (write_arrow_schema) {
@@ -540,9 +523,8 @@ struct leaf_schema_fn {
     }
   }
 
-  template <typename T>
+  template <std::same_as<cudf::duration_ms> T>
   void operator()()
-    requires(std::is_same_v<T, cudf::duration_ms>)
   {
     // If writing arrow schema, no logical type nor converted type is necessary
     if (write_arrow_schema) {
@@ -557,9 +539,8 @@ struct leaf_schema_fn {
     }
   }
 
-  template <typename T>
+  template <std::same_as<cudf::duration_us> T>
   void operator()()
-    requires(std::is_same_v<T, cudf::duration_us>)
   {
     col_schema.type        = Type::INT64;
     col_schema.stats_dtype = statistics_dtype::dtype_int64;
@@ -570,9 +551,8 @@ struct leaf_schema_fn {
     }
   }
 
-  template <typename T>
+  template <std::same_as<cudf::duration_ns> T>
   void operator()()
-    requires(std::is_same_v<T, cudf::duration_ns>)
   {
     col_schema.type        = Type::INT64;
     col_schema.stats_dtype = statistics_dtype::dtype_int64;
@@ -582,9 +562,8 @@ struct leaf_schema_fn {
     }
   }
 
-  template <typename T>
+  template <cudf::concepts::fixed_point T>
   void operator()()
-    requires(cudf::is_fixed_point<T>())
   {
     if constexpr (std::is_same_v<T, numeric::decimal32>) {
       col_schema.type              = Type::INT32;
@@ -621,16 +600,14 @@ struct leaf_schema_fn {
     }
   }
 
-  template <typename T>
+  template <cudf::concepts::nested T>
   void operator()()
-    requires(cudf::is_nested<T>())
   {
     CUDF_FAIL("This functor is only meant for physical data types");
   }
 
-  template <typename T>
+  template <cudf::concepts::dictionary T>
   void operator()()
-    requires(cudf::is_dictionary<T>())
   {
     CUDF_FAIL("Dictionary columns are not supported for writing");
   }

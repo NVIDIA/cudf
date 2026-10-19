@@ -120,7 +120,7 @@ class sort_merge_join {
                                    ///< rows of the unprocessed table view if null equality is set
                                    ///< to false, otherwise equal to the unprocessed table view
 
-    std::optional<cuda::device_buffer<std::byte>> _validity_mask =
+    std::optional<cuda::device_buffer<cudf::bitmask_type>> _validity_mask =
       std::nullopt;  ///< Optional validity mask for null_equality::UNEQUAL case
     std::optional<size_type> _num_nulls =
       std::nullopt;  ///< Optional count of nulls for null_equality::UNEQUAL case

@@ -91,6 +91,20 @@ def _skip_unless_spmd(request: pytest.FixtureRequest) -> None:
         pytest.skip("skip: SPMD nranks > 1 (mark with pytest.mark.spmd to run)")
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _configure_dask() -> Generator[None, None, None]:
+    """Apply test-suite-wide Dask configuration."""
+    # workaround https://github.com/dask/distributed/issues/9374
+    try:
+        import dask
+    except ImportError:
+        yield
+        return
+
+    with dask.config.set({"distributed.client.scheduler-info-interval": "60s"}):
+        yield
+
+
 @pytest.fixture(scope="session")
 def _engine_param(request: pytest.FixtureRequest) -> EngineFixtureParam:
     """Decoded engine variant selected by pytest parametrization.

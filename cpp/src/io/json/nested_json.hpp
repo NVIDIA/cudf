@@ -154,7 +154,7 @@ struct device_json_column {
   rmm::device_uvector<int32_t> child_offsets;
 
   // Validity bitmap
-  cuda::device_buffer<std::byte> validity =
+  cuda::device_buffer<cudf::bitmask_type> validity =
     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED);
 
   // Map of child columns, if applicable.

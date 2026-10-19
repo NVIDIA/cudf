@@ -457,6 +457,7 @@ ConfigureNVBench(
   text/tokenize.cpp
   text/unicode_normalize.cpp
   text/vocab.cpp
+  text/byte_pair_encoding.cpp
 )
 
 # ##################################################################################################

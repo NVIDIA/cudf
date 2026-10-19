@@ -131,8 +131,7 @@ void find_matches_in_hash_table(HashTableType const& hash_table,
     auto stencil = cuda::counting_iterator<size_type>{0};
     auto const row_bitmask =
       cudf::detail::bitmask_and(left, stream, cudf::get_current_device_resource_ref()).first;
-    auto const pred =
-      cudf::detail::row_is_valid{reinterpret_cast<bitmask_type const*>(row_bitmask.data())};
+    auto const pred = cudf::detail::row_is_valid{row_bitmask.data()};
 
     hash_table.find_if_async(
       iter, iter + left_table_num_rows, stencil, pred, d_equal, hasher, found_begin, stream.get());
@@ -183,8 +182,7 @@ distinct_hash_join::distinct_hash_join(cudf::table_view const& right,
       auto stencil = cuda::counting_iterator<size_type>{0};
       auto const row_bitmask =
         cudf::detail::bitmask_and(_right, stream, cudf::get_current_device_resource_ref()).first;
-      auto const pred =
-        cudf::detail::row_is_valid{reinterpret_cast<bitmask_type const*>(row_bitmask.data())};
+      auto const pred = cudf::detail::row_is_valid{row_bitmask.data()};
 
       // insert valid rows
       this->_hash_table.insert_if_async(

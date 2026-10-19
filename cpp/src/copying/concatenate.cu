@@ -578,9 +578,9 @@ std::unique_ptr<table> concatenate(std::span<table_view const> tables_to_concat,
   return std::make_unique<table>(std::move(concat_columns));
 }
 
-cuda::device_buffer<std::byte> concatenate_masks(std::span<column_view const> views,
-                                                 cuda::stream_ref stream,
-                                                 rmm::device_async_resource_ref mr)
+cuda::device_buffer<cudf::bitmask_type> concatenate_masks(std::span<column_view const> views,
+                                                          cuda::stream_ref stream,
+                                                          rmm::device_async_resource_ref mr)
 {
   bool const has_nulls =
     std::any_of(views.begin(), views.end(), [](column_view const col) { return col.has_nulls(); });
@@ -590,12 +590,11 @@ cuda::device_buffer<std::byte> concatenate_masks(std::span<column_view const> vi
         return accumulator + v.size();
       });
 
-    cuda::device_buffer<std::byte> null_mask =
+    cuda::device_buffer<cudf::bitmask_type> null_mask =
       cudf::detail::create_null_mask(total_element_count, mask_state::UNINITIALIZED, stream, mr);
 
-    detail::concatenate_masks(host_span<column_view const>{views.data(), views.size()},
-                              reinterpret_cast<bitmask_type*>(null_mask.data()),
-                              stream);
+    detail::concatenate_masks(
+      host_span<column_view const>{views.data(), views.size()}, null_mask.data(), stream);
 
     return null_mask;
   }
@@ -605,9 +604,9 @@ cuda::device_buffer<std::byte> concatenate_masks(std::span<column_view const> vi
 
 }  // namespace detail
 
-cuda::device_buffer<std::byte> concatenate_masks(std::span<column_view const> views,
-                                                 cuda::stream_ref stream,
-                                                 rmm::device_async_resource_ref mr)
+cuda::device_buffer<cudf::bitmask_type> concatenate_masks(std::span<column_view const> views,
+                                                          cuda::stream_ref stream,
+                                                          rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::concatenate_masks(views, stream, mr);

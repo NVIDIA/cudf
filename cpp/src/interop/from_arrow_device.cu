@@ -191,18 +191,14 @@ dispatch_tuple_t dispatch_from_arrow_device::operator()<cudf::string_view>(
     auto const d_mask = reinterpret_cast<bitmask_type const*>(input->buffers[validity_buffer_idx]);
     // build strings into gather input form
     auto d_indices = cuda::device_buffer<cudf::strings::detail::string_index_pair>(
-      stream, mr, size, cuda::no_init);
+      stream, cudf::get_current_device_resource_ref(), size, cuda::no_init);
     thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                       cuda::counting_iterator<cudf::size_type>{offset},
                       cuda::counting_iterator<cudf::size_type>{offset + size},
-                      d_indices.data(),
+                      d_indices.begin(),
                       binary_view_to_string_index_pair{d_items, d_ptrs, d_mask, skip_mask});
     // gather strings into output column
-    auto out_col = cudf::make_strings_column(
-      cudf::device_span<cudf::strings::detail::string_index_pair const>{d_indices.data(),
-                                                                        d_indices.size()},
-      stream,
-      mr);
+    auto out_col = cudf::make_strings_column(d_indices, stream, mr);
     owned.emplace_back(std::move(out_col));
     cudf::detail::sync_stream(stream);
     return std::make_tuple<column_view, owned_columns_t>(owned.front()->view(), std::move(owned));

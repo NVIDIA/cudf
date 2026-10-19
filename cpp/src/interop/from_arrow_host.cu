@@ -94,18 +94,18 @@ CUDF_KERNEL void copy_shifted_bitmask(bitmask_type* __restrict__ destination,
 }
 
 // copies the bitmask to device and automatically applies the offset
-std::pair<std::unique_ptr<cuda::device_buffer<std::byte>>, size_type> get_mask_buffer(
+std::pair<std::unique_ptr<cuda::device_buffer<cudf::bitmask_type>>, size_type> get_mask_buffer(
   ArrowArray const* input, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
 {
   if (input->length == 0) {
-    return {std::make_unique<cuda::device_buffer<std::byte>>(
+    return {std::make_unique<cuda::device_buffer<cudf::bitmask_type>>(
               cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr)),
             0};
   }
 
   auto bitmap = static_cast<uint8_t const*>(input->buffers[validity_buffer_idx]);
   if (bitmap == nullptr || input->null_count == 0) {
-    return {std::make_unique<cuda::device_buffer<std::byte>>(
+    return {std::make_unique<cuda::device_buffer<cudf::bitmask_type>>(
               cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr)),
             0};
   }
@@ -124,7 +124,8 @@ std::pair<std::unique_ptr<cuda::device_buffer<std::byte>>, size_type> get_mask_b
   CUDF_CUDA_TRY(cudf::detail::memcpy_async(mask.data(), bitmap + offset_index, copy_size, stream));
 
   if (mask_words > 0 && bit_index > 0) {
-    auto dest_mask = cuda::device_buffer<bitmask_type>(stream, mr, padded_words, cuda::no_init);
+    auto dest_mask = cuda::device_buffer<bitmask_type>(
+      stream, cudf::get_current_device_resource_ref(), padded_words, cuda::no_init);
     cudf::detail::grid_1d config(mask_words, 256);
     copy_shifted_bitmask<<<config.num_blocks, config.num_threads_per_block, 0, stream.get()>>>(
       dest_mask.data(), mask.data(), bit_index, bit_index + num_rows, mask_words);
@@ -135,9 +136,8 @@ std::pair<std::unique_ptr<cuda::device_buffer<std::byte>>, size_type> get_mask_b
   auto const null_count =
     mask_words > 0 ? cudf::detail::count_unset_bits(mask.data(), 0, num_rows, stream) : 0;
 
-  auto const mask_bytes = reinterpret_cast<uint8_t const*>(mask.data());
-  return {std::make_unique<cuda::device_buffer<std::byte>>(cudf::detail::copy_bitmask(
-            reinterpret_cast<bitmask_type const*>(mask_bytes), 0, num_rows, stream, mr)),
+  return {std::make_unique<cuda::device_buffer<cudf::bitmask_type>>(
+            cudf::detail::copy_bitmask(mask.data(), 0, num_rows, stream, mr)),
           null_count};
 }
 
@@ -239,7 +239,7 @@ std::unique_ptr<column> dispatch_copy_from_arrow_host::operator()<cudf::string_v
   if (input->length == 0) { return make_empty_column(type_id::STRING); }
   auto [mask, null_count] =
     !skip_mask ? get_mask_buffer(input, stream, mr)
-               : std::pair{std::make_unique<cuda::device_buffer<std::byte>>(
+               : std::pair{std::make_unique<cuda::device_buffer<cudf::bitmask_type>>(
                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr)),
                            0};
   return string_column_from_arrow_host(schema, input, std::move(mask), null_count, stream, mr);
@@ -296,7 +296,7 @@ std::unique_ptr<column> dispatch_copy_from_arrow_host::operator()<cudf::struct_v
 
   auto [out_mask, null_count] =
     !skip_mask ? get_mask_buffer(input, stream, mr)
-               : std::pair{std::make_unique<cuda::device_buffer<std::byte>>(
+               : std::pair{std::make_unique<cuda::device_buffer<cudf::bitmask_type>>(
                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr)),
                            0};
 
@@ -363,7 +363,7 @@ std::unique_ptr<column> dispatch_copy_from_arrow_host::operator()<cudf::list_vie
 
   auto [out_mask, null_count] =
     !skip_mask ? get_mask_buffer(input, stream, mr)
-               : std::pair{std::make_unique<cuda::device_buffer<std::byte>>(
+               : std::pair{std::make_unique<cuda::device_buffer<cudf::bitmask_type>>(
                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr)),
                            0};
 

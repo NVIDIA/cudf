@@ -249,7 +249,7 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns,
       static_cast<size_type>(columns.size()),
       strings_count,
       itr_new_offsets,
-      reinterpret_cast<bitmask_type*>(null_mask.data()),
+      null_mask.data(),
       d_valid_count.data());
     CUDF_CUDA_TRY(cudaGetLastError());
 

@@ -268,9 +268,8 @@ struct column_to_strings_fn {
 
   // bools:
   //
-  template <typename column_type>
+  template <cudf::concepts::boolean column_type>
   std::unique_ptr<column> operator()(column_view const& column) const
-    requires(std::is_same_v<column_type, bool>)
   {
     string_scalar true_string{
       options_.get_true_value(), true, stream_, cudf::get_current_device_resource_ref()};
@@ -281,9 +280,8 @@ struct column_to_strings_fn {
 
   // strings:
   //
-  template <typename column_type>
+  template <cudf::concepts::string_view column_type>
   std::unique_ptr<column> operator()(column_view const& column_v) const
-    requires(std::is_same_v<column_type, cudf::string_view>)
   {
     if (options_.get_quoting() == cudf::io::quote_style::NONE) {
       return std::make_unique<column>(column_v, stream_, mr_);

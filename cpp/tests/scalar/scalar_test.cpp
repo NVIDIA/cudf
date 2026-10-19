@@ -141,16 +141,18 @@ TEST_F(ScalarTest, AsyncStringConstructionOwnsHostSource)
   auto upstream = cudf::get_current_device_resource_ref();
   int allocations{0};
   rmm::mr::callback_memory_resource mr{
-    [upstream, &gate, &allocations](std::size_t bytes, auto stream, void*) mutable {
-      auto* ptr = upstream.allocate(stream, bytes, cuda::mr::default_cuda_malloc_alignment);
+    [upstream, &gate, &allocations](
+      cuda::stream_ref stream, std::size_t bytes, std::size_t alignment, void*) mutable {
+      auto* ptr = upstream.allocate(stream, bytes, alignment);
       if (allocations++ == 1) {
         CUDF_CUDA_TRY(cudaLaunchHostFunc(
           stream.get(), [](void* data) { static_cast<host_func_gate*>(data)->wait(); }, &gate));
       }
       return ptr;
     },
-    [upstream](void* ptr, std::size_t bytes, auto stream, void*) mutable {
-      upstream.deallocate(stream, ptr, bytes, cuda::mr::default_cuda_malloc_alignment);
+    [upstream](
+      cuda::stream_ref stream, void* ptr, std::size_t bytes, std::size_t alignment, void*) mutable {
+      upstream.deallocate(stream, ptr, bytes, alignment);
     }};
   std::string expected{"expected"};
   auto source = cudf::detail::make_pinned_vector<char>(expected.size(), stream_ref);

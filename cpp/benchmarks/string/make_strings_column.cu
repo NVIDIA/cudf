@@ -67,8 +67,8 @@ static void BM_make_strings_column_batch(nvbench::state& state)
     auto batch_input      = cuda::device_buffer<string_index_pair>(
       stream, cudf::get_current_device_resource_ref(), cv.size(), cuda::no_init);
     thrust::tabulate(rmm::exec_policy_nosync(stream),
-                     batch_input.data(),
-                     batch_input.data() + batch_input.size(),
+                     batch_input.begin(),
+                     batch_input.end(),
                      [data_col = *d_data_ptr] __device__(auto const idx) {
                        if (data_col.is_null(idx)) { return string_index_pair{nullptr, 0}; }
                        auto const row = data_col.element<cudf::string_view>(idx);

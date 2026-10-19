@@ -84,7 +84,7 @@ std::vector<std::unique_ptr<column>> make_strings_column_batch(
   auto [offsets_cols, d_chars_sizes] =
     make_offsets_child_column_batch_async<size_type>(input, stream, mr);
 
-  std::vector<cuda::device_buffer<std::byte>> null_masks;
+  std::vector<cuda::device_buffer<cudf::bitmask_type>> null_masks;
   null_masks.reserve(num_columns);
 
   rmm::device_uvector<size_type> d_valid_counts(num_columns, stream, mr);
@@ -107,7 +107,7 @@ std::vector<std::unique_ptr<column>> make_strings_column_batch(
       cudf::detail::grid_1d{static_cast<thread_index_type>(string_count), block_size};
     cudf::detail::valid_if_kernel<block_size>
       <<<grid.num_blocks, grid.num_threads_per_block, 0, stream.get()>>>(
-        reinterpret_cast<bitmask_type*>(null_masks.back().data()),
+        null_masks.back().data(),
         string_pairs.data(),
         string_count,
         [] __device__(string_index_pair const pair) -> bool { return pair.first != nullptr; },
@@ -232,7 +232,7 @@ std::unique_ptr<column> make_strings_column(size_type num_strings,
                                             std::unique_ptr<column> offsets_column,
                                             rmm::device_buffer&& chars_buffer,
                                             size_type null_count,
-                                            cuda::device_buffer<std::byte>&& null_mask)
+                                            cuda::device_buffer<cudf::bitmask_type>&& null_mask)
 {
   CUDF_FUNC_RANGE();
 
@@ -255,7 +255,7 @@ std::unique_ptr<column> make_strings_column(size_type num_strings,
 std::unique_ptr<column> make_strings_column(size_type num_strings,
                                             rmm::device_uvector<size_type>&& offsets,
                                             rmm::device_uvector<char>&& chars,
-                                            cuda::device_buffer<std::byte>&& null_mask,
+                                            cuda::device_buffer<cudf::bitmask_type>&& null_mask,
                                             size_type null_count)
 {
   CUDF_FUNC_RANGE();

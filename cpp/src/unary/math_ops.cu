@@ -336,7 +336,7 @@ std::unique_ptr<column> unary_op_with(column_view const& input,
 template <typename OutputType, typename UFN, typename InputIterator>
 std::unique_ptr<cudf::column> transform_fn(InputIterator begin,
                                            InputIterator end,
-                                           cuda::device_buffer<std::byte>&& null_mask,
+                                           cuda::device_buffer<cudf::bitmask_type>&& null_mask,
                                            size_type null_count,
                                            cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
@@ -346,7 +346,7 @@ std::unique_ptr<cudf::column> transform_fn(InputIterator begin,
   std::unique_ptr<cudf::column> output =
     make_fixed_width_column(data_type{type_to_id<OutputType>()},
                             size,
-                            std::forward<cuda::device_buffer<std::byte>>(null_mask),
+                            std::forward<cuda::device_buffer<cudf::bitmask_type>>(null_mask),
                             null_count,
                             stream,
                             mr);

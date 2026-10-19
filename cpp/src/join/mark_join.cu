@@ -40,7 +40,7 @@ namespace cudf {
 namespace detail {
 namespace {
 
-std::pair<cuda::device_buffer<std::byte>, bitmask_type const*> build_row_bitmask(
+std::pair<cuda::device_buffer<cudf::bitmask_type>, bitmask_type const*> build_row_bitmask(
   table_view const& input, cuda::stream_ref stream)
 {
   auto const nullable_columns = get_nullable_columns(input);
@@ -51,7 +51,7 @@ std::pair<cuda::device_buffer<std::byte>, bitmask_type const*> build_row_bitmask
   if (nullable_columns.size() > 1) {
     auto row_bitmask =
       cudf::detail::bitmask_and(table_view{nullable_columns}, stream, temp_mr).first;
-    auto const row_bitmask_ptr = reinterpret_cast<cudf::bitmask_type const*>(row_bitmask.data());
+    auto const row_bitmask_ptr = row_bitmask.data();
     return std::pair(std::move(row_bitmask), row_bitmask_ptr);
   }
 

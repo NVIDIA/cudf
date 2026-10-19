@@ -59,7 +59,7 @@ struct fixed_width_column {
 
   static auto make(data_type type,
                    size_type size,
-                   cuda::device_buffer<std::byte> null_mask,
+                   cuda::device_buffer<cudf::bitmask_type> null_mask,
                    size_type null_count,
                    cuda::stream_ref stream,
                    rmm::device_async_resource_ref mr)
@@ -97,12 +97,12 @@ struct mutable_string_views_column_view {
 struct string_views_column {
   cuda::device_buffer<string_view> _data;
   size_type _size{0};
-  cuda::device_buffer<std::byte> _null_mask =
+  cuda::device_buffer<cudf::bitmask_type> _null_mask =
     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED);
   size_type _null_count{0};
 
   static auto make(size_type size,
-                   cuda::device_buffer<std::byte> null_mask,
+                   cuda::device_buffer<cudf::bitmask_type> null_mask,
                    size_type null_count,
                    cuda::stream_ref stream,
                    rmm::device_async_resource_ref mr)
@@ -113,19 +113,14 @@ struct string_views_column {
 
   auto mutable_view()
   {
-    return mutable_string_views_column_view{
-      _data.data(),
-      _size,
-      reinterpret_cast<bitmask_type const*>(_null_mask.data()),
-      0,
-      _null_count};
+    return mutable_string_views_column_view{_data.data(), _size, _null_mask.data(), 0, _null_count};
   }
 
   void set_null_count(size_type count) { _null_count = count; }
 
   bool nullable() const { return _null_mask.size() != 0; }
 
-  bitmask_type* null_mask() { return reinterpret_cast<bitmask_type*>(_null_mask.data()); }
+  bitmask_type* null_mask() { return _null_mask.data(); }
 };
 
 struct mutable_strings_column_view {
@@ -143,7 +138,7 @@ struct mutable_strings_column {
   static auto make(size_type size,
                    rmm::device_buffer chars,
                    std::unique_ptr<column> offsets,
-                   cuda::device_buffer<std::byte> null_mask,
+                   cuda::device_buffer<cudf::bitmask_type> null_mask,
                    size_type null_count)
   {
     return mutable_strings_column{make_strings_column(
@@ -1000,7 +995,7 @@ rmm::device_uvector<char> make_chars_buffer(column_view const& offsets_view,
 }
 
 std::unique_ptr<column> make_strings_column(device_span<string_view const> strings,
-                                            cuda::device_buffer<std::byte> null_mask,
+                                            cuda::device_buffer<cudf::bitmask_type> null_mask,
                                             size_type null_count,
                                             cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr)
@@ -1009,7 +1004,7 @@ std::unique_ptr<column> make_strings_column(device_span<string_view const> strin
   auto size = static_cast<size_type>(strings.size());
   if (size == 0) return make_empty_column(type_id::STRING);
 
-  auto stencil = reinterpret_cast<bitmask_type const*>(null_mask.data());
+  auto stencil = null_mask.data();
 
   // build offsets column from the strings sizes
   auto sizes = detail::make_counting_transform_iterator(

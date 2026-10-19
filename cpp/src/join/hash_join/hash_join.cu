@@ -110,9 +110,7 @@ hash_join<Hasher>::hash_join(cudf::table_view const& right,
     _nulls_equal == null_equality::UNEQUAL
       ? cudf::detail::bitmask_and(right, stream, temp_mr).first
       : cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, temp_mr);
-  auto const valid_rows = _nulls_equal == null_equality::UNEQUAL
-                            ? reinterpret_cast<bitmask_type const*>(row_bitmask.data())
-                            : nullptr;
+  auto const valid_rows = _nulls_equal == null_equality::UNEQUAL ? row_bitmask.data() : nullptr;
   // Hashing and comparing variable-width rows again can dominate construction. Cache one
   // representative index per row for keys containing lists or strings, including within structs.
   auto const cache_representatives = std::any_of(right.begin(), right.end(), has_list_or_string);

@@ -52,7 +52,12 @@ from cudf_polars.streaming.actor_graph.utils import (
     shutdown_channels_on_error,
     shutdown_on_error,
 )
-from cudf_polars.streaming.groupby import _has_stable_sorted_agg, combine, decompose
+from cudf_polars.streaming.groupby import (
+    _has_order_sensitive_agg,
+    _has_stable_sorted_agg,
+    combine,
+    decompose,
+)
 from cudf_polars.streaming.repartition import Repartition
 from cudf_polars.streaming.utils import partition_range
 
@@ -693,7 +698,11 @@ def _key_indices(
 
 def _maintain_order(ir: GroupBy | Distinct) -> bool:
     if isinstance(ir, GroupBy):
-        return ir.maintain_order or _has_stable_sorted_agg(ir.agg_requests)
+        return (
+            ir.maintain_order
+            or _has_stable_sorted_agg(ir.agg_requests)
+            or _has_order_sensitive_agg(ir.agg_requests)
+        )
     else:
         return ir.stable or ir.keep in (
             plc.stream_compaction.DuplicateKeepOption.KEEP_FIRST,

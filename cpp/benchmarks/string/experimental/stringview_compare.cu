@@ -463,7 +463,7 @@ static void BM_sv_sort(nvbench::state& state)
   auto keys = cuda::device_buffer<cudf::size_type>(
     stream, cudf::get_current_device_resource_ref(), num_rows, cuda::no_init);
   auto in_keys   = cuda::counting_iterator<cudf::size_type>{0};
-  auto out_keys  = keys.data();
+  auto out_keys  = keys.begin();
   auto tmp_bytes = std::size_t{0};
 
   if (std::getenv(BM_ARROWSTRINGVIEW)) {

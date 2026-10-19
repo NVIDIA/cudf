@@ -1022,7 +1022,7 @@ std::unique_ptr<cudf::column> get_json_object(cudf::strings_column_view const& c
 
   // potential optimization : if we know that all outputs are valid, we could skip creating
   // the validity mask altogether
-  cuda::device_buffer<std::byte> validity =
+  cuda::device_buffer<cudf::bitmask_type> validity =
     cudf::detail::create_null_mask(col.size(), mask_state::UNINITIALIZED, stream, mr);
 
   // compute results
@@ -1036,7 +1036,7 @@ std::unique_ptr<cudf::column> get_json_object(cudf::strings_column_view const& c
       sizes.data(),
       d_offsets,
       chars.data(),
-      reinterpret_cast<bitmask_type*>(validity.data()),
+      validity.data(),
       d_valid_count.data(),
       options);
   CUDF_CUDA_TRY(cudaGetLastError());

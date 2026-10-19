@@ -293,15 +293,15 @@ std::pair<std::unique_ptr<column>, std::vector<column_name_info>> device_json_co
 {
   CUDF_FUNC_RANGE();
   auto validity_size_check = [](device_json_column& json_col) {
-    CUDF_EXPECTS(json_col.validity.size() >= bitmask_allocation_size_bytes(json_col.num_rows),
+    CUDF_EXPECTS(json_col.validity.size() * sizeof(bitmask_type) >=
+                   bitmask_allocation_size_bytes(json_col.num_rows),
                  "valid_count is too small");
   };
-  auto make_validity =
-    [stream, validity_size_check](
-      device_json_column& json_col) -> std::pair<cuda::device_buffer<std::byte>, size_type> {
+  auto make_validity = [stream, validity_size_check](device_json_column& json_col)
+    -> std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type> {
     validity_size_check(json_col);
-    auto null_count = cudf::detail::null_count(
-      reinterpret_cast<bitmask_type*>(json_col.validity.data()), 0, json_col.num_rows, stream);
+    auto null_count =
+      cudf::detail::null_count(json_col.validity.data(), 0, json_col.num_rows, stream);
     // full null_mask is always required for parse_data
     return {std::move(json_col.validity), null_count};
     // Note: json_col modified here, moves this memory

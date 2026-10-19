@@ -157,6 +157,15 @@ jobs:
           - 'cpp/libcudf_streaming/src/**'
         test_cmake:
           - 'ci/test_cmake.sh'
+        devcontainer_build_inputs:
+          - '.devcontainer/**'
+          - '.github/workflows/pr.yaml'
+          - 'RAPIDS_BRANCH'
+          - 'cmake/**'
+          - 'cpp/**'
+          - 'dependencies.yaml'
+          - 'python/**'
+          - '!**/*.md'
         cpp_linters:
           - 'cpp/.clang-tidy'
           - 'cpp/scripts/parse_iwyu_output.py'
@@ -1033,7 +1042,8 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    needs: telemetry-setup
+    needs: [telemetry-setup, changed-files]
+    if: fromJSON(needs.changed-files.outputs.changed_file_groups).devcontainer_build_inputs
     uses: rapidsai/shared-workflows/.github/workflows/build-in-devcontainer.yaml@main
     with:
       arch: '["amd64", "arm64"]'

@@ -38,6 +38,7 @@
 #include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/for_each.h>
+#include <thrust/gather.h>
 
 #include <nanoarrow/nanoarrow.h>
 #include <nanoarrow/nanoarrow.hpp>
@@ -88,8 +89,7 @@ struct dispatch_to_arrow_host {
     enable_hugepage(&bitmap->buffer);
     CUDF_CUDA_TRY(cudf::detail::memcpy_async(
       bitmap->buffer.data,
-      (column.offset() > 0) ? reinterpret_cast<cudf::bitmask_type const*>(
-                                cudf::detail::copy_bitmask(column, stream, mr).data())
+      (column.offset() > 0) ? cudf::detail::copy_bitmask(column, stream, mr).data()
                             : column.null_mask(),
       bitmap->buffer.size_bytes,
       stream));
@@ -149,7 +149,7 @@ int dispatch_to_arrow_host::operator()<bool>(ArrowArray* out) const
   auto bitmask = detail::bools_to_mask(column, stream, mr);
   NANOARROW_RETURN_NOT_OK(populate_data_buffer(
     device_span<uint8_t const>(reinterpret_cast<uint8_t const*>(bitmask.first->data()),
-                               bitmask.first->size()),
+                               bitmask.first->size() * sizeof(bitmask_type)),
     ArrowArrayBuffer(tmp.get(), fixed_width_data_buffer_idx)));
 
   ArrowArrayMove(tmp.get(), out);
@@ -409,13 +409,10 @@ struct strings_to_binary_view {
                    d_str.data(),
                    d_str.data() + NANOARROW_BINARY_VIEW_PREFIX_SIZE,
                    item.ref.prefix);
-      auto const offset = d_offsets[idx];
-      auto const buf_idx =
-        cuda::std::distance(buffer_offsets.data(),
-                            thrust::upper_bound(thrust::seq,
-                                                buffer_offsets.data(),
-                                                (buffer_offsets.data() + buffer_offsets.size()),
-                                                offset));
+      auto const offset  = d_offsets[idx];
+      auto const buf_idx = cuda::std::distance(
+        buffer_offsets.begin(),
+        thrust::upper_bound(thrust::seq, buffer_offsets.begin(), buffer_offsets.end(), offset));
       auto const new_offset = offset - (buf_idx == 0 ? 0 : buffer_offsets[buf_idx - 1]);
       item.ref.buffer_index = buf_idx;
       item.ref.offset       = static_cast<int32_t>(new_offset);
@@ -498,12 +495,12 @@ unique_device_array_t to_arrow_host_stringview(cudf::strings_column_view const& 
                         d_offsets + longer_strings.size(),
                         bound_itr,
                         bound_itr + num_buffers,
-                        buffer_indices.data());
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                      buffer_indices.data(),
-                      (buffer_indices.data() + buffer_indices.size()),
-                      buffer_offsets.data(),
-                      [d_offsets] __device__(auto idx) { return d_offsets[idx]; });
+                        buffer_indices.begin());
+    thrust::gather(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                   buffer_indices.begin(),
+                   buffer_indices.end(),
+                   d_offsets,
+                   buffer_offsets.begin());
     auto h_offsets = make_std_vector(buffer_offsets, stream);
 
     // build up the variadic buffers needed

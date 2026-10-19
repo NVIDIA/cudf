@@ -318,8 +318,7 @@ class key_remap_table : public key_remap_table_interface {
       skip_nulls
         ? cudf::detail::bitmask_and(_right, stream, cudf::get_current_device_resource_ref()).first
         : cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED);
-    auto const bitmask_ptr =
-      skip_nulls ? reinterpret_cast<cudf::bitmask_type const*>(row_bitmask.data()) : nullptr;
+    auto const bitmask_ptr = skip_nulls ? row_bitmask.data() : nullptr;
 
     if (compute_metrics) {
       // Use hash-based atomic counting for metrics computation
@@ -468,8 +467,7 @@ class key_remap_table : public key_remap_table_interface {
       auto stencil = cuda::counting_iterator<cudf::size_type>{0};
       auto const row_bitmask =
         cudf::detail::bitmask_and(left_keys, stream, cudf::get_current_device_resource_ref()).first;
-      auto const pred =
-        row_is_valid{reinterpret_cast<cudf::bitmask_type const*>(row_bitmask.data())};
+      auto const pred = row_is_valid{row_bitmask.data()};
 
       _hash_table.find_if_async(iter,
                                 iter + left_num_rows,

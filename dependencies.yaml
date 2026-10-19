@@ -1151,7 +1151,7 @@ dependencies:
             packages:
               - numba==0.60.0
               - *pandas
-              - numba-cuda==0.22.2
+              - numba-cuda==0.30.2
           - matrix: {dependencies: "latest"}
             packages:
               - *pandas

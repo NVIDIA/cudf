@@ -128,8 +128,7 @@ void post_process_list_overlap(cudf::column_view const& lhs,
     // new nullmask.
     if (overlap_cv.nullable()) {
       auto [null_mask, null_count] = cudf::bitmask_and(
-        std::vector<bitmask_type const*>{
-          overlap_cv.null_mask(), reinterpret_cast<bitmask_type const*>(new_null_mask->data())},
+        std::vector<bitmask_type const*>{overlap_cv.null_mask(), new_null_mask->data()},
         std::vector<cudf::size_type>{0, 0},
         overlap_cv.size(),
         stream,

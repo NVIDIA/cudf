@@ -87,7 +87,8 @@ struct result_column_creator {
       return children;
     };
 
-    auto [null_mask, null_count] = [&]() -> std::pair<cuda::device_buffer<std::byte>, size_type> {
+    auto [null_mask,
+          null_count] = [&]() -> std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type> {
       if (output_size > 0 && nullable) {
         return {create_null_mask(output_size, mask_state::ALL_NULL, stream, mr), output_size};
       }

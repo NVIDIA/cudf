@@ -88,7 +88,7 @@ std::unique_ptr<table> build_table(
             [] __device__(auto i) { return i != InvalidIndex; },
             stream,
             mr)
-        : std::pair<cuda::device_buffer<std::byte>, size_type>{
+        : std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type>{
             cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream), size_type{0}};
 
     columns.insert(columns.begin() + explode_column_idx,

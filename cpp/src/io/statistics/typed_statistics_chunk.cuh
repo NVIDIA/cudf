@@ -17,11 +17,13 @@
 #include "temp_storage_wrapper.cuh"
 
 #include <cudf/fixed_point/fixed_point.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/wrappers/timestamps.hpp>
 
 #include <cuda/functional>
 #include <cuda/std/cmath>
+#include <cuda/std/concepts>
 #include <cuda/std/functional>
 #include <cuda/std/limits>
 #include <cuda/std/type_traits>
@@ -46,45 +48,39 @@ class union_member {
                        reference_type<U, byte_array_stats>,
                        reference_type<U, T>>>;
 
-  template <typename T, typename U>
+  template <cuda::std::unsigned_integral T, typename U>
   __device__ static type<T, U> get(U& val)
-    requires(cudf::is_integral<T>() and cudf::is_unsigned<T>())
   {
     return val.u_val;
   }
 
-  template <typename T, typename U>
+  template <cuda::std::signed_integral T, typename U>
   __device__ static type<T, U> get(U& val)
-    requires(cudf::is_integral<T>() and cudf::is_signed<T>() and
-             not cuda::std::is_same_v<T, __int128_t>)
+    requires(not cuda::std::same_as<T, __int128_t>)
   {
     return val.i_val;
   }
 
-  template <typename T, typename U>
+  template <cuda::std::same_as<__int128_t> T, typename U>
   __device__ static type<T, U> get(U& val)
-    requires(cuda::std::is_same_v<T, __int128_t>)
   {
     return val.d128_val;
   }
 
-  template <typename T, typename U>
+  template <cuda::std::floating_point T, typename U>
   __device__ static type<T, U> get(U& val)
-    requires(std::is_floating_point_v<T>)
   {
     return val.fp_val;
   }
 
-  template <typename T, typename U>
+  template <cudf::concepts::string_view T, typename U>
   __device__ static type<T, U> get(U& val)
-    requires(std::is_same_v<T, string_view>)
   {
     return val.str_val;
   }
 
-  template <typename T, typename U>
+  template <cuda::std::same_as<statistics::byte_array_view> T, typename U>
   __device__ static type<T, U> get(U& val)
-    requires(std::is_same_v<T, statistics::byte_array_view>)
   {
     return val.byte_val;
   }

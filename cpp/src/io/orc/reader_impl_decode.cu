@@ -17,6 +17,7 @@
 #include <cudf/detail/structs/utilities.hpp>
 #include <cudf/detail/transform.hpp>
 #include <cudf/detail/utilities/batched_memcpy.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/config_utils.hpp>
@@ -139,11 +140,18 @@ cuda::device_buffer<std::uint8_t> decompress_stripe_data(
   // This is still a valid input, thus do not be panick.
   if (decomp_data.empty()) { return decomp_data; }
 
-  rmm::device_uvector<device_span<uint8_t const>> inflate_in(
-    num_compressed_blocks + num_uncompressed_blocks, stream);
-  rmm::device_uvector<device_span<uint8_t>> inflate_out(
-    num_compressed_blocks + num_uncompressed_blocks, stream);
-  rmm::device_uvector<codec_exec_result> inflate_res(num_compressed_blocks, stream);
+  cuda::device_buffer<device_span<uint8_t const>> inflate_in(
+    stream,
+    cudf::get_current_device_resource_ref(),
+    num_compressed_blocks + num_uncompressed_blocks,
+    cuda::no_init);
+  cuda::device_buffer<device_span<uint8_t>> inflate_out(
+    stream,
+    cudf::get_current_device_resource_ref(),
+    num_compressed_blocks + num_uncompressed_blocks,
+    cuda::no_init);
+  cuda::device_buffer<codec_exec_result> inflate_res(
+    stream, cudf::get_current_device_resource_ref(), num_compressed_blocks, cuda::no_init);
   thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                inflate_res.begin(),
                inflate_res.end(),
@@ -305,7 +313,8 @@ void update_null_mask(cudf::detail::hostdevice_2dvector<column_desc>& chunks,
       auto parent_mask_len = chunks[0][col_idx].column_num_rows;
 
       if (child_valid_map_base != nullptr) {
-        rmm::device_uvector<uint32_t> dst_idx(child_mask_len, stream);
+        cuda::device_buffer<uint32_t> dst_idx(
+          stream, cudf::get_current_device_resource_ref(), child_mask_len, cuda::no_init);
         // Copy indexes at which the parent has valid value.
         cudf::detail::copy_if_async(
           cuda::counting_iterator<int64_t>{0},
@@ -318,7 +327,7 @@ void update_null_mask(cudf::detail::hostdevice_2dvector<column_desc>& chunks,
 
         auto merged_null_mask = cudf::detail::create_null_mask(
           parent_mask_len, mask_state::ALL_NULL, cuda::stream_ref(stream), mr);
-        auto merged_mask      = reinterpret_cast<bitmask_type*>(merged_null_mask.data());
+        auto merged_mask      = merged_null_mask.data();
         uint32_t* dst_idx_ptr = dst_idx.data();
         // Copy child valid bits from child column to valid indexes, this will merge both child
         // and parent null masks
@@ -397,7 +406,8 @@ void decode_stream_data(int64_t num_dicts,
   });
 
   // Allocate global dictionary for deserializing
-  rmm::device_uvector<dictionary_entry> global_dict(num_dicts, stream);
+  cuda::device_buffer<dictionary_entry> global_dict(
+    stream, cudf::get_current_device_resource_ref(), num_dicts, cuda::no_init);
 
   chunks.host_to_device_async(stream);
   decode_nulls_and_string_dictionaries(chunks.base_device_ptr(),
@@ -470,7 +480,7 @@ void scan_null_counts(cudf::detail::hostdevice_2dvector<column_desc> const& chun
       prefix_sums_to_update.push_back({col_idx, d_prefix_sums + num_stripes * col_idx});
     }
   }
-  auto const d_prefix_sums_to_update = cudf::detail::make_device_uvector_async(
+  auto const d_prefix_sums_to_update = cudf::detail::make_device_buffer_async(
     prefix_sums_to_update, stream, cudf::get_current_device_resource_ref());
 
   thrust::for_each(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),

@@ -2070,12 +2070,13 @@ struct contiguous_split_state {
         partition_row_counts.begin(),
         partition_row_counts.end(),
         std::back_inserter(result),
-        [](size_type partition_rows) {
+        [stream = stream,
+         mr     = mr.value_or(cudf::get_current_device_resource_ref())](size_type partition_rows) {
           auto partition = cudf::table_view{std::vector<column_view>{}, partition_rows};
           return packed_table{partition,
                               packed_columns{std::make_unique<std::vector<uint8_t>>(
                                                cudf::pack_metadata(partition, nullptr, 0)),
-                                             std::make_unique<rmm::device_buffer>()}};
+                                             std::make_unique<rmm::device_buffer>(0, stream, mr)}};
         });
       return result;
     }
@@ -2129,15 +2130,17 @@ struct contiguous_split_state {
     std::vector<packed_table> result;
     result.reserve(num_partitions);
     auto const iter = cuda::counting_iterator<std::size_t>{0};
-    std::transform(iter,
-                   iter + num_partitions,
-                   std::back_inserter(result),
-                   [&empty_inputs](int partition_index) {
-                     return packed_table{empty_inputs,
-                                         packed_columns{std::make_unique<std::vector<uint8_t>>(
-                                                          pack_metadata(empty_inputs, nullptr, 0)),
-                                                        std::make_unique<rmm::device_buffer>()}};
-                   });
+    std::transform(
+      iter,
+      iter + num_partitions,
+      std::back_inserter(result),
+      [&empty_inputs, stream = stream, mr = mr.value_or(cudf::get_current_device_resource_ref())](
+        int partition_index) {
+        return packed_table{empty_inputs,
+                            packed_columns{std::make_unique<std::vector<uint8_t>>(
+                                             pack_metadata(empty_inputs, nullptr, 0)),
+                                           std::make_unique<rmm::device_buffer>(0, stream, mr)}};
+      });
 
     return result;
   }

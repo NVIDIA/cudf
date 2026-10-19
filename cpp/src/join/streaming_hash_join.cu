@@ -358,7 +358,7 @@ class streaming_hash_join_impl {
 
     auto preprocessed = row::equality::preprocessed_table::create(keys, stream, mr.get_output_mr());
     auto const batch_rows = keys.num_rows();
-    auto row_bitmask      = [&]() -> std::optional<cuda::device_buffer<std::byte>> {
+    auto row_bitmask      = [&]() -> std::optional<cuda::device_buffer<cudf::bitmask_type>> {
       if (batch_rows > 0 && compare_nulls == null_equality::UNEQUAL && nullable(keys)) {
         return cudf::detail::bitmask_and(keys, stream, mr.get_temporary_mr()).first;
       }
@@ -395,12 +395,11 @@ class streaming_hash_join_impl {
         if (compare_nulls == null_equality::EQUAL || !nullable(keys)) {
           hash_table.insert_async(input_begin, input_begin + batch_rows, stream.get());
         } else {
-          hash_table.insert_if_async(
-            input_begin,
-            input_begin + batch_rows,
-            cuda::counting_iterator<size_type>{0},
-            row_is_valid{reinterpret_cast<bitmask_type const*>(row_bitmask->data())},
-            stream.get());
+          hash_table.insert_if_async(input_begin,
+                                     input_begin + batch_rows,
+                                     cuda::counting_iterator<size_type>{0},
+                                     row_is_valid{row_bitmask->data()},
+                                     stream.get());
         }
       };
 

@@ -363,12 +363,13 @@ std::pair<std::unique_ptr<cudf::table>, std::vector<char>> create_parquet_with_s
 
     auto const make_null_mask = [stream](auto begin, auto end) {
       auto [null_mask, null_count] = cudf::test::detail::make_null_mask_vector(begin, end);
-      auto const* data             = reinterpret_cast<uint8_t const*>(null_mask.data());
-      auto d_mask                  = cuda::device_buffer<std::byte>{
+      auto const* data             = null_mask.data();
+      auto d_mask                  = cuda::device_buffer<cudf::bitmask_type>{
         stream,
         cudf::get_current_device_resource_ref(),
         data,
-        data + cudf::bitmask_allocation_size_bytes(cudf::distance(begin, end))};
+        data + cudf::bitmask_allocation_size_bytes(cudf::distance(begin, end)) /
+                 sizeof(cudf::bitmask_type)};
       stream.sync();
       return std::pair{std::move(d_mask), null_count};
     };

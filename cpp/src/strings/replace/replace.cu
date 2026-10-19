@@ -531,8 +531,7 @@ std::unique_ptr<column> replace(strings_column_view const& input,
       return std::pair{cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0};
     }
   }();
-  auto const d_valid_mask =
-    has_any_nulls ? reinterpret_cast<bitmask_type const*>(null_mask.data()) : nullptr;
+  auto const d_valid_mask = has_any_nulls ? null_mask.data() : nullptr;
 
   auto d_targets = column_device_view::create(targets.parent(), stream);
   auto d_repls   = column_device_view::create(repls.parent(), stream);

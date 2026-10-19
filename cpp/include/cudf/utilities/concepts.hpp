@@ -169,6 +169,30 @@ template <typename T>
 concept dictionary_key = !dictionary<T> && cuda::std::totally_ordered<T>;
 
 /**
+ * @brief Satisfied if `T` is the cudf string type, `cudf::string_view`.
+ *
+ * @tparam T The type to verify
+ */
+template <typename T>
+concept string_view = cuda::std::same_as<cuda::std::remove_cv_t<T>, cudf::string_view>;
+
+/**
+ * @brief Satisfied if `T` is the cudf list type, `cudf::list_view`.
+ *
+ * @tparam T The type to verify
+ */
+template <typename T>
+concept list_view = cuda::std::same_as<cuda::std::remove_cv_t<T>, cudf::list_view>;
+
+/**
+ * @brief Satisfied if `T` is the cudf struct type, `cudf::struct_view`.
+ *
+ * @tparam T The type to verify
+ */
+template <typename T>
+concept struct_view = cuda::std::same_as<cuda::std::remove_cv_t<T>, cudf::struct_view>;
+
+/**
  * @brief Satisfied if `T` is a nested type.
  *
  * "Nested" types can have an arbitrarily deep list of descendants of the same type. Strings are
@@ -177,8 +201,7 @@ concept dictionary_key = !dictionary<T> && cuda::std::totally_ordered<T>;
  * @tparam T The type to verify
  */
 template <typename T>
-concept nested = cuda::std::same_as<cuda::std::remove_cv_t<T>, list_view> ||
-                 cuda::std::same_as<cuda::std::remove_cv_t<T>, struct_view>;
+concept nested = list_view<T> || struct_view<T>;
 
 /**
  * @brief Satisfied if `T` is a compound type.
@@ -190,8 +213,7 @@ concept nested = cuda::std::same_as<cuda::std::remove_cv_t<T>, list_view> ||
  * @tparam T The type to verify
  */
 template <typename T>
-concept compound =
-  cuda::std::same_as<cuda::std::remove_cv_t<T>, string_view> || dictionary<T> || nested<T>;
+concept compound = string_view<T> || dictionary<T> || nested<T>;
 
 /** @} */
 

@@ -411,7 +411,7 @@ std::unique_ptr<column> url_decode(strings_column_view const& strings,
   CUDF_CUDA_TRY(cudaGetLastError());
 
   // copy null mask
-  cuda::device_buffer<std::byte> null_mask =
+  cuda::device_buffer<cudf::bitmask_type> null_mask =
     cudf::detail::copy_bitmask(strings.parent(), stream, mr);
 
   return make_strings_column(strings_count,

@@ -15,11 +15,13 @@
 #include <cudf/strings/detail/convert/fixed_point.cuh>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/structs/struct_view.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/std/concepts>
 #include <cuda/std/iterator>
 #include <cuda/std/limits>
 #include <cuda/std/optional>
@@ -443,9 +445,7 @@ struct ConvertFunctor {
    *
    * @return bool Whether the parsed value is valid.
    */
-  template <typename T,
-            CUDF_ENABLE_IF(std::is_integral_v<T> and !std::is_same_v<T, bool> and
-                           !cudf::is_fixed_point<T>())>
+  template <cudf::concepts::integral_not_bool T>
   __device__ __forceinline__ bool operator()(char const* begin,
                                              char const* end,
                                              void* out_buffer,
@@ -472,7 +472,7 @@ struct ConvertFunctor {
    *
    * @return bool Whether the parsed value is valid.
    */
-  template <typename T, CUDF_ENABLE_IF(cudf::is_fixed_point<T>())>
+  template <cudf::concepts::fixed_point T>
   __host__ __device__ __forceinline__ bool operator()(char const* begin,
                                                       char const* end,
                                                       void* out_buffer,
@@ -494,7 +494,7 @@ struct ConvertFunctor {
   /**
    * @brief Dispatch for boolean type types.
    */
-  template <typename T, CUDF_ENABLE_IF(std::is_same_v<T, bool>)>
+  template <cudf::concepts::boolean T>
   __device__ __forceinline__ bool operator()(char const* begin,
                                              char const* end,
                                              void* out_buffer,
@@ -523,7 +523,7 @@ struct ConvertFunctor {
    * @brief Dispatch for floating points, which are set to NaN if the input
    * is not valid. In such case, the validity mask is set to zero too.
    */
-  template <typename T, CUDF_ENABLE_IF(std::is_floating_point_v<T>)>
+  template <cuda::std::floating_point T>
   __device__ __forceinline__ bool operator()(char const* begin,
                                              char const* end,
                                              void* out_buffer,
@@ -551,9 +551,7 @@ struct ConvertFunctor {
   /**
    * @brief Dispatch for remaining supported types, i.e., timestamp and duration types.
    */
-  template <typename T,
-            CUDF_ENABLE_IF(!std::is_integral_v<T> and !std::is_floating_point_v<T> and
-                           !cudf::is_fixed_point<T>())>
+  template <typename T>
   __host__ __device__ __forceinline__ bool operator()(char const* begin,
                                                       char const* end,
                                                       void* out_buffer,

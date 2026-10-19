@@ -2779,14 +2779,14 @@ TEST_F(OrcChunkedWriterTest, OutOfMemoryRetry)
   // Not the current resource, which is replaced below
   rmm::mr::cuda_memory_resource upstream;
   rmm::mr::callback_memory_resource mr{
-    [&](std::size_t bytes, auto stream, void*) -> void* {
+    [&](cuda::stream_ref stream, std::size_t bytes, std::size_t alignment, void*) -> void* {
       // An allocation after output starts could fail when the write can no longer be retried
       EXPECT_EQ(out_buffer.size(), output_start);
       if (fail_allocation) { throw rmm::bad_alloc{"Injected ORC OOM"}; }
-      return upstream.allocate(stream, bytes, cuda::mr::default_cuda_malloc_alignment);
+      return upstream.allocate(stream, bytes, alignment);
     },
-    [&](void* ptr, std::size_t bytes, auto stream, void*) {
-      upstream.deallocate(stream, ptr, bytes, cuda::mr::default_cuda_malloc_alignment);
+    [&](cuda::stream_ref stream, void* ptr, std::size_t bytes, std::size_t alignment, void*) {
+      upstream.deallocate(stream, ptr, bytes, alignment);
     }};
   {
     cudf::test::scoped_current_device_resource resource_scope{mr};

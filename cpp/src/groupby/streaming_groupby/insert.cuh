@@ -52,7 +52,7 @@ streaming_groupby::impl::batch_insert_result streaming_groupby::impl::probe_and_
   auto [bitmask_buffer, batch_bitmask] =
     skip_rows_with_nulls
       ? detail::compute_row_bitmask(batch_keys, stream)
-      : std::pair<cuda::device_buffer<std::byte>, bitmask_type const*>{
+      : std::pair<cuda::device_buffer<cudf::bitmask_type>, bitmask_type const*>{
           cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream), nullptr};
 
   // Precompute batch hash values.  Caching is faster than inlining the row hasher

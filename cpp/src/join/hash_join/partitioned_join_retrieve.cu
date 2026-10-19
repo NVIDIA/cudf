@@ -110,9 +110,7 @@ hash_join<Hasher>::partitioned_join_retrieve(join_kind join,
 
     cuda::device_buffer<size_type> probe_groups(stream, temp_mr, partition_size, cuda::no_init);
     auto const row_bitmask = cudf::detail::bitmask_and(left_partition_view, stream, temp_mr).first;
-    auto const valid_rows  = _nulls_equal == null_equality::UNEQUAL
-                               ? reinterpret_cast<bitmask_type const*>(row_bitmask.data())
-                               : nullptr;
+    auto const valid_rows  = _nulls_equal == null_equality::UNEQUAL ? row_bitmask.data() : nullptr;
     auto save_groups       = [&](auto equality, auto hasher) {
       if (join == join_kind::INNER_JOIN) {
         launch_hash_csr_probe_count_kernel<false>(partition_size,

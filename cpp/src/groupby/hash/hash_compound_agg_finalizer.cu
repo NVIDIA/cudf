@@ -125,7 +125,7 @@ void hash_compound_agg_finalizer::operator()<aggregation::MEAN>(aggregation cons
       count_result.begin<size_type>(), count_result.end<size_type>(), stream, mr.as_temporary());
     if (null_count > 0) {
       result->set_null_mask(
-        cuda::device_buffer<std::byte>{
+        cuda::device_buffer<cudf::bitmask_type>{
           stream, mr.get_output_mr(), null_mask.begin(), null_mask.end()},
         null_count);
     }

@@ -63,8 +63,7 @@ cuda::device_buffer<T> make_zeroed_device_buffer(std::size_t size,
                                                  cuda::stream_ref stream,
                                                  cudf::memory_resources mr)
 {
-  cuda::device_buffer<T> ret(stream, mr.get_output_mr(), size, cuda::no_init);
-  if (size != 0) { CUDF_CUDA_TRY(cudaMemsetAsync(ret.data(), 0, size * sizeof(T), stream.get())); }
+  auto ret = make_zeroed_device_buffer_async<T>(size, stream, mr);
   cudf::detail::sync_stream(stream);
   return ret;
 }
@@ -89,8 +88,7 @@ cuda::device_buffer<std::remove_cv_t<T>> make_device_buffer_async(host_span<T> s
   using value_type = std::remove_cv_t<T>;
   cuda::device_buffer<value_type> ret(
     stream, mr.get_output_mr(), source_data.size(), cuda::no_init);
-  CUDF_CUDA_TRY(cudf::detail::memcpy_async(
-    ret.data(), source_data.data(), source_data.size() * sizeof(value_type), stream));
+  cuda_memcpy_async<value_type>(ret, host_span<value_type const>{source_data}, stream);
   return ret;
 }
 
@@ -111,8 +109,7 @@ cuda::device_buffer<typename Container::value_type> make_device_buffer_async(
   Container const& c, cuda::stream_ref stream, cudf::memory_resources mr)
   requires(std::is_convertible_v<Container, host_span<typename Container::value_type const>>)
 {
-  return make_device_buffer_async(
-    host_span<typename Container::value_type const>{c}, stream, mr.get_output_mr());
+  return make_device_buffer_async(host_span<typename Container::value_type const>{c}, stream, mr);
 }
 
 /**
@@ -132,7 +129,7 @@ cuda::device_buffer<T> make_device_buffer_async(std::vector<T, Allocator> const&
                                                 cuda::stream_ref stream,
                                                 cudf::memory_resources mr)
 {
-  return make_device_buffer_async(host_span<T const>{source_data}, stream, mr.get_output_mr());
+  return make_device_buffer_async(host_span<T const>{source_data}, stream, mr);
 }
 
 /**
@@ -152,7 +149,7 @@ cuda::device_buffer<T> make_device_buffer(host_span<T const> source_data,
                                           cuda::stream_ref stream,
                                           cudf::memory_resources mr)
 {
-  auto ret = make_device_buffer_async(source_data, stream, mr.get_output_mr());
+  auto ret = make_device_buffer_async(source_data, stream, mr);
   cudf::detail::sync_stream(stream);
   return ret;
 }
@@ -175,8 +172,7 @@ cuda::device_buffer<typename Container::value_type> make_device_buffer(Container
                                                                        cudf::memory_resources mr)
   requires(std::is_convertible_v<Container, host_span<typename Container::value_type const>>)
 {
-  return make_device_buffer(
-    host_span<typename Container::value_type const>{c}, stream, mr.get_output_mr());
+  return make_device_buffer(host_span<typename Container::value_type const>{c}, stream, mr);
 }
 
 /**
@@ -196,7 +192,7 @@ cuda::device_buffer<T> make_device_buffer(std::vector<T, Allocator> const& sourc
                                           cuda::stream_ref stream,
                                           cudf::memory_resources mr)
 {
-  return make_device_buffer(host_span<T const>{source_data}, stream, mr.get_output_mr());
+  return make_device_buffer(host_span<T const>{source_data}, stream, mr);
 }
 
 }  // namespace cudf::detail

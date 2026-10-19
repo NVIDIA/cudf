@@ -19,6 +19,7 @@
 #include <cudf/wrappers/timestamps.hpp>
 
 #include <cub/block/block_reduce.cuh>
+#include <cuda/std/concepts>
 
 namespace cudf {
 namespace io {
@@ -56,11 +57,11 @@ union block_reduce_storage {
   DECLARE_MEMBER(byte_array_view)
 };
 
-#define STORAGE_WRAPPER_GET(TYPE)                                                                 \
-  template <typename T>                                                                           \
-  __device__ std::enable_if_t<std::is_same_v<T, TYPE>, cub_temp_storage<TYPE, block_size>&> get() \
-  {                                                                                               \
-    return storage.MEMBER_NAME(TYPE);                                                             \
+#define STORAGE_WRAPPER_GET(TYPE)                      \
+  template <cuda::std::same_as<TYPE> T>                \
+  __device__ cub_temp_storage<TYPE, block_size>& get() \
+  {                                                    \
+    return storage.MEMBER_NAME(TYPE);                  \
   }
 
 /**

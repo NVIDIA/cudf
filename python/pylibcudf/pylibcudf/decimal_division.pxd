@@ -4,6 +4,7 @@ from pylibcudf.libcudf.round cimport rounding_method
 
 from .column cimport Column
 from .scalar cimport Scalar
+from .types cimport DataType
 
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
@@ -11,6 +12,7 @@ from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 cpdef Column divide_decimal(
     Column lhs,
     Column rhs,
+    DataType output_type,
     rounding_method round_method = *,
     object stream = *,
     DeviceMemoryResource mr = *
@@ -19,6 +21,7 @@ cpdef Column divide_decimal(
 cpdef Column divide_decimal_column_scalar(
     Column lhs,
     Scalar rhs,
+    DataType output_type,
     rounding_method round_method = *,
     object stream = *,
     DeviceMemoryResource mr = *
@@ -27,6 +30,7 @@ cpdef Column divide_decimal_column_scalar(
 cpdef Column divide_decimal_scalar_column(
     Scalar lhs,
     Column rhs,
+    DataType output_type,
     rounding_method round_method = *,
     object stream = *,
     DeviceMemoryResource mr = *

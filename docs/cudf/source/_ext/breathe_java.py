@@ -32,6 +32,7 @@ deprecation information are computed from the XML directly.
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 import glob
 import os
@@ -373,6 +374,8 @@ def clean_java_xml(path: str) -> None:
     - Link text is shown as in javadoc, ``Class.member`` instead of
       ``Class#member``.
     - Doxygen marks package-private classes and members of enums as public.
+    - Public and protected members of package-private superclasses are
+      copied into their public subclasses, as javadoc documents them.
     """
     trees = {
         fn: ET.parse(fn)
@@ -410,6 +413,11 @@ def clean_java_xml(path: str) -> None:
         for tree in trees.values()
         for compound in tree.getroot().iter("compounddef")
     }
+    compounds = {
+        compound.get("id"): compound
+        for tree in trees.values()
+        for compound in tree.getroot().iter("compounddef")
+    }
 
     for fn, tree in trees.items():
         root = tree.getroot()
@@ -418,6 +426,10 @@ def clean_java_xml(path: str) -> None:
             if compound.get("kind") == "enum":
                 compound.set("kind", "class")
                 changed = True
+            if protections[compound.get("id")] in ("public", "protected"):
+                changed |= _copy_hidden_base_members(
+                    compound, compounds, protections, qualified_ids
+                )
             prot = protections[compound.get("id")]
             if prot != compound.get("prot"):
                 compound.set("prot", prot)
@@ -591,6 +603,85 @@ def _declared_protection(
     if interfaces is not None and outer in interfaces:
         return prot
     return "package"
+
+
+def _copy_hidden_base_members(
+    compound: ET.Element,
+    compounds: dict[str, ET.Element],
+    protections: dict[str, str],
+    qualified_ids: dict[str, list[str]],
+) -> bool:
+    """Copy the members *compound* inherits from non-public superclasses.
+
+    Like javadoc, document the public and protected members of a
+    package-private superclass as members of the public subclass, since the
+    superclass itself is not documented.
+    """
+    fullname = compound.findtext("compoundname").replace("::", ".")
+    own = {
+        (m.findtext("name"), m.findtext("argsstring"))
+        for m in compound.iter("memberdef")
+    }
+    changed = False
+    base = compound
+    while True:
+        # Java classes have one superclass; skip interfaces.
+        bases = [
+            compounds[id_]
+            for ref in base.iterfind("basecompoundref")
+            for id_ in qualified_ids.get(ref.text.replace("::", "."), [])
+            if id_ in compounds and not id_.startswith("interface")
+        ]
+        if not bases or protections[bases[0].get("id")] in (
+            "public",
+            "protected",
+        ):
+            return changed
+        base = bases[0]
+        base_id = base.get("id")
+        base_name = base.findtext("compoundname").replace("::", ".")
+        simple_name = base_name.rpartition(".")[2]
+        for section in base.iterfind("sectiondef"):
+            for member in section.iterfind("memberdef"):
+                name = member.findtext("name")
+                key = (name, member.findtext("argsstring"))
+                if (
+                    member.get("prot") not in ("public", "protected")
+                    or name in (simple_name, "[static initializer]")
+                    or key in own
+                ):
+                    continue
+                own.add(key)
+                clone = copy.deepcopy(member)
+                old_id = member.get("id")
+                new_id = compound.get("id") + old_id[len(base_id) :]
+                clone.set("id", new_id)
+                for tag in ("definition", "qualifiedname"):
+                    element = clone.find(tag)
+                    if element is not None and element.text:
+                        element.text = element.text.replace(
+                            base_name + ".", fullname + "."
+                        )
+                target = compound.find(
+                    f"sectiondef[@kind='{section.get('kind')}']"
+                )
+                if target is None:
+                    target = ET.SubElement(
+                        compound, "sectiondef", kind=section.get("kind")
+                    )
+                    # Keep the DTD's element order: sections come before
+                    # the descriptions.
+                    compound.remove(target)
+                    position = list(compound).index(
+                        compound.find("briefdescription")
+                    )
+                    compound.insert(position, target)
+                target.append(clone)
+                for ref in compound.iterfind(
+                    f"listofallmembers/member[@refid='{old_id}']"
+                ):
+                    ref.set("refid", new_id)
+                changed = True
 
 
 def _fix_enum_member_protection(compound: ET.Element) -> bool:

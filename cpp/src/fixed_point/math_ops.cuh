@@ -51,51 +51,50 @@ __device__ inline bool checked_power(U& result, int32_t exponent)
 }
 
 /**
- * @brief Divides two fixed-point numbers, keeping the scale of the dividend.
+ * @brief Divides two decimal values and rounds the quotient to the output scale.
  *
- * Similar to Java's `BigDecimal.divide(divisor, roundingMode)`. The quotient is computed exactly
- * and then rounded to the scale of `lhs` using `method`.
+ * Similar to Java's `BigDecimal.divide(divisor, scale, roundingMode)`. The quotient is
+ * `lhs * 10^exponent / rhs`, computed exactly and then rounded using `method`, where
+ * `exponent = lhs scale - rhs scale - output scale`.
  *
- * Returns no value if `rhs` is zero, if the rounded quotient does not fit in `Rep`, or, for
- * 128-bit `Rep`, if `lhs` rescaled to the scale of the quotient does not fit in 128 bits.
+ * Returns no value if `rhs` is zero, if the rounded quotient has more digits than `OutRep` can
+ * always hold, or if `lhs * 10^exponent` does not fit in the magnitude type of `CompRep`.
  *
- * @param lhs The dividend
- * @param rhs The divisor
+ * @tparam OutRep The representation type of the output
+ * @tparam CompRep The representation type both operands have been widened to
+ * @param lhs The dividend's representation
+ * @param rhs The divisor's representation
+ * @param exponent The power of 10 to rescale the quotient by
  * @param method The rounding method to use
- * @return The quotient with the scale of `lhs`, or no value
+ * @return The quotient's representation at the output scale, or no value
  */
-template <typename Rep, numeric::Radix Rad>
-__device__ inline cuda::std::optional<numeric::fixed_point<Rep, Rad>> divide_and_round(
-  numeric::fixed_point<Rep, Rad> const& lhs,
-  numeric::fixed_point<Rep, Rad> const& rhs,
-  rounding_method method)
+template <typename OutRep, typename CompRep>
+__device__ inline cuda::std::optional<OutRep> divide_and_round(CompRep lhs,
+                                                               CompRep rhs,
+                                                               int32_t exponent,
+                                                               rounding_method method)
 {
-  using U = division_magnitude_t<Rep>;
+  using U = division_magnitude_t<CompRep>;
 
-  auto const make_result = [&](Rep value) {
-    return numeric::fixed_point<Rep, Rad>{numeric::scaled_integer<Rep>{value, lhs.scale()}};
-  };
-  auto const magnitude = [](Rep value) { return static_cast<U>(cuda::uabs(value)); };
+  auto const magnitude = [](CompRep value) { return static_cast<U>(cuda::uabs(value)); };
 
-  if (rhs.value() == 0) { return cuda::std::nullopt; }
-  if (lhs.value() == 0) { return make_result(0); }
+  if (rhs == 0) { return cuda::std::nullopt; }
+  if (lhs == 0) { return OutRep{0}; }
 
-  bool const negative = (lhs.value() < 0) != (rhs.value() < 0);
-  U dividend          = magnitude(lhs.value());
-  U divisor           = magnitude(rhs.value());
+  bool const negative = (lhs < 0) != (rhs < 0);
+  U dividend          = magnitude(lhs);
+  U divisor           = magnitude(rhs);
 
-  // The quotient at the scale of `lhs` is `lhs.value() * radix^(-rhs.scale()) / rhs.value()`.
-  auto const exponent = -static_cast<int32_t>(rhs.scale());
   U factor{};
   if (exponent >= 0) {
-    if (!checked_power<U, Rad>(factor, exponent) ||
+    if (!checked_power<U, numeric::Radix::BASE_10>(factor, exponent) ||
         cuda::mul_overflow(dividend, dividend, factor)) {
       return cuda::std::nullopt;
     }
-  } else if (!checked_power<U, Rad>(factor, -exponent) ||
+  } else if (!checked_power<U, numeric::Radix::BASE_10>(factor, -exponent) ||
              cuda::mul_overflow(divisor, divisor, factor)) {
     // The divisor is more than twice the largest possible dividend, so the quotient rounds to 0.
-    return make_result(0);
+    return OutRep{0};
   }
 
   U quotient            = dividend / divisor;
@@ -106,11 +105,14 @@ __device__ inline cuda::std::optional<numeric::fixed_point<Rep, Rad>> divide_and
                             : remainder >= rest;
   if (round_away) { ++quotient; }
 
-  auto const result =
-    negative ? cuda::sub_overflow<Rep>(Rep{0}, quotient) : cuda::overflow_cast<Rep>(quotient);
-  if (result.overflow) { return cuda::std::nullopt; }
+  // The largest magnitude with no more digits than `OutRep` can always hold
+  constexpr U max_magnitude =
+    numeric::detail::ipow<U, numeric::Radix::BASE_10>(cuda::std::numeric_limits<OutRep>::digits10) -
+    1;
+  if (quotient > max_magnitude) { return cuda::std::nullopt; }
 
-  return make_result(result.value);
+  auto const value = static_cast<OutRep>(quotient);
+  return negative ? -value : value;
 }
 
 }  // namespace cudf::detail

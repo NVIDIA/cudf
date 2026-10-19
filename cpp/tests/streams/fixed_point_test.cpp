@@ -19,7 +19,11 @@ TEST_F(DivideDecimalTest, ColumnColumn)
     {1000, 2000, 3000}, {1, 0, 1}, numeric::scale_type{-2}};
   auto const rhs =
     cudf::test::fixed_point_column_wrapper<int64_t>{{300, 400, 0}, numeric::scale_type{-1}};
-  cudf::divide_decimal(lhs, rhs, cudf::rounding_method::HALF_UP, cudf::test::get_default_stream());
+  cudf::divide_decimal(lhs,
+                       rhs,
+                       cudf::data_type{cudf::type_id::DECIMAL128, numeric::scale_type{-4}},
+                       cudf::rounding_method::HALF_UP,
+                       cudf::test::get_default_stream());
 }
 
 TEST_F(DivideDecimalTest, ColumnScalar)
@@ -28,8 +32,11 @@ TEST_F(DivideDecimalTest, ColumnScalar)
     {1000, 2000, 3000}, {1, 0, 1}, numeric::scale_type{-2}};
   auto const rhs = cudf::make_fixed_point_scalar<numeric::decimal64>(
     30, numeric::scale_type{-1}, cudf::test::get_default_stream());
-  cudf::divide_decimal(
-    lhs, *rhs, cudf::rounding_method::HALF_EVEN, cudf::test::get_default_stream());
+  cudf::divide_decimal(lhs,
+                       *rhs,
+                       cudf::data_type{cudf::type_id::DECIMAL64, numeric::scale_type{-2}},
+                       cudf::rounding_method::HALF_EVEN,
+                       cudf::test::get_default_stream());
 }
 
 TEST_F(DivideDecimalTest, ScalarColumn)
@@ -38,7 +45,11 @@ TEST_F(DivideDecimalTest, ScalarColumn)
     1000, numeric::scale_type{-2}, cudf::test::get_default_stream());
   auto const rhs =
     cudf::test::fixed_point_column_wrapper<int64_t>{{300, 400, 0}, numeric::scale_type{-1}};
-  cudf::divide_decimal(*lhs, rhs, cudf::rounding_method::HALF_UP, cudf::test::get_default_stream());
+  cudf::divide_decimal(*lhs,
+                       rhs,
+                       cudf::data_type{cudf::type_id::DECIMAL64, numeric::scale_type{-2}},
+                       cudf::rounding_method::HALF_UP,
+                       cudf::test::get_default_stream());
 }
 
 CUDF_TEST_PROGRAM_MAIN()

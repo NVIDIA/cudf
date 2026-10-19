@@ -16,6 +16,7 @@ from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from .column cimport Column
 from .scalar cimport Scalar
 from .traits cimport is_fixed_point
+from .types cimport DataType
 from .utils cimport _get_stream, _get_memory_resource
 from typing import TYPE_CHECKING
 
@@ -40,14 +41,24 @@ cdef void _check_decimal(object operand, str side) except *:
         )
 
 
+cdef void _check_output_type(DataType output_type) except *:
+    if output_type is None:
+        raise TypeError("output_type must not be None")
+    if not is_fixed_point(output_type):
+        raise TypeError(
+            f"output_type must be a decimal type, got {output_type.id()!r}"
+        )
+
+
 cpdef Column divide_decimal(
     Column lhs,
     Column rhs,
+    DataType output_type,
     rounding_method round_method = rounding_method.HALF_UP,
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
-    """Divides two decimal columns element-wise, keeping the scale of ``lhs``.
+    """Divides two decimal columns element-wise into a column of ``output_type``.
 
     For details, see :cpp:func:`divide_decimal`.
 
@@ -56,10 +67,12 @@ cpdef Column divide_decimal(
     lhs : Column
         The dividend column. Must be a decimal type.
     rhs : Column
-        The divisor column. Must have the same decimal type as ``lhs``,
-        but may have a different scale.
+        The divisor column. Must be a decimal type, of any width and scale.
+    output_type : DataType
+        The decimal type and scale of the result. Results with more digits
+        than this type can hold are null.
     round_method : RoundingMethod, optional
-        How to round the quotient to the scale of ``lhs``.
+        How to round the quotient to the scale of ``output_type``.
         Can be one of { RoundingMethod.HALF_UP, RoundingMethod.HALF_EVEN }
         (default RoundingMethod.HALF_UP)
     stream : Stream | None
@@ -70,15 +83,16 @@ cpdef Column divide_decimal(
     Returns
     -------
     Column
-        The quotients, with the type and scale of ``lhs``.
+        The quotients, with type ``output_type``.
 
     Raises
     ------
     TypeError
-        If either operand is None or is not a decimal type.
+        If either operand or ``output_type`` is None or is not a decimal type.
     """
     _check_decimal(lhs, "Left")
     _check_decimal(rhs, "Right")
+    _check_output_type(output_type)
 
     cdef unique_ptr[column] c_result
     cdef Stream _stream = _get_stream(stream)
@@ -91,6 +105,7 @@ cpdef Column divide_decimal(
         c_result = cpp_divide_decimal(
             c_lhs,
             c_rhs,
+            output_type.c_obj,
             round_method,
             _cs,
             mr.get_mr()
@@ -102,11 +117,12 @@ cpdef Column divide_decimal(
 cpdef Column divide_decimal_column_scalar(
     Column lhs,
     Scalar rhs,
+    DataType output_type,
     rounding_method round_method = rounding_method.HALF_UP,
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
-    """Divides a decimal column by a decimal scalar, keeping the scale of ``lhs``.
+    """Divides a decimal column by a decimal scalar into a column of ``output_type``.
 
     For details, see :cpp:func:`divide_decimal`.
 
@@ -115,10 +131,12 @@ cpdef Column divide_decimal_column_scalar(
     lhs : Column
         The dividend column. Must be a decimal type.
     rhs : Scalar
-        The divisor. Must have the same decimal type as ``lhs``,
-        but may have a different scale.
+        The divisor. Must be a decimal type, of any width and scale.
+    output_type : DataType
+        The decimal type and scale of the result. Results with more digits
+        than this type can hold are null.
     round_method : RoundingMethod, optional
-        How to round the quotient to the scale of ``lhs``.
+        How to round the quotient to the scale of ``output_type``.
         Can be one of { RoundingMethod.HALF_UP, RoundingMethod.HALF_EVEN }
         (default RoundingMethod.HALF_UP)
     stream : Stream | None
@@ -129,15 +147,16 @@ cpdef Column divide_decimal_column_scalar(
     Returns
     -------
     Column
-        The quotients, with the type and scale of ``lhs``.
+        The quotients, with type ``output_type``.
 
     Raises
     ------
     TypeError
-        If either operand is None or is not a decimal type.
+        If either operand or ``output_type`` is None or is not a decimal type.
     """
     _check_decimal(lhs, "Left")
     _check_decimal(rhs, "Right")
+    _check_output_type(output_type)
 
     cdef unique_ptr[column] c_result
     cdef Stream _stream = _get_stream(stream)
@@ -150,6 +169,7 @@ cpdef Column divide_decimal_column_scalar(
         c_result = cpp_divide_decimal(
             c_lhs,
             c_rhs[0],
+            output_type.c_obj,
             round_method,
             _cs,
             mr.get_mr()
@@ -161,11 +181,12 @@ cpdef Column divide_decimal_column_scalar(
 cpdef Column divide_decimal_scalar_column(
     Scalar lhs,
     Column rhs,
+    DataType output_type,
     rounding_method round_method = rounding_method.HALF_UP,
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
-    """Divides a decimal scalar by a decimal column, keeping the scale of ``lhs``.
+    """Divides a decimal scalar by a decimal column into a column of ``output_type``.
 
     For details, see :cpp:func:`divide_decimal`.
 
@@ -174,10 +195,12 @@ cpdef Column divide_decimal_scalar_column(
     lhs : Scalar
         The dividend. Must be a decimal type.
     rhs : Column
-        The divisor column. Must have the same decimal type as ``lhs``,
-        but may have a different scale.
+        The divisor column. Must be a decimal type, of any width and scale.
+    output_type : DataType
+        The decimal type and scale of the result. Results with more digits
+        than this type can hold are null.
     round_method : RoundingMethod, optional
-        How to round the quotient to the scale of ``lhs``.
+        How to round the quotient to the scale of ``output_type``.
         Can be one of { RoundingMethod.HALF_UP, RoundingMethod.HALF_EVEN }
         (default RoundingMethod.HALF_UP)
     stream : Stream | None
@@ -188,15 +211,16 @@ cpdef Column divide_decimal_scalar_column(
     Returns
     -------
     Column
-        The quotients, with the type and scale of ``lhs``.
+        The quotients, with type ``output_type``.
 
     Raises
     ------
     TypeError
-        If either operand is None or is not a decimal type.
+        If either operand or ``output_type`` is None or is not a decimal type.
     """
     _check_decimal(lhs, "Left")
     _check_decimal(rhs, "Right")
+    _check_output_type(output_type)
 
     cdef unique_ptr[column] c_result
     cdef Stream _stream = _get_stream(stream)
@@ -209,6 +233,7 @@ cpdef Column divide_decimal_scalar_column(
         c_result = cpp_divide_decimal(
             c_lhs[0],
             c_rhs,
+            output_type.c_obj,
             round_method,
             _cs,
             mr.get_mr()

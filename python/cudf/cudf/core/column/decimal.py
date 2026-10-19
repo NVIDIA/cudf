@@ -399,13 +399,14 @@ class DecimalColumn(NumericalBaseColumn):
             lhs,
             rhs,
         ):
+            output_type = lhs.plc_column.type()
             if isinstance(rhs, ColumnBase):
                 plc_result = plc.decimal_division.divide_decimal(
-                    lhs.plc_column, rhs.plc_column, rounding
+                    lhs.plc_column, rhs.plc_column, output_type, rounding
                 )
             else:
                 plc_result = plc.decimal_division.divide_decimal_column_scalar(
-                    lhs.plc_column, rhs, rounding
+                    lhs.plc_column, rhs, output_type, rounding
                 )
         return cast("Self", ColumnBase.create(plc_result, result_dtype))
 

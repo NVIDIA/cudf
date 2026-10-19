@@ -8,6 +8,7 @@
 #include <cudf/column/column.hpp>
 #include <cudf/round.hpp>
 #include <cudf/scalar/scalar.hpp>
+#include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -27,83 +28,93 @@ namespace CUDF_EXPORT cudf {
  */
 
 /**
- * @brief Divides two decimal columns element-wise, keeping the scale of `lhs`.
+ * @brief Divides two decimal columns element-wise into a column of type `output_type`.
  *
- * Each output element is `lhs[i] / rhs[i]`, rounded to the scale of `lhs` using `method`.
- * The output has the same type and scale as `lhs`. This is unlike `cudf::binary_operation`
- * with `binary_operator::DIV`, whose output scale is `lhs.scale() - rhs.scale()` and which
- * truncates instead of rounding.
+ * Each output element is `lhs[i] / rhs[i]`, rounded to the scale of `output_type` using `method`.
+ * `lhs`, `rhs` and `output_type` may each be any decimal type, with any scale. Passing
+ * `lhs.type()` keeps the type and scale of `lhs`, and a scale of `min(lhs.scale(), rhs.scale())`
+ * keeps the larger number of fractional digits of the two operands. This is unlike
+ * `cudf::binary_operation` with `binary_operator::DIV`, which truncates instead of rounding.
  *
- * An output element is null if either input element is null, if `rhs[i]` is zero, or if the
- * rounded quotient does not fit in the output type. For `DECIMAL128`, it is also null if `lhs[i]`
- * rescaled by `10^(-rhs.scale())` does not fit in 128 bits.
+ * The precision of the output is the largest number of decimal digits its type can hold: 9 for
+ * `DECIMAL32`, 18 for `DECIMAL64` and 38 for `DECIMAL128`.
  *
- * @throw cudf::logic_error if `lhs` or `rhs` is not a decimal type
- * @throw cudf::logic_error if `lhs` and `rhs` have different type ids
+ * An output element is null if:
+ * - either input element is null,
+ * - `rhs[i]` is zero,
+ * - the rounded quotient has more digits than the precision of `output_type`, or
+ * - `lhs[i]`, rescaled to give a quotient at the scale of `output_type`, does not fit in the
+ *   widest of the three types.
+ *
+ * @throw cudf::logic_error if `lhs`, `rhs` or `output_type` is not a decimal type
  * @throw cudf::logic_error if `lhs` and `rhs` have different sizes
  *
  * @param lhs The dividend column
  * @param rhs The divisor column
+ * @param output_type The decimal type and scale of the output
  * @param method The rounding method to use
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Memory resources used for temporary allocations and the returned column
- * @return Column containing the quotients, with the type of `lhs`
+ * @return Column of type `output_type` containing the quotients
  */
 std::unique_ptr<column> divide_decimal(
   column_view const& lhs,
   column_view const& rhs,
+  data_type output_type,
   rounding_method method    = rounding_method::HALF_UP,
   cuda::stream_ref stream   = cudf::get_default_stream(),
   cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
- * @brief Divides each element of a decimal column by a decimal scalar, keeping the scale of `lhs`.
+ * @brief Divides each element of a decimal column by a decimal scalar into a column of type
+ * `output_type`.
  *
- * Each output element is `lhs[i] / rhs`, rounded to the scale of `lhs` using `method`.
- * The output has the same type and scale as `lhs`. `rhs` may have a different scale.
+ * Each output element is `lhs[i] / rhs`, rounded to the scale of `output_type` using `method`.
  *
- * Null outputs follow the same rules as the column-column overload. Every output element is null
- * if `rhs` is invalid.
+ * Types, precision and null outputs follow the same rules as the column-column overload. Every
+ * output element is null if `rhs` is invalid.
  *
- * @throw cudf::logic_error if `lhs` or `rhs` is not a decimal type
- * @throw cudf::logic_error if `lhs` and `rhs` have different type ids
+ * @throw cudf::logic_error if `lhs`, `rhs` or `output_type` is not a decimal type
  *
  * @param lhs The dividend column
  * @param rhs The divisor scalar
+ * @param output_type The decimal type and scale of the output
  * @param method The rounding method to use
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Memory resources used for temporary allocations and the returned column
- * @return Column containing the quotients, with the type of `lhs`
+ * @return Column of type `output_type` containing the quotients
  */
 std::unique_ptr<column> divide_decimal(
   column_view const& lhs,
   scalar const& rhs,
+  data_type output_type,
   rounding_method method    = rounding_method::HALF_UP,
   cuda::stream_ref stream   = cudf::get_default_stream(),
   cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
- * @brief Divides a decimal scalar by each element of a decimal column, keeping the scale of `lhs`.
+ * @brief Divides a decimal scalar by each element of a decimal column into a column of type
+ * `output_type`.
  *
- * Each output element is `lhs / rhs[i]`, rounded to the scale of `lhs` using `method`.
- * The output has the same type and scale as `lhs`. `rhs` may have a different scale.
+ * Each output element is `lhs / rhs[i]`, rounded to the scale of `output_type` using `method`.
  *
- * Null outputs follow the same rules as the column-column overload. Every output element is null
- * if `lhs` is invalid.
+ * Types, precision and null outputs follow the same rules as the column-column overload. Every
+ * output element is null if `lhs` is invalid.
  *
- * @throw cudf::logic_error if `lhs` or `rhs` is not a decimal type
- * @throw cudf::logic_error if `lhs` and `rhs` have different type ids
+ * @throw cudf::logic_error if `lhs`, `rhs` or `output_type` is not a decimal type
  *
  * @param lhs The dividend scalar
  * @param rhs The divisor column
+ * @param output_type The decimal type and scale of the output
  * @param method The rounding method to use
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Memory resources used for temporary allocations and the returned column
- * @return Column containing the quotients, with the type of `lhs`
+ * @return Column of type `output_type` containing the quotients
  */
 std::unique_ptr<column> divide_decimal(
   scalar const& lhs,
   column_view const& rhs,
+  data_type output_type,
   rounding_method method    = rounding_method::HALF_UP,
   cuda::stream_ref stream   = cudf::get_default_stream(),
   cudf::memory_resources mr = cudf::get_current_device_resource_ref());

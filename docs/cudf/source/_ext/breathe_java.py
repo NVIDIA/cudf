@@ -327,7 +327,12 @@ def _source_lines(
         try:
             with open(filename) as f:
                 _cache[filename] = f.readlines()
-        except OSError:
+        except OSError as e:
+            # Visibility and declaration fixes that need the source are
+            # skipped for this file.
+            # Doxygen uses "[generated]" for members it synthesizes.
+            if filename != "[generated]":
+                logger.warning("cannot read Java source %r: %s", filename, e)
             _cache[filename] = []
     return _cache[filename]
 
@@ -400,6 +405,12 @@ def clean_java_xml(path: str) -> None:
         }
         return matches.pop() if len(matches) == 1 else None
 
+    protections = {
+        compound.get("id"): _declared_protection(compound, interfaces)
+        for tree in trees.values()
+        for compound in tree.getroot().iter("compounddef")
+    }
+
     for fn, tree in trees.items():
         root = tree.getroot()
         changed = False
@@ -407,10 +418,17 @@ def clean_java_xml(path: str) -> None:
             if compound.get("kind") == "enum":
                 compound.set("kind", "class")
                 changed = True
-            prot = _declared_protection(compound, interfaces)
+            prot = protections[compound.get("id")]
             if prot != compound.get("prot"):
                 compound.set("prot", prot)
                 changed = True
+            # Breathe decides whether to render a nested class by the
+            # protection recorded in its outer class.
+            for inner in compound.iterfind("innerclass"):
+                prot = protections.get(inner.get("refid"))
+                if prot is not None and prot != inner.get("prot"):
+                    inner.set("prot", prot)
+                    changed = True
             if compound.get("id").startswith("enum"):
                 changed |= _fix_enum_member_protection(compound)
         # Breathe 4 does not know Doxygen's elements for {@code ...}, <pre>
@@ -555,16 +573,18 @@ def _declared_protection(
 ) -> str:
     """Return the protection of a class as declared in its source file.
 
-    Doxygen reports package-private classes as public. Classes nested in an
-    interface are implicitly public.
+    Doxygen reports package-private and some private nested classes as
+    public. Classes nested in an interface are implicitly public.
     """
     prot = compound.get("prot")
     if prot != "public":
         return prot
     location = compound.find("location")
     header = _source_header(location.get("file"), int(location.get("line")))
-    if header is None or re.search(r"\b(public|protected|private)\b", header):
+    if header is None:
         return prot
+    if modifier := re.search(r"\b(public|protected|private)\b", header):
+        return modifier.group(1)
     outer = (
         compound.findtext("compoundname").replace("::", ".").rpartition(".")[0]
     )
@@ -1303,6 +1323,12 @@ def _class_summary(compound: _Compound) -> list[nodes.Node]:
             or not member.documented
             or member.constructor
             or (member.name, member.args) in declared
+            # Static methods of interfaces are not inherited.
+            or (
+                member.static
+                and member.kind == "function"
+                and _compounds[member.compound].kind == "interface"
+            )
         ):
             continue
         kind = "Fields" if member.kind == "variable" else "Methods"

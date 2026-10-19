@@ -13,6 +13,9 @@ published to Maven Central as ``ai.rapids:cudf``:
        <version>${cudf.version}</version>
    </dependency>
 
+Replace ``${cudf.version}`` with a published cuDF version, or define the
+``cudf.version`` property in your POM.
+
 The jar bundles native libraries, so it only runs on the platforms it was
 built for. See the `cuDF Java README
 <https://github.com/NVIDIA/cudf/blob/main/java/README.md>`_ for details on

@@ -28,6 +28,7 @@
 #include <rmm/mr/polymorphic_allocator.hpp>
 
 #include <cuco/static_set.cuh>
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/iterator>
 #include <cuda/stream>
@@ -100,7 +101,7 @@ std::unique_ptr<column> encode(column_view const& input,
 
   // build a static_set of the input values
   // and keep track of the indices of the unique values
-  auto d_indices = rmm::device_uvector<size_type>(input.size(), stream, temp_mr);
+  auto d_indices = cuda::device_buffer<size_type>(stream, temp_mr, input.size(), cuda::no_init);
   auto d_input   = column_device_view::create(input, stream, temp_mr);
   thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
                     cuda::counting_iterator<size_type>{0},
@@ -108,9 +109,11 @@ std::unique_ptr<column> encode(column_view const& input,
                     d_indices.begin(),
                     encode_fn{set_ref, *d_input});
 
-  auto keys_indices = rmm::device_uvector<size_type>(input.size(), stream, temp_mr);
-  auto keys_end     = set.retrieve_all(keys_indices.begin(), stream.get());
-  keys_indices.resize(cuda::std::distance(keys_indices.begin(), keys_end), stream);
+  auto keys_indices_storage =
+    cuda::device_buffer<size_type>(stream, temp_mr, input.size(), cuda::no_init);
+  auto keys_end     = set.retrieve_all(keys_indices_storage.begin(), stream);
+  auto keys_indices = cudf::device_span<size_type>(
+    keys_indices_storage.data(), cuda::std::distance(keys_indices_storage.begin(), keys_end));
 
   // sort the keys_indices so we can use lower-bound on them
   thrust::sort(rmm::exec_policy_nosync(stream, temp_mr), keys_indices.begin(), keys_indices.end());

@@ -725,3 +725,122 @@ def test_masked_string_empty_target_null_row():
     assert out_valid.get().tolist() == valid
     # value only meaningful where valid; "abc".find("") == 0
     assert int(out.get()[0]) == 0
+
+
+_IS_PREDICATES = [
+    "isalpha",
+    "isalnum",
+    "isdecimal",
+    "isdigit",
+    "isupper",
+    "islower",
+    "isspace",
+    "isnumeric",
+    "istitle",
+]
+
+
+def test_string_is_predicates():
+    """Character-class predicates match Python's ``str`` methods for ASCII.
+
+    One kernel computes all nine predicates into separate columns (numba can't
+    take the method name dynamically); each is compared to the ``str`` oracle.
+    """
+    strings = [
+        "abc",
+        "ABC",
+        "Abc",
+        "abc123",
+        "123",
+        "  ",
+        "a b",
+        "",
+        "Hello World",
+        "hello world",
+        "3.14",
+        "ABC123",
+    ]
+    arr, _k = _make_mlir_string_array(strings)
+    n = len(strings)
+    outs = {name: cp.zeros(n, dtype=np.bool_) for name in _IS_PREDICATES}
+
+    @cuda.jit(
+        types.void(
+            types.boolean[::1],  # isalpha
+            types.boolean[::1],  # isalnum
+            types.boolean[::1],  # isdecimal
+            types.boolean[::1],  # isdigit
+            types.boolean[::1],  # isupper
+            types.boolean[::1],  # islower
+            types.boolean[::1],  # isspace
+            types.boolean[::1],  # isnumeric
+            types.boolean[::1],  # istitle
+            types.CPointer(mlir_string),
+        ),
+        extensions=[mlir_string_arg_handler],
+    )
+    def k(o_al, o_an, o_dec, o_dig, o_up, o_lo, o_sp, o_num, o_tit, s):
+        i = cuda.grid(1)
+        if i < o_al.size:
+            e = s[i]
+            o_al[i] = e.isalpha()
+            o_an[i] = e.isalnum()
+            o_dec[i] = e.isdecimal()
+            o_dig[i] = e.isdigit()
+            o_up[i] = e.isupper()
+            o_lo[i] = e.islower()
+            o_sp[i] = e.isspace()
+            o_num[i] = e.isnumeric()
+            o_tit[i] = e.istitle()
+
+    with MLIRNumbaCudaConfig():
+        k[1, n](
+            outs["isalpha"],
+            outs["isalnum"],
+            outs["isdecimal"],
+            outs["isdigit"],
+            outs["isupper"],
+            outs["islower"],
+            outs["isspace"],
+            outs["isnumeric"],
+            outs["istitle"],
+            arr,
+        )
+    cuda.synchronize()
+    for name in _IS_PREDICATES:
+        expected = [getattr(s, name)() for s in strings]
+        assert outs[name].get().tolist() == expected, name
+
+
+def test_masked_string_is_predicate_propagates_validity():
+    """``Masked(str).isalpha()`` -> ``Masked(bool)``; validity carried through."""
+    strings = ["abc", "a1c", "xyz"]
+    valid = [True, False, True]
+    arr, _k = _make_mlir_string_array(strings)
+    n = len(strings)
+    out = cp.zeros(n, dtype=np.bool_)
+    out_valid = cp.zeros(n, dtype=np.bool_)
+
+    @cuda.jit(
+        types.void(
+            types.boolean[::1],
+            types.boolean[::1],
+            types.CPointer(mlir_string),
+            types.boolean[::1],
+        ),
+        extensions=[mlir_string_arg_handler],
+    )
+    def k(o, ov, s, sv):
+        i = cuda.grid(1)
+        if i < o.size:
+            r = Masked(s[i], sv[i]).isalpha()
+            o[i] = r.value
+            ov[i] = r.valid
+
+    with MLIRNumbaCudaConfig():
+        k[1, n](out, out_valid, arr, cp.array(valid, dtype=np.bool_))
+    cuda.synchronize()
+    assert out_valid.get().tolist() == valid
+    for i in range(n):
+        if valid[i]:
+            assert bool(out.get()[i]) is strings[i].isalpha()

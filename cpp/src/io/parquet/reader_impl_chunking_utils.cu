@@ -14,6 +14,7 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/batched_memcpy.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -250,18 +251,25 @@ int64_t find_next_split(int64_t cur_pos,
   return {clock_rate, std::move(logical_type)};
 }
 
-std::pair<rmm::device_uvector<cumulative_page_info>, rmm::device_uvector<int32_t>>
+// TODO: Change this to a resizable buffer if/when https://github.com/NVIDIA/cccl/issues/12051
+// is implemented
+std::pair<cuda::device_buffer<cumulative_page_info>, cuda::device_buffer<int32_t>>
 adjust_cumulative_sizes(device_span<cumulative_page_info const> c_info,
                         device_span<PageInfo const> pages,
                         cuda::stream_ref stream)
 {
   // sort by row count
-  rmm::device_uvector<cumulative_page_info> c_info_sorted(c_info.size(), stream);
+  cuda::device_buffer<cumulative_page_info> c_info_sorted(
+    stream, cudf::get_current_device_resource_ref(), c_info.size(), cuda::no_init);
   {
-    rmm::device_uvector<size_t> end_row_indices(c_info.size(), stream);
-    rmm::device_uvector<size_t> sorted_end_row_indices(c_info.size(), stream);
-    rmm::device_uvector<size_t> indices(c_info.size(), stream);
-    rmm::device_uvector<size_t> sort_order(c_info.size(), stream);
+    cuda::device_buffer<size_t> end_row_indices(
+      stream, cudf::get_current_device_resource_ref(), c_info.size(), cuda::no_init);
+    cuda::device_buffer<size_t> sorted_end_row_indices(
+      stream, cudf::get_current_device_resource_ref(), c_info.size(), cuda::no_init);
+    cuda::device_buffer<size_t> indices(
+      stream, cudf::get_current_device_resource_ref(), c_info.size(), cuda::no_init);
+    cuda::device_buffer<size_t> sort_order(
+      stream, cudf::get_current_device_resource_ref(), c_info.size(), cuda::no_init);
 
     thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                      indices.begin(),
@@ -276,10 +284,10 @@ adjust_cumulative_sizes(device_span<cumulative_page_info const> c_info,
     auto tmp_bytes = std::size_t{0};
     cub::DeviceRadixSort::SortPairs(nullptr,
                                     tmp_bytes,
-                                    end_row_indices.begin(),         // keys in
-                                    sorted_end_row_indices.begin(),  // sorted keys out
-                                    indices.begin(),                 // values in
-                                    sort_order.begin(),              // sorted values out
+                                    end_row_indices.data(),         // keys in
+                                    sorted_end_row_indices.data(),  // sorted keys out
+                                    indices.data(),                 // values in
+                                    sort_order.data(),              // sorted values out
                                     c_info.size(),
                                     0,
                                     sizeof(size_t) * 8,
@@ -288,10 +296,10 @@ adjust_cumulative_sizes(device_span<cumulative_page_info const> c_info,
       stream, cudf::get_current_device_resource_ref(), tmp_bytes, cuda::no_init);
     cub::DeviceRadixSort::SortPairs(tmp_stg.data(),
                                     tmp_bytes,
-                                    end_row_indices.begin(),         // keys in
-                                    sorted_end_row_indices.begin(),  // sorted keys out
-                                    indices.begin(),                 // values in
-                                    sort_order.begin(),              // sorted values out
+                                    end_row_indices.data(),         // keys in
+                                    sorted_end_row_indices.data(),  // sorted keys out
+                                    indices.data(),                 // values in
+                                    sort_order.data(),              // sorted values out
                                     c_info.size(),
                                     0,
                                     sizeof(size_t) * 8,
@@ -305,7 +313,8 @@ adjust_cumulative_sizes(device_span<cumulative_page_info const> c_info,
   }
 
   // page keys grouped by split.
-  rmm::device_uvector<int32_t> page_keys_by_split{c_info.size(), stream};
+  cuda::device_buffer<int32_t> page_keys_by_split(
+    stream, cudf::get_current_device_resource_ref(), c_info.size(), cuda::no_init);
   thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                     c_info_sorted.begin(),
                     c_info_sorted.end(),
@@ -315,7 +324,8 @@ adjust_cumulative_sizes(device_span<cumulative_page_info const> c_info,
 
   // generate key offsets (offsets to the start of each partition of keys). worst case is 1 page per
   // key
-  rmm::device_uvector<size_type> key_offsets(pages.size() + 1, stream);
+  cuda::device_buffer<size_type> key_offsets(
+    stream, cudf::get_current_device_resource_ref(), pages.size() + 1, cuda::no_init);
   auto page_keys             = make_page_key_iterator(pages);
   auto const key_offsets_end = cudf::detail::reduce_by_key(page_keys,
                                                            page_keys + pages.size(),
@@ -342,7 +352,8 @@ adjust_cumulative_sizes(device_span<cumulative_page_info const> c_info,
   // at that point.  So we have to proceed as if we are taking the bytes from all 200 rows of that
   // page.
   //
-  rmm::device_uvector<cumulative_page_info> aggregated_info(c_info.size(), stream);
+  cuda::device_buffer<cumulative_page_info> aggregated_info(
+    stream, cudf::get_current_device_resource_ref(), c_info.size(), cuda::no_init);
   thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                     c_info_sorted.begin(),
                     c_info_sorted.end(),
@@ -351,7 +362,7 @@ adjust_cumulative_sizes(device_span<cumulative_page_info const> c_info,
   return {std::move(aggregated_info), std::move(page_keys_by_split)};
 }
 
-std::tuple<rmm::device_uvector<page_span>, size_t, size_t> compute_next_subpass(
+std::tuple<cuda::device_buffer<page_span>, size_t, size_t> compute_next_subpass(
   device_span<cumulative_page_info const> c_info,
   device_span<PageInfo const> pages,
   device_span<ColumnChunkDesc const> chunks,
@@ -387,7 +398,8 @@ std::tuple<rmm::device_uvector<page_span>, size_t, size_t> compute_next_subpass(
   auto const end_row = h_aggregated_info[end_index].end_row_index;
 
   // for each column, collect the set of pages that spans start_row / end_row
-  rmm::device_uvector<page_span> page_bounds(num_columns, stream);
+  cuda::device_buffer<page_span> page_bounds(
+    stream, cudf::get_current_device_resource_ref(), num_columns, cuda::no_init);
   auto iter = cuda::counting_iterator{size_t{0}};
   auto page_row_index =
     cudf::detail::make_counting_transform_iterator(0, get_page_end_row_index{c_info});
@@ -586,11 +598,12 @@ decompress_page_data(host_span<ColumnChunkDesc const> chunks,
                    subpass_decomp_offset);
   }
 
-  auto const d_comp_in = cudf::detail::make_device_uvector_async(
+  auto const d_comp_in = cudf::detail::make_device_buffer_async(
     comp_in, stream, cudf::get_current_device_resource_ref());
-  auto const d_comp_out = cudf::detail::make_device_uvector_async(
+  auto const d_comp_out = cudf::detail::make_device_buffer_async(
     comp_out, stream, cudf::get_current_device_resource_ref());
-  rmm::device_uvector<codec_exec_result> comp_res(num_comp_pages, stream);
+  cuda::device_buffer<codec_exec_result> comp_res(
+    stream, cudf::get_current_device_resource_ref(), num_comp_pages, cuda::no_init);
   thrust::uninitialized_fill(
     rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
     comp_res.begin(),
@@ -621,9 +634,9 @@ decompress_page_data(host_span<ColumnChunkDesc const> chunks,
   }
   // now copy the uncompressed V2 def and rep level data
   if (curr_copy_page > 0) {
-    auto const d_copy_in = cudf::detail::make_device_uvector_async(
+    auto const d_copy_in = cudf::detail::make_device_buffer_async(
       copy_in, stream, cudf::get_current_device_resource_ref());
-    auto const d_copy_out = cudf::detail::make_device_uvector_async(
+    auto const d_copy_out = cudf::detail::make_device_buffer_async(
       copy_out, stream, cudf::get_current_device_resource_ref());
 
     auto const src_iter = cudf::detail::make_counting_transform_iterator(
@@ -663,8 +676,10 @@ void detect_malformed_pages(device_span<PageInfo const> pages,
   CUDF_FUNC_RANGE();
 
   // sum row counts for all non-dictionary, non-list columns. other columns will be indicated as 0
-  rmm::device_uvector<size_type> row_counts(pages.size(),
-                                            stream);  // worst case:  num keys == num pages
+  cuda::device_buffer<size_type> row_counts(stream,
+                                            cudf::get_current_device_resource_ref(),
+                                            pages.size(),
+                                            cuda::no_init);  // worst case:  num keys == num pages
   auto const size_iter =
     cuda::make_transform_iterator(pages.begin(), flat_column_num_rows{chunks.data()});
   auto const row_counts_begin = row_counts.begin();
@@ -679,7 +694,8 @@ void detect_malformed_pages(device_span<PageInfo const> pages,
                                 .second;
 
   // make sure all non-zero row counts are the same
-  rmm::device_uvector<size_type> compacted_row_counts(pages.size(), stream);
+  cuda::device_buffer<size_type> compacted_row_counts(
+    stream, cudf::get_current_device_resource_ref(), pages.size(), cuda::no_init);
   auto const compacted_row_counts_begin = compacted_row_counts.begin();
   auto const compacted_row_counts_end   = cudf::detail::copy_if(
     row_counts_begin, row_counts_end, compacted_row_counts_begin, row_counts_nonzero{}, stream);
@@ -707,7 +723,7 @@ void detect_malformed_pages(device_span<PageInfo const> pages,
   }
 }
 
-rmm::device_uvector<size_t> compute_decompression_scratch_sizes(
+cuda::device_buffer<size_t> compute_decompression_scratch_sizes(
   device_span<ColumnChunkDesc const> chunks,
   device_span<PageInfo const> pages,
   cuda::stream_ref stream)
@@ -715,7 +731,8 @@ rmm::device_uvector<size_t> compute_decompression_scratch_sizes(
   auto page_keys = make_page_key_iterator(pages);
 
   // per-codec page counts and decompression sizes
-  rmm::device_uvector<decompression_info> decomp_info(pages.size(), stream);
+  cuda::device_buffer<decompression_info> decomp_info(
+    stream, cudf::get_current_device_resource_ref(), pages.size(), cuda::no_init);
   auto decomp_iter = cuda::make_transform_iterator(pages.begin(), get_decomp_info{chunks});
   thrust::inclusive_scan_by_key(
     rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
@@ -734,8 +751,8 @@ rmm::device_uvector<size_t> compute_decompression_scratch_sizes(
       return d.num_pages == 0 ? 0 : cudf::io::detail::get_decompression_scratch_size(d, stream);
     });
 
-  rmm::device_uvector<size_t> d_temp_cost =
-    cudf::detail::make_device_uvector(temp_cost, stream, cudf::get_current_device_resource_ref());
+  cuda::device_buffer<size_t> d_temp_cost =
+    cudf::detail::make_device_buffer(temp_cost, stream, cudf::get_current_device_resource_ref());
 
   std::array codecs{compression_type::BROTLI,
                     compression_type::GZIP,
@@ -756,7 +773,8 @@ rmm::device_uvector<size_t> compute_decompression_scratch_sizes(
         stream);
 
       // Collect pages with matching codecs
-      rmm::device_uvector<device_span<uint8_t const>> temp_spans(pages.size(), stream);
+      cuda::device_buffer<device_span<uint8_t const>> temp_spans(
+        stream, cudf::get_current_device_resource_ref(), pages.size(), cuda::no_init);
       auto iter = cuda::counting_iterator{size_t{0}};
       thrust::for_each(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                        iter,
@@ -772,7 +790,8 @@ rmm::device_uvector<size_t> compute_decompression_scratch_sizes(
                              : device_span<uint8_t const>{};
                        });
       // Copy only non-empty input spans.
-      rmm::device_uvector<device_span<uint8_t const>> page_spans(pages.size(), stream);
+      cuda::device_buffer<device_span<uint8_t const>> page_spans(
+        stream, cudf::get_current_device_resource_ref(), pages.size(), cuda::no_init);
       auto end_iter =
         cudf::detail::copy_if(temp_spans.begin(),
                               temp_spans.end(),
@@ -784,12 +803,13 @@ rmm::device_uvector<size_t> compute_decompression_scratch_sizes(
         // No pages compressed with this codec, skip
         continue;
       }
-      page_spans.resize(end_iter - page_spans.begin(), stream);
+      auto const valid_page_spans = device_span<device_span<uint8_t const> const>{
+        page_spans.data(), static_cast<std::size_t>(end_iter - page_spans.begin())};
 
       auto const total_temp_size    = get_decompression_scratch_size(total_decomp_info, stream);
       auto const total_temp_size_ex = cudf::io::detail::get_decompression_scratch_size_ex(
         total_decomp_info.type,
-        page_spans,
+        valid_page_spans,
         total_decomp_info.max_page_decompressed_size,
         total_decomp_info.total_decompressed_size,
         stream,
@@ -914,14 +934,14 @@ struct compute_page_level_decode_size {
 
 }  // anonymous namespace
 
-rmm::device_uvector<size_t> compute_string_offset_sizes(device_span<ColumnChunkDesc const> chunks,
+cuda::device_buffer<size_t> compute_string_offset_sizes(device_span<ColumnChunkDesc const> chunks,
                                                         device_span<PageInfo const> pages,
                                                         size_t skip_rows,
                                                         size_t num_rows,
                                                         cuda::stream_ref stream,
                                                         rmm::device_async_resource_ref mr)
 {
-  rmm::device_uvector<size_t> string_offset_sizes(pages.size(), stream, mr);
+  cuda::device_buffer<size_t> string_offset_sizes(stream, mr, pages.size(), cuda::no_init);
 
   thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                     pages.begin(),
@@ -932,7 +952,7 @@ rmm::device_uvector<size_t> compute_string_offset_sizes(device_span<ColumnChunkD
   return string_offset_sizes;
 }
 
-rmm::device_uvector<size_t> compute_level_decode_sizes(device_span<ColumnChunkDesc const> chunks,
+cuda::device_buffer<size_t> compute_level_decode_sizes(device_span<ColumnChunkDesc const> chunks,
                                                        device_span<PageInfo const> pages,
                                                        int level_type_size,
                                                        size_t skip_rows,
@@ -940,7 +960,7 @@ rmm::device_uvector<size_t> compute_level_decode_sizes(device_span<ColumnChunkDe
                                                        cuda::stream_ref stream,
                                                        rmm::device_async_resource_ref mr)
 {
-  rmm::device_uvector<size_t> level_decode_sizes(pages.size(), stream, mr);
+  cuda::device_buffer<size_t> level_decode_sizes(stream, mr, pages.size(), cuda::no_init);
 
   thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                     pages.begin(),

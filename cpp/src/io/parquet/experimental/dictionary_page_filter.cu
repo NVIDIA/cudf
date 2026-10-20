@@ -13,10 +13,12 @@
 #include <cudf/ast/detail/operators.hpp>
 #include <cudf/ast/expressions.hpp>
 #include <cudf/detail/cuco_helpers.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/hashing/detail/default_hash.cuh>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_checks.hpp>
@@ -27,6 +29,7 @@
 
 #include <cuco/extent.cuh>
 #include <cuco/static_set.cuh>
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/stream>
 
@@ -1044,9 +1047,9 @@ struct dictionary_caster {
     // Device vectors to store the running number of hash set slots and decoded values for all
     // dictionaries
     auto const set_offsets =
-      cudf::detail::make_device_uvector_async(host_set_offsets, stream, default_mr);
+      cudf::detail::make_device_buffer_async(host_set_offsets, stream, default_mr);
     auto const value_offsets =
-      cudf::detail::make_device_uvector_async(host_value_offsets, stream, default_mr);
+      cudf::detail::make_device_buffer_async(host_value_offsets, stream, default_mr);
 
     auto const total_set_storage_size = static_cast<std::size_t>(host_set_offsets.back());
     auto const total_num_values       = static_cast<std::size_t>(host_value_offsets.back());
@@ -1060,7 +1063,7 @@ struct dictionary_caster {
     set_storage.initialize_async(EMPTY_KEY_SENTINEL, {stream.get()});
 
     // Device vector to store the decoded values for all dictionaries
-    rmm::device_uvector<T> decoded_data{total_num_values, stream, default_mr};
+    cuda::device_buffer<T> decoded_data{stream, default_mr, total_num_values, cuda::no_init};
     kernel_error error_code(stream);
 
     // Host vector of scalar device views from all literals
@@ -1070,10 +1073,10 @@ struct dictionary_caster {
       host_scalars.push_back(literal->get_value());
     });
     // Device vector of all scalars device views
-    auto const scalars = cudf::detail::make_device_uvector_async(host_scalars, stream, default_mr);
+    auto const scalars = cudf::detail::make_device_buffer_async(host_scalars, stream, default_mr);
 
     // Device vector of all operators
-    auto const d_operators = cudf::detail::make_device_uvector_async(operators, stream, default_mr);
+    auto const d_operators = cudf::detail::make_device_buffer_async(operators, stream, default_mr);
 
     // Device buffers to store the dictionary membership results for all predicates
     std::vector<rmm::device_buffer> results_buffers(total_num_literals);
@@ -1206,10 +1209,10 @@ struct dictionary_caster {
       host_scalars.push_back(literal->get_value());
     });
     // Device vector of all scalars device views
-    auto const scalars = cudf::detail::make_device_uvector_async(host_scalars, stream, default_mr);
+    auto const scalars = cudf::detail::make_device_buffer_async(host_scalars, stream, default_mr);
 
     // Device vector of all operators
-    auto const d_operators = cudf::detail::make_device_uvector_async(operators, stream, default_mr);
+    auto const d_operators = cudf::detail::make_device_buffer_async(operators, stream, default_mr);
 
     // Device buffers to store the dictionary membership results for all predicates
     std::vector<rmm::device_buffer> results_buffers(total_num_literals);

@@ -30,6 +30,7 @@
 #include <rmm/mr/polymorphic_allocator.hpp>
 
 #include <cuco/static_map.cuh>
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/functional>
 #include <cuda/std/iterator>
@@ -363,7 +364,8 @@ std::unique_ptr<cudf::column> tokenize_with_vocabulary(cudf::strings_column_view
 
   if ((input.chars_size(stream) / (input.size() - input.null_count())) < AVG_CHAR_BYTES_THRESHOLD) {
     auto const zero_itr = cuda::counting_iterator<cudf::size_type>{0};
-    auto d_sizes        = rmm::device_uvector<cudf::size_type>(input.size(), stream);
+    auto d_sizes        = cuda::device_buffer<cudf::size_type>(
+      stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
     thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                       zero_itr,
                       zero_itr + input.size(),
@@ -402,8 +404,10 @@ std::unique_ptr<cudf::column> tokenize_with_vocabulary(cudf::strings_column_view
   auto const chars_size    = last_offset - first_offset;
   auto const d_input_chars = input.chars_begin(stream) + first_offset;
 
-  rmm::device_uvector<cudf::size_type> d_token_counts(input.size(), stream);
-  rmm::device_uvector<int8_t> d_marks(chars_size, stream);
+  cuda::device_buffer<cudf::size_type> d_token_counts(
+    stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
+  cuda::device_buffer<int8_t> d_marks(
+    stream, cudf::get_current_device_resource_ref(), chars_size, cuda::no_init);
 
   // mark position of all delimiters
   auto grid_chars = cudf::detail::grid_1d{chars_size, block_size};

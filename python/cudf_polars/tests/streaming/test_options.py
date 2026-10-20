@@ -169,7 +169,7 @@ def test_rapidsmpf_options_serialized() -> None:
         ucxx_progress_mode="thread-polling",
         log="DEBUG",
         pinned_max_pool_size="4GiB",
-        unbounded_file_read_cache="host",
+        experimental_unbounded_file_read_cache="host",
     )
     strings = opts.to_rapidsmpf_options().get_strings()
     assert strings["statistics"] == "True"
@@ -178,7 +178,7 @@ def test_rapidsmpf_options_serialized() -> None:
     assert strings["ucxx_progress_mode"] == "thread-polling"
     assert strings["log"] == "DEBUG"
     assert strings["pinned_max_pool_size"] == "4GiB"
-    assert strings["unbounded_file_read_cache"] == "host"
+    assert strings["experimental_unbounded_file_read_cache"] == "host"
 
 
 def test_rapidsmpf_options_unspecified_fields_absent() -> None:
@@ -242,9 +242,9 @@ def test_pinned_max_pool_size_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_unbounded_file_read_cache_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("RAPIDSMPF_UNBOUNDED_FILE_READ_CACHE", "host")
+    monkeypatch.setenv("CUDF_POLARS__EXPERIMENTAL_UNBOUNDED_FILE_READ_CACHE", "host")
     strings = StreamingOptions().to_rapidsmpf_options().get_strings()
-    assert strings["unbounded_file_read_cache"] == "host"
+    assert strings["experimental_unbounded_file_read_cache"] == "host"
 
 
 # ---------------------------------------------------------------------------
@@ -393,7 +393,7 @@ def test_add_cli_args_then_from_argparse_roundtrip() -> None:
             "--raise-on-fail",
             "--pinned-max-pool-size",
             "4GiB",
-            "--unbounded-file-read-cache",
+            "--experimental-unbounded-file-read-cache",
             "host",
             "--max-concurrent-io-tasks",
             "6",
@@ -404,7 +404,7 @@ def test_add_cli_args_then_from_argparse_roundtrip() -> None:
     assert opts.log == "DEBUG"
     assert opts.raise_on_fail is True
     assert opts.pinned_max_pool_size == "4GiB"
-    assert opts.unbounded_file_read_cache == "host"
+    assert opts.experimental_unbounded_file_read_cache == "host"
     assert opts.max_concurrent_io_tasks == 6
     # Unprovided args default to None → UNSPECIFIED
     assert isinstance(opts.fallback_mode, Unspecified)

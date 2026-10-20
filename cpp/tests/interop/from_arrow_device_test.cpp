@@ -975,7 +975,7 @@ void slice_nanoarrow(ArrowArray* arr, int64_t start, int64_t end)
     array->length = end - start;
     if (array->null_count != 0) {
       array->null_count =
-        cudf::null_count(reinterpret_cast<cudf::bitmask_type const*>(array->buffers[0]),
+        cudf::null_count(static_cast<cudf::bitmask_type const*>(array->buffers[0]),
                          start,
                          end,
                          cudf::get_default_stream());

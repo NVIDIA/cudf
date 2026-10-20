@@ -30,6 +30,7 @@
 
 #include <cooperative_groups.h>
 #include <cuda/atomic>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/iterator>
@@ -387,10 +388,11 @@ CUDF_KERNEL void minhash_kernel(offsets_type offsets_itr,
  * @param stream Stream used for allocation and kernel launches
  */
 template <typename transform_fn>
-std::pair<cudf::size_type, rmm::device_uvector<cudf::size_type>> partition_input(
+std::pair<cudf::size_type, cuda::device_buffer<cudf::size_type>> partition_input(
   cudf::size_type size, cudf::size_type threshold_count, transform_fn tfn, cuda::stream_ref stream)
 {
-  auto indices = rmm::device_uvector<cudf::size_type>(size, stream);
+  auto indices = cuda::device_buffer<cudf::size_type>(
+    stream, cudf::get_current_device_resource_ref(), size, cuda::no_init);
   thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                    indices.begin(),
                    indices.end());
@@ -399,7 +401,8 @@ std::pair<cudf::size_type, rmm::device_uvector<cudf::size_type>> partition_input
   // if we counted a split of above/below threshold then
   // compute partitions based on the size of each string
   if ((threshold_count > 0) && (threshold_count < size)) {
-    auto sizes = rmm::device_uvector<cudf::size_type>(size, stream);
+    auto sizes = cuda::device_buffer<cudf::size_type>(
+      stream, cudf::get_current_device_resource_ref(), size, cuda::no_init);
     auto begin = cuda::counting_iterator<cudf::size_type>{0};
     auto end   = begin + size;
     thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
@@ -460,7 +463,8 @@ std::unique_ptr<cudf::column> minhash_fn(cudf::strings_column_view const& input,
   cudf::detail::grid_1d grid{static_cast<cudf::thread_index_type>(input.size()) * block_size,
                              block_size};
   auto const hashes_size = input.chars_size(stream);
-  auto d_hashes          = rmm::device_uvector<hash_value_type>(hashes_size, stream);
+  auto d_hashes          = cuda::device_buffer<hash_value_type>(
+    stream, cudf::get_current_device_resource_ref(), hashes_size, cuda::no_init);
   auto d_threshold_count = cudf::detail::device_scalar<cudf::size_type>(
     0, stream, cudf::get_current_device_resource_ref());
 
@@ -550,7 +554,8 @@ std::unique_ptr<cudf::column> minhash_ngrams_fn(
   cudf::detail::grid_1d grid{static_cast<cudf::thread_index_type>(input.size()) * block_size,
                              block_size};
   auto const hashes_size = input.child().size();
-  auto d_hashes          = rmm::device_uvector<hash_value_type>(hashes_size, stream);
+  auto d_hashes          = cuda::device_buffer<hash_value_type>(
+    stream, cudf::get_current_device_resource_ref(), hashes_size, cuda::no_init);
   auto d_threshold_count = cudf::detail::device_scalar<cudf::size_type>(
     0, stream, cudf::get_current_device_resource_ref());
 

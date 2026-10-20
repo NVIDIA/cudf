@@ -258,7 +258,7 @@ std::pair<std::vector<bitmask_type>, cudf::size_type> make_null_mask_vector(Vali
                                                                             ValidityIterator end)
 {
   auto const size      = cudf::distance(begin, end);
-  auto const num_words = cudf::bitmask_allocation_size_bytes(size) / sizeof(bitmask_type);
+  auto const num_words = cudf::bitmask_allocation_size_words(size);
 
   auto null_mask  = std::vector<bitmask_type>(num_words, 0);
   auto null_count = cudf::size_type{0};
@@ -301,8 +301,7 @@ std::pair<cuda::device_buffer<cudf::bitmask_type>, cudf::size_type> make_null_ma
     stream,
     mr.get_output_mr(),
     data,
-    data +
-      cudf::bitmask_allocation_size_bytes(cudf::distance(begin, end)) / sizeof(cudf::bitmask_type)};
+    data + cudf::bitmask_allocation_size_words(cudf::distance(begin, end))};
   stream.sync();  // wait for async H2D before host source is destroyed
   return {std::move(d_mask), null_count};
 }

@@ -28,6 +28,7 @@
 
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/std/iterator>
 #include <cuda/stream>
@@ -269,7 +270,8 @@ std::unique_ptr<cudf::column> generate_character_ngrams(cudf::strings_column_vie
   auto const d_strings = cudf::column_device_view::create(input.parent(), stream);
 
   auto [offsets, total_ngrams] = [&] {
-    auto counts               = rmm::device_uvector<cudf::size_type>(input.size(), stream);
+    auto counts = cuda::device_buffer<cudf::size_type>(
+      stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
     auto const avg_char_bytes = (input.chars_size(stream) / (input.size() - input.null_count()));
     auto const tile_size      = (avg_char_bytes < AVG_CHAR_BYTES_THRESHOLD)
                                   ? 1                         // thread per row
@@ -382,7 +384,8 @@ std::unique_ptr<cudf::column> hash_character_ngrams(cudf::strings_column_view co
 
   // build offsets column by computing the number of ngrams per string
   auto [offsets, total_ngrams] = [&] {
-    auto counts = rmm::device_uvector<cudf::size_type>(input.size(), stream);
+    auto counts = cuda::device_buffer<cudf::size_type>(
+      stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
     count_char_ngrams_kernel<<<grid.num_blocks, grid.num_threads_per_block, 0, stream.get()>>>(
       *d_strings, ngrams, cudf::detail::warp_size, counts.data());
     CUDF_CUDA_TRY(cudaGetLastError());

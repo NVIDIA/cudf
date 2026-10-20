@@ -9,6 +9,7 @@
 
 #include <cudf/column/column_factories.hpp>
 #include <cudf/json/json.hpp>
+#include <cudf/scalar/scalar.hpp>
 #include <cudf/strings/detail/strings_children.cuh>
 #include <cudf/strings/detail/utilities.cuh>
 #include <cudf/strings/string_view.hpp>
@@ -183,10 +184,10 @@ static void bench_query(nvbench::state& state)
 {
   srand(5236);
 
-  auto const num_rows              = static_cast<cudf::size_type>(state.get_int64("num_rows"));
-  auto const desired_bytes         = static_cast<cudf::size_type>(state.get_int64("bytes"));
-  auto const query                 = state.get_int64("query");
-  std::string_view const json_path = queries[query];
+  auto const num_rows      = static_cast<cudf::size_type>(state.get_int64("num_rows"));
+  auto const desired_bytes = static_cast<cudf::size_type>(state.get_int64("bytes"));
+  auto const query         = state.get_int64("query");
+  cudf::string_scalar json_path(queries[query]);
 
   auto const stream = cudf::get_default_stream();
   auto input        = build_json_string_column(desired_bytes, num_rows);

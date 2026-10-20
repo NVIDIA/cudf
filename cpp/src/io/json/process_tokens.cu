@@ -8,11 +8,11 @@
 #include "nested_json.hpp"
 
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/detail/tokenize_json.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
@@ -79,7 +79,7 @@ void validate_token_stream(device_span<char const> d_input,
   CUDF_FUNC_RANGE();
   if (!options.is_strict_validation()) { return; }
 
-  rmm::device_uvector<bool> d_invalid = cudf::detail::make_zeroed_device_uvector_async<bool>(
+  auto d_invalid = cudf::detail::make_zeroed_device_buffer_async<bool>(
     tokens.size(), stream, cudf::get_current_device_resource_ref());
 
   using token_t = cudf::io::json::token_t;

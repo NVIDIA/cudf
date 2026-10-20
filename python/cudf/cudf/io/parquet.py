@@ -25,6 +25,7 @@ import pylibcudf as plc
 from pylibcudf import expressions as plc_expr
 
 from cudf.api.types import is_list_like
+from cudf.core._compat import PYARROW_GE_26
 from cudf.core.column import (
     ColumnBase,
     access_columns,
@@ -1395,11 +1396,14 @@ def _read_parquet(
             nrows = -1
         if skip_rows is None:
             skip_rows = 0
+        empty_columns = columns is not None and len(columns) == 0
         if get_option("io.parquet.low_memory"):
             # If filters are used, we can't rely on a RangeIndex
             # (row count may be reduced)
             allow_range_index = (
-                filters is None and columns is not None and len(columns) != 0
+                filters is None
+                and columns is not None
+                and (len(columns) != 0 or PYARROW_GE_26)
             )
 
             options = (
@@ -1465,10 +1469,23 @@ def _read_parquet(
                 nrows=nrows,
                 skip_rows=skip_rows,
             )
+            if (
+                empty_columns
+                and PYARROW_GE_26
+                and filters is None
+                and len(df.index) == 0
+            ):
+                df.index = RangeIndex(
+                    _num_rows(
+                        filepaths_or_buffers, row_groups, skip_rows, nrows
+                    )
+                )
             return df
         else:
             allow_range_index = True
-            if columns is not None and len(columns) == 0 or filters:
+            if (
+                columns is not None and len(columns) == 0 and not PYARROW_GE_26
+            ) or filters:
                 allow_range_index = False
 
             options = (
@@ -1505,6 +1522,17 @@ def _read_parquet(
                 nrows=nrows,
                 skip_rows=skip_rows,
             )
+            if (
+                empty_columns
+                and PYARROW_GE_26
+                and filters is None
+                and len(df.index) == 0
+            ):
+                df.index = RangeIndex(
+                    _num_rows(
+                        filepaths_or_buffers, row_groups, skip_rows, nrows
+                    )
+                )
             return df
     else:
         if (
@@ -2479,6 +2507,26 @@ def _get_stat_freq(
     return result
 
 
+def _num_rows(
+    filepaths_or_buffers, row_groups, skip_rows: int, nrows: int
+) -> int:
+    metadata = plc.io.parquet_metadata.read_parquet_metadata(
+        plc.io.SourceInfo(filepaths_or_buffers)
+    )
+    if row_groups is not None:
+        row_group_rows = metadata.rowgroup_metadata()
+        file_offsets = itertools.accumulate(
+            metadata.num_rowgroups_per_file(), initial=0
+        )
+        return sum(
+            row_group_rows[offset + row_group]["num_rows"]
+            for offset, groups in zip(file_offsets, row_groups, strict=False)
+            for row_group in groups
+        )
+    num_rows = max(metadata.num_rows() - skip_rows, 0)
+    return num_rows if nrows < 0 else min(num_rows, nrows)
+
+
 def _process_metadata(
     df: DataFrame,
     names: Sequence[Hashable],
@@ -2592,7 +2640,7 @@ def _process_metadata(
                 start = range_index_meta["start"] + skip_rows  # type: ignore[operator]
                 stop = int(range_index_meta["stop"])  # type: ignore[arg-type]
                 if nrows > -1:
-                    stop = start + nrows
+                    stop = min(stop, start + nrows)
                 idx = RangeIndex(
                     start=start,
                     stop=stop,

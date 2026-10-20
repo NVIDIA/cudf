@@ -8,6 +8,7 @@
 #include <cudf_test/column_wrapper.hpp>
 
 #include <cudf/column/column.hpp>
+#include <cudf/scalar/scalar.hpp>
 #include <cudf/strings/capitalize.hpp>
 #include <cudf/strings/case.hpp>
 #include <cudf/strings/strings_column_view.hpp>
@@ -99,14 +100,14 @@ TEST_F(StringsCaseTest, Capitalize)
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
   {
-    auto results = cudf::strings::capitalize(strings_view, std::string_view(" "));
+    auto results = cudf::strings::capitalize(strings_view, cudf::string_scalar(" "));
     cudf::test::strings_column_wrapper expected(
       {"Sⱥⱥnich Xyz", "Examples Abc", "Thesé", "", "Are\tthe", "Tést\tstrings", ""},
       {true, true, true, false, true, true, true});
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
   {
-    auto results = cudf::strings::capitalize(strings_view, std::string_view(" \t"));
+    auto results = cudf::strings::capitalize(strings_view, cudf::string_scalar(" \t"));
     cudf::test::strings_column_wrapper expected(
       {"Sⱥⱥnich Xyz", "Examples Abc", "Thesé", "", "Are\tThe", "Tést\tStrings", ""},
       {true, true, true, false, true, true, true});
@@ -206,7 +207,7 @@ TEST_F(StringsCaseTest, MultiCharTitle)
     "Fl Ffi Ffl St St Մն Մե Մի Վն Մխ "};
   auto sv = cudf::strings_column_view(input);
 
-  auto results = cudf::strings::capitalize(sv, std::string_view(" "));
+  auto results = cudf::strings::capitalize(sv, cudf::string_scalar(" "));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 
   results = cudf::strings::title(sv);

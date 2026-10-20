@@ -43,7 +43,7 @@ std::unique_ptr<cudf::column> redact_strings(cudf::column_view const& names,
 
   auto const last_initial_first = cudf::table_view({last_initial->view(), first});
 
-  auto result = cudf::strings::concatenate(last_initial_first, std::string_view(" "));
+  auto result = cudf::strings::concatenate(last_initial_first, cudf::string_scalar(" "));
 
   cudaStreamSynchronize(0);
 

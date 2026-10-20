@@ -12,7 +12,9 @@
 
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/std/utility>
 #include <cuda/stream>
@@ -103,8 +105,11 @@ int64_t find_next_split(int64_t cur_pos,
  *
  * This function is asynchronous. Call stream.sync() before using the
  * results.
+ *
+ * TODO: Change this to a resizable buffer if/when https://github.com/NVIDIA/cccl/issues/12051
+ * is implemented
  */
-std::pair<rmm::device_uvector<cumulative_page_info>, rmm::device_uvector<int32_t>>
+std::pair<cuda::device_buffer<cumulative_page_info>, cuda::device_buffer<int32_t>>
 adjust_cumulative_sizes(device_span<cumulative_page_info const> c_info,
                         device_span<PageInfo const> pages,
                         cuda::stream_ref stream);
@@ -134,7 +139,7 @@ adjust_cumulative_sizes(device_span<cumulative_page_info const> c_info,
  * expected memory usage (including scratch space)
  *
  */
-std::tuple<rmm::device_uvector<page_span>, size_t, size_t> compute_next_subpass(
+std::tuple<cuda::device_buffer<page_span>, size_t, size_t> compute_next_subpass(
   device_span<cumulative_page_info const> c_info,
   device_span<PageInfo const> pages,
   device_span<ColumnChunkDesc const> chunks,
@@ -217,7 +222,7 @@ void detect_malformed_pages(device_span<PageInfo const> pages,
 /**
  * @brief Computes the per-page scratch space required for decompression.
  */
-rmm::device_uvector<size_t> compute_decompression_scratch_sizes(
+cuda::device_buffer<size_t> compute_decompression_scratch_sizes(
   device_span<ColumnChunkDesc const> chunks,
   device_span<PageInfo const> pages,
   cuda::stream_ref stream);
@@ -233,11 +238,11 @@ rmm::device_uvector<size_t> compute_decompression_scratch_sizes(
  * @param skip_rows Starting row for the pass
  * @param num_rows Number of rows to read in the pass
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource to use for allocating the returned device_uvector
+ * @param mr Device memory resource to use for allocating the returned device_buffer
  * @returns A vector of size_t values, one for each page, indicating the size needed for string
  * offsets
  */
-rmm::device_uvector<size_t> compute_string_offset_sizes(device_span<ColumnChunkDesc const> chunks,
+cuda::device_buffer<size_t> compute_string_offset_sizes(device_span<ColumnChunkDesc const> chunks,
                                                         device_span<PageInfo const> pages,
                                                         size_t skip_rows,
                                                         size_t num_rows,
@@ -256,11 +261,11 @@ rmm::device_uvector<size_t> compute_string_offset_sizes(device_span<ColumnChunkD
  * @param skip_rows Starting row for the pass
  * @param num_rows Number of rows to read in the pass
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource to use for allocating the returned device_uvector
+ * @param mr Device memory resource to use for allocating the returned device_buffer
  * @returns A vector of size_t values, one for each page, indicating the size needed for level
  * decode preprocessing
  */
-rmm::device_uvector<size_t> compute_level_decode_sizes(device_span<ColumnChunkDesc const> chunks,
+cuda::device_buffer<size_t> compute_level_decode_sizes(device_span<ColumnChunkDesc const> chunks,
                                                        device_span<PageInfo const> pages,
                                                        int level_type_size,
                                                        size_t skip_rows,

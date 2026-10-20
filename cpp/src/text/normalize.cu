@@ -728,8 +728,8 @@ std::unique_ptr<cudf::column> normalize_characters(cudf::strings_column_view con
 
   // convert the block sizes to block offsets
   thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                         d_block_offsets.data(),
-                         d_block_offsets.data() + d_block_offsets.size(),
+                         d_block_offsets.begin(),
+                         d_block_offsets.end(),
                          d_block_offsets.data());
 
   // convert the sizes to offsets

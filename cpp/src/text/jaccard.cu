@@ -10,6 +10,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/sizes_to_offsets_iterator.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -21,7 +22,6 @@
 
 #include <nvtext/jaccard.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_segmented_sort.cuh>
@@ -102,12 +102,13 @@ CUDF_KERNEL void sorted_unique_fn(uint32_t const* d_values,
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @return Number of unique values
  */
-rmm::device_uvector<cudf::size_type> compute_unique_counts(uint32_t const* values,
+cuda::device_buffer<cudf::size_type> compute_unique_counts(uint32_t const* values,
                                                            int64_t const* offsets,
                                                            cudf::size_type rows,
                                                            cuda::stream_ref stream)
 {
-  auto d_results        = rmm::device_uvector<cudf::size_type>(rows, stream);
+  auto d_results = cuda::device_buffer<cudf::size_type>(
+    stream, cudf::get_current_device_resource_ref(), rows, cuda::no_init);
   auto const num_blocks = cudf::util::div_rounding_up_safe(
     static_cast<cudf::thread_index_type>(rows) * cudf::detail::warp_size, block_size);
   sorted_unique_fn<<<num_blocks, block_size, 0, stream.get()>>>(
@@ -175,14 +176,15 @@ CUDF_KERNEL void sorted_intersect_fn(uint32_t const* d_values1,
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @return Number of common values
  */
-rmm::device_uvector<cudf::size_type> compute_intersect_counts(uint32_t const* values1,
+cuda::device_buffer<cudf::size_type> compute_intersect_counts(uint32_t const* values1,
                                                               int64_t const* offsets1,
                                                               uint32_t const* values2,
                                                               int64_t const* offsets2,
                                                               cudf::size_type rows,
                                                               cuda::stream_ref stream)
 {
-  auto d_results        = rmm::device_uvector<cudf::size_type>(rows, stream);
+  auto d_results = cuda::device_buffer<cudf::size_type>(
+    stream, cudf::get_current_device_resource_ref(), rows, cuda::no_init);
   auto const num_blocks = cudf::util::div_rounding_up_safe(
     static_cast<cudf::thread_index_type>(rows) * cudf::detail::warp_size, block_size);
   sorted_intersect_fn<<<num_blocks, block_size, 0, stream.get()>>>(
@@ -304,7 +306,7 @@ void segmented_sort(uint32_t const* input,
                     uint32_t* output,
                     int64_t items,
                     cudf::size_type segments,
-                    int64_t const* offsets,
+                    cuda::device_buffer<int64_t>::iterator offsets,
                     cuda::stream_ref stream)
 {
   cuda::device_buffer<std::byte> temp{stream, cudf::get_current_device_resource_ref()};
@@ -328,13 +330,14 @@ void segmented_sort(uint32_t const* input,
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @return The sorted hash values and offsets to each row
  */
-std::pair<rmm::device_uvector<uint32_t>, rmm::device_uvector<int64_t>> hash_substrings(
+std::pair<cuda::device_buffer<uint32_t>, cuda::device_buffer<int64_t>> hash_substrings(
   cudf::strings_column_view const& input, cudf::size_type width, cuda::stream_ref stream)
 {
   auto const d_strings = cudf::column_device_view::create(input.parent(), stream);
 
   // count substrings
-  auto offsets          = rmm::device_uvector<int64_t>(input.size() + 1, stream);
+  auto offsets = cuda::device_buffer<int64_t>(
+    stream, cudf::get_current_device_resource_ref(), input.size() + 1, cuda::no_init);
   auto const num_blocks = cudf::util::div_rounding_up_safe(
     static_cast<cudf::thread_index_type>(input.size()) * cudf::detail::warp_size, block_size);
   count_substrings_kernel<<<num_blocks, block_size, 0, stream.get()>>>(
@@ -348,16 +351,18 @@ std::pair<rmm::device_uvector<uint32_t>, rmm::device_uvector<int64_t>> hash_subs
                                                            cudf::get_current_device_resource_ref());
 
   // hash substrings
-  rmm::device_uvector<uint32_t> hashes(total_hashes, stream);
+  cuda::device_buffer<uint32_t> hashes(
+    stream, cudf::get_current_device_resource_ref(), total_hashes, cuda::no_init);
   substring_hash_kernel<<<num_blocks, block_size, 0, stream.get()>>>(
     *d_strings, width, offsets.data(), hashes.data());
   CUDF_CUDA_TRY(cudaGetLastError());
 
   // sort hashes
-  rmm::device_uvector<uint32_t> sorted(total_hashes, stream);
+  cuda::device_buffer<uint32_t> sorted(
+    stream, cudf::get_current_device_resource_ref(), total_hashes, cuda::no_init);
   if (total_hashes < static_cast<int64_t>(std::numeric_limits<int>::max())) {
     segmented_sort(
-      hashes.begin(), sorted.begin(), sorted.size(), input.size(), offsets.begin(), stream);
+      hashes.data(), sorted.data(), sorted.size(), input.size(), offsets.begin(), stream);
   } else {
     // The CUB segmented sort can only handle max<int> total values
     // so this code calls it in sections.
@@ -365,13 +370,15 @@ std::pair<rmm::device_uvector<uint32_t>, rmm::device_uvector<int64_t>> hash_subs
     auto const sort_sections  = cudf::util::div_rounding_up_safe(total_hashes, section_size);
     auto const offset_indices = [&] {
       // build a set of indices that point to offsets subsections
-      auto sub_offsets = rmm::device_uvector<int64_t>(sort_sections + 1, stream);
+      auto sub_offsets = cuda::device_buffer<int64_t>(
+        stream, cudf::get_current_device_resource_ref(), sort_sections + 1, cuda::no_init);
       thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                        sub_offsets.begin(),
                        sub_offsets.end(),
                        0L,
                        section_size);
-      auto indices = rmm::device_uvector<int64_t>(sub_offsets.size(), stream);
+      auto indices = cuda::device_buffer<int64_t>(
+        stream, cudf::get_current_device_resource_ref(), sub_offsets.size(), cuda::no_init);
       thrust::lower_bound(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                           offsets.begin(),
                           offsets.end(),
@@ -381,12 +388,21 @@ std::pair<rmm::device_uvector<uint32_t>, rmm::device_uvector<int64_t>> hash_subs
       return cudf::detail::make_host_vector(indices, stream);
     }();
 
+    auto const get_offset = [&](int64_t index) {
+      int64_t value = 0;
+      cudf::detail::cuda_memcpy<int64_t>(
+        cudf::host_span<int64_t>(&value, 1),
+        cudf::device_span<int64_t const>(offsets.data() + index, 1),
+        stream);
+      return value;
+    };
+
     // Call segmented sort with the sort sections
     for (auto i = 0L; i < sort_sections; ++i) {
       auto const index1 = offset_indices[i];
       auto const index2 = std::min(offset_indices[i + 1], static_cast<int64_t>(offsets.size() - 1));
-      auto const offset1 = offsets.element(index1, stream);
-      auto const offset2 = offsets.element(index2, stream);
+      auto const offset1 = get_offset(index1);
+      auto const offset2 = get_offset(index2);
 
       auto const num_items    = offset2 - offset1;
       auto const num_segments = index2 - index1;
@@ -394,15 +410,16 @@ std::pair<rmm::device_uvector<uint32_t>, rmm::device_uvector<int64_t>> hash_subs
       // There is a bug in the CUB segmented sort and the workaround is to
       // shift the offset values so the first offset is 0.
       // This transform can be removed once the bug is fixed.
-      auto sort_offsets = rmm::device_uvector<int64_t>(num_segments + 1, stream);
+      auto sort_offsets = cuda::device_buffer<int64_t>(
+        stream, cudf::get_current_device_resource_ref(), num_segments + 1, cuda::no_init);
       thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                         offsets.begin() + index1,
                         offsets.begin() + index2 + 1,
                         sort_offsets.begin(),
                         [offset1] __device__(auto const o) { return o - offset1; });
 
-      segmented_sort(hashes.begin() + offset1,
-                     sorted.begin() + offset1,
+      segmented_sort(hashes.data() + offset1,
+                     sorted.data() + offset1,
                      num_items,
                      num_segments,
                      sort_offsets.begin(),

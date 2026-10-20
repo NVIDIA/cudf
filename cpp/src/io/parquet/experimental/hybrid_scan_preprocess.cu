@@ -12,6 +12,7 @@
 #include <cudf/detail/algorithms/reduce.cuh>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/types.hpp>
@@ -21,6 +22,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_transform.cuh>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/stream>
@@ -52,11 +54,12 @@ void decode_dictionary_page_headers(
 {
   CUDF_FUNC_RANGE();
 
-  auto const page_data = cudf::detail::make_device_uvector_async(
+  auto const page_data = cudf::detail::make_device_buffer_async(
     dict_page_data, stream, cudf::get_current_device_resource_ref());
 
   // Exactly one dictionary page per column chunk
-  rmm::device_uvector<size_type> chunk_page_offsets(chunks.size() + 1, stream);
+  cuda::device_buffer<size_type> chunk_page_offsets(
+    stream, cudf::get_current_device_resource_ref(), chunks.size() + 1, cuda::no_init);
   thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                    chunk_page_offsets.begin(),
                    chunk_page_offsets.end(),
@@ -203,7 +206,7 @@ void hybrid_scan_reader_impl::setup_compressed_data(
   auto const total_pages = _has_offset_index ? count_page_headers_with_pgidx(chunks, _stream)
                                              : count_page_headers(chunks, _stream);
   if (total_pages <= 0) { return; }
-  auto unsorted_pages = cudf::detail::make_zeroed_device_uvector_async<PageInfo>(
+  auto unsorted_pages = cudf::detail::make_zeroed_device_buffer_async<PageInfo>(
     total_pages, _stream, cudf::get_current_device_resource_ref());
 
   // decoding of column/page information
@@ -241,7 +244,7 @@ void hybrid_scan_reader_impl::setup_sparse_compressed_data(
 
   // `decode_page_headers` may not write every byte of each PageInfo, and `sort_pages` copies
   // PageInfo as whole objects.
-  auto unsorted_pages = cudf::detail::make_zeroed_device_uvector_async<PageInfo>(
+  auto unsorted_pages = cudf::detail::make_zeroed_device_buffer_async<PageInfo>(
     total_pages, _stream, cudf::get_current_device_resource_ref());
   parquet::detail::decode_page_headers(pass, unsorted_pages, page_data, _stream);
   CUDF_EXPECTS(pass.page_offsets.size() - 1 == static_cast<size_t>(_input_columns.size()),

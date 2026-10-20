@@ -368,8 +368,7 @@ std::pair<std::unique_ptr<cudf::table>, std::vector<char>> create_parquet_with_s
         stream,
         cudf::get_current_device_resource_ref(),
         data,
-        data + cudf::bitmask_allocation_size_bytes(cudf::distance(begin, end)) /
-                 sizeof(cudf::bitmask_type)};
+        data + cudf::bitmask_allocation_size_words(cudf::distance(begin, end))};
       stream.sync();
       return std::pair{std::move(d_mask), null_count};
     };

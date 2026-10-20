@@ -983,6 +983,7 @@ jobs:
       arch: amd64
       node_type: gpu-rtxpro6000-latest-1
       container_image: rapidsai/citestwheel:26.12-latest
+      container-options: "--cap-add CAP_SYS_PTRACE"
       script: >-
         ci/test_cudf_polars_polars_tests.sh --engine ${{ matrix.engine }}
         --inject-gpu-engine-blocksize default

@@ -1,6 +1,6 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
@@ -699,6 +699,36 @@ public final class Scalar implements AutoCloseable, BinaryOperable {
   }
 
   private static native long binaryOpSV(long lhs, long rhs, int op, int dtype, int scale);
+
+  /**
+   * Divides this decimal scalar by each element of a decimal column. Each quotient is rounded to
+   * the scale of {@code outType} using {@code mode}, unlike {@code div}, which truncates. This
+   * scalar, {@code rhs} and {@code outType} may each be any decimal type, with any scale.
+   *
+   * An output element is null if this scalar is null, if the divisor element is null or zero, or
+   * if the rounded quotient does not fit in {@code outType}.
+   *
+   * @param rhs     the divisor column
+   * @param outType the decimal type and scale of the output
+   * @param mode    the rounding mode to use
+   * @return a new column of type {@code outType} containing the quotients
+   * @throws CudfException if either input or {@code outType} is not a decimal type
+   */
+  public ColumnVector divideDecimal(ColumnView rhs, DType outType, RoundMode mode) {
+    return new ColumnVector(divideDecimalSV(getScalarHandle(), rhs.getNativeView(),
+        outType.typeId.getNativeId(), outType.getScale(), mode.nativeId));
+  }
+
+  /**
+   * Divides this decimal scalar by each element of a decimal column, rounding HALF_UP.
+   * See {@link #divideDecimal(ColumnView, DType, RoundMode)}.
+   */
+  public ColumnVector divideDecimal(ColumnView rhs, DType outType) {
+    return divideDecimal(rhs, outType, RoundMode.HALF_UP);
+  }
+
+  private static native long divideDecimalSV(long lhs, long rhs, int dtype, int scale,
+                                             int roundMode) throws CudfException;
 
   @Override
   public boolean equals(Object o) {

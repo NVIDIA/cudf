@@ -47,13 +47,13 @@ auto host_row_mask_data(cudf::column_view const& column, cuda::stream_ref stream
 
 /**
  * @brief Creates a parquet buffer with zero-rows and same schema as table from
- * `create_parquet_with_stats`
+ * `get_parquet_with_stats`
  */
 template <typename T>
 std::vector<char> create_empty_parquet_with_stats()
 {
-  auto const non_empty = std::get<0>(create_parquet_with_stats<T, 1>());
-  auto const empty     = cudf::empty_like(non_empty->view());
+  auto const& non_empty = std::get<0>(*get_parquet_with_stats<T, 1>());
+  auto const empty      = cudf::empty_like(non_empty->view());
 
   cudf::io::table_input_metadata output_metadata(empty->view());
   output_metadata.column_metadata[0].set_name("col0");
@@ -108,7 +108,7 @@ TEST_F(HybridScanMultifileFiltersTest, Metadata)
                  std::back_inserter(file_buffers),
                  [](auto const src_seed) {
                    srand(src_seed);
-                   return std::get<1>(create_parquet_with_stats<T, num_concat>());
+                   return std::get<1>(*get_parquet_with_stats<T, num_concat>());
                  });
 
   // Filtering AST - col0 < 100
@@ -222,8 +222,8 @@ TEST_F(HybridScanMultifileFiltersTest, MismatchedNullabilityDoesNotLeakIntoMetad
 {
   // First source has REQUIRED columns and the second one has reordered and
   // nullable ones.
-  auto const buffer_a = std::get<1>(create_parquet_with_stats<int64_t, 1>());
-  auto const buffer_b = std::get<1>(create_parquet_with_stats<int64_t, 1, true, true>(
+  auto const& buffer_a = std::get<1>(*get_parquet_with_stats<int64_t, 1>());
+  auto const& buffer_b = std::get<1>(*get_parquet_with_stats<int64_t, 1, true, true>(
     100, cudf::io::compression_type::AUTO, {"col2", "col0", "col1"}, {2, 0, 1}));
 
   auto const parquet_buffers = std::vector<std::vector<char>>{buffer_a, buffer_b};
@@ -290,7 +290,7 @@ TEST_F(HybridScanMultifileFiltersTest, EmptySource)
   auto constexpr num_sources = 2;
   std::vector<std::vector<char>> file_buffers;
   file_buffers.reserve(num_sources);
-  file_buffers.emplace_back(std::get<1>(create_parquet_with_stats<T, 1>()));
+  file_buffers.emplace_back(std::get<1>(*get_parquet_with_stats<T, 1>()));
   file_buffers.emplace_back(create_empty_parquet_with_stats<T>());
 
   auto inputs = multifile_inputs(build_source_info(file_buffers));
@@ -339,7 +339,7 @@ TEST_F(HybridScanMultifileFiltersTest, RowGroupPasses)
                  std::back_inserter(file_buffers),
                  [&](auto i) {
                    srand(0xced + i);
-                   return std::get<1>(create_parquet_with_stats<T, 1>());
+                   return std::get<1>(*get_parquet_with_stats<T, 1>());
                  });
   auto inputs = multifile_inputs(build_source_info(file_buffers));
 
@@ -446,7 +446,7 @@ TEST_F(HybridScanMultifileFiltersTest, RowGroupPassesSingleSourceParity)
   srand(0xced);
 
   std::vector<std::vector<char>> file_buffers;
-  file_buffers.emplace_back(std::get<1>(create_parquet_with_stats<T, 1>()));
+  file_buffers.emplace_back(std::get<1>(*get_parquet_with_stats<T, 1>()));
 
   auto inputs = multifile_inputs(build_source_info(file_buffers));
 
@@ -494,7 +494,7 @@ TEST_F(HybridScanMultifileFiltersTest, ErrorFilterRowGroupsWithByteRanges)
                  std::back_inserter(file_buffers),
                  [](auto const src_seed) {
                    srand(src_seed);
-                   return std::get<1>(create_parquet_with_stats<T, 1>());
+                   return std::get<1>(*get_parquet_with_stats<T, 1>());
                  });
 
   auto inputs = multifile_inputs(build_source_info(file_buffers));
@@ -538,7 +538,7 @@ TEST_F(HybridScanMultifileFiltersTest, FilterRowGroupsWithStats)
                  std::back_inserter(file_buffers),
                  [](auto const src_seed) {
                    srand(src_seed);
-                   return std::get<1>(create_parquet_with_stats<T, 1, false>());
+                   return std::get<1>(*get_parquet_with_stats<T, 1, false>());
                  });
 
   auto inputs = multifile_inputs(build_source_info(file_buffers));
@@ -596,7 +596,7 @@ TEST_F(HybridScanMultifileFiltersTest, FilterRowGroupsWithBloomFilters)
   file_buffers.reserve(num_sources);
   for (int i = 0; i < num_sources; ++i) {
     srand(0xb100 + i);
-    file_buffers.emplace_back(std::get<1>(create_parquet_with_stats<T, 1>()));
+    file_buffers.emplace_back(std::get<1>(*get_parquet_with_stats<T, 1>()));
   }
 
   auto inputs = multifile_inputs(build_source_info(file_buffers));
@@ -660,7 +660,7 @@ TEST_F(HybridScanMultifileFiltersTest, BuildAllTrueRowMask)
                  std::back_inserter(file_buffers),
                  [](auto const src_seed) {
                    srand(src_seed);
-                   return std::get<1>(create_parquet_with_stats<T, 1>());
+                   return std::get<1>(*get_parquet_with_stats<T, 1>());
                  });
 
   auto inputs = multifile_inputs(build_source_info(file_buffers));
@@ -697,7 +697,7 @@ TEST_F(HybridScanMultifileFiltersTest, SparsePayloadPagesWithoutOffsetIndexes)
   using T = uint32_t;
 
   auto file_buffers = std::vector<std::vector<char>>{};
-  file_buffers.emplace_back(std::get<1>(create_parquet_with_stats<T, 1>()));
+  file_buffers.emplace_back(std::get<1>(*get_parquet_with_stats<T, 1>()));
   auto inputs = multifile_inputs(build_source_info(file_buffers));
 
   auto const options = cudf::io::parquet_reader_options::builder().column_names({"col1"}).build();
@@ -739,7 +739,7 @@ TYPED_TEST(HybridScanMultifilePageIndexRowMaskTest, BuildRowMaskWithPageIndexSta
                  std::back_inserter(file_buffers),
                  [](auto const src_seed) {
                    srand(src_seed);
-                   return std::get<1>(create_parquet_with_stats<T, 1, false>());
+                   return std::get<1>(*get_parquet_with_stats<T, 1, false>());
                  });
 
   auto inputs = multifile_inputs(build_source_info(file_buffers));
@@ -862,9 +862,9 @@ TEST_F(HybridScanMultifileFiltersTest, FilterRowGroupsWithDictionaryPages)
   std::vector<std::vector<char>> file_buffers;
   file_buffers.reserve(num_sources);
   srand(0xd1c7);
-  file_buffers.emplace_back(std::get<1>(create_parquet_with_stats<T, 1>(100)));  // col2 == "0100"
+  file_buffers.emplace_back(std::get<1>(*get_parquet_with_stats<T, 1>(100)));  // col2 == "0100"
   srand(0xfeed);
-  file_buffers.emplace_back(std::get<1>(create_parquet_with_stats<T, 1>(200)));  // col2 == "0200"
+  file_buffers.emplace_back(std::get<1>(*get_parquet_with_stats<T, 1>(200)));  // col2 == "0200"
 
   auto inputs = multifile_inputs(build_source_info(file_buffers));
 
@@ -902,9 +902,9 @@ TEST_F(HybridScanMultifileFiltersTest, MismatchedSchemaDictionaryPruningCollisio
   std::vector<std::vector<char>> file_buffers;
   file_buffers.reserve(num_sources);
   srand(0xd1c7);
-  file_buffers.emplace_back(std::get<1>(create_parquet_with_stats<T, 1>(200)));
+  file_buffers.emplace_back(std::get<1>(*get_parquet_with_stats<T, 1>(200)));
   srand(0xfeed);
-  file_buffers.emplace_back(std::get<1>(create_parquet_with_stats<T, 1>(
+  file_buffers.emplace_back(std::get<1>(*get_parquet_with_stats<T, 1>(
     100, cudf::io::compression_type::AUTO, {"col2", "col0", "col1"}, {2, 0, 1})));
 
   auto inputs = multifile_inputs(build_source_info(file_buffers));

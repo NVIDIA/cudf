@@ -9,6 +9,7 @@
 #include "tests/io/parquet_common.hpp"
 
 #include <cudf_test/column_wrapper.hpp>
+#include <cudf_test/cudf_gtest.hpp>
 
 #include <cudf/column/column_factories.hpp>
 #include <cudf/concatenate.hpp>
@@ -19,19 +20,45 @@
 #include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/traits.hpp>
+#include <cudf/utilities/type_dispatcher.hpp>
 
 #include <rmm/device_buffer.hpp>
 
 #include <cuda/iterator>
 
 #include <algorithm>
+#include <cstddef>
+#include <cstdint>
 #include <format>
 #include <iterator>
+#include <map>
 #include <string>
 #include <tuple>
 #include <type_traits>
 
 namespace {
+
+using stats_fixture     = std::pair<std::unique_ptr<cudf::table const>, std::vector<char>>;
+using stats_fixture_key = std::tuple<cudf::type_id,
+                                     std::size_t,
+                                     bool,
+                                     bool,
+                                     cudf::size_type,
+                                     cudf::io::compression_type,
+                                     std::vector<std::string>,
+                                     std::vector<cudf::size_type>,
+                                     std::uintptr_t>;
+
+/** @brief Amortize identical input construction across hybrid-scan suites. */
+struct HybridScanStatsFixtures : ::testing::Environment {
+  std::map<stats_fixture_key, stats_fixture> inputs;
+
+  // Device allocations must be released before the test runner resets its memory resource.
+  void TearDown() override { inputs.clear(); }
+};
+
+auto* const stats_fixtures = static_cast<HybridScanStatsFixtures*>(
+  ::testing::AddGlobalTestEnvironment(new HybridScanStatsFixtures));
 
 /**
  * @brief Creates a strings column with a constant stringified value between 0 and 9999
@@ -334,7 +361,7 @@ std::vector<std::vector<cudf::size_type>> filter_row_groups_with_dictionaries(
 }
 
 template <typename T, size_t NumTableConcats, bool IsConstantStrings, bool IsNullable>
-std::pair<std::unique_ptr<cudf::table>, std::vector<char>> create_parquet_with_stats(
+std::pair<std::unique_ptr<cudf::table const>, std::vector<char>> const* get_parquet_with_stats(
   cudf::size_type str_col_value,
   cudf::io::compression_type compression,
   std::vector<std::string> column_names,
@@ -346,6 +373,19 @@ std::pair<std::unique_ptr<cudf::table>, std::vector<char>> create_parquet_with_s
   CUDF_EXPECTS(column_names.size() == column_order.size(),
                "Column names and column order must have the same size");
   CUDF_EXPECTS(column_order.size() == 3, "Column order must include all three test columns");
+
+  auto key = stats_fixture_key{cudf::type_to_id<T>(),
+                               NumTableConcats,
+                               IsConstantStrings,
+                               IsNullable,
+                               str_col_value,
+                               compression,
+                               column_names,
+                               column_order,
+                               reinterpret_cast<std::uintptr_t>(stream.get())};
+  if (auto const it = stats_fixtures->inputs.find(key); it != stats_fixtures->inputs.end()) {
+    return &it->second;
+  }
 
   auto col0 = testdata::ascending<T>();
   auto col1 = []() {
@@ -440,59 +480,60 @@ std::pair<std::unique_ptr<cudf::table>, std::vector<char>> create_parquet_with_s
 
   cudf::io::write_parquet(out_opts, stream);
 
-  return std::pair{std::move(table), std::move(buffer)};
+  return &stats_fixtures->inputs
+            .emplace(std::move(key), std::pair{std::move(table), std::move(buffer)})
+            .first->second;
 }
 
-#define INSTANTIATE_CREATE_PARQUET_WITH_STATS(T, NUM_CONCATS, CONSTANT_STRINGS, NULLABLE) \
-  template std::pair<std::unique_ptr<cudf::table>, std::vector<char>>                     \
-  create_parquet_with_stats<T, NUM_CONCATS, CONSTANT_STRINGS, NULLABLE>(                  \
-    cudf::size_type,                                                                      \
-    cudf::io::compression_type,                                                           \
-    std::vector<std::string>,                                                             \
-    std::vector<cudf::size_type>,                                                         \
-    cuda::stream_ref)
+#define INSTANTIATE_GET_PARQUET_WITH_STATS(T, NUM_CONCATS, CONSTANT_STRINGS, NULLABLE)             \
+  template std::pair<std::unique_ptr<cudf::table const>, std::vector<char>> const*                 \
+  get_parquet_with_stats<T, NUM_CONCATS, CONSTANT_STRINGS, NULLABLE>(cudf::size_type,              \
+                                                                     cudf::io::compression_type,   \
+                                                                     std::vector<std::string>,     \
+                                                                     std::vector<cudf::size_type>, \
+                                                                     cuda::stream_ref)
 
-#define INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(T)       \
-  INSTANTIATE_CREATE_PARQUET_WITH_STATS(T, 1, true, false); \
-  INSTANTIATE_CREATE_PARQUET_WITH_STATS(T, 1, true, true)
+#define INSTANTIATE_GET_PARQUET_WITH_STATS_DICT(T)       \
+  INSTANTIATE_GET_PARQUET_WITH_STATS(T, 1, true, false); \
+  INSTANTIATE_GET_PARQUET_WITH_STATS(T, 1, true, true)
 
-INSTANTIATE_CREATE_PARQUET_WITH_STATS(uint32_t, 4, true, false);
-INSTANTIATE_CREATE_PARQUET_WITH_STATS(int32_t, 2, true, false);
-INSTANTIATE_CREATE_PARQUET_WITH_STATS(cudf::timestamp_ms, 2, true, false);
-INSTANTIATE_CREATE_PARQUET_WITH_STATS(cudf::duration_ms, 2, true, false);
+INSTANTIATE_GET_PARQUET_WITH_STATS(uint32_t, 4, true, false);
+INSTANTIATE_GET_PARQUET_WITH_STATS(int32_t, 2, true, false);
+INSTANTIATE_GET_PARQUET_WITH_STATS(cudf::timestamp_ms, 2, true, false);
+INSTANTIATE_GET_PARQUET_WITH_STATS(cudf::duration_ms, 2, true, false);
 
-INSTANTIATE_CREATE_PARQUET_WITH_STATS(uint8_t, 1, false, false);
-INSTANTIATE_CREATE_PARQUET_WITH_STATS(uint16_t, 1, false, false);
-INSTANTIATE_CREATE_PARQUET_WITH_STATS(uint32_t, 1, false, false);
-INSTANTIATE_CREATE_PARQUET_WITH_STATS(uint64_t, 1, false, false);
-INSTANTIATE_CREATE_PARQUET_WITH_STATS(cudf::duration_ms, 1, false, false);
+INSTANTIATE_GET_PARQUET_WITH_STATS(uint8_t, 1, false, false);
+INSTANTIATE_GET_PARQUET_WITH_STATS(uint16_t, 1, false, false);
+INSTANTIATE_GET_PARQUET_WITH_STATS(uint32_t, 1, false, false);
+INSTANTIATE_GET_PARQUET_WITH_STATS(uint64_t, 1, false, false);
+INSTANTIATE_GET_PARQUET_WITH_STATS(cudf::duration_ms, 1, false, false);
 
-INSTANTIATE_CREATE_PARQUET_WITH_STATS(uint8_t, 2, false, false);
-INSTANTIATE_CREATE_PARQUET_WITH_STATS(uint16_t, 2, false, false);
-INSTANTIATE_CREATE_PARQUET_WITH_STATS(uint32_t, 2, false, false);
-INSTANTIATE_CREATE_PARQUET_WITH_STATS(uint64_t, 2, false, false);
+INSTANTIATE_GET_PARQUET_WITH_STATS(uint8_t, 2, false, false);
+INSTANTIATE_GET_PARQUET_WITH_STATS(uint16_t, 2, false, false);
+INSTANTIATE_GET_PARQUET_WITH_STATS(uint32_t, 2, false, false);
+INSTANTIATE_GET_PARQUET_WITH_STATS(uint64_t, 2, false, false);
 
-INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(int8_t);
-INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(int16_t);
-INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(int32_t);
-INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(int64_t);
-INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(uint8_t);
-INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(uint16_t);
-INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(uint32_t);
-INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(uint64_t);
-INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(float);
-INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(double);
-INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(cudf::timestamp_D);
-INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(cudf::timestamp_ms);
-INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(cudf::timestamp_us);
-INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(cudf::timestamp_ns);
-INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(cudf::duration_ms);
-INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(cudf::duration_us);
-INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(cudf::duration_ns);
-INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(cudf::string_view);
-INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(numeric::decimal32);
-INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(numeric::decimal64);
-INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(numeric::decimal128);
+INSTANTIATE_GET_PARQUET_WITH_STATS_DICT(int8_t);
+INSTANTIATE_GET_PARQUET_WITH_STATS_DICT(int16_t);
+INSTANTIATE_GET_PARQUET_WITH_STATS_DICT(int32_t);
+INSTANTIATE_GET_PARQUET_WITH_STATS_DICT(int64_t);
+INSTANTIATE_GET_PARQUET_WITH_STATS_DICT(uint8_t);
+INSTANTIATE_GET_PARQUET_WITH_STATS_DICT(uint16_t);
+INSTANTIATE_GET_PARQUET_WITH_STATS_DICT(uint32_t);
+INSTANTIATE_GET_PARQUET_WITH_STATS_DICT(uint64_t);
+INSTANTIATE_GET_PARQUET_WITH_STATS_DICT(float);
+INSTANTIATE_GET_PARQUET_WITH_STATS_DICT(double);
+INSTANTIATE_GET_PARQUET_WITH_STATS_DICT(cudf::timestamp_D);
+INSTANTIATE_GET_PARQUET_WITH_STATS_DICT(cudf::timestamp_ms);
+INSTANTIATE_GET_PARQUET_WITH_STATS_DICT(cudf::timestamp_us);
+INSTANTIATE_GET_PARQUET_WITH_STATS_DICT(cudf::timestamp_ns);
+INSTANTIATE_GET_PARQUET_WITH_STATS_DICT(cudf::duration_ms);
+INSTANTIATE_GET_PARQUET_WITH_STATS_DICT(cudf::duration_us);
+INSTANTIATE_GET_PARQUET_WITH_STATS_DICT(cudf::duration_ns);
+INSTANTIATE_GET_PARQUET_WITH_STATS_DICT(cudf::string_view);
+INSTANTIATE_GET_PARQUET_WITH_STATS_DICT(numeric::decimal32);
+INSTANTIATE_GET_PARQUET_WITH_STATS_DICT(numeric::decimal64);
+INSTANTIATE_GET_PARQUET_WITH_STATS_DICT(numeric::decimal128);
 
-#undef INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT
-#undef INSTANTIATE_CREATE_PARQUET_WITH_STATS
+#undef INSTANTIATE_GET_PARQUET_WITH_STATS_DICT
+#undef INSTANTIATE_GET_PARQUET_WITH_STATS

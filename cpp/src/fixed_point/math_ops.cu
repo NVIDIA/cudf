@@ -189,6 +189,46 @@ std::unique_ptr<column> dispatch_decimals(data_type lhs,
   });
 }
 
+/**
+ * @brief Divides column `col` by scalar `s`, or `s` by `col` if `ScalarIsLhs` is true.
+ *
+ * @tparam ScalarIsLhs Whether `s` is the dividend rather than the divisor
+ */
+template <bool ScalarIsLhs>
+std::unique_ptr<column> divide_decimal_column_scalar(column_view const& col,
+                                                     scalar const& s,
+                                                     data_type output_type,
+                                                     rounding_method method,
+                                                     cuda::stream_ref stream,
+                                                     cudf::memory_resources mr)
+{
+  CUDF_EXPECTS(cudf::is_fixed_point(col.type()) && cudf::is_fixed_point(s.type()),
+               "Column and scalar must be decimal type");
+  CUDF_EXPECTS(cudf::is_fixed_point(output_type), "Output type must be a decimal type");
+
+  if (col.is_empty()) { return make_empty_column(output_type); }
+  if (all_null(col)) { return make_all_null_column(output_type, col.size(), stream, mr); }
+
+  auto const lhs_type = ScalarIsLhs ? s.type() : col.type();
+  auto const rhs_type = ScalarIsLhs ? col.type() : s.type();
+  auto const exponent = rescale_exponent(lhs_type, rhs_type, output_type);
+  return dispatch_decimals(
+    lhs_type, rhs_type, output_type, [&]<typename LhsT, typename RhsT, typename OutT>() {
+      using ColT        = std::conditional_t<ScalarIsLhs, RhsT, LhsT>;
+      using ScalarT     = std::conditional_t<ScalarIsLhs, LhsT, RhsT>;
+      auto const d_col  = column_device_view::create(col, stream);
+      auto const col_it = make_optional_iterator<ColT>(*d_col, nullate::DYNAMIC{col.has_nulls()});
+      auto const s_it   = make_optional_iterator<ScalarT>(s, nullate::YES{});
+      if constexpr (ScalarIsLhs) {
+        return divide_decimal_impl<LhsT, RhsT, OutT>(
+          s_it, col_it, exponent, output_type, col.size(), method, stream, mr);
+      } else {
+        return divide_decimal_impl<LhsT, RhsT, OutT>(
+          col_it, s_it, exponent, output_type, col.size(), method, stream, mr);
+      }
+    });
+}
+
 }  // namespace
 
 std::unique_ptr<column> divide_decimal(column_view const& lhs,
@@ -232,27 +272,7 @@ std::unique_ptr<column> divide_decimal(column_view const& lhs,
                                        cuda::stream_ref stream,
                                        cudf::memory_resources mr)
 {
-  CUDF_EXPECTS(cudf::is_fixed_point(lhs.type()) && cudf::is_fixed_point(rhs.type()),
-               "Column and scalar must be decimal type");
-  CUDF_EXPECTS(cudf::is_fixed_point(output_type), "Output type must be a decimal type");
-
-  if (lhs.is_empty()) { return make_empty_column(output_type); }
-  if (all_null(lhs)) { return make_all_null_column(output_type, lhs.size(), stream, mr); }
-
-  auto const exponent = rescale_exponent(lhs.type(), rhs.type(), output_type);
-  return dispatch_decimals(
-    lhs.type(), rhs.type(), output_type, [&]<typename LhsT, typename RhsT, typename OutT>() {
-      auto const d_lhs = column_device_view::create(lhs, stream);
-      return divide_decimal_impl<LhsT, RhsT, OutT>(
-        make_optional_iterator<LhsT>(*d_lhs, nullate::DYNAMIC{lhs.has_nulls()}),
-        make_optional_iterator<RhsT>(rhs, nullate::YES{}),
-        exponent,
-        output_type,
-        lhs.size(),
-        method,
-        stream,
-        mr);
-    });
+  return divide_decimal_column_scalar<false>(lhs, rhs, output_type, method, stream, mr);
 }
 
 std::unique_ptr<column> divide_decimal(scalar const& lhs,
@@ -262,27 +282,7 @@ std::unique_ptr<column> divide_decimal(scalar const& lhs,
                                        cuda::stream_ref stream,
                                        cudf::memory_resources mr)
 {
-  CUDF_EXPECTS(cudf::is_fixed_point(lhs.type()) && cudf::is_fixed_point(rhs.type()),
-               "Column and scalar must be decimal type");
-  CUDF_EXPECTS(cudf::is_fixed_point(output_type), "Output type must be a decimal type");
-
-  if (rhs.is_empty()) { return make_empty_column(output_type); }
-  if (all_null(rhs)) { return make_all_null_column(output_type, rhs.size(), stream, mr); }
-
-  auto const exponent = rescale_exponent(lhs.type(), rhs.type(), output_type);
-  return dispatch_decimals(
-    lhs.type(), rhs.type(), output_type, [&]<typename LhsT, typename RhsT, typename OutT>() {
-      auto const d_rhs = column_device_view::create(rhs, stream);
-      return divide_decimal_impl<LhsT, RhsT, OutT>(
-        make_optional_iterator<LhsT>(lhs, nullate::YES{}),
-        make_optional_iterator<RhsT>(*d_rhs, nullate::DYNAMIC{rhs.has_nulls()}),
-        exponent,
-        output_type,
-        rhs.size(),
-        method,
-        stream,
-        mr);
-    });
+  return divide_decimal_column_scalar<true>(rhs, lhs, output_type, method, stream, mr);
 }
 
 }  // namespace detail

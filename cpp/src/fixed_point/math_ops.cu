@@ -62,13 +62,13 @@ struct divide_decimal_fn {
 
   __device__ void operator()(size_type i) const
   {
-    cuda::std::optional<OutRep> quotient;
-    if (auto const l = lhs[i]) {
-      if (auto const r = rhs[i]) {
-        quotient = divide_and_round<OutRep>(
-          static_cast<CompRep>(l->value()), static_cast<CompRep>(r->value()), exponent, method);
-      }
-    }
+    auto const l = lhs[i];
+    auto const r = rhs[i];
+    auto const quotient =
+      (l and r)
+        ? divide_and_round<OutRep>(
+            static_cast<CompRep>(l->value()), static_cast<CompRep>(r->value()), exponent, method)
+        : cuda::std::optional<OutRep>{};
     output[i]       = quotient.value_or(OutRep{0});
     output_valid[i] = quotient.has_value();
   }

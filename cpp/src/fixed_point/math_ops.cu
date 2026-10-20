@@ -51,6 +51,17 @@ template <cudf::concepts::fixed_point LhsT,
 using compute_rep_t =
   wider_rep_t<wider_rep_t<typename LhsT::rep, typename RhsT::rep>, typename OutT::rep>;
 
+/**
+ * @brief Functor that divides `lhs[i]` by `rhs[i]` and writes the quotient to `output[i]`.
+ *
+ * The quotient is `lhs * 10^exponent / rhs`, rounded using `method`. A row is null, and its
+ * output value is 0, if either operand is null or the division has no result.
+ *
+ * @tparam OutRep The representation type of the output
+ * @tparam CompRep The representation type both operands are widened to for the division
+ * @tparam LhsIterator Iterator yielding optional dividends
+ * @tparam RhsIterator Iterator yielding optional divisors
+ */
 template <typename OutRep, typename CompRep, typename LhsIterator, typename RhsIterator>
 struct divide_decimal_fn {
   LhsIterator lhs;
@@ -119,7 +130,7 @@ std::unique_ptr<column> divide_decimal_impl(LhsIterator lhs,
 /**
  * @brief Returns the power of 10 that rescales `lhs / rhs` to the scale of `output_type`.
  */
-int32_t rescale_exponent(data_type lhs, data_type rhs, data_type output_type)
+[[nodiscard]] int32_t rescale_exponent(data_type lhs, data_type rhs, data_type output_type)
 {
   auto const exponent = static_cast<int64_t>(lhs.scale()) - rhs.scale() - output_type.scale();
   // Any exponent beyond +/-64 already overflows every magnitude type, so clamping keeps results
@@ -130,15 +141,18 @@ int32_t rescale_exponent(data_type lhs, data_type rhs, data_type output_type)
 /**
  * @brief Returns true if every element of `input` is null.
  */
-bool all_null(column_view const& input) { return input.null_count() == input.size(); }
+[[nodiscard]] inline bool all_null(column_view const& input)
+{
+  return input.null_count() == input.size();
+}
 
 /**
  * @brief Returns a column of `size` null elements of type `type`.
  */
-std::unique_ptr<column> make_all_null_column(data_type type,
-                                             size_type size,
-                                             cuda::stream_ref stream,
-                                             cudf::memory_resources mr)
+[[nodiscard]] inline std::unique_ptr<column> make_all_null_column(data_type type,
+                                                                  size_type size,
+                                                                  cuda::stream_ref stream,
+                                                                  cudf::memory_resources mr)
 {
   return make_fixed_width_column(type, size, mask_state::ALL_NULL, stream, mr.get_output_mr());
 }

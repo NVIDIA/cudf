@@ -4,21 +4,25 @@
 use std::collections::{HashMap, HashSet};
 
 use quent_analyzer::{AnalyzerResult, Entity, Span};
+use quent_dynamic_attributes::DynamicAttribute;
 use quent_query_engine_analyzer::{
     EngineEntity, OperatorEntity, PlanEntity, PortEntity, QueryEngineModel, QueryEntity,
     WorkerEntity,
 };
-use quent_query_engine_ui::{EntityRef as UiEntityRef, QueryBundle, QueryEntities};
+use quent_query_engine_ui::{
+    EntityRef as UiEntityRef, OperatorStatistic, OperatorStatistics, QueryBundle, QueryEntities,
+};
 use quent_ui::{
     FsmTypeSelection, Resource, ResourceGroup, ResourceGroupNode, ResourceGroupTypeDecl,
     ResourceTree, ResourceTypeDecl as UiResourceTypeDecl,
     fsm::{FsmStateTypeDecl, FsmTransitionDecl, FsmTypeDecl},
-    quantity::{CapacityDecl as UiCapacityDecl, CapacityKind, QuantitySpec},
+    quantity::{CapacityDecl as UiCapacityDecl, CapacityKind, PrefixSystem, QuantitySpec},
 };
 use uuid::Uuid;
 
 use super::CudfPolarsUiAnalyzer;
 use crate::reservation::{REQUEST_ENTITY_TYPE, RESERVATION_ENTITY_TYPE};
+use crate::reservation_metrics::aggregate_operator_reservations;
 use crate::resource::{
     DATA_CHANNEL_RESOURCE_TYPE, DEVICE_MEMORY_RESOURCE_TYPE, EVALUATE_ENTITY_TYPE,
     PROCESSOR_RESOURCE_TYPE, RESERVABLE_MEMORY_RESOURCE_TYPE,
@@ -314,6 +318,38 @@ impl CudfPolarsUiAnalyzer {
         .into_iter()
         .collect();
 
+        let query_operator_ids = view.operators().map(|operator| operator.id()).collect();
+        let reservation_metrics =
+            aggregate_operator_reservations(&self.reservations, &self.actors, &query_operator_ids);
+        let mut operators: HashMap<_, _> = view
+            .operators()
+            .map(|operator| (operator.id(), operator.to_ui(epoch)))
+            .collect();
+        for (operator_id, metrics) in reservation_metrics {
+            let operator = operators
+                .get_mut(&operator_id)
+                .expect("reservation metric operator came from this query");
+            let statistics = operator
+                .statistics
+                .get_or_insert_with(|| OperatorStatistics {
+                    custom_statistics: vec![],
+                });
+            statistics.custom_statistics.extend([
+                OperatorStatistic {
+                    value: DynamicAttribute::u64("reservation_peak_bytes", metrics.peak_bytes),
+                    quantity: Some("bytes".to_owned()),
+                },
+                OperatorStatistic {
+                    value: DynamicAttribute::f64("reservation_byte_seconds", metrics.byte_seconds),
+                    quantity: Some("byte-seconds".to_owned()),
+                },
+                OperatorStatistic {
+                    value: DynamicAttribute::u64("reservation_count", metrics.reservation_count),
+                    quantity: None,
+                },
+            ]);
+        }
+
         let entities = QueryEntities {
             engine: view.engine()?.to_ui()?,
             query: query.to_ui()?,
@@ -322,10 +358,7 @@ impl CudfPolarsUiAnalyzer {
                 .map(|worker| (worker.id(), worker.to_ui(epoch)))
                 .collect(),
             plans: view.plans().map(|plan| (plan.id(), plan.to_ui())).collect(),
-            operators: view
-                .operators()
-                .map(|operator| (operator.id(), operator.to_ui(epoch)))
-                .collect(),
+            operators,
             ports: view
                 .ports()
                 .map(|port| (port.id(), port.to_ui(epoch)))
@@ -349,6 +382,16 @@ impl CudfPolarsUiAnalyzer {
             unique_operator_names,
             quantity_specs: [
                 ("bytes".to_owned(), QuantitySpec::bytes()),
+                (
+                    "byte-seconds".to_owned(),
+                    QuantitySpec {
+                        symbol: "B·s".to_owned(),
+                        singular: "byte-second".to_owned(),
+                        plural: "byte-seconds".to_owned(),
+                        occupancy_prefix: PrefixSystem::Iec,
+                        rate_prefix: PrefixSystem::Iec,
+                    },
+                ),
                 ("unit".to_owned(), QuantitySpec::unit()),
             ]
             .into(),

@@ -18,7 +18,7 @@ mod generated_python {
         __quent_pyo3_bridge::_quent_generated(module)
     }
 
-    pub use __quent_pyo3_bridge::reservation_observers;
+    pub use __quent_pyo3_bridge::reservation_event_observers;
 }
 
 const MEMORY_DEVICE: u32 = 0;
@@ -594,7 +594,7 @@ impl ReservationEventIngestor {
             worker_observer,
             actor_observer,
             memory_observer,
-        ) = generated_python::reservation_observers(context)?;
+        ) = generated_python::reservation_event_observers(context)?;
         let worker_id = parse_uuid(worker_id, "worker_id")?;
         Ok(Self {
             worker: worker_observer.handle_with_id(worker_id).as_entity_ref(),

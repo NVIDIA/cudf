@@ -51,7 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             file.content.insert_str(
                 end,
                 r#"
-    pub fn reservation_observers(
+    pub fn reservation_event_observers(
         context: &pyo3::Bound<'_, pyo3::types::PyAny>,
     ) -> pyo3::PyResult<(
         quent_instrumentation::Observer<crate::MemoryReservationRequest>,
@@ -62,7 +62,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )> {
         let context = context.extract::<pyo3::PyRef<'_, PyContext>>()?;
         let context = context.inner.as_ref().ok_or_else(|| {
-            ContextClosedError::new_err("cannot create a recorder from a closed context")
+            ContextClosedError::new_err(
+                "cannot create reservation event observers from a closed context"
+            )
         })?;
         Ok((
             context.observer(),

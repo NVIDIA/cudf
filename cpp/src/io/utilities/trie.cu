@@ -10,10 +10,11 @@
 
 #include "trie.cuh"
 
-#include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <cuda/buffer>
 #include <cuda_runtime.h>
 
 #include <deque>
@@ -23,10 +24,13 @@
 namespace cudf {
 namespace detail {
 
-rmm::device_uvector<serial_trie_node> create_serialized_trie(std::vector<std::string> const& keys,
+cuda::device_buffer<serial_trie_node> create_serialized_trie(std::vector<std::string> const& keys,
                                                              cuda::stream_ref stream)
 {
-  if (keys.empty()) { return rmm::device_uvector<serial_trie_node>{0, stream}; }
+  if (keys.empty()) {
+    return cuda::device_buffer<serial_trie_node>{
+      stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init};
+  }
 
   static constexpr int alphabet_size = std::numeric_limits<char>::max() + 1;
   struct TreeTrieNode {
@@ -93,7 +97,11 @@ rmm::device_uvector<serial_trie_node> create_serialized_trie(std::vector<std::st
     // Only add the terminating character if any nodes were added
     if (has_children) { nodes.emplace_back(trie_terminating_character); }
   }
-  return cudf::detail::make_device_uvector(nodes, stream, cudf::get_current_device_resource_ref());
+  auto result = cudf::detail::make_device_buffer<serial_trie_node>(
+    cudf::host_span<serial_trie_node const>{nodes},
+    stream,
+    cudf::get_current_device_resource_ref());
+  return result;
 }
 
 }  // namespace detail

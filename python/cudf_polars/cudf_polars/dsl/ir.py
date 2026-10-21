@@ -23,7 +23,6 @@ import pickle
 import random
 import reprlib
 import sys
-import time
 import uuid
 from collections.abc import Sized
 from dataclasses import dataclass, field
@@ -46,7 +45,7 @@ import cudf_polars.dsl.expr as expr
 from cudf_polars.containers import Column, DataFrame, DataType
 from cudf_polars.containers.dataframe import NamedColumn
 from cudf_polars.containers.datatype import _contains_dtype
-from cudf_polars.dsl.expressions import rolling, unary
+from cudf_polars.dsl.expressions import rolling
 from cudf_polars.dsl.expressions.base import ExecutionContext
 from cudf_polars.dsl.nodebase import Node
 from cudf_polars.dsl.to_ast import _DECIMAL_IDS, to_ast, to_parquet_filter
@@ -63,11 +62,6 @@ from cudf_polars.utils.cuda_stream import (
     get_cuda_stream,
     stream_ordered_after,
 )
-from cudf_polars.utils.versions import (
-    POLARS_VERSION_LT_136,
-    POLARS_VERSION_LT_137,
-    POLARS_VERSION_LT_138,
-)
 
 if TYPE_CHECKING:
     import concurrent.futures
@@ -81,7 +75,7 @@ if TYPE_CHECKING:
     )
     from typing import Literal, Self
 
-    from polars import polars  # type: ignore[attr-defined]
+    from polars import _plr as polars
 
     from rmm.pylibrmm.stream import Stream
 
@@ -95,7 +89,6 @@ if TYPE_CHECKING:
     from cudf_polars.streaming.rank_aware_source import RankAwareSource
     from cudf_polars.typing import CSECache, ClosedInterval, Schema, Slice as Zlice
     from cudf_polars.utils.config import ParquetOptions
-    from cudf_polars.utils.timer import Timer
 
 __all__ = [
     "IR",
@@ -340,9 +333,7 @@ class IR(Node["IR"]):
         translation phase should fail earlier.
     """
 
-    def evaluate(
-        self, *, cache: CSECache, timer: Timer | None, context: IRExecutionContext
-    ) -> DataFrame:
+    def evaluate(self, *, cache: CSECache, context: IRExecutionContext) -> DataFrame:
         """
         Evaluate the node (recursively) and return a dataframe.
 
@@ -351,9 +342,6 @@ class IR(Node["IR"]):
         cache
             Mapping from cached node ids to constructed DataFrames.
             Used to implement evaluation of the `Cache` node.
-        timer
-            If not None, a Timer object to record timings for the
-            evaluation of the node.
         context
             The execution context for the node.
 
@@ -375,18 +363,9 @@ class IR(Node["IR"]):
             translation phase should fail earlier.
         """
         children = [
-            child.evaluate(cache=cache, timer=timer, context=context)
-            for child in self.children
+            child.evaluate(cache=cache, context=context) for child in self.children
         ]
-        if timer is not None:
-            start = time.monotonic_ns()
-            result = self.do_evaluate(*self._non_child_args, *children, context=context)
-            end = time.monotonic_ns()
-            # TODO: Set better names on each class object.
-            timer.store(start, end, type(self).__name__)
-            return result
-        else:
-            return self.do_evaluate(*self._non_child_args, *children, context=context)
+        return self.do_evaluate(*self._non_child_args, *children, context=context)
 
 
 class ErrorNode(IR):
@@ -866,9 +845,9 @@ class Scan(IR):
                         and isinstance(schema, dict)
                         and "fields" in reader_schema
                     )
-                    # polars 1.43 added a separate "column_names_overwrite"
-                    # for headerless new_columns; "schema" still covers other
-                    # renaming mechanisms (e.g. with_column_names) unchanged.
+                    # "column_names_overwrite" holds headerless new_columns;
+                    # "schema" covers other renaming mechanisms
+                    # (e.g. with_column_names).
                     or self.reader_options.get("column_names_overwrite")
                 )
                 if not has_new_columns:
@@ -1174,9 +1153,9 @@ class Scan(IR):
                 # Reader schema provides names
                 column_names = list(reader_options["schema"]["fields"].keys())
             elif reader_options.get("column_names_overwrite"):
-                # polars 1.43 added "column_names_overwrite" for headerless
-                # new_columns; "schema" (above) still covers other renaming
-                # mechanisms (e.g. with_column_names) unchanged.
+                # "column_names_overwrite" holds headerless new_columns;
+                # "schema" (above) covers other renaming mechanisms
+                # (e.g. with_column_names).
                 # "column_names_overwrite" only lists the overridden names,
                 # not any trailing columns padded with polars' default
                 # "column_N" names. Read the full, resolved set of names from
@@ -1673,8 +1652,8 @@ class Sink(IR):
                 raise NotImplementedError(
                     f"Compression type '{compression}' is not supported."
                 )
-        elif kind == (
-            "Json" if POLARS_VERSION_LT_137 else "NDJson"
+        elif (
+            kind == "NDJson"
         ):  # pragma: no cover; options are validated on the polars side
             if not all(
                 plc.io.json.is_supported_write_json(dtype.plc_type)
@@ -1858,13 +1837,11 @@ class Sink(IR):
         """Write the dataframe to a file."""
         target = plc.io.SinkInfo([path])
 
-        if POLARS_VERSION_LT_136 and options.get("mkdir", False):
-            Path(path).parent.mkdir(parents=True, exist_ok=True)  # pragma: no cover
         if kind == "Csv":
             cls._write_csv(target, options, df)
         elif kind == "Parquet":
             cls._write_parquet(target, parquet_options, options, df)
-        elif kind == ("Json" if POLARS_VERSION_LT_137 else "NDJson"):
+        elif kind == "NDJson":
             cls._write_json(target, df)
 
         return DataFrame([], stream=df.stream)
@@ -1921,9 +1898,7 @@ class Cache(IR):
         # return it.
         return df
 
-    def evaluate(
-        self, *, cache: CSECache, timer: Timer | None, context: IRExecutionContext
-    ) -> DataFrame:
+    def evaluate(self, *, cache: CSECache, context: IRExecutionContext) -> DataFrame:
         """Evaluate and return a dataframe."""
         # We must override the recursion scheme because we don't want
         # to recurse if we're in the cache.
@@ -1931,7 +1906,7 @@ class Cache(IR):
             (result, hits) = cache[self.key]
         except KeyError:
             (value,) = self.children
-            result = value.evaluate(cache=cache, timer=timer, context=context)
+            result = value.evaluate(cache=cache, context=context)
             cache[self.key] = (result, 0)
             return result
         else:
@@ -2138,9 +2113,7 @@ class Select(IR):
             columns = broadcast(*columns, stream=df.stream)
         return DataFrame(columns, stream=df.stream)
 
-    def evaluate(
-        self, *, cache: CSECache, timer: Timer | None, context: IRExecutionContext
-    ) -> DataFrame:
+    def evaluate(self, *, cache: CSECache, context: IRExecutionContext) -> DataFrame:
         """
         Evaluate the Select node with special handling for fast count queries.
 
@@ -2149,9 +2122,6 @@ class Select(IR):
         cache
             Mapping from cached node ids to constructed DataFrames.
             Used to implement evaluation of the `Cache` node.
-        timer
-            If not None, a Timer object to record timings for the
-            evaluation of the node.
         context
             The execution context for the node.
 
@@ -2195,7 +2165,7 @@ class Select(IR):
             )
             return DataFrame([col], stream=stream)
 
-        return super().evaluate(cache=cache, timer=timer, context=context)
+        return super().evaluate(cache=cache, context=context)
 
 
 class Reduce(IR):
@@ -2465,16 +2435,6 @@ class GroupBy(IR):
         for dtype in schema.values():
             if _has_struct_in_list(dtype.polars_type):
                 raise NotImplementedError("Nested list[struct] types not supported")
-        for request in agg_requests:
-            expr = request.value
-            if (
-                POLARS_VERSION_LT_136
-                and isinstance(expr, unary.UnaryFunction)
-                and expr.name == "value_counts"
-            ):
-                raise NotImplementedError(
-                    "value_counts is not supported in groupby"
-                )  # pragma: no cover; Nested list[struct] types not supported
         self.agg_requests = tuple(agg_requests)
         self.maintain_order = maintain_order
         self.zlice = zlice
@@ -3392,21 +3352,27 @@ class Join(IR):
                         left=False,
                         stream=stream,
                     )
-                    return DataFrame([*left_cols, *right_cols], stream=stream).slice(
-                        zlice
-                    )
+                    return DataFrame(
+                        [*left_cols, *right_cols],
+                        stream=stream,
+                        num_rows=left.num_rows * right.num_rows,
+                    ).slice(zlice)
         else:
             # how != "Cross"
             # TODO: Waiting on clarity based on https://github.com/pola-rs/polars/issues/17184
             left_on = DataFrame(
                 broadcast(
-                    *(e.evaluate(left) for e in left_on_exprs), stream=left.stream
+                    *(e.evaluate(left) for e in left_on_exprs),
+                    target_length=left.num_rows,
+                    stream=left.stream,
                 ),
                 stream=left.stream,
             )
             right_on = DataFrame(
                 broadcast(
-                    *(e.evaluate(right) for e in right_on_exprs), stream=right.stream
+                    *(e.evaluate(right) for e in right_on_exprs),
+                    target_length=right.num_rows,
+                    stream=right.stream,
                 ),
                 stream=right.stream,
             )
@@ -3555,7 +3521,9 @@ class HStack(IR):
         if should_broadcast:
             columns = broadcast(
                 *columns,
-                target_length=df.num_rows if df.num_columns != 0 else None,
+                target_length=(
+                    df.num_rows if df.num_columns != 0 or df.num_rows != 0 else None
+                ),
                 stream=df.stream,
             )
         else:  # pragma: no cover; streaming rewrites HStack(False)
@@ -3629,6 +3597,10 @@ class Distinct(IR):
         context: IRExecutionContext,
     ) -> DataFrame:
         """Evaluate and return a dataframe."""
+        if df.num_columns == 0:
+            return DataFrame([], stream=df.stream, num_rows=min(df.num_rows, 1)).slice(
+                zlice
+            )
         if subset is None:
             indices = list(range(df.num_columns))
             keys_sorted = all(c.is_sorted for c in df.column_map.values())
@@ -3934,11 +3906,11 @@ class MapFunction(IR):
                 f"{self.name} with Categorical/Enum columns is not supported"
             )
         if self.name == "explode":
-            if POLARS_VERSION_LT_136 or len(self.options) == 1:
+            if len(self.options) == 1:
                 (to_explode,) = self.options
             else:
-                (to_explode, empty_as_null, keep_nulls) = self.options
-                if (POLARS_VERSION_LT_136 and not empty_as_null) or not keep_nulls:
+                (to_explode, _, keep_nulls) = self.options
+                if not keep_nulls:
                     raise NotImplementedError(
                         "Explode an empty or null list/array"
                     )  # pragma: no cover
@@ -3956,9 +3928,6 @@ class MapFunction(IR):
             indices, pivotees, variable_name, value_name = self.options
             value_name = "value" if value_name is None else value_name
             variable_name = "variable" if variable_name is None else variable_name
-            if POLARS_VERSION_LT_136 and len(pivotees) == 0:  # pragma: no cover
-                index = frozenset(indices)
-                pivotees = [name for name in df.schema if name not in index]
             if not all(
                 dtypes.can_cast(df.schema[p].plc_type, self.schema[value_name].plc_type)
                 for p in pivotees
@@ -3975,8 +3944,6 @@ class MapFunction(IR):
             )
         elif self.name == "row_index":
             col_name, offset = options
-            if POLARS_VERSION_LT_138 and col_name in df.schema:  # pragma: no cover
-                raise NotImplementedError("Duplicate row index name")
             self.options = (col_name, offset)
         elif self.name == "fast_count":
             # TODO: Remove this once all scan types support projections

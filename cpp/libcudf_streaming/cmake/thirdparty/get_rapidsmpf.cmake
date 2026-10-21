@@ -1,6 +1,6 @@
 # =============================================================================
 # cmake-format: off
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # cmake-format: on
 # =============================================================================
@@ -33,7 +33,7 @@ function(find_and_configure_rapidsmpf VERSION)
   )
 endfunction()
 
-set(CUDF_STREAMING_MIN_VERSION
-    "${CUDF_STREAMING_VERSION_MAJOR}.${CUDF_STREAMING_VERSION_MINOR}.${CUDF_STREAMING_VERSION_PATCH}"
+set(CUDF_STREAMING_MIN_VERSION_rapidsmpf
+    "${CUDF_STREAMING_VERSION_MAJOR}.${CUDF_STREAMING_VERSION_MINOR}"
 )
-find_and_configure_rapidsmpf(${CUDF_STREAMING_MIN_VERSION})
+find_and_configure_rapidsmpf(${CUDF_STREAMING_MIN_VERSION_rapidsmpf})

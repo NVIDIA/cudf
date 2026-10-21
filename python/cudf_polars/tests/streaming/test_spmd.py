@@ -15,7 +15,7 @@ import pytest
 from cuda.bindings.driver import CUresult
 
 import polars as pl
-from polars import polars as plrs  # type: ignore[attr-defined]
+from polars import _plr as plrs
 from polars.testing import assert_frame_equal
 
 import rmm.mr

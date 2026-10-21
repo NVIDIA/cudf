@@ -17,6 +17,7 @@ import pylibcudf as plc
 
 from cudf_polars.containers import Column, DataType
 from cudf_polars.dsl.expressions.base import (
+    Col,
     ExecutionContext,
     Expr,
 )
@@ -26,7 +27,7 @@ if TYPE_CHECKING:
     from typing import Self
 
     import polars.type_aliases as pl_types
-    from polars import polars  # type: ignore[attr-defined]
+    from polars import _plr as polars
 
     from rmm.pylibrmm.stream import Stream
 
@@ -123,6 +124,13 @@ class BooleanFunction(Expr):
                     raise NotImplementedError(
                         f"arguments for `is_in` have different lengths ({len(needles.value)} != {len(haystack.value)})"
                     )
+        if (
+            self.name is BooleanFunction.Name.IsIn
+            and len(children) == 2
+            and isinstance(children[1], Col)
+            and plc.traits.is_nested(children[1].dtype.plc_type)
+        ):
+            raise NotImplementedError("is_in with a nested column haystack")
         if self.name is BooleanFunction.Name.IsClose:
             abs_tol, rel_tol, _ = self.options
             if abs_tol < 0.0:
@@ -539,33 +547,53 @@ class BooleanFunction(Expr):
             )
         elif self.name is BooleanFunction.Name.IsIn:
             needles, haystack = columns
+            (nulls_equal,) = self.options
             if haystack.obj.type().id() == plc.TypeId.LIST:
-                # Unwrap values from the list column
-                # .inner returns DataTypeClass | DataType, need to cast to DataType
-                haystack = Column(
-                    haystack.obj.children()[1],
-                    dtype=DataType(
-                        cast(
-                            "pl.DataType",
-                            cast("pl.List", haystack.dtype.polars_type).inner,
-                        )
-                    ),
-                ).astype(needles.dtype, stream=df.stream)
-            if haystack.size:
-                return Column(
-                    plc.search.contains(
-                        haystack.obj,
-                        needles.obj,
-                        stream=df.stream,
-                    ),
-                    dtype=self.dtype,
+                if haystack.size == 1 and haystack.null_count:
+                    return Column(
+                        plc.Column.from_scalar(
+                            plc.Scalar.from_py(
+                                None, self.dtype.plc_type, stream=df.stream
+                            ),
+                            needles.size,
+                            stream=df.stream,
+                        ),
+                        dtype=self.dtype,
+                    )
+                haystack_size = (
+                    plc.lists.count_elements(haystack.obj, stream=df.stream)
+                    .to_scalar(stream=df.stream)
+                    .to_py(stream=df.stream)
                 )
-            base = plc.Column.from_scalar(
+                (exploded,) = plc.lists.explode_outer(
+                    plc.Table([haystack.obj]), 0, stream=df.stream
+                ).columns()
+                haystack = Column(
+                    exploded,
+                    dtype=DataType(cast("pl.List", haystack.dtype.polars_type).inner),
+                ).astype(needles.dtype, stream=df.stream)
+            else:
+                haystack_size = haystack.size
+            if haystack_size:
+                result = plc.search.contains(
+                    haystack.obj,
+                    needles.obj,
+                    stream=df.stream,
+                )
+                if nulls_equal and needles.null_count:
+                    result = plc.replace.replace_nulls(
+                        result,
+                        plc.Scalar.from_py(haystack.null_count > 0, stream=df.stream),
+                        stream=df.stream,
+                    )
+                return Column(result, dtype=self.dtype)
+            out = plc.Column.from_scalar(
                 plc.Scalar.from_py(py_val=False, stream=df.stream),
                 needles.size,
                 stream=df.stream,
             )
-            out = base.with_mask(needles.obj.null_mask(), needles.null_count)
+            if not nulls_equal:
+                out = out.with_mask(needles.obj.null_mask(), needles.null_count)
             return Column(out, dtype=self.dtype)
         elif self.name is BooleanFunction.Name.IsSorted:
             (column,) = columns

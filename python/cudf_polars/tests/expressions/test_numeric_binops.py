@@ -12,7 +12,6 @@ from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
 )
-from cudf_polars.utils.versions import POLARS_VERSION_LT_140, POLARS_VERSION_LT_142
 
 dtypes = [
     pl.Int8,
@@ -55,6 +54,13 @@ _REPRESENTATIVE_DTYPE_PAIRS = [
 ]
 
 
+_SIGNED_INTEGERS = {pl.Int8, pl.Int16, pl.Int64}
+
+
+def _promotes_to_int128(ltype, rtype):
+    return {ltype, rtype} & _SIGNED_INTEGERS and pl.UInt64 in {ltype, rtype}
+
+
 @pytest.fixture(params=dtypes)
 def ltype(request):
     return request.param
@@ -93,13 +99,16 @@ def df(ltype, rtype, with_nulls):
 
 
 @pytest.mark.engine_params(["spmd", "spmd-small"])
-def test_numeric_binop(engine: pl.GPUEngine, df, binop):
+def test_numeric_binop(engine: pl.GPUEngine, df, binop, ltype, rtype):
     left = pl.col("a")
     right = pl.col("b")
 
     q = df.select(binop(left, right))
 
-    assert_gpu_result_equal(q, engine=engine)
+    if _promotes_to_int128(ltype, rtype):
+        assert_ir_translation_raises(q, engine, NotImplementedError)
+    else:
+        assert_gpu_result_equal(q, engine=engine)
 
 
 @pytest.mark.engine_params(["in-memory", "dask", "ray"])
@@ -173,13 +182,7 @@ def test_multiply_with_decimals(engine: pl.GPUEngine):
     assert_gpu_result_equal(q, engine=engine)
 
 
-def test_sum_decimal_widens_precision(request) -> None:
-    if POLARS_VERSION_LT_140:
-        request.applymarker(
-            pytest.mark.xfail(
-                reason="Polars does not widen precision for sum of decimals."
-            )
-        )
+def test_sum_decimal_widens_precision() -> None:
     df = pl.LazyFrame(
         {"x": [Decimal("5000000000000.00"), Decimal("5000000000000.00")]},
         schema={"x": pl.Decimal(15, 2)},
@@ -202,7 +205,4 @@ def test_fused_arithmetic(engine: pl.GPUEngine, expr: pl.Expr) -> None:
     # fms: fused multiply subtract
     df = pl.LazyFrame({"a": [1, 2, 3], "b": [10, 20, 30], "c": [5, 5, 5]})
     q = df.select(expr)
-    if POLARS_VERSION_LT_142:
-        assert_ir_translation_raises(q, engine, NotImplementedError)
-    else:
-        assert_gpu_result_equal(q, engine=engine)
+    assert_gpu_result_equal(q, engine=engine)

@@ -25,6 +25,7 @@
 #include <cub/block/block_reduce.cuh>
 #include <cub/block/block_scan.cuh>
 #include <cub/warp/warp_scan.cuh>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/iterator>
@@ -809,7 +810,8 @@ static std::unique_ptr<column> parse_string(string_view_pair_it str_tuples,
     size_type{0},
     cuda::maximum<size_type>{});
 
-  auto sizes           = rmm::device_uvector<size_type>(col_size, stream);
+  cuda::device_buffer<size_type> sizes(
+    stream, cudf::get_current_device_resource_ref(), col_size, cuda::no_init);
   auto d_sizes         = sizes.data();
   auto null_count_data = d_null_count.data();
 

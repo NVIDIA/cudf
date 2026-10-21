@@ -11,8 +11,10 @@
 #pragma once
 
 #include <cudf/utilities/export.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <cuda/buffer>
 #include <cuda/stream>
 
 #include <optional>
@@ -40,7 +42,7 @@ struct serial_trie_node {
   explicit serial_trie_node(char c, bool leaf = false) noexcept : character(c), is_leaf(leaf) {}
 };
 
-using trie          = rmm::device_uvector<serial_trie_node>;
+using trie          = cuda::device_buffer<serial_trie_node>;
 using optional_trie = std::optional<trie>;
 using trie_view     = device_span<serial_trie_node const>;
 
@@ -59,7 +61,7 @@ inline trie_view make_trie_view(optional_trie const& t)
  * @param keys Array of strings to insert into the trie
  * @param stream CUDA stream used for device memory operations and kernel launches.
  *
- * @return A host vector of nodes representing the serialized trie
+ * @return A device vector of nodes representing the serialized trie
  */
 CUDF_EXPORT trie create_serialized_trie(std::vector<std::string> const& keys,
                                         cuda::stream_ref stream);

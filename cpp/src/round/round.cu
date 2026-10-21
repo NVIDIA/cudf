@@ -20,6 +20,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/std/type_traits>
 #include <cuda/stream>
 #include <thrust/transform.h>
 #include <thrust/uninitialized_fill.h>
@@ -217,7 +218,7 @@ std::unique_ptr<column> round_with(column_view const& input,
 {
   using Functor = RoundFunctor<T>;
 
-  if (decimal_places >= 0 && std::is_integral_v<T>)
+  if (decimal_places >= 0 && cuda::std::is_integral_v<T>)
     return std::make_unique<cudf::column>(input, stream, mr);
 
   auto result = cudf::make_fixed_width_column(input.type(),

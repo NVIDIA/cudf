@@ -24,6 +24,7 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/std/type_traits>
 #include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/reduce.h>
@@ -38,7 +39,7 @@ struct count_accessor {
 
   template <typename T>
   cudf::size_type operator()(cuda::stream_ref stream)
-    requires(std::is_integral_v<T>)
+    requires(cuda::std::is_integral_v<T>)
   {
     using ScalarType = cudf::scalar_type_t<T>;
     auto p_count     = static_cast<ScalarType const*>(this->p_scalar);
@@ -52,7 +53,7 @@ struct count_accessor {
 
   template <typename T>
   cudf::size_type operator()(cuda::stream_ref)
-    requires(not std::is_integral_v<T>)
+    requires(not cuda::std::is_integral_v<T>)
   {
     CUDF_FAIL("count value should be a integral type.");
   }
@@ -63,7 +64,7 @@ struct count_checker {
 
   template <typename T>
   void operator()(cuda::stream_ref stream)
-    requires(std::is_integral_v<T>)
+    requires(cuda::std::is_integral_v<T>)
   {
     // static_cast is necessary due to bool
     if (static_cast<int64_t>(std::numeric_limits<T>::max()) >
@@ -82,7 +83,7 @@ struct count_checker {
 
   template <typename T>
   void operator()(cuda::stream_ref)
-    requires(not std::is_integral_v<T>)
+    requires(not cuda::std::is_integral_v<T>)
   {
     CUDF_FAIL("count value type should be integral.");
   }

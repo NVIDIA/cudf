@@ -19,6 +19,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/algorithm>
@@ -122,7 +123,7 @@ struct token_reader_fn {
  * @param stream CUDA stream used for kernel launches.
  */
 template <typename ProgDevice>
-std::pair<rmm::device_uvector<string_index_pair>, std::unique_ptr<column>> generate_tokens(
+std::pair<cuda::device_buffer<string_index_pair>, std::unique_ptr<column>> generate_tokens(
   column_device_view const& d_strings,
   ProgDevice& d_prog,
   split_direction direction,
@@ -150,7 +151,8 @@ std::pair<rmm::device_uvector<string_index_pair>, std::unique_ptr<column>> gener
   auto const d_offsets = cudf::detail::offsetalator_factory::make_input_iterator(offsets->view());
 
   // build a vector of tokens
-  rmm::device_uvector<string_index_pair> tokens(total_tokens, stream);
+  cuda::device_buffer<string_index_pair> tokens(
+    stream, cudf::get_current_device_resource_ref(), total_tokens, cuda::no_init);
   if (total_tokens > 0) {
     auto tr_fn = token_reader_fn{d_strings, direction, d_offsets, tokens.data()};
     launch_for_each_kernel(tr_fn, d_prog, d_strings.size(), stream);
@@ -161,7 +163,7 @@ std::pair<rmm::device_uvector<string_index_pair>, std::unique_ptr<column>> gener
 /**
  * @brief Builds the device regex program once and generates the split tokens with it.
  */
-std::pair<rmm::device_uvector<string_index_pair>, std::unique_ptr<column>> generate_tokens(
+std::pair<cuda::device_buffer<string_index_pair>, std::unique_ptr<column>> generate_tokens(
   column_device_view const& d_strings,
   regex_program const& prog,
   split_direction direction,

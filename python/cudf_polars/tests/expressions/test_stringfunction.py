@@ -15,10 +15,6 @@ from cudf_polars.testing.asserts import (
     assert_ir_translation_raises,
 )
 from cudf_polars.testing.engine_utils import is_streaming_engine
-from cudf_polars.utils.versions import (
-    POLARS_VERSION_LT_136,
-    POLARS_VERSION_LT_138,
-)
 
 
 @pytest.fixture
@@ -327,7 +323,7 @@ def test_to_datetime(
         assert_ir_translation_raises(q, engine, NotImplementedError)
     elif outcome == "collect_error":
         with pytest.raises(pl.exceptions.InvalidOperationError):
-            q.collect()
+            q.collect(engine="in-memory")
         if is_streaming_engine(engine):
             with pytest.RaisesGroup(pl.exceptions.InvalidOperationError):
                 q.collect(engine=engine)
@@ -362,13 +358,13 @@ def test_replace_re(engine: pl.GPUEngine, ldf):
 @pytest.mark.parametrize(
     "target,repl",
     [
-        (["A", "de", "kLm", "awef"], "a"),
-        (["A", "de", "kLm", "awef"], ""),
+        (["A", "de", "kLm", "awef"], ["a"]),
+        (["A", "de", "kLm", "awef"], [""]),
         (["A", "de", "kLm", "awef"], ["a", "b", "c", "d"]),
         (["A", "de", "kLm", "awef"], ["a", "b", "c", ""]),
         (
-            pl.lit(pl.Series(["A", "de", "kLm", "awef"])),
-            pl.lit(pl.Series(["a", "b", "c", "d"])),
+            pl.lit(pl.Series(["A", "de", "kLm", "awef"])).implode(),
+            pl.lit(pl.Series(["a", "b", "c", "d"])).implode(),
         ),
     ],
 )
@@ -379,7 +375,10 @@ def test_replace_many(engine: pl.GPUEngine, ldf, target, repl):
 
 @pytest.mark.parametrize(
     "target,repl",
-    [(["A", ""], ["a", "b"]), (pl.col("a").drop_nulls(), pl.col("a").drop_nulls())],
+    [
+        (["A", ""], ["a", "b"]),
+        (pl.col("a").drop_nulls().implode(), pl.col("a").drop_nulls().implode()),
+    ],
 )
 def test_replace_many_notimplemented(engine: pl.GPUEngine, ldf, target, repl):
     q = ldf.select(pl.col("a").str.replace_many(target, repl))
@@ -388,15 +387,16 @@ def test_replace_many_notimplemented(engine: pl.GPUEngine, ldf, target, repl):
 
 def test_replace_many_ascii_case(engine: pl.GPUEngine, ldf):
     q = ldf.select(
-        pl.col("a").str.replace_many(["a", "b", "c"], "a", ascii_case_insensitive=True)
+        pl.col("a").str.replace_many(
+            ["a", "b", "c"], ["a"], ascii_case_insensitive=True
+        )
     )
 
     assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
-@pytest.mark.skipif(POLARS_VERSION_LT_136, reason="leftmost arg added in 1.36")
 def test_replace_many_leftmost(engine: pl.GPUEngine, ldf):
-    q = ldf.select(pl.col("a").str.replace_many(["a", "b"], "x", leftmost=True))
+    q = ldf.select(pl.col("a").str.replace_many(["a", "b"], ["x"], leftmost=True))
 
     assert_ir_translation_raises(q, engine, NotImplementedError)
 
@@ -1036,9 +1036,6 @@ def test_concat_str_with_boolean(engine: pl.GPUEngine):
     assert_gpu_result_equal(q, engine=engine)
 
 
-@pytest.mark.skipif(
-    POLARS_VERSION_LT_138, reason="Split with literal parameter added in 1.38"
-)
 def test_split_regex_not_supported(engine: pl.GPUEngine):
     lf = pl.LazyFrame({"a": ["foo1bar", "baz456boo", "abc321"]})
 

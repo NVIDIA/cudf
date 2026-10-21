@@ -50,12 +50,29 @@ cudf::test::strings_column_wrapper constant_strings(cudf::size_type value)
 /**
  * @brief Fail for types other than duration or timestamp
  */
-template <typename T, CUDF_ENABLE_IF(not cudf::is_chrono<T>())>
+template <typename T>
 cudf::test::fixed_width_column_wrapper<T> descending_low_cardinality()
+  requires(not cudf::is_chrono<T>() and not cudf::is_fixed_point<T>())
 {
   static_assert(
-    cudf::is_chrono<T>(),
+    cudf::is_chrono<T>() or cudf::is_fixed_point<T>(),
     "Use testdata::descending<T>() to generate descending values for non-temporal types");
+}
+
+/**
+ * @brief Creates a fixed-point column wrapper with low cardinality descending values from 100 to
+ * -99
+ *
+ * @tparam T Fixed-point type
+ * @return Column wrapper
+ */
+template <typename T>
+cudf::test::fixed_width_column_wrapper<T> descending_low_cardinality()
+  requires(cudf::is_fixed_point<T>())
+{
+  auto elements = cudf::detail::make_counting_transform_iterator(
+    0, [](auto i) { return T((num_ordered_rows / 2 - i) / 100, numeric::scale_type{0}); });
+  return cudf::test::fixed_width_column_wrapper<T>(elements, elements + num_ordered_rows);
 }
 
 /**
@@ -64,8 +81,9 @@ cudf::test::fixed_width_column_wrapper<T> descending_low_cardinality()
  * @tparam T Duration type
  * @return Column wrapper
  */
-template <typename T, CUDF_ENABLE_IF(cudf::is_duration<T>())>
+template <typename T>
 cudf::test::fixed_width_column_wrapper<T> descending_low_cardinality()
+  requires(cudf::is_duration<T>())
 {
   auto elements = cudf::detail::make_counting_transform_iterator(
     0, [](auto i) { return T((num_ordered_rows - i) / 100); });
@@ -78,8 +96,9 @@ cudf::test::fixed_width_column_wrapper<T> descending_low_cardinality()
  * @tparam T Timestamp type
  * @return Column wrapper
  */
-template <typename T, CUDF_ENABLE_IF(cudf::is_timestamp<T>())>
+template <typename T>
 cudf::test::fixed_width_column_wrapper<T> descending_low_cardinality()
+  requires(cudf::is_timestamp<T>())
 {
   auto elements = cudf::detail::make_counting_transform_iterator(
     0, [](auto i) { return T(typename T::duration((num_ordered_rows - i) / 100)); });
@@ -334,7 +353,7 @@ std::pair<std::unique_ptr<cudf::table>, std::vector<char>> create_parquet_with_s
 
   auto col0 = testdata::ascending<T>();
   auto col1 = []() {
-    if constexpr (cudf::is_chrono<T>()) {
+    if constexpr (cudf::is_chrono<T>() or cudf::is_fixed_point<T>()) {
       return descending_low_cardinality<T>();
     } else {
       return testdata::descending<T>();
@@ -475,6 +494,9 @@ INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(cudf::duration_ms);
 INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(cudf::duration_us);
 INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(cudf::duration_ns);
 INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(cudf::string_view);
+INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(numeric::decimal32);
+INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(numeric::decimal64);
+INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(numeric::decimal128);
 
 #undef INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT
 #undef INSTANTIATE_CREATE_PARQUET_WITH_STATS

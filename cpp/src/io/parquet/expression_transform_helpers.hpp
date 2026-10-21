@@ -113,9 +113,10 @@ template <operator_transform mode>
 [[nodiscard]] bool is_boolean_valued(ast::expression const& expr);
 
 /**
- * @brief Whether a bloom filter or a dictionary page can be queried for a `col == lit` predicate
+ * @brief Whether a bloom filter or a dictionary page can be queried for an equality predicate
+ * between a column and a literal
  *
- * @throws cudf::logic_error if the column and literal types mismatch
+ * @throws cudf::logic_error if the literal's type differs from the column's
  *
  * @param column_type Output type of the column
  * @param literal Literal compared against the column

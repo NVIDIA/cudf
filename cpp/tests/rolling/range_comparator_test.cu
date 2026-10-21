@@ -1,11 +1,13 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/cudf_gtest.hpp>
 #include <cudf_test/type_lists.hpp>
+
+#include <cuda/std/type_traits>
 
 #include <src/rolling/detail/range_utils.cuh>
 
@@ -115,7 +117,7 @@ TYPED_TEST(RangeComparatorTypedTest, TestAddSafe)
             (result_t{max, !std::is_floating_point_v<T>}));
   EXPECT_EQ(cudf::detail::rolling::saturating<cuda::std::plus<>>{}(max, T{max - 10}),
             (result_t{max, true}));
-  if constexpr (std::is_signed_v<T>) {
+  if constexpr (cuda::std::is_signed_v<T>) {
     auto constexpr min = std::numeric_limits<T>::lowest();
     EXPECT_EQ(cudf::detail::rolling::saturating<cuda::std::plus<>>{}(T{-10}, min),
               (result_t{min, !std::is_floating_point_v<T>}));
@@ -158,7 +160,7 @@ TYPED_TEST(RangeComparatorTypedTest, TestSubtractSafe)
   EXPECT_EQ(cudf::detail::rolling::saturating<cuda::std::minus<>>{}(min, max),
             (result_t{min, true}));
 
-  if constexpr (std::is_signed_v<T>) {
+  if constexpr (cuda::std::is_signed_v<T>) {
     EXPECT_EQ(cudf::detail::rolling::saturating<cuda::std::minus<>>{}(T{max - 1}, min),
               (result_t{max, true}));
   }

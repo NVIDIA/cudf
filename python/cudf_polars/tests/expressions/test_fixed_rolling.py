@@ -6,7 +6,7 @@ from __future__ import annotations
 import pytest
 
 import polars as pl
-from polars import polars as plrs  # type: ignore[attr-defined]
+from polars import _plr as plrs
 from polars.testing import assert_frame_equal
 
 import pylibcudf as plc

@@ -73,7 +73,7 @@ template <typename T, bool as_hex = false>
 __device__ constexpr uint8_t decode_digit(char c, bool* valid_flag)
 {
   if (c >= '0' && c <= '9') return c - '0';
-  if constexpr (as_hex and std::is_integral_v<T>) {
+  if constexpr (as_hex and cuda::std::is_integral_v<T>) {
     if (c >= 'a' && c <= 'f') return c - 'a' + 10;
     if (c >= 'A' && c <= 'F') return c - 'A' + 10;
   }

@@ -38,7 +38,6 @@ from cudf_polars.streaming.statistics import collect_statistics
 from cudf_polars.testing.asserts import assert_gpu_result_equal
 from cudf_polars.testing.engine_utils import warns_on_spmd
 from cudf_polars.utils.config import ConfigOptions, StreamingExecutor
-from cudf_polars.utils.versions import POLARS_VERSION_LT_138
 
 if TYPE_CHECKING:
     import concurrent.futures
@@ -256,9 +255,6 @@ def _set_sorted_join_metadata(spmd_engine_factory) -> ChannelMetadata:
     return metadata_collector[0]
 
 
-@pytest.mark.skipif(
-    POLARS_VERSION_LT_138, reason="set_sorted lowers to unsupported hint ir"
-)
 def test_ordered_join_after_set_sorted_inputs(spmd_engine_factory):
     metadata = _set_sorted_join_metadata(spmd_engine_factory)
 

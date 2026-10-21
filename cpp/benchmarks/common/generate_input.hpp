@@ -9,6 +9,8 @@
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 
+#include <cuda/std/type_traits>
+
 #include <map>
 #include <optional>
 
@@ -58,14 +60,15 @@ distribution_id default_distribution_id()
   return distribution_id::GEOMETRIC;
 }
 
-template <typename T, std::enable_if_t<!std::is_unsigned_v<T> && cudf::is_numeric<T>()>* = nullptr>
+template <typename T,
+          std::enable_if_t<!cuda::std::is_unsigned_v<T> && cudf::is_numeric<T>()>* = nullptr>
 distribution_id default_distribution_id()
 {
   return distribution_id::NORMAL;
 }
 
 template <typename T,
-          std::enable_if_t<!std::is_same_v<T, bool> && std::is_unsigned_v<T> &&
+          std::enable_if_t<!std::is_same_v<T, bool> && cuda::std::is_unsigned_v<T> &&
                            cudf::is_numeric<T>()>* = nullptr>
 distribution_id default_distribution_id()
 {

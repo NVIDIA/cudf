@@ -21,7 +21,6 @@ from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
 )
-from cudf_polars.utils.versions import POLARS_VERSION_LT_138
 
 if TYPE_CHECKING:
     from collections.abc import MutableMapping
@@ -125,13 +124,7 @@ def test_unique_hash():
     assert hash(ir_a) != hash(ir_b)
 
 
-def test_set_sorted_then_inner_join(
-    engine: pl.GPUEngine, request: pytest.FixtureRequest
-):
-    if POLARS_VERSION_LT_138:
-        request.applymarker(
-            pytest.mark.xfail(reason="set_sorted lowers to unsupported hint ir")
-        )
+def test_set_sorted_then_inner_join(engine: pl.GPUEngine):
     df = pl.LazyFrame({"a": [1, 2, 3, 4, 5]})
 
     q = df.set_sorted("a").join(
@@ -164,7 +157,7 @@ def test_hint_sorted_marks_column_metadata(descending, nulls_last) -> None:
         child,
     )
 
-    result = node.evaluate(cache={}, timer=None, context=IRExecutionContext())
+    result = node.evaluate(cache={}, context=IRExecutionContext())
 
     order = plc.types.Order.DESCENDING if descending else plc.types.Order.ASCENDING
     null_order = (
@@ -202,7 +195,7 @@ def test_hint_sorted_marks_multiple_column_metadata() -> None:
         child,
     )
 
-    result = node.evaluate(cache={}, timer=None, context=IRExecutionContext())
+    result = node.evaluate(cache={}, context=IRExecutionContext())
 
     assert result.column_map["a"].check_sorted(
         order=plc.types.Order.ASCENDING,
@@ -248,12 +241,11 @@ def test_hint_sorted_streaming_lowering_preserves_partitioning() -> None:
     assert partition_info[lowered] is child_partition
 
 
-def test_explode_single_legacy_options():
-    # Cover the branch: POLARS_VERSION_LT_136 or len(self.options) == 1
-    # On polars >= 1.36 this branch is only reachable by direct construction
-    # with 1-element options (the old pre-1.36 format).
+def test_explode_reconstruct():
     df = pl.DataFrame({"a": [[1, 2], [3, 4]]})
     child = DataFrameScan({"a": DataType(pl.List(pl.Int64()))}, df._df, None)
-    # 1-element options list: [[columns_to_explode]]
-    node = MapFunction({"a": DataType(pl.Int64())}, "explode", [["a"]], child)
-    assert node.options == (("a",),)
+    node = MapFunction(
+        {"a": DataType(pl.Int64())}, "explode", [["a"], False, True], child
+    )
+    rebuilt = node.reconstruct([child])
+    assert rebuilt.options == node.options == (("a",),)

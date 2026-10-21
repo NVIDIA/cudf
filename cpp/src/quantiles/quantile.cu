@@ -26,6 +26,7 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/std/type_traits>
 #include <cuda/stream>
 #include <thrust/transform.h>
 
@@ -46,14 +47,14 @@ struct quantile_functor {
 
   template <typename T>
   std::unique_ptr<column> operator()(column_view const& input)
-    requires(not std::is_arithmetic_v<T> and not cudf::is_fixed_point<T>())
+    requires(not cuda::std::is_arithmetic_v<T> and not cudf::is_fixed_point<T>())
   {
     CUDF_FAIL("quantile does not support non-numeric types");
   }
 
   template <typename T>
   std::unique_ptr<column> operator()(column_view const& input)
-    requires(std::is_arithmetic_v<T> or cudf::is_fixed_point<T>())
+    requires(cuda::std::is_arithmetic_v<T> or cudf::is_fixed_point<T>())
   {
     using StorageType   = cudf::device_storage_type_t<T>;
     using ExactResult   = std::conditional_t<exact and not cudf::is_fixed_point<T>(), double, T>;

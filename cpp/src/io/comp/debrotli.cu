@@ -52,7 +52,9 @@ THE SOFTWARE.
 #include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/buffer>
 #include <cuda/stream>
 
 namespace cudf::io::detail {
@@ -2087,8 +2089,11 @@ void gpu_debrotli(device_span<device_span<uint8_t const> const> inputs,
                   cudf::memory_resources mr)
 {
   // Scratch memory for decompressing
-  rmm::device_uvector<uint8_t> scratch(
-    cudf::io::detail::get_gpu_debrotli_scratch_size(inputs.size()), stream, mr.get_temporary_mr());
+  cuda::device_buffer<uint8_t> scratch(
+    stream,
+    mr.get_temporary_mr(),
+    cudf::io::detail::get_gpu_debrotli_scratch_size(inputs.size()),
+    cuda::no_init);
 
   auto const count = inputs.size();
   dim3 dim_block(block_size, 1);

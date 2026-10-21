@@ -11,9 +11,11 @@
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/strings/detail/char_tables.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/device_buffer.hpp>
 
+#include <cuda/buffer>
 #include <cuda/stream>
 
 #include <cstring>
@@ -67,8 +69,9 @@ std::unique_ptr<gkprog_device, std::function<void(gkprog_device*)>> gkprog_devic
   // allocate memory to store all the prog data in a flat contiguous buffer
   auto h_buffer = cudf::detail::make_host_vector<u_char>(memsize, stream);
   auto h_ptr    = h_buffer.data();
-  auto d_buffer = std::make_unique<rmm::device_uvector<u_char>>(memsize, stream);
-  auto d_ptr    = d_buffer->data();
+  auto d_buffer = std::make_unique<cuda::device_buffer<u_char>>(
+    stream, cudf::get_current_device_resource_ref(), memsize, cuda::no_init);
+  auto d_ptr = d_buffer->data();
 
   // create our device object; this is managed separately and returned to the caller.
   // both allocations are held by unique_ptrs so they are freed if anything below throws;

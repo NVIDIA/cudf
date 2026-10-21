@@ -11,7 +11,6 @@ from cudf_polars.testing.asserts import (
     assert_ir_translation_raises,
 )
 from cudf_polars.testing.engine_utils import is_streaming_engine
-from cudf_polars.utils.versions import POLARS_VERSION_LT_143
 
 
 @pytest.mark.parametrize("descending", [True, False])
@@ -36,9 +35,6 @@ def test_merge_sorted_without_nulls(engine: pl.GPUEngine, descending, request):
     assert_gpu_result_equal(q, engine=engine)
 
 
-@pytest.mark.skipif(
-    POLARS_VERSION_LT_143, reason="Merging on multiple keys added in polars 1.43"
-)
 def test_merge_sorted_multiple_keys_not_supported(engine: pl.GPUEngine):
     df0 = pl.LazyFrame(
         {"name": ["steve", "elise", "bob"], "age": [42, 44, 18], "height": [5, 6, 5]}

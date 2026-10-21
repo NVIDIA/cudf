@@ -588,7 +588,7 @@ translator = Translator(q._ldf.visit(), pl.GPUEngine())
 ir = translator.translate_ir()
 
 # DataFrame living on the device
-result = ir.evaluate(cache={}, timer=None, context=IRExecutionContext())
+result = ir.evaluate(cache={}, context=IRExecutionContext())
 
 # Polars dataframe
 host_result = result.to_polars()

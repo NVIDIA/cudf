@@ -17,6 +17,14 @@ from cudf_polars.dsl import expr as ir_expr
 from cudf_polars.dsl.ir import ConditionalJoin
 from cudf_polars.testing.asserts import assert_gpu_result_equal
 
+FUSED_PREDICATE_XFAIL = pytest.mark.xfail(
+    reason="Polars 2.0 plans an equi join with a residual predicate as a "
+    "'fused predicate' join, which its visitor does not expose"
+)
+MISMATCHED_DECIMAL_SCALE_XFAIL = pytest.mark.xfail(
+    reason="Polars 2.0 cannot join decimals with different scales on CPU"
+)
+
 
 @pytest.fixture(params=[False, True], ids=["nulls_not_equal", "nulls_equal"])
 def nulls_equal(request):
@@ -150,7 +158,10 @@ def test_join_literal_key(engine: pl.GPUEngine, left, right, left_on, right_on):
             pl.col("a_right") <= pl.col("a") * 2,
             pl.col("a_right") <= 2 * pl.col("a"),
         ],
-        [pl.col("b") * 2 > pl.col("a_right"), pl.col("a") == pl.col("c_right")],
+        pytest.param(
+            [pl.col("b") * 2 > pl.col("a_right"), pl.col("a") == pl.col("c_right")],
+            marks=FUSED_PREDICATE_XFAIL,
+        ),
         [pl.col("b") * 2 <= pl.col("a_right"), pl.col("a") < pl.col("c_right")],
         [pl.col("b") <= pl.col("a_right") * 7, pl.col("a") < pl.col("d") * 2],
     ],
@@ -290,8 +301,16 @@ def test_join_maintain_order_with_slice(
     "left_dtype,right_dtype",
     [
         (pl.Decimal(15, 2), pl.Decimal(15, 2)),
-        (pl.Decimal(15, 4), pl.Decimal(15, 2)),
-        (pl.Decimal(15, 2), pl.Decimal(15, 4)),
+        pytest.param(
+            pl.Decimal(15, 4),
+            pl.Decimal(15, 2),
+            marks=MISMATCHED_DECIMAL_SCALE_XFAIL,
+        ),
+        pytest.param(
+            pl.Decimal(15, 2),
+            pl.Decimal(15, 4),
+            marks=MISMATCHED_DECIMAL_SCALE_XFAIL,
+        ),
         (pl.Decimal(15, 2), pl.Float32),
         (pl.Decimal(15, 2), pl.Float64),
     ],
@@ -357,6 +376,7 @@ def test_cross_join_filter_decimal_float_finer_than_scale(
     assert_gpu_result_equal(q, engine=engine, check_row_order=False)
 
 
+@FUSED_PREDICATE_XFAIL
 @pytest.mark.skip_on_streaming_engine(
     "ConditionalJoin not supported for multiple partitions"
 )

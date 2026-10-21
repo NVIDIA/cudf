@@ -49,7 +49,6 @@ from cudf_polars.utils.config import (
     MaxConcurrentIOTasks,
     ParquetOptions,
 )
-from cudf_polars.utils.versions import POLARS_VERSION_LT_142
 
 if TYPE_CHECKING:
     import concurrent.futures
@@ -1062,12 +1061,6 @@ def test_scan_partition_plan_nearest(
     assert plan.flavor == expected_flavor
 
 
-requires_hive_ir = pytest.mark.skipif(
-    POLARS_VERSION_LT_142,
-    reason="hive::HivePartitionedDf not exposed in the logical plan before 1.42",
-)
-
-
 @pytest.fixture
 def hive_root(tmp_path: Path) -> Path:
     """Hive dataset with several row groups per file, to allow file splitting."""
@@ -1081,7 +1074,6 @@ def hive_root(tmp_path: Path) -> Path:
     return root
 
 
-@requires_hive_ir
 @pytest.mark.parametrize("target_partition_size", [1_000, 1_000_000])
 @pytest.mark.parametrize("use_hybrid_scan", [True, False])
 @pytest.mark.parametrize(
@@ -1113,7 +1105,6 @@ def test_hive_partitioned_streaming_scan(
     assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=False)
 
 
-@requires_hive_ir
 def test_hive_partitioned_split_tasks_slice_partitions(
     hive_root: Path, streaming_engine: StreamingEngine
 ) -> None:
@@ -1146,7 +1137,6 @@ def test_hive_partitioned_split_tasks_slice_partitions(
     ]
 
 
-@requires_hive_ir
 def test_hive_partitioned_fused_tasks_slice_partitions(
     hive_root: Path, streaming_engine: StreamingEngine
 ) -> None:
@@ -1169,7 +1159,6 @@ def test_hive_partitioned_fused_tasks_slice_partitions(
     assert [parts.df.rows() for parts in hive_parts] == [[(0,), (1,)], [(2,)]]
 
 
-@requires_hive_ir
 @pytest.mark.parametrize("target_partition_size", [1_000, 1_000_000])
 def test_hive_only_projection_with_prefetched_metadata(
     hive_root: Path,

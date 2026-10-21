@@ -21,6 +21,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/stream>
@@ -29,7 +30,7 @@ namespace cudf {
 namespace strings {
 namespace detail {
 
-std::pair<std::unique_ptr<column>, rmm::device_uvector<string_index_pair>> split_helper(
+std::pair<std::unique_ptr<column>, cuda::device_buffer<string_index_pair>> split_helper(
   strings_column_view const& input,
   split_tokenizer_fn tokenizer,
   string_delimiter_fn delimiter_fn,
@@ -192,7 +193,7 @@ std::unique_ptr<table> split_fn(strings_column_view const& input,
 // Build an output table from a (offsets, tokens) pair produced by split_per_row_helper.
 std::unique_ptr<table> build_table_from_tokens(strings_column_view const& input,
                                                column_view offsets,
-                                               rmm::device_uvector<string_index_pair> const& tokens,
+                                               cuda::device_buffer<string_index_pair> const& tokens,
                                                cuda::stream_ref stream,
                                                rmm::device_async_resource_ref mr)
 {

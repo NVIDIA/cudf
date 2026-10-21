@@ -19,7 +19,6 @@ import pylibcudf as plc
 from cudf_polars.containers import Column
 from cudf_polars.dsl.expressions.base import ExecutionContext, Expr
 from cudf_polars.dsl.expressions.literal import Literal
-from cudf_polars.utils.versions import POLARS_VERSION_LT_136
 
 if TYPE_CHECKING:
     from rmm.pylibrmm.stream import Stream
@@ -169,6 +168,10 @@ class Agg(Expr):
         elif name == "mean":
             req = plc.aggregation.mean()
         elif name == "sum":
+            if context == ExecutionContext.FRAME and plc.traits.is_duration(
+                dtype.plc_type
+            ):
+                raise NotImplementedError("Sum reduction of duration data type")
             req = plc.aggregation.sum()
         elif name == "product":
             req = plc.aggregation.product()
@@ -207,16 +210,6 @@ class Agg(Expr):
             raise NotImplementedError(
                 f"Unreachable, {name=} is incorrectly listed in _SUPPORTED"
             )  # pragma: no cover
-        if (
-            POLARS_VERSION_LT_136
-            and context == ExecutionContext.FRAME
-            and req is not None
-            and not plc.aggregation.is_valid_aggregation(dtype.plc_type, req)
-        ):  # pragma: no cover; polars may raise ahead of time
-            # TODO: Check which cases polars raises vs returns all-NULL column.
-            # For the all-NULL column cases, we could build it using Column.all_null_like
-            # at evaluation time.
-            raise NotImplementedError(f"Invalid aggregation {req} with dtype {dtype}")
         self.request = req
         op = getattr(self, f"_{name}", None)
         if op is None:
@@ -327,15 +320,16 @@ class Agg(Expr):
     def _sum(self, column: Column, stream: Stream) -> Column:
         if column.size == 0 or column.null_count == column.size:
             dtype = self.dtype.plc_type
+            empty_sum: Decimal | int | None
+            if self.options:
+                empty_sum = None
+            elif plc.traits.is_fixed_point(dtype):
+                empty_sum = Decimal(0).scaleb(dtype.scale())
+            else:
+                empty_sum = 0
             return Column(
                 plc.Column.from_scalar(
-                    plc.Scalar.from_py(
-                        Decimal(0).scaleb(dtype.scale())
-                        if plc.traits.is_fixed_point(dtype)
-                        else 0,
-                        dtype,
-                        stream=stream,
-                    ),
+                    plc.Scalar.from_py(empty_sum, dtype, stream=stream),
                     1,
                     stream=stream,
                 ),

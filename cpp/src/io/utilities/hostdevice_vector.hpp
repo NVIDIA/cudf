@@ -14,10 +14,10 @@
 #include <cudf/io/config_utils.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/device_uvector.hpp>
-
+#include <cuda/buffer>
 #include <cuda/stream>
 
 namespace cudf::detail {
@@ -47,7 +47,10 @@ class hostdevice_vector {
   explicit hostdevice_vector(size_t size, cuda::stream_ref stream)
     : keep_single_copy{cudf::io::integrated_memory_optimization::is_enabled()},
       h_data{make_pinned_vector_async<T>(size, stream)},
-      d_data{keep_single_copy ? 0 : size, stream},
+      d_data{stream,
+             cudf::get_current_device_resource_ref(),
+             keep_single_copy ? 0 : size,
+             cuda::no_init},
       _device_ptr{keep_single_copy ? h_data.data() : d_data.data()}
   {
   }
@@ -128,7 +131,7 @@ class hostdevice_vector {
  private:
   bool keep_single_copy;
   cudf::detail::host_vector<T> h_data;
-  rmm::device_uvector<T> d_data;
+  cuda::device_buffer<T> d_data;
   T* _device_ptr{};  // Device pointer for integrated memory systems
 };
 

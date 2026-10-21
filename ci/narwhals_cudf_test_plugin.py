@@ -102,6 +102,11 @@ EXPECTED_FAILURES: Mapping[str, str] = {
     "tests/expr_and_series/struct_test.py::test_struct_with_series[cudf]": "Constructing nested list/struct columns triggers a disallowed implicit host PyArrow conversion in cudf.",
     "tests/frame/columns_test.py::test_iter_columns[cudf]": "cudf does not support iterating over a Series/DataFrame/Index.",
     "tests/frame/getitem_test.py::test_getitem_boolean_columns[cudf]": "cudf does not support iterating over a Series/DataFrame/Index.",
+    "tests/frame/interchange_native_namespace_test.py::test_interchange": "Polars 2.0 removed the dataframe interchange protocol (`__dataframe__`).",
+    "tests/frame/interchange_schema_test.py::test_interchange_schema": "Polars 2.0 removed the dataframe interchange protocol (`__dataframe__`).",
+    "tests/frame/interchange_schema_test.py::test_interchange_schema_float16": "Polars 2.0 removed the dataframe interchange protocol (`__dataframe__`).",
+    "tests/frame/interchange_schema_test.py::test_invalid": "Polars 2.0 removed the dataframe interchange protocol (`__dataframe__`).",
+    "tests/frame/interchange_to_arrow_test.py::test_interchange_to_arrow": "Polars 2.0 removed the dataframe interchange protocol (`__dataframe__`).",
     "tests/frame/with_columns_test.py::test_with_columns_dtypes_single_row[cudf]": "Narwhals hashes cudf's CategoricalDtype, which is unhashable.",
     "tests/selectors_test.py::test_categorical[cudf]": "Narwhals hashes cudf's CategoricalDtype, which is unhashable.",
     "tests/selectors_test.py::test_enum[cudf-selector0]": "Narwhals hashes cudf's CategoricalDtype, which is unhashable.",
@@ -116,6 +121,7 @@ EXPECTED_FAILURES: Mapping[str, str] = {
     "tests/testing/assert_frame_equal_test.py::test_self_equal[cudf]": "cudf cannot round-trip this categorical dtype through Arrow.",
     "tests/testing/assert_series_equal_test.py::test_categorical_as_str[cudf-False-context1]": "Narwhals hashes cudf's CategoricalDtype, which is unhashable.",
     "tests/testing/assert_series_equal_test.py::test_categorical_as_str[cudf-True-context0]": "Narwhals hashes cudf's CategoricalDtype, which is unhashable.",
+    "tests/v1_test.py::test_get_level": "Polars 2.0 removed the dataframe interchange protocol (`__dataframe__`).",
 }
 
 

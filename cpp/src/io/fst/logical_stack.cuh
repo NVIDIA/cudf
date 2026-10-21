@@ -21,6 +21,7 @@
 #include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/functional>
+#include <cuda/std/type_traits>
 #include <thrust/device_ptr.h>
 #include <thrust/fill.h>
 #include <thrust/scatter.h>
@@ -66,7 +67,7 @@ namespace detail {
 template <typename StackLevelT, typename ValueT>
 struct StackOp {
   // Must be signed type as any subsequence of stack operations must be able to be covered.
-  static_assert(std::is_signed_v<StackLevelT>, "StackLevelT has to be a signed type");
+  static_assert(cuda::std::is_signed_v<StackLevelT>, "StackLevelT has to be a signed type");
 
   StackLevelT stack_level;
   ValueT value;

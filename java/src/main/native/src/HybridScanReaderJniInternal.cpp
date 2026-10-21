@@ -58,6 +58,23 @@ jlongArray ranges_to_jlong_array(JNIEnv* env, std::vector<byte_range_info> const
   return result;
 }
 
+jlongArray ranges_to_jlong_array(JNIEnv* env,
+                                 std::vector<exp_pq::dictionary_byte_range> const& ranges)
+{
+  auto result = env->NewLongArray(ranges.size() * 3);
+  if (result == nullptr) { return nullptr; }
+  if (ranges.empty()) { return result; }
+  std::vector<jlong> data;
+  data.reserve(ranges.size() * 3);
+  for (auto const& r : ranges) {
+    data.push_back(static_cast<jlong>(r.byte_range.offset()));
+    data.push_back(static_cast<jlong>(r.byte_range.size()));
+    data.push_back(r.is_exact ? 1 : 0);
+  }
+  env->SetLongArrayRegion(result, 0, data.size(), data.data());
+  return result;
+}
+
 jintArray sizes_to_jint_array(JNIEnv* env, std::vector<cudf::size_type> const& vals)
 {
   auto result = env->NewIntArray(vals.size());

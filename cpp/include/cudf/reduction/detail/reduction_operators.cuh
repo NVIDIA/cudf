@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,11 +11,15 @@
 #include <cudf/detail/utilities/transform_unary_functions.cuh>
 #include <cudf/types.hpp>  //for CUDF_HOST_DEVICE
 
-#include <cmath>
+#include <cuda/std/cmath>
+#include <cuda/std/limits>
+
+#include <nv/target>
 
 namespace cudf {
 namespace reduction {
 namespace detail {
+
 // intermediate data structure to compute `var`, `std`
 template <typename ResultType>
 struct var_std {
@@ -24,36 +28,40 @@ struct var_std {
   // recommendations_ (1983)
   // https://doi.org/10.1080/00031305.1983.10483115
   // Also http://www.cs.yale.edu/publications/techreports/tr222.pdf
-  // This is a modification of Youngs and Cramer's online approach.
-  ResultType running_sum;
+  // We track the running mean, rather than the running sum so that columns whose sum
+  // overflows, but whose mean does not, produce finite variance. This is algebraically
+  // equivalent to the CGL algorithm in exact arithmetic, and has similar small-step
+  // backward error bounds.
+  ResultType running_mean;
   ResultType running_square_deviations;
   size_type count;
 
-  CUDF_HOST_DEVICE inline var_std(ResultType t = 0, ResultType s = 0, size_type n = 0)
-    : running_sum(t), running_square_deviations(s), count(n){};
+  CUDF_HOST_DEVICE inline var_std(ResultType mean = 0, ResultType m2 = 0, size_type n = 0)
+    : running_mean(mean), running_square_deviations(m2), count(n){};
 
   using this_t = var_std<ResultType>;
 
   CUDF_HOST_DEVICE inline this_t operator+(this_t const& rhs) const
   {
-    // Updates as per equations 1.5a and 1.5b in the paper
-    // T_{1,m+n} = T_{1,m} + T_{m+1,n+1}
-    // S_{1,m+n} = S_{1,m} + S_{m+1,n+1} + m/(n(m+n)) * (n/m T_{1,m} - T_{m+1,n+1})**2
-    // Here the first m samples are in this, the remaining n samples are in rhs.
     auto const m = this->count;
     auto const n = rhs.count;
-    // Avoid division by zero.
+    // Empty states are identities, including when the other state is non-finite.
     if (m == 0) { return rhs; }
     if (n == 0) { return *this; }
-    auto const tm   = this->running_sum;
-    auto const tn   = rhs.running_sum;
-    auto const sm   = this->running_square_deviations;
-    auto const sn   = rhs.running_square_deviations;
-    auto const tmn  = tm + tn;
-    auto const diff = ((static_cast<ResultType>(n) / m) * tm) - tn;
-    // Computing m/n(m+n) as m/n/(m+n) to avoid integer overflow
-    auto const smn = sm + sn + ((static_cast<ResultType>(m) / n) / (m + n)) * diff * diff;
-    return {tmn, smn, m + n};
+    if (!cuda::std::isfinite(running_mean) || !cuda::std::isfinite(rhs.running_mean)) {
+      auto constexpr nan = cuda::std::numeric_limits<ResultType>::quiet_NaN();
+      return {nan, nan, m + n};
+    }
+    auto const delta         = rhs.running_mean - running_mean;
+    auto const inverse_count = [&] {
+      NV_IF_ELSE_TARGET(NV_IS_DEVICE,
+                        (return __drcp_rn(static_cast<double>(m + n));),
+                        (return 1.0 / static_cast<double>(m + n);))
+    }();
+    auto const delta_n = delta * static_cast<ResultType>(inverse_count);
+    return {running_mean + delta_n * n,
+            running_square_deviations + rhs.running_square_deviations + delta * delta_n * m * n,
+            m + n};
   };
 };
 
@@ -283,7 +291,7 @@ struct variance : public compound_op<variance> {
 
   template <typename ResultType>
   struct intermediate {
-    using IntermediateType = var_std<ResultType>;  // with sum of value, and sum of squared value
+    using IntermediateType = var_std<ResultType>;  // with mean, M2, and count
 
     // compute `variance` from intermediate type `IntermediateType`
     CUDF_HOST_DEVICE inline static ResultType compute_result(IntermediateType const& input,
@@ -304,7 +312,7 @@ struct standard_deviation : public compound_op<standard_deviation> {
 
   template <typename ResultType>
   struct intermediate {
-    using IntermediateType = var_std<ResultType>;  // with sum of value, and sum of squared value
+    using IntermediateType = var_std<ResultType>;  // with mean, M2, and count
 
     // compute `standard deviation` from intermediate type `IntermediateType`
     CUDF_HOST_DEVICE inline static ResultType compute_result(IntermediateType const& input,

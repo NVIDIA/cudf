@@ -251,7 +251,7 @@ jobs:
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
       continue-on-error: true
-      script: "CUPY_NIGHTLY=true ci/test_wheel_cudf.sh"
+      script: "env CUPY_NIGHTLY=true ci/test_wheel_cudf.sh"
       # Only the 'latest' dependency set is compatible with nightly cupy.
       matrix_filter: map(select(.DEPENDENCIES == "latest"))
   wheel-tests-dask-cudf:

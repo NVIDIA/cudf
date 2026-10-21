@@ -14,6 +14,7 @@
 #include <rmm/resource_ref.hpp>
 
 #include <cuda/memory_resource>
+#include <cuda/std/concepts>
 #include <cuda/stream>
 
 #include <rapidsmpf/error.hpp>
@@ -102,7 +103,7 @@ template <typename T>
   return ret.release();
 }
 
-template <std::integral T = std::int64_t>
+template <cuda::std::integral T = std::int64_t>
 [[nodiscard]] inline std::vector<T> random_vector(std::int64_t seed,
                                                   std::size_t nelem,
                                                   T min = std::numeric_limits<T>::min(),

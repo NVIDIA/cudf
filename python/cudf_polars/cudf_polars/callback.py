@@ -7,12 +7,10 @@ from __future__ import annotations
 
 import contextlib
 import os
-import textwrap
-import time
 import warnings
 from functools import cache, partial
 from threading import Lock
-from typing import TYPE_CHECKING, Literal, assert_never, overload
+from typing import TYPE_CHECKING, assert_never
 
 import nvtx
 from cuda.bindings import runtime
@@ -34,7 +32,6 @@ from cudf_polars.utils.config import (
     _env_get_int,
     get_total_device_memory,
 )
-from cudf_polars.utils.timer import Timer
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -240,50 +237,18 @@ def set_device(device: int | None) -> Generator[int, None, None]:
             gpu.setDevice(current)
 
 
-@overload
 def _callback(
     ir: IR,
     with_columns: list[str] | None,
     pyarrow_predicate: str | None,
     n_rows: int | None,
-    should_time: Literal[False],
     *,
     memory_resource: rmm.mr.DeviceMemoryResource | None,
     config_options: ConfigOptions,
-    timer: Timer | None,
-) -> pl.DataFrame: ...
-
-
-@overload
-def _callback(
-    ir: IR,
-    with_columns: list[str] | None,
-    pyarrow_predicate: str | None,
-    n_rows: int | None,
-    should_time: Literal[True],
-    *,
-    memory_resource: rmm.mr.DeviceMemoryResource | None,
-    config_options: ConfigOptions,
-    timer: Timer | None,
-) -> tuple[pl.DataFrame, list[tuple[int, int, str]]]: ...
-
-
-def _callback(
-    ir: IR,
-    with_columns: list[str] | None,
-    pyarrow_predicate: str | None,
-    n_rows: int | None,
-    should_time: bool,  # noqa: FBT001
-    *,
-    memory_resource: rmm.mr.DeviceMemoryResource | None,
-    config_options: ConfigOptions,
-    timer: Timer | None,
-) -> pl.DataFrame | tuple[pl.DataFrame, list[tuple[int, int, str]]]:
+) -> pl.DataFrame:
     assert with_columns is None
     assert pyarrow_predicate is None
     assert n_rows is None
-    if timer is not None:
-        assert should_time
 
     with (
         nvtx.annotate(message="ExecuteIR", domain=CUDF_POLARS_NVTX_DOMAIN),
@@ -297,22 +262,11 @@ def _callback(
     ):
         if config_options.executor.name == "in-memory":
             context = IRExecutionContext()
-            df = ir.evaluate(cache={}, timer=timer, context=context).to_polars()
+            df = ir.evaluate(cache={}, context=context).to_polars()
             gpu_executed.set(True)
-            if timer is None:
-                return df
-            else:
-                return df, timer.timings
+            return df
         elif config_options.executor.name == "streaming":
             from cudf_polars.streaming.parallel import evaluate_streaming
-
-            if timer is not None:
-                msg = textwrap.dedent("""\
-                    LazyFrame.profile() is not supported with the streaming executor.
-                    To profile execution with the streaming executor, use NVIDIA
-                    NSight Systems with the 'streaming' scheduler.
-                    """)
-                raise NotImplementedError(msg)
 
             df = evaluate_streaming(ir, config_options)
             gpu_executed.set(True)
@@ -320,9 +274,7 @@ def _callback(
         assert_never(config_options.executor)
 
 
-def execute_with_cudf(
-    nt: NodeTraverser, duration_since_start: int | None, *, config: GPUEngine
-) -> None:
+def execute_with_cudf(nt: NodeTraverser, *, config: GPUEngine) -> None:
     """
     A post optimization callback that attempts to execute the plan with cudf.
 
@@ -330,10 +282,6 @@ def execute_with_cudf(
     ----------
     nt
         NodeTraverser
-
-    duration_since_start
-        Time since the user started executing the query (or None if no
-        profiling should occur).
 
     config
         GPUEngine object. Configuration is available as ``engine.config``.
@@ -351,19 +299,11 @@ def execute_with_cudf(
     """
     # Translation can decline a plan before the execution callback is installed.
     gpu_attempted.set(True)
-    if duration_since_start is None:
-        timer = None
-    else:
-        start = time.monotonic_ns()
-        timer = Timer(start - duration_since_start)
-
     memory_resource = config.memory_resource
 
     with nvtx.annotate(message="ConvertIR", domain=CUDF_POLARS_NVTX_DOMAIN):
         translator = Translator(nt, config)
         ir = translator.translate_ir()
-        if timer is not None:
-            timer.store(start, time.monotonic_ns(), "gpu-ir-translation")
 
         exception = translator.unsupported_operations_error()
         if exception is not None:
@@ -380,6 +320,5 @@ def execute_with_cudf(
                     ir,
                     memory_resource=memory_resource,
                     config_options=translator.config_options,
-                    timer=timer,
                 )
             )

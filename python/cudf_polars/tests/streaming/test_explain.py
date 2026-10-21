@@ -331,7 +331,9 @@ def test_explain_logical_io_then_join(explain_engine, tmp_path, kind):
         }
     )
     customers = make_lazy_frame(customers, kind, path=tmp_path / f"customers_{kind}")
-    q = sales.join(customers, on="customer_id", how="inner").sort("customer_id")
+    q = sales.join(customers, on="customer_id", how="inner").sort(
+        "customer_id", "order_id"
+    )
 
     # Verify the query runs correctly
     assert_gpu_result_equal(q, engine=explain_engine)

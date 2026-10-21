@@ -11,10 +11,12 @@
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/types.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/stream>
 #include <thrust/for_each.h>
@@ -25,7 +27,7 @@ namespace io {
 /**
  * @brief Create column_device_view pointers from leaf columns
  *
- * A device_uvector is created to store the leaves of parent columns. The
+ * A device_buffer is created to store the leaves of parent columns. The
  * column descriptor array is updated to point to these leaf columns.
  *
  * @tparam ColumnDescriptor Struct describing properties of columns with

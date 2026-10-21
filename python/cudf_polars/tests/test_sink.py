@@ -15,7 +15,6 @@ from cudf_polars.testing.asserts import (
     assert_sink_result_equal,
 )
 from cudf_polars.testing.engine_utils import get_blocksize_mode
-from cudf_polars.utils.versions import POLARS_VERSION_LT_138
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -223,10 +222,6 @@ def test_sink_in_memory_executor(df, tmp_path, file_type):
 
 @pytest.mark.parametrize("compression", ["gzip", "zstd"])
 @pytest.mark.parametrize("file_type", ["csv", "ndjson"])
-@pytest.mark.skipif(
-    POLARS_VERSION_LT_138,
-    reason="compression parameter added in Polars 1.38",
-)
 def test_sink_compression_raises(
     in_memory_engine, df, tmp_path, compression, file_type
 ):

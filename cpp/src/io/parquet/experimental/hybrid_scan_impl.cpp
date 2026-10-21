@@ -397,10 +397,11 @@ std::vector<std::vector<size_type>> hybrid_scan_reader_impl::filter_row_groups_w
                                                           stream);
 }
 
-std::pair<std::vector<byte_range_info>, std::vector<cudf::size_type>>
+std::pair<std::vector<dictionary_byte_range>, std::vector<cudf::size_type>>
 hybrid_scan_reader_impl::dictionary_pages_byte_ranges(
   cudf::host_span<std::vector<size_type> const> row_group_indices,
-  parquet_reader_options const& options)
+  parquet_reader_options const& options,
+  bool include_unbounded)
 {
   CUDF_EXPECTS(not row_group_indices.empty(), "Empty input row group indices encountered");
   auto [expr_conv, output_dtypes] = prepare_filter_and_output_types(options);
@@ -408,7 +409,8 @@ hybrid_scan_reader_impl::dictionary_pages_byte_ranges(
   return _extended_metadata->dictionary_pages_byte_ranges(row_group_indices,
                                                           output_dtypes,
                                                           _output_column_schemas,
-                                                          expr_conv.get_converted_expr().value());
+                                                          expr_conv.get_converted_expr().value(),
+                                                          include_unbounded);
 }
 
 std::pair<std::vector<byte_range_info>, std::vector<size_type>>

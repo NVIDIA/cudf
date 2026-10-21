@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -93,12 +93,13 @@ void test_single_agg(cudf::column_view const& keys,
 
   // --- Streaming groupby path (single-batch, validates against same expected output) ---
   // Skip streaming for: empty input (finalize throws), dictionary values (unsupported by
-  // streaming's row operators), ARGMIN/ARGMAX (batch-local row indices), or pre-sorted
-  // keys (streaming doesn't support sorted mode).
+  // streaming's row operators), unsupported aggregations, or pre-sorted keys (streaming
+  // doesn't support sorted mode).
   auto const skip_streaming =
     keys.size() == 0 || expect_keys.size() == 0 ||
-    values.type().id() == cudf::type_id::DICTIONARY32 || agg->kind == cudf::aggregation::ARGMIN ||
-    agg->kind == cudf::aggregation::ARGMAX || keys_are_sorted == cudf::sorted::YES;
+    values.type().id() == cudf::type_id::DICTIONARY32 ||
+    !cudf::groupby::is_streaming_groupby_supported(values.type(), agg->kind) ||
+    keys_are_sorted == cudf::sorted::YES;
 
   if (use_streaming == test_streaming::YES && !skip_streaming) {
     SCOPED_TRACE("streaming groupby path");
@@ -152,7 +153,7 @@ void test_sum_agg(cudf::column_view const& keys,
                     {},
                     {},
                     cudf::sorted::NO,
-                    test_streaming::NO,
+                    test_streaming::YES,
                     location);
   };
   do_test(force_use_sort_impl::YES);

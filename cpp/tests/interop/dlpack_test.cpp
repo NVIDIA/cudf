@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <cudf_test/base_fixture.hpp>
@@ -11,6 +11,7 @@
 #include <cudf/interop.hpp>
 #include <cudf/utilities/error.hpp>
 
+#include <cuda/std/type_traits>
 #include <thrust/host_vector.h>
 
 #include <dlpack/dlpack.h>
@@ -29,9 +30,9 @@ DLDataType get_dtype()
   uint16_t const lanes{1};
   if (std::is_floating_point_v<T>) {
     return DLDataType{kDLFloat, bits, lanes};
-  } else if (std::is_signed_v<T>) {
+  } else if (cuda::std::is_signed_v<T>) {
     return DLDataType{kDLInt, bits, lanes};
-  } else if (std::is_unsigned_v<T>) {
+  } else if (cuda::std::is_unsigned_v<T>) {
     return DLDataType{kDLUInt, bits, lanes};
   } else {
     static_assert(true, "unsupported type");
@@ -42,8 +43,8 @@ template <typename T>
 void validate_dtype(DLDataType const& dtype)
 {
   switch (dtype.code) {
-    case kDLInt: EXPECT_TRUE(std::is_integral_v<T> && std::is_signed_v<T>); break;
-    case kDLUInt: EXPECT_TRUE(std::is_integral_v<T> && std::is_unsigned_v<T>); break;
+    case kDLInt: EXPECT_TRUE(cuda::std::is_integral_v<T> && cuda::std::is_signed_v<T>); break;
+    case kDLUInt: EXPECT_TRUE(cuda::std::is_integral_v<T> && cuda::std::is_unsigned_v<T>); break;
     case kDLFloat: EXPECT_TRUE(std::is_floating_point_v<T>); break;
     default: FAIL();
   }

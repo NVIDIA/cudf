@@ -82,18 +82,30 @@ void decode_dictionary_page_headers(
               parquet::kernel_error::to_string(error));
   }
 
-  // Setup dictionary page for each chunk. One page per column chunk, zeroed out struct if a column
-  // is not fully dictionary encoded.
-  thrust::for_each(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-    cuda::counting_iterator<cuda::std::size_t>(0),
-    cuda::counting_iterator<cuda::std::size_t>(chunks.size()),
-    [chunks = chunks.device_begin(), pages = pages.device_begin()] __device__(auto chunk_idx) {
-      auto const& page = pages[chunk_idx];
-      if (page.flags & parquet::detail::PAGEINFO_FLAGS_DICTIONARY) {
-        chunks[chunk_idx].dict_page = &page;
-      }
-    });
+  // Point each chunk at its dictionary page. A chunk whose span is empty keeps a zeroed page and is
+  // not pruned with. A non-empty span must hold a dictionary page.
+  thrust::for_each(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                   cuda::counting_iterator<cuda::std::size_t>(0),
+                   cuda::counting_iterator<cuda::std::size_t>(chunks.size()),
+                   [chunks     = chunks.device_begin(),
+                    pages      = pages.device_begin(),
+                    error_code = error_code.data()] __device__(auto chunk_idx) {
+                     auto const& page = pages[chunk_idx];
+                     auto& chunk      = chunks[chunk_idx];
+                     if (page.flags & parquet::detail::PAGEINFO_FLAGS_DICTIONARY) {
+                       chunk.dict_page = &page;
+                     } else if (chunk.compressed_size > 0) {
+                       parquet::detail::set_error(
+                         static_cast<parquet::kernel_error::value_type>(
+                           parquet::detail::decode_error::INVALID_PAGE_TYPE),
+                         error_code);
+                     }
+                   });
+
+  if (auto const error = error_code.value_sync(stream); error != 0) {
+    CUDF_FAIL("Dictionary page data holds a non-dictionary page, code(s) " +
+              parquet::kernel_error::to_string(error));
+  }
 
   pages.device_to_host_async(stream);
   chunks.device_to_host_async(stream);

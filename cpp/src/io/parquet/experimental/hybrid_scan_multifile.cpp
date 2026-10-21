@@ -9,6 +9,8 @@
 #include <cudf/io/experimental/hybrid_scan_multifile.hpp>
 #include <cudf/utilities/error.hpp>
 
+#include <algorithm>
+#include <iterator>
 #include <numeric>
 
 namespace cudf::io::parquet::experimental {
@@ -343,7 +345,12 @@ hybrid_scan_multifile::dictionary_pages_byte_ranges(
   parquet_reader_options const& options)
 {
   CUDF_FUNC_RANGE();
-  return _impl->dictionary_pages_byte_ranges(row_group_indices, options);
+  auto [ranges, source_map] = _impl->dictionary_pages_byte_ranges(row_group_indices, options);
+  std::vector<text::byte_range_info> byte_ranges;
+  byte_ranges.reserve(ranges.size());
+  std::ranges::transform(
+    ranges, std::back_inserter(byte_ranges), &dictionary_byte_range::byte_range);
+  return {std::move(byte_ranges), std::move(source_map)};
 }
 
 std::vector<std::vector<size_type>> hybrid_scan_multifile::filter_row_groups_with_dictionary_pages(

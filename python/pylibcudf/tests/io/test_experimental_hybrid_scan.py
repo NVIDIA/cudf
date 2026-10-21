@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import decimal
 import io
 
 import pyarrow as pa
@@ -1041,6 +1042,89 @@ def test_hybrid_scan_dictionary_page_filter_long_strings() -> None:
             )
             == expected
         )
+
+
+@pytest.mark.parametrize(
+    "arrow_type,literal_type",
+    [
+        (pa.decimal128(9, 2), pa.decimal32(9, 2)),  # 4 byte FLBA
+        (pa.decimal128(12, 2), pa.decimal64(12, 2)),  # 6 byte FLBA
+        (pa.decimal128(20, 2), pa.decimal128(20, 2)),  # 9 byte FLBA
+    ],
+)
+def test_hybrid_scan_short_flba_decimals(arrow_type, literal_type) -> None:
+    """Decimals in FIXED_LEN_BYTE_ARRAY shorter than their cudf storage type
+    (pyarrow's default) are big-endian and must be sign-extended.
+    """
+    # Negative values. Row group 0 holds -0.55 and row group 1 does not.
+    evens = [
+        decimal.Decimal((i % 50) * 2 - 60).scaleb(-2) for i in range(1000)
+    ]
+    with_odd = [
+        decimal.Decimal(-55).scaleb(-2) if i % 50 == 1 else v
+        for i, v in enumerate(evens)
+    ]
+    table = pa.table({"c": pa.array(with_odd + evens, arrow_type)})
+    buf = io.BytesIO()
+    pq.write_table(table, buf, row_group_size=len(evens), use_dictionary=True)
+    parquet_bytes = buf.getvalue()
+    options = plc.io.parquet.ParquetReaderOptions.builder(
+        plc.io.SourceInfo([io.BytesIO(parquet_bytes)])
+    ).build()
+    reader = HybridScanReader(extract_parquet_footer(parquet_bytes), options)
+
+    def compare(op, value, scale=2):
+        decimal_type = {4: pa.decimal32, 8: pa.decimal64, 16: pa.decimal128}[
+            literal_type.byte_width
+        ](literal_type.precision, scale)
+        literal = pa.array(
+            [decimal.Decimal(value).scaleb(-scale)], decimal_type
+        )
+        return Operation(
+            op,
+            ColumnNameReference("c"),
+            Literal(plc.Scalar.from_arrow(literal[0])),
+        )
+
+    # Dictionary pages, where a literal at another scale cannot prune
+    for filter_expression, expected in [
+        (compare(ASTOperator.EQUAL, -55), [0]),
+        (compare(ASTOperator.EQUAL, -53), []),
+        (compare(ASTOperator.EQUAL, -550, scale=3), [0, 1]),
+    ]:
+        assert (
+            _filter_row_groups_with_dictionary_pages(
+                reader, options, parquet_bytes, filter_expression
+            )
+            == expected
+        )
+
+    # Statistics, where both row groups have a minimum of -0.60
+    for filter_expression, expected in [
+        (compare(ASTOperator.LESS, -60), []),
+        (compare(ASTOperator.LESS_EQUAL, -60), [0, 1]),
+    ]:
+        reader.reset_column_selection()
+        options.set_filter(filter_expression)
+        assert (
+            reader.filter_row_groups_with_stats(
+                reader.all_row_groups(options), options
+            )
+            == expected
+        )
+
+    # BYTE_STREAM_SPLIT decoding of the same values
+    buf = io.BytesIO()
+    pq.write_table(
+        table, buf, use_dictionary=False, column_encoding="BYTE_STREAM_SPLIT"
+    )
+    source = io.BytesIO(buf.getvalue())
+    got = plc.io.parquet.read_parquet(
+        plc.io.parquet.ParquetReaderOptions.builder(
+            plc.io.SourceInfo([source])
+        ).build()
+    )
+    assert got.tbl.to_arrow()[0].to_pylist() == table["c"].to_pylist()
 
 
 def test_hybrid_scan_metadata_with_page_index(

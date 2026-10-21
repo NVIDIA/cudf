@@ -22,9 +22,8 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_uvector.hpp>
-
 #include <cuda/atomic>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/iterator>
@@ -336,8 +335,14 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
   auto target_count = d_count.value(stream);
   // Create a vector of every target position in the chars column.
   // These may also include overlapping targets which will be resolved later.
-  auto targets_positions = rmm::device_uvector<int64_t>(target_count, stream);
-  auto targets_indices   = rmm::device_uvector<size_type>(target_count, stream);
+  // TODO: Replace these with resizable buffers once https://github.com/NVIDIA/cccl/issues/12051 is
+  // resolved
+  cuda::device_buffer<int64_t> targets_positions_storage(
+    stream, cudf::get_current_device_resource_ref(), target_count, cuda::no_init);
+  auto targets_positions = device_span<int64_t>{targets_positions_storage};
+  cuda::device_buffer<size_type> targets_indices_storage(
+    stream, cudf::get_current_device_resource_ref(), target_count, cuda::no_init);
+  auto targets_indices = device_span<size_type>{targets_indices_storage};
 
   // cudf::detail::make_counting_transform_iterator hardcodes size_type
   auto const copy_itr =
@@ -349,8 +354,8 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
 
   // adjust target count since the copy-if may have eliminated some invalid targets
   target_count = std::min(static_cast<int64_t>(std::distance(out_itr, copy_end)), target_count);
-  targets_positions.resize(target_count, stream);
-  targets_indices.resize(target_count, stream);
+  targets_positions      = targets_positions.first(target_count);
+  targets_indices        = targets_indices.first(target_count);
   auto d_positions       = targets_positions.data();
   auto d_targets_indices = targets_indices.data();
 
@@ -361,7 +366,8 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
     cudf::detail::offsetalator_factory::make_input_iterator(targets_offsets->view());
 
   // compute the number of string segments produced by replace in each string
-  auto counts = rmm::device_uvector<size_type>(strings_count, stream);
+  auto counts = cuda::device_buffer<size_type>(
+    stream, cudf::get_current_device_resource_ref(), strings_count, cuda::no_init);
   thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                     cuda::counting_iterator<size_type>{0},
                     cuda::counting_iterator<size_type>{strings_count},
@@ -380,7 +386,8 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
     cudf::detail::offsetalator_factory::make_input_iterator(offsets->view());
 
   // build a vector of all the positions for all the strings
-  auto indices   = rmm::device_uvector<string_index_pair>(total_strings, stream);
+  auto indices = cuda::device_buffer<string_index_pair>(
+    stream, cudf::get_current_device_resource_ref(), total_strings, cuda::no_init);
   auto d_indices = indices.data();
   auto d_sizes   = counts.data();  // reusing this vector to hold output sizes now
   thrust::for_each_n(

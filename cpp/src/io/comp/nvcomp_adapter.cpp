@@ -11,6 +11,7 @@
 #include <cudf/io/config_utils.hpp>
 #include <cudf/logger.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/buffer>
 
@@ -538,8 +539,8 @@ size_t batched_decompress_temp_size_ex(compression_type compression,
 {
   if (is_batched_decompress_temp_size_ex_supported(compression)) {
     size_t temp_size = 0;
-    auto d_statuses =
-      rmm::device_uvector<nvcompStatus_t>(input_data_ptrs.size(), stream, mr.get_temporary_mr());
+    auto d_statuses  = cuda::device_buffer<nvcompStatus_t>(
+      stream, mr.get_temporary_mr(), input_data_ptrs.size(), cuda::no_init);
     nvcompStatus_t const nvcomp_status =
       batched_decompress_get_temp_size_sync(compression,
                                             input_data_ptrs.data(),
@@ -624,8 +625,9 @@ void batched_decompress(compression_type compression,
 
   // cuDF inflate inputs converted to nvcomp inputs
   auto const nvcomp_args = create_batched_nvcomp_args(inputs, outputs, stream, {temp_mr, temp_mr});
-  rmm::device_uvector<size_t> actual_uncompressed_data_sizes(num_chunks, stream, temp_mr);
-  rmm::device_uvector<nvcompStatus_t> nvcomp_statuses(num_chunks, stream, temp_mr);
+  cuda::device_buffer<size_t> actual_uncompressed_data_sizes(
+    stream, temp_mr, num_chunks, cuda::no_init);
+  cuda::device_buffer<nvcompStatus_t> nvcomp_statuses(stream, temp_mr, num_chunks, cuda::no_init);
 
   // Temporary space required for decompression
   auto const temp_size = batched_decompress_temp_size_ex(compression,
@@ -731,8 +733,9 @@ void batched_compress(compression_type compression,
   cuda::device_buffer<std::byte> scratch(stream, temp_mr, temp_size, cuda::no_init);
   CUDF_EXPECTS(is_aligned(scratch.data(), 8), "Compression failed, misaligned scratch buffer");
 
-  rmm::device_uvector<size_t> actual_compressed_data_sizes(num_chunks, stream, temp_mr);
-  rmm::device_uvector<nvcompStatus_t> nvcomp_statuses(num_chunks, stream, temp_mr);
+  cuda::device_buffer<size_t> actual_compressed_data_sizes(
+    stream, temp_mr, num_chunks, cuda::no_init);
+  cuda::device_buffer<nvcompStatus_t> nvcomp_statuses(stream, temp_mr, num_chunks, cuda::no_init);
 
   batched_compress_async(compression,
                          nvcomp_args.input_data_ptrs.data(),
@@ -924,9 +927,10 @@ void load_nvcomp_library()
     auto const mr     = cudf::get_current_device_resource_ref();
 
     // Allocate dummy input buffer and output buffer
-    auto const d_input             = rmm::device_uvector<uint8_t>(1, stream, mr);
+    auto const d_input             = cuda::device_buffer<uint8_t>(stream, mr, 1, cuda::no_init);
     auto const max_compressed_size = compress_max_output_chunk_size(compression_type::SNAPPY, 1);
-    rmm::device_uvector<uint8_t> d_compressed(max_compressed_size, stream);
+    cuda::device_buffer<uint8_t> d_compressed(
+      stream, cudf::get_current_device_resource_ref(), max_compressed_size, cuda::no_init);
 
     // Prepare parameters for compression
     cudf::detail::hostdevice_vector<device_span<uint8_t const>> hd_inputs(1, stream);

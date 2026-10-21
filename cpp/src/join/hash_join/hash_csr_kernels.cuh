@@ -10,6 +10,7 @@
 
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/cuda.hpp>
+#include <cudf/detail/utilities/dispatchers.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/utilities/bit.hpp>
@@ -127,7 +128,7 @@ CUDF_KERNEL void hash_csr_build_fill_kernel(size_type num_rows,
   }
 }
 
-template <bool IsOuter, typename Equal, typename Hasher>
+template <bool IsOuter, bool ComputeSum, typename Equal, typename Hasher>
 CUDF_KERNEL void hash_csr_probe_count_kernel(size_type num_rows,
                                              bitmask_type const* valid_rows,
                                              size_type* probe_groups,
@@ -156,7 +157,7 @@ CUDF_KERNEL void hash_csr_probe_count_kernel(size_type num_rows,
     }
     auto const match_count = IsOuter ? cuda::std::max(count, size_type{1}) : count;
     if (match_counts != nullptr) { match_counts[index] = match_count; }
-    thread_matches += static_cast<cuda::std::uint64_t>(match_count);
+    if constexpr (ComputeSum) { thread_matches += static_cast<cuda::std::uint64_t>(match_count); }
 
     // Only right and full joins consume the matched-row tally, and `matched_groups` is null for
     // every other kind, so this whole block compiles away outside outer joins rather than costing
@@ -175,7 +176,7 @@ CUDF_KERNEL void hash_csr_probe_count_kernel(size_type num_rows,
     }
   }
 
-  if (total_matches != nullptr) {
+  if constexpr (ComputeSum) {
     using block_reduce = cub::BlockReduce<cuda::std::uint64_t, hash_csr_block_size>;
     __shared__ typename block_reduce::TempStorage temp_storage;
     auto const block_matches = block_reduce(temp_storage).Sum(thread_matches);
@@ -251,18 +252,22 @@ void launch_hash_csr_probe_count_kernel(size_type num_rows,
 {
   if (num_rows == 0) { return; }
   auto const config = grid_1d{num_rows, hash_csr_block_size};
-  hash_csr_probe_count_kernel<IsOuter>
-    <<<config.num_blocks, config.num_threads_per_block, 0, stream.get()>>>(num_rows,
-                                                                           valid_rows,
-                                                                           probe_groups,
-                                                                           match_counts,
-                                                                           total_matches,
-                                                                           matched_groups,
-                                                                           matched_build_rows,
-                                                                           map,
-                                                                           csr,
-                                                                           equal,
-                                                                           hasher);
+  // Keep reduction registers and shared memory out of the kernels used by match contexts and
+  // retrieval. A device-side null check still reserves those resources for every probe.
+  dispatch_bool(total_matches != nullptr, [&](auto compute_sum) {
+    hash_csr_probe_count_kernel<IsOuter, decltype(compute_sum)::value>
+      <<<config.num_blocks, config.num_threads_per_block, 0, stream.get()>>>(num_rows,
+                                                                             valid_rows,
+                                                                             probe_groups,
+                                                                             match_counts,
+                                                                             total_matches,
+                                                                             matched_groups,
+                                                                             matched_build_rows,
+                                                                             map,
+                                                                             csr,
+                                                                             equal,
+                                                                             hasher);
+  });
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 

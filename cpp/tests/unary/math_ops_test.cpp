@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,6 +12,8 @@
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/dictionary/encode.hpp>
 #include <cudf/unary.hpp>
+
+#include <cuda/std/type_traits>
 
 #include <bitset>
 #include <numeric>
@@ -114,7 +116,7 @@ TYPED_TEST(UnaryBitwiseOpsTypedTest, BitCount)
 
   std::vector<int32_t> expected_data(data.size());
   std::transform(data.begin(), data.end(), expected_data.begin(), [](T val) {
-    using UnsignedT      = std::conditional_t<std::is_same_v<T, bool>, T, std::make_unsigned_t<T>>;
+    using UnsignedT = std::conditional_t<std::is_same_v<T, bool>, T, cuda::std::make_unsigned_t<T>>;
     auto constexpr nbits = CHAR_BIT * sizeof(T);
     auto const b         = std::bitset<nbits>(static_cast<UnsignedT>(val));
     return b.count();
@@ -139,7 +141,7 @@ TYPED_TEST(UnaryBitwiseOpsTypedTest, BitCountWithNulls)
 
   std::vector<int32_t> expected_data(data.size());
   std::transform(data.begin(), data.end(), expected_data.begin(), [](T val) {
-    using UnsignedT      = std::conditional_t<std::is_same_v<T, bool>, T, std::make_unsigned_t<T>>;
+    using UnsignedT = std::conditional_t<std::is_same_v<T, bool>, T, cuda::std::make_unsigned_t<T>>;
     auto constexpr nbits = CHAR_BIT * sizeof(T);
     auto const b         = std::bitset<nbits>(static_cast<UnsignedT>(val));
     return b.count();
@@ -220,8 +222,9 @@ TYPED_TEST(UnaryMathOpsTest, ABS)
   std::vector<T> h_input_v(colSize);
   std::vector<T> h_expect_v(colSize);
 
-  std::iota(
-    std::begin(h_input_v), std::end(h_input_v), std::is_unsigned_v<T> ? colSize : -1 * colSize);
+  std::iota(std::begin(h_input_v),
+            std::end(h_input_v),
+            cuda::std::is_unsigned_v<T> ? colSize : -1 * colSize);
 
   std::transform(std::cbegin(h_input_v), std::cend(h_input_v), std::begin(h_expect_v), [](auto e) {
     return cudf::util::absolute_value(e);

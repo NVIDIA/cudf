@@ -469,11 +469,17 @@ filter_join_indices_output_size(
  * right_col1, ...)
  * ```
  * The first parameter is a pointer to a bool that the function must set to `true` or `false`.
+ * For both null-aware and non-null-aware predicates, the output value is uninitialized and must
+ * be set on every execution path.
  * The remaining parameters correspond to columns in the left table followed by the right table.
+ * The CUDA function may return `cudf::errc` instead of `void` to report evaluation errors. PTX UDFs
+ * do not support returning errors.
+ *
  *
  * @throw std::invalid_argument if join_kind is not INNER_JOIN, LEFT_JOIN, or FULL_JOIN.
  * @throw std::invalid_argument if left_indices and right_indices have different sizes.
  * @throw cudf::jit_compilation_error if predicate_code fails to compile.
+ * @throw cudf::evaluation_error if the predicate reports an evaluation error.
  *
  * @param left The left table for predicate evaluation (conditional columns only).
  * @param right The right table for predicate evaluation (conditional columns only).
@@ -490,16 +496,15 @@ filter_join_indices_output_size(
  */
 std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
-filter_join_indices_jit(
-  cudf::table_view const& left,
-  cudf::table_view const& right,
-  cudf::device_span<size_type const> left_indices,
-  cudf::device_span<size_type const> right_indices,
-  std::string const& predicate_code,
-  cudf::join_kind join_kind,
-  bool is_ptx                       = false,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+filter_join_indices_jit(cudf::table_view const& left,
+                        cudf::table_view const& right,
+                        cudf::device_span<size_type const> left_indices,
+                        cudf::device_span<size_type const> right_indices,
+                        std::string const& predicate_code,
+                        cudf::join_kind join_kind,
+                        bool is_ptx               = false,
+                        cuda::stream_ref stream   = cudf::get_default_stream(),
+                        cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Filters join indices using a JIT-compiled predicate from an AST expression.
@@ -509,6 +514,7 @@ filter_join_indices_jit(
  * The input-map contract and join semantics are the same as `filter_join_indices`.
  *
  * @throw std::invalid_argument if join_kind is not INNER_JOIN, LEFT_JOIN, or FULL_JOIN.
+ * @throw cudf::evaluation_error if the predicate reports an evaluation error.
  *
  * @param left The left table for predicate evaluation
  * @param right The right table for predicate evaluation
@@ -522,15 +528,14 @@ filter_join_indices_jit(
  */
 std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
-filter_join_indices_jit(
-  cudf::table_view const& left,
-  cudf::table_view const& right,
-  cudf::device_span<size_type const> left_indices,
-  cudf::device_span<size_type const> right_indices,
-  cudf::ast::expression const& predicate,
-  cudf::join_kind join_kind,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+filter_join_indices_jit(cudf::table_view const& left,
+                        cudf::table_view const& right,
+                        cudf::device_span<size_type const> left_indices,
+                        cudf::device_span<size_type const> right_indices,
+                        cudf::ast::expression const& predicate,
+                        cudf::join_kind join_kind,
+                        cuda::stream_ref stream   = cudf::get_default_stream(),
+                        cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 

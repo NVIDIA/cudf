@@ -15,6 +15,7 @@
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <cuda/iterator>
+#include <cuda/std/type_traits>
 
 #include <stdexcept>
 #include <type_traits>
@@ -126,7 +127,7 @@ struct element_type_dispatcher {
   template <typename ElementType>
   static constexpr bool is_supported_v()
   {
-    return std::is_arithmetic_v<ElementType>;
+    return cuda::std::is_arithmetic_v<ElementType>;
   }
 
  public:

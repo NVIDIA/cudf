@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -24,7 +24,7 @@ void test_single_agg(cudf::column_view const& keys,
                      std::vector<cudf::order> const& column_order = {},
                      std::vector<cudf::null_order> const& null_precedence = {},
                      cudf::sorted reference_keys_are_sorted               = cudf::sorted::NO,
-                     test_streaming use_streaming                         = test_streaming::NO,
+                     test_streaming use_streaming                         = test_streaming::YES,
                      std::source_location const& location = std::source_location::current());
 void test_sum_agg(cudf::column_view const& keys,
                   cudf::column_view const& values,

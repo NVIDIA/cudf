@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,6 +13,7 @@
 #include <cudf/reduction.hpp>
 #include <cudf/types.hpp>
 
+#include <cuda/std/type_traits>
 #include <thrust/host_vector.h>
 
 using rank_result_col    = cudf::test::fixed_width_column_wrapper<cudf::size_type>;
@@ -53,7 +54,7 @@ TYPED_TEST_SUITE(TypedRankScanTest, RankTypes);
 TYPED_TEST(TypedRankScanTest, Rank)
 {
   auto const v = [] {
-    if (std::is_signed_v<TypeParam>)
+    if (cuda::std::is_signed_v<TypeParam>)
       return make_vector<TypeParam>({-120, -120, -120, -16, -16, 5, 6, 6, 6, 6, 34, 113});
     return make_vector<TypeParam>({5, 5, 5, 6, 6, 9, 11, 11, 11, 11, 14, 34});
   }();
@@ -81,7 +82,7 @@ TYPED_TEST(TypedRankScanTest, Rank)
 TYPED_TEST(TypedRankScanTest, RankWithNulls)
 {
   auto const v = [] {
-    if (std::is_signed_v<TypeParam>)
+    if (cuda::std::is_signed_v<TypeParam>)
       return make_vector<TypeParam>({-120, -120, -120, -16, -16, 5, 6, 6, 6, 6, 34, 113});
     return make_vector<TypeParam>({5, 5, 5, 6, 6, 9, 11, 11, 11, 11, 14, 34});
   }();
@@ -118,7 +119,7 @@ auto make_input_column()
       cudf::test::iterators::null_at(5)};
   } else {
     using fw_wrapper = cudf::test::fixed_width_column_wrapper<TypeParam>;
-    return (std::is_signed_v<TypeParam>)
+    return (cuda::std::is_signed_v<TypeParam>)
              ? fw_wrapper{{-1, -1, -4, -4, -4, 5, 7, 7, 7, 9, 9, 9},
                           cudf::test::iterators::null_at(5)}
              : fw_wrapper{{0, 0, 4, 4, 4, 5, 7, 7, 7, 9, 9, 9}, cudf::test::iterators::null_at(5)};

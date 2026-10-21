@@ -12,6 +12,7 @@
 
 #include <cuda/atomic>
 #include <cuda/iterator>
+#include <cuda/std/type_traits>
 #include <thrust/for_each.h>
 
 namespace cudf {
@@ -45,7 +46,7 @@ struct all_fn {
   std::unique_ptr<scalar> operator()(column_view const& input,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
-    requires(std::is_arithmetic_v<T>)
+    requires(cuda::std::is_arithmetic_v<T>)
   {
     auto const d_dict = cudf::column_device_view::create(input, stream);
     auto const iter   = [&] {
@@ -66,7 +67,7 @@ struct all_fn {
   std::unique_ptr<scalar> operator()(column_view const&,
                                      cuda::stream_ref,
                                      rmm::device_async_resource_ref)
-    requires(!std::is_arithmetic_v<T>)
+    requires(!cuda::std::is_arithmetic_v<T>)
   {
     CUDF_FAIL("Unexpected key type for dictionary in reduction all()");
   }

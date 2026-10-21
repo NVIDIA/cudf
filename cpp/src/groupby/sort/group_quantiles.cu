@@ -21,6 +21,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/std/type_traits>
 #include <cuda/stream>
 #include <thrust/execution_policy.h>
 #include <thrust/for_each.h>
@@ -81,7 +82,7 @@ struct quantiles_functor {
                                      interpolation interpolation,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
-    requires(std::is_arithmetic_v<T>)
+    requires(cuda::std::is_arithmetic_v<T>)
   {
     using ResultType = cudf::detail::target_type_t<T, aggregation::QUANTILE>;
 
@@ -137,7 +138,7 @@ struct quantiles_functor {
 
   template <typename T, typename... Args>
   std::unique_ptr<column> operator()(Args&&...)
-    requires(!std::is_arithmetic_v<T>)
+    requires(!cuda::std::is_arithmetic_v<T>)
   {
     CUDF_FAIL("Only arithmetic types are supported in quantiles");
   }

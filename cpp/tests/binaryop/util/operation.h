@@ -1,7 +1,7 @@
 /*
  * SPDX-FileCopyrightText: Copyright 2018-2019 BlazingDB, Inc.
  * SPDX-FileCopyrightText: Copyright 2018 Christian Noboa Mardini <christian@blazingdb.com>
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /*
@@ -24,6 +24,8 @@
 #pragma once
 
 #include <cudf/utilities/traits.hpp>
+
+#include <cuda/std/type_traits>
 
 #include <cmath>
 #include <cstdint>
@@ -92,8 +94,8 @@ struct Mul {
 
   template <typename OutT, typename LhsT, typename RhsT>
   [[nodiscard]] OutT DurationProduct(LhsT x, RhsT y) const
-    requires((cudf::is_duration_t<LhsT>::value && std::is_integral_v<RhsT>) ||
-             (cudf::is_duration_t<RhsT>::value && std::is_integral_v<LhsT>))
+    requires((cudf::is_duration_t<LhsT>::value && cuda::std::is_integral_v<RhsT>) ||
+             (cudf::is_duration_t<RhsT>::value && cuda::std::is_integral_v<LhsT>))
   {
     return x * y;
   }
@@ -118,7 +120,7 @@ struct Div {
 
   template <typename OutT, typename LhsT, typename RhsT>
   [[nodiscard]] OutT DurationDivide(LhsT x, RhsT y) const
-    requires(std::is_integral_v<RhsT> || cudf::is_duration<RhsT>())
+    requires(cuda::std::is_integral_v<RhsT> || cudf::is_duration<RhsT>())
   {
     return x / y;
   }
@@ -136,8 +138,8 @@ template <typename TypeOut, typename TypeLhs, typename TypeRhs>
 struct FloorDiv {
   template <typename OutT = TypeOut, typename LhsT = TypeLhs, typename RhsT = TypeRhs>
   TypeOut operator()(TypeLhs lhs, TypeRhs rhs)
-    requires(std::is_integral_v<std::common_type_t<LhsT, RhsT>> and
-             std::is_signed_v<std::common_type_t<LhsT, RhsT>>)
+    requires(cuda::std::is_integral_v<std::common_type_t<LhsT, RhsT>> and
+             cuda::std::is_signed_v<std::common_type_t<LhsT, RhsT>>)
   {
     if ((lhs ^ rhs) >= 0) {
       return lhs / rhs;
@@ -150,8 +152,8 @@ struct FloorDiv {
 
   template <typename OutT = TypeOut, typename LhsT = TypeLhs, typename RhsT = TypeRhs>
   TypeOut operator()(TypeLhs lhs, TypeRhs rhs)
-    requires(std::is_integral_v<std::common_type_t<LhsT, RhsT>> and
-             !std::is_signed_v<std::common_type_t<LhsT, RhsT>>)
+    requires(cuda::std::is_integral_v<std::common_type_t<LhsT, RhsT>> and
+             !cuda::std::is_signed_v<std::common_type_t<LhsT, RhsT>>)
   {
     return lhs / rhs;
   }
@@ -175,7 +177,7 @@ template <typename TypeOut, typename TypeLhs, typename TypeRhs>
 struct Mod {
   template <typename OutT = TypeOut, typename LhsT = TypeLhs, typename RhsT = TypeRhs>
   TypeOut operator()(TypeLhs lhs, TypeRhs rhs)
-    requires(std::is_integral_v<std::common_type_t<OutT, LhsT, RhsT>>)
+    requires(cuda::std::is_integral_v<std::common_type_t<OutT, LhsT, RhsT>>)
   {
     using TypeCommon = std::common_type_t<TypeOut, TypeLhs, TypeRhs>;
     return static_cast<TypeOut>(static_cast<TypeCommon>(lhs) % static_cast<TypeCommon>(rhs));
@@ -281,7 +283,7 @@ template <typename TypeOut, typename TypeLhs, typename TypeRhs>
 struct ShiftRightUnsigned {
   TypeOut operator()(TypeLhs lhs, TypeRhs rhs)
   {
-    return static_cast<TypeOut>(static_cast<std::make_unsigned_t<TypeLhs>>(lhs) >> rhs);
+    return static_cast<TypeOut>(static_cast<cuda::std::make_unsigned_t<TypeLhs>>(lhs) >> rhs);
   }
 };
 

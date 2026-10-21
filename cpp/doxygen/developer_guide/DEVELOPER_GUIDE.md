@@ -1420,12 +1420,12 @@ types, respectively.
 ```c++
 struct integral_or_floating_point {
 template <typename ColumnType,
-          std::enable_if_t<not std::is_integral<ColumnType>::value and
+          std::enable_if_t<not cuda::std::is_integral_v<ColumnType> and
                            not std::is_floating_point<ColumnType>::value>* = nullptr>
 void operator()() { std::cout << "neither integral nor floating point\n"; }
 
 template <typename ColumnType,
-          std::enable_if_t<std::is_integral<ColumnType>::value>* = nullptr>
+          std::enable_if_t<cuda::std::is_integral_v<ColumnType>>* = nullptr>
 void operator()() { std::cout << "integral\n"; }
 
 template < typename ColumnType,

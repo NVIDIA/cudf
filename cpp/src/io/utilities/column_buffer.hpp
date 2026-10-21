@@ -18,6 +18,7 @@
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/buffer>
 #include <cuda/std/utility>
 #include <cuda/stream>
 
@@ -205,7 +206,7 @@ class gather_column_buffer : public column_buffer_base<gather_column_buffer> {
   std::unique_ptr<column> make_string_column_impl(cuda::stream_ref stream);
 
  public:
-  std::unique_ptr<rmm::device_uvector<string_index_pair>> _strings;
+  std::unique_ptr<cuda::device_buffer<string_index_pair>> _strings;
 };
 
 // column buffer that stores string data internally which can be passed directly when

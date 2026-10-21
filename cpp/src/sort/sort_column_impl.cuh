@@ -24,6 +24,7 @@
 #include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/execution>
+#include <cuda/std/type_traits>
 #include <cuda/stream>
 #include <thrust/gather.h>
 #include <thrust/sequence.h>
@@ -44,7 +45,7 @@ namespace detail {
  */
 template <typename PrefixKey, bool has_nulls>
 struct string_prefix_extractor {
-  static_assert(std::is_unsigned_v<PrefixKey>);
+  static_assert(cuda::std::is_unsigned_v<PrefixKey>);
   static constexpr auto prefix_bytes  = static_cast<size_type>(sizeof(PrefixKey));
   static constexpr auto bits_per_byte = std::numeric_limits<uint8_t>::digits;
 
@@ -83,7 +84,7 @@ struct string_prefix_extractor {
  */
 template <typename PrefixKey, bool has_nulls>
 struct string_prefix_comparator {
-  static_assert(std::is_unsigned_v<PrefixKey>);
+  static_assert(cuda::std::is_unsigned_v<PrefixKey>);
   static constexpr auto prefix_bytes = static_cast<size_type>(sizeof(PrefixKey));
 
   __device__ bool operator()(size_type lhs, size_type rhs)

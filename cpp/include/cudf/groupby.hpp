@@ -436,10 +436,10 @@ struct streaming_aggregation_request {
  * `streaming_groupby` and the stateless `groupby` serve different use cases.  Use
  * the stateless `groupby` for single-shot aggregation when all input fits in memory
  * at once.  Use `streaming_groupby` when input arrives over multiple batches and
- * memory efficiency matters: peak memory does not scale with the number of *input*
- * rows, because only the distinct keys seen so far and one aggregation slot per
- * group are kept across batches.  Arbitrarily long high-duplicate streams therefore
- * accumulate without running out of memory.
+ * memory efficiency matters: only distinct keys and bounded partial aggregate state
+ * are retained across batches. Memory requirements depend on the capacity bound,
+ * distinct key data, requested aggregations, and batch sizes, rather than the
+ * cumulative number of input rows.
  *
  * If memory is not a concern, concatenating all batches and calling the stateless
  * `groupby` once is also a valid choice.  Reach for `streaming_groupby` when
@@ -451,11 +451,12 @@ struct streaming_aggregation_request {
  * can be combined via `merge()`, and final results are produced via `finalize()`.
  *
  * The `max_distinct_keys` parameter sets the upper bound on the number of distinct key
- * combinations across the lifetime of this object.  The persistent state is sized to
- * `max_distinct_keys` (constant for the lifetime of the object); the stored distinct
- * keys grow with the number of distinct keys actually seen, so the incremental key
- * storage is O(`distinct_keys()` × key_size) and does not scale with cumulative input
- * rows.
+ * combinations across the lifetime of this object. The hash set and companion key-index
+ * storage have fixed capacities determined by this bound. Aggregate capacity grows
+ * with observed groups and may hold multiple partials per group, with the number of
+ * partials bounded based on batch size. Stored distinct keys grow with the number of
+ * distinct keys actually seen, so incremental key storage is O(`distinct_keys()` × key_size)
+ * and does not scale with cumulative input rows.
  *
  * Cumulative input rows are not bounded — only cumulative distinct keys.  A single
  * batch may also not exceed `max_distinct_keys` rows; this is an implementation
@@ -496,11 +497,14 @@ class streaming_groupby {
    *
    * @param key_indices Indices of columns in the data table that serve as groupby keys
    * @param requests The aggregations to perform and which columns to aggregate
-   * @param max_distinct_keys Upper bound on distinct key combinations. The hash set,
-   *        companion vectors, and aggregation results table are all sized to this
-   *        capacity. Cumulative input rows are not bounded.
+   * @param max_distinct_keys Upper bound on distinct key combinations. The hash set is sized to
+   *        approximately twice this bound and companion vectors to this bound. Aggregate state
+   *        grows with observed groups and uses bounded partials based on batch size. Cumulative
+   *        input rows are not bounded.
    * @param null_handling Indicates whether rows in keys that contain NULL values should be included
-   * @param mr Device memory resource used to allocate the persistent hash table
+   * @param mr Device memory resource used to allocate all persistent state, including the hash
+   *        table, stored keys, and aggregate results. Temporary allocations made by aggregate()
+   *        and merge() use the current device memory resource.
    *
    * @throws std::invalid_argument if `max_distinct_keys <= 0`
    * @throws std::invalid_argument if any requested aggregation kind is unsupported

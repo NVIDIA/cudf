@@ -122,7 +122,7 @@ inline __device__ void bitpack_mini_block(
 template <typename T>
 class delta_binary_packer {
  public:
-  using U            = std::make_unsigned_t<T>;
+  using U            = cuda::std::make_unsigned_t<T>;
   using block_reduce = cub::BlockReduce<T, delta::block_size>;
   using warp_reduce  = cub::WarpReduce<U>;
   using index_scan   = cub::BlockScan<size_type, delta::block_size>;

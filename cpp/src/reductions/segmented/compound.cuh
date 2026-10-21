@@ -16,6 +16,7 @@
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <cuda/iterator>
+#include <cuda/std/type_traits>
 
 namespace cudf {
 namespace reduction {
@@ -124,7 +125,7 @@ struct compound_segmented_dispatcher {
   template <typename ElementType>
   static constexpr bool is_supported_v()
   {
-    return std::is_arithmetic_v<ElementType>;
+    return cuda::std::is_arithmetic_v<ElementType>;
   }
 
  public:

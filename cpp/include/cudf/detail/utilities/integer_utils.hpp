@@ -119,7 +119,7 @@ CUDF_HOST_DEVICE constexpr I div_rounding_up_safe(I dividend, I divisor) noexcep
  *          argument types are: (uint64_t)
  * @endcode
  *
- * Not all cases could be if-ed out using `std::is_signed_v<T>` and satisfy the compiler.
+ * Not all cases could be if-ed out using `cuda::std::is_signed_v<T>` and satisfy the compiler.
  *
  * @param value Numeric value can be either integer or float type.
  * @return Absolute value if value type is signed.

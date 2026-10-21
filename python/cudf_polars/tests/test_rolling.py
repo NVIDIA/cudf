@@ -14,7 +14,6 @@ from cudf_polars.testing.asserts import (
     assert_ir_translation_raises,
 )
 from cudf_polars.testing.engine_utils import is_streaming_engine
-from cudf_polars.utils.versions import POLARS_VERSION_LT_136
 
 
 @pytest.fixture(params=[False, True], ids=["nosort", "sort"])
@@ -187,26 +186,6 @@ def test_orderby_nulls_raises_computeerror(engine: pl.GPUEngine):
             RuntimeError, match=r"Index column.*in rolling may not contain nulls"
         ):
             q.collect(engine=engine)
-
-
-@pytest.mark.xfail(
-    condition=not POLARS_VERSION_LT_136,
-    reason="polars raises now",
-)
-def test_rolling_nested_raises(in_memory_engine):
-    q = (
-        pl.LazyFrame(
-            {
-                "orderby": [1, 2, 3, 4, 10],
-                "values": [6, 7, 8, 9, 10],
-            }
-        )
-        .rolling("orderby", period="3i", closed="left")
-        .agg(pl.col("values").rolling("orderby", period="2i").sum())
-    )
-    with pytest.raises(pl.exceptions.InvalidOperationError):
-        q.collect(engine="in-memory")
-    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 
 
 def test_unsupported_agg(in_memory_engine):

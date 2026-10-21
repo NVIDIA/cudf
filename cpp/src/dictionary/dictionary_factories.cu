@@ -12,6 +12,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
+#include <cuda/std/type_traits>
 #include <cuda/stream>
 
 namespace cudf {
@@ -100,7 +101,7 @@ struct make_signed_fn {
   constexpr cudf::type_id operator()()
     requires(is_index_type<T>())
   {
-    return cudf::type_to_id<std::make_signed_t<T>>();
+    return cudf::type_to_id<cuda::std::make_signed_t<T>>();
   }
   template <typename T>
   constexpr cudf::type_id operator()()

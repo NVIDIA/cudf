@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -18,6 +18,7 @@
 #include <cudf/utilities/traits.hpp>
 
 #include <cuda/std/functional>
+#include <cuda/std/type_traits>
 
 #include <type_traits>
 
@@ -270,14 +271,14 @@ struct DeviceLeadLag {
 struct DeviceBitAnd {
   template <typename T>
   CUDF_HOST_DEVICE inline T operator()(T const& lhs, T const& rhs) const
-    requires(std::is_integral_v<T>)
+    requires(cuda::std::is_integral_v<T>)
   {
     return lhs & rhs;
   }
 
   template <typename T>
   CUDF_HOST_DEVICE static constexpr T identity()
-    requires(std::is_integral_v<T>)
+    requires(cuda::std::is_integral_v<T>)
   {
     if constexpr (std::is_same_v<T, bool>) {
       return true;
@@ -288,7 +289,7 @@ struct DeviceBitAnd {
 
   template <typename T>
   CUDF_HOST_DEVICE static constexpr T identity()
-    requires(!std::is_integral_v<T>)
+    requires(!cuda::std::is_integral_v<T>)
   {
 #ifndef __CUDA_ARCH__
     CUDF_FAIL("Bitwise AND is only supported for integral types.");
@@ -305,21 +306,21 @@ struct DeviceBitAnd {
 struct DeviceBitOr {
   template <typename T>
   CUDF_HOST_DEVICE inline T operator()(T const& lhs, T const& rhs) const
-    requires(std::is_integral_v<T>)
+    requires(cuda::std::is_integral_v<T>)
   {
     return lhs | rhs;
   }
 
   template <typename T>
   CUDF_HOST_DEVICE static constexpr T identity()
-    requires(std::is_integral_v<T>)
+    requires(cuda::std::is_integral_v<T>)
   {
     return T{0};
   }
 
   template <typename T>
   CUDF_HOST_DEVICE static constexpr T identity()
-    requires(!std::is_integral_v<T>)
+    requires(!cuda::std::is_integral_v<T>)
   {
 #ifndef __CUDA_ARCH__
     CUDF_FAIL("Bitwise OR is only supported for integral types.");
@@ -336,21 +337,21 @@ struct DeviceBitOr {
 struct DeviceBitXor {
   template <typename T>
   CUDF_HOST_DEVICE inline T operator()(T const& lhs, T const& rhs) const
-    requires(std::is_integral_v<T>)
+    requires(cuda::std::is_integral_v<T>)
   {
     return lhs ^ rhs;
   }
 
   template <typename T>
   CUDF_HOST_DEVICE static constexpr T identity()
-    requires(std::is_integral_v<T>)
+    requires(cuda::std::is_integral_v<T>)
   {
     return T{0};
   }
 
   template <typename T>
   CUDF_HOST_DEVICE static constexpr T identity()
-    requires(!std::is_integral_v<T>)
+    requires(!cuda::std::is_integral_v<T>)
   {
 #ifndef __CUDA_ARCH__
     CUDF_FAIL("Bitwise XOR is only supported for integral types.");

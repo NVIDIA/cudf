@@ -5,18 +5,24 @@
 
 #pragma once
 
+#include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 #include <rmm/resource_ref.hpp>
 
+#include <cuda/buffer>
 #include <cuda/stream>
 #include <thrust/copy.h>
 
+#include <cstddef>
 #include <iterator>
+#include <type_traits>
+#include <vector>
 
 namespace cudf {
 
@@ -201,7 +207,7 @@ template <typename T>
 template <typename T>
 class output_builder {
  public:
-  using size_type = typename rmm::device_uvector<T>::size_type;
+  using size_type = std::size_t;
 
   /**
    * @brief Initializes an output builder with given worst-case output size and stream.
@@ -216,11 +222,10 @@ class output_builder {
                  size_type max_growth,
                  cuda::stream_ref stream,
                  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
-    : _max_write_size{max_write_size}, _max_growth{max_growth}
+    : _max_write_size{max_write_size}, _max_growth{max_growth}, _mr{mr}
   {
     CUDF_EXPECTS(max_write_size > 0, "Internal error");
-    _chunks.emplace_back(0, stream, mr);
-    _chunks.back().reserve(max_write_size * 2, stream);
+    _chunks.emplace_back(max_write_size * 2, stream, mr);
   }
 
   output_builder(output_builder&&)                 = delete;
@@ -239,15 +244,14 @@ class output_builder {
    */
   [[nodiscard]] split_device_span<T> next_output(cuda::stream_ref stream)
   {
-    auto head_it   = _chunks.end() - (_chunks.size() > 1 and _chunks.back().is_empty() ? 2 : 1);
+    auto head_it   = _chunks.end() - (_chunks.size() > 1 and _chunks.back().size == 0 ? 2 : 1);
     auto head_span = get_free_span(*head_it);
     if (head_span.size() >= _max_write_size) { return split_device_span<T>{head_span}; }
     if (head_it == _chunks.end() - 1) {
-      // insert a new device_uvector of double size
+      // insert a new device buffer of double size
       auto const next_chunk_size =
-        std::min(_max_growth * _max_write_size, 2 * _chunks.back().capacity());
-      _chunks.emplace_back(0, stream, _chunks.back().memory_resource());
-      _chunks.back().reserve(next_chunk_size, stream);
+        std::min(_max_growth * _max_write_size, 2 * _chunks.back().storage.size());
+      _chunks.emplace_back(next_chunk_size, stream, _mr);
     }
     auto tail_span = get_free_span(_chunks.back());
     CUDF_EXPECTS(head_span.size() + tail_span.size() >= _max_write_size, "Internal error");
@@ -260,23 +264,22 @@ class output_builder {
    *
    * @param actual_size The number of elements that were written to the result of the previous
    *                    `next_output` call.
-   * @param stream The stream on which to resize the vectors. Since this function will not
-   *               reallocate, this only changes the stream of the internally stored vectors,
-   *               impacting their subsequent copy and destruction behavior.
+   * @param stream The stream used for subsequent destruction of the internal buffers.
+   *               Advancing their written sizes does not reallocate storage.
    */
   void advance_output(size_type actual_size, cuda::stream_ref stream)
   {
     CUDF_EXPECTS(actual_size <= _max_write_size, "Internal error");
     if (_chunks.size() < 2) {
-      auto const new_size = _chunks.back().size() + actual_size;
+      auto const new_size = _chunks.back().size + actual_size;
       inplace_resize(_chunks.back(), new_size, stream);
     } else {
       auto& tail              = _chunks.back();
       auto& prev              = _chunks.rbegin()[1];
-      auto const prev_advance = std::min(actual_size, prev.capacity() - prev.size());
+      auto const prev_advance = std::min(actual_size, prev.storage.size() - prev.size);
       auto const tail_advance = actual_size - prev_advance;
-      inplace_resize(prev, prev.size() + prev_advance, stream);
-      inplace_resize(tail, tail.size() + tail_advance, stream);
+      inplace_resize(prev, prev.size + prev_advance, stream);
+      inplace_resize(tail, tail.size + tail_advance, stream);
     }
     _size += actual_size;
   }
@@ -289,7 +292,7 @@ class output_builder {
    */
   [[nodiscard]] T front_element(cuda::stream_ref stream) const
   {
-    return _chunks.front().front_element(stream);
+    return read_element(_chunks.front().storage.data(), stream);
   }
 
   /**
@@ -305,11 +308,11 @@ class output_builder {
 #pragma GCC diagnostic ignored "-Wdangling-reference"
 #endif
     auto const& last_nonempty_chunk =
-      _chunks.size() > 1 and _chunks.back().is_empty() ? _chunks.rbegin()[1] : _chunks.back();
+      _chunks.size() > 1 and _chunks.back().size == 0 ? _chunks.rbegin()[1] : _chunks.back();
 #if defined(__GNUC__) && (__GNUC__ >= 14)
 #pragma GCC diagnostic pop
 #endif
-    return last_nonempty_chunk.back_element(stream);
+    return read_element(last_nonempty_chunk.storage.data() + last_nonempty_chunk.size - 1, stream);
   }
 
   [[nodiscard]] size_type size() const { return _size; }
@@ -322,55 +325,79 @@ class output_builder {
    * @param mr The memory resource used to allocate the output vector.
    * @return The output vector.
    */
-  [[nodiscard]] rmm::device_uvector<T> gather(cuda::stream_ref stream,
-                                              rmm::device_async_resource_ref mr) const
+  template <typename Buffer = rmm::device_uvector<T>>
+  [[nodiscard]] Buffer gather(cuda::stream_ref stream, rmm::device_async_resource_ref mr) const
   {
-    rmm::device_uvector<T> output{size(), stream, mr};
+    auto output = [&] {
+      if constexpr (std::is_same_v<Buffer, cuda::device_buffer<T>>) {
+        return Buffer(stream, mr, size(), cuda::no_init);
+      } else {
+        static_assert(std::is_same_v<Buffer, rmm::device_uvector<T>>);
+        return Buffer(size(), stream, mr);
+      }
+    }();
     auto output_it = output.begin();
     for (auto const& chunk : _chunks) {
       output_it =
         thrust::copy(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                     chunk.begin(),
-                     chunk.begin() + chunk.size(),
+                     chunk.storage.begin(),
+                     chunk.storage.begin() + chunk.size,
                      output_it);
     }
     return output;
   }
 
  private:
+  // TODO: Replace this with a resizable buffer once https://github.com/NVIDIA/cccl/issues/12051
+  // is done
+  struct output_chunk {
+    output_chunk(size_type capacity, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
+      : storage(stream, mr, capacity, cuda::no_init)
+    {
+    }
+
+    cuda::device_buffer<T> storage;
+    size_type size{0};
+  };
+
   /**
-   * @brief Resizes a vector without reallocating
+   * @brief Changes a chunk's written size without reallocating its storage.
    *
-   * @param vector The vector
-   * @param new_size The new size. Must be smaller than the vector's capacity
-   * @param stream The stream on which to resize the vector. Since this function will not
-   *               reallocate, this only changes the stream of `vector`, impacting its subsequent
-   *               copy and destruction behavior.
+   * @param chunk The chunk
+   * @param new_size The new size. Must not exceed the storage size
+   * @param stream The stream used for subsequent destruction of the storage
    */
-  static void inplace_resize(rmm::device_uvector<T>& vector,
-                             size_type new_size,
-                             cuda::stream_ref stream)
+  static void inplace_resize(output_chunk& chunk, size_type new_size, cuda::stream_ref stream)
   {
-    CUDF_EXPECTS(new_size <= vector.capacity(), "Internal error");
-    vector.resize(new_size, stream);
+    CUDF_EXPECTS(new_size <= chunk.storage.size(), "Internal error");
+    chunk.size = new_size;
+    chunk.storage.set_stream(stream);
   }
 
   /**
-   * @brief Returns the span consisting of all currently unused elements in the vector
-   *        (`i >= size() and i < capacity()`).
+   * @brief Returns the span of currently unused elements in a chunk.
    *
-   * @param vector The vector.
-   * @return The span of unused elements.
+   * @param chunk The chunk
+   * @return The span of unused elements
    */
-  static device_span<T> get_free_span(rmm::device_uvector<T>& vector)
+  static device_span<T> get_free_span(output_chunk& chunk)
   {
-    return device_span<T>{vector.data() + vector.size(), vector.capacity() - vector.size()};
+    return device_span<T>{chunk.storage.data() + chunk.size, chunk.storage.size() - chunk.size};
+  }
+
+  static T read_element(T const* data, cuda::stream_ref stream)
+  {
+    T value;
+    CUDF_CUDA_TRY(cudf::detail::memcpy_async(&value, data, sizeof(T), stream));
+    cudf::detail::sync_stream(stream);
+    return value;
   }
 
   size_type _size{0};
   size_type _max_write_size;
   size_type _max_growth;
-  std::vector<rmm::device_uvector<T>> _chunks;
+  rmm::device_async_resource_ref _mr;
+  std::vector<output_chunk> _chunks;
 };
 
 }  // namespace cudf

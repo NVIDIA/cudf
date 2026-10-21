@@ -52,3 +52,12 @@ def test_distinct_non_spmd(
     engine: pl.GPUEngine, subset, keep, maintain_order, pre_sorted
 ):
     assert_distinct_result(engine, subset, keep, maintain_order, pre_sorted)
+
+
+@pytest.mark.parametrize("keep", ["any", "first", "last"])
+@pytest.mark.parametrize("height", [0, 1, 5])
+def test_distinct_zero_width(engine: pl.GPUEngine, keep, height):
+    ldf = pl.LazyFrame(height=height)
+    q = ldf.unique(keep=keep)
+    assert_gpu_result_equal(q, engine=engine)
+    assert_gpu_result_equal(q.head(1), engine=engine)

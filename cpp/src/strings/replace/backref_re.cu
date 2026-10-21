@@ -12,6 +12,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/strings/replace_re.hpp>
 #include <cudf/strings/string_view.cuh>
@@ -19,6 +20,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/buffer>
 #include <cuda/stream>
 
 #include <regex>
@@ -108,7 +110,7 @@ std::unique_ptr<column> replace_with_backrefs(strings_column_view const& input,
   // parse the repl string for back-ref indicators
   auto group_count = std::min(99, d_prog->group_counts());  // group count should NOT exceed 99
   auto const parse_result                    = parse_backrefs(replacement, group_count);
-  rmm::device_uvector<backref_type> backrefs = cudf::detail::make_device_uvector(
+  cuda::device_buffer<backref_type> backrefs = cudf::detail::make_device_buffer(
     parse_result.second, stream, cudf::get_current_device_resource_ref());
   string_scalar repl_scalar(
     parse_result.first, true, stream, cudf::get_current_device_resource_ref());

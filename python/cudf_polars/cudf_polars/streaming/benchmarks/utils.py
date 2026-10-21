@@ -929,9 +929,7 @@ def execute_query(
                 context = IRExecutionContext()
                 if run_config.frontend == "in-memory":
                     t0 = time.monotonic()
-                    result = ir.evaluate(
-                        cache={}, timer=None, context=context
-                    ).to_polars()
+                    result = ir.evaluate(cache={}, context=context).to_polars()
                     t1 = time.monotonic()
                 elif run_config.frontend in _STREAMING_FRONTENDS:
                     t0 = time.monotonic()

@@ -256,6 +256,28 @@ def test_to_numeric_error(data, errors):
         assert_eq(expect, got)
 
 
+@pytest.mark.parametrize(
+    "invalid",
+    ["1+2", "1.5+3", "++2", "+-2", "1e++2", "1e+2+3"],
+)
+@pytest.mark.parametrize("errors", ["raise", "coerce"])
+def test_to_numeric_invalid_plus_sign(invalid, errors):
+    data = pd.Series([invalid, "3"])
+    if errors == "raise":
+        with pytest.raises(ValueError, match="Unable to convert"):
+            cudf.to_numeric(data, errors=errors)
+    else:
+        assert_eq(
+            pd.to_numeric(data, errors=errors),
+            cudf.to_numeric(data, errors=errors),
+        )
+
+
+def test_to_numeric_valid_plus_signs():
+    data = pd.Series(["+2.5", "1e+2", "+inf"])
+    assert_eq(pd.to_numeric(data), cudf.to_numeric(data))
+
+
 def test_series_to_numeric_bool(downcast):
     data = [True, False, True]
     ps = pd.Series(data)

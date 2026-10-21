@@ -7,6 +7,7 @@
 
 #include <cudf/column/column_factories.hpp>
 #include <cudf/copying.hpp>
+#include <cudf/detail/algorithms/copy_if.cuh>
 #include <cudf/detail/copy.hpp>
 #include <cudf/detail/gather.hpp>
 #include <cudf/detail/groupby/sort_helper.hpp>
@@ -24,6 +25,8 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
+#include <cuda/iterator>
+#include <cuda/std/functional>
 #include <cuda/stream>
 #include <thrust/transform.h>
 
@@ -35,6 +38,18 @@ namespace cudf {
 namespace groupby {
 namespace detail {
 namespace sort {
+
+size_type compact_group_offsets(bool* flags,
+                                size_type size,
+                                size_type* offsets,
+                                cuda::stream_ref stream,
+                                cudf::memory_resources mr)
+{
+  auto const begin = cuda::counting_iterator<size_type>{0};
+  auto const end =
+    cudf::detail::copy_if(begin, begin + size, flags, offsets, cuda::std::identity{}, stream, mr);
+  return static_cast<size_type>(end - offsets);
+}
 
 sort_groupby_helper::sort_groupby_helper(table_view const& keys,
                                          null_policy include_null_keys,

@@ -132,10 +132,14 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
 
   /**
    * @copydoc cudf::io::parquet::experimental::hybrid_scan_multifile::dictionary_pages_byte_ranges
+   *
+   * @param include_unbounded Whether to also return an upper-bound range for a column chunk whose
+   *        footer has neither a `dictionary_page_offset` nor an offset index
    */
-  [[nodiscard]] std::pair<std::vector<byte_range_info>, std::vector<cudf::size_type>>
+  [[nodiscard]] std::pair<std::vector<dictionary_byte_range>, std::vector<cudf::size_type>>
   dictionary_pages_byte_ranges(cudf::host_span<std::vector<size_type> const> row_group_indices,
-                               parquet_reader_options const& options);
+                               parquet_reader_options const& options,
+                               bool include_unbounded = false);
 
   /**
    * @copydoc cudf::io::parquet::experimental::hybrid_scan::filter_row_groups_with_dictionary_pages

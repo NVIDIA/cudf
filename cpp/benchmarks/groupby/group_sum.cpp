@@ -102,6 +102,15 @@ static void bench_streaming_groupby_decimal128_sum(nvbench::state& state)
   auto const batch_size  = static_cast<cudf::size_type>(state.get_int64("batch_size"));
   auto const cardinality = static_cast<cudf::size_type>(state.get_int64("cardinality"));
 
+  if (num_rows <= 0 || batch_size <= 0 || cardinality <= 0) {
+    state.skip("num_rows, batch_size, and cardinality must be positive");
+    return;
+  }
+  if (batch_size > num_rows) {
+    state.skip("batch_size exceeds num_rows");
+    return;
+  }
+
   data_profile const key_profile =
     data_profile_builder()
       .cardinality(cardinality)
@@ -146,6 +155,6 @@ static void bench_streaming_groupby_decimal128_sum(nvbench::state& state)
 
 NVBENCH_BENCH(bench_streaming_groupby_decimal128_sum)
   .set_name("streaming_decimal128_sum")
-  .add_int64_power_of_two_axis("num_rows", {20, 24})
-  .add_int64_power_of_two_axis("batch_size", {12, 16, 20})
+  .add_int64_axis("num_rows", {1'000'000, 10'000'000})
+  .add_int64_axis("batch_size", {100'000, 1'000'000, 10'000'000})
   .add_int64_axis("cardinality", {128, 4'096});

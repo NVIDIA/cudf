@@ -5,6 +5,7 @@
 Test related to Cut
 """
 
+import cupy
 import numpy as np
 import pandas as pd
 import pytest
@@ -310,3 +311,17 @@ def test_cut_series(bins, right, include_lowest):
     )
 
     assert_eq(pcat, gcat)
+
+
+def test_cut_right_false_preserves_cupy_input():
+    x = cupy.asarray([0.0, 1.0, 2.0])
+    original = x.copy()
+    bins = [0.0, 1.0, 2.0]
+
+    expected = pd.CategoricalIndex(
+        pd.cut(cupy.asnumpy(x), bins=bins, right=False)
+    )
+    actual = cut(x=x, bins=bins, right=False)
+
+    assert_eq(expected, actual)
+    cupy.testing.assert_array_equal(x, original)

@@ -290,12 +290,15 @@ async def shutdown_on_error(
         runtime.session._actors[actor_id] = started.running()
 
     actor_error: BaseException | None = None
+    actor_finalization_errors: list[BaseException] = []
     try:
         yield ActorScope(tracer=tracer, ir_context=ir_context)
     except BaseException as caught:
         actor_error = caught
-        await shutdown_channels(context, *channels)
-        raise
+        try:
+            await shutdown_channels(context, *channels)
+        except BaseException as error:
+            actor_finalization_errors.append(error)
     finally:
         if (
             created_quent_actor
@@ -346,18 +349,41 @@ async def shutdown_on_error(
                     actor=quent_ir_execution_state.actor_id,
                     values=prefilter,
                 )
-            if actor_error is None:
-                runtime.session._actors.pop(
-                    quent_ir_execution_state.actor_id
-                ).completed(
-                    values=values,
-                )
-            else:
-                runtime.session._actors.pop(quent_ir_execution_state.actor_id).failed(
-                    error=str(actor_error),
-                    values=values,
-                )
-            operator.statistics(values=values)
+            try:
+                runtime.drain_reservation_events()
+            except BaseException as error:
+                actor_finalization_errors.append(error)
+            try:
+                if actor_error is None:
+                    runtime.session._actors.pop(
+                        quent_ir_execution_state.actor_id
+                    ).completed(
+                        values=values,
+                    )
+                else:
+                    runtime.session._actors.pop(
+                        quent_ir_execution_state.actor_id
+                    ).failed(
+                        error=str(actor_error),
+                        values=values,
+                    )
+            except BaseException as error:
+                actor_finalization_errors.append(error)
+            try:
+                operator.statistics(values=values)
+            except BaseException as error:
+                actor_finalization_errors.append(error)
+    if actor_error is not None:
+        if actor_finalization_errors:
+            raise BaseExceptionGroup(
+                "Actor and Quent finalization failed",
+                [actor_error, *actor_finalization_errors],
+            ) from None
+        raise actor_error
+    if actor_finalization_errors:
+        raise BaseExceptionGroup(
+            "Quent actor finalization failed", actor_finalization_errors
+        )
 
 
 async def send_metadata(

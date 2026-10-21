@@ -138,7 +138,7 @@ def test_quent_worker_cleanup_continues_after_handle_failure() -> None:
         worker_resources=MagicMock(),
         _worker_handle=worker_handle,
         _buffer_resource=None,
-        _reservation_recorder=None,
+        _reservation_ingestor=None,
     )
 
     with pytest.raises(ExceptionGroup, match="Quent worker shutdown failed"):

@@ -507,15 +507,16 @@ def _teardown_worker(
         if mp_ctx.kvikio_monitor is not None:
             mp_ctx.kvikio_monitor.stop()
             mp_ctx.kvikio_monitor = None
-        # Drop this engine's persisted partitions before the Context is torn down,
-        # so they don't outlive their allocator.
-        rank_local_store.close_store(uid)
-        if mp_ctx.py_executor is not None:
-            mp_ctx.py_executor.shutdown(wait=True, cancel_futures=True)
-        # Shut down the Context explicitly on the same thread that
-        # constructed it.
         try:
+            # Stop Python producers before the Quent runtime disables BufferResource
+            # recording, then tear down the Context on its constructing thread.
             steps: list[Callable[[], object]] = []
+            if mp_ctx.py_executor is not None:
+                py_executor = mp_ctx.py_executor
+                steps.append(
+                    lambda: py_executor.shutdown(wait=True, cancel_futures=True)
+                )
+            steps.append(lambda: rank_local_store.close_store(uid))
             if mp_ctx.quent_worker_runtime is not None:
                 steps.append(mp_ctx.quent_worker_runtime.close)
             if mp_ctx.ctx is not None:

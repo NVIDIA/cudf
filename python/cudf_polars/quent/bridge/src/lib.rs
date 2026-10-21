@@ -3,14 +3,11 @@
 
 #![allow(clippy::too_many_arguments, clippy::type_complexity)]
 
-use std::collections::{BTreeMap, HashMap};
-use std::ffi::{CStr, c_void};
-use std::ptr::NonNull;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::collections::{HashMap, HashSet};
 
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyAny, PyCapsule, PyCapsuleMethods, PyMapping, PyMappingMethods, PyTuple};
+use pyo3::types::{PyAny, PyBool, PyFloat, PyInt, PyMapping, PyMappingMethods, PyString, PyTuple};
 
 include!(concat!(env!("OUT_DIR"), "/cudfpolars.rs"));
 
@@ -24,76 +21,10 @@ mod generated_python {
     pub use __quent_pyo3_bridge::reservation_observers;
 }
 
-const ABI_VERSION: u32 = 1;
-const CAPSULE_NAME: &CStr = c"rapidsmpf.reservation_recorder";
-
 const MEMORY_DEVICE: u32 = 0;
 const MEMORY_HOST: u32 = 1;
 const MEMORY_PINNED_HOST: u32 = 2;
 const MEMORY_DISK: u32 = 3;
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct StringView {
-    data: *const u8,
-    size: usize,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-union AttributeValue {
-    string_value: StringView,
-    i64_value: i64,
-    bool_value: bool,
-    f64_value: f64,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct ReservationAttribute {
-    key: StringView,
-    type_: u32,
-    value: AttributeValue,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct AttributesView {
-    data: *const ReservationAttribute,
-    size: usize,
-}
-
-#[repr(C)]
-struct ReservationRecorder {
-    abi_version: u32,
-    struct_size: usize,
-    user: *mut c_void,
-    retain_user: Option<unsafe extern "C" fn(*mut c_void)>,
-    release_user: Option<unsafe extern "C" fn(*mut c_void)>,
-    request_submitted: Option<
-        unsafe extern "C" fn(
-            *mut c_void,
-            u64,
-            u64,
-            usize,
-            *const u32,
-            usize,
-            u32,
-            bool,
-            i64,
-            AttributesView,
-        ),
-    >,
-    request_waiting: Option<unsafe extern "C" fn(*mut c_void, u64, u64)>,
-    request_resolved: Option<
-        unsafe extern "C" fn(*mut c_void, u64, u64, u32, u64, u32, usize, usize, bool, StringView),
-    >,
-    reservation_created:
-        Option<unsafe extern "C" fn(*mut c_void, u64, u64, u32, usize, AttributesView, u64, u64)>,
-    reservation_resized: Option<unsafe extern "C" fn(*mut c_void, u64, u64, usize, u32)>,
-    reservation_released: Option<unsafe extern "C" fn(*mut c_void, u64, u64, u32)>,
-    memory_limit_changed: Option<unsafe extern "C" fn(*mut c_void, u64, u32, i64)>,
-}
 
 #[derive(Clone, Debug)]
 enum OwnedValue {
@@ -109,8 +40,8 @@ struct OwnedAttribute {
     value: OwnedValue,
 }
 
-#[derive(Debug)]
-enum PendingEvent {
+#[derive(Clone, Debug)]
+enum ReservationEventData {
     RequestSubmitted {
         id: u64,
         size: u64,
@@ -153,99 +84,258 @@ enum PendingEvent {
         memory_type: u32,
         configured_limit: i64,
     },
-    Invalid(String),
 }
 
-struct Core {
+#[derive(Clone, Debug)]
+struct ReservationEvent {
+    sequence: u64,
+    timestamp_ns: u64,
+    data: ReservationEventData,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RequestStatus {
+    Submitted,
+    Waiting,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct RequestState {
+    status: RequestStatus,
+    next_fsm_sequence: u16,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ReservationState {
+    memory_type: u32,
+    next_fsm_sequence: u16,
+}
+
+#[derive(Clone, Debug, Default)]
+struct Lifecycle {
     next_sequence: u64,
-    pending: BTreeMap<u64, PendingEvent>,
-    requests: HashMap<u64, DynamicFsmHandle<MemoryReservationRequest>>,
-    reservations: HashMap<u64, DynamicFsmHandle<MemoryReservation>>,
-    reservation_types: HashMap<u64, u32>,
-    reservation_refs: HashMap<u64, EntityRef<MemoryReservation>>,
-    first_error: Option<String>,
-    diagnostics: Vec<String>,
+    requests: HashMap<u64, RequestState>,
+    known_requests: HashSet<u64>,
+    reservations: HashMap<u64, ReservationState>,
+    known_reservations: HashSet<u64>,
 }
 
-struct RecorderState {
+impl Lifecycle {
+    fn advance_fsm(sequence: &mut u16, entity: &str, id: u64) -> Result<u16, String> {
+        let current = *sequence;
+        *sequence = sequence
+            .checked_add(1)
+            .ok_or_else(|| format!("{entity} {id} exceeded the FSM sequence limit"))?;
+        Ok(current)
+    }
+
+    fn validate(
+        &mut self,
+        event: &ReservationEvent,
+        memories: &HashSet<u32>,
+    ) -> Result<(), String> {
+        if event.sequence != self.next_sequence {
+            return Err(format!(
+                "reservation event sequence discontinuity: expected {}, got {}",
+                self.next_sequence, event.sequence
+            ));
+        }
+        self.next_sequence = self
+            .next_sequence
+            .checked_add(1)
+            .ok_or_else(|| "reservation event sequence overflow".to_owned())?;
+
+        match &event.data {
+            ReservationEventData::RequestSubmitted {
+                id,
+                memory_types,
+                policy,
+                ..
+            } => {
+                if !self.known_requests.insert(*id) {
+                    return Err(format!("duplicate request id {id}"));
+                }
+                for memory_type in memory_types {
+                    memory_type_name(*memory_type)?;
+                }
+                policy_name(*policy)?;
+                self.requests.insert(
+                    *id,
+                    RequestState {
+                        status: RequestStatus::Submitted,
+                        next_fsm_sequence: 1,
+                    },
+                );
+            }
+            ReservationEventData::RequestWaiting { id } => {
+                let state = self
+                    .requests
+                    .get_mut(id)
+                    .ok_or_else(|| format!("waiting for unknown request {id}"))?;
+                if state.status != RequestStatus::Submitted {
+                    return Err(format!("request {id} cannot wait more than once"));
+                }
+                Self::advance_fsm(&mut state.next_fsm_sequence, "request", *id)?;
+                state.status = RequestStatus::Waiting;
+            }
+            ReservationEventData::RequestResolved {
+                id,
+                outcome,
+                reservation_id,
+                memory_type,
+                ..
+            } => {
+                let mut state = self
+                    .requests
+                    .remove(id)
+                    .ok_or_else(|| format!("resolution for unknown request {id}"))?;
+                Self::advance_fsm(&mut state.next_fsm_sequence, "request", *id)?;
+                match outcome {
+                    0 => {
+                        memory_type_name(*memory_type)?;
+                        if !self.known_reservations.contains(reservation_id) {
+                            return Err(format!(
+                                "request {id} granted unknown reservation {reservation_id}"
+                            ));
+                        }
+                    }
+                    1..=3 => {}
+                    value => return Err(format!("invalid request outcome {value}")),
+                }
+            }
+            ReservationEventData::ReservationCreated {
+                id,
+                memory_type,
+                size,
+                request_id,
+                parent_id,
+                ..
+            } => {
+                if *size == 0 {
+                    return Err(format!("reservation {id} was created with zero bytes"));
+                }
+                if !memories.contains(memory_type) {
+                    return Err(format!(
+                        "reservation uses undeclared {}",
+                        memory_type_description(*memory_type)
+                    ));
+                }
+                if !self.known_reservations.insert(*id) {
+                    return Err(format!("duplicate reservation id {id}"));
+                }
+                if *request_id != 0 && !self.requests.contains_key(request_id) {
+                    return Err(format!(
+                        "reservation {id} references unknown request {request_id}"
+                    ));
+                }
+                if *parent_id != 0 && !self.known_reservations.contains(parent_id) {
+                    return Err(format!(
+                        "reservation {id} references unknown parent {parent_id}"
+                    ));
+                }
+                self.reservations.insert(
+                    *id,
+                    ReservationState {
+                        memory_type: *memory_type,
+                        next_fsm_sequence: 2,
+                    },
+                );
+            }
+            ReservationEventData::ReservationResized { id, size, reason } => {
+                if *size == 0 {
+                    return Err(format!("reservation {id} resized to zero bytes"));
+                }
+                resize_reason(*reason)?;
+                let state = self
+                    .reservations
+                    .get_mut(id)
+                    .ok_or_else(|| format!("resize for unknown reservation {id}"))?;
+                Self::advance_fsm(&mut state.next_fsm_sequence, "reservation", *id)?;
+            }
+            ReservationEventData::ReservationReleased { id, reason } => {
+                release_reason(*reason)?;
+                let mut state = self
+                    .reservations
+                    .remove(id)
+                    .ok_or_else(|| format!("release for unknown reservation {id}"))?;
+                Self::advance_fsm(&mut state.next_fsm_sequence, "reservation", *id)?;
+            }
+            ReservationEventData::MemoryLimitChanged { memory_type, .. } => {
+                if !memories.contains(memory_type) {
+                    return Err(format!(
+                        "memory limit changed for undeclared {}",
+                        memory_type_description(*memory_type)
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn fsm_sequence_before(&self, event: &ReservationEvent) -> u16 {
+        match &event.data {
+            ReservationEventData::RequestSubmitted { .. }
+            | ReservationEventData::ReservationCreated { .. } => 0,
+            ReservationEventData::RequestWaiting { id }
+            | ReservationEventData::RequestResolved { id, .. } => self
+                .requests
+                .get(id)
+                .map_or(0, |state| state.next_fsm_sequence),
+            ReservationEventData::ReservationResized { id, .. }
+            | ReservationEventData::ReservationReleased { id, .. } => self
+                .reservations
+                .get(id)
+                .map_or(0, |state| state.next_fsm_sequence),
+            ReservationEventData::MemoryLimitChanged { .. } => 0,
+        }
+    }
+}
+
+#[pyclass]
+struct ReservationEventIngestor {
     worker: EntityRef<Worker>,
-    memories: HashMap<u32, Handle<ReservableMemory>>,
+    memory_ids: HashMap<u32, Uuid>,
     request_observer: Observer<MemoryReservationRequest>,
     reservation_observer: Observer<MemoryReservation>,
     actor_observer: Observer<Actor>,
-    core: Mutex<Core>,
+    memory_observer: Observer<ReservableMemory>,
+    lifecycle: Lifecycle,
+    diagnostics: Vec<String>,
+    closed: bool,
 }
 
-impl RecorderState {
-    fn new(
-        request_observer: Observer<MemoryReservationRequest>,
-        reservation_observer: Observer<MemoryReservation>,
-        worker_observer: Observer<Worker>,
-        actor_observer: Observer<Actor>,
-        memory_observer: Observer<ReservableMemory>,
-        worker_id: Uuid,
-        memory_ids: HashMap<u32, Uuid>,
-    ) -> Self {
-        Self {
-            worker: worker_observer.handle_with_id(worker_id).as_entity_ref(),
-            memories: memory_ids
-                .into_iter()
-                .map(|(kind, id)| (kind, memory_observer.handle_with_id(id)))
-                .collect(),
-            request_observer,
-            reservation_observer,
-            actor_observer,
-            core: Mutex::new(Core {
-                next_sequence: 0,
-                pending: BTreeMap::new(),
-                requests: HashMap::new(),
-                reservations: HashMap::new(),
-                reservation_types: HashMap::new(),
-                reservation_refs: HashMap::new(),
-                first_error: None,
-                diagnostics: Vec::new(),
-            }),
+impl ReservationEventIngestor {
+    fn ingest_owned(&mut self, events: Vec<ReservationEvent>) -> Result<(), String> {
+        if self.closed {
+            return Err("reservation event ingestor is closed".to_owned());
         }
+
+        let memory_types = self.memory_ids.keys().copied().collect();
+        let mut next = self.lifecycle.clone();
+        for event in &events {
+            next.validate(event, &memory_types)?;
+        }
+
+        let mut current = self.lifecycle.clone();
+        for event in events {
+            let fsm_sequence = current.fsm_sequence_before(&event);
+            self.forward_event(&event, fsm_sequence, &current)?;
+            current.validate(&event, &memory_types)?;
+        }
+        self.lifecycle = next;
+        Ok(())
     }
 
-    fn lock(&self) -> MutexGuard<'_, Core> {
-        self.core
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-
-    fn enqueue(&self, sequence: u64, event: PendingEvent) {
-        let mut core = self.lock();
-        if sequence < core.next_sequence {
-            let next_sequence = core.next_sequence;
-            core.latch(format!(
-                "duplicate or stale recorder sequence {sequence}; next is {}",
-                next_sequence
-            ));
-            return;
-        }
-        if core.pending.insert(sequence, event).is_some() {
-            core.latch(format!("duplicate recorder sequence {sequence}"));
-            return;
-        }
-        loop {
-            let next_sequence = core.next_sequence;
-            let Some(event) = core.pending.remove(&next_sequence) else {
-                break;
-            };
-            let current = core.next_sequence;
-            core.next_sequence += 1;
-            if core.first_error.is_none()
-                && let Err(error) = self.apply(&mut core, current, event)
-            {
-                core.latch(error);
-            }
-        }
-    }
-
-    fn apply(&self, core: &mut Core, sequence: u64, event: PendingEvent) -> Result<(), String> {
-        match event {
-            PendingEvent::RequestSubmitted {
+    fn forward_event(
+        &mut self,
+        event: &ReservationEvent,
+        seq: u16,
+        lifecycle: &Lifecycle,
+    ) -> Result<(), String> {
+        let timestamp = event.timestamp_ns;
+        let sequence = event.sequence;
+        match &event.data {
+            ReservationEventData::RequestSubmitted {
                 id,
                 size,
                 memory_types,
@@ -253,41 +343,36 @@ impl RecorderState {
                 delta,
                 attributes,
             } => {
-                if core.requests.contains_key(&id) {
-                    return Err(format!("duplicate request id {id}"));
-                }
-                let translated = self.translate_attributes(core, attributes);
-                let memory_types = memory_types
-                    .into_iter()
-                    .map(memory_type_name)
-                    .collect::<Result<Vec<_>, _>>()?;
-                let mut handle = self
-                    .request_observer
-                    .handle_with_id(stable_id(b"request", id))
-                    .into_dynamic();
-                handle
-                    .submitted(
-                        self.worker.clone(),
-                        translated.actor,
-                        translated.site,
-                        size,
-                        memory_types,
-                        policy_name(policy)?.to_owned(),
-                        delta,
-                        translated.dynamic,
-                        sequence,
-                    )
-                    .map_err(|error| error.to_string())?;
-                core.requests.insert(id, handle);
+                let translated = self.translate_attributes(attributes);
+                let data = MemoryReservationRequestEvent::Submitted {
+                    seq,
+                    worker: self.worker.clone(),
+                    actor: translated.actor,
+                    site: translated.site,
+                    size: *size,
+                    memory_types: memory_types
+                        .iter()
+                        .map(|value| memory_type_name(*value))
+                        .collect::<Result<_, _>>()?,
+                    policy: policy_name(*policy)?.to_owned(),
+                    net_memory_delta: *delta,
+                    attributes: translated.dynamic,
+                    sequence,
+                };
+                self.request_observer.forward(raw_event(
+                    stable_id(b"request", *id),
+                    timestamp,
+                    data,
+                ));
             }
-            PendingEvent::RequestWaiting { id } => {
-                core.requests
-                    .get_mut(&id)
-                    .ok_or_else(|| format!("waiting for unknown request {id}"))?
-                    .waiting(sequence)
-                    .map_err(|error| error.to_string())?;
+            ReservationEventData::RequestWaiting { id } => {
+                self.request_observer.forward(raw_event(
+                    stable_id(b"request", *id),
+                    timestamp,
+                    MemoryReservationRequestEvent::Waiting { seq, sequence },
+                ));
             }
-            PendingEvent::RequestResolved {
+            ReservationEventData::RequestResolved {
                 id,
                 outcome,
                 reservation_id,
@@ -297,40 +382,36 @@ impl RecorderState {
                 timed_out,
                 error,
             } => {
-                let mut handle = core
-                    .requests
-                    .remove(&id)
-                    .ok_or_else(|| format!("resolution for unknown request {id}"))?;
-                match outcome {
-                    0 => {
-                        let reservation =
-                            core.reservation_refs.get(&reservation_id).ok_or_else(|| {
-                                format!("request {id} granted unknown reservation {reservation_id}")
-                            })?;
-                        handle
-                            .granted(
-                                reservation.clone(),
-                                memory_type_name(memory_type)?,
-                                size,
-                                overbooked_bytes,
-                                timed_out,
-                                sequence,
-                            )
-                            .map_err(|error| error.to_string())?;
-                    }
-                    1 => handle
-                        .empty(timed_out, sequence)
-                        .map_err(|error| error.to_string())?,
-                    2 => handle
-                        .failed(error, sequence)
-                        .map_err(|error| error.to_string())?,
-                    3 => handle
-                        .cancelled(sequence)
-                        .map_err(|error| error.to_string())?,
+                let data = match outcome {
+                    0 => MemoryReservationRequestEvent::Granted {
+                        seq,
+                        reservation: self.reservation_ref(*reservation_id),
+                        memory_type: memory_type_name(*memory_type)?,
+                        size: *size,
+                        overbooked_bytes: *overbooked_bytes,
+                        timed_out: *timed_out,
+                        sequence,
+                    },
+                    1 => MemoryReservationRequestEvent::Empty {
+                        seq,
+                        timed_out: *timed_out,
+                        sequence,
+                    },
+                    2 => MemoryReservationRequestEvent::Failed {
+                        seq,
+                        error: error.clone(),
+                        sequence,
+                    },
+                    3 => MemoryReservationRequestEvent::Cancelled { seq, sequence },
                     value => return Err(format!("invalid request outcome {value}")),
-                }
+                };
+                self.request_observer.forward(raw_event(
+                    stable_id(b"request", *id),
+                    timestamp,
+                    data,
+                ));
             }
-            PendingEvent::ReservationCreated {
+            ReservationEventData::ReservationCreated {
                 id,
                 memory_type,
                 size,
@@ -338,146 +419,157 @@ impl RecorderState {
                 request_id,
                 parent_id,
             } => {
-                if size == 0 {
-                    return Err(format!("reservation {id} was created with zero bytes"));
-                }
-                if core.reservation_refs.contains_key(&id) {
-                    return Err(format!("duplicate reservation id {id}"));
-                }
-                let translated = self.translate_attributes(core, attributes);
-                let request = (request_id != 0)
-                    .then(|| {
-                        core.requests
-                            .get(&request_id)
-                            .map(DynamicFsmHandle::as_entity_ref)
-                            .ok_or_else(|| {
-                                format!("reservation {id} references unknown request {request_id}")
-                            })
-                    })
-                    .transpose()?;
-                let parent = (parent_id != 0)
-                    .then(|| {
-                        core.reservation_refs
-                            .get(&parent_id)
-                            .cloned()
-                            .ok_or_else(|| {
-                                format!("reservation {id} references unknown parent {parent_id}")
-                            })
-                    })
-                    .transpose()?;
-                let memory = self.memory_usage(memory_type, size)?;
-                let mut handle = self
-                    .reservation_observer
-                    .handle_with_id(stable_id(b"reservation", id))
-                    .into_dynamic();
-                handle
-                    .created(
-                        self.worker.clone(),
-                        translated.actor,
-                        translated.site,
-                        request,
-                        parent,
-                        translated.dynamic,
+                let translated = self.translate_attributes(attributes);
+                let entity_id = stable_id(b"reservation", *id);
+                self.reservation_observer.forward(raw_event(
+                    entity_id,
+                    timestamp,
+                    MemoryReservationEvent::Created {
+                        seq,
+                        worker: self.worker.clone(),
+                        actor: translated.actor,
+                        site: translated.site,
+                        request: (*request_id != 0).then(|| self.request_ref(*request_id)),
+                        parent: (*parent_id != 0).then(|| self.reservation_ref(*parent_id)),
+                        attributes: translated.dynamic,
                         sequence,
-                    )
-                    .map_err(|error| error.to_string())?;
-                handle
-                    .held(
-                        memory,
-                        if parent_id == 0 {
+                    },
+                ));
+                self.reservation_observer.forward(raw_event(
+                    entity_id,
+                    timestamp,
+                    MemoryReservationEvent::Held {
+                        seq: seq + 1,
+                        memory: self.memory_usage(*memory_type, *size)?,
+                        change: if *parent_id == 0 {
                             "granted"
                         } else {
                             "split_child"
                         }
                         .to_owned(),
                         sequence,
-                    )
-                    .map_err(|error| error.to_string())?;
-                core.reservation_refs.insert(id, handle.as_entity_ref());
-                core.reservation_types.insert(id, memory_type);
-                core.reservations.insert(id, handle);
+                    },
+                ));
             }
-            PendingEvent::ReservationResized { id, size, reason } => {
-                if size == 0 {
-                    return Err(format!("reservation {id} resized to zero bytes"));
-                }
-                let memory_type = self.reservation_memory_type(core, id)?;
-                let memory = self.memory_usage(memory_type, size)?;
-                core.reservations
-                    .get_mut(&id)
-                    .ok_or_else(|| format!("resize for unknown reservation {id}"))?
-                    .held(memory, resize_reason(reason)?.to_owned(), sequence)
-                    .map_err(|error| error.to_string())?;
-            }
-            PendingEvent::ReservationReleased { id, reason } => {
-                let mut handle = core
+            ReservationEventData::ReservationResized { id, size, reason } => {
+                let memory_type = lifecycle
                     .reservations
-                    .remove(&id)
-                    .ok_or_else(|| format!("release for unknown reservation {id}"))?;
-                core.reservation_types.remove(&id);
-                handle
-                    .released(release_reason(reason)?.to_owned(), sequence)
-                    .map_err(|error| error.to_string())?;
+                    .get(id)
+                    .ok_or_else(|| format!("resize for unknown reservation {id}"))?
+                    .memory_type;
+                self.reservation_observer.forward(raw_event(
+                    stable_id(b"reservation", *id),
+                    timestamp,
+                    MemoryReservationEvent::Held {
+                        seq,
+                        memory: self.memory_usage(memory_type, *size)?,
+                        change: resize_reason(*reason)?.to_owned(),
+                        sequence,
+                    },
+                ));
             }
-            PendingEvent::MemoryLimitChanged {
+            ReservationEventData::ReservationReleased { id, reason } => {
+                self.reservation_observer.forward(raw_event(
+                    stable_id(b"reservation", *id),
+                    timestamp,
+                    MemoryReservationEvent::Released {
+                        seq,
+                        reason: release_reason(*reason)?.to_owned(),
+                        sequence,
+                    },
+                ));
+            }
+            ReservationEventData::MemoryLimitChanged {
                 memory_type,
                 configured_limit,
             } => {
-                let handle = self.memories.get(&memory_type).ok_or_else(|| {
+                let id = *self.memory_ids.get(memory_type).ok_or_else(|| {
                     format!(
                         "memory limit changed for undeclared {}",
-                        memory_type_name(memory_type)
-                            .unwrap_or_else(|_| { format!("memory type {memory_type}") })
+                        memory_type_description(*memory_type)
                     )
                 })?;
-                handle
-                    .resized(
-                        ReservableMemoryBounds {
-                            bytes: configured_limit.max(0) as u64,
+                self.memory_observer.forward(raw_event(
+                    id,
+                    timestamp,
+                    ReservableMemoryEvent::Resized {
+                        limits: ReservableMemoryBounds {
+                            bytes: (*configured_limit).max(0) as u64,
                         },
-                        configured_limit,
+                        configured_limit: *configured_limit,
                         sequence,
-                    )
-                    .map_err(|error| error.to_string())?;
+                    },
+                ));
             }
-            PendingEvent::Invalid(error) => return Err(error),
         }
         Ok(())
     }
 
-    fn translate_attributes(
+    fn request_ref(&self, id: u64) -> EntityRef<MemoryReservationRequest> {
+        self.request_observer
+            .handle_with_id(stable_id(b"request", id))
+            .as_entity_ref()
+    }
+
+    fn reservation_ref(&self, id: u64) -> EntityRef<MemoryReservation> {
+        self.reservation_observer
+            .handle_with_id(stable_id(b"reservation", id))
+            .as_entity_ref()
+    }
+
+    fn memory_usage(
         &self,
-        core: &mut Core,
-        attributes: Vec<OwnedAttribute>,
-    ) -> TranslatedAttributes {
+        memory_type: u32,
+        bytes: u64,
+    ) -> Result<EntityRef<ReservableMemory, ReservableMemoryUsage>, String> {
+        let id = self
+            .memory_ids
+            .get(&memory_type)
+            .ok_or_else(|| {
+                format!(
+                    "reservation uses undeclared {}",
+                    memory_type_description(memory_type)
+                )
+            })?
+            .to_owned();
+        Ok(self
+            .memory_observer
+            .handle_with_id(id)
+            .as_entity_ref_with(ReservableMemoryUsage { bytes }))
+    }
+
+    fn translate_attributes(&mut self, attributes: &[OwnedAttribute]) -> TranslatedAttributes {
         let mut site = None;
         let mut actor = None;
         let mut dynamic = DynamicAttributes::new();
         for attribute in attributes {
             match attribute.key.as_str() {
                 "rapidsmpf.site" => {
-                    if let OwnedValue::String(value) = attribute.value {
-                        site = Some(value);
+                    if let OwnedValue::String(value) = &attribute.value {
+                        site = Some(value.clone());
                     } else {
-                        core.diagnostic("rapidsmpf.site is not a string".to_owned());
+                        self.diagnostics
+                            .push("rapidsmpf.site is not a string".to_owned());
                     }
                 }
-                "quent.actor_id" => match attribute.value {
-                    OwnedValue::String(value) => match Uuid::parse_str(&value) {
+                "quent.actor_id" => match &attribute.value {
+                    OwnedValue::String(value) => match Uuid::parse_str(value) {
                         Ok(id) => {
                             actor = Some(self.actor_observer.handle_with_id(id).as_entity_ref())
                         }
                         Err(_) => {
-                            core.diagnostic(format!("invalid actor UUID: {value}"));
-                            dynamic.add("invalid_actor_id", value);
+                            self.diagnostics
+                                .push(format!("invalid actor UUID: {value}"));
+                            dynamic.add("invalid_actor_id", value.clone());
                         }
                     },
                     value => {
-                        core.diagnostic("quent.actor_id is not a string".to_owned());
+                        self.diagnostics
+                            .push("quent.actor_id is not a string".to_owned());
                         add_dynamic(&mut dynamic, "invalid_actor_id".to_owned(), value);
                     }
                 },
-                _ => add_dynamic(&mut dynamic, attribute.key, attribute.value),
+                _ => add_dynamic(&mut dynamic, attribute.key.clone(), &attribute.value),
             }
         }
         TranslatedAttributes {
@@ -486,29 +578,78 @@ impl RecorderState {
             dynamic,
         }
     }
+}
 
-    fn memory_usage(
-        &self,
-        memory_type: u32,
-        bytes: u64,
-    ) -> Result<EntityRef<ReservableMemory, ReservableMemoryUsage>, String> {
-        self.memories
-            .get(&memory_type)
-            .ok_or_else(|| {
-                format!(
-                    "reservation uses undeclared {}",
-                    memory_type_name(memory_type)
-                        .unwrap_or_else(|_| format!("memory type {memory_type}"))
-                )
-            })
-            .map(|memory| memory.as_entity_ref_with(ReservableMemoryUsage { bytes }))
+#[pymethods]
+impl ReservationEventIngestor {
+    #[new]
+    fn new(
+        context: &Bound<'_, PyAny>,
+        worker_id: &Bound<'_, PyAny>,
+        reservable_memory_ids: &Bound<'_, PyMapping>,
+    ) -> PyResult<Self> {
+        let (
+            request_observer,
+            reservation_observer,
+            worker_observer,
+            actor_observer,
+            memory_observer,
+        ) = generated_python::reservation_observers(context)?;
+        let worker_id = parse_uuid(worker_id, "worker_id")?;
+        Ok(Self {
+            worker: worker_observer.handle_with_id(worker_id).as_entity_ref(),
+            memory_ids: parse_memory_ids(reservable_memory_ids)?,
+            request_observer,
+            reservation_observer,
+            actor_observer,
+            memory_observer,
+            lifecycle: Lifecycle::default(),
+            diagnostics: Vec::new(),
+            closed: false,
+        })
     }
 
-    fn reservation_memory_type(&self, core: &Core, id: u64) -> Result<u32, String> {
-        core.reservation_types
-            .get(&id)
-            .copied()
-            .ok_or_else(|| format!("resize for unknown reservation {id}"))
+    fn ingest(&mut self, events: &Bound<'_, PyAny>) -> PyResult<()> {
+        let mut parsed = Vec::new();
+        for (index, event) in events.try_iter()?.enumerate() {
+            let event = event?
+                .cast_into::<PyMapping>()
+                .map_err(|_| PyValueError::new_err(format!("event {index} is not a mapping")))?;
+            parsed.push(
+                parse_event(&event)
+                    .map_err(|error| PyValueError::new_err(format!("event {index}: {error}")))?,
+            );
+        }
+        self.ingest_owned(parsed).map_err(PyValueError::new_err)
+    }
+
+    fn diagnostics(&self) -> Vec<String> {
+        self.diagnostics.clone()
+    }
+
+    fn close(&mut self) -> PyResult<()> {
+        if self.closed {
+            return Ok(());
+        }
+        let mut errors = Vec::new();
+        if !self.lifecycle.requests.is_empty() {
+            errors.push(format!(
+                "{} live reservation request(s)",
+                self.lifecycle.requests.len()
+            ));
+        }
+        if !self.lifecycle.reservations.is_empty() {
+            errors.push(format!(
+                "{} live reservation(s)",
+                self.lifecycle.reservations.len()
+            ));
+        }
+        if errors.is_empty() {
+            self.closed = true;
+            Ok(())
+        } else {
+            Err(PyRuntimeError::new_err(errors.join("; ")))
+        }
     }
 }
 
@@ -518,24 +659,131 @@ struct TranslatedAttributes {
     dynamic: DynamicAttributes,
 }
 
-impl Core {
-    fn latch(&mut self, error: String) {
-        self.diagnostics.push(error.clone());
-        self.first_error.get_or_insert(error);
-    }
+fn raw_event<P>(id: Uuid, timestamp_ns: u64, data: P) -> Event<P> {
+    Event::new(id, timestamp_ns, data)
+}
 
-    fn diagnostic(&mut self, diagnostic: String) {
-        self.diagnostics.push(diagnostic);
+fn add_dynamic(attributes: &mut DynamicAttributes, key: String, value: &OwnedValue) {
+    match value {
+        OwnedValue::String(value) => attributes.add(key, value.clone()),
+        OwnedValue::I64(value) => attributes.add(key, *value),
+        OwnedValue::Bool(value) => attributes.add(key, *value),
+        OwnedValue::F64(value) => attributes.add(key, *value),
     }
 }
 
-fn add_dynamic(attributes: &mut DynamicAttributes, key: String, value: OwnedValue) {
-    match value {
-        OwnedValue::String(value) => attributes.add(key, value),
-        OwnedValue::I64(value) => attributes.add(key, value),
-        OwnedValue::Bool(value) => attributes.add(key, value),
-        OwnedValue::F64(value) => attributes.add(key, value),
+fn parse_event(mapping: &Bound<'_, PyMapping>) -> PyResult<ReservationEvent> {
+    let sequence = mapping.get_item("sequence")?.extract()?;
+    let timestamp_ns = mapping.get_item("timestamp_ns")?.extract()?;
+    let kind: String = mapping.get_item("kind")?.extract()?;
+    let data = match kind.as_str() {
+        "request_submitted" => ReservationEventData::RequestSubmitted {
+            id: mapping.get_item("id")?.extract()?,
+            size: mapping.get_item("size")?.extract()?,
+            memory_types: mapping.get_item("memory_types")?.extract()?,
+            policy: mapping.get_item("policy")?.extract()?,
+            delta: mapping.get_item("net_memory_delta")?.extract()?,
+            attributes: parse_attributes(&mapping.get_item("attributes")?)?,
+        },
+        "request_waiting" => ReservationEventData::RequestWaiting {
+            id: mapping.get_item("id")?.extract()?,
+        },
+        "request_resolved" => ReservationEventData::RequestResolved {
+            id: mapping.get_item("id")?.extract()?,
+            outcome: mapping.get_item("outcome")?.extract()?,
+            reservation_id: mapping.get_item("reservation_id")?.extract()?,
+            memory_type: mapping.get_item("memory_type")?.extract()?,
+            size: mapping.get_item("size")?.extract()?,
+            overbooked_bytes: mapping.get_item("overbooked_bytes")?.extract()?,
+            timed_out: mapping.get_item("timed_out")?.extract()?,
+            error: mapping.get_item("error")?.extract()?,
+        },
+        "reservation_created" => ReservationEventData::ReservationCreated {
+            id: mapping.get_item("id")?.extract()?,
+            memory_type: mapping.get_item("memory_type")?.extract()?,
+            size: mapping.get_item("size")?.extract()?,
+            attributes: parse_attributes(&mapping.get_item("attributes")?)?,
+            request_id: mapping.get_item("request_id")?.extract()?,
+            parent_id: mapping.get_item("parent_id")?.extract()?,
+        },
+        "reservation_resized" => ReservationEventData::ReservationResized {
+            id: mapping.get_item("id")?.extract()?,
+            size: mapping.get_item("size")?.extract()?,
+            reason: mapping.get_item("reason")?.extract()?,
+        },
+        "reservation_released" => ReservationEventData::ReservationReleased {
+            id: mapping.get_item("id")?.extract()?,
+            reason: mapping.get_item("reason")?.extract()?,
+        },
+        "memory_limit_changed" => ReservationEventData::MemoryLimitChanged {
+            memory_type: mapping.get_item("memory_type")?.extract()?,
+            configured_limit: mapping.get_item("configured_limit")?.extract()?,
+        },
+        _ => {
+            return Err(PyValueError::new_err(format!(
+                "unknown event kind {kind:?}"
+            )));
+        }
+    };
+    Ok(ReservationEvent {
+        sequence,
+        timestamp_ns,
+        data,
+    })
+}
+
+fn parse_attributes(value: &Bound<'_, PyAny>) -> PyResult<Vec<OwnedAttribute>> {
+    let mapping = value
+        .clone()
+        .cast_into::<PyMapping>()
+        .map_err(|_| PyValueError::new_err("attributes is not a mapping"))?;
+    let mut result = Vec::new();
+    for item in mapping.items()?.try_iter()? {
+        let item = item?.cast_into::<PyTuple>()?;
+        let key: String = item.get_item(0)?.extract()?;
+        let value = item.get_item(1)?;
+        let value = if value.is_instance_of::<PyBool>() {
+            OwnedValue::Bool(value.extract()?)
+        } else if value.is_instance_of::<PyString>() {
+            OwnedValue::String(value.extract()?)
+        } else if value.is_instance_of::<PyInt>() {
+            OwnedValue::I64(value.extract().map_err(|_| {
+                PyValueError::new_err(format!("integer attribute {key:?} does not fit in i64"))
+            })?)
+        } else if value.is_instance_of::<PyFloat>() {
+            OwnedValue::F64(value.extract()?)
+        } else {
+            return Err(PyValueError::new_err(format!(
+                "attribute {key:?} must be str, int, bool, or float"
+            )));
+        };
+        result.push(OwnedAttribute { key, value });
     }
+    Ok(result)
+}
+
+fn parse_uuid(value: &Bound<'_, PyAny>, field: &str) -> PyResult<Uuid> {
+    let text = value.str()?.to_str()?.to_owned();
+    Uuid::parse_str(&text).map_err(|error| PyValueError::new_err(format!("{field}: {error}")))
+}
+
+fn parse_memory_ids(mapping: &Bound<'_, PyMapping>) -> PyResult<HashMap<u32, Uuid>> {
+    let mut result = HashMap::new();
+    for item in mapping.items()?.try_iter()? {
+        let item = item?.cast_into::<PyTuple>()?;
+        let key: String = item.get_item(0)?.extract()?;
+        let id = parse_uuid(
+            &item.get_item(1)?,
+            &format!("reservable_memory_ids[{key:?}]"),
+        )?;
+        let kind = memory_type_value(&key)?;
+        if result.insert(kind, id).is_some() {
+            return Err(PyValueError::new_err(format!(
+                "duplicate reservable memory type {key:?}"
+            )));
+        }
+    }
+    Ok(result)
 }
 
 fn stable_id(namespace: &[u8], id: u64) -> Uuid {
@@ -546,6 +794,18 @@ fn stable_id(namespace: &[u8], id: u64) -> Uuid {
     Uuid::from_bytes(bytes)
 }
 
+fn memory_type_value(value: &str) -> PyResult<u32> {
+    match value {
+        "device" => Ok(MEMORY_DEVICE),
+        "host" => Ok(MEMORY_HOST),
+        "pinned_host" => Ok(MEMORY_PINNED_HOST),
+        "disk" => Ok(MEMORY_DISK),
+        _ => Err(PyValueError::new_err(format!(
+            "invalid reservable memory type {value:?}"
+        ))),
+    }
+}
+
 fn memory_type_name(value: u32) -> Result<String, String> {
     match value {
         MEMORY_DEVICE => Ok("device".to_owned()),
@@ -554,6 +814,10 @@ fn memory_type_name(value: u32) -> Result<String, String> {
         MEMORY_DISK => Ok("disk".to_owned()),
         _ => Err(format!("invalid memory type {value}")),
     }
+}
+
+fn memory_type_description(value: u32) -> String {
+    memory_type_name(value).unwrap_or_else(|_| format!("memory type {value}"))
 }
 
 fn policy_name(value: u32) -> Result<&'static str, String> {
@@ -585,381 +849,10 @@ fn release_reason(value: u32) -> Result<&'static str, String> {
     }
 }
 
-unsafe fn copy_string(view: StringView, field: &str) -> Result<String, String> {
-    if view.size == 0 {
-        return Ok(String::new());
-    }
-    if view.data.is_null() {
-        return Err(format!("{field} has a null pointer with non-zero length"));
-    }
-    // SAFETY: rapidsmpf guarantees callback views are valid for the callback duration.
-    let bytes = unsafe { std::slice::from_raw_parts(view.data, view.size) };
-    std::str::from_utf8(bytes)
-        .map(str::to_owned)
-        .map_err(|error| format!("{field} is not UTF-8: {error}"))
-}
-
-unsafe fn copy_attributes(view: AttributesView) -> Result<Vec<OwnedAttribute>, String> {
-    if view.size == 0 {
-        return Ok(Vec::new());
-    }
-    if view.data.is_null() {
-        return Err("attributes have a null pointer with non-zero length".to_owned());
-    }
-    // SAFETY: rapidsmpf guarantees callback views are valid for the callback duration.
-    let attributes = unsafe { std::slice::from_raw_parts(view.data, view.size) };
-    attributes
-        .iter()
-        .map(|attribute| {
-            // SAFETY: each key and the selected union member are valid for this callback.
-            let key = unsafe { copy_string(attribute.key, "attribute key") }?;
-            let value = match attribute.type_ {
-                0 => {
-                    // SAFETY: the ABI tag selects string_value.
-                    OwnedValue::String(unsafe {
-                        copy_string(attribute.value.string_value, "string attribute")?
-                    })
-                }
-                // SAFETY: each ABI tag selects the corresponding union member.
-                1 => OwnedValue::I64(unsafe { attribute.value.i64_value }),
-                2 => OwnedValue::Bool(unsafe { attribute.value.bool_value }),
-                3 => OwnedValue::F64(unsafe { attribute.value.f64_value }),
-                value => return Err(format!("invalid attribute type {value} for {key}")),
-            };
-            Ok(OwnedAttribute { key, value })
-        })
-        .collect()
-}
-
-unsafe fn copy_memory_types(data: *const u32, size: usize) -> Result<Vec<u32>, String> {
-    if size == 0 {
-        return Ok(Vec::new());
-    }
-    if data.is_null() {
-        return Err("memory types have a null pointer with non-zero length".to_owned());
-    }
-    // SAFETY: rapidsmpf guarantees callback arrays are valid for the callback duration.
-    Ok(unsafe { std::slice::from_raw_parts(data, size) }.to_vec())
-}
-
-unsafe fn state_from_user<'a>(user: *mut c_void) -> Option<&'a RecorderState> {
-    // SAFETY: rapidsmpf retains user for every installed registration and in-flight callback.
-    unsafe { (user as *const RecorderState).as_ref() }
-}
-
-fn callback(
-    user: *mut c_void,
-    sequence: u64,
-    build: impl FnOnce() -> Result<PendingEvent, String>,
-) {
-    // SAFETY: callback callers pass the recorder's retained Arc pointer.
-    let Some(state) = (unsafe { state_from_user(user) }) else {
-        return;
-    };
-    let event = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(build)) {
-        Ok(Ok(event)) => event,
-        Ok(Err(error)) => PendingEvent::Invalid(error),
-        Err(_) => PendingEvent::Invalid("panic caught in reservation recorder callback".to_owned()),
-    };
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        state.enqueue(sequence, event);
-    }));
-    if result.is_err() {
-        let mut core = state.lock();
-        core.latch("panic caught while applying reservation recorder event".to_owned());
-    }
-}
-
-unsafe extern "C" fn retain_user(user: *mut c_void) {
-    if !user.is_null() {
-        // SAFETY: user was created with Arc::into_raw and remains a valid Arc allocation.
-        unsafe { Arc::increment_strong_count(user as *const RecorderState) };
-    }
-}
-
-unsafe extern "C" fn release_user(user: *mut c_void) {
-    if !user.is_null() {
-        // SAFETY: balances one Arc strong count owned by rapidsmpf.
-        unsafe { Arc::decrement_strong_count(user as *const RecorderState) };
-    }
-}
-
-unsafe extern "C" fn request_submitted(
-    user: *mut c_void,
-    sequence: u64,
-    id: u64,
-    size: usize,
-    memory_types: *const u32,
-    memory_types_size: usize,
-    policy: u32,
-    has_delta: bool,
-    delta: i64,
-    attributes: AttributesView,
-) {
-    callback(user, sequence, || {
-        Ok(PendingEvent::RequestSubmitted {
-            id,
-            size: u64::try_from(size).map_err(|_| "request size exceeds u64".to_owned())?,
-            // SAFETY: copied before this callback returns.
-            memory_types: unsafe { copy_memory_types(memory_types, memory_types_size) }?,
-            policy,
-            delta: has_delta.then_some(delta),
-            // SAFETY: copied before this callback returns.
-            attributes: unsafe { copy_attributes(attributes) }?,
-        })
-    });
-}
-
-unsafe extern "C" fn request_waiting(user: *mut c_void, sequence: u64, id: u64) {
-    callback(user, sequence, || Ok(PendingEvent::RequestWaiting { id }));
-}
-
-#[allow(clippy::too_many_arguments)]
-unsafe extern "C" fn request_resolved(
-    user: *mut c_void,
-    sequence: u64,
-    id: u64,
-    outcome: u32,
-    reservation_id: u64,
-    memory_type: u32,
-    size: usize,
-    overbooked_bytes: usize,
-    timed_out: bool,
-    error: StringView,
-) {
-    callback(user, sequence, || {
-        Ok(PendingEvent::RequestResolved {
-            id,
-            outcome,
-            reservation_id,
-            memory_type,
-            size: u64::try_from(size).map_err(|_| "granted size exceeds u64".to_owned())?,
-            overbooked_bytes: u64::try_from(overbooked_bytes)
-                .map_err(|_| "overbooked bytes exceed u64".to_owned())?,
-            timed_out,
-            // SAFETY: copied before this callback returns.
-            error: unsafe { copy_string(error, "request error") }?,
-        })
-    });
-}
-
-#[allow(clippy::too_many_arguments)]
-unsafe extern "C" fn reservation_created(
-    user: *mut c_void,
-    sequence: u64,
-    id: u64,
-    memory_type: u32,
-    size: usize,
-    attributes: AttributesView,
-    request_id: u64,
-    parent_id: u64,
-) {
-    callback(user, sequence, || {
-        Ok(PendingEvent::ReservationCreated {
-            id,
-            memory_type,
-            size: u64::try_from(size).map_err(|_| "reservation size exceeds u64".to_owned())?,
-            // SAFETY: copied before this callback returns.
-            attributes: unsafe { copy_attributes(attributes) }?,
-            request_id,
-            parent_id,
-        })
-    });
-}
-
-unsafe extern "C" fn reservation_resized(
-    user: *mut c_void,
-    sequence: u64,
-    id: u64,
-    size: usize,
-    reason: u32,
-) {
-    callback(user, sequence, || {
-        Ok(PendingEvent::ReservationResized {
-            id,
-            size: u64::try_from(size).map_err(|_| "reservation size exceeds u64".to_owned())?,
-            reason,
-        })
-    });
-}
-
-unsafe extern "C" fn reservation_released(user: *mut c_void, sequence: u64, id: u64, reason: u32) {
-    callback(user, sequence, || {
-        Ok(PendingEvent::ReservationReleased { id, reason })
-    });
-}
-
-unsafe extern "C" fn memory_limit_changed(
-    user: *mut c_void,
-    sequence: u64,
-    memory_type: u32,
-    configured_limit: i64,
-) {
-    callback(user, sequence, || {
-        Ok(PendingEvent::MemoryLimitChanged {
-            memory_type,
-            configured_limit,
-        })
-    });
-}
-
-#[repr(C)]
-struct CapsuleRegistration {
-    recorder: ReservationRecorder,
-    state: *const RecorderState,
-}
-
-impl Drop for CapsuleRegistration {
-    fn drop(&mut self) {
-        // SAFETY: this is the original strong count transferred with Arc::into_raw.
-        unsafe { drop(Arc::from_raw(self.state)) };
-    }
-}
-
-unsafe extern "C" fn capsule_destructor(capsule: *mut pyo3::ffi::PyObject) {
-    // SAFETY: CPython calls this with the capsule created below.
-    let pointer = unsafe { pyo3::ffi::PyCapsule_GetPointer(capsule, CAPSULE_NAME.as_ptr()) };
-    if !pointer.is_null() {
-        // SAFETY: the pointer was allocated with Box::into_raw exactly once.
-        unsafe { drop(Box::from_raw(pointer as *mut CapsuleRegistration)) };
-    }
-}
-
-fn parse_uuid(value: &Bound<'_, PyAny>, field: &str) -> PyResult<Uuid> {
-    let text = value.str()?.to_str()?.to_owned();
-    Uuid::parse_str(&text).map_err(|error| PyValueError::new_err(format!("{field}: {error}")))
-}
-
-fn memory_type_value(value: &str) -> PyResult<u32> {
-    match value {
-        "device" => Ok(MEMORY_DEVICE),
-        "host" => Ok(MEMORY_HOST),
-        "pinned_host" => Ok(MEMORY_PINNED_HOST),
-        "disk" => Ok(MEMORY_DISK),
-        _ => Err(PyValueError::new_err(format!(
-            "invalid reservable memory type {value:?}"
-        ))),
-    }
-}
-
-fn parse_memory_ids(mapping: &Bound<'_, PyMapping>) -> PyResult<HashMap<u32, Uuid>> {
-    let mut result = HashMap::new();
-    for item in mapping.items()?.try_iter()? {
-        let item = item?.cast_into::<PyTuple>()?;
-        let key: String = item.get_item(0)?.extract()?;
-        let id = parse_uuid(
-            &item.get_item(1)?,
-            &format!("reservable_memory_ids[{key:?}]"),
-        )?;
-        let kind = memory_type_value(&key)?;
-        if result.insert(kind, id).is_some() {
-            return Err(PyValueError::new_err(format!(
-                "duplicate reservable memory type {key:?}"
-            )));
-        }
-    }
-    Ok(result)
-}
-
-fn registration<'a>(capsule: &'a Bound<'a, PyCapsule>) -> PyResult<&'a CapsuleRegistration> {
-    let pointer = capsule.pointer_checked(Some(CAPSULE_NAME))?;
-    // SAFETY: the capsule owns a live CapsuleRegistration until its destructor runs.
-    Ok(unsafe { pointer.cast::<CapsuleRegistration>().as_ref() })
-}
-
-#[pyfunction]
-fn reservation_recorder_capsule<'py>(
-    py: Python<'py>,
-    context: &Bound<'py, PyAny>,
-    worker_id: &Bound<'py, PyAny>,
-    reservable_memory_ids: &Bound<'py, PyMapping>,
-) -> PyResult<Bound<'py, PyCapsule>> {
-    let (request_observer, reservation_observer, worker_observer, actor_observer, memory_observer) =
-        generated_python::reservation_observers(context)?;
-    let state = Arc::new(RecorderState::new(
-        request_observer,
-        reservation_observer,
-        worker_observer,
-        actor_observer,
-        memory_observer,
-        parse_uuid(worker_id, "worker_id")?,
-        parse_memory_ids(reservable_memory_ids)?,
-    ));
-    let state = Arc::into_raw(state);
-    let registration = Box::new(CapsuleRegistration {
-        recorder: ReservationRecorder {
-            abi_version: ABI_VERSION,
-            struct_size: std::mem::size_of::<ReservationRecorder>(),
-            user: state.cast_mut().cast(),
-            retain_user: Some(retain_user),
-            release_user: Some(release_user),
-            request_submitted: Some(request_submitted),
-            request_waiting: Some(request_waiting),
-            request_resolved: Some(request_resolved),
-            reservation_created: Some(reservation_created),
-            reservation_resized: Some(reservation_resized),
-            reservation_released: Some(reservation_released),
-            memory_limit_changed: Some(memory_limit_changed),
-        },
-        state,
-    });
-    let pointer = NonNull::new(Box::into_raw(registration).cast::<c_void>())
-        .expect("Box::into_raw never returns null");
-    // SAFETY: the boxed registration remains alive until capsule_destructor.
-    unsafe {
-        PyCapsule::new_with_pointer_and_destructor(
-            py,
-            pointer,
-            CAPSULE_NAME,
-            Some(capsule_destructor),
-        )
-    }
-}
-
-#[pyfunction]
-fn reservation_recorder_diagnostics(capsule: &Bound<'_, PyCapsule>) -> PyResult<Vec<String>> {
-    let registration = registration(capsule)?;
-    // SAFETY: the capsule retains the original Arc strong count.
-    let state = unsafe { &*registration.state };
-    Ok(state.lock().diagnostics.clone())
-}
-
-#[pyfunction]
-fn close_reservation_recorder(capsule: &Bound<'_, PyCapsule>) -> PyResult<()> {
-    let registration = registration(capsule)?;
-    // SAFETY: the capsule retains the original Arc strong count.
-    let state = unsafe { &*registration.state };
-    let core = state.lock();
-    let mut errors = core.diagnostics.clone();
-    if !core.requests.is_empty() {
-        errors.push(format!(
-            "{} live reservation request(s)",
-            core.requests.len()
-        ));
-    }
-    if !core.reservations.is_empty() {
-        errors.push(format!("{} live reservation(s)", core.reservations.len()));
-    }
-    if !core.pending.is_empty() {
-        errors.push(format!(
-            "{} pending event(s), next sequence {}",
-            core.pending.len(),
-            core.next_sequence
-        ));
-    }
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(PyRuntimeError::new_err(errors.join("; ")))
-    }
-}
-
 #[pymodule]
 fn cudf_polars_quent(module: &Bound<'_, PyModule>) -> PyResult<()> {
     generated_python::register(module)?;
-    module.add_function(wrap_pyfunction!(reservation_recorder_capsule, module)?)?;
-    module.add_function(wrap_pyfunction!(reservation_recorder_diagnostics, module)?)?;
-    module.add_function(wrap_pyfunction!(close_reservation_recorder, module)?)?;
+    module.add_class::<ReservationEventIngestor>()?;
     Ok(())
 }
 
@@ -967,150 +860,257 @@ fn cudf_polars_quent(module: &Bound<'_, PyModule>) -> PyResult<()> {
 mod tests {
     use super::*;
 
-    fn state() -> RecorderState {
+    fn ingestor() -> ReservationEventIngestor {
         let context = Context::<CudfPolars>::try_new(Noop).expect("no-op context");
-        RecorderState::new(
-            context.observer(),
-            context.observer(),
-            context.observer(),
-            context.observer(),
-            context.observer(),
-            Uuid::from_u128(1),
-            HashMap::from([(MEMORY_DEVICE, Uuid::from_u128(2))]),
-        )
+        ReservationEventIngestor {
+            worker: context
+                .observer::<Worker>()
+                .handle_with_id(Uuid::from_u128(1))
+                .as_entity_ref(),
+            memory_ids: HashMap::from([(MEMORY_DEVICE, Uuid::from_u128(2))]),
+            request_observer: context.observer(),
+            reservation_observer: context.observer(),
+            actor_observer: context.observer(),
+            memory_observer: context.observer(),
+            lifecycle: Lifecycle::default(),
+            diagnostics: Vec::new(),
+            closed: false,
+        }
     }
 
-    fn submitted(id: u64, attributes: Vec<OwnedAttribute>) -> PendingEvent {
-        PendingEvent::RequestSubmitted {
+    fn event(sequence: u64, data: ReservationEventData) -> ReservationEvent {
+        ReservationEvent {
+            sequence,
+            timestamp_ns: 1_234_567_890 + sequence,
+            data,
+        }
+    }
+
+    fn submitted(id: u64) -> ReservationEventData {
+        ReservationEventData::RequestSubmitted {
             id,
             size: 64,
             memory_types: vec![MEMORY_DEVICE],
             policy: 3,
             delta: None,
-            attributes,
+            attributes: Vec::new(),
         }
     }
 
     #[test]
-    fn reorders_callbacks_before_applying_transitions() {
-        let state = state();
-        state.enqueue(1, PendingEvent::RequestWaiting { id: 7 });
-        assert_eq!(state.lock().next_sequence, 0);
-
-        state.enqueue(0, submitted(7, Vec::new()));
-        let core = state.lock();
-        assert_eq!(core.next_sequence, 2);
-        assert_eq!(
-            core.requests.get(&7).expect("request").state(),
-            MemoryReservationRequestDynamicState::Waiting
-        );
-        assert!(core.first_error.is_none());
+    fn requires_strict_sequence_continuity_across_batches() {
+        let mut ingestor = ingestor();
+        ingestor.ingest_owned(vec![event(0, submitted(1))]).unwrap();
+        for invalid in [0, 2] {
+            let error = ingestor
+                .ingest_owned(vec![event(
+                    invalid,
+                    ReservationEventData::RequestWaiting { id: 1 },
+                )])
+                .unwrap_err();
+            assert!(error.contains(&format!("expected 1, got {invalid}")));
+            assert_eq!(ingestor.lifecycle.next_sequence, 1);
+        }
     }
 
     #[test]
-    fn first_error_is_latched_while_sequence_keeps_advancing() {
-        let state = state();
-        state.enqueue(0, PendingEvent::Invalid("first".to_owned()));
-        state.enqueue(2, PendingEvent::RequestWaiting { id: 99 });
-        state.enqueue(1, PendingEvent::Invalid("second".to_owned()));
+    fn supports_multibatch_request_and_all_terminal_outcomes() {
+        for outcome in 1..=3 {
+            let mut ingestor = ingestor();
+            ingestor.ingest_owned(vec![event(0, submitted(1))]).unwrap();
+            ingestor
+                .ingest_owned(vec![
+                    event(1, ReservationEventData::RequestWaiting { id: 1 }),
+                    event(
+                        2,
+                        ReservationEventData::RequestResolved {
+                            id: 1,
+                            outcome,
+                            reservation_id: 0,
+                            memory_type: MEMORY_DEVICE,
+                            size: 0,
+                            overbooked_bytes: 0,
+                            timed_out: outcome == 1,
+                            error: "failure".to_owned(),
+                        },
+                    ),
+                ])
+                .unwrap();
+            assert!(ingestor.lifecycle.requests.is_empty());
+        }
 
-        let core = state.lock();
-        assert_eq!(core.next_sequence, 3);
-        assert_eq!(core.first_error.as_deref(), Some("first"));
-        assert!(core.pending.is_empty());
-    }
-
-    #[test]
-    fn callback_panic_is_latched_without_unwinding() {
-        let state = state();
-        callback(
-            (&raw const state).cast_mut().cast(),
-            0,
-            || -> Result<PendingEvent, String> { panic!("deliberate callback panic") },
-        );
-
-        let core = state.lock();
-        assert_eq!(core.next_sequence, 1);
-        assert_eq!(
-            core.first_error.as_deref(),
-            Some("panic caught in reservation recorder callback")
-        );
-    }
-
-    #[test]
-    fn negative_memory_limit_is_accepted_and_zero_clamped() {
-        let state = state();
-        state.enqueue(
-            0,
-            PendingEvent::MemoryLimitChanged {
-                memory_type: MEMORY_DEVICE,
-                configured_limit: -7,
-            },
-        );
-
-        let core = state.lock();
-        assert_eq!(core.next_sequence, 1);
-        assert!(core.first_error.is_none());
-    }
-
-    #[test]
-    fn malformed_actor_is_unattributed_and_diagnosed() {
-        let state = state();
-        state.enqueue(
-            0,
-            submitted(
-                3,
-                vec![
-                    OwnedAttribute {
-                        key: "rapidsmpf.site".to_owned(),
-                        value: OwnedValue::String("shuffle.extract".to_owned()),
+        let mut ingestor = ingestor();
+        ingestor
+            .ingest_owned(vec![
+                event(0, submitted(1)),
+                event(
+                    1,
+                    ReservationEventData::ReservationCreated {
+                        id: 10,
+                        memory_type: MEMORY_DEVICE,
+                        size: 64,
+                        attributes: Vec::new(),
+                        request_id: 1,
+                        parent_id: 0,
                     },
-                    OwnedAttribute {
-                        key: "quent.actor_id".to_owned(),
-                        value: OwnedValue::String("not-a-uuid".to_owned()),
+                ),
+                event(
+                    2,
+                    ReservationEventData::RequestResolved {
+                        id: 1,
+                        outcome: 0,
+                        reservation_id: 10,
+                        memory_type: MEMORY_DEVICE,
+                        size: 64,
+                        overbooked_bytes: 4,
+                        timed_out: false,
+                        error: String::new(),
                     },
-                ],
-            ),
-        );
-
-        let core = state.lock();
-        assert!(core.first_error.is_none());
-        assert_eq!(core.diagnostics, ["invalid actor UUID: not-a-uuid"]);
-        assert!(core.requests.contains_key(&3));
+                ),
+                event(
+                    3,
+                    ReservationEventData::ReservationReleased { id: 10, reason: 0 },
+                ),
+            ])
+            .unwrap();
+        assert!(ingestor.lifecycle.requests.is_empty());
+        assert!(ingestor.lifecycle.reservations.is_empty());
     }
 
     #[test]
-    fn released_reservations_retain_identity_for_split_children() {
-        let state = state();
-        state.enqueue(
-            0,
-            PendingEvent::ReservationCreated {
-                id: 5,
-                memory_type: MEMORY_DEVICE,
-                size: 64,
-                attributes: Vec::new(),
-                request_id: 0,
-                parent_id: 0,
-            },
-        );
-        state.enqueue(1, PendingEvent::ReservationReleased { id: 5, reason: 0 });
-        state.enqueue(
-            2,
-            PendingEvent::ReservationCreated {
-                id: 6,
-                memory_type: MEMORY_DEVICE,
-                size: 32,
-                attributes: Vec::new(),
-                request_id: 0,
-                parent_id: 5,
-            },
-        );
+    fn retains_released_reservations_for_split_references() {
+        let mut ingestor = ingestor();
+        ingestor
+            .ingest_owned(vec![
+                event(
+                    0,
+                    ReservationEventData::ReservationCreated {
+                        id: 5,
+                        memory_type: MEMORY_DEVICE,
+                        size: 64,
+                        attributes: Vec::new(),
+                        request_id: 0,
+                        parent_id: 0,
+                    },
+                ),
+                event(
+                    1,
+                    ReservationEventData::ReservationReleased { id: 5, reason: 2 },
+                ),
+                event(
+                    2,
+                    ReservationEventData::ReservationCreated {
+                        id: 6,
+                        memory_type: MEMORY_DEVICE,
+                        size: 32,
+                        attributes: Vec::new(),
+                        request_id: 0,
+                        parent_id: 5,
+                    },
+                ),
+            ])
+            .unwrap();
+        assert!(ingestor.lifecycle.known_reservations.contains(&5));
+        assert!(ingestor.lifecycle.reservations.contains_key(&6));
+        assert_eq!(ingestor.lifecycle.reservations[&6].next_fsm_sequence, 2);
+    }
 
-        let core = state.lock();
-        assert!(!core.reservations.contains_key(&5));
-        assert!(!core.reservation_types.contains_key(&5));
-        assert!(core.reservation_refs.contains_key(&5));
-        assert!(core.reservations.contains_key(&6));
-        assert!(core.first_error.is_none());
+    #[test]
+    fn maps_attributes_resizes_and_limit_changes() {
+        let mut ingestor = ingestor();
+        ingestor
+            .ingest_owned(vec![
+                event(
+                    0,
+                    ReservationEventData::RequestSubmitted {
+                        id: 1,
+                        size: 64,
+                        memory_types: vec![MEMORY_DEVICE],
+                        policy: 0,
+                        delta: Some(-64),
+                        attributes: vec![
+                            OwnedAttribute {
+                                key: "rapidsmpf.site".to_owned(),
+                                value: OwnedValue::String("test.site".to_owned()),
+                            },
+                            OwnedAttribute {
+                                key: "string".to_owned(),
+                                value: OwnedValue::String("value".to_owned()),
+                            },
+                            OwnedAttribute {
+                                key: "integer".to_owned(),
+                                value: OwnedValue::I64(-7),
+                            },
+                            OwnedAttribute {
+                                key: "boolean".to_owned(),
+                                value: OwnedValue::Bool(true),
+                            },
+                            OwnedAttribute {
+                                key: "float".to_owned(),
+                                value: OwnedValue::F64(1.5),
+                            },
+                        ],
+                    },
+                ),
+                event(
+                    1,
+                    ReservationEventData::ReservationCreated {
+                        id: 10,
+                        memory_type: MEMORY_DEVICE,
+                        size: 64,
+                        attributes: Vec::new(),
+                        request_id: 1,
+                        parent_id: 0,
+                    },
+                ),
+                event(
+                    2,
+                    ReservationEventData::ReservationResized {
+                        id: 10,
+                        size: 32,
+                        reason: 0,
+                    },
+                ),
+                event(
+                    3,
+                    ReservationEventData::MemoryLimitChanged {
+                        memory_type: MEMORY_DEVICE,
+                        configured_limit: -1,
+                    },
+                ),
+            ])
+            .unwrap();
+        assert_eq!(ingestor.lifecycle.reservations[&10].next_fsm_sequence, 3);
+        assert!(ingestor.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn raw_event_preserves_explicit_timestamp() {
+        let event = raw_event(Uuid::from_u128(1), 987_654_321, ());
+        assert_eq!(event.timestamp, 987_654_321);
+    }
+
+    #[test]
+    fn malformed_batch_is_atomic() {
+        let mut ingestor = ingestor();
+        let error = ingestor
+            .ingest_owned(vec![
+                event(0, submitted(1)),
+                event(1, ReservationEventData::RequestWaiting { id: 99 }),
+            ])
+            .unwrap_err();
+        assert!(error.contains("unknown request 99"));
+        assert_eq!(ingestor.lifecycle.next_sequence, 0);
+        assert!(ingestor.lifecycle.requests.is_empty());
+    }
+
+    #[test]
+    fn incomplete_close_is_rejected() {
+        Python::initialize();
+        let mut ingestor = ingestor();
+        ingestor.ingest_owned(vec![event(0, submitted(1))]).unwrap();
+        let error = ingestor.close().unwrap_err();
+        assert!(error.to_string().contains("1 live reservation request"));
+        assert!(!ingestor.closed);
     }
 }

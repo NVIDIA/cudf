@@ -196,25 +196,27 @@ def test_worker_resources_declares_inter_rank_channel() -> None:
     )
 
 
-def test_worker_runtime_drains_recorder_before_worker_exit(monkeypatch) -> None:
+def test_worker_runtime_finalizes_events_before_worker_exit() -> None:
     events: list[str] = []
-    recorder = object()
+    final_batch = [{"sequence": 1}]
     buffer_resource = MagicMock()
-    buffer_resource.set_reservation_recorder.side_effect = lambda value: events.append(
-        f"recorder:{value is None}"
-    )
-    bindings = MagicMock()
 
-    def diagnostics(value: object) -> list[str]:
-        assert value is recorder
+    def stop_recording() -> list[dict[str, int]]:
+        events.append("stop")
+        return final_batch
+
+    buffer_resource.stop_reservation_event_recording.side_effect = stop_recording
+    ingestor = MagicMock()
+    ingestor.ingest.side_effect = lambda batch: events.append(
+        f"ingest:{batch is final_batch}"
+    )
+
+    def diagnostics() -> list[str]:
         events.append("diagnostics")
         return []
 
-    bindings.reservation_recorder_diagnostics.side_effect = diagnostics
-    bindings.close_reservation_recorder.side_effect = lambda value: events.append(
-        "recorder-close"
-    )
-    monkeypatch.setattr(quent_runtime, "_quent", bindings)
+    ingestor.diagnostics.side_effect = diagnostics
+    ingestor.close.side_effect = lambda: events.append("ingestor-close")
     worker_handle = MagicMock()
     worker_handle.exit.side_effect = lambda: events.append("worker-exit")
     session = MagicMock()
@@ -225,18 +227,113 @@ def test_worker_runtime_drains_recorder_before_worker_exit(monkeypatch) -> None:
         worker_resources=MagicMock(),
         _worker_handle=worker_handle,
         _buffer_resource=buffer_resource,
-        _reservation_recorder=recorder,
+        _reservation_ingestor=ingestor,
     )
 
     runtime.close()
 
     assert events == [
-        "recorder:True",
+        "stop",
+        "ingest:True",
         "diagnostics",
-        "recorder-close",
+        "ingestor-close",
         "worker-exit",
         "session-close",
     ]
+
+
+def test_worker_runtime_create_starts_recording_after_declarations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    session = MagicMock()
+    monkeypatch.setattr(quent_runtime, "QuentSession", lambda _: session)
+    resources = MagicMock()
+    resources.reservable_memory_ids = {"device": uuid.uuid4()}
+    resources.declare.side_effect = lambda _: events.append("declare")
+    monkeypatch.setattr(WorkerResources, "build", staticmethod(lambda **_: resources))
+    ingestor = MagicMock()
+    bindings = MagicMock()
+
+    def create_ingestor(*_: object) -> MagicMock:
+        events.append("ingestor")
+        return ingestor
+
+    bindings.ReservationEventIngestor.side_effect = create_ingestor
+    monkeypatch.setattr(quent_runtime, "_quent", bindings)
+    buffer_resource = MagicMock()
+    buffer_resource.start_reservation_event_recording.side_effect = lambda: (
+        events.append("start")
+    )
+
+    runtime = QuentWorkerRuntime.create(
+        QuentConfig(),
+        "collector:1234",
+        worker_id=uuid.uuid4(),
+        rank=0,
+        nranks=1,
+        instance_name="rank-0",
+        buffer_resource=buffer_resource,
+    )
+
+    assert events == ["declare", "ingestor", "start"]
+    assert runtime._reservation_ingestor is ingestor
+
+
+def test_worker_runtime_drains_events() -> None:
+    batch = [{"sequence": 0}]
+    buffer_resource = MagicMock()
+    buffer_resource.drain_reservation_events.return_value = batch
+    ingestor = MagicMock()
+    runtime = QuentWorkerRuntime(
+        config=QuentConfig(),
+        session=MagicMock(),
+        worker_resources=MagicMock(),
+        _worker_handle=MagicMock(),
+        _buffer_resource=buffer_resource,
+        _reservation_ingestor=ingestor,
+    )
+
+    runtime.enable_reservation_event_metrics()
+    runtime.drain_reservation_events()
+
+    ingestor.ingest.assert_called_once_with(batch)
+    metrics = runtime.reservation_event_metrics()
+    assert metrics.event_count == 1
+    assert metrics.peak_buffered_events == 1
+    assert metrics.peak_buffered_bytes > 0
+    assert metrics.drain_conversion_seconds >= 0
+
+
+def test_worker_runtime_close_aggregates_event_errors() -> None:
+    buffer_resource = MagicMock()
+    buffer_resource.stop_reservation_event_recording.side_effect = RuntimeError(
+        "stop failed"
+    )
+    ingestor = MagicMock()
+    ingestor.diagnostics.return_value = ["bad attribute"]
+    ingestor.close.side_effect = RuntimeError("live reservation")
+    worker_handle = MagicMock()
+    session = MagicMock()
+    runtime = QuentWorkerRuntime(
+        config=QuentConfig(),
+        session=session,
+        worker_resources=MagicMock(),
+        _worker_handle=worker_handle,
+        _buffer_resource=buffer_resource,
+        _reservation_ingestor=ingestor,
+    )
+
+    with pytest.raises(ExceptionGroup) as caught:
+        runtime.close()
+
+    rendered = repr(caught.value)
+    assert "stop failed" in rendered
+    assert "bad attribute" in rendered
+    assert "live reservation" in rendered
+    ingestor.close.assert_called_once_with()
+    worker_handle.exit.assert_called_once_with()
+    session.close.assert_called_once_with()
 
 
 def test_emit_evaluate_failure() -> None:
@@ -248,7 +345,7 @@ def test_emit_evaluate_failure() -> None:
         worker_resources=MagicMock(),
         _worker_handle=MagicMock(),
         _buffer_resource=None,
-        _reservation_recorder=None,
+        _reservation_ingestor=None,
     )
     runtime.session._evaluations = {
         evaluate_id: running_evaluation,

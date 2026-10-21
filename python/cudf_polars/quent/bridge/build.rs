@@ -91,13 +91,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             file.content.push_str(
                 r#"
 
-def reservation_recorder_capsule(
-    context: Context,
-    worker_id: _uuid.UUID | str,
-    reservable_memory_ids: Mapping[str, _uuid.UUID | str],
-) -> object: ...
-def reservation_recorder_diagnostics(capsule: object) -> list[str]: ...
-def close_reservation_recorder(capsule: object) -> None: ...
+class ReservationEventIngestor:
+    def __init__(
+        self,
+        context: Context,
+        worker_id: _uuid.UUID | str,
+        reservable_memory_ids: Mapping[str, _uuid.UUID | str],
+    ) -> None: ...
+    def ingest(self, events: Iterable[Mapping[str, object]]) -> None: ...
+    def diagnostics(self) -> list[str]: ...
+    def close(self) -> None: ...
 "#,
             );
         }

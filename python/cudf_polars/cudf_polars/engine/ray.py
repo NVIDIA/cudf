@@ -486,14 +486,16 @@ class RankActor:
         if self._kvikio_monitor is not None:
             self._kvikio_monitor.stop()
             self._kvikio_monitor = None
-        self._py_executor.shutdown(wait=True, cancel_futures=True)
         # Release resources in dependency order before exit_actor() terminates
         # the process. Shut down the Context explicitly on the same thread
         # that constructed it.
         try:
-            # Drop persisted partitions before tearing down the Context.
-            rank_local_store.close_all()
-            steps: list[Callable[[], object]] = []
+            # Stop Python producers before the Quent runtime disables BufferResource
+            # recording, then tear down the Context.
+            steps: list[Callable[[], object]] = [
+                lambda: self._py_executor.shutdown(wait=True, cancel_futures=True),
+                rank_local_store.close_all,
+            ]
             if self._quent_worker_runtime is not None:
                 steps.append(self._quent_worker_runtime.close)
             if self._ctx is not None:

@@ -93,42 +93,16 @@ struct ReservationEvent {
     data: ReservationEventData,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum RequestStatus {
-    Submitted,
-    Waiting,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct RequestState {
-    status: RequestStatus,
-    next_fsm_sequence: u16,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct ReservationState {
-    memory_type: u32,
-    next_fsm_sequence: u16,
-}
-
 #[derive(Clone, Debug, Default)]
 struct Lifecycle {
     next_sequence: u64,
-    requests: HashMap<u64, RequestState>,
+    requests: HashSet<u64>,
     known_requests: HashSet<u64>,
-    reservations: HashMap<u64, ReservationState>,
+    reservations: HashMap<u64, u32>,
     known_reservations: HashSet<u64>,
 }
 
 impl Lifecycle {
-    fn advance_fsm(sequence: &mut u16, entity: &str, id: u64) -> Result<u16, String> {
-        let current = *sequence;
-        *sequence = sequence
-            .checked_add(1)
-            .ok_or_else(|| format!("{entity} {id} exceeded the FSM sequence limit"))?;
-        Ok(current)
-    }
-
     fn validate(
         &mut self,
         event: &ReservationEvent,
@@ -159,24 +133,12 @@ impl Lifecycle {
                     memory_type_name(*memory_type)?;
                 }
                 policy_name(*policy)?;
-                self.requests.insert(
-                    *id,
-                    RequestState {
-                        status: RequestStatus::Submitted,
-                        next_fsm_sequence: 1,
-                    },
-                );
+                self.requests.insert(*id);
             }
             ReservationEventData::RequestWaiting { id } => {
-                let state = self
-                    .requests
-                    .get_mut(id)
-                    .ok_or_else(|| format!("waiting for unknown request {id}"))?;
-                if state.status != RequestStatus::Submitted {
-                    return Err(format!("request {id} cannot wait more than once"));
+                if !self.requests.contains(id) {
+                    return Err(format!("waiting for unknown request {id}"));
                 }
-                Self::advance_fsm(&mut state.next_fsm_sequence, "request", *id)?;
-                state.status = RequestStatus::Waiting;
             }
             ReservationEventData::RequestResolved {
                 id,
@@ -185,11 +147,9 @@ impl Lifecycle {
                 memory_type,
                 ..
             } => {
-                let mut state = self
-                    .requests
-                    .remove(id)
-                    .ok_or_else(|| format!("resolution for unknown request {id}"))?;
-                Self::advance_fsm(&mut state.next_fsm_sequence, "request", *id)?;
+                if !self.requests.remove(id) {
+                    return Err(format!("resolution for unknown request {id}"));
+                }
                 match outcome {
                     0 => {
                         memory_type_name(*memory_type)?;
@@ -223,7 +183,7 @@ impl Lifecycle {
                 if !self.known_reservations.insert(*id) {
                     return Err(format!("duplicate reservation id {id}"));
                 }
-                if *request_id != 0 && !self.requests.contains_key(request_id) {
+                if *request_id != 0 && !self.requests.contains(request_id) {
                     return Err(format!(
                         "reservation {id} references unknown request {request_id}"
                     ));
@@ -233,32 +193,22 @@ impl Lifecycle {
                         "reservation {id} references unknown parent {parent_id}"
                     ));
                 }
-                self.reservations.insert(
-                    *id,
-                    ReservationState {
-                        memory_type: *memory_type,
-                        next_fsm_sequence: 2,
-                    },
-                );
+                self.reservations.insert(*id, *memory_type);
             }
             ReservationEventData::ReservationResized { id, size, reason } => {
                 if *size == 0 {
                     return Err(format!("reservation {id} resized to zero bytes"));
                 }
                 resize_reason(*reason)?;
-                let state = self
-                    .reservations
-                    .get_mut(id)
-                    .ok_or_else(|| format!("resize for unknown reservation {id}"))?;
-                Self::advance_fsm(&mut state.next_fsm_sequence, "reservation", *id)?;
+                if !self.reservations.contains_key(id) {
+                    return Err(format!("resize for unknown reservation {id}"));
+                }
             }
             ReservationEventData::ReservationReleased { id, reason } => {
                 release_reason(*reason)?;
-                let mut state = self
-                    .reservations
-                    .remove(id)
-                    .ok_or_else(|| format!("release for unknown reservation {id}"))?;
-                Self::advance_fsm(&mut state.next_fsm_sequence, "reservation", *id)?;
+                if self.reservations.remove(id).is_none() {
+                    return Err(format!("release for unknown reservation {id}"));
+                }
             }
             ReservationEventData::MemoryLimitChanged { memory_type, .. } => {
                 if !memories.contains(memory_type) {
@@ -271,24 +221,6 @@ impl Lifecycle {
         }
         Ok(())
     }
-
-    fn fsm_sequence_before(&self, event: &ReservationEvent) -> u16 {
-        match &event.data {
-            ReservationEventData::RequestSubmitted { .. }
-            | ReservationEventData::ReservationCreated { .. } => 0,
-            ReservationEventData::RequestWaiting { id }
-            | ReservationEventData::RequestResolved { id, .. } => self
-                .requests
-                .get(id)
-                .map_or(0, |state| state.next_fsm_sequence),
-            ReservationEventData::ReservationResized { id, .. }
-            | ReservationEventData::ReservationReleased { id, .. } => self
-                .reservations
-                .get(id)
-                .map_or(0, |state| state.next_fsm_sequence),
-            ReservationEventData::MemoryLimitChanged { .. } => 0,
-        }
-    }
 }
 
 #[pyclass]
@@ -297,6 +229,8 @@ struct ReservationEventIngestor {
     memory_ids: HashMap<u32, Uuid>,
     request_observer: Observer<MemoryReservationRequest>,
     reservation_observer: Observer<MemoryReservation>,
+    requests: HashMap<u64, DynamicFsmHandle<MemoryReservationRequest>>,
+    reservations: HashMap<u64, DynamicFsmHandle<MemoryReservation>>,
     actor_observer: Observer<Actor>,
     memory_observer: Observer<ReservableMemory>,
     lifecycle: Lifecycle,
@@ -318,8 +252,7 @@ impl ReservationEventIngestor {
 
         let mut current = self.lifecycle.clone();
         for event in events {
-            let fsm_sequence = current.fsm_sequence_before(&event);
-            self.forward_event(&event, fsm_sequence, &current)?;
+            self.forward_event(&event, &current)?;
             current.validate(&event, &memory_types)?;
         }
         self.lifecycle = next;
@@ -329,7 +262,6 @@ impl ReservationEventIngestor {
     fn forward_event(
         &mut self,
         event: &ReservationEvent,
-        seq: u16,
         lifecycle: &Lifecycle,
     ) -> Result<(), String> {
         let timestamp = event.timestamp_ns;
@@ -344,33 +276,33 @@ impl ReservationEventIngestor {
                 attributes,
             } => {
                 let translated = self.translate_attributes(attributes);
-                let data = MemoryReservationRequestEvent::Submitted {
-                    seq,
-                    worker: self.worker.clone(),
-                    actor: translated.actor,
-                    site: translated.site,
-                    size: *size,
-                    memory_types: memory_types
-                        .iter()
-                        .map(|value| memory_type_name(*value))
-                        .collect::<Result<_, _>>()?,
-                    policy: policy_name(*policy)?.to_owned(),
-                    net_memory_delta: *delta,
-                    attributes: translated.dynamic,
-                    sequence,
-                };
-                self.request_observer.forward(raw_event(
-                    stable_id(b"request", *id),
-                    timestamp,
-                    data,
-                ));
+                let mut handle = self
+                    .request_observer
+                    .handle_with_id(stable_id(self.worker.target, b"request", *id))
+                    .into_dynamic();
+                handle
+                    .submitted_at(
+                        timestamp,
+                        self.worker.clone(),
+                        translated.actor,
+                        translated.site,
+                        *size,
+                        memory_types
+                            .iter()
+                            .map(|value| memory_type_name(*value))
+                            .collect::<Result<_, _>>()?,
+                        policy_name(*policy)?.to_owned(),
+                        *delta,
+                        translated.dynamic,
+                        sequence,
+                    )
+                    .map_err(|error| error.to_string())?;
+                self.requests.insert(*id, handle);
             }
             ReservationEventData::RequestWaiting { id } => {
-                self.request_observer.forward(raw_event(
-                    stable_id(b"request", *id),
-                    timestamp,
-                    MemoryReservationRequestEvent::Waiting { seq, sequence },
-                ));
+                self.request_handle(*id)?
+                    .waiting_at(timestamp, sequence)
+                    .map_err(|error| error.to_string())?;
             }
             ReservationEventData::RequestResolved {
                 id,
@@ -382,34 +314,25 @@ impl ReservationEventIngestor {
                 timed_out,
                 error,
             } => {
-                let data = match outcome {
-                    0 => MemoryReservationRequestEvent::Granted {
-                        seq,
-                        reservation: self.reservation_ref(*reservation_id),
-                        memory_type: memory_type_name(*memory_type)?,
-                        size: *size,
-                        overbooked_bytes: *overbooked_bytes,
-                        timed_out: *timed_out,
+                let reservation = self.reservation_ref(*reservation_id);
+                let handle = self.request_handle(*id)?;
+                match outcome {
+                    0 => handle.granted_at(
+                        timestamp,
+                        reservation,
+                        memory_type_name(*memory_type)?,
+                        *size,
+                        *overbooked_bytes,
+                        *timed_out,
                         sequence,
-                    },
-                    1 => MemoryReservationRequestEvent::Empty {
-                        seq,
-                        timed_out: *timed_out,
-                        sequence,
-                    },
-                    2 => MemoryReservationRequestEvent::Failed {
-                        seq,
-                        error: error.clone(),
-                        sequence,
-                    },
-                    3 => MemoryReservationRequestEvent::Cancelled { seq, sequence },
+                    ),
+                    1 => handle.empty_at(timestamp, *timed_out, sequence),
+                    2 => handle.failed_at(timestamp, error.clone(), sequence),
+                    3 => handle.cancelled_at(timestamp, sequence),
                     value => return Err(format!("invalid request outcome {value}")),
-                };
-                self.request_observer.forward(raw_event(
-                    stable_id(b"request", *id),
-                    timestamp,
-                    data,
-                ));
+                }
+                .map_err(|error| error.to_string())?;
+                self.requests.remove(id);
             }
             ReservationEventData::ReservationCreated {
                 id,
@@ -420,64 +343,61 @@ impl ReservationEventIngestor {
                 parent_id,
             } => {
                 let translated = self.translate_attributes(attributes);
-                let entity_id = stable_id(b"reservation", *id);
-                self.reservation_observer.forward(raw_event(
-                    entity_id,
-                    timestamp,
-                    MemoryReservationEvent::Created {
-                        seq,
-                        worker: self.worker.clone(),
-                        actor: translated.actor,
-                        site: translated.site,
-                        request: (*request_id != 0).then(|| self.request_ref(*request_id)),
-                        parent: (*parent_id != 0).then(|| self.reservation_ref(*parent_id)),
-                        attributes: translated.dynamic,
+                let request = (*request_id != 0).then(|| self.request_ref(*request_id));
+                let parent = (*parent_id != 0).then(|| self.reservation_ref(*parent_id));
+                let memory = self.memory_usage(*memory_type, *size)?;
+                let mut handle = self
+                    .reservation_observer
+                    .handle_with_id(stable_id(self.worker.target, b"reservation", *id))
+                    .into_dynamic();
+                handle
+                    .created_at(
+                        timestamp,
+                        self.worker.clone(),
+                        translated.actor,
+                        translated.site,
+                        request,
+                        parent,
+                        translated.dynamic,
                         sequence,
-                    },
-                ));
-                self.reservation_observer.forward(raw_event(
-                    entity_id,
-                    timestamp,
-                    MemoryReservationEvent::Held {
-                        seq: seq + 1,
-                        memory: self.memory_usage(*memory_type, *size)?,
-                        change: if *parent_id == 0 {
+                    )
+                    .map_err(|error| error.to_string())?;
+                handle
+                    .held_at(
+                        timestamp,
+                        memory,
+                        if *parent_id == 0 {
                             "granted"
                         } else {
                             "split_child"
                         }
                         .to_owned(),
                         sequence,
-                    },
-                ));
+                    )
+                    .map_err(|error| error.to_string())?;
+                self.reservations.insert(*id, handle);
             }
             ReservationEventData::ReservationResized { id, size, reason } => {
                 let memory_type = lifecycle
                     .reservations
                     .get(id)
                     .ok_or_else(|| format!("resize for unknown reservation {id}"))?
-                    .memory_type;
-                self.reservation_observer.forward(raw_event(
-                    stable_id(b"reservation", *id),
-                    timestamp,
-                    MemoryReservationEvent::Held {
-                        seq,
-                        memory: self.memory_usage(memory_type, *size)?,
-                        change: resize_reason(*reason)?.to_owned(),
+                    .to_owned();
+                let memory = self.memory_usage(memory_type, *size)?;
+                self.reservation_handle(*id)?
+                    .held_at(
+                        timestamp,
+                        memory,
+                        resize_reason(*reason)?.to_owned(),
                         sequence,
-                    },
-                ));
+                    )
+                    .map_err(|error| error.to_string())?;
             }
             ReservationEventData::ReservationReleased { id, reason } => {
-                self.reservation_observer.forward(raw_event(
-                    stable_id(b"reservation", *id),
-                    timestamp,
-                    MemoryReservationEvent::Released {
-                        seq,
-                        reason: release_reason(*reason)?.to_owned(),
-                        sequence,
-                    },
-                ));
+                self.reservation_handle(*id)?
+                    .released_at(timestamp, release_reason(*reason)?.to_owned(), sequence)
+                    .map_err(|error| error.to_string())?;
+                self.reservations.remove(id);
             }
             ReservationEventData::MemoryLimitChanged {
                 memory_type,
@@ -489,31 +409,49 @@ impl ReservationEventIngestor {
                         memory_type_description(*memory_type)
                     )
                 })?;
-                self.memory_observer.forward(raw_event(
-                    id,
-                    timestamp,
-                    ReservableMemoryEvent::Resized {
-                        limits: ReservableMemoryBounds {
+                self.memory_observer
+                    .handle_with_id(id)
+                    .resized_at(
+                        timestamp,
+                        ReservableMemoryBounds {
                             bytes: (*configured_limit).max(0) as u64,
                         },
-                        configured_limit: *configured_limit,
+                        *configured_limit,
                         sequence,
-                    },
-                ));
+                    )
+                    .map_err(|error| error.to_string())?;
             }
         }
         Ok(())
     }
 
+    fn request_handle(
+        &mut self,
+        id: u64,
+    ) -> Result<&mut DynamicFsmHandle<MemoryReservationRequest>, String> {
+        self.requests
+            .get_mut(&id)
+            .ok_or_else(|| format!("event for unknown request {id}"))
+    }
+
+    fn reservation_handle(
+        &mut self,
+        id: u64,
+    ) -> Result<&mut DynamicFsmHandle<MemoryReservation>, String> {
+        self.reservations
+            .get_mut(&id)
+            .ok_or_else(|| format!("event for unknown reservation {id}"))
+    }
+
     fn request_ref(&self, id: u64) -> EntityRef<MemoryReservationRequest> {
         self.request_observer
-            .handle_with_id(stable_id(b"request", id))
+            .handle_with_id(stable_id(self.worker.target, b"request", id))
             .as_entity_ref()
     }
 
     fn reservation_ref(&self, id: u64) -> EntityRef<MemoryReservation> {
         self.reservation_observer
-            .handle_with_id(stable_id(b"reservation", id))
+            .handle_with_id(stable_id(self.worker.target, b"reservation", id))
             .as_entity_ref()
     }
 
@@ -601,6 +539,8 @@ impl ReservationEventIngestor {
             memory_ids: parse_memory_ids(reservable_memory_ids)?,
             request_observer,
             reservation_observer,
+            requests: HashMap::new(),
+            reservations: HashMap::new(),
             actor_observer,
             memory_observer,
             lifecycle: Lifecycle::default(),
@@ -657,10 +597,6 @@ struct TranslatedAttributes {
     site: String,
     actor: Option<EntityRef<Actor>>,
     dynamic: DynamicAttributes,
-}
-
-fn raw_event<P>(id: Uuid, timestamp_ns: u64, data: P) -> Event<P> {
-    Event::new(id, timestamp_ns, data)
 }
 
 fn add_dynamic(attributes: &mut DynamicAttributes, key: String, value: &OwnedValue) {
@@ -786,11 +722,14 @@ fn parse_memory_ids(mapping: &Bound<'_, PyMapping>) -> PyResult<HashMap<u32, Uui
     Ok(result)
 }
 
-fn stable_id(namespace: &[u8], id: u64) -> Uuid {
-    let mut bytes = [0_u8; 16];
-    let namespace_len = namespace.len().min(8);
-    bytes[..namespace_len].copy_from_slice(&namespace[..namespace_len]);
-    bytes[8..].copy_from_slice(&id.to_be_bytes());
+fn stable_id(worker_id: Uuid, namespace: &[u8], id: u64) -> Uuid {
+    let mut bytes = *worker_id.as_bytes();
+    for (target, source) in bytes.iter_mut().zip(namespace) {
+        *target ^= source;
+    }
+    for (target, source) in bytes[8..].iter_mut().zip(id.to_be_bytes()) {
+        *target ^= source;
+    }
     Uuid::from_bytes(bytes)
 }
 
@@ -859,9 +798,14 @@ fn cudf_polars_quent(module: &Bound<'_, PyModule>) -> PyResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
 
     fn ingestor() -> ReservationEventIngestor {
         let context = Context::<CudfPolars>::try_new(Noop).expect("no-op context");
+        ingestor_with_context(&context)
+    }
+
+    fn ingestor_with_context(context: &Context<CudfPolars>) -> ReservationEventIngestor {
         ReservationEventIngestor {
             worker: context
                 .observer::<Worker>()
@@ -870,6 +814,8 @@ mod tests {
             memory_ids: HashMap::from([(MEMORY_DEVICE, Uuid::from_u128(2))]),
             request_observer: context.observer(),
             reservation_observer: context.observer(),
+            requests: HashMap::new(),
+            reservations: HashMap::new(),
             actor_observer: context.observer(),
             memory_observer: context.observer(),
             lifecycle: Lifecycle::default(),
@@ -886,6 +832,20 @@ mod tests {
         }
     }
 
+    #[test]
+    fn entity_ids_include_worker_and_entity_kind() {
+        let worker_a = Uuid::from_u128(1);
+        let worker_b = Uuid::from_u128(2);
+        assert_ne!(
+            stable_id(worker_a, b"request", 7),
+            stable_id(worker_b, b"request", 7)
+        );
+        assert_ne!(
+            stable_id(worker_a, b"request", 7),
+            stable_id(worker_a, b"reservation", 7)
+        );
+    }
+
     fn submitted(id: u64) -> ReservationEventData {
         ReservationEventData::RequestSubmitted {
             id,
@@ -894,6 +854,19 @@ mod tests {
             policy: 3,
             delta: None,
             attributes: Vec::new(),
+        }
+    }
+
+    fn resolved(id: u64, outcome: u32) -> ReservationEventData {
+        ReservationEventData::RequestResolved {
+            id,
+            outcome,
+            reservation_id: 0,
+            memory_type: MEMORY_DEVICE,
+            size: 0,
+            overbooked_bytes: 0,
+            timed_out: outcome == 1,
+            error: "failure".to_owned(),
         }
     }
 
@@ -921,19 +894,7 @@ mod tests {
             ingestor
                 .ingest_owned(vec![
                     event(1, ReservationEventData::RequestWaiting { id: 1 }),
-                    event(
-                        2,
-                        ReservationEventData::RequestResolved {
-                            id: 1,
-                            outcome,
-                            reservation_id: 0,
-                            memory_type: MEMORY_DEVICE,
-                            size: 0,
-                            overbooked_bytes: 0,
-                            timed_out: outcome == 1,
-                            error: "failure".to_owned(),
-                        },
-                    ),
+                    event(2, resolved(1, outcome)),
                 ])
                 .unwrap();
             assert!(ingestor.lifecycle.requests.is_empty());
@@ -1012,7 +973,7 @@ mod tests {
             .unwrap();
         assert!(ingestor.lifecycle.known_reservations.contains(&5));
         assert!(ingestor.lifecycle.reservations.contains_key(&6));
-        assert_eq!(ingestor.lifecycle.reservations[&6].next_fsm_sequence, 2);
+        assert_eq!(ingestor.lifecycle.reservations[&6], MEMORY_DEVICE);
     }
 
     #[test]
@@ -1080,14 +1041,48 @@ mod tests {
                 ),
             ])
             .unwrap();
-        assert_eq!(ingestor.lifecycle.reservations[&10].next_fsm_sequence, 3);
+        assert_eq!(ingestor.lifecycle.reservations[&10], MEMORY_DEVICE);
         assert!(ingestor.diagnostics.is_empty());
     }
 
     #[test]
-    fn raw_event_preserves_explicit_timestamp() {
-        let event = raw_event(Uuid::from_u128(1), 987_654_321, ());
-        assert_eq!(event.timestamp, 987_654_321);
+    fn generated_transitions_preserve_original_timestamps() {
+        let recorded = Arc::new(Mutex::new(Vec::<Event<CudfPolarsEvent>>::new()));
+        {
+            let context =
+                Context::<CudfPolars>::try_new(quent_instrumentation::EventCallback::new({
+                    let recorded = Arc::clone(&recorded);
+                    move |event| recorded.lock().unwrap().push(event)
+                }))
+                .unwrap();
+            ingestor_with_context(&context)
+                .ingest_owned(vec![
+                    event(0, submitted(1)),
+                    event(1, ReservationEventData::RequestWaiting { id: 1 }),
+                    event(2, resolved(1, 2)),
+                ])
+                .unwrap();
+        }
+        let events = recorded.lock().unwrap();
+        let requests = events
+            .iter()
+            .filter(|event| matches!(&event.data, CudfPolarsEvent::MemoryReservationRequest(_)))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            requests
+                .iter()
+                .map(|event| event.timestamp)
+                .collect::<Vec<_>>(),
+            vec![1_234_567_890, 1_234_567_891, 1_234_567_892]
+        );
+        assert!(matches!(
+            &requests[2].data,
+            CudfPolarsEvent::MemoryReservationRequest(MemoryReservationRequestEvent::Failed {
+                seq: 2,
+                sequence: 2,
+                ..
+            })
+        ));
     }
 
     #[test]

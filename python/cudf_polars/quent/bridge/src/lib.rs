@@ -341,7 +341,7 @@ impl RecorderState {
                 if size == 0 {
                     return Err(format!("reservation {id} was created with zero bytes"));
                 }
-                if core.reservations.contains_key(&id) {
+                if core.reservation_refs.contains_key(&id) {
                     return Err(format!("duplicate reservation id {id}"));
                 }
                 let translated = self.translate_attributes(core, attributes);
@@ -415,7 +415,6 @@ impl RecorderState {
                     .remove(&id)
                     .ok_or_else(|| format!("release for unknown reservation {id}"))?;
                 core.reservation_types.remove(&id);
-                core.reservation_refs.remove(&id);
                 handle
                     .released(release_reason(reason)?.to_owned(), sequence)
                     .map_err(|error| error.to_string())?;
@@ -1024,9 +1023,11 @@ mod tests {
     #[test]
     fn callback_panic_is_latched_without_unwinding() {
         let state = state();
-        callback(&state, 0, || -> Result<PendingEvent, String> {
-            panic!("deliberate callback panic")
-        });
+        callback(
+            (&raw const state).cast_mut().cast(),
+            0,
+            || -> Result<PendingEvent, String> { panic!("deliberate callback panic") },
+        );
 
         let core = state.lock();
         assert_eq!(core.next_sequence, 1);
@@ -1079,7 +1080,7 @@ mod tests {
     }
 
     #[test]
-    fn released_reservations_drop_all_live_state() {
+    fn released_reservations_retain_identity_for_split_children() {
         let state = state();
         state.enqueue(
             0,
@@ -1093,11 +1094,23 @@ mod tests {
             },
         );
         state.enqueue(1, PendingEvent::ReservationReleased { id: 5, reason: 0 });
+        state.enqueue(
+            2,
+            PendingEvent::ReservationCreated {
+                id: 6,
+                memory_type: MEMORY_DEVICE,
+                size: 32,
+                attributes: Vec::new(),
+                request_id: 0,
+                parent_id: 5,
+            },
+        );
 
         let core = state.lock();
         assert!(!core.reservations.contains_key(&5));
         assert!(!core.reservation_types.contains_key(&5));
-        assert!(!core.reservation_refs.contains_key(&5));
+        assert!(core.reservation_refs.contains_key(&5));
+        assert!(core.reservations.contains_key(&6));
         assert!(core.first_error.is_none());
     }
 }

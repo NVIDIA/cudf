@@ -22,9 +22,10 @@ use uuid::Uuid;
 use super::CudfPolarsUiAnalyzer;
 use crate::{
     evaluate::EvaluateUsage,
+    reservation::RESERVATION_ENTITY_TYPE,
     resource::{
         DATA_CHANNEL_RESOURCE_TYPE, DEVICE_MEMORY_RESOURCE_TYPE, EVALUATE_ENTITY_TYPE,
-        PROCESSOR_RESOURCE_TYPE, resource_type,
+        PROCESSOR_RESOURCE_TYPE, RESERVABLE_MEMORY_RESOURCE_TYPE, resource_type,
     },
 };
 
@@ -104,18 +105,26 @@ impl CudfPolarsUiAnalyzer {
 
         if !matches!(
             resource_type_name.as_str(),
-            PROCESSOR_RESOURCE_TYPE | DEVICE_MEMORY_RESOURCE_TYPE | DATA_CHANNEL_RESOURCE_TYPE
+            PROCESSOR_RESOURCE_TYPE
+                | DEVICE_MEMORY_RESOURCE_TYPE
+                | DATA_CHANNEL_RESOURCE_TYPE
+                | RESERVABLE_MEMORY_RESOURCE_TYPE
         ) {
             return Err(AnalyzerError::InvalidArgument(format!(
                 "unknown resource type {resource_type_name:?}"
             )));
         }
+        let expected_entity_type = if resource_type_name == RESERVABLE_MEMORY_RESOURCE_TYPE {
+            RESERVATION_ENTITY_TYPE
+        } else {
+            EVALUATE_ENTITY_TYPE
+        };
         if entity_type_name
             .as_deref()
-            .is_some_and(|name| name != EVALUATE_ENTITY_TYPE)
+            .is_some_and(|name| name != expected_entity_type)
         {
             return Err(AnalyzerError::InvalidArgument(format!(
-                "unknown timeline entity type {:?}; expected {EVALUATE_ENTITY_TYPE:?}",
+                "unknown timeline entity type {:?}; expected {expected_entity_type:?}",
                 entity_type_name.unwrap()
             )));
         }
@@ -129,6 +138,15 @@ impl CudfPolarsUiAnalyzer {
                 })
         });
         let resource_type = resource_type(&resource_type_name);
+        let reservations = self.reservations.iter().filter(|reservation| {
+            reservation.actor_id.is_none_or(|actor_id| {
+                self.actors.get(&actor_id).is_some_and(|actor| {
+                    query_operator_ids.contains(&actor.operator_id)
+                        && (requested_operator_ids.is_empty()
+                            || requested_operator_ids.contains(&actor.operator_id))
+                })
+            })
+        });
         let data = if entity_type_name.is_some() {
             let mut builder = ResourceTimelineByKeyBuilder::try_new(
                 &resource_type,
@@ -163,12 +181,28 @@ impl CudfPolarsUiAnalyzer {
                     )?;
                 }
             }
+            if resource_type_name == RESERVABLE_MEMORY_RESOURCE_TYPE {
+                for reservation in reservations {
+                    for segment in &reservation.segments {
+                        if selected_resource_ids.contains(&segment.resource_id) {
+                            builder.try_push("held", &segment)?;
+                        }
+                    }
+                }
+            }
             let result = builder.build();
             let long_fsms = result
                 .long_entities
                 .iter()
                 .filter_map(|id| self.evaluate(*id))
                 .map(|evaluate| evaluate.to_ui_fsm(epoch))
+                .chain(
+                    result
+                        .long_entities
+                        .iter()
+                        .filter_map(|id| self.reservation(*id))
+                        .map(|reservation| reservation.to_ui_fsm(epoch)),
+                )
                 .collect();
             let mut capacities_states_values = HashMap::new();
             for ((state_name, capacity_name), values) in result.data {
@@ -207,12 +241,28 @@ impl CudfPolarsUiAnalyzer {
                     })?;
                 }
             }
+            if resource_type_name == RESERVABLE_MEMORY_RESOURCE_TYPE {
+                for reservation in reservations {
+                    for segment in &reservation.segments {
+                        if selected_resource_ids.contains(&segment.resource_id) {
+                            builder.try_push(&segment)?;
+                        }
+                    }
+                }
+            }
             let result = builder.build();
             let long_fsms = result
                 .long_entities
                 .iter()
                 .filter_map(|id| self.evaluate(*id))
                 .map(|evaluate| evaluate.to_ui_fsm(epoch))
+                .chain(
+                    result
+                        .long_entities
+                        .iter()
+                        .filter_map(|id| self.reservation(*id))
+                        .map(|reservation| reservation.to_ui_fsm(epoch)),
+                )
                 .collect();
             UiResourceTimeline::Binned(ResourceTimelineBinned {
                 config: result.config.try_to_secs_relative(epoch)?,

@@ -8,6 +8,7 @@
 #include <cudf/types.hpp>
 
 #include <rapidsmpf/communicator/communicator.hpp>
+#include <rapidsmpf/memory/reservation_attributes.hpp>
 #include <rapidsmpf/streaming/core/actor.hpp>
 #include <rapidsmpf/streaming/core/channel.hpp>
 #include <rapidsmpf/streaming/core/context.hpp>
@@ -99,13 +100,15 @@ class cardinality_estimator {
    * @param ch_sampled Optional output channel receiving the input chunks.
    * @param column_indices Columns whose row tuples are counted. An empty vector selects all
    * columns.
+   * @param attributes Attributes attached to memory reservation requests.
    * @return Coroutine representing the estimation.
    */
   [[nodiscard]] rapidsmpf::streaming::Actor estimate(
     std::shared_ptr<rapidsmpf::streaming::Channel> ch_in,
     std::shared_ptr<rapidsmpf::streaming::Channel> ch_out,
     std::shared_ptr<rapidsmpf::streaming::Channel> ch_sampled = nullptr,
-    std::vector<cudf::size_type> column_indices               = {});
+    std::vector<cudf::size_type> column_indices               = {},
+    rapidsmpf::ReservationAttributes attributes               = {});
 
  private:
   std::shared_ptr<rapidsmpf::streaming::Context> ctx_{};

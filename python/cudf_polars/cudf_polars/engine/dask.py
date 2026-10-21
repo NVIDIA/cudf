@@ -515,9 +515,14 @@ def _teardown_worker(
         # Shut down the Context explicitly on the same thread that
         # constructed it.
         try:
+            steps: list[Callable[[], object]] = []
+            if mp_ctx.quent_worker_runtime is not None:
+                steps.append(mp_ctx.quent_worker_runtime.close)
             if mp_ctx.ctx is not None:
-                mp_ctx.ctx.shutdown()
+                steps.append(mp_ctx.ctx.shutdown)
+            run_cleanup_steps("Dask worker teardown failed", *steps)
         finally:
+            mp_ctx.quent_worker_runtime = None
             mp_ctx.ctx = None
             mp_ctx.comm = None
             mp_ctx.base_mr = None

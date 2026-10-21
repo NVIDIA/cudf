@@ -17,7 +17,9 @@ from unittest.mock import MagicMock, call
 
 import pytest
 
-import cudf_polars.quent._runtime
+from rapidsmpf.memory.buffer import MemoryType
+
+import cudf_polars.quent._runtime as quent_runtime
 from cudf_polars.engine.spmd import synchronize_quent_reset_contexts
 from cudf_polars.quent._context import (
     ActorBoundQuentIRExecutionState,
@@ -27,6 +29,7 @@ from cudf_polars.quent._context import (
     WorkerResources,
 )
 from cudf_polars.quent._runtime import QuentWorkerRuntime
+from cudf_polars.streaming.actor_graph.utils import reservation_attributes
 
 
 def test_context_serialization_roundtrip(tmp_path) -> None:
@@ -100,20 +103,70 @@ def test_ir_execution_state_bind_actor() -> None:
     assert actor_state.operator_id == state.operator_id
 
 
+def test_reservation_attributes() -> None:
+    actor_id = uuid.uuid4()
+    state = MagicMock(actor_id=actor_id)
+
+    assert reservation_attributes(None, "join.evaluate") is None
+    assert reservation_attributes(state, "join.evaluate") == {
+        "rapidsmpf.site": "join.evaluate",
+        "quent.actor_id": str(actor_id),
+    }
+    with pytest.raises(ValueError, match="lowercase dotted"):
+        reservation_attributes(state, "Join")
+    with pytest.raises(TypeError, match="UUID"):
+        reservation_attributes(MagicMock(actor_id="not-a-uuid"), "join.evaluate")
+
+
 def test_worker_resources_declares_inter_rank_channel() -> None:
     engine_id = uuid.uuid4()
     worker_id = uuid.uuid4()
+    buffer_resource = MagicMock()
+    buffer_resource.has_memory_resource.side_effect = lambda memory_type: (
+        memory_type in {MemoryType.DEVICE, MemoryType.HOST}
+    )
+    buffer_resource.memory_limit.side_effect = {
+        MemoryType.DEVICE: 100,
+        MemoryType.HOST: -1,
+    }.__getitem__
+    buffer_resource.spill_directory = None
     resources = WorkerResources.build(
         instance_suffix="rank-0",
         engine_id=engine_id,
         worker_id=worker_id,
         rank=0,
         nranks=2,
+        buffer_resource=buffer_resource,
     )
 
     session = MagicMock()
     resources.declare(session)
 
+    reservable_memory_observer = (
+        session.binding_context.reservable_memory_observer.return_value
+    )
+    assert reservable_memory_observer.handle.call_args_list == [
+        call(resources.reservable_memory_ids["device"]),
+        call(resources.reservable_memory_ids["host"]),
+    ]
+    reservable_memory_observer.handle.return_value.declared.assert_has_calls(
+        [
+            call(
+                instance_name="rank-0 device reservable memory",
+                worker=worker_id,
+                memory_type="device",
+                limits={"bytes": 100},
+                configured_limit=100,
+            ),
+            call(
+                instance_name="rank-0 host reservable memory",
+                worker=worker_id,
+                memory_type="host",
+                limits={"bytes": 0},
+                configured_limit=-1,
+            ),
+        ]
+    )
     data_channel_observer = session.binding_context.data_channel_observer.return_value
     link_channel_id = resources.link_channel_ids[1]
     assert data_channel_observer.handle.call_args_list == [
@@ -143,6 +196,49 @@ def test_worker_resources_declares_inter_rank_channel() -> None:
     )
 
 
+def test_worker_runtime_drains_recorder_before_worker_exit(monkeypatch) -> None:
+    events: list[str] = []
+    recorder = object()
+    buffer_resource = MagicMock()
+    buffer_resource.set_reservation_recorder.side_effect = lambda value: events.append(
+        f"recorder:{value is None}"
+    )
+    bindings = MagicMock()
+
+    def diagnostics(value: object) -> list[str]:
+        assert value is recorder
+        events.append("diagnostics")
+        return []
+
+    bindings.reservation_recorder_diagnostics.side_effect = diagnostics
+    bindings.close_reservation_recorder.side_effect = lambda value: events.append(
+        "recorder-close"
+    )
+    monkeypatch.setattr(quent_runtime, "_quent", bindings)
+    worker_handle = MagicMock()
+    worker_handle.exit.side_effect = lambda: events.append("worker-exit")
+    session = MagicMock()
+    session.close.side_effect = lambda: events.append("session-close")
+    runtime = QuentWorkerRuntime(
+        config=QuentConfig(),
+        session=session,
+        worker_resources=MagicMock(),
+        _worker_handle=worker_handle,
+        _buffer_resource=buffer_resource,
+        _reservation_recorder=recorder,
+    )
+
+    runtime.close()
+
+    assert events == [
+        "recorder:True",
+        "diagnostics",
+        "recorder-close",
+        "worker-exit",
+        "session-close",
+    ]
+
+
 def test_emit_evaluate_failure() -> None:
     evaluate_id = uuid.uuid4()
     running_evaluation = MagicMock()
@@ -151,6 +247,8 @@ def test_emit_evaluate_failure() -> None:
         session=MagicMock(),
         worker_resources=MagicMock(),
         _worker_handle=MagicMock(),
+        _buffer_resource=None,
+        _reservation_recorder=None,
     )
     runtime.session._evaluations = {
         evaluate_id: running_evaluation,
@@ -173,18 +271,18 @@ def test_quent_controller_create_closes_collector_on_failure(
 ) -> None:
     collector = MagicMock(address="127.0.0.1:1234")
     monkeypatch.setattr(
-        cudf_polars.quent._runtime,
+        quent_runtime,
         "start_collector",
         MagicMock(return_value=collector),
     )
     monkeypatch.setattr(
-        cudf_polars.quent._runtime,
+        quent_runtime,
         "QuentSession",
         MagicMock(side_effect=RuntimeError("session creation failed")),
     )
 
     with pytest.raises(RuntimeError, match="session creation failed"):
-        cudf_polars.quent._runtime.QuentControllerRuntime.create(
+        quent_runtime.QuentControllerRuntime.create(
             quent_context,
             backend="test",
         )

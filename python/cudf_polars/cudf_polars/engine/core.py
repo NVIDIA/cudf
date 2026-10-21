@@ -721,7 +721,9 @@ def execute_ir_on_rank(
     messages = output.release()
     chunks = [
         TableChunk.from_message(msg, br=ctx.br()).make_available_and_spill(
-            ctx.br(), allow_overbooking=True
+            ctx.br(),
+            allow_overbooking=True,
+            attributes={"rapidsmpf.site": "engine.output.collect"},
         )
         for msg in messages
     ]
@@ -815,7 +817,12 @@ def all_gather_host_data(
     -------
     List of bytes, one element per rank, ordered by rank index.
     """
-    allgather = AllGather(comm=comm, op_id=op_id, br=br)
+    allgather = AllGather(
+        comm=comm,
+        op_id=op_id,
+        br=br,
+        attributes={"rapidsmpf.site": "engine.statistics.allgather"},
+    )
     # TODO: Make AllGather (bulk) a context manager so this becomes
     # with AllGather(...) as ag:
     #     ag.insert(0, PackedData.from_host_bytes(data, br))

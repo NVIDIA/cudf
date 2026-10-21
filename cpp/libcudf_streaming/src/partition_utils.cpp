@@ -111,7 +111,8 @@ std::pair<std::vector<cudf::table_view>, std::unique_ptr<cudf::table>> partition
   std::uint32_t seed,
   cuda::stream_ref stream,
   rapidsmpf::BufferResource* br,
-  rapidsmpf::AllowOverbooking allow_overbooking)
+  rapidsmpf::AllowOverbooking allow_overbooking,
+  rapidsmpf::ReservationAttributes attributes)
 {
   RAPIDSMPF_MEMORY_PROFILE(br->statistics(), br->device_mr());
   if (table.num_rows() == 0) {
@@ -124,8 +125,8 @@ std::pair<std::vector<cudf::table_view>, std::unique_ptr<cudf::table>> partition
 
   // hash_partition does a deep-copy. Therefore, we need to reserve memory for
   // at least the size of the table.
-  auto reservation =
-    br->reserve_device_memory_and_spill(estimated_memory_usage(table, stream), allow_overbooking);
+  auto reservation = br->reserve_device_memory_and_spill(
+    estimated_memory_usage(table, stream), allow_overbooking, std::move(attributes));
   auto [partition_table, offsets] = cudf::hash_partition(
     table, columns_to_hash, num_partitions, hash_function, seed, stream, br->device_mr());
   reservation.clear();
@@ -157,10 +158,12 @@ std::unordered_map<rapidsmpf::shuffler::PartID, rapidsmpf::PackedData> partition
   std::uint32_t seed,
   cuda::stream_ref stream,
   rapidsmpf::BufferResource* br,
-  rapidsmpf::AllowOverbooking allow_overbooking)
+  rapidsmpf::AllowOverbooking allow_overbooking,
+  rapidsmpf::ReservationAttributes attributes)
 {
   auto const [packed_bytes, cost] = packed_and_total_size(table, stream, br->device_mr());
-  auto reservation                = br->reserve_device_memory_and_spill(cost, allow_overbooking);
+  auto reservation =
+    br->reserve_device_memory_and_spill(cost, allow_overbooking, std::move(attributes));
   return partition_and_pack(
     table, columns_to_hash, num_partitions, hash_function, seed, stream, reservation, packed_bytes);
 }
@@ -220,10 +223,12 @@ std::unordered_map<rapidsmpf::shuffler::PartID, rapidsmpf::PackedData> split_and
   std::vector<cudf::size_type> const& splits,
   cuda::stream_ref stream,
   rapidsmpf::BufferResource* br,
-  rapidsmpf::AllowOverbooking allow_overbooking)
+  rapidsmpf::AllowOverbooking allow_overbooking,
+  rapidsmpf::ReservationAttributes attributes)
 {
   auto const packed_bytes = split_and_pack_cost(table, stream, br->device_mr());
-  auto reservation        = br->reserve_device_memory_and_spill(packed_bytes, allow_overbooking);
+  auto reservation =
+    br->reserve_device_memory_and_spill(packed_bytes, allow_overbooking, std::move(attributes));
   return split_and_pack(table, splits, stream, reservation, packed_bytes);
 }
 
@@ -279,10 +284,11 @@ std::size_t unpack_and_concat_cost(std::vector<rapidsmpf::PackedData const*> con
 std::unique_ptr<cudf::table> unpack_and_concat(std::vector<rapidsmpf::PackedData>&& partitions,
                                                cuda::stream_ref stream,
                                                rapidsmpf::BufferResource* br,
-                                               rapidsmpf::AllowOverbooking allow_overbooking)
+                                               rapidsmpf::AllowOverbooking allow_overbooking,
+                                               rapidsmpf::ReservationAttributes attributes)
 {
-  auto reservation =
-    br->reserve_device_memory_and_spill(unpack_and_concat_cost(partitions), allow_overbooking);
+  auto reservation = br->reserve_device_memory_and_spill(
+    unpack_and_concat_cost(partitions), allow_overbooking, std::move(attributes));
   return unpack_and_concat(std::move(partitions), stream, reservation);
 }
 

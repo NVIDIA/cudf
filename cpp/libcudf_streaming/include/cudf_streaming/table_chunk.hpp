@@ -14,6 +14,7 @@
 #include <coro/task.hpp>
 #include <rapidsmpf/memory/content_description.hpp>
 #include <rapidsmpf/memory/packed_data.hpp>
+#include <rapidsmpf/memory/reservation_attributes.hpp>
 #include <rapidsmpf/owning_wrapper.hpp>
 #include <rapidsmpf/streaming/core/context.hpp>
 #include <rapidsmpf/streaming/core/memory_reserve_or_wait.hpp>
@@ -199,6 +200,7 @@ class table_chunk {
    * @param net_memory_delta Estimated change in memory usage after the reservation
    * is granted and all work using the returned `table_chunk` has completed. See
    * `MemoryReserveOrWait::reserve_or_wait` for details.
+   * @param attributes Attributes attached to the memory reservation request.
    * @return A new `table_chunk` that is available on device.
    *
    * @throws std::runtime_error If shutdown occurs before the reservation can be
@@ -209,7 +211,8 @@ class table_chunk {
   [[nodiscard]] coro::task<table_chunk> make_available(
     std::shared_ptr<rapidsmpf::streaming::Context> ctx,
     std::int64_t net_memory_delta =
-      rapidsmpf::streaming::MemoryReserveOrWait::missing_net_memory_delta);
+      rapidsmpf::streaming::MemoryReserveOrWait::missing_net_memory_delta,
+    rapidsmpf::ReservationAttributes attributes = {});
 
   /**
    * @brief Returns a view of the underlying table.

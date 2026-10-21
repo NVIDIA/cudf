@@ -41,7 +41,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ..Default::default()
     };
     let out_dir = PathBuf::from(std::env::var("OUT_DIR")?);
-    let bindings = quent_schema_codegen_python::emit(&parsed.schema, &options)?;
+    let mut bindings = quent_schema_codegen_python::emit(&parsed.schema, &options)?;
+    for file in &mut bindings {
+        if file.name == "pyo3_bridge.rs" {
+            let end = file
+                .content
+                .rfind('}')
+                .ok_or("generated Python bridge has no module terminator")?;
+            file.content.insert_str(
+                end,
+                r#"
+    pub fn reservation_observers(
+        context: &pyo3::Bound<'_, pyo3::types::PyAny>,
+    ) -> pyo3::PyResult<(
+        quent_instrumentation::Observer<crate::MemoryReservationRequest>,
+        quent_instrumentation::Observer<crate::MemoryReservation>,
+        quent_instrumentation::Observer<crate::Worker>,
+        quent_instrumentation::Observer<crate::Actor>,
+        quent_instrumentation::Observer<crate::ReservableMemory>,
+    )> {
+        let context = context.extract::<pyo3::PyRef<'_, PyContext>>()?;
+        let context = context.inner.as_ref().ok_or_else(|| {
+            ContextClosedError::new_err("cannot create a recorder from a closed context")
+        })?;
+        Ok((
+            context.observer(),
+            context.observer(),
+            context.observer(),
+            context.observer(),
+            context.observer(),
+        ))
+    }
+"#,
+            );
+        }
+    }
     quent_schema_codegen_python::write_generated_files(&bindings, &out_dir)?;
 
     const PREAMBLE: &str = "\
@@ -54,6 +88,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for file in &mut stubs {
         if file.name == "_quent_generated/__init__.pyi" {
             file.name = "cudf_polars_quent.pyi".to_owned();
+            file.content.push_str(
+                r#"
+
+def reservation_recorder_capsule(
+    context: Context,
+    worker_id: _uuid.UUID | str,
+    reservable_memory_ids: Mapping[str, _uuid.UUID | str],
+) -> object: ...
+def reservation_recorder_diagnostics(capsule: object) -> list[str]: ...
+def close_reservation_recorder(capsule: object) -> None: ...
+"#,
+            );
         }
 
         if file.name.ends_with(".pyi") {

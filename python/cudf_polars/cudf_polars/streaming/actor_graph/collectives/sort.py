@@ -67,6 +67,7 @@ from cudf_polars.streaming.actor_graph.utils import (
     process_children,
     recv_metadata,
     replay_buffered_channel,
+    reservation_attributes,
     send_metadata,
 )
 from cudf_polars.streaming.repartition import Repartition
@@ -136,7 +137,14 @@ async def _simple_top_or_bottom_k(
     chunks.clear()
 
     if comm.nranks > 1 and not metadata_in.duplicated:
-        allgather = AllGatherManager(context, comm, collective_ids.pop())
+        allgather = AllGatherManager(
+            context,
+            comm,
+            collective_ids.pop(),
+            attributes=reservation_attributes(
+                ir_context.actor_bound_quent_ir_execution_state, "sort.topk.allgather"
+            ),
+        )
         with allgather.inserting() as inserter:
             await inserter.insert(comm.rank, chunk)
 
@@ -168,6 +176,8 @@ async def _sample_chunks_for_size_estimate(
     metadata_in: ChannelMetadata,
     executor: StreamingExecutor,
     collective_ids: list[int],
+    *,
+    attributes: dict[str, str] | None,
 ) -> tuple[ChunkStore, int]:
     """
     Sample chunks and estimate total data size to derive num_partitions dynamically.
@@ -193,7 +203,11 @@ async def _sample_chunks_for_size_estimate(
     # Allgather to get global size estimate across all ranks
     if comm.nranks > 1 and not metadata_in.duplicated:
         (global_size,) = await allgather_reduce(
-            context, comm, size_estimate_id, sample.total_size
+            context,
+            comm,
+            size_estimate_id,
+            sample.total_size,
+            attributes=attributes,
         )
     else:
         global_size = sample.total_size
@@ -303,6 +317,9 @@ async def _insert_chunks_into_shuffle(
         num_partitions,
         collective_ids.pop(),
         partition_assignment=PartitionAssignment.CONTIGUOUS,
+        attributes=reservation_attributes(
+            ir_context.actor_bound_quent_ir_execution_state, "sort.shuffle"
+        ),
     )
     async with shuffle.inserting() as inserter:
         while (msg := await ch_in.recv(context)) is not None:
@@ -316,6 +333,10 @@ async def _insert_chunks_into_shuffle(
                 TableChunk.from_message(msg, br=context.br()),
                 reserve_extra=0,
                 net_memory_delta=0,
+                attributes=reservation_attributes(
+                    ir_context.actor_bound_quent_ir_execution_state,
+                    "sort.shuffle.input",
+                ),
             )
             tbl = available_chunk.table_view()
             sort_cols_tbl = plc.Table([tbl.columns()[i] for i in by_indices])
@@ -555,7 +576,17 @@ async def sort_actor(
             return
 
         sampled_chunks, num_partitions = await _sample_chunks_for_size_estimate(
-            context, comm, ch_in, num_partitions, metadata_in, executor, collective_ids
+            context,
+            comm,
+            ch_in,
+            num_partitions,
+            metadata_in,
+            executor,
+            collective_ids,
+            attributes=reservation_attributes(
+                ir_context.actor_bound_quent_ir_execution_state,
+                "sort.sample.statistics",
+            ),
         )
 
         chunk_store = ChunkStore(context)

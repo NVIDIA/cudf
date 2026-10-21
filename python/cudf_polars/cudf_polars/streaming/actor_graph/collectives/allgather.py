@@ -12,6 +12,8 @@ from rapidsmpf.streaming.coll.allgather import AllGather
 from rapidsmpf.streaming.core.memory_reserve_or_wait import reserve_memory
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     import pylibcudf as plc
     from cudf_streaming.table_chunk import TableChunk
     from rapidsmpf.communicator.communicator import Communicator
@@ -71,6 +73,7 @@ class AllGatherManager:
                 chunk,
                 reserve_extra=chunk.into_packed_data_cost(),
                 net_memory_delta=0,
+                attributes=self._manager.attributes,
             )
             self._manager.allgather.insert(
                 sequence_number, chunk.into_packed_data(extra)
@@ -85,9 +88,19 @@ class AllGatherManager:
             """Exit the context manager, calling ``insert_finished()``."""
             self._manager.allgather.insert_finished()
 
-    def __init__(self, context: Context, comm: Communicator, op_id: int):
+    def __init__(
+        self,
+        context: Context,
+        comm: Communicator,
+        op_id: int,
+        *,
+        attributes: Mapping[str, str | int | bool | float] | None,
+    ):
         self.context = context
-        self.allgather = AllGather(self.context, comm, op_id)
+        self.attributes = attributes
+        self.allgather = AllGather(
+            self.context, comm, op_id, attributes=self.attributes
+        )
 
     def inserting(self) -> AllGatherManager.Inserter:
         """Return a context manager for the insert phase."""
@@ -121,6 +134,7 @@ class AllGatherManager:
             self.context,
             unpack_and_concat_cost(partitions),
             net_memory_delta=0,
+            attributes=self.attributes,
         )
         return await ir_context.to_thread(
             unpack_and_concat,

@@ -38,6 +38,9 @@ pub struct CudfPolarsUiAnalyzer {
     pub(super) actors: HashMap<Uuid, ActorSpan>,
     pub(super) evaluates: Vec<EvaluateSpan>,
     pub(super) evaluate_indices: HashMap<Uuid, usize>,
+    pub(super) reservations: Vec<crate::reservation::ReservationSpan>,
+    pub(super) reservation_indices: HashMap<Uuid, usize>,
+    pub(super) requests: Vec<crate::reservation::RequestSpan>,
     pub(super) resources: HashMap<Uuid, DeclaredResource>,
     pub(super) resource_groups: HashMap<Uuid, DeclaredResourceGroup>,
 }
@@ -62,6 +65,12 @@ impl CudfPolarsUiAnalyzer {
         self.evaluate_indices
             .get(&id)
             .and_then(|&index| self.evaluates.get(index))
+    }
+
+    pub(super) fn reservation(&self, id: Uuid) -> Option<&crate::reservation::ReservationSpan> {
+        self.reservation_indices
+            .get(&id)
+            .and_then(|&index| self.reservations.get(index))
     }
 
     pub(super) fn is_known_resource_group(&self, group_id: Uuid, engine_id: Uuid) -> bool {

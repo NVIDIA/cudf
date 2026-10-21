@@ -42,6 +42,7 @@ from cudf_polars.streaming.actor_graph.utils import (
     gather_in_task_group,
     process_children,
     recv_metadata,
+    reservation_attributes,
     send_metadata,
 )
 from cudf_polars.streaming.io import (
@@ -427,7 +428,12 @@ async def _process_and_send_chunk(
         reservation = input_bytes * (1 + (ir.predicate is not None))
     with opaque_memory_usage(
         await reserve_memory(
-            context, size=reservation, net_memory_delta=net_memory_delta
+            context,
+            size=reservation,
+            net_memory_delta=net_memory_delta,
+            attributes=reservation_attributes(
+                ir_context.actor_bound_quent_ir_execution_state, "io.python.scan"
+            ),
         )
     ):
         df = await ir_context.to_thread(process)
@@ -613,6 +619,9 @@ async def read_chunk(
         context,
         size=reservation_bytes,
         net_memory_delta=estimated_chunk_bytes,
+        attributes=reservation_attributes(
+            ir_context.actor_bound_quent_ir_execution_state, "io.scan.read"
+        ),
     )
     with opaque_memory_usage(reservation):
         df = await ir_context.to_thread(
@@ -839,6 +848,10 @@ class _CallbackConsumer:
             chunk,
             reserve_extra=0,
             net_memory_delta=-chunk.data_alloc_size(),
+            attributes=reservation_attributes(
+                self.ir_context.actor_bound_quent_ir_execution_state,
+                "io.callback.consume",
+            ),
         )
         df = chunk_to_frame(chunk, self.input_ir)
         host_df = await self.ir_context.to_thread(df.to_polars)
@@ -939,6 +952,10 @@ async def callback_sink_actor(
                         chunk,
                         reserve_extra=chunk.into_packed_data_cost(),
                         net_memory_delta=0,
+                        attributes=reservation_attributes(
+                            ir_context.actor_bound_quent_ir_execution_state,
+                            "io.callback.exchange",
+                        ),
                     )
                     assert exchange is not None
                     exchange.insert(0, chunk.into_packed_data(extra))
@@ -1072,6 +1089,10 @@ async def sink_node(
                         chunk,
                         reserve_extra=0,
                         net_memory_delta=-chunk.data_alloc_size(),
+                        attributes=reservation_attributes(
+                            ir_context.actor_bound_quent_ir_execution_state,
+                            "io.sink.write",
+                        ),
                     )
                     df = chunk_to_frame(chunk, child_ir)
                     part_path = f"{path_root}.{str(i).zfill(count_width)}.{suffix}"
@@ -1098,6 +1119,10 @@ async def sink_node(
                         chunk,
                         reserve_extra=0,
                         net_memory_delta=-chunk.data_alloc_size(),
+                        attributes=reservation_attributes(
+                            ir_context.actor_bound_quent_ir_execution_state,
+                            "io.sink.write",
+                        ),
                     )
                     # Multiple chunks - use chunked writer
                     df = chunk_to_frame(chunk, child_ir)

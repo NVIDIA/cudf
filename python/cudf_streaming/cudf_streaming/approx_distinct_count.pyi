@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from collections.abc import Mapping
 from typing import Self
 
 from cudf_streaming.table_chunk import TableChunk
@@ -40,4 +41,6 @@ class CardinalityEstimator:
         ch_out: Channel[CardinalityEstimate],
         ch_sampled: Channel[TableChunk] | None = None,
         column_indices: tuple[int, ...] = (),
+        *,
+        attributes: Mapping[str, str | int | bool | float] | None = None,
     ) -> None: ...

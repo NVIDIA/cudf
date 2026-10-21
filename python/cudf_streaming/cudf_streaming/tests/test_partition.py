@@ -73,6 +73,7 @@ def test_partition_and_pack_unpack(
         ch_out=ch2,
         columns_to_hash=(1,),
         num_partitions=num_partitions,
+        attributes={"site": "partition.actor"},
     )
 
     ch3: Channel[TableChunk] = context.create_channel()
@@ -80,6 +81,7 @@ def test_partition_and_pack_unpack(
         context,
         ch_in=ch2,
         ch_out=ch3,
+        attributes={"site": "concatenate.actor"},
     )
 
     actor4, output = pull_from_channel(context, ch_in=ch3)

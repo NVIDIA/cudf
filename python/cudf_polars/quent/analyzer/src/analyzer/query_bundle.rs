@@ -18,9 +18,10 @@ use quent_ui::{
 use uuid::Uuid;
 
 use super::CudfPolarsUiAnalyzer;
+use crate::reservation::{REQUEST_ENTITY_TYPE, RESERVATION_ENTITY_TYPE};
 use crate::resource::{
     DATA_CHANNEL_RESOURCE_TYPE, DEVICE_MEMORY_RESOURCE_TYPE, EVALUATE_ENTITY_TYPE,
-    PROCESSOR_RESOURCE_TYPE,
+    PROCESSOR_RESOURCE_TYPE, RESERVABLE_MEMORY_RESOURCE_TYPE,
 };
 
 impl CudfPolarsUiAnalyzer {
@@ -98,6 +99,21 @@ impl CudfPolarsUiAnalyzer {
                     ],
                 },
             ),
+            (
+                RESERVABLE_MEMORY_RESOURCE_TYPE.to_owned(),
+                UiResourceTypeDecl {
+                    name: RESERVABLE_MEMORY_RESOURCE_TYPE.to_owned(),
+                    capacities: vec![UiCapacityDecl {
+                        name: "bytes".to_owned(),
+                        kind: CapacityKind::Occupancy,
+                        quantity: "bytes".to_owned(),
+                    }],
+                    display_order: vec![
+                        FsmTypeSelection::All,
+                        FsmTypeSelection::Type(RESERVATION_ENTITY_TYPE.to_owned()),
+                    ],
+                },
+            ),
         ]
         .into_iter()
         .collect();
@@ -118,6 +134,7 @@ impl CudfPolarsUiAnalyzer {
                         PROCESSOR_RESOURCE_TYPE.to_owned(),
                         DEVICE_MEMORY_RESOURCE_TYPE.to_owned(),
                         DATA_CHANNEL_RESOURCE_TYPE.to_owned(),
+                        RESERVABLE_MEMORY_RESOURCE_TYPE.to_owned(),
                     ],
                 ),
             ),
@@ -129,6 +146,7 @@ impl CudfPolarsUiAnalyzer {
                         PROCESSOR_RESOURCE_TYPE.to_owned(),
                         DEVICE_MEMORY_RESOURCE_TYPE.to_owned(),
                         DATA_CHANNEL_RESOURCE_TYPE.to_owned(),
+                        RESERVABLE_MEMORY_RESOURCE_TYPE.to_owned(),
                     ],
                 ),
             ),
@@ -193,38 +211,106 @@ impl CudfPolarsUiAnalyzer {
                 })
                 .collect(),
         });
-        let fsm_types = [(
-            EVALUATE_ENTITY_TYPE.to_owned(),
-            FsmTypeDecl {
-                name: EVALUATE_ENTITY_TYPE.to_owned(),
-                states: vec![
-                    FsmStateTypeDecl {
-                        name: "queued".to_owned(),
+        let fsm_types = [
+            (
+                EVALUATE_ENTITY_TYPE.to_owned(),
+                FsmTypeDecl {
+                    name: EVALUATE_ENTITY_TYPE.to_owned(),
+                    states: vec![
+                        FsmStateTypeDecl {
+                            name: "queued".to_owned(),
+                            usages: vec![],
+                        },
+                        FsmStateTypeDecl {
+                            name: "running".to_owned(),
+                            usages: vec!["processor".to_owned(), "channel".to_owned()],
+                        },
+                        FsmStateTypeDecl {
+                            name: "completed".to_owned(),
+                            usages: vec![],
+                        },
+                        FsmStateTypeDecl {
+                            name: "failed".to_owned(),
+                            usages: vec![],
+                        },
+                    ],
+                    transitions: vec![
+                        FsmTransitionDecl::Entry("queued".to_owned()),
+                        FsmTransitionDecl::Transition("queued".to_owned(), "running".to_owned()),
+                        FsmTransitionDecl::Transition("running".to_owned(), "completed".to_owned()),
+                        FsmTransitionDecl::Transition("running".to_owned(), "failed".to_owned()),
+                        FsmTransitionDecl::Exit("completed".to_owned()),
+                        FsmTransitionDecl::Exit("failed".to_owned()),
+                    ],
+                },
+            ),
+            (
+                RESERVATION_ENTITY_TYPE.to_owned(),
+                FsmTypeDecl {
+                    name: RESERVATION_ENTITY_TYPE.to_owned(),
+                    states: vec![
+                        FsmStateTypeDecl {
+                            name: "created".to_owned(),
+                            usages: vec![],
+                        },
+                        FsmStateTypeDecl {
+                            name: "held".to_owned(),
+                            usages: vec!["memory".to_owned()],
+                        },
+                        FsmStateTypeDecl {
+                            name: "released".to_owned(),
+                            usages: vec![],
+                        },
+                    ],
+                    transitions: vec![
+                        FsmTransitionDecl::Entry("created".to_owned()),
+                        FsmTransitionDecl::Transition("created".to_owned(), "held".to_owned()),
+                        FsmTransitionDecl::Transition("held".to_owned(), "held".to_owned()),
+                        FsmTransitionDecl::Transition("held".to_owned(), "released".to_owned()),
+                        FsmTransitionDecl::Exit("released".to_owned()),
+                    ],
+                },
+            ),
+            (
+                REQUEST_ENTITY_TYPE.to_owned(),
+                FsmTypeDecl {
+                    name: REQUEST_ENTITY_TYPE.to_owned(),
+                    states: [
+                        "submitted",
+                        "waiting",
+                        "granted",
+                        "empty",
+                        "failed",
+                        "cancelled",
+                    ]
+                    .into_iter()
+                    .map(|name| FsmStateTypeDecl {
+                        name: name.to_owned(),
                         usages: vec![],
-                    },
-                    FsmStateTypeDecl {
-                        name: "running".to_owned(),
-                        usages: vec!["processor".to_owned(), "channel".to_owned()],
-                    },
-                    FsmStateTypeDecl {
-                        name: "completed".to_owned(),
-                        usages: vec![],
-                    },
-                    FsmStateTypeDecl {
-                        name: "failed".to_owned(),
-                        usages: vec![],
-                    },
-                ],
-                transitions: vec![
-                    FsmTransitionDecl::Entry("queued".to_owned()),
-                    FsmTransitionDecl::Transition("queued".to_owned(), "running".to_owned()),
-                    FsmTransitionDecl::Transition("running".to_owned(), "completed".to_owned()),
-                    FsmTransitionDecl::Transition("running".to_owned(), "failed".to_owned()),
-                    FsmTransitionDecl::Exit("completed".to_owned()),
-                    FsmTransitionDecl::Exit("failed".to_owned()),
-                ],
-            },
-        )]
+                    })
+                    .collect(),
+                    transitions: vec![
+                        FsmTransitionDecl::Entry("submitted".to_owned()),
+                        FsmTransitionDecl::Transition("submitted".to_owned(), "waiting".to_owned()),
+                        FsmTransitionDecl::Transition("submitted".to_owned(), "granted".to_owned()),
+                        FsmTransitionDecl::Transition("submitted".to_owned(), "empty".to_owned()),
+                        FsmTransitionDecl::Transition("submitted".to_owned(), "failed".to_owned()),
+                        FsmTransitionDecl::Transition(
+                            "submitted".to_owned(),
+                            "cancelled".to_owned(),
+                        ),
+                        FsmTransitionDecl::Transition("waiting".to_owned(), "granted".to_owned()),
+                        FsmTransitionDecl::Transition("waiting".to_owned(), "empty".to_owned()),
+                        FsmTransitionDecl::Transition("waiting".to_owned(), "failed".to_owned()),
+                        FsmTransitionDecl::Transition("waiting".to_owned(), "cancelled".to_owned()),
+                        FsmTransitionDecl::Exit("granted".to_owned()),
+                        FsmTransitionDecl::Exit("empty".to_owned()),
+                        FsmTransitionDecl::Exit("failed".to_owned()),
+                        FsmTransitionDecl::Exit("cancelled".to_owned()),
+                    ],
+                },
+            ),
+        ]
         .into_iter()
         .collect();
 

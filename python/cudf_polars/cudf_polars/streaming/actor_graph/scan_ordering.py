@@ -21,6 +21,7 @@ from cudf_polars.streaming.actor_graph.collectives.allgather import AllGatherMan
 from cudf_polars.streaming.actor_graph.collectives.ordering import (
     _extract_boundaries_from_endpoint_rows as _extract_ordering_boundaries,
 )
+from cudf_polars.streaming.actor_graph.utils import reservation_attributes
 from cudf_polars.streaming.io import ParquetScanTask
 from cudf_polars.streaming.partitioning_requests import OrderPartitioningRequest
 from cudf_polars.utils.dtypes import is_order_preserving_cast
@@ -359,7 +360,15 @@ async def parquet_metadata_ordering(
         local_chunk = TableChunk.from_pylibcudf_table(
             local_task_bounds, stream, exclusive_view=True, br=context.br()
         )
-        allgather = AllGatherManager(context, comm, collective_id)
+        allgather = AllGatherManager(
+            context,
+            comm,
+            collective_id,
+            attributes=reservation_attributes(
+                ir_context.actor_bound_quent_ir_execution_state,
+                "scan.ordering.allgather",
+            ),
+        )
         with allgather.inserting() as inserter:
             await inserter.insert(comm.rank, local_chunk)
         global_task_bounds = await allgather.extract_concatenated(

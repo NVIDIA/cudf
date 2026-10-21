@@ -189,7 +189,11 @@ def test_local_repartitioner_hash(spmd_engine, local_count) -> None:
         cudf_df = DataFrame.from_polars(pl_df, stream)
         with reserve_op_id() as op_id:
             shuffle = ShuffleManager(
-                context, comm, num_partitions=comm.nranks, collective_id=op_id
+                context,
+                comm,
+                num_partitions=comm.nranks,
+                collective_id=op_id,
+                attributes=None,
             )
             async with shuffle.inserting() as inserter:
                 await inserter.insert_hash(
@@ -257,7 +261,11 @@ def test_local_repartitioner_index(spmd_engine, local_count) -> None:
 
         with reserve_op_id() as op_id:
             shuffle = ShuffleManager(
-                context, comm, num_partitions=comm.nranks, collective_id=op_id
+                context,
+                comm,
+                num_partitions=comm.nranks,
+                collective_id=op_id,
+                attributes=None,
             )
             async with shuffle.inserting() as inserter:
                 await inserter.insert_index(

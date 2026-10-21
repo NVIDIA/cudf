@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 
 from pylibcudf.contiguous_split import PackedColumns
 from pylibcudf.table import Table
@@ -25,6 +25,7 @@ def partition_and_pack(
     br: BufferResource,
     seed: int = ...,
     reservation: MemoryReservation | None = None,
+    attributes: Mapping[str, str | int | bool | float] | None = None,
 ) -> dict[int, PackedData]: ...
 def split_and_pack_cost(
     table: Table,
@@ -37,6 +38,7 @@ def split_and_pack(
     stream: Stream,
     br: BufferResource,
     reservation: MemoryReservation | None = None,
+    attributes: Mapping[str, str | int | bool | float] | None = None,
 ) -> dict[int, PackedData]: ...
 def unpack_and_concat_cost(partitions: Iterable[PackedData]) -> int: ...
 def unpack_and_concat(
@@ -44,6 +46,7 @@ def unpack_and_concat(
     stream: Stream,
     br: BufferResource,
     reservation: MemoryReservation | None = None,
+    attributes: Mapping[str, str | int | bool | float] | None = None,
 ) -> Table: ...
 def packed_data_from_cudf_packed_columns(
     packed_columns: PackedColumns,

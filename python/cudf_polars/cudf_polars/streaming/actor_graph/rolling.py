@@ -33,6 +33,7 @@ from cudf_polars.streaming.actor_graph.utils import (
     evaluate_chunk,
     process_children,
     recv_metadata,
+    reservation_attributes,
     send_metadata,
     shutdown_on_error,
 )

@@ -7,6 +7,7 @@
 
 #include <cudf/partitioning.hpp>
 
+#include <rapidsmpf/memory/reservation_attributes.hpp>
 #include <rapidsmpf/streaming/core/actor.hpp>
 #include <rapidsmpf/streaming/core/channel.hpp>
 #include <rapidsmpf/streaming/core/context.hpp>
@@ -34,6 +35,7 @@ namespace cudf_streaming::actor {
  * @param num_partitions The number of partitions to use.
  * @param hash_function Hash function to use for partitioning.
  * @param seed Seed value for the hash function.
+ * @param attributes Attributes attached to memory reservation requests.
  *
  * @return Streaming actor representing the asynchronous partitioning and packing
  * operation.
@@ -49,7 +51,8 @@ rapidsmpf::streaming::Actor partition_and_pack(
   std::vector<cudf::size_type> columns_to_hash,
   int num_partitions,
   cudf::hash_id hash_function,
-  std::uint32_t seed);
+  std::uint32_t seed,
+  rapidsmpf::ReservationAttributes attributes = {});
 
 /**
  * @brief Asynchronously unpacks and concatenates packed partitions.
@@ -65,15 +68,16 @@ rapidsmpf::streaming::Actor partition_and_pack(
  * @param ch_in Input channel providing packed partitions as PartitionMapChunk or
  * PartitionVectorChunk.
  * @param ch_out Output channel to which unpacked and concatenated tables are sent.
+ * @param attributes Attributes attached to memory reservation requests.
  *
  * @return Streaming actor representing the asynchronous unpacking and concatenation
  * operation.
  *
  * @see rapidsmpf::unpack_and_concat
  */
-rapidsmpf::streaming::Actor unpack_and_concat(
-  std::shared_ptr<rapidsmpf::streaming::Context> ctx,
-  std::shared_ptr<rapidsmpf::streaming::Channel> ch_in,
-  std::shared_ptr<rapidsmpf::streaming::Channel> ch_out);
+rapidsmpf::streaming::Actor unpack_and_concat(std::shared_ptr<rapidsmpf::streaming::Context> ctx,
+                                              std::shared_ptr<rapidsmpf::streaming::Channel> ch_in,
+                                              std::shared_ptr<rapidsmpf::streaming::Channel> ch_out,
+                                              rapidsmpf::ReservationAttributes attributes = {});
 
 }  // namespace cudf_streaming::actor

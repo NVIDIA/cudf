@@ -52,6 +52,7 @@ from cudf_polars.streaming.actor_graph.utils import (
     gather_in_task_group,
     process_children,
     recv_metadata,
+    reservation_attributes,
     send_metadata,
     shutdown_channels_on_error,
     shutdown_on_error,
@@ -416,6 +417,9 @@ async def _shuffle_reduce(
         shuffle_comm,
         modulus,
         collective_id,
+        attributes=reservation_attributes(
+            ir_context.actor_bound_quent_ir_execution_state, "groupby.shuffle"
+        ),
     )
     async with shuffle.inserting() as inserter:
         await inserter.insert_hash(
@@ -721,6 +725,7 @@ async def _choose_strategy(
     skip_global_comm: bool,  # noqa: FBT001
     maintain_order: bool,  # noqa: FBT001
     tracer: ActorTracer | None,
+    attributes: dict[str, str] | None,
 ) -> int:
     """
     Select the best algorithm for the given context and metadata.
@@ -739,6 +744,8 @@ async def _choose_strategy(
         The number of chunks received from the input channel.
     input_drained
         Whether the input channel is drained.
+    attributes
+        Reservation telemetry attributes for planning collectives.
     collective_ids
         The collective IDs.
     target_partition_size
@@ -783,6 +790,7 @@ async def _choose_strategy(
             local_estimated_rows,
             local_count,
             int(not input_drained),
+            attributes=attributes,
         )
 
     min_row_limit_count = 1
@@ -956,6 +964,10 @@ async def groupby_actor(
             skip_global_comm,
             maintain_order and not can_adjust_preserving_order,
             tracer,
+            reservation_attributes(
+                ir_context.actor_bound_quent_ir_execution_state,
+                "groupby.shuffle.statistics",
+            ),
         )
 
         if output_count == 1:

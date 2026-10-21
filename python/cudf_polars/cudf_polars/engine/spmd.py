@@ -351,7 +351,12 @@ def allgather_polars_dataframe(
         ctx.br(),
     )
     # Bulk AllGather: each rank contributes once (sequence_number=0)
-    allgather = AllGather(comm, op_id, ctx.br())
+    allgather = AllGather(
+        comm,
+        op_id,
+        ctx.br(),
+        attributes={"rapidsmpf.site": "spmd.dataframe.allgather"},
+    )
     try:
         allgather.insert(0, packed_data)
     finally:
@@ -359,7 +364,12 @@ def allgather_polars_dataframe(
     results = allgather.wait_and_extract(ordered=True)
 
     # Deserialize and concatenate each rank's contribution
-    plc_result = unpack_and_concat(results, stream, ctx.br())
+    plc_result = unpack_and_concat(
+        results,
+        stream,
+        ctx.br(),
+        attributes={"rapidsmpf.site": "spmd.dataframe.allgather"},
+    )
 
     # pylibcudf Table -> pl.DataFrame (restore column names)
     return DataFrame.from_table(

@@ -23,7 +23,12 @@ use crate::generated::{
 pub(crate) const RESERVATION_ENTITY_TYPE: &str = "MemoryReservation";
 pub(crate) const REQUEST_ENTITY_TYPE: &str = "MemoryReservationRequest";
 
-type ReservationTransition = (TimeUnixNanoSec, String, Option<(Uuid, u64)>);
+struct ReservationTransition {
+    timestamp: TimeUnixNanoSec,
+    name: String,
+    usage: Option<(Uuid, u64)>,
+    attributes: Vec<DynamicAttribute>,
+}
 
 pub(crate) struct ReservationSpan {
     pub(crate) id: Uuid,
@@ -66,25 +71,18 @@ impl ReservationSpan {
             transitions: self
                 .transitions
                 .iter()
-                .map(|(timestamp, name, usage)| FsmTransition {
-                    name: name.clone(),
-                    usages: usage
+                .map(|transition| FsmTransition {
+                    name: transition.name.clone(),
+                    usages: transition
+                        .usage
                         .map(|(resource, bytes)| FsmUsage {
                             resource,
                             capacities: vec![("bytes".to_owned(), Some(bytes))],
                         })
                         .into_iter()
                         .collect(),
-                    timestamp: to_secs_relative(*timestamp, epoch),
-                    attributes: (name == "created")
-                        .then(|| {
-                            self.actor_id.map(|actor_id| {
-                                DynamicAttribute::string("actor_id", actor_id.to_string())
-                            })
-                        })
-                        .flatten()
-                        .into_iter()
-                        .collect(),
+                    timestamp: to_secs_relative(transition.timestamp, epoch),
+                    attributes: transition.attributes.clone(),
                     derived_attributes: vec![],
                 })
                 .collect(),
@@ -151,7 +149,33 @@ fn build_reservation(entity: &NativeEntity<MemoryReservation>) -> AnalyzerResult
     let actor_id = created.actor().as_ref().map(|actor| actor.target);
     let held = entity.held().collect::<Vec<_>>();
     let mut segments = Vec::with_capacity(held.len());
-    let mut transitions = vec![(created.timestamp(), "created".to_owned(), None)];
+    let mut created_attributes = created.attributes().iter().cloned().collect::<Vec<_>>();
+    created_attributes.extend([
+        DynamicAttribute::string("worker_id", created.worker().target.to_string()),
+        DynamicAttribute::string("site", created.site().clone()),
+        DynamicAttribute::u64("sequence", *created.sequence()),
+    ]);
+    created_attributes.extend(
+        actor_id.map(|actor_id| DynamicAttribute::string("actor_id", actor_id.to_string())),
+    );
+    created_attributes.extend(
+        created
+            .request()
+            .as_ref()
+            .map(|request| DynamicAttribute::string("request_id", request.target.to_string())),
+    );
+    created_attributes.extend(
+        created
+            .parent()
+            .as_ref()
+            .map(|parent| DynamicAttribute::string("parent_id", parent.target.to_string())),
+    );
+    let mut transitions = vec![ReservationTransition {
+        timestamp: created.timestamp(),
+        name: "created".to_owned(),
+        usage: None,
+        attributes: created_attributes,
+    }];
     for (index, current) in held.iter().enumerate() {
         let end = held
             .get(index + 1)
@@ -165,13 +189,25 @@ fn build_reservation(entity: &NativeEntity<MemoryReservation>) -> AnalyzerResult
                 span: SpanUnixNanoSec::try_new(current.timestamp(), end)?,
             });
         }
-        transitions.push((
-            current.timestamp(),
-            "held".to_owned(),
-            Some((memory.target, memory.data.bytes)),
-        ));
+        transitions.push(ReservationTransition {
+            timestamp: current.timestamp(),
+            name: "held".to_owned(),
+            usage: Some((memory.target, memory.data.bytes)),
+            attributes: vec![
+                DynamicAttribute::string("change", current.change().clone()),
+                DynamicAttribute::u64("sequence", *current.sequence()),
+            ],
+        });
     }
-    transitions.push((released.timestamp(), "released".to_owned(), None));
+    transitions.push(ReservationTransition {
+        timestamp: released.timestamp(),
+        name: "released".to_owned(),
+        usage: None,
+        attributes: vec![
+            DynamicAttribute::string("reason", released.reason().clone()),
+            DynamicAttribute::u64("sequence", *released.sequence()),
+        ],
+    });
     Ok(ReservationSpan {
         id,
         actor_id,
@@ -350,6 +386,41 @@ mod tests {
         assert_eq!(reservations[0].segments.len(), 2);
         assert_eq!(reservations[0].segments[0].span.duration(), 10);
         assert_eq!(reservations[0].segments[1].span.duration(), 10);
+
+        let fsm = reservations[0].to_ui_fsm(0);
+        assert!(
+            fsm.transitions[0]
+                .attributes
+                .contains(&DynamicAttribute::string(
+                    "worker_id",
+                    Uuid::from_u128(4).to_string()
+                ))
+        );
+        assert!(
+            fsm.transitions[0]
+                .attributes
+                .contains(&DynamicAttribute::string("actor_id", actor_id.to_string()))
+        );
+        assert!(
+            fsm.transitions[0]
+                .attributes
+                .contains(&DynamicAttribute::string("site", "test.reserve"))
+        );
+        assert!(
+            fsm.transitions[1]
+                .attributes
+                .contains(&DynamicAttribute::string("change", "granted"))
+        );
+        assert!(
+            fsm.transitions[2]
+                .attributes
+                .contains(&DynamicAttribute::string("change", "consumed"))
+        );
+        assert!(
+            fsm.transitions[3]
+                .attributes
+                .contains(&DynamicAttribute::string("reason", "consumed"))
+        );
     }
 
     #[test]

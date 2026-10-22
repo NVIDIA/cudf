@@ -702,7 +702,7 @@ class hybrid_scan_reader {
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @return Vector of byte ranges to pages of payload columns
    */
-  [[nodiscard]] std::vector<byte_range_info> sparse_payload_pages_byte_ranges(
+  [[nodiscard]] std::vector<byte_range_info> payload_pages_byte_ranges(
     std::span<size_type const> row_group_indices,
     cudf::column_view const& row_mask,
     parquet_reader_options const& options,
@@ -820,11 +820,10 @@ class hybrid_scan_reader {
     rmm::device_async_resource_ref mr);
 
   /**
-   * @brief Setup chunking information for payload columns using page-level (sparse) I/O and
-   * preprocess the input data pages
+   * @brief Setup chunking information for payload columns and preprocess the input data pages
    *
    * Input page data spans (including empty ones) must be in the same order as the byte ranges
-   * from `sparse_payload_pages_byte_ranges`. The data page mask is inferred from the empty spans.
+   * from `payload_pages_byte_ranges`. The data page mask is inferred from the empty spans.
    * Table chunks are read with `materialize_payload_columns_chunk`.
    *
    * @param chunk_read_limit Limit on total number of bytes to be returned per table chunk. `0` if
@@ -832,21 +831,20 @@ class hybrid_scan_reader {
    * @param pass_read_limit Limit on the memory used for reading and decompressing data. `0` if
    * there is no limit
    * @param row_group_indices Input row groups indices
-   * @param page_data Device spans of page data of payload columns
    * @param row_mask Boolean column indicating which rows need to be read
+   * @param page_data Device spans of page data of payload columns
    * @param options Parquet reader options
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @param mr Device memory resource used to allocate the device memory for the output table chunks
    */
-  void setup_chunked_sparse_payload_materialization(
-    std::size_t chunk_read_limit,
-    std::size_t pass_read_limit,
-    std::span<size_type const> row_group_indices,
-    std::span<cudf::device_span<uint8_t const> const> page_data,
-    cudf::column_view const& row_mask,
-    parquet_reader_options const& options,
-    cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr);
+  void setup_chunking_for_payload_pages(std::size_t chunk_read_limit,
+                                        std::size_t pass_read_limit,
+                                        std::span<size_type const> row_group_indices,
+                                        cudf::column_view const& row_mask,
+                                        std::span<cudf::device_span<uint8_t const> const> page_data,
+                                        parquet_reader_options const& options,
+                                        cuda::stream_ref stream,
+                                        rmm::device_async_resource_ref mr);
 
   /**
    * @brief Materializes a chunk of payload columns and applies the corresponding range of input row

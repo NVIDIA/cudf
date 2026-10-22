@@ -111,7 +111,7 @@ class HybridScanReader:
     def payload_column_chunks_byte_ranges(
         self, row_group_indices: list[int], options: ParquetReaderOptions
     ) -> list[ByteRangeInfo]: ...
-    def sparse_payload_pages_byte_ranges(
+    def payload_pages_byte_ranges(
         self,
         row_group_indices: list[int],
         row_mask: Column,
@@ -167,13 +167,13 @@ class HybridScanReader:
         stream: CudaStreamLike | None = None,
         mr: DeviceMemoryResource | None = None,
     ) -> None: ...
-    def setup_chunked_sparse_payload_materialization(
+    def setup_chunking_for_payload_pages(
         self,
         chunk_read_limit: int,
         pass_read_limit: int,
         row_group_indices: list[int],
-        page_data: Sequence[Span | None],
         row_mask: Column,
+        page_data: Sequence[Span | None],
         options: ParquetReaderOptions,
         stream: CudaStreamLike | None = None,
         mr: DeviceMemoryResource | None = None,

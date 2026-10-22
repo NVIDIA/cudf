@@ -116,7 +116,7 @@ cdef extern from "cudf/io/experimental/hybrid_scan_multifile.hpp" \
             cudaStream_t stream
         ) except +libcudf_exception_handler
 
-        void setup_chunking_for_payload_columns(
+        void setup_chunking_for_payload_pages(
             size_t chunk_read_limit,
             size_t pass_read_limit,
             host_span[const_vector_size_type] row_group_indices,

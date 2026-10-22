@@ -1389,7 +1389,7 @@ TEST_F(HybridScanTest, ChunkedReadRowMaskPerPass)
 
     // Read payload columns again using page-level (sparse) I/O in chunks and expect a match
     auto const page_byte_ranges =
-      reader->sparse_payload_pages_byte_ranges(row_group_indices, row_mask_view, options, stream);
+      reader->payload_pages_byte_ranges(row_group_indices, row_mask_view, options, stream);
     auto [page_buffers, page_data, page_tasks] =
       cudf::io::parquet::fetch_byte_ranges_to_device_async(
         *datasource,
@@ -1400,8 +1400,8 @@ TEST_F(HybridScanTest, ChunkedReadRowMaskPerPass)
     page_tasks.get();
 
     auto constexpr chunk_read_limit = 1024;
-    reader->setup_chunked_sparse_payload_materialization(
-      chunk_read_limit, 0, row_group_indices, page_data, row_mask_view, options, stream, mr);
+    reader->setup_chunking_for_payload_pages(
+      chunk_read_limit, 0, row_group_indices, row_mask_view, page_data, options, stream, mr);
     auto sparse_chunks = std::vector<std::unique_ptr<cudf::table>>{};
     while (reader->has_next_table_chunk()) {
       sparse_chunks.push_back(reader->materialize_payload_columns_chunk(row_mask_view).tbl);

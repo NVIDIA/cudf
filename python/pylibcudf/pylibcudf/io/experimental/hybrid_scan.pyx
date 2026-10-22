@@ -706,7 +706,7 @@ cdef class HybridScanReader:
             ))
         return [ByteRangeInfo(r.offset(), r.size()) for r in ranges]
 
-    def sparse_payload_pages_byte_ranges(
+    def payload_pages_byte_ranges(
         self,
         list row_group_indices: list[int],
         Column row_mask,
@@ -740,7 +740,7 @@ cdef class HybridScanReader:
         cdef column_view mask_view = row_mask.view()
         cdef vector[byte_range_info] ranges
         with nogil:
-            ranges = move(self.c_obj.get()[0].sparse_payload_pages_byte_ranges(
+            ranges = move(self.c_obj.get()[0].payload_pages_byte_ranges(
                 std_span[const_size_type](indices_vec.data(), indices_vec.size()),
                 mask_view,
                 options.c_obj,
@@ -1036,13 +1036,13 @@ cdef class HybridScanReader:
                 self.mr.get_mr()
             )
 
-    def setup_chunked_sparse_payload_materialization(
+    def setup_chunking_for_payload_pages(
         self,
         size_t chunk_read_limit,
         size_t pass_read_limit,
         list row_group_indices: list[int],
-        object page_data: Sequence,
         Column row_mask,
+        object page_data: Sequence,
         ParquetReaderOptions options,
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None
@@ -1051,7 +1051,7 @@ cdef class HybridScanReader:
 
         The data page mask is inferred from ``page_data``, which must be in the
         same order as the byte ranges returned by
-        :meth:`sparse_payload_pages_byte_ranges`. Table chunks are read with
+        :meth:`payload_pages_byte_ranges`. Table chunks are read with
         :meth:`materialize_payload_columns_chunk`.
 
         Parameters
@@ -1062,13 +1062,13 @@ cdef class HybridScanReader:
             Limit on memory for reading/decompressing (0 for no limit)
         row_group_indices : list[int]
             Input row group indices
+        row_mask : Column
+            Boolean column indicating which rows need to be read
         page_data : Sequence
             Span-like objects containing the page data of payload columns, in
             the same order as the byte ranges returned by
-            :meth:`sparse_payload_pages_byte_ranges`. ``None`` indicates a
+            :meth:`payload_pages_byte_ranges`. ``None`` indicates a
             pruned page
-        row_mask : Column
-            Boolean column indicating which rows need to be read
         options : ParquetReaderOptions
             Parquet reader options
         stream : Stream, optional
@@ -1092,14 +1092,14 @@ cdef class HybridScanReader:
 
         cdef column_view mask_view = row_mask.view()
         with nogil:
-            self.c_obj.get()[0].setup_chunked_sparse_payload_materialization(
+            self.c_obj.get()[0].setup_chunking_for_payload_pages(
                 chunk_read_limit,
                 pass_read_limit,
                 std_span[const_size_type](indices_vec.data(), indices_vec.size()),
+                mask_view,
                 std_span[const_device_span_const_uint8_t](
                     <const_device_span_const_uint8_t*>spans_vec.data(), spans_vec.size()
                 ),
-                mask_view,
                 options.c_obj,
                 self._stream.view().get(),
                 self.mr.get_mr()

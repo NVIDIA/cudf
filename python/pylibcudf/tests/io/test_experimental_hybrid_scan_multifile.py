@@ -261,7 +261,7 @@ def test_hybrid_scan_multifile_materialize_payload_pages(
     synchronize_stream(stream)
 
     # The data page mask is inferred from the fetched page data
-    hybrid_scan_multifile_reader.setup_chunking_for_payload_columns(
+    hybrid_scan_multifile_reader.setup_chunking_for_payload_pages(
         1024,  # chunk_read_limit
         0,  # pass_read_limit
         row_groups,

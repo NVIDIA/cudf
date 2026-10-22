@@ -560,7 +560,7 @@ def test_hybrid_scan_payload_page_mask_without_page_index(
 
     # Page-level (sparse) I/O requires the offset index from the page index
     with pytest.raises(RuntimeError):
-        reader.sparse_payload_pages_byte_ranges(
+        reader.payload_pages_byte_ranges(
             row_groups, row_mask, simple_parquet_options
         )
     page_index = reader.page_index_byte_range()
@@ -571,7 +571,7 @@ def test_hybrid_scan_payload_page_mask_without_page_index(
     )
 
     # Fetch only the surviving pages, passing None for pruned ones
-    page_ranges = reader.sparse_payload_pages_byte_ranges(
+    page_ranges = reader.payload_pages_byte_ranges(
         row_groups, row_mask, simple_parquet_options
     )
     assert any(r.size == 0 for r in page_ranges)
@@ -588,12 +588,12 @@ def test_hybrid_scan_payload_page_mask_without_page_index(
     ]
     synchronize_stream()
 
-    reader.setup_chunked_sparse_payload_materialization(
+    reader.setup_chunking_for_payload_pages(
         256,
         0,
         row_groups,
-        page_data,
         row_mask,
+        page_data,
         simple_parquet_options,
     )
     sparse_rows = []

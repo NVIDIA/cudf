@@ -332,7 +332,7 @@ hybrid_scan_reader::payload_column_chunks_byte_ranges(std::span<size_type const>
     .first;
 }
 
-std::vector<byte_range_info> hybrid_scan_reader::sparse_payload_pages_byte_ranges(
+std::vector<byte_range_info> hybrid_scan_reader::payload_pages_byte_ranges(
   std::span<size_type const> row_group_indices,
   cudf::column_view const& row_mask,
   parquet_reader_options const& options,
@@ -468,12 +468,12 @@ void hybrid_scan_reader::setup_chunking_for_payload_columns(
     mr);
 }
 
-void hybrid_scan_reader::setup_chunked_sparse_payload_materialization(
+void hybrid_scan_reader::setup_chunking_for_payload_pages(
   std::size_t chunk_read_limit,
   std::size_t pass_read_limit,
   std::span<size_type const> row_group_indices,
-  std::span<cudf::device_span<uint8_t const> const> page_data,
   cudf::column_view const& row_mask,
+  std::span<cudf::device_span<uint8_t const> const> page_data,
   parquet_reader_options const& options,
   cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)

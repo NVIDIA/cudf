@@ -225,7 +225,7 @@ std::unique_ptr<cudf::column> aggregate_reader_metadata::build_row_mask_with_pag
   std::span<cudf::size_type const> output_column_schemas,
   std::reference_wrapper<ast::expression const> filter,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr) const
+  cudf::memory_resources mr) const
 {
   CUDF_FUNC_RANGE();
 
@@ -305,7 +305,7 @@ std::unique_ptr<cudf::column> aggregate_reader_metadata::build_row_mask_with_pag
                       map_schema_index_to_sources(output_column_schemas[col_idx]),
                       dtype,
                       stream,
-                      cudf::get_current_device_resource_ref()));
+                      mr.get_temporary_mr()));
                   }
                 });
 

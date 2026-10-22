@@ -253,14 +253,12 @@ def test_worker_runtime_create_starts_recording_after_declarations(
     resources.declare.side_effect = lambda _: events.append("declare")
     monkeypatch.setattr(WorkerResources, "build", staticmethod(lambda **_: resources))
     ingestor = MagicMock()
-    bindings = MagicMock()
 
     def create_ingestor(*_: object) -> MagicMock:
         events.append("ingestor")
         return ingestor
 
-    bindings.ReservationEventIngestor.side_effect = create_ingestor
-    monkeypatch.setattr(quent_runtime, "_quent", bindings)
+    monkeypatch.setattr(quent_runtime, "ReservationEventIngestor", create_ingestor)
     buffer_resource = MagicMock()
     buffer_resource.start_reservation_event_recording.side_effect = lambda: (
         events.append("start")

@@ -973,7 +973,7 @@ dependencies = [
 [[package]]
 name = "quent-build-info"
 version = "0.2.0"
-source = "git+https://github.com/TomAugspurger/quent?rev=342c9a6699cb5008e7a3dbd725ade9dfa37ec860#342c9a6699cb5008e7a3dbd725ade9dfa37ec860"
+source = "git+https://github.com/TomAugspurger/quent?rev=ceaeaab244c368cba616cc23008760823912164f#ceaeaab244c368cba616cc23008760823912164f"
 dependencies = [
  "serde",
  "serde_json",
@@ -982,7 +982,7 @@ dependencies = [
 [[package]]
 name = "quent-collector"
 version = "0.2.0"
-source = "git+https://github.com/TomAugspurger/quent?rev=342c9a6699cb5008e7a3dbd725ade9dfa37ec860#342c9a6699cb5008e7a3dbd725ade9dfa37ec860"
+source = "git+https://github.com/TomAugspurger/quent?rev=ceaeaab244c368cba616cc23008760823912164f#ceaeaab244c368cba616cc23008760823912164f"
 dependencies = [
  "quent-collector-client",
  "quent-collector-proto",
@@ -996,7 +996,7 @@ dependencies = [
 [[package]]
 name = "quent-collector-client"
 version = "0.2.0"
-source = "git+https://github.com/TomAugspurger/quent?rev=342c9a6699cb5008e7a3dbd725ade9dfa37ec860#342c9a6699cb5008e7a3dbd725ade9dfa37ec860"
+source = "git+https://github.com/TomAugspurger/quent?rev=ceaeaab244c368cba616cc23008760823912164f#ceaeaab244c368cba616cc23008760823912164f"
 dependencies = [
  "bitcode",
  "http",
@@ -1015,7 +1015,7 @@ dependencies = [
 [[package]]
 name = "quent-collector-proto"
 version = "0.2.0"
-source = "git+https://github.com/TomAugspurger/quent?rev=342c9a6699cb5008e7a3dbd725ade9dfa37ec860#342c9a6699cb5008e7a3dbd725ade9dfa37ec860"
+source = "git+https://github.com/TomAugspurger/quent?rev=ceaeaab244c368cba616cc23008760823912164f#ceaeaab244c368cba616cc23008760823912164f"
 dependencies = [
  "prost",
  "protox",
@@ -1027,7 +1027,7 @@ dependencies = [
 [[package]]
 name = "quent-collector-python"
 version = "0.2.0"
-source = "git+https://github.com/TomAugspurger/quent?rev=342c9a6699cb5008e7a3dbd725ade9dfa37ec860#342c9a6699cb5008e7a3dbd725ade9dfa37ec860"
+source = "git+https://github.com/TomAugspurger/quent?rev=ceaeaab244c368cba616cc23008760823912164f#ceaeaab244c368cba616cc23008760823912164f"
 dependencies = [
  "http",
  "pyo3",
@@ -1042,7 +1042,7 @@ dependencies = [
 [[package]]
 name = "quent-constraints"
 version = "0.2.0"
-source = "git+https://github.com/TomAugspurger/quent?rev=342c9a6699cb5008e7a3dbd725ade9dfa37ec860#342c9a6699cb5008e7a3dbd725ade9dfa37ec860"
+source = "git+https://github.com/TomAugspurger/quent?rev=ceaeaab244c368cba616cc23008760823912164f#ceaeaab244c368cba616cc23008760823912164f"
 dependencies = [
  "petgraph",
  "quent-schema",
@@ -1053,7 +1053,7 @@ dependencies = [
 [[package]]
 name = "quent-dag"
 version = "0.2.0"
-source = "git+https://github.com/TomAugspurger/quent?rev=342c9a6699cb5008e7a3dbd725ade9dfa37ec860#342c9a6699cb5008e7a3dbd725ade9dfa37ec860"
+source = "git+https://github.com/TomAugspurger/quent?rev=ceaeaab244c368cba616cc23008760823912164f#ceaeaab244c368cba616cc23008760823912164f"
 dependencies = [
  "quent-constraints",
  "quent-ref-target",
@@ -1065,7 +1065,7 @@ dependencies = [
 [[package]]
 name = "quent-dynamic-attributes"
 version = "0.2.0"
-source = "git+https://github.com/TomAugspurger/quent?rev=342c9a6699cb5008e7a3dbd725ade9dfa37ec860#342c9a6699cb5008e7a3dbd725ade9dfa37ec860"
+source = "git+https://github.com/TomAugspurger/quent?rev=ceaeaab244c368cba616cc23008760823912164f#ceaeaab244c368cba616cc23008760823912164f"
 dependencies = [
  "serde",
 ]
@@ -1073,7 +1073,7 @@ dependencies = [
 [[package]]
 name = "quent-events"
 version = "0.2.0"
-source = "git+https://github.com/TomAugspurger/quent?rev=342c9a6699cb5008e7a3dbd725ade9dfa37ec860#342c9a6699cb5008e7a3dbd725ade9dfa37ec860"
+source = "git+https://github.com/TomAugspurger/quent?rev=ceaeaab244c368cba616cc23008760823912164f#ceaeaab244c368cba616cc23008760823912164f"
 dependencies = [
  "quent-build-info",
  "quent-dynamic-attributes",
@@ -1085,7 +1085,7 @@ dependencies = [
 [[package]]
 name = "quent-events-build"
 version = "0.2.0"
-source = "git+https://github.com/TomAugspurger/quent?rev=342c9a6699cb5008e7a3dbd725ade9dfa37ec860#342c9a6699cb5008e7a3dbd725ade9dfa37ec860"
+source = "git+https://github.com/TomAugspurger/quent?rev=ceaeaab244c368cba616cc23008760823912164f#ceaeaab244c368cba616cc23008760823912164f"
 dependencies = [
  "convert_case 0.12.0",
  "prettyplease 0.3.0",
@@ -1101,7 +1101,7 @@ dependencies = [
 [[package]]
 name = "quent-fsm"
 version = "0.2.0"
-source = "git+https://github.com/TomAugspurger/quent?rev=342c9a6699cb5008e7a3dbd725ade9dfa37ec860#342c9a6699cb5008e7a3dbd725ade9dfa37ec860"
+source = "git+https://github.com/TomAugspurger/quent?rev=ceaeaab244c368cba616cc23008760823912164f#ceaeaab244c368cba616cc23008760823912164f"
 dependencies = [
  "petgraph",
  "quent-constraints",
@@ -1114,7 +1114,7 @@ dependencies = [
 [[package]]
 name = "quent-instrumentation"
 version = "0.2.0"
-source = "git+https://github.com/TomAugspurger/quent?rev=342c9a6699cb5008e7a3dbd725ade9dfa37ec860#342c9a6699cb5008e7a3dbd725ade9dfa37ec860"
+source = "git+https://github.com/TomAugspurger/quent?rev=ceaeaab244c368cba616cc23008760823912164f#ceaeaab244c368cba616cc23008760823912164f"
 dependencies = [
  "async-trait",
  "quent-build-info",
@@ -1122,7 +1122,6 @@ dependencies = [
  "quent-dynamic-attributes",
  "quent-events",
  "quent-io",
- "quent-io-callback",
  "quent-time",
  "serde",
  "thiserror",
@@ -1135,7 +1134,7 @@ dependencies = [
 [[package]]
 name = "quent-instrumentation-build"
 version = "0.2.0"
-source = "git+https://github.com/TomAugspurger/quent?rev=342c9a6699cb5008e7a3dbd725ade9dfa37ec860#342c9a6699cb5008e7a3dbd725ade9dfa37ec860"
+source = "git+https://github.com/TomAugspurger/quent?rev=ceaeaab244c368cba616cc23008760823912164f#ceaeaab244c368cba616cc23008760823912164f"
 dependencies = [
  "convert_case 0.12.0",
  "prettyplease 0.3.0",
@@ -1153,7 +1152,7 @@ dependencies = [
 [[package]]
 name = "quent-io"
 version = "0.2.0"
-source = "git+https://github.com/TomAugspurger/quent?rev=342c9a6699cb5008e7a3dbd725ade9dfa37ec860#342c9a6699cb5008e7a3dbd725ade9dfa37ec860"
+source = "git+https://github.com/TomAugspurger/quent?rev=ceaeaab244c368cba616cc23008760823912164f#ceaeaab244c368cba616cc23008760823912164f"
 dependencies = [
  "async-trait",
  "http",
@@ -1166,20 +1165,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "quent-io-callback"
-version = "0.2.0"
-source = "git+https://github.com/TomAugspurger/quent?rev=342c9a6699cb5008e7a3dbd725ade9dfa37ec860#342c9a6699cb5008e7a3dbd725ade9dfa37ec860"
-dependencies = [
- "async-trait",
- "quent-events",
- "quent-io-types",
- "uuid",
-]
-
-[[package]]
 name = "quent-io-collector"
 version = "0.2.0"
-source = "git+https://github.com/TomAugspurger/quent?rev=342c9a6699cb5008e7a3dbd725ade9dfa37ec860#342c9a6699cb5008e7a3dbd725ade9dfa37ec860"
+source = "git+https://github.com/TomAugspurger/quent?rev=ceaeaab244c368cba616cc23008760823912164f#ceaeaab244c368cba616cc23008760823912164f"
 dependencies = [
  "async-trait",
  "http",
@@ -1194,7 +1182,7 @@ dependencies = [
 [[package]]
 name = "quent-io-ndjson"
 version = "0.2.0"
-source = "git+https://github.com/TomAugspurger/quent?rev=342c9a6699cb5008e7a3dbd725ade9dfa37ec860#342c9a6699cb5008e7a3dbd725ade9dfa37ec860"
+source = "git+https://github.com/TomAugspurger/quent?rev=ceaeaab244c368cba616cc23008760823912164f#ceaeaab244c368cba616cc23008760823912164f"
 dependencies = [
  "async-trait",
  "quent-events",
@@ -1209,7 +1197,7 @@ dependencies = [
 [[package]]
 name = "quent-io-types"
 version = "0.2.0"
-source = "git+https://github.com/TomAugspurger/quent?rev=342c9a6699cb5008e7a3dbd725ade9dfa37ec860#342c9a6699cb5008e7a3dbd725ade9dfa37ec860"
+source = "git+https://github.com/TomAugspurger/quent?rev=ceaeaab244c368cba616cc23008760823912164f#ceaeaab244c368cba616cc23008760823912164f"
 dependencies = [
  "async-trait",
  "quent-events",
@@ -1221,7 +1209,7 @@ dependencies = [
 [[package]]
 name = "quent-log"
 version = "0.2.0"
-source = "git+https://github.com/TomAugspurger/quent?rev=342c9a6699cb5008e7a3dbd725ade9dfa37ec860#342c9a6699cb5008e7a3dbd725ade9dfa37ec860"
+source = "git+https://github.com/TomAugspurger/quent?rev=ceaeaab244c368cba616cc23008760823912164f#ceaeaab244c368cba616cc23008760823912164f"
 dependencies = [
  "quent-constraints",
  "quent-schema",
@@ -1233,7 +1221,7 @@ dependencies = [
 [[package]]
 name = "quent-os"
 version = "0.2.0"
-source = "git+https://github.com/TomAugspurger/quent?rev=342c9a6699cb5008e7a3dbd725ade9dfa37ec860#342c9a6699cb5008e7a3dbd725ade9dfa37ec860"
+source = "git+https://github.com/TomAugspurger/quent?rev=ceaeaab244c368cba616cc23008760823912164f#ceaeaab244c368cba616cc23008760823912164f"
 dependencies = [
  "quent-constraints",
  "quent-ref-target",
@@ -1246,7 +1234,7 @@ dependencies = [
 [[package]]
 name = "quent-ref-target"
 version = "0.2.0"
-source = "git+https://github.com/TomAugspurger/quent?rev=342c9a6699cb5008e7a3dbd725ade9dfa37ec860#342c9a6699cb5008e7a3dbd725ade9dfa37ec860"
+source = "git+https://github.com/TomAugspurger/quent?rev=ceaeaab244c368cba616cc23008760823912164f#ceaeaab244c368cba616cc23008760823912164f"
 dependencies = [
  "quent-constraints",
  "quent-schema",
@@ -1256,7 +1244,7 @@ dependencies = [
 [[package]]
 name = "quent-ref-tree"
 version = "0.2.0"
-source = "git+https://github.com/TomAugspurger/quent?rev=342c9a6699cb5008e7a3dbd725ade9dfa37ec860#342c9a6699cb5008e7a3dbd725ade9dfa37ec860"
+source = "git+https://github.com/TomAugspurger/quent?rev=ceaeaab244c368cba616cc23008760823912164f#ceaeaab244c368cba616cc23008760823912164f"
 dependencies = [
  "petgraph",
  "quent-constraints",
@@ -1269,7 +1257,7 @@ dependencies = [
 [[package]]
 name = "quent-resource"
 version = "0.2.0"
-source = "git+https://github.com/TomAugspurger/quent?rev=342c9a6699cb5008e7a3dbd725ade9dfa37ec860#342c9a6699cb5008e7a3dbd725ade9dfa37ec860"
+source = "git+https://github.com/TomAugspurger/quent?rev=ceaeaab244c368cba616cc23008760823912164f#ceaeaab244c368cba616cc23008760823912164f"
 dependencies = [
  "indexmap",
  "quent-constraints",
@@ -1284,7 +1272,7 @@ dependencies = [
 [[package]]
 name = "quent-schema"
 version = "0.2.0"
-source = "git+https://github.com/TomAugspurger/quent?rev=342c9a6699cb5008e7a3dbd725ade9dfa37ec860#342c9a6699cb5008e7a3dbd725ade9dfa37ec860"
+source = "git+https://github.com/TomAugspurger/quent?rev=ceaeaab244c368cba616cc23008760823912164f#ceaeaab244c368cba616cc23008760823912164f"
 dependencies = [
  "indexmap",
  "rustc-hash",
@@ -1296,7 +1284,7 @@ dependencies = [
 [[package]]
 name = "quent-schema-codegen-python"
 version = "0.2.0"
-source = "git+https://github.com/TomAugspurger/quent?rev=342c9a6699cb5008e7a3dbd725ade9dfa37ec860#342c9a6699cb5008e7a3dbd725ade9dfa37ec860"
+source = "git+https://github.com/TomAugspurger/quent?rev=ceaeaab244c368cba616cc23008760823912164f#ceaeaab244c368cba616cc23008760823912164f"
 dependencies = [
  "convert_case 0.11.0",
  "prettyplease 0.3.0",
@@ -1313,7 +1301,7 @@ dependencies = [
 [[package]]
 name = "quent-time"
 version = "0.2.0"
-source = "git+https://github.com/TomAugspurger/quent?rev=342c9a6699cb5008e7a3dbd725ade9dfa37ec860#342c9a6699cb5008e7a3dbd725ade9dfa37ec860"
+source = "git+https://github.com/TomAugspurger/quent?rev=ceaeaab244c368cba616cc23008760823912164f#ceaeaab244c368cba616cc23008760823912164f"
 dependencies = [
  "thiserror",
 ]
@@ -1321,7 +1309,7 @@ dependencies = [
 [[package]]
 name = "quent-yaml"
 version = "0.2.0"
-source = "git+https://github.com/TomAugspurger/quent?rev=342c9a6699cb5008e7a3dbd725ade9dfa37ec860#342c9a6699cb5008e7a3dbd725ade9dfa37ec860"
+source = "git+https://github.com/TomAugspurger/quent?rev=ceaeaab244c368cba616cc23008760823912164f#ceaeaab244c368cba616cc23008760823912164f"
 dependencies = [
  "indexmap",
  "quent-constraints",

@@ -342,7 +342,12 @@ def test_quent_lifecycle(
         for states in reservation_states.values()
     )
     assert attributed_bytes > 0
-    assert unattributed_sites <= {"spill"}
+    # Internal reservations without actor context may also lack a call site.
+    assert unattributed_sites <= {
+        "engine.statistics.allgather",
+        "spill",
+        "unknown",
+    }
     evaluate_events = _of_type(events, "Evaluate")
     assert evaluate_events
     evaluate_states: dict[str, list[str]] = {}

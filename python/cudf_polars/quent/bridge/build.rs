@@ -33,7 +33,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let options = quent_schema_codegen_python::Options {
-        module_name: "_quent_generated".to_owned(),
+        module_name: "cudf_polars_quent".to_owned(),
+        bridge_file_name: "cudf_polars_quent.rs".to_owned(),
+        stub_file_name: Some("cudf_polars_quent.pyi".to_owned()),
+        bridge_preamble: "\
+// SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+"
+        .to_owned(),
+        stub_preamble: "\
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"
+        .to_owned(),
         instrumentation_path: "crate".to_owned(),
         exporters: quent_schema_codegen_python::Exporters {
             ndjson: true,
@@ -44,76 +58,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ..Default::default()
     };
     let out_dir = PathBuf::from(std::env::var("OUT_DIR")?);
-    let mut bindings = quent_schema_codegen_python::emit(&parsed.schema, &options)?;
-    for file in &mut bindings {
-        if file.name == "pyo3_bridge.rs" {
-            let end = file
-                .content
-                .rfind('}')
-                .ok_or("generated Python bridge has no module terminator")?;
-            file.content.insert_str(
-                end,
-                r#"
-    pub fn reservation_event_observers(
-        context: &pyo3::Bound<'_, pyo3::types::PyAny>,
-    ) -> pyo3::PyResult<(
-        quent_instrumentation::Observer<crate::MemoryReservationRequest>,
-        quent_instrumentation::Observer<crate::MemoryReservation>,
-        quent_instrumentation::Observer<crate::Worker>,
-        quent_instrumentation::Observer<crate::Actor>,
-        quent_instrumentation::Observer<crate::ReservableMemory>,
-    )> {
-        let context = context.extract::<pyo3::PyRef<'_, PyContext>>()?;
-        let context = context.inner.as_ref().ok_or_else(|| {
-            ContextClosedError::new_err(
-                "cannot create reservation event observers from a closed context"
-            )
-        })?;
-        Ok((
-            context.observer(),
-            context.observer(),
-            context.observer(),
-            context.observer(),
-            context.observer(),
-        ))
-    }
-"#,
-            );
-        }
-    }
+    let bindings = quent_schema_codegen_python::emit(&parsed.schema, &options)?;
     quent_schema_codegen_python::write_generated_files(&bindings, &out_dir)?;
-
-    const PREAMBLE: &str = "\
-# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-
-";
-
-    let mut stubs = quent_schema_codegen_python::emit_stubs(&parsed.schema, &options)?;
-    for file in &mut stubs {
-        if file.name == "_quent_generated/__init__.pyi" {
-            file.name = "cudf_polars_quent.pyi".to_owned();
-            file.content.push_str(
-                r#"
-
-class ReservationEventIngestor:
-    def __init__(
-        self,
-        context: Context,
-        worker_id: _uuid.UUID | str,
-        reservable_memory_ids: Mapping[str, _uuid.UUID | str],
-    ) -> None: ...
-    def ingest(self, events: Iterable[Mapping[str, object]]) -> None: ...
-    def diagnostics(self) -> list[str]: ...
-    def close(self) -> None: ...
-"#,
-            );
-        }
-
-        if file.name.ends_with(".pyi") {
-            file.content.insert_str(0, PREAMBLE);
-        }
-    }
+    let stubs = quent_schema_codegen_python::emit_stubs(&parsed.schema, &options)?;
     quent_schema_codegen_python::write_generated_files(&stubs, &out_dir)?;
     Ok(())
 }

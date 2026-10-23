@@ -23,6 +23,7 @@ TEST_F(DivideDecimalTest, ColumnColumn)
                        rhs,
                        cudf::data_type{cudf::type_id::DECIMAL128, numeric::scale_type{-4}},
                        cudf::rounding_method::HALF_UP,
+                       cudf::decimal_intermediate::STANDARD,
                        cudf::test::get_default_stream());
 }
 
@@ -36,6 +37,7 @@ TEST_F(DivideDecimalTest, ColumnScalar)
                        *rhs,
                        cudf::data_type{cudf::type_id::DECIMAL64, numeric::scale_type{-2}},
                        cudf::rounding_method::HALF_EVEN,
+                       cudf::decimal_intermediate::STANDARD,
                        cudf::test::get_default_stream());
 }
 
@@ -49,6 +51,23 @@ TEST_F(DivideDecimalTest, ScalarColumn)
                        rhs,
                        cudf::data_type{cudf::type_id::DECIMAL64, numeric::scale_type{-2}},
                        cudf::rounding_method::HALF_UP,
+                       cudf::decimal_intermediate::STANDARD,
+                       cudf::test::get_default_stream());
+}
+
+TEST_F(DivideDecimalTest, WideIntermediate)
+{
+  // 1.0000000000 / 1.00000000000000000000 at scale -20 rescales the dividend past 128 bits
+  auto const ten_10 = __int128_t{10'000'000'000};
+  auto const lhs =
+    cudf::test::fixed_point_column_wrapper<__int128_t>{{ten_10, -ten_10}, numeric::scale_type{-10}};
+  auto const rhs = cudf::test::fixed_point_column_wrapper<__int128_t>{
+    {ten_10 * ten_10, ten_10 * ten_10}, numeric::scale_type{-20}};
+  cudf::divide_decimal(lhs,
+                       rhs,
+                       cudf::data_type{cudf::type_id::DECIMAL128, numeric::scale_type{-20}},
+                       cudf::rounding_method::HALF_UP,
+                       cudf::decimal_intermediate::WIDE,
                        cudf::test::get_default_stream());
 }
 

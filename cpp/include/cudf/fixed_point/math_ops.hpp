@@ -28,6 +28,14 @@ namespace CUDF_EXPORT cudf {
  */
 
 /**
+ * @brief Width of the intermediate value that `divide_decimal` rescales the dividend into.
+ */
+enum class decimal_intermediate : int32_t {
+  STANDARD,  ///< The widest of the input and output types. Rows that overflow it are null.
+  WIDE       ///< 256 bits. Rows are null only for a zero divisor or a quotient that doesn't fit.
+};
+
+/**
  * @brief Divides two decimal columns element-wise into a column of type `output_type`.
  *
  * Each output element is `lhs[i] / rhs[i]`, rounded to the scale of `output_type` using `method`.
@@ -43,8 +51,12 @@ namespace CUDF_EXPORT cudf {
  * - either input element is null,
  * - `rhs[i]` is zero,
  * - the rounded quotient has more digits than the precision of `output_type`, or
- * - `lhs[i]`, rescaled to give a quotient at the scale of `output_type`, does not fit in the
- *   widest of the three types.
+ * - `intermediate` is `decimal_intermediate::STANDARD` and `lhs[i]`, rescaled to give a quotient
+ *   at the scale of `output_type`, does not fit in the widest of the three types.
+ *
+ * With `decimal_intermediate::WIDE`, the rescaled dividend is held in 256 bits, which is always
+ * enough for any quotient that fits in `output_type`. Rows that would need it are slower than
+ * other rows.
  *
  * @throw cudf::logic_error if `lhs`, `rhs` or `output_type` is not a decimal type
  * @throw cudf::logic_error if `lhs` and `rhs` have different sizes
@@ -53,6 +65,7 @@ namespace CUDF_EXPORT cudf {
  * @param rhs The divisor column
  * @param output_type The decimal type and scale of the output
  * @param method The rounding method to use
+ * @param intermediate The width of the intermediate value used to rescale the dividend
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Memory resources used for temporary allocations and the returned column
  * @return Column of type `output_type` containing the quotients
@@ -61,9 +74,10 @@ std::unique_ptr<column> divide_decimal(
   column_view const& lhs,
   column_view const& rhs,
   data_type output_type,
-  rounding_method method    = rounding_method::HALF_UP,
-  cuda::stream_ref stream   = cudf::get_default_stream(),
-  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+  rounding_method method            = rounding_method::HALF_UP,
+  decimal_intermediate intermediate = decimal_intermediate::STANDARD,
+  cuda::stream_ref stream           = cudf::get_default_stream(),
+  cudf::memory_resources mr         = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Divides each element of a decimal column by a decimal scalar into a column of type
@@ -80,6 +94,7 @@ std::unique_ptr<column> divide_decimal(
  * @param rhs The divisor scalar
  * @param output_type The decimal type and scale of the output
  * @param method The rounding method to use
+ * @param intermediate The width of the intermediate value used to rescale the dividend
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Memory resources used for temporary allocations and the returned column
  * @return Column of type `output_type` containing the quotients
@@ -88,9 +103,10 @@ std::unique_ptr<column> divide_decimal(
   column_view const& lhs,
   scalar const& rhs,
   data_type output_type,
-  rounding_method method    = rounding_method::HALF_UP,
-  cuda::stream_ref stream   = cudf::get_default_stream(),
-  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+  rounding_method method            = rounding_method::HALF_UP,
+  decimal_intermediate intermediate = decimal_intermediate::STANDARD,
+  cuda::stream_ref stream           = cudf::get_default_stream(),
+  cudf::memory_resources mr         = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Divides a decimal scalar by each element of a decimal column into a column of type
@@ -107,6 +123,7 @@ std::unique_ptr<column> divide_decimal(
  * @param rhs The divisor column
  * @param output_type The decimal type and scale of the output
  * @param method The rounding method to use
+ * @param intermediate The width of the intermediate value used to rescale the dividend
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Memory resources used for temporary allocations and the returned column
  * @return Column of type `output_type` containing the quotients
@@ -115,9 +132,10 @@ std::unique_ptr<column> divide_decimal(
   scalar const& lhs,
   column_view const& rhs,
   data_type output_type,
-  rounding_method method    = rounding_method::HALF_UP,
-  cuda::stream_ref stream   = cudf::get_default_stream(),
-  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+  rounding_method method            = rounding_method::HALF_UP,
+  decimal_intermediate intermediate = decimal_intermediate::STANDARD,
+  cuda::stream_ref stream           = cudf::get_default_stream(),
+  cudf::memory_resources mr         = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 }  // namespace CUDF_EXPORT cudf

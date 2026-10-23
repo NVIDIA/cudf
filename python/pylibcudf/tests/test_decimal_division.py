@@ -262,6 +262,63 @@ class TestInvalidArguments:
             )
 
 
+def test_decimal_intermediate_values():
+    intermediate = plc.decimal_division.DecimalIntermediate
+    assert [intermediate.STANDARD, intermediate.WIDE] == [0, 1]
+
+
+@pytest.mark.parametrize(
+    "intermediate, expected",
+    [
+        (None, [None, None, None]),
+        (
+            plc.decimal_division.DecimalIntermediate.STANDARD,
+            [None, None, None],
+        ),
+        (plc.decimal_division.DecimalIntermediate.WIDE, ["1", "-1", "-3"]),
+    ],
+)
+def test_divide_decimal_intermediate(intermediate, expected):
+    # Rescaling the dividends to give quotients with 20 fractional digits
+    # needs more than 128 bits, so only the wide intermediate gives results.
+    lhs = _column(["1", "-1", "3"], plc.TypeId.DECIMAL128, 10)
+    rhs = _column(["1", "1", "-1"], plc.TypeId.DECIMAL128, 20)
+    output_type = plc.DataType(plc.TypeId.DECIMAL128, -20)
+    kwargs = {} if intermediate is None else {"intermediate": intermediate}
+
+    got = plc.decimal_division.divide_decimal(
+        lhs, rhs, output_type, plc.round.RoundingMethod.HALF_UP, **kwargs
+    )
+
+    assert _values(got) == _expect(expected)
+
+
+def test_divide_decimal_wide_intermediate_with_scalars():
+    lhs = _column(["1", "-1", "3"], plc.TypeId.DECIMAL128, 10)
+    rhs = _column(["1", "1", "-1"], plc.TypeId.DECIMAL128, 20)
+    output_type = plc.DataType(plc.TypeId.DECIMAL128, -20)
+    wide = plc.decimal_division.DecimalIntermediate.WIDE
+    half_up = plc.round.RoundingMethod.HALF_UP
+
+    got = plc.decimal_division.divide_decimal_column_scalar(
+        lhs,
+        _scalar("1", plc.TypeId.DECIMAL128, 20),
+        output_type,
+        half_up,
+        wide,
+    )
+    assert _values(got) == _expect(["1", "-1", "3"])
+
+    got = plc.decimal_division.divide_decimal_scalar_column(
+        _scalar("1", plc.TypeId.DECIMAL128, 10),
+        rhs,
+        output_type,
+        half_up,
+        intermediate=wide,
+    )
+    assert _values(got) == _expect(["1", "1", "-1"])
+
+
 def test_divide_decimal_non_decimal_type_error():
     ints = plc.Column.from_arrow(pa.array([1, 2], type=pa.int32()))
     decimals = _column(["1", "2"], plc.TypeId.DECIMAL32, 0)

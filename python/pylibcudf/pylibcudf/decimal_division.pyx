@@ -5,8 +5,13 @@ from libcpp.utility cimport move
 from pylibcudf.libcudf.column.column cimport column
 from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.fixed_point.math_ops cimport (
+    decimal_intermediate,
     divide_decimal as cpp_divide_decimal,
 )
+
+from pylibcudf.libcudf.fixed_point.math_ops import \
+    decimal_intermediate as DecimalIntermediate  # no-cython-lint
+
 from pylibcudf.libcudf.round cimport rounding_method
 from pylibcudf.libcudf.scalar.scalar cimport scalar
 
@@ -25,6 +30,7 @@ if TYPE_CHECKING:
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 __all__ = [
+    "DecimalIntermediate",
     "divide_decimal",
     "divide_decimal_column_scalar",
     "divide_decimal_scalar_column",
@@ -55,6 +61,7 @@ cpdef Column divide_decimal(
     Column rhs,
     DataType output_type,
     rounding_method round_method = rounding_method.HALF_UP,
+    decimal_intermediate intermediate = decimal_intermediate.STANDARD,
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
@@ -75,6 +82,13 @@ cpdef Column divide_decimal(
         How to round the quotient to the scale of ``output_type``.
         Can be one of { RoundingMethod.HALF_UP, RoundingMethod.HALF_EVEN }
         (default RoundingMethod.HALF_UP)
+    intermediate : DecimalIntermediate, optional
+        The width of the intermediate value used to rescale the dividend.
+        With DecimalIntermediate.STANDARD, a result is also null if the
+        rescaled dividend overflows the widest of the input and output types.
+        DecimalIntermediate.WIDE uses 256 bits, so a result is null only for
+        a zero divisor or a quotient that does not fit ``output_type``.
+        (default DecimalIntermediate.STANDARD)
     stream : Stream | None
         CUDA stream on which to perform the operation.
     mr : DeviceMemoryResource | None
@@ -107,6 +121,7 @@ cpdef Column divide_decimal(
             c_rhs,
             output_type.c_obj,
             round_method,
+            intermediate,
             _cs,
             mr.get_mr()
         )
@@ -119,6 +134,7 @@ cpdef Column divide_decimal_column_scalar(
     Scalar rhs,
     DataType output_type,
     rounding_method round_method = rounding_method.HALF_UP,
+    decimal_intermediate intermediate = decimal_intermediate.STANDARD,
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
@@ -139,6 +155,13 @@ cpdef Column divide_decimal_column_scalar(
         How to round the quotient to the scale of ``output_type``.
         Can be one of { RoundingMethod.HALF_UP, RoundingMethod.HALF_EVEN }
         (default RoundingMethod.HALF_UP)
+    intermediate : DecimalIntermediate, optional
+        The width of the intermediate value used to rescale the dividend.
+        With DecimalIntermediate.STANDARD, a result is also null if the
+        rescaled dividend overflows the widest of the input and output types.
+        DecimalIntermediate.WIDE uses 256 bits, so a result is null only for
+        a zero divisor or a quotient that does not fit ``output_type``.
+        (default DecimalIntermediate.STANDARD)
     stream : Stream | None
         CUDA stream on which to perform the operation.
     mr : DeviceMemoryResource | None
@@ -171,6 +194,7 @@ cpdef Column divide_decimal_column_scalar(
             c_rhs[0],
             output_type.c_obj,
             round_method,
+            intermediate,
             _cs,
             mr.get_mr()
         )
@@ -183,6 +207,7 @@ cpdef Column divide_decimal_scalar_column(
     Column rhs,
     DataType output_type,
     rounding_method round_method = rounding_method.HALF_UP,
+    decimal_intermediate intermediate = decimal_intermediate.STANDARD,
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
@@ -203,6 +228,13 @@ cpdef Column divide_decimal_scalar_column(
         How to round the quotient to the scale of ``output_type``.
         Can be one of { RoundingMethod.HALF_UP, RoundingMethod.HALF_EVEN }
         (default RoundingMethod.HALF_UP)
+    intermediate : DecimalIntermediate, optional
+        The width of the intermediate value used to rescale the dividend.
+        With DecimalIntermediate.STANDARD, a result is also null if the
+        rescaled dividend overflows the widest of the input and output types.
+        DecimalIntermediate.WIDE uses 256 bits, so a result is null only for
+        a zero divisor or a quotient that does not fit ``output_type``.
+        (default DecimalIntermediate.STANDARD)
     stream : Stream | None
         CUDA stream on which to perform the operation.
     mr : DeviceMemoryResource | None
@@ -235,6 +267,7 @@ cpdef Column divide_decimal_scalar_column(
             c_rhs,
             output_type.c_obj,
             round_method,
+            intermediate,
             _cs,
             mr.get_mr()
         )

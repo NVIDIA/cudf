@@ -1351,9 +1351,30 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * @throws CudfException if either input or {@code outType} is not a decimal type
    */
   public final ColumnVector divideDecimal(ColumnView rhs, DType outType, RoundMode mode) {
+    return divideDecimal(rhs, outType, mode, DecimalIntermediate.STANDARD);
+  }
+
+  /**
+   * Divides this decimal column by a decimal column, element-wise, rescaling each dividend into
+   * an intermediate value of the given width.
+   * See {@link #divideDecimal(ColumnView, DType, RoundMode)}.
+   *
+   * With {@link DecimalIntermediate#STANDARD}, an output element is also null if the dividend,
+   * rescaled to give a quotient at the scale of {@code outType}, overflows the widest of the input
+   * and output types. {@link DecimalIntermediate#WIDE} rescales it into 256 bits instead.
+   *
+   * @param rhs          the divisor column, with the same number of rows as this column
+   * @param outType      the decimal type and scale of the output
+   * @param mode         the rounding mode to use
+   * @param intermediate the width of the intermediate value
+   * @return a new column of type {@code outType} containing the quotients
+   * @throws CudfException if either input or {@code outType} is not a decimal type
+   */
+  public final ColumnVector divideDecimal(ColumnView rhs, DType outType, RoundMode mode,
+                                          DecimalIntermediate intermediate) {
     assert rows == rhs.getRowCount();
     return new ColumnVector(divideDecimalVV(getNativeView(), rhs.getNativeView(),
-        outType.typeId.getNativeId(), outType.getScale(), mode.nativeId));
+        outType.typeId.getNativeId(), outType.getScale(), mode.nativeId, intermediate.nativeId));
   }
 
   /**
@@ -1379,8 +1400,26 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * @throws CudfException if either input or {@code outType} is not a decimal type
    */
   public final ColumnVector divideDecimal(Scalar rhs, DType outType, RoundMode mode) {
+    return divideDecimal(rhs, outType, mode, DecimalIntermediate.STANDARD);
+  }
+
+  /**
+   * Divides each element of this decimal column by a decimal scalar, rescaling each dividend into
+   * an intermediate value of the given width.
+   * See {@link #divideDecimal(Scalar, DType, RoundMode)} and
+   * {@link #divideDecimal(ColumnView, DType, RoundMode, DecimalIntermediate)}.
+   *
+   * @param rhs          the divisor scalar
+   * @param outType      the decimal type and scale of the output
+   * @param mode         the rounding mode to use
+   * @param intermediate the width of the intermediate value
+   * @return a new column of type {@code outType} containing the quotients
+   * @throws CudfException if either input or {@code outType} is not a decimal type
+   */
+  public final ColumnVector divideDecimal(Scalar rhs, DType outType, RoundMode mode,
+                                          DecimalIntermediate intermediate) {
     return new ColumnVector(divideDecimalVS(getNativeView(), rhs.getScalarHandle(),
-        outType.typeId.getNativeId(), outType.getScale(), mode.nativeId));
+        outType.typeId.getNativeId(), outType.getScale(), mode.nativeId, intermediate.nativeId));
   }
 
   /**
@@ -5040,10 +5079,10 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   private static native long binaryOpVV(long lhs, long rhs, int op, int dtype, int scale);
 
   private static native long divideDecimalVS(long lhs, long rhs, int dtype, int scale,
-                                             int roundMode) throws CudfException;
+                                             int roundMode, int intermediate) throws CudfException;
 
   private static native long divideDecimalVV(long lhs, long rhs, int dtype, int scale,
-                                             int roundMode) throws CudfException;
+                                             int roundMode, int intermediate) throws CudfException;
 
   private static native long countElements(long viewHandle);
 

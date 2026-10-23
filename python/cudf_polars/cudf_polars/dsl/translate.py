@@ -1384,6 +1384,8 @@ def _translate_function(
             )
         elif name == "pow":
             return expr.BinOp(dtype, plc.binaryop.BinaryOperator.POW, *children)
+        elif name == "decimal_mul":
+            return expr.BinOp(dtype, plc.binaryop.BinaryOperator.MUL, *children)
         elif name == "product":
             return expr.Agg(dtype, "product", None, translator._expr_context, *children)
         elif name == "quantile":

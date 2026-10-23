@@ -11,9 +11,14 @@ execution.
 
 from __future__ import annotations
 
+import dataclasses
 import uuid
 from unittest.mock import MagicMock, call
 
+import pytest
+
+import cudf_polars.quent._runtime
+from cudf_polars.engine.spmd import synchronize_quent_reset_contexts
 from cudf_polars.quent._context import (
     ActorBoundQuentIRExecutionState,
     QuentConfig,
@@ -36,6 +41,48 @@ def test_context_serialization_roundtrip(tmp_path) -> None:
     )
 
     assert QuentConfig._deserialize(context._serialize()) == context
+
+
+@pytest.mark.parametrize(
+    "existing_enabled,new_enabled",
+    [
+        pytest.param(False, True, id="enable"),
+        pytest.param(True, True, id="replace"),
+        pytest.param(True, False, id="disable"),
+    ],
+)
+def test_synchronize_quent_reset_contexts(
+    quent_context: QuentConfig,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    existing_enabled: bool,
+    new_enabled: bool,
+) -> None:
+    existing_context = quent_context if existing_enabled else None
+    new_context = (
+        dataclasses.replace(quent_context, engine_id=uuid.uuid4())
+        if new_enabled
+        else None
+    )
+
+    def fake_all_gather(*args: object) -> list[bytes]:
+        data = args[-1]
+        assert isinstance(data, bytes)
+        return [data, b""]
+
+    monkeypatch.setattr(
+        "cudf_polars.engine.spmd.all_gather_host_data",
+        fake_all_gather,
+    )
+
+    synchronized = synchronize_quent_reset_contexts(
+        comm=MagicMock(nranks=2, rank=0),
+        context=MagicMock(),
+        existing_context=existing_context,
+        new_context=new_context,
+    )
+
+    assert synchronized == (existing_context, new_context)
 
 
 def test_ir_execution_state_bind_actor() -> None:
@@ -118,3 +165,28 @@ def test_emit_evaluate_failure() -> None:
 
     running_evaluation.failed.assert_called_once_with(error=str(error))
     assert evaluate_id not in runtime.session._evaluations
+
+
+def test_quent_controller_create_closes_collector_on_failure(
+    quent_context: QuentConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    collector = MagicMock(address="127.0.0.1:1234")
+    monkeypatch.setattr(
+        cudf_polars.quent._runtime,
+        "start_collector",
+        MagicMock(return_value=collector),
+    )
+    monkeypatch.setattr(
+        cudf_polars.quent._runtime,
+        "QuentSession",
+        MagicMock(side_effect=RuntimeError("session creation failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="session creation failed"):
+        cudf_polars.quent._runtime.QuentControllerRuntime.create(
+            quent_context,
+            backend="test",
+        )
+
+    collector.close.assert_called_once_with(timeout=10.0)

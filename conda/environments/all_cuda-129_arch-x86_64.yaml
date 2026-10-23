@@ -54,6 +54,7 @@ dependencies:
 - libucxx==0.53.*,>=0.0.0a0
 - make
 - matplotlib-base<3.11
+- mkl<2026.2
 - mmh3
 - moto>=4.0.8
 - msgpack-python

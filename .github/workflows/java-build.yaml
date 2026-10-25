@@ -1,0 +1,184 @@
+on:
+  workflow_call:
+    inputs:
+      build_type:
+        description: "One of: [branch, nightly, pull-request]"
+        required: true
+        type: string
+      branch:
+        description: |
+          Git branch the workflow run targets.
+          This is required even when 'sha' is provided because it is also used for organizing artifacts.
+        type: string
+      date:
+        description: "Date (YYYY-MM-DD) this run is for. Used to organize artifacts produced by nightly builds"
+        type: string
+      sha:
+        description: "Full git commit SHA to check out"
+        type: string
+      build-datetime:
+        description: |
+          date-time to be used in build strings.
+          Unlike input 'date' (set in the call to the calling workflow), this is computed at runtime
+          by the calling workflow.
+        default: null
+        required: false
+        type: string
+      repo:
+        description: "Git repo to check out, in '{org}/{repo}' form, e.g. 'rapidsai/cudf'"
+        type: string
+      node_type:
+        description: |
+          Suffix, without leading '-', indicating the type of machine to run jobs on (e.g., 'cpu4' or 'gpu-l4-latest-1').
+          Runner labels are of the form '{operating_system}-{arch}-{node_type}'.
+          See https://github.com/nv-gha-runners/enterprise-runner-configuration/blob/main/docs/runner-groups.md for a list
+          of valid values.
+        type: string
+        default: "cpu8"
+      script:
+        type: string
+        required: true
+        description: "Shell code to be executed in a step. Ideally this should just invoke a script managed in the repo the workflow runs from, like 'ci/build_java.sh'."
+      file-to-upload:
+        type: string
+        required: true
+        description: |
+          One path or a newline-separated list of paths containing the files for this Maven coordinate.
+          All paths are uploaded together as one GitHub Actions artifact per matrix entry.
+      artifact-name-prefix:
+        type: string
+        required: true
+        description: "Project-specific prefix for build artifacts. Each matrix entry is uploaded as '{prefix}_{arch}_cu{CUDA major version}'."
+      container-image-repository:
+        type: string
+        default: "rapidsai/ci-wheel"
+        description: "CI image repository without its tag, e.g. 'rapidsai/ci-wheel' or 'rapidsai/ci-conda'."
+      matrix_filter:
+        description: |
+          jq expression which modifies the matrix.
+          For example, 'map(select(.ARCH == "amd64"))' to achieve "only run amd64 jobs".
+        type: string
+        default: "."
+      sccache-dist-request-timeout:
+        type: string
+        default: 7140
+        description: |
+          The maximum time (in seconds) the sccache client should wait for a distributed compilation to complete.
+      alternative-gh-token-secret-name:
+        type: string
+        required: false
+        description: |
+          If provided, should contain the name of a secret in the repo which holds a GitHub API token.
+          When this is non-empty, that secret's value is used in place of the default repo-level token
+          anywhere that environment variable GH_TOKEN is set. This is especially useful for downloading
+          artifacts from other private repos, which repo tokens do not have access to.
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  actions: read
+  checks: none
+  contents: read
+  deployments: none
+  discussions: none
+  id-token: write
+  issues: none
+  packages: read
+  pages: none
+  pull-requests: read
+  repository-projects: none
+  security-events: none
+  statuses: none
+
+jobs:
+  compute-matrix:
+    uses: rapidsai/shared-workflows/.github/workflows/compute-matrix.yaml@main
+    with:
+      build_type: ${{ inputs.build_type }}
+      matrix_name: conda-cpp-build
+      matrix_filter: 'map(. + {CUDA_MAJOR: (.CUDA_VER | split(".") | .[0])}) | unique_by([.ARCH, .CUDA_MAJOR]) | ${{ inputs.matrix_filter }}'
+  build:
+    name: ${{ matrix.CUDA_VER }}, ${{ matrix.PY_VER }}, ${{ matrix.ARCH }}, ${{ matrix.LINUX_VER }}
+    needs: compute-matrix
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.compute-matrix.outputs.matrix) }}
+    runs-on: "linux-${{ matrix.ARCH }}-${{ inputs.node_type }}"
+    env:
+      RAPIDS_ARTIFACTS_DIR: ${{ github.workspace }}/artifacts
+    container:
+      image: ${{ inputs.container-image-repository }}:26.12-cuda${{ matrix.CUDA_VER }}-${{ matrix.LINUX_VER }}-py${{ matrix.PY_VER }} # zizmor: ignore[unpinned-images]
+      env:
+        RAPIDS_BUILD_TYPE: ${{ inputs.build_type }}
+        RAPIDS_DATETIME_STRING: ${{ inputs.build-datetime }}
+    steps:
+      - uses: aws-actions/configure-aws-credentials@517a711dbcd0e402f90c77e7e2f81e849156e31d # v6.2.2
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-duration-seconds: 43200 # 12h
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: ${{ inputs.repo }}
+          ref: ${{ inputs.sha }}
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Standardize repository information
+        uses: rapidsai/shared-actions/rapids-github-info@main
+        with:
+          repo: ${{ inputs.repo }}
+          branch: ${{ inputs.branch }}
+          date: ${{ inputs.date }}
+          sha: ${{ inputs.sha }}
+      - name: Setup proxy cache
+        uses: nv-gha-runners/setup-proxy-cache@eadc57871cde0c92a223d0f486ab669a2360f978 # main
+        continue-on-error: true
+        with:
+          enable-apt: true
+      - name: Telemetry setup
+        uses: rapidsai/shared-actions/telemetry-dispatch-setup@main
+        continue-on-error: true
+        if: ${{ vars.TELEMETRY_ENABLED == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Setup sccache-dist
+        uses: rapidsai/shared-actions/setup-sccache-dist@main
+        env:
+          AWS_REGION: "${{env.AWS_REGION}}"
+          AWS_ACCESS_KEY_ID: "${{env.AWS_ACCESS_KEY_ID}}"
+          AWS_SECRET_ACCESS_KEY: "${{env.AWS_SECRET_ACCESS_KEY}}"
+        with:
+          log-file: "${{ env.RAPIDS_ARTIFACTS_DIR }}/sccache.log"
+          request-timeout: ${{ inputs.sccache-dist-request-timeout }}
+      - name: Check GitHub API rate limits
+        run: |
+          if ! type gh >/dev/null; then
+              echo "'gh' CLI is not installed... skipping rate-limits check"
+          else
+              gh api /rate_limit | jq .
+          fi
+        env:
+          GH_TOKEN: ${{ inputs.alternative-gh-token-secret-name && secrets[inputs.alternative-gh-token-secret-name] || github.token }} # zizmor: ignore[overprovisioned-secrets]
+      - name: Maven build
+        run: |
+          ulimit -n "$(ulimit -Hn)"
+          $INPUTS_SCRIPT
+        env:
+          INPUTS_SCRIPT: "${{ inputs.script }}"
+          GH_TOKEN: ${{ inputs.alternative-gh-token-secret-name && secrets[inputs.alternative-gh-token-secret-name] || github.token }} # zizmor: ignore[overprovisioned-secrets]
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          if-no-files-found: error
+          name: ${{ inputs.artifact-name-prefix }}_${{ matrix.ARCH }}_cu${{ matrix.CUDA_MAJOR }}
+          path: ${{ inputs.file-to-upload }}
+      - name: Upload additional artifacts
+        if: "!cancelled()"
+        run: rapids-upload-artifacts-dir "maven_cuda${RAPIDS_CUDA_VERSION%%.*}_$(arch)"
+      - name: Telemetry upload attributes
+        uses: rapidsai/shared-actions/telemetry-dispatch-stash-job-artifacts@main
+        continue-on-error: true
+        if: ${{ vars.TELEMETRY_ENABLED == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}

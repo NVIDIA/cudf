@@ -72,14 +72,35 @@ void generate_depth_remappings(
   rmm::device_async_resource_ref mr);
 
 /**
- * @brief Return the number of total pages from the given column chunks.
+ * @brief Allocate bounded scratch for fused header parsing.
+ *
+ * LIBCUDF_PARQUET_PAGE_HEADER_SCRATCH_MIB sets an integer MiB budget (default 64; zero disables).
+ * Each chunk gets at most 16,192 slots. Indexed or empty passes return empty scratch.
+ * Budgets below one slot per chunk use separate parsing. Keep scratch alive through header
+ * decoding.
+ *
+ * @throws cudf::logic_error For invalid budgets on nonempty no-index passes
+ *
+ * @param num_chunks Number of column chunks in the pass
+ * @param has_offset_index Whether page indexes are available
+ * @param stream CUDA stream to use
+ * @return Per-chunk scratch descriptors
+ */
+rmm::device_uvector<PageInfo> make_page_header_scratch(size_t num_chunks,
+                                                       bool has_offset_index,
+                                                       cuda::stream_ref stream);
+
+/**
+ * @brief Count pages and cache headers that fit in scratch.
  *
  * @param chunks Host-device span of column chunk descriptors
+ * @param scratch Equal per-chunk slices; below one slot per chunk uses count-only parsing
  * @param stream CUDA stream used for device memory operations and kernel launches
  *
  * @return The total number of pages
  */
 [[nodiscard]] size_t count_page_headers(cudf::detail::hostdevice_span<ColumnChunkDesc> chunks,
+                                        device_span<PageInfo> scratch,
                                         cuda::stream_ref stream);
 
 /**
@@ -120,11 +141,13 @@ std::string encoding_to_string(Encoding encoding);
  * @param pass The struct containing pass information
  * @param unsorted_pages Device span of page information to decode
  * @param has_offset_index Boolean indicating if the offset index is available
+ * @param scratch Cached headers; below one slot per chunk uses separate decoding
  * @param stream CUDA stream used for device memory operations and kernel launches
  */
 void decode_page_headers(pass_intermediate_data& pass,
                          device_span<PageInfo> unsorted_pages,
                          bool has_offset_index,
+                         device_span<PageInfo const> scratch,
                          cuda::stream_ref stream);
 
 /**

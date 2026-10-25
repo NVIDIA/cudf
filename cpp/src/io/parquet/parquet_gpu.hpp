@@ -854,6 +854,39 @@ __device__ inline bool is_literal_run(int const run_header) { return (run_header
 __device__ inline bool is_repeated_run(int const run_header) { return !is_literal_run(run_header); }
 
 /**
+ * @brief Count headers and cache descriptors in bounded scratch.
+ *
+ * Each chunk gets an equal slice for data and dictionary pages. Counting continues on overflow;
+ * finish_page_headers reparses those chunks.
+ *
+ * @param[in,out] chunks Column chunks; receives exact data and dictionary page counts
+ * @param[out] scratch Scratch size must be divisible by the chunk count
+ * @param[out] error_code Header parsing errors
+ * @param[in] stream CUDA stream to use
+ */
+void count_and_decode_page_headers(cudf::device_span<ColumnChunkDesc> chunks,
+                                   cudf::device_span<PageInfo> scratch,
+                                   kernel_error::pointer error_code,
+                                   cuda::stream_ref stream);
+
+/**
+ * @brief Copy cached headers or reparse overflowing chunks into final output.
+ *
+ * Uses the same scratch and chunk order as count_and_decode_page_headers. Dictionaries come first.
+ *
+ * @param[in] chunks Column chunks with exact page counts
+ * @param[in] scratch Cached page descriptors
+ * @param[out] chunk_pages Exact-size output storage for each chunk
+ * @param[out] error_code Header parsing errors
+ * @param[in] stream CUDA stream to use
+ */
+void finish_page_headers(cudf::device_span<ColumnChunkDesc const> chunks,
+                         cudf::device_span<PageInfo const> scratch,
+                         cudf::device_span<chunk_page_info> chunk_pages,
+                         kernel_error::pointer error_code,
+                         cuda::stream_ref stream);
+
+/**
  * @brief Launches kernel for counting page headers from column chunk data buffers
  *
  * @param[in] chunks Device span of column chunks

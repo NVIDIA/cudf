@@ -1567,6 +1567,22 @@ def test_cross_merge_zero_column_operand(left_cols, right_cols):
     assert_eq(result, expected)
 
 
+@pytest.mark.parametrize(
+    "right_values", [["a", "b"], [1.5, 2.5]], ids=["str", "float"]
+)
+def test_cross_merge_overlapping_columns_different_dtypes(right_values):
+    # Same-named columns are not join keys in a cross merge: they must keep
+    # their own dtypes and be suffixed, not be checked or cast as keys.
+    pleft = pd.DataFrame({"c0": [1, 2], "a": [3, 4]})
+    pright = pd.DataFrame({"c0": right_values})
+    gleft = cudf.from_pandas(pleft)
+    gright = cudf.from_pandas(pright)
+
+    expected = pleft.merge(pright, how="cross")
+    result = gleft.merge(gright, how="cross")
+    assert_eq(result, expected)
+
+
 def test_merge_natural_join_key_order_matches_left_frame():
     # A merge without ``on`` joins on the common columns in left-frame
     # column order, like pandas. Building the key list from an unordered

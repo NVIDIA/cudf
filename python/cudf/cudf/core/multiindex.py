@@ -550,6 +550,7 @@ class MultiIndex(Index):
     @_performance_tracking
     def __repr__(self) -> str:
         max_seq_items = pd.get_option("display.max_seq_items") or len(self)
+        self._maybe_materialize_codes_and_levels()
 
         if len(self) > max_seq_items:
             n = int(max_seq_items / 2) + 1
@@ -560,20 +561,30 @@ class MultiIndex(Index):
             indices = indices.append(
                 ColumnBase.from_range(range(len(self) - n, len(self), 1))
             )
-            preprocess = self.take(indices)
+            preprocess = self[indices]
         else:
             preprocess = self
 
         arrays = []
-        for name, col in zip(self.names, preprocess._columns, strict=True):
+        # Unused level values also determine pandas' formatting, such as
+        # whether datetime values include a time component.
+        for level in self.levels:
             try:
-                pd_idx = col.to_pandas(nullable=True)
+                pd_idx = level.to_pandas(nullable=True)
             except NotImplementedError:
-                pd_idx = col.to_pandas(nullable=False)
-            pd_idx.name = name
+                pd_idx = level.to_pandas(nullable=False)
             arrays.append(pd_idx)
 
-        preprocess_pd = pd.MultiIndex.from_arrays(arrays)
+        pd_codes = (
+            code.find_and_replace(
+                as_column(np.iinfo(SIZE_TYPE_DTYPE).min, length=1),
+                as_column(-1, length=1),
+            ).to_numpy()
+            for code in preprocess._codes
+        )
+        preprocess_pd = pd.MultiIndex(
+            levels=arrays, codes=list(pd_codes), names=self.names
+        )
 
         output = repr(preprocess_pd)
         output_prefix = self.__class__.__name__ + "("

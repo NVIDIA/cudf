@@ -22,7 +22,7 @@ from collections import defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
 from statistics import mean
-from typing import IO, TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import nvtx
 
@@ -120,7 +120,7 @@ class RunOptions:
     print_plans: bool = False
     print_results: bool = False
     summarize: bool = False
-    output: IO[str] | None = None
+    output: Path | None = None
     output_expected_directory: Path | None = None
     results_directory: Path | None = None
     validation_abs_tol: float = POLARS_VALIDATION_OPTIONS["abs_tol"]
@@ -1449,8 +1449,9 @@ def _finalize_benchmark_run(
     serializable_engine_config["shutdown_duration_ms"] = shutdown_duration_ms
 
     if run_options.output is not None:
-        run_options.output.write(json.dumps(serializable_engine_config))
-        run_options.output.write("\n")
+        with run_options.output.open("a") as f:
+            f.write(json.dumps(serializable_engine_config))
+            f.write("\n")
     sys.exit(benchmark_exit_code(query_failures, validation_failures))
 
 
@@ -1964,10 +1965,9 @@ def run_duckdb(duckdb_queries_cls: Any, args: argparse.Namespace) -> None:
         run_config.summarize()
 
     if run_options.output is not None:
-        run_options.output.write(
-            json.dumps(run_config.serialize(engine=None, quent_archive=None))
-        )
-        run_options.output.write("\n")
+        with run_options.output.open("a") as f:
+            f.write(json.dumps(run_config.serialize(engine=None, quent_archive=None)))
+            f.write("\n")
 
 
 def check_input_data_type(
@@ -2180,8 +2180,8 @@ def build_parser(num_queries: int = 22) -> argparse.ArgumentParser:
     parser.add_argument(
         "-o",
         "--output",
-        type=argparse.FileType("at"),
-        default="pdsh_results.jsonl",
+        type=Path,
+        default=Path("pdsh_results.jsonl"),
         help="Output file path.",
     )
     parser.add_argument(

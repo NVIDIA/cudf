@@ -34,8 +34,6 @@ requirements:
     - setuptools>=77.0.0
     - cuda-version =${{ cuda_version }}
   run:
-    # 'nvidia-ml-py' provides the 'pynvml' module
-    - nvidia-ml-py>=12
     - python
     - pylibcudf =${{ version }}
     - rapidsmpf =${{ minor_version }}
@@ -45,8 +43,9 @@ requirements:
     - packaging
     - ${{ pin_compatible("cuda-version", upper_bound="x", lower_bound="x") }}
     - if: cuda_major == "12"
-      then: cuda-bindings >=12.9.3,<13.0
-      else: cuda-bindings >=13.0.2,<14.0
+      then: cuda-bindings >=12.9.6,<13.0
+      else: cuda-bindings >=13.3.0,<14.0
+    - cuda-core >=1.0.0
   run_constraints:
     - ray-default >=2.55.1
   ignore_run_exports:

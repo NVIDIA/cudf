@@ -161,41 +161,38 @@ def _env_get_int(name: str, default: int) -> int:
 
 
 @functools.cache
-def get_device_handle() -> Any:
+def get_device() -> Any:
     # Gets called for each IR.do_evaluate node, so we'll cache it.
-    import pynvml
+    from cuda.core import system
 
-    try:
-        pynvml.nvmlInit()
-        index = os.environ.get("CUDA_VISIBLE_DEVICES", "0").split(",")[0]
-        if index and not index.isnumeric():  # pragma: no cover
-            # This means device_index is UUID.
-            # This works for both MIG and non-MIG device UUIDs.
-            handle = pynvml.nvmlDeviceGetHandleByUUID(str.encode(index))
-            if pynvml.nvmlDeviceIsMigDeviceHandle(handle):
+    index_or_uuid = os.environ.get("CUDA_VISIBLE_DEVICES", "0").split(",")[0]
+    if index_or_uuid and not index_or_uuid.isnumeric():  # pragma: no cover
+        # This means device_index is UUID.
+        # This works for both MIG and non-MIG device UUIDs.
+        device = system.Device(uuid=index_or_uuid)
+        try:
+            if device.mig.is_mig_device:
                 # Additionally get parent device handle
                 # if the device itself is a MIG instance
-                handle = pynvml.nvmlDeviceGetDeviceHandleFromMigDeviceHandle(handle)
-        else:
-            handle = pynvml.nvmlDeviceGetHandleByIndex(int(index))
-    except pynvml.NVMLError_NotSupported:  # pragma: no cover
-        # System doesn't have proper "GPU memory".
-        return None
+                device = device.mig.parent
+        except system.NotSupportedError:
+            return None
     else:
-        return handle
+        device = system.Device(index=int(index_or_uuid))
+    return device
 
 
 @functools.cache
 def get_total_device_memory() -> int | None:
     """Return the total memory of the current device."""
-    import pynvml
+    from cuda.core import system
 
-    maybe_handle = get_device_handle()
+    maybe_device = get_device()
 
-    if maybe_handle is not None:
+    if maybe_device is not None:
         try:
-            return pynvml.nvmlDeviceGetMemoryInfo(maybe_handle).total
-        except pynvml.NVMLError_NotSupported:  # pragma: no cover
+            return maybe_device.memory_info.total
+        except system.NotSupportedError:  # pragma: no cover
             # System doesn't have proper "GPU memory".
             return None
     else:  # pragma: no cover
@@ -1091,12 +1088,12 @@ class StreamingExecutor:
         - the ``CUDF_POLARS__EXECUTOR__TARGET_PARTITION_SIZE`` environment variable
 
         By default, cudf-polars uses the minimum of 1.5GB or 2.5% of the minimum
-        device size in the cluster. If pynvml cannot query the the device size(s),
+        device size in the cluster. If NVML cannot query the the device size(s),
         the default ``target_partition_size`` will be 1.5GB.
     broadcast_limit
         The maximum number of bytes to broadcast in a single operation.
         By default, cudf-polars uses the minimum of 16GB or 15% of the minimum
-        device size in the cluster. If pynvml cannot query the the device size(s),
+        device size in the cluster. If NVML cannot query the the device size(s),
         the default ``broadcast_limit`` will be 16GB.
     client_device_threshold
         Threshold for spilling data from device memory.

@@ -61,7 +61,7 @@ jobs:
     continue-on-error: true
     runs-on: ubuntu-latest
     env:
-      OTEL_SERVICE_NAME: 'pr-cudf'
+      OTEL_SERVICE_NAME: "pr-cudf"
     steps:
       - name: Telemetry setup
         if: ${{ vars.TELEMETRY_ENABLED == 'true' }}
@@ -75,12 +75,13 @@ jobs:
       id-token: write
     env:
       GH_TOKEN: ${{ github.token }}
+      SHARED_ACTIONS_REF: temp-extension
     steps:
       - name: Get PR Info
         id: get-pr-info
         uses: nv-gha-runners/get-pr-info@090577647b8ddc4e06e809e264f7881650ecdccf # main
       - name: Check if nightly CI is passing
-        uses: rapidsai/shared-actions/check_nightly_success/dispatch@main
+        uses: rapidsai/shared-actions/check_nightly_success/dispatch@temp-extension
         with:
           repo: ${{ github.repository }}
           target-branch: ${{ fromJSON(steps.get-pr-info.outputs.pr-info).base.ref }}
@@ -796,7 +797,13 @@ jobs:
       build_type: pull-request
       matrix_name: docs-build
   docs-build:
-    needs: [docs-build-matrix, conda-python-build, conda-python-build-noarch, changed-files]
+    needs:
+      [
+        docs-build-matrix,
+        conda-python-build,
+        conda-python-build-noarch,
+        changed-files,
+      ]
     permissions:
       actions: read
       contents: read

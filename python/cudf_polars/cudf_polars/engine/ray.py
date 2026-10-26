@@ -733,11 +733,18 @@ def get_num_gpus_in_ray_cluster() -> int:
     return free_gpus
 
 
-def _wait_for_actor_shutdown(ref: ObjectRef[Any], deadline: float) -> None:
-    """Wait for actor exit, ignoring Ray's expected termination error."""
+def _wait_for_actor_shutdown(
+    actor: ActorHandle[Any], ref: ObjectRef[Any], deadline: float
+) -> None:
+    """Wait for graceful actor exit, force-killing it on timeout."""
     timeout = max(0.0, deadline - time.monotonic())
-    with contextlib.suppress(ray.exceptions.RayActorError):
+    try:
         ray.get(ref, timeout=timeout)
+    except ray.exceptions.RayActorError:  # pragma: no cover
+        pass
+    except ray.exceptions.GetTimeoutError:  # pragma: no cover
+        ray.kill(actor, no_restart=True)
+        raise
 
 
 def _shutdown_ray(
@@ -762,8 +769,10 @@ def _shutdown_ray(
             run_cleanup_steps(
                 "Ray actor shutdown failed",
                 *(
-                    lambda ref=ref: _wait_for_actor_shutdown(ref, deadline)
-                    for ref in refs
+                    lambda actor=actor, ref=ref: _wait_for_actor_shutdown(
+                        actor, ref, deadline
+                    )
+                    for actor, ref in zip(rank_actors, refs, strict=True)
                 ),
             )
 

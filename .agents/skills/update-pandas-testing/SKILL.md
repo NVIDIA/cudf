@@ -111,6 +111,34 @@ for prefix in plugin["NODEIDS_PATHS_TO_SKIP"]:
 ```
 The `-m "not slow and not single_cpu and not db and not network"` filter in `run-pandas-tests.sh` deselects some tests. Before removing a key, confirm that it is truly gone from the new pandas test suite (for example with `grep` in `pandas-testing/pandas-tests`) and not only deselected by a marker.
 
+### Remove entries that never apply
+
+`pytest_collection_modifyitems` applies only the first dictionary that matches a test, in the order given in "The `pandas-testing-plugin.py` dictionaries". List the entries that an earlier dictionary already covers:
+```python
+import runpy
+
+plugin = runpy.run_path(
+    "<cudf repo>/python/cudf/cudf/pandas/scripts/pandas-testing-plugin.py"
+)
+skip = set(plugin["NODEIDS_TO_SKIP"])
+paths = tuple(plugin["NODEIDS_PATHS_TO_SKIP"])
+may_fail = set(plugin["NODEIDS_THAT_MAY_FAIL"])
+for name in (
+    "NODEIDS_TO_SKIP_WHEN_SHARDED",
+    "NODEIDS_THAT_MAY_FAIL",
+    "NODEIDS_THAT_FAIL",
+):
+    for key in sorted(set(plugin[name]) & skip):
+        print(name, key, "is in NODEIDS_TO_SKIP")
+for name in ("NODEIDS_TO_SKIP", "NODEIDS_THAT_MAY_FAIL", "NODEIDS_THAT_FAIL"):
+    for key in sorted(plugin[name]):
+        if key.startswith(paths):
+            print(name, key, "is under a NODEIDS_PATHS_TO_SKIP prefix")
+for key in sorted(set(plugin["NODEIDS_THAT_FAIL"]) & may_fail):
+    print("NODEIDS_THAT_FAIL", key, "is in NODEIDS_THAT_MAY_FAIL")
+```
+Remove each listed entry from the dictionary named first on its line. The one exception is a `NODEIDS_TO_SKIP` entry under a `NODEIDS_PATHS_TO_SKIP` key that is the node id of that single test. In that case, keep the `NODEIDS_TO_SKIP` entry and remove the `NODEIDS_PATHS_TO_SKIP` entry. A test in both `NODEIDS_TO_SKIP_WHEN_SHARDED` and `NODEIDS_THAT_MAY_FAIL` is intended: it is skipped when sharded and allowed to fail otherwise. Run this check again before sorting the dictionaries.
+
 ### Run the tests
 
 1. Run the same `run-pandas-tests.sh` command that `ci/cudf_pandas_scripts/pandas-tests/run.sh` runs, from the fresh working directory, and pipe the output to a file. Omit `--junitxml` and the sharding arguments, so the full suite runs unsharded like the nightly job:

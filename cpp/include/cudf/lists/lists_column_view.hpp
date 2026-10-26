@@ -5,6 +5,7 @@
 #pragma once
 
 #include <cudf/column/column.hpp>
+#include <cudf/column/column_child_offsets.hpp>
 #include <cudf/column/column_view.hpp>
 #include <cudf/utilities/export.hpp>
 
@@ -51,8 +52,10 @@ class lists_column_view : private column_view {
    */
   lists_column_view& operator=(lists_column_view&&) = default;
 
-  static constexpr size_type offsets_column_index{0};  ///< The index of the offsets column
-  static constexpr size_type child_column_index{1};    ///< The index of the child column
+  static constexpr size_type offsets_column_index =
+    lists_offsets_column_index;  ///< The index of the offsets column
+  static constexpr size_type child_column_index =
+    lists_child_column_index;  ///< The index of the child column
 
   using column_view::child_begin;
   using column_view::child_end;

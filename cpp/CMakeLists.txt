@@ -513,7 +513,7 @@ function(precompile_fixed_width_kernel_fragments)
     )
     set(VARIANT_NAME transform_kernel_${FILE_INDEX})
     set(INSTANCE
-        "cudf::jit::transform_kernel<false, false, cudf::jit::type_list<cudf::jit::column_accessor<0, cudf::column_device_view_core, ${TYPE}, false, 0>>, cudf::jit::type_list<cudf::jit::column_accessor<0, cudf::mutable_column_device_view_core, ${TYPE}, false, 0>>>"
+        "cudf::jit::transform_kernel<false, false, cudf::jit::type_list<cudf::jit::column_accessor<0, ${TYPE}, false, 0>>, cudf::jit::type_list<cudf::jit::column_accessor<0, ${TYPE}, false, 0>>>"
     )
     add_fragment(
       cudf_fragments
@@ -548,7 +548,7 @@ function(precompile_fixed_width_kernel_fragments)
       )
       set(VARIANT_NAME transform_kernel_${FILE_INDEX})
       set(INSTANCE
-          "cudf::jit::transform_kernel<false, false, cudf::jit::type_list<cudf::jit::column_accessor<0, cudf::column_device_view_core, ${TYPE}, false, 0>, cudf::jit::column_accessor<1, cudf::column_device_view_core, ${TYPE}, ${RHS_IS_SCALAR}, 0>>, cudf::jit::type_list<cudf::jit::column_accessor<0, cudf::mutable_column_device_view_core, ${TYPE}, false, 0>>>"
+          "cudf::jit::transform_kernel<false, false, cudf::jit::type_list<cudf::jit::column_accessor<0, ${TYPE}, false, 0>, cudf::jit::column_accessor<1, ${TYPE}, ${RHS_IS_SCALAR}, 0>>, cudf::jit::type_list<cudf::jit::column_accessor<0, ${TYPE}, false, 0>>>"
       )
       add_fragment(
         cudf_fragments
@@ -578,20 +578,9 @@ endfunction()
 # amortize the cost of JIT compilation for kernels that have matching signatures
 function(precompile_string_kernel_fragments)
   list(APPEND CUDF_PRECOMPILE_STRING_OUTPUT_PHYSICAL_TYPES uint8_t uint16_t uint32_t uint64_t
-       cuda::std::span<char>
+       cudf::mutable_string_view
   )
-  list(
-    APPEND
-    CUDF_PRECOMPILE_STRING_OUTPUT_COLUMN_TYPES
-    cudf::mutable_column_device_view_core
-    cudf::mutable_column_device_view_core
-    cudf::mutable_column_device_view_core
-    cudf::mutable_column_device_view_core
-    cudf::jit::mutable_strings_column_device_view
-  )
-  foreach(OUTPUT_TYPE OUTPUT_COLUMN_TYPE IN ZIP_LISTS CUDF_PRECOMPILE_STRING_OUTPUT_PHYSICAL_TYPES
-                      CUDF_PRECOMPILE_STRING_OUTPUT_COLUMN_TYPES
-  )
+  foreach(OUTPUT_TYPE IN LISTS CUDF_PRECOMPILE_STRING_OUTPUT_PHYSICAL_TYPES)
     # Pre-compile for up to 8 output columns
     foreach(OUTPUT_INDICES IN ITEMS "0" "0;1" "0;1;2" "0;1;2;3" "0;1;2;3;4" "0;1;2;3;4;5"
                                     "0;1;2;3;4;5;6" "0;1;2;3;4;5;6;7"
@@ -606,17 +595,15 @@ function(precompile_string_kernel_fragments)
       set(OUTPUT_ACCESSORS "")
       set(OUTPUT_POINTERS "")
       foreach(OUTPUT_INDEX IN LISTS OUTPUT_INDICES)
-        list(
-          APPEND
-          OUTPUT_ACCESSORS
-          "cudf::jit::column_accessor<${OUTPUT_INDEX}, ${OUTPUT_COLUMN_TYPE}, ${OUTPUT_TYPE}, false, 0>"
+        list(APPEND OUTPUT_ACCESSORS
+             "cudf::jit::column_accessor<${OUTPUT_INDEX}, ${OUTPUT_TYPE}, false, 0>"
         )
         list(APPEND OUTPUT_POINTERS "${OUTPUT_TYPE} *")
       endforeach()
       list(JOIN OUTPUT_ACCESSORS " ," OUTPUT_ACCESSORS_STR)
       list(JOIN OUTPUT_POINTERS " ," OUTPUT_POINTERS_STR)
       set(INSTANCE
-          "cudf::jit::transform_kernel<false, false, cudf::jit::type_list<cudf::jit::column_accessor<0, cudf::column_device_view_core, cudf::string_view, false, 0>>, cudf::jit::type_list<${OUTPUT_ACCESSORS_STR}>>"
+          "cudf::jit::transform_kernel<false, false, cudf::jit::type_list<cudf::jit::column_accessor<0, cudf::string_view, false, 0>>, cudf::jit::type_list<${OUTPUT_ACCESSORS_STR}>>"
       )
       add_fragment(
         cudf_fragments

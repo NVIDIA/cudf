@@ -104,7 +104,7 @@ __device__ void transform_kernel(size_type row_size,
              ...);
             thread_error = cuda::std::max(thread_error, error);
           });
-        }(Out::null_output_arg(output_cols, row_index)...);
+        }(Out::nullable_output_arg(output_cols, row_index)...);
       });
     }
   }

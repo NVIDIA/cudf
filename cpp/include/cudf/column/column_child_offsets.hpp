@@ -14,12 +14,28 @@
 
 namespace CUDF_EXPORT cudf {
 
-static constexpr size_type offsets_column_index = 0;  ///< Child index of the offsets column
+/**
+ * @brief Child index of the offsets column.
+ * @ingroup column_classes
+ */
+constexpr size_type offsets_column_index = 0;
 
 static constexpr size_type dictionary_indices_column_index =
   0;  ///< Child index of the dictionary indices column
 
 static constexpr size_type dictionary_keys_column_index =
   1;  ///< Child index of the dictionary key column
+
+/**
+ * @brief Child index of the list offsets column.
+ * @ingroup lists_classes
+ */
+constexpr size_type lists_offsets_column_index = offsets_column_index;
+
+/**
+ * @brief Child index of the list values column.
+ * @ingroup lists_classes
+ */
+constexpr size_type lists_child_column_index = 1;
 
 }  // namespace CUDF_EXPORT cudf

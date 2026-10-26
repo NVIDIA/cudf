@@ -44,6 +44,7 @@ class column;
 class column_view;
 class mutable_column_view;
 class string_view;
+class mutable_string_view;
 class list_view;
 class struct_view;
 class scalar;

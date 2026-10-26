@@ -6,6 +6,7 @@
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_factories.hpp>
+#include <cudf/detail/copy.hpp>
 #include <cudf/detail/device_scalar.hpp>
 #include <cudf/detail/null_mask.cuh>
 #include <cudf/detail/null_mask.hpp>
@@ -20,9 +21,14 @@
 #include <cudf/strings/detail/utilities.hpp>
 #include <cudf/utilities/traits.hpp>
 
+#include <rmm/exec_policy.hpp>
+
 #include <cuda/buffer>
 #include <cuda/iterator>
+#include <cuda/std/span>
 #include <cuda/stream>
+#include <thrust/iterator/counting_iterator.h>
+#include <thrust/logical.h>
 
 #include <cudf_fragments.hpp>
 #include <jit/cache.hpp>
@@ -35,6 +41,7 @@
 
 #include <algorithm>
 #include <array>
+#include <limits>
 #include <span>
 #include <variant>
 
@@ -42,14 +49,16 @@ namespace cudf {
 namespace {
 
 using jit::fixed_width_column;
+using jit::mutable_lists_column;
 using jit::mutable_strings_column;
 using jit::output_column;
 using jit::string_views_column;
 
 using input_column_view = transform_input;
-using handle            = std::variant<
-             std::unique_ptr<column_device_view, std::function<void(column_device_view*)>>,
-             std::unique_ptr<mutable_column_device_view, std::function<void(mutable_column_device_view*)>>>;
+
+using handle = std::variant<
+  std::unique_ptr<column_device_view, std::function<void(column_device_view*)>>,
+  std::unique_ptr<mutable_column_device_view, std::function<void(mutable_column_device_view*)>>>;
 
 namespace jit_transform {
 
@@ -243,6 +252,7 @@ rtcx::binary_type as_rtcx_binary_type(lto_binary_type type)
   switch (type) {
     case lto_binary_type::LTO_IR: return rtcx::binary_type::LTO_IR;
     case lto_binary_type::FATBIN: return rtcx::binary_type::FATBIN;
+    case lto_binary_type::PTX: return rtcx::binary_type::PTX;
     default:
       CUDF_FAIL(
         std::format("Unrecognized LTO binary type {} for LTO transform", static_cast<int>(type)),
@@ -332,9 +342,13 @@ size_type inplace_null_mask_and(bitmask_type* null_mask,
 
   if (!is_nullable) { return 0; }
 
+  auto init_mask = [&](bool valid) {
+    CUDF_CUDA_TRY(cudaMemsetAsync(
+      null_mask, valid ? 0xff : 0, bitmask_allocation_size_bytes(row_size), stream.get()));
+  };
   if (inputs.empty()) {
     // no input, set all to valid
-    set_null_mask(null_mask, 0, row_size, true, stream);
+    init_mask(true);
     return 0;
   }
 
@@ -350,7 +364,7 @@ size_type inplace_null_mask_and(bitmask_type* null_mask,
 
     if (scalar_is_null) {
       // scalar is null, all rows will be null
-      set_null_mask(null_mask, 0, row_size, false, stream);
+      init_mask(false);
       return row_size;
     }
   }
@@ -360,7 +374,7 @@ size_type inplace_null_mask_and(bitmask_type* null_mask,
 
   if (!has_cols) {
     // no non-scalar columns, so all rows are valid
-    set_null_mask(null_mask, 0, row_size, true, stream);
+    init_mask(true);
     return 0;
   }
 
@@ -381,7 +395,7 @@ size_type inplace_null_mask_and(bitmask_type* null_mask,
 
   if (nullable_masks.empty()) {
     // we only have non-nullable columns, so all rows are valid
-    set_null_mask(null_mask, 0, row_size, true, stream);
+    init_mask(true);
     return 0;
   }
 
@@ -452,7 +466,7 @@ void perform_checks(std::variant<udf_source_type, lto_binary_type> source_type,
                     std::optional<size_type> in_row_size,
                     std::span<transform_input const> inputs,
                     std::span<transform_output const> outputs,
-                    std::span<std::unique_ptr<column> const> string_offsets)
+                    std::span<std::unique_ptr<column> const> output_offsets)
 {
   if (auto* udf_source = std::get_if<udf_source_type>(&source_type);
       udf_source != nullptr && *udf_source == udf_source_type::PTX) {
@@ -485,24 +499,48 @@ void perform_checks(std::variant<udf_source_type, lto_binary_type> source_type,
   CUDF_EXPECTS(std::none_of(outputs.begin(),
                             outputs.end(),
                             [](auto& out) {
-                              return !is_fixed_width(out.type) && out.type.id() != type_id::STRING;
+                              return !(is_fixed_width(out.type) ||
+                                       out.type.id() == type_id::STRING ||
+                                       out.type.id() == type_id::LIST);
                             }),
-               "Transforms only support output of fixed-width or string types",
+               "Transforms only support fixed-width, STRING, or fixed-width LIST outputs",
                std::invalid_argument);
 
-  static constexpr auto is_input_value_supported = [](auto const& c) {
-    return is_fixed_width(c.type()) || c.type().id() == type_id::STRING || is_dictionary(c.type());
+  for (auto const& out : outputs) {
+    if (out.type.id() == type_id::LIST) {
+      CUDF_EXPECTS(out.children.size() == 2,
+                   "LIST outputs require offsets and values child specifications",
+                   std::invalid_argument);
+      auto const& offsets = out.children[lists_offsets_column_index];
+      auto const& values  = out.children[lists_child_column_index];
+      CUDF_EXPECTS(offsets.type.id() == type_id::INT32 && is_fixed_width(values.type),
+                   "LIST outputs require INT32 offsets and a fixed-width values child",
+                   std::invalid_argument);
+    } else {
+      CUDF_EXPECTS(out.children.empty(),
+                   "Child specifications are only supported for LIST outputs",
+                   std::invalid_argument);
+    }
+  }
+
+  static constexpr auto is_input_value_supported = [](auto const& self,
+                                                      column_view const& c) -> bool {
+    if (is_fixed_width(c.type()) || c.type().id() == type_id::STRING) { return true; }
+    if (is_dictionary(c.type())) { return self(self, c.child(dictionary_keys_column_index)); }
+    if (c.type().id() == type_id::LIST) {
+      return is_fixed_width(c.child(lists_child_column_index).type());
+    }
+
+    return false;
   };
   static constexpr auto is_supported_input_type = [&](auto const& c) {
     auto col = std::visit([](auto const& c) { return jit::as_column_view(c); }, c);
-    return is_input_value_supported(col) ||
-           (is_dictionary(col.type()) &&
-            is_input_value_supported(col.child(dictionary_keys_column_index)));
+    return is_input_value_supported(is_input_value_supported, col);
   };
   CUDF_EXPECTS(
     std::none_of(
       inputs.begin(), inputs.end(), [&](auto const& in) { return !is_supported_input_type(in); }),
-    "Transforms only support input of fixed-width, string, or dictionary types",
+    "Transforms only support fixed-width, string, dictionary, or lists of fixed-width inputs",
     std::invalid_argument);
 
   if (!in_row_size.has_value()) {
@@ -526,19 +564,33 @@ void perform_checks(std::variant<udf_source_type, lto_binary_type> source_type,
                "All transform input columns must have the same size",
                std::invalid_argument);
 
-  CUDF_EXPECTS(string_offsets.empty() || (string_offsets.size() == outputs.size()),
-               "Number of string offsets must be empty or match the number of outputs (with nulls "
-               "for each non-string column)",
+  CUDF_EXPECTS(output_offsets.empty() || (output_offsets.size() == outputs.size()),
+               "Number of output offsets must be empty or match the number of outputs (with nulls "
+               "for each output without offsets)",
                std::invalid_argument);
 
   CUDF_EXPECTS(std::all_of(cuda::counting_iterator(size_t{0}),
-                           cuda::counting_iterator(string_offsets.size()),
+                           cuda::counting_iterator(output_offsets.size()),
                            [&](auto i) {
-                             if (outputs[i].type.id() == type_id::STRING) { return true; }
-                             return string_offsets.empty() || string_offsets[i] == nullptr;
+                             if (outputs[i].type.id() == type_id::STRING ||
+                                 outputs[i].type.id() == type_id::LIST) {
+                               return true;
+                             }
+                             return output_offsets.empty() || output_offsets[i] == nullptr;
                            }),
-               "String offsets must only be provided for string outputs",
+               "Output offsets must only be provided for string or list outputs",
                std::invalid_argument);
+
+  for (size_t i = 0; i < outputs.size(); ++i) {
+    if (outputs[i].type.id() != type_id::LIST) { continue; }
+    CUDF_EXPECTS(!output_offsets.empty() && output_offsets[i] != nullptr,
+                 "List outputs require supplied offsets",
+                 std::invalid_argument);
+    auto const& off = *output_offsets[i];
+    CUDF_EXPECTS(off.type().id() == type_id::INT32 && !off.nullable() && off.size() == row_size + 1,
+                 "List output offsets must be non-nullable INT32 with row_size + 1 elements",
+                 std::invalid_argument);
+  }
 }
 
 std::optional<std::pair<bitmask_type*, size_type>> make_stencil(
@@ -644,12 +696,80 @@ std::unique_ptr<column> make_strings_column(device_span<string_view const> strin
     size, std::move(offsets), chars.release(), null_count, std::move(null_mask));
 }
 
+struct make_output_column_fn {
+  template <typename T>
+    requires(is_fixed_width<T>())
+  output_column operator()(transform_output const& output,
+                           size_type row_size,
+                           cuda::device_buffer<cudf::bitmask_type>&& null_mask,
+                           std::optional<std::unique_ptr<column>>&& offsets,
+                           cuda::stream_ref stream,
+                           rmm::device_async_resource_ref mr)
+  {
+    return fixed_width_column::make(output.type, row_size, std::move(null_mask), 0, stream, mr);
+  }
+
+  template <typename T>
+    requires(std::is_same_v<T, string_view>)
+  output_column operator()(transform_output const& output,
+                           size_type row_size,
+                           cuda::device_buffer<cudf::bitmask_type>&& null_mask,
+                           std::optional<std::unique_ptr<column>>&& offsets,
+                           cuda::stream_ref stream,
+                           rmm::device_async_resource_ref mr)
+  {
+    if (!offsets.has_value()) {
+      return string_views_column::make(row_size, std::move(null_mask), 0, stream, mr);
+    } else {
+      auto chars_size =
+        strings::detail::get_offset_value(offsets.value()->view(), row_size, stream);
+      auto chars = rmm::device_buffer{static_cast<size_t>(chars_size), stream, mr};
+      return mutable_strings_column::make(
+        row_size, std::move(chars), std::move(offsets.value()), std::move(null_mask), 0);
+    }
+  }
+
+  template <typename T>
+    requires(std::is_same_v<T, list_view>)
+  output_column operator()(transform_output const& output,
+                           size_type row_size,
+                           cuda::device_buffer<cudf::bitmask_type>&& null_mask,
+                           std::optional<std::unique_ptr<column>>&& offsets,
+                           cuda::stream_ref stream,
+                           rmm::device_async_resource_ref mr)
+  {
+    auto count = strings::detail::get_offset_value(offsets.value()->view(), row_size, stream);
+    auto element_type = output.children.at(lists_child_column_index).type;
+    // TODO: are nulls in the child columns handled correctly?
+    // TODO: if children column are nullable, we need to allocate null masks for each of the
+    // children elements
+    // Must obey propagation rules
+    // TODO: null-propagation based on attributes
+    auto child = make_fixed_width_column(element_type, count, mask_state::UNALLOCATED, stream, mr);
+    return mutable_lists_column{make_lists_column(
+      row_size, std::move(offsets.value()), std::move(child), 0, std::move(null_mask))};
+  }
+
+  template <typename T>
+    requires(!(is_fixed_width<T>() || std::is_same_v<T, string_view> ||
+               std::is_same_v<T, list_view>))
+  output_column operator()(transform_output const& output,
+                           size_type row_size,
+                           cuda::device_buffer<cudf::bitmask_type>&& null_mask,
+                           std::optional<std::unique_ptr<column>>&& offsets,
+                           cuda::stream_ref stream,
+                           rmm::device_async_resource_ref mr)
+  {
+    CUDF_FAIL("Unsupported output type for transform");
+  }
+};
+
 auto make_outputs(null_aware is_null_aware,
                   size_type row_size,
                   std::span<transform_input const> inputs,
                   std::span<transform_output const> outputs,
                   std::span<char const> is_output_nullable,
-                  std::vector<std::unique_ptr<column>> string_offsets,
+                  std::vector<std::unique_ptr<column>> output_offsets,
                   cuda::stream_ref stream,
                   rmm::device_async_resource_ref mr)
 {
@@ -662,26 +782,22 @@ auto make_outputs(null_aware is_null_aware,
     auto nullable   = is_output_nullable[i];
     auto null_state = nullable ? mask_state::UNINITIALIZED : mask_state::UNALLOCATED;
     auto null_mask  = create_null_mask(row_size, null_state, stream, mr);
+    auto offsets    = std::optional<std::unique_ptr<column>>{};
 
-    if (is_fixed_width(output.type)) {
-      auto col =
-        fixed_width_column::make(output.type, row_size, std::move(null_mask), 0, stream, mr);
-      cols.emplace_back(std::move(col));
-    } else if (output.type.id() == type_id::STRING) {
-      if (string_offsets.empty() || string_offsets[i] == nullptr) {
-        auto col = string_views_column::make(row_size, std::move(null_mask), 0, stream, mr);
-        cols.emplace_back(std::move(col));
-      } else {
-        auto chars_size =
-          strings::detail::get_offset_value(string_offsets[i]->view(), row_size, stream);
-        auto chars = rmm::device_buffer{static_cast<size_t>(chars_size), stream, mr};
-        auto col   = mutable_strings_column::make(
-          row_size, std::move(chars), std::move(string_offsets[i]), std::move(null_mask), 0);
-        cols.emplace_back(std::move(col));
-      }
-    } else {
-      CUDF_UNREACHABLE("Unsupported output type for transform");
+    if (!output_offsets.empty() && output_offsets[i] != nullptr) {
+      offsets = std::move(output_offsets[i]);
     }
+
+    auto output_column = type_dispatcher(output.type,
+                                         make_output_column_fn{},
+                                         output,
+                                         row_size,
+                                         std::move(null_mask),
+                                         std::move(offsets),
+                                         stream,
+                                         mr);
+
+    cols.emplace_back(std::move(output_column));
   }
 
   auto stencil = make_stencil(is_null_aware, row_size, inputs, cols, stream);
@@ -741,6 +857,13 @@ auto finalize_output(string_views_column&& c,
     mr);
 }
 
+auto finalize_output(mutable_lists_column&& c,
+                     cuda::stream_ref stream,
+                     rmm::device_async_resource_ref mr)
+{
+  return std::move(c._col);
+}
+
 auto finalize_outputs(null_aware is_null_aware,
                       size_type row_size,
                       std::vector<output_column> outputs,
@@ -767,7 +890,7 @@ std::unique_ptr<table> execute_transform(std::string const& udf,
                                          std::optional<void*> user_data,
                                          std::span<transform_input const> inputs,
                                          std::span<transform_output const> outputs,
-                                         std::vector<std::unique_ptr<column>> string_offsets,
+                                         std::vector<std::unique_ptr<column>> output_offsets,
                                          kernel const* compiled_kernel,
                                          cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
@@ -779,7 +902,7 @@ std::unique_ptr<table> execute_transform(std::string const& udf,
                                                 inputs,
                                                 outputs,
                                                 output_may_be_nullable,
-                                                std::move(string_offsets),
+                                                std::move(output_offsets),
                                                 stream,
                                                 mr);
 
@@ -835,13 +958,13 @@ std::unique_ptr<table> transform(std::string const& udf,
                                  std::optional<void*> user_data,
                                  std::span<transform_input const> inputs,
                                  std::span<transform_output const> outputs,
-                                 std::vector<std::unique_ptr<column>>&& string_offsets,
+                                 std::vector<std::unique_ptr<column>>&& output_offsets,
                                  std::optional<size_type> row_size,
                                  cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
-  perform_checks(source_type, is_null_aware, row_size, inputs, outputs, string_offsets);
+  perform_checks(source_type, is_null_aware, row_size, inputs, outputs, output_offsets);
   return execute_transform(udf,
                            source_type,
                            is_null_aware,
@@ -849,7 +972,7 @@ std::unique_ptr<table> transform(std::string const& udf,
                            user_data,
                            inputs,
                            outputs,
-                           std::move(string_offsets),
+                           std::move(output_offsets),
                            nullptr,
                            stream,
                            mr);
@@ -861,7 +984,7 @@ std::unique_ptr<table> multi_transform(std::string const& udf,
                                        std::optional<void*> user_data,
                                        std::span<transform_input const> inputs,
                                        std::span<transform_output const> outputs,
-                                       std::vector<std::unique_ptr<column>>&& string_offsets,
+                                       std::vector<std::unique_ptr<column>>&& output_offsets,
                                        std::optional<size_type> row_size,
                                        cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr)
@@ -872,7 +995,7 @@ std::unique_ptr<table> multi_transform(std::string const& udf,
                    user_data,
                    inputs,
                    outputs,
-                   std::move(string_offsets),
+                   std::move(output_offsets),
                    row_size,
                    stream,
                    mr);
@@ -990,13 +1113,13 @@ std::unique_ptr<table> transform_lto(std::span<uint8_t const> udf,
                                      std::optional<void*> user_data,
                                      std::span<transform_input const> inputs,
                                      std::span<transform_output const> outputs,
-                                     std::vector<std::unique_ptr<column>>&& string_offsets,
+                                     std::vector<std::unique_ptr<column>>&& output_offsets,
                                      std::optional<size_type> in_row_size,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
-  perform_checks(binary_type, is_null_aware, in_row_size, inputs, outputs, string_offsets);
+  perform_checks(binary_type, is_null_aware, in_row_size, inputs, outputs, output_offsets);
   auto row_size = in_row_size.has_value() ? *in_row_size : jit::get_projection_size(inputs);
   auto output_may_be_nullable = get_null_transformation(is_null_aware, inputs, outputs);
 
@@ -1005,7 +1128,7 @@ std::unique_ptr<table> transform_lto(std::span<uint8_t const> udf,
                                                 inputs,
                                                 outputs,
                                                 output_may_be_nullable,
-                                                std::move(string_offsets),
+                                                std::move(output_offsets),
                                                 stream,
                                                 mr);
   auto stencil_arg               = stencil.has_value() ? stencil->first : nullptr;
@@ -1047,10 +1170,10 @@ struct transform_program::impl {
   void validate(udf_source_type source_type,
                 std::span<transform_input const> actual_inputs,
                 std::span<transform_output const> actual_outputs,
-                std::span<std::unique_ptr<column> const> string_offsets) const
+                std::span<std::unique_ptr<column> const> output_offsets) const
   {
     auto actual_input_specs  = jit::make_input_specs(actual_inputs);
-    auto actual_output_specs = jit::make_output_specs(actual_outputs, string_offsets);
+    auto actual_output_specs = jit::make_output_specs(actual_outputs, output_offsets);
     auto actual_reflection   = jit::reflect(source_type, actual_input_specs, actual_output_specs);
     CUDF_EXPECTS(reflection_ == actual_reflection,
                  "Transform program specifications do not match the provided inputs and outputs",
@@ -1094,13 +1217,13 @@ transform_program::transform_program(std::string const& udf,
                                      std::optional<void*> user_data,
                                      std::span<transform_input const> inputs,
                                      std::span<transform_output const> outputs,
-                                     std::span<std::unique_ptr<column> const> string_offsets)
+                                     std::span<std::unique_ptr<column> const> output_offsets)
   : transform_program(udf,
                       source_type,
                       is_null_aware,
                       user_data,
                       jit::make_input_specs(inputs),
-                      jit::make_output_specs(outputs, string_offsets))
+                      jit::make_output_specs(outputs, output_offsets))
 {
 }
 
@@ -1163,15 +1286,15 @@ transform_program::~transform_program()                              = default;
 
 std::unique_ptr<table> transform_program::run(std::span<transform_input const> inputs,
                                               std::span<transform_output const> outputs,
-                                              std::vector<std::unique_ptr<column>>&& string_offsets,
+                                              std::vector<std::unique_ptr<column>>&& output_offsets,
                                               std::optional<size_type> row_size,
                                               cuda::stream_ref stream,
                                               rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
-  impl_->validate(impl_->source_type_, inputs, outputs, string_offsets);
+  impl_->validate(impl_->source_type_, inputs, outputs, output_offsets);
   perform_checks(
-    impl_->source_type_, impl_->is_null_aware_, row_size, inputs, outputs, string_offsets);
+    impl_->source_type_, impl_->is_null_aware_, row_size, inputs, outputs, output_offsets);
   return execute_transform({},
                            impl_->source_type_,
                            impl_->is_null_aware_,
@@ -1179,7 +1302,7 @@ std::unique_ptr<table> transform_program::run(std::span<transform_input const> i
                            impl_->user_data_,
                            inputs,
                            outputs,
-                           std::move(string_offsets),
+                           std::move(output_offsets),
                            &impl_->kernel_,
                            stream,
                            mr);

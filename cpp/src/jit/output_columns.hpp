@@ -140,5 +140,31 @@ struct mutable_strings_column {
   [[nodiscard]] bitmask_type* null_mask() { return _col->mutable_view().null_mask(); }
 };
 
-using output_column = std::variant<fixed_width_column, string_views_column, mutable_strings_column>;
+struct mutable_lists_column_view {
+  mutable_column_view _view;
+
+  [[nodiscard]] auto to_device(cuda::stream_ref stream) const
+  {
+    return mutable_column_device_view::create(_view, stream);
+  }
+};
+
+// Lists retain the supplied offsets and own the directly written child.
+struct mutable_lists_column {
+  std::unique_ptr<column> _col;
+
+  [[nodiscard]] auto mutable_view() const
+  {
+    return mutable_lists_column_view{_col->mutable_view()};
+  }
+
+  void set_null_count(size_type count) { _col->set_null_count(count); }
+
+  [[nodiscard]] bool nullable() const { return _col->nullable(); }
+
+  [[nodiscard]] bitmask_type* null_mask() { return _col->mutable_view().null_mask(); }
+};
+
+using output_column = std::
+  variant<fixed_width_column, string_views_column, mutable_strings_column, mutable_lists_column>;
 }  // namespace cudf::jit

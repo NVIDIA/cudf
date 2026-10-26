@@ -103,21 +103,7 @@ TYPED_TEST(TileTest, OneColumnZeroCount)
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected, actual->view());
 }
 
-struct TileMemoryResourcesTest : cudf::test::BaseFixture {
-  void check(cudf::table_view input, cudf::table_view expected)
-  {
-    auto const stream = cudf::test::get_default_stream();
-    auto harness      = cudf::test::memory_resource_test_harness{this->mr()};
-    cudf::test::expect_api_uses_memory_resources(
-      harness,
-      [&](auto resources) { return cudf::tile(input, 2, stream, resources); },
-      [](auto const& result) { return result->alloc_size(); },
-      [&](auto const& result) { CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result->view()); },
-      {cudf::test::output_allocation_expectation::EXACT,
-       cudf::test::temporary_allocation_expectation::SOME},
-      stream);
-  }
-};
+struct TileMemoryResourcesTest : cudf::test::BaseFixture {};
 
 TEST_F(TileMemoryResourcesTest, NullableFixedWidthAndStrings)
 {
@@ -128,6 +114,16 @@ TEST_F(TileMemoryResourcesTest, NullableFixedWidthAndStrings)
   cudf::test::strings_column_wrapper expected_strings{
     {"one", "two", "three", "one", "two", "three"}, {1, 0, 1, 1, 0, 1}};
 
-  check(cudf::table_view{{numbers, strings}},
-        cudf::table_view{{expected_numbers, expected_strings}});
+  auto const input    = cudf::table_view{{numbers, strings}};
+  auto const expected = cudf::table_view{{expected_numbers, expected_strings}};
+  auto const stream   = cudf::test::get_default_stream();
+  auto harness        = cudf::test::memory_resource_test_harness{this->mr()};
+  cudf::test::expect_api_uses_memory_resources(
+    harness,
+    [&](auto resources) { return cudf::tile(input, 2, stream, resources); },
+    [](auto const& result) { return result->alloc_size(); },
+    [&](auto const& result) { CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result->view()); },
+    {cudf::test::output_allocation_expectation::EXACT,
+     cudf::test::temporary_allocation_expectation::SOME},
+    stream);
 }

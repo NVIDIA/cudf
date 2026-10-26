@@ -290,7 +290,7 @@ std::unique_ptr<column> empty_like(scalar const& input);
  *
  * @param input Immutable view of input column to emulate
  * @param mask_alloc Optional, Policy for allocating null mask. Defaults to RETAIN
- * @param mr Memory resources used for temporary allocations and the returned column
+ * @param mr Memory resources used for device allocations
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @return A column with sufficient uninitialized capacity to hold the same
  * number of elements as `input` of the same type as `input.type()`
@@ -313,7 +313,7 @@ std::unique_ptr<column> allocate_like(
  * @param size The desired number of elements that the new column should have capacity for
  * @param mask_alloc Optional, Policy for allocating null mask. Defaults to RETAIN
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Memory resources used for temporary allocations and the returned column
+ * @param mr Memory resources used for device allocations
  * @return A column with sufficient uninitialized capacity to hold the specified number of elements
  * as `input` of the same type as `input.type()`
  */

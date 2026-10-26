@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from libc.stdint cimport int32_t, uint64_t
+from libc.stdint cimport int32_t, uint8_t, uint64_t
 from libcpp cimport bool as bool_t
 from libcpp.memory cimport shared_ptr, unique_ptr
 from libcpp.optional cimport optional
@@ -34,6 +34,20 @@ cdef extern from "<cudf_streaming/channel_metadata.hpp>" \
         cpp_order order
         cpp_null_order null_order
         bool_t operator==(const cpp_OrderKey&) noexcept
+
+    cpdef enum class RowOrderingScope "cudf_streaming::row_ordering_scope"(uint8_t):
+        GLOBAL
+        RANK_LOCAL
+
+    cdef cppclass cpp_RowOrdering "cudf_streaming::row_ordering":
+        cpp_RowOrdering() noexcept
+        cpp_RowOrdering(
+            vector[cpp_OrderKey], RowOrderingScope, vector[int32_t]
+        ) except +ex_handler
+        vector[cpp_OrderKey] order_keys
+        RowOrderingScope scope
+        vector[int32_t] group_keys
+        bool_t operator==(const cpp_RowOrdering&) noexcept
 
     cdef cppclass cpp_Ordering "cudf_streaming::ordering":
         cpp_Ordering() noexcept
@@ -97,6 +111,7 @@ cdef extern from "<cudf_streaming/channel_metadata.hpp>" \
     cdef cppclass cpp_Partitioning "cudf_streaming::partitioning":
         cpp_PartitioningSpec inter_rank
         cpp_PartitioningSpec local
+        vector[cpp_RowOrdering] row_orderings
         cpp_Partitioning() except +ex_handler
         cpp_Partitioning(const cpp_Partitioning&) except +ex_handler
 
@@ -128,6 +143,13 @@ cdef class OrderKey:
 
     @staticmethod
     cdef OrderKey from_cpp(cpp_OrderKey key)
+
+
+cdef class RowOrdering:
+    cdef cpp_RowOrdering _handle
+
+    @staticmethod
+    cdef RowOrdering from_cpp(cpp_RowOrdering ordering)
 
 
 cdef class Ordering:

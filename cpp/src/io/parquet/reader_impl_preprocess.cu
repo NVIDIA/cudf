@@ -1059,7 +1059,10 @@ void reader_impl::preprocess_subpass_pages(read_mode mode, size_t chunk_read_lim
   compute_output_chunks_for_subpass();
 }
 
-void reader_impl::allocate_columns(read_mode mode, size_t skip_rows, size_t num_rows)
+void reader_impl::allocate_columns(read_mode mode,
+                                   size_t skip_rows,
+                                   size_t num_rows,
+                                   cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -1089,6 +1092,16 @@ void reader_impl::allocate_columns(read_mode mode, size_t skip_rows, size_t num_
   };
   auto unwritten_bufs = cudf::detail::make_empty_pinned_vector<cudf::device_span<cuda::std::byte>>(
     _input_columns.size(), _stream);
+
+  // Top-level columns replaced after decoding by the decimal width cast or the dictionary encoding
+  // are intermediates
+  auto const column_mr = [&](auto const& out_buf, size_t max_depth) {
+    auto const is_cast = cudf::is_fixed_point(out_buf.type) and
+                         _options.decimal_width != type_id::EMPTY and
+                         out_buf.type.id() != _options.decimal_width;
+    auto const is_encoded = _options.output_dict_columns and out_buf.type.id() == type_id::STRING;
+    return (max_depth == 1 and (is_cast or is_encoded)) ? mr.as_temporary() : mr;
+  };
 
   for (auto const& input_col : _input_columns) {
     size_t const max_depth = input_col.nesting_depth();
@@ -1121,7 +1134,7 @@ void reader_impl::allocate_columns(read_mode mode, size_t skip_rows, size_t num_
                                  cudf::mask_state::UNINITIALIZED,
                                  false,
                                  _stream,
-                                 decode_mr().get_output_mr());
+                                 column_mr(out_buf, max_depth).get_output_mr());
         nullmask_bufs.emplace_back(
           out_buf.null_mask(),
           cudf::util::round_up_safe(out_buf.null_mask_size(), sizeof(cudf::bitmask_type)) /
@@ -1252,11 +1265,8 @@ void reader_impl::allocate_columns(read_mode mode, size_t skip_rows, size_t num_
                        std::overflow_error);
           // allocate
           // we're going to start null mask as all valid and then turn bits off if necessary
-          out_buf.create_with_mask(buffer_size,
-                                   cudf::mask_state::UNINITIALIZED,
-                                   false,
-                                   _stream,
-                                   decode_mr().get_output_mr());
+          out_buf.create_with_mask(
+            buffer_size, cudf::mask_state::UNINITIALIZED, false, _stream, mr.get_output_mr());
           nullmask_bufs.emplace_back(
             out_buf.null_mask(),
             cudf::util::round_up_safe(out_buf.null_mask_size(), sizeof(cudf::bitmask_type)) /

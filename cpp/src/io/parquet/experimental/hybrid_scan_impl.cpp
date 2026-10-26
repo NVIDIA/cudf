@@ -1123,7 +1123,7 @@ table_with_metadata hybrid_scan_reader_impl::read_chunk_internal(read_mode mode,
   preprocess_chunk_strings(mode, read_info);
 
   // Allocate memory buffers for the output columns.
-  allocate_columns(mode, read_info.skip_rows, read_info.num_rows);
+  allocate_columns(mode, read_info.skip_rows, read_info.num_rows, _mr);
 
   // Parse data into the output buffers.
   decode_page_data(mode, read_info.skip_rows, read_info.num_rows);
@@ -1152,8 +1152,8 @@ table_with_metadata hybrid_scan_reader_impl::read_chunk_internal(read_mode mode,
     }
   }
 
-  out_columns =
-    cudf::structs::detail::enforce_null_consistency(std::move(out_columns), _stream, _mr);
+  out_columns = cudf::structs::detail::enforce_null_consistency(
+    std::move(out_columns), _stream, _mr.get_output_mr());
 
   // Compute the output number of rows per source
   if (mode == read_mode::CHUNKED_READ) {
@@ -1180,9 +1180,11 @@ table_with_metadata hybrid_scan_reader_impl::finalize_output(
   for (std::size_t i = out_columns.size(); i < _output_buffers.size(); ++i) {
     if (!_output_metadata) {
       column_name_info& col_name = out_metadata.schema_info[i];
-      out_columns.emplace_back(io::detail::empty_like(_output_buffers[i], &col_name, _stream, _mr));
+      out_columns.emplace_back(
+        io::detail::empty_like(_output_buffers[i], &col_name, _stream, _mr.get_output_mr()));
     } else {
-      out_columns.emplace_back(io::detail::empty_like(_output_buffers[i], nullptr, _stream, _mr));
+      out_columns.emplace_back(
+        io::detail::empty_like(_output_buffers[i], nullptr, _stream, _mr.get_output_mr()));
     }
   }
 
@@ -1209,7 +1211,7 @@ table_with_metadata hybrid_scan_reader_impl::finalize_output(
   // increment the output chunk count
   _file_itm_data._output_chunk_count++;
 
-  apply_decimal_width_cast(out_columns);
+  apply_decimal_width_cast(out_columns, _mr);
 
   // Prepend the source and row index columns to filter columns only
   if (columns_mode == read_columns_mode::FILTER_COLUMNS) {
@@ -1258,16 +1260,17 @@ table_with_metadata hybrid_scan_reader_impl::finalize_output(
     auto const final_filter      = compute_offset_filter();
     auto const final_filter_expr = final_filter.get_converted_expr();
 
-    auto final_row_mask = cudf::detail::compute_column(*read_table,
-                                                       final_filter_expr.value().get(),
-                                                       _stream,
-                                                       cudf::get_current_device_resource_ref());
+    auto final_row_mask = cudf::detail::compute_column(
+      *read_table, final_filter_expr.value().get(), _stream, _mr.get_temporary_mr());
     CUDF_EXPECTS(final_row_mask->view().type().id() == type_id::BOOL8,
                  "Predicate filter should return a boolean");
 
     // Apply the final row mask to get the final output table
-    auto output_table = cudf::detail::apply_mask(
-      read_table->view(), *final_row_mask, cudf::detail::mask_type::RETENTION, _stream, _mr);
+    auto output_table = cudf::detail::apply_mask(read_table->view(),
+                                                 *final_row_mask,
+                                                 cudf::detail::mask_type::RETENTION,
+                                                 _stream,
+                                                 _mr.get_output_mr());
 
     // Update the input row mask to reflect the final row mask.
     update_row_mask(final_row_mask->view(), row_mask, mask_offset, _stream);
@@ -1285,8 +1288,11 @@ table_with_metadata hybrid_scan_reader_impl::finalize_output(
       (read_table->num_rows() == row_mask.size())
         ? row_mask
         : cudf::split(row_mask, {mask_offset, mask_offset + read_table->num_rows()}, _stream)[1];
-    auto output_table = cudf::detail::apply_mask(
-      read_table->view(), effective_row_mask, cudf::detail::mask_type::RETENTION, _stream, _mr);
+    auto output_table = cudf::detail::apply_mask(read_table->view(),
+                                                 effective_row_mask,
+                                                 cudf::detail::mask_type::RETENTION,
+                                                 _stream,
+                                                 _mr.get_output_mr());
     return {std::move(output_table), std::move(out_metadata)};
   }
 }

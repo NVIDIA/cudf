@@ -15,7 +15,11 @@ import polars as pl
 from polars.testing import assert_frame_equal
 
 import pylibcudf as plc
-from cudf_streaming.channel_metadata import OrderScheme
+from cudf_streaming.channel_metadata import (
+    OrderScheme,
+    RowOrdering,
+    RowOrderingScope,
+)
 from cudf_streaming.table_chunk import TableChunk
 
 from cudf_polars import Translator
@@ -187,7 +191,9 @@ def test_groupby_adjusts_truncated_ordering_with_maintain_order(
     (ordering,) = scheme.orderings
     assert tuple(key.column_index for key in ordering.keys) == (0,)
     assert ordering.strict_boundaries is True
-    assert ordering.locally_ordered is True
+    assert metadata.partitioning.row_orderings == (
+        RowOrdering(ordering.keys, RowOrderingScope.GLOBAL),
+    )
 
 
 @pytest.mark.parametrize("keys", [("key",), ("key", "key2")])

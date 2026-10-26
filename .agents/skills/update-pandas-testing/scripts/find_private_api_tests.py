@@ -33,6 +33,7 @@ import argparse
 import ast
 import importlib
 import inspect
+import json
 import re
 import runpy
 import types
@@ -564,10 +565,10 @@ def print_plugin_entries(
         "file is flagged)"
     )
     for path, reason in sorted(paths.items()):
-        print(f'    "{path}": "{reason}",')  # noqa: T201
+        print(f"    {json.dumps(path)}: {json.dumps(reason)},")  # noqa: T201
     print("\n# NODEIDS_TO_SKIP candidates")  # noqa: T201
     for node_id, reason in sorted(node_ids.items()):
-        print(f'    "{node_id}": "{reason}",')  # noqa: T201
+        print(f"    {json.dumps(node_id)}: {json.dumps(reason)},")  # noqa: T201
 
 
 def main() -> None:

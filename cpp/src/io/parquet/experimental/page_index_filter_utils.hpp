@@ -104,7 +104,7 @@ compute_page_row_offsets_and_colchunk_page_offsets(
  * @param total_rows Total number of rows
  * @param stats_expression AST expression to evaluate on page statistics
  * @param stream CUDA stream
- * @param mr Memory resources for the output column and temporary allocations
+ * @param mr Memory resources used to allocate temporary and output device memory
  * @return Row mask column
  */
 [[nodiscard]] std::unique_ptr<column> compute_row_mask_from_page_stats(

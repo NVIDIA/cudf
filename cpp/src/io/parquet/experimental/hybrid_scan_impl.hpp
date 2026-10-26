@@ -225,7 +225,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
    *        Ignored for `ALL_COLUMNS`
    * @param options Parquet reader options
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Memory resources used to allocate the device memory of the returned table
+   * @param mr Memory resources used to allocate temporary and output device memory
    * @return Table of materialized columns and metadata
    */
   template <read_columns_mode mode>
@@ -251,7 +251,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
    *        Ignored for `ALL_COLUMNS`
    * @param options Parquet reader options
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Memory resources used to allocate the device memory of the returned tables
+   * @param mr Memory resources used to allocate temporary and output device memory
    */
   template <read_columns_mode mode>
   void setup_chunked_table_materialization(
@@ -326,7 +326,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
    * @param options Reader options
    * @param num_sources Number of input sources
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Memory resources used to allocate the returned column's device memory
+   * @param mr Memory resources used to allocate temporary and output device memory
    */
   void initialize_options(parquet_reader_options const& options,
                           std::size_t num_sources,
@@ -419,7 +419,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
    * @param sparse_page_io Boolean indicating if page-level (sparse) I/O is enabled
    * @param options Parquet reader options
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Memory resources used to allocate the device memory for the output columns
+   * @param mr Memory resources used to allocate temporary and output device memory
    */
   void prepare_materialization(read_mode mode,
                                read_columns_mode columns_mode,

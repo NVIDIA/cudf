@@ -93,7 +93,6 @@ dependencies:
 - pyqt
 - pyreadstat
 - pytables
-- pytest
 - pytest-benchmark
 - pytest-cases>=3.8.2
 - pytest-cov

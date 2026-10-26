@@ -1784,7 +1784,7 @@ dependencies:
           - openpyxl
           - pyarrow
           - pyreadstat
-          - pytest
+          - pytest<9.1.0
           # Used in cudf/ci/cudf_pandas_scripts/pandas-tests/run.sh
           - pytest-reportlog
           - pytest-xdist

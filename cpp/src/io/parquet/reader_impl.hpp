@@ -113,6 +113,8 @@ class reader_impl {
   reader_impl(reader_impl&&)                 = delete;
   reader_impl& operator=(reader_impl&&)      = delete;
 
+  virtual ~reader_impl() = default;
+
   /**
    * @copydoc cudf::io::chunked_parquet_reader::has_next
    */
@@ -511,6 +513,19 @@ class reader_impl {
    * @param out_columns Output columns to cast
    */
   void apply_decimal_width_cast(std::vector<std::unique_ptr<cudf::column>>& out_columns);
+
+  /**
+   * @brief Memory resources to decode the output columns with
+   *
+   * Decoded columns are intermediates when a filter is applied to produce the output table, so
+   * they are allocated with the temporary resource in that case.
+   *
+   * @return Memory resources whose output resource is used for the decoded columns
+   */
+  [[nodiscard]] virtual cudf::memory_resources decode_mr() const
+  {
+    return _expr_conv.get_converted_expr().has_value() ? _mr.as_temporary() : _mr;
+  }
 
   cuda::stream_ref _stream;
   cudf::memory_resources _mr;

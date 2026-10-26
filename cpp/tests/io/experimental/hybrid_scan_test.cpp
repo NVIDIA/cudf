@@ -674,11 +674,9 @@ TEST_F(HybridScanTest, MaterializeUsesMemoryResources)
                                          resources.output_mr());
     resources.synchronize(stream);
   }
-  // Columns are decoded on the output resource before the row mask is applied, so the output
-  // resource also sees the released unfiltered tables
   resources.expect_resource_usage(
     filter_result.tbl->alloc_size() + payload_result.tbl->alloc_size(),
-    {cudf::test::output_allocation_expectation::AT_LEAST_LIVE,
+    {cudf::test::output_allocation_expectation::EXACT,
      cudf::test::temporary_allocation_expectation::SOME},
     stream);
 

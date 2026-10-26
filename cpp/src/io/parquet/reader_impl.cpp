@@ -816,7 +816,7 @@ table_with_metadata reader_impl::read_chunk_internal(read_mode mode)
   assemble_dict_transcoded_columns(out_columns);
 
   out_columns = cudf::structs::detail::enforce_null_consistency(
-    std::move(out_columns), _stream, _mr.get_output_mr());
+    std::move(out_columns), _stream, decode_mr().get_output_mr());
 
   // Compute the output number of rows per source
   if (mode == read_mode::CHUNKED_READ) {
@@ -941,7 +941,7 @@ void reader_impl::apply_decimal_width_cast(std::vector<std::unique_ptr<column>>&
       col = cudf::cast(col->view(),
                        data_type{_options.decimal_width, col_type.scale()},
                        _stream,
-                       _mr.get_output_mr());
+                       decode_mr().get_output_mr());
     }
   }
 }
@@ -981,11 +981,11 @@ table_with_metadata reader_impl::finalize_output(read_mode mode,
   for (size_t i = out_columns.size(); i < _output_buffers.size(); ++i) {
     if (!_output_metadata) {
       column_name_info& col_name = out_metadata.schema_info[i];
-      out_columns.emplace_back(
-        io::detail::empty_like(_output_buffers[i], &col_name, _stream, _mr.get_output_mr()));
+      out_columns.emplace_back(io::detail::empty_like(
+        _output_buffers[i], &col_name, _stream, decode_mr().get_output_mr()));
     } else {
       out_columns.emplace_back(
-        io::detail::empty_like(_output_buffers[i], nullptr, _stream, _mr.get_output_mr()));
+        io::detail::empty_like(_output_buffers[i], nullptr, _stream, decode_mr().get_output_mr()));
     }
   }
 
@@ -1037,14 +1037,14 @@ table_with_metadata reader_impl::finalize_output(read_mode mode,
     if (_options.prepend_row_index_column) {
       out_columns.emplace(
         out_columns.begin(),
-        synthesize_row_index_column(_file_itm_data.row_groups, read_info, _stream, _mr));
+        synthesize_row_index_column(_file_itm_data.row_groups, read_info, _stream, decode_mr()));
       out_metadata.schema_info.emplace(out_metadata.schema_info.begin(),
                                        column_name_info{.name = "row_index", .is_nullable = false});
     }
     if (_options.prepend_source_index_column) {
       out_columns.emplace(
         out_columns.begin(),
-        synthesize_source_index_column(out_metadata.num_rows_per_source, _stream, _mr));
+        synthesize_source_index_column(out_metadata.num_rows_per_source, _stream, decode_mr()));
       out_metadata.schema_info.emplace(
         out_metadata.schema_info.begin(),
         column_name_info{.name = "source_index", .is_nullable = false});

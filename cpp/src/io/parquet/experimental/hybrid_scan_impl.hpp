@@ -617,6 +617,20 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
     return _file_itm_data._output_chunk_count == 0 and not _output_chunk_produced;
   }
 
+  /**
+   * @brief Memory resources to decode the output columns with
+   *
+   * Filter and payload columns are always decoded into intermediates that the row mask is applied
+   * to, so they are allocated with the temporary resource.
+   *
+   * @return Memory resources whose output resource is used for the decoded columns
+   */
+  [[nodiscard]] cudf::memory_resources decode_mr() const override
+  {
+    return _selected_columns_mode == read_columns_mode::ALL_COLUMNS ? reader_impl::decode_mr()
+                                                                    : _mr.as_temporary();
+  }
+
   aggregate_reader_metadata* _extended_metadata;
 
   std::optional<std::vector<std::string>> _filter_columns_names;

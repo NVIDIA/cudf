@@ -61,6 +61,16 @@ enum class use_data_page_mask : bool {
 };
 
 /**
+ * @brief Columns selection to use for pass memory estimation
+ * row group passes
+ */
+enum class read_columns_mode : int8_t {
+  FILTER_COLUMNS  = 0,  ///< Filter columns
+  PAYLOAD_COLUMNS = 1,  ///< Payload columns
+  ALL_COLUMNS     = 2   ///< All selected columns
+};
+
+/**
  * @brief Byte range of a column chunk's dictionary page, and whether it is exact
  *
  * An inexact range starts at the dictionary page, if present, and may extend past it. Trim it with
@@ -79,16 +89,6 @@ struct dictionary_byte_range {
  *         page
  */
 [[nodiscard]] std::optional<int64_t> dictionary_page_length(std::span<uint8_t const> page_bytes);
-
-/**
- * @brief Columns selection to use for pass memory estimation
- * row group passes
- */
-enum class read_columns_mode : int8_t {
-  FILTER_COLUMNS  = 0,  ///< Filter columns
-  PAYLOAD_COLUMNS = 1,  ///< Payload columns
-  ALL_COLUMNS     = 2   ///< All selected columns
-};
 
 /**
  * @brief Shareable, pre-parsed Parquet file metadata for the Hybrid Scan reader.

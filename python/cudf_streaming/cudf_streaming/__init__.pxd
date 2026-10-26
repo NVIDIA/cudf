@@ -15,6 +15,8 @@ from cudf_streaming.channel_metadata cimport (
     OrderScheme,
     Ordering,
     Partitioning,
+    RowOrdering,
+    RowOrderingScope,
     cpp_ChannelMetadata,
     cpp_HashScheme,
     cpp_OrderKey,
@@ -22,6 +24,7 @@ from cudf_streaming.channel_metadata cimport (
     cpp_Ordering,
     cpp_Partitioning,
     cpp_PartitioningSpec,
+    cpp_RowOrdering,
 )
 from cudf_streaming.partition_utils cimport pack, unpack_and_concat
 from cudf_streaming.table_chunk cimport TableChunk, cpp_TableChunk

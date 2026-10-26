@@ -4102,13 +4102,11 @@ class MapFunction(IR):
                 num_keys=len(column_names),
             )
             result = DataFrame([col.copy() for col in df.columns], stream=df.stream)
-            for column_name, order, null_order in zip(
-                column_names, orders, null_orders, strict=True
-            ):
-                result.column_map[column_name].set_sorted(
+            if column_names:
+                result.column_map[column_names[0]].set_sorted(
                     is_sorted=plc.types.Sorted.YES,
-                    order=order,
-                    null_order=null_order,
+                    order=orders[0],
+                    null_order=null_orders[0],
                 )
             return result
         else:

@@ -261,7 +261,6 @@ class RankActor:
         kvikio_task_size: int,
         kvikio_bounce_buffer_bytes: int,
         kvikio_reactor_count: int,
-        kvikio_reactor_dispatch: kvikio.RemoteReactorDispatch,
         kvikio_request_ceiling: int,
         hardware_binding: HardwareBindingPolicy,
         memory_resource_config: MemoryResourceConfig | None,
@@ -274,7 +273,6 @@ class RankActor:
             task_size=kvikio_task_size,
             bounce_buffer_bytes=kvikio_bounce_buffer_bytes,
             reactor_count=kvikio_reactor_count,
-            reactor_dispatch=kvikio_reactor_dispatch,
             request_ceiling=kvikio_request_ceiling,
         )
         memory_resource_config = (
@@ -403,7 +401,6 @@ class RankActor:
         kvikio_task_size: int,
         kvikio_bounce_buffer_bytes: int,
         kvikio_reactor_count: int,
-        kvikio_reactor_dispatch: kvikio.RemoteReactorDispatch,
         kvikio_request_ceiling: int,
     ) -> None:
         """
@@ -429,8 +426,6 @@ class RankActor:
             Size, in bytes, of the kvikio bounce buffer to configure on this worker process.
         kvikio_reactor_count
             Number of ``MULTI_POLL`` reactor threads to configure on this worker process.
-        kvikio_reactor_dispatch
-            ``MULTI_POLL`` reactor dispatch policy to configure on this worker process.
         kvikio_request_ceiling
             ``MULTI_POLL`` concurrent-request ceiling to configure on this worker process.
         """
@@ -442,7 +437,6 @@ class RankActor:
             task_size=kvikio_task_size,
             bounce_buffer_bytes=kvikio_bounce_buffer_bytes,
             reactor_count=kvikio_reactor_count,
-            reactor_dispatch=kvikio_reactor_dispatch,
             request_ceiling=kvikio_request_ceiling,
         )
         assert self._comm is not None
@@ -956,9 +950,6 @@ class RayEngine(StreamingEngine):
                             "kvikio_bounce_buffer_bytes"
                         ],
                         kvikio_reactor_count=executor_options["kvikio_reactor_count"],
-                        kvikio_reactor_dispatch=executor_options[
-                            "kvikio_reactor_dispatch"
-                        ],
                         kvikio_request_ceiling=executor_options[
                             "kvikio_request_ceiling"
                         ],
@@ -1045,7 +1036,6 @@ class RayEngine(StreamingEngine):
                         "kvikio_bounce_buffer_bytes"
                     ],
                     kvikio_reactor_count=executor_options["kvikio_reactor_count"],
-                    kvikio_reactor_dispatch=executor_options["kvikio_reactor_dispatch"],
                     kvikio_request_ceiling=executor_options["kvikio_request_ceiling"],
                 )
                 for rank in self._rank_actors

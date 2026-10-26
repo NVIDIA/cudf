@@ -28,6 +28,7 @@
 #include <cuda/std/concepts>
 
 #include <bit>
+#include <cmath>
 #include <numeric>
 #include <span>
 #include <string_view>
@@ -213,27 +214,42 @@ class stats_caster_base {
                           Type const type,
                           int32_t ts_scale = 0)
     {
-      if (binary_value.has_value()) {
-        // For strings, also insert the characters
-        if constexpr (std::is_same_v<T, string_view>) {
-          // Create a temporary string view from the binary value
-          std::string_view input_value{reinterpret_cast<char const*>(binary_value.value().data()),
-                                       binary_value.value().size()};
-          // Current offset into the chars vector
-          auto const current_chars_offset = chars.size();
-          chars.insert(chars.end(), input_value.begin(), input_value.end());
-          // Convert to the target type
-          val[index] = stats_caster_base::convert<T>(
-            reinterpret_cast<uint8_t const*>(chars.data()) + current_chars_offset,
-            binary_value.value().size(),
-            type);
-        } else {
-          val[index] = stats_caster_base::convert<T>(
-            binary_value.value().data(), binary_value.value().size(), type, ts_scale);
-        }
-      } else {
+      // Helper to set the stat value to null (ignore)
+      auto const set_to_null = [&] {
         clear_bit_unsafe(null_mask.data(), index);
         null_count++;
+      };
+
+      // Return early if the binary value isn't set
+      if (not binary_value.has_value()) {
+        set_to_null();
+        return;
+      }
+
+      // For strings, also insert the characters
+      if constexpr (std::is_same_v<T, string_view>) {
+        // Create a temporary string view from the binary value
+        std::string_view input_value{reinterpret_cast<char const*>(binary_value.value().data()),
+                                     binary_value.value().size()};
+        // Current offset into the chars vector
+        auto const current_chars_offset = chars.size();
+        chars.insert(chars.end(), input_value.begin(), input_value.end());
+        // Convert to the target type
+        val[index] = stats_caster_base::convert<T>(
+          reinterpret_cast<uint8_t const*>(chars.data()) + current_chars_offset,
+          binary_value.value().size(),
+          type);
+      } else {
+        val[index] = stats_caster_base::convert<T>(
+          binary_value.value().data(), binary_value.value().size(), type, ts_scale);
+        // Per Parquet spec, a `NaN` stats value must be ignored (set to null)
+        if constexpr (cudf::is_floating_point<T>()) {
+          if (std::isnan(val[index])) {
+            val[index] = T{};  // No non-empty nulls
+            set_to_null();
+            return;
+          }
+        }
       }
     }
 

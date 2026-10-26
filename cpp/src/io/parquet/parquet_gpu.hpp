@@ -20,8 +20,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/device_uvector.hpp>
-
 #include <cuda/atomic>
 #include <cuda/buffer>
 #include <cuda/cmath>

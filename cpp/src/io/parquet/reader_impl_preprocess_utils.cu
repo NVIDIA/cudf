@@ -113,15 +113,18 @@ void generate_depth_remappings(
       int schema_idx = mapped_src_col_schema;
       while (schema_idx > 0) {
         auto& cur_schema = md.get_schema(schema_idx, src_file_idx);
+        auto const one_level_list =
+          cur_schema.is_one_level_list(md.get_schema(cur_schema.parent_idx, src_file_idx));
         if (cur_schema.max_repetition_level == r) {
           // if this is a repeated field, map it one level deeper
           shallowest = cur_schema.is_stub() ? cur_depth + 1 : cur_depth;
         }
         // if it's one-level encoding list
-        else if (cur_schema.is_one_level_list(md.get_schema(cur_schema.parent_idx, src_file_idx))) {
+        else if (one_level_list) {
           shallowest = cur_depth - 1;
         }
-        if (!cur_schema.is_stub()) { cur_depth--; }
+        // a one-level list also accounts for its implicit list level
+        if (!cur_schema.is_stub()) { cur_depth -= one_level_list ? 2 : 1; }
         schema_idx = cur_schema.parent_idx;
       }
       return shallowest;
@@ -132,19 +135,15 @@ void generate_depth_remappings(
   // compute "Y" from above
   for (int s_idx = schema.max_definition_level; s_idx >= 0; s_idx--) {
     auto find_deepest = [&](int d) {
-      SchemaElement prev_schema;
       int schema_idx = mapped_src_col_schema;
       int r1         = 0;
       while (schema_idx > 0) {
         SchemaElement cur_schema = md.get_schema(schema_idx, src_file_idx);
         if (cur_schema.max_definition_level == d) {
-          // if this is a repeated field, map it one level deeper
-          r1 = cur_schema.is_stub() ? prev_schema.max_repetition_level
-                                    : cur_schema.max_repetition_level;
+          r1 = cur_schema.max_repetition_level;
           break;
         }
-        prev_schema = cur_schema;
-        schema_idx  = cur_schema.parent_idx;
+        schema_idx = cur_schema.parent_idx;
       }
 
       // we now know R1 from above. return the deepest nesting level that has the
@@ -153,14 +152,20 @@ void generate_depth_remappings(
       int depth  = max_depth - 1;
       while (schema_idx > 0) {
         SchemaElement cur_schema = md.get_schema(schema_idx, src_file_idx);
+        auto const one_level_list =
+          cur_schema.is_one_level_list(md.get_schema(cur_schema.parent_idx, src_file_idx));
         if (cur_schema.max_repetition_level == r1) {
           // if this is a repeated field, map it one level deeper
           depth = cur_schema.is_stub() ? depth + 1 : depth;
           break;
         }
-        if (!cur_schema.is_stub()) { depth--; }
-        prev_schema = cur_schema;
-        schema_idx  = cur_schema.parent_idx;
+        // the implicit list of a one-level list has one less repetition level than its leaf
+        if (one_level_list and cur_schema.max_repetition_level - 1 == r1) {
+          depth--;
+          break;
+        }
+        if (!cur_schema.is_stub()) { depth -= one_level_list ? 2 : 1; }
+        schema_idx = cur_schema.parent_idx;
       }
       return depth;
     };

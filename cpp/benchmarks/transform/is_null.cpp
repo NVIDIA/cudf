@@ -4,6 +4,7 @@
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf/null_mask.hpp>
 #include <cudf/unary.hpp>
@@ -28,6 +29,8 @@ static void bench_is_null(nvbench::state& state)
   if (api == "is_nan") { state.add_global_memory_reads<float>(num_rows); }
   state.add_global_memory_writes<bool>(num_rows);
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
     if (api == "is_nan") {
       cudf::is_nan(input->view(), stream);
@@ -35,6 +38,9 @@ static void bench_is_null(nvbench::state& state)
       cudf::is_null(input->view(), stream);
     }
   });
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 NVBENCH_BENCH(bench_is_null)

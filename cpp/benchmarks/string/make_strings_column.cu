@@ -4,6 +4,7 @@
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_factories.hpp>
@@ -79,9 +80,12 @@ static void BM_make_strings_column_batch(nvbench::state& state)
   }
 
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
+  auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     [[maybe_unused]] auto const output = make_strings_columns<true>(input, stream);
   });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 NVBENCH_BENCH(BM_make_strings_column_batch)

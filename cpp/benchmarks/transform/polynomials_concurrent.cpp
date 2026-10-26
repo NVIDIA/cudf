@@ -4,6 +4,7 @@
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_factories.hpp>
@@ -51,6 +52,8 @@ static void BM_transform_polynomials_concurrent(nvbench::state& state)
     constants.end(),
     std::back_inserter(inputs),
     [](auto const& col) -> cudf::transform_input { return cudf::scalar_column_view(*col); });
+
+  auto const mem_stats_logger = cudf::memory_stats_logger();
 
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     auto root_stream = launch.get_stream().get_stream();
@@ -111,6 +114,9 @@ static void BM_transform_polynomials_concurrent(nvbench::state& state)
 
     nvtxRangePop();
   });
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 #define TRANSFORM_POLYNOMIALS_CONCURRENT_BENCHMARK_DEFINE(name, key_type)                         \

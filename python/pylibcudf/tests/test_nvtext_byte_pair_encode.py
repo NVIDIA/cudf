@@ -112,6 +112,8 @@ def test_byte_pair_encoding_nulls_and_slices(merge_pairs):
 def test_byte_pair_encoding_empty(merge_pairs):
     result = encode([], merge_pairs)
     assert_column_eq(result, pa.array([], type=pa.string()))
+    result = encode(["", None, ""], merge_pairs)
+    assert_column_eq(result, pa.array(["", None, ""]))
 
 
 def test_byte_pair_encoding_rank_order():
@@ -160,6 +162,13 @@ def test_byte_pair_encoding_random(seed):
     ranks = to_ranks(merge_pairs)
     expected = [reference_bpe(s, ranks) for s in strings]
     assert_column_eq(encode(strings, merge_pairs), pa.array(expected))
+
+
+def test_byte_pair_encoding_duplicate_pairs():
+    # a duplicate pair keeps its lowest rank
+    merge_pairs = ["b c", "a b", "c d", "b c", "a b"]
+    result = encode(["abc", "abcd", "cab"], merge_pairs)
+    assert_column_eq(result, pa.array(["a bc", "a bc d", "c ab"]))
 
 
 def test_byte_pair_encoding_errors(merge_pairs):

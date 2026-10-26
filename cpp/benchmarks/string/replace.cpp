@@ -38,23 +38,31 @@ static void bench_replace(nvbench::state& state)
   state.add_global_memory_reads<nvbench::int8_t>(data_size);
   state.add_global_memory_writes<nvbench::int8_t>(data_size);
 
-  auto const mem_stats_logger = cudf::memory_stats_logger();
   if (api == "scalar") {
     cudf::string_scalar target("+");
     cudf::string_scalar repl("-");
+    auto const mem_stats_logger = cudf::memory_stats_logger();
     state.exec(nvbench::exec_tag::sync,
                [&](nvbench::launch& launch) { cudf::strings::replace(input, target, repl); });
+    state.add_buffer_size(
+      mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
   } else if (api == "multi") {
+    cudf::test::strings_column_wrapper targets({"+", " "});
+    cudf::test::strings_column_wrapper repls({"-", "_"});
+    auto const mem_stats_logger = cudf::memory_stats_logger();
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
-      cudf::test::strings_column_wrapper targets({"+", " "});
-      cudf::test::strings_column_wrapper repls({"-", "_"});
       cudf::strings::replace_multiple(
         input, cudf::strings_column_view(targets), cudf::strings_column_view(repls));
     });
+    state.add_buffer_size(
+      mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
   } else if (api == "slice") {
     cudf::string_scalar repl("0123456789");
+    auto const mem_stats_logger = cudf::memory_stats_logger();
     state.exec(nvbench::exec_tag::sync,
                [&](nvbench::launch& launch) { cudf::strings::replace_slice(input, repl, 1, 10); });
+    state.add_buffer_size(
+      mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
   } else if (api == "column") {
     // Per-row targets and replacements — same length as input
     std::vector<std::string> t_vals(num_rows, "+");
@@ -63,11 +71,12 @@ static void bench_replace(nvbench::state& state)
     cudf::test::strings_column_wrapper repls_col(r_vals.begin(), r_vals.end());
     cudf::strings_column_view targets(targets_col);
     cudf::strings_column_view repls(repls_col);
+    auto const mem_stats_logger = cudf::memory_stats_logger();
     state.exec(nvbench::exec_tag::sync,
                [&](nvbench::launch& launch) { cudf::strings::replace(input, targets, repls); });
+    state.add_buffer_size(
+      mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
   }
-  state.add_buffer_size(
-    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 NVBENCH_BENCH(bench_replace)

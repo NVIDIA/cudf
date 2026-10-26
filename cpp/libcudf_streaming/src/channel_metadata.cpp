@@ -42,6 +42,21 @@ void validate_ordering(ordering const& ordering)
 
 }  // namespace
 
+row_ordering::row_ordering(std::vector<order_key> order_keys,
+                           row_ordering_scope scope,
+                           std::vector<cudf::size_type> group_keys)
+  : order_keys{std::move(order_keys)}, scope{scope}, group_keys{std::move(group_keys)}
+{
+  RAPIDSMPF_EXPECTS(
+    !this->order_keys.empty(), "row_ordering: order_keys must not be empty", std::invalid_argument);
+  for (auto const& key : this->order_keys) {
+    RAPIDSMPF_EXPECTS(
+      std::ranges::find(this->group_keys, key.column_index) == this->group_keys.end(),
+      "row_ordering: order_keys and group_keys must not overlap",
+      std::invalid_argument);
+  }
+}
+
 ordering::ordering(std::vector<order_key> keys,
                    std::shared_ptr<table_chunk> boundaries,
                    bool strict_boundaries,

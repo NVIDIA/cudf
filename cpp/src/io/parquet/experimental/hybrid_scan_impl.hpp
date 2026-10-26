@@ -553,13 +553,15 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
    * @param[in,out] out_columns The columns for building the output table
    * @param[in,out] row_mask Boolean column indicating which rows need to be read after page-pruning
    *                         for filter columns, or after materialize step for payload columns
+   * @param[in] mr Memory resources used to allocate temporary and output device memory
    * @return The output table along with columns' metadata
    */
   template <typename RowMaskView>
   table_with_metadata finalize_output(read_columns_mode columns_mode,
                                       table_metadata& out_metadata,
                                       std::vector<std::unique_ptr<column>>& out_columns,
-                                      RowMaskView row_mask);
+                                      RowMaskView row_mask,
+                                      cudf::memory_resources mr);
 
   /**
    * @brief Read a chunk of data and return an output table.
@@ -613,20 +615,6 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
   [[nodiscard]] bool is_first_output_chunk() const
   {
     return _file_itm_data._output_chunk_count == 0 and not _output_chunk_produced;
-  }
-
-  /**
-   * @brief Memory resources to decode the output columns with
-   *
-   * Filter and payload columns are always decoded into intermediates that the row mask is applied
-   * to, so they are allocated with the temporary resource.
-   *
-   * @return Memory resources whose output resource is used for the decoded columns
-   */
-  [[nodiscard]] cudf::memory_resources decode_mr() const override
-  {
-    return _selected_columns_mode == read_columns_mode::ALL_COLUMNS ? reader_impl::decode_mr()
-                                                                    : _mr.as_temporary();
   }
 
   aggregate_reader_metadata* _extended_metadata;

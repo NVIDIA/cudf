@@ -381,12 +381,12 @@ void reader_impl::assemble_dict_transcoded_columns(
       auto const emit_single_row_group_column = [&]() -> bool {
         auto const& chunk = pass.chunks[chunk_indices[0]];
         auto keys         = make_keys_column_from_index_pairs(
-          chunk.str_dict_index, chunk_key_counts[0], _stream, decode_mr());
+          chunk.str_dict_index, chunk_key_counts[0], _stream, _mr);
         auto const num_distinct_keys = cudf::detail::distinct_count(
           keys->view(), null_policy::INCLUDE, nan_policy::NAN_IS_VALID, _stream);
         if (num_distinct_keys != keys->size()) { return true; }  // fall back: dedup below
         out_columns[out_idx] = cudf::make_dictionary_column(
-          std::move(keys), std::move(indices_owner), _stream, decode_mr().get_output_mr());
+          std::move(keys), std::move(indices_owner), _stream, _mr.get_output_mr());
         return false;
       };
 
@@ -487,15 +487,14 @@ void reader_impl::assemble_dict_transcoded_columns(
 
       // Deduplicate the stacked keys. `encode` yields the compact unique keys (on `_mr`, the output
       // keys child) plus an INT32 map from each stacked-key position to its compact index.
-      auto encoded = cudf::dictionary::detail::encode(
-        stacked_keys, data_type{type_id::INT32}, _stream, decode_mr());
+      auto encoded =
+        cudf::dictionary::detail::encode(stacked_keys, data_type{type_id::INT32}, _stream, _mr);
       auto encoded_contents  = encoded->release();
       auto stacked_to_unique = std::move(
         encoded_contents.children[dictionary_column_view::indices_column_index]);  // INT32 map
-      auto unique_keys =
-        std::move(encoded_contents
-                    .children[dictionary_column_view::keys_column_index]);  // compact keys, owned
-                                                                            // on decode_mr()
+      auto unique_keys = std::move(
+        encoded_contents
+          .children[dictionary_column_view::keys_column_index]);  // compact keys, owned on _mr
 
       // Remap every row's index onto the compact key space in place. Null rows carry a zero index
       // (fill_pruned_offsets); the shift keeps them in range and the null mask (carried by
@@ -512,7 +511,7 @@ void reader_impl::assemble_dict_transcoded_columns(
       _stream.sync();
 
       out_columns[out_idx] = cudf::make_dictionary_column(
-        std::move(unique_keys), std::move(indices_owner), _stream, decode_mr().get_output_mr());
+        std::move(unique_keys), std::move(indices_owner), _stream, _mr.get_output_mr());
     });
 }
 

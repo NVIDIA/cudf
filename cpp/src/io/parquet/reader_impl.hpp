@@ -332,11 +332,13 @@ class reader_impl {
    * @param mode Value indicating if the data sources are read all at once or chunk by chunk
    * @param out_metadata The output table metadata
    * @param out_columns The columns for building the output table
+   * @param mr Memory resources used to allocate temporary and output device memory
    * @return The output table along with columns' metadata
    */
   table_with_metadata finalize_output(read_mode mode,
                                       table_metadata& out_metadata,
-                                      std::vector<std::unique_ptr<column>>& out_columns);
+                                      std::vector<std::unique_ptr<column>>& out_columns,
+                                      cudf::memory_resources mr);
 
   /**
    * @brief Allocate data buffers for the output columns.
@@ -344,8 +346,12 @@ class reader_impl {
    * @param mode Value indicating if the data sources are read all at once or chunk by chunk
    * @param skip_rows Crop all rows below skip_rows
    * @param num_rows Number of rows to read
+   * @param mr Memory resources used to allocate temporary and output device memory
    */
-  void allocate_columns(read_mode mode, size_t skip_rows, size_t num_rows);
+  void allocate_columns(read_mode mode,
+                        size_t skip_rows,
+                        size_t num_rows,
+                        cudf::memory_resources mr);
 
   /**
    * @brief Calculate per-page offsets for string data
@@ -511,21 +517,10 @@ class reader_impl {
    * @brief Cast any fixed-point output columns to the decimal width specified in options.
    *
    * @param out_columns Output columns to cast
+   * @param mr Memory resources used to allocate temporary and output device memory
    */
-  void apply_decimal_width_cast(std::vector<std::unique_ptr<cudf::column>>& out_columns);
-
-  /**
-   * @brief Memory resources to decode the output columns with
-   *
-   * Decoded columns are intermediates when a filter is applied to produce the output table, so
-   * they are allocated with the temporary resource in that case.
-   *
-   * @return Memory resources whose output resource is used for the decoded columns
-   */
-  [[nodiscard]] virtual cudf::memory_resources decode_mr() const
-  {
-    return _expr_conv.get_converted_expr().has_value() ? _mr.as_temporary() : _mr;
-  }
+  void apply_decimal_width_cast(std::vector<std::unique_ptr<cudf::column>>& out_columns,
+                                cudf::memory_resources mr);
 
   cuda::stream_ref _stream;
   cudf::memory_resources _mr;

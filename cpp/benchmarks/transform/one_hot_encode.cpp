@@ -4,6 +4,7 @@
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf/filling.hpp>
 #include <cudf/scalar/scalar.hpp>
@@ -28,9 +29,14 @@ static void bench_one_hot_encode(nvbench::state& state)
   state.add_global_memory_reads<int32_t>(num_rows);
   state.add_global_memory_writes<bool>(static_cast<int64_t>(num_rows) * num_categories);
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     cudf::one_hot_encode(input->view(), categories->view(), stream);
   });
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 NVBENCH_BENCH(bench_one_hot_encode)

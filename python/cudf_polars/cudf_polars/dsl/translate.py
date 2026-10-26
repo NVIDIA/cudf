@@ -434,16 +434,10 @@ class Translator:
         )
         if (
             _contains_dtype(dtype.polars_type, (pl.Time,)) and not is_time_passthrough
-        ) or (
-            # dt.time() children were already validated with allow_passthrough=True.
-            not is_time_function
-            and any(
-                _contains_dtype(child.dtype.polars_type, (pl.Time,))
-                for child in traversal(list(translated.children))
-            )
-        ):
+        ) or _contains_time_input(translated):
             error = NotImplementedError(
-                "Only dt.time() and pass-through of Time columns are supported"
+                "Only dt.time(), dt.combine() and pass-through of Time columns "
+                "are supported"
             )
             self.errors.append(error)
             return expr.ErrorExpr(dtype, str(error))
@@ -924,6 +918,25 @@ def _(node: plrs._ir_nodes.Sort, translator: Translator, schema: Schema) -> ir.I
     order, null_order = sorting.sort_order(
         descending, nulls_last=nulls_last, num_keys=len(by)
     )
+    # CPU Polars allows duplicate keys, but they may break streaming
+    # GPU code (see https://github.com/pola-rs/polars/issues/30116).
+    # Repeated columns cannot break ties left by their first occurrence.
+    # Keep the first occurrence's direction and null placement.
+    seen: set[str] = set()
+    unique_by = []
+    unique_order = []
+    unique_null_order = []
+    for key, key_order, key_null_order in zip(by, order, null_order, strict=True):
+        if isinstance(key.value, expr.Col):
+            if key.value.name in seen:
+                continue
+            seen.add(key.value.name)
+        unique_by.append(key)
+        unique_order.append(key_order)
+        unique_null_order.append(key_null_order)
+    by = unique_by
+    order = unique_order
+    null_order = unique_null_order
     # TODO: use the DynamicPred hint from node.slice (offset, length,
     # dynamic_pred_id). dynamic_pred_id is an int (u128 UUID) matching a
     # DynamicPred Function node in an upstream scan. The sort actor could
@@ -1132,6 +1145,25 @@ def translate_named_expr(
     )
 
 
+def _contains_time_input(node: expr.Expr) -> bool:
+    """
+    Whether a descendant of ``node`` is a Time expression used as an input.
+
+    Inputs of ``dt.time()`` and ``dt.combine()`` are not checked, since
+    they were validated when those expressions were translated.
+    """
+    return any(
+        _contains_dtype(child.dtype.polars_type, (pl.Time,))
+        for parent in traversal([node])
+        if not (
+            isinstance(parent, expr.TemporalFunction)
+            and parent.name
+            in {expr.TemporalFunction.Name.Time, expr.TemporalFunction.Name.Combine}
+        )
+        for child in parent.children
+    )
+
+
 def _contains_nested_lists(val: Any) -> bool:
     if not val:
         return False
@@ -1251,6 +1283,28 @@ def _translate_function(
             plrs._expr_nodes.TemporalFunction.Second,
             plrs._expr_nodes.TemporalFunction.Millisecond,
         }
+        if name == plrs._expr_nodes.TemporalFunction.Combine:
+            date, time = node.input
+            time_node = translator.visitor.view_expression(time)
+            if (
+                isinstance(time_node, plrs._expr_nodes.Literal)
+                and not isinstance(time_node.value, plrs.PySeries)
+                and isinstance(translator.visitor.get_dtype(time), pl.Time)
+            ):
+                time_expr: expr.Expr = expr.Literal(
+                    DataType(pl.Time()), time_node.value
+                ).astype(DataType(pl.Duration("ns")))
+            else:
+                time_expr = translator.translate_expr(
+                    n=time, schema=schema, allow_passthrough=True
+                )
+            return expr.TemporalFunction(
+                dtype,
+                expr.TemporalFunction.Name.Combine,
+                options,
+                translator.translate_expr(n=date, schema=schema),
+                time_expr,
+            )
         result_expr = expr.TemporalFunction(
             dtype,
             expr.TemporalFunction.Name.from_polars(name),
@@ -1349,6 +1403,8 @@ def _translate_function(
             )
         elif name == "pow":
             return expr.BinOp(dtype, plc.binaryop.BinaryOperator.POW, *children)
+        elif name == "decimal_mul":
+            return expr.BinOp(dtype, plc.binaryop.BinaryOperator.MUL, *children)
         elif name == "product":
             return expr.Agg(dtype, "product", None, translator._expr_context, *children)
         elif name == "quantile":

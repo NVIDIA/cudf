@@ -99,6 +99,31 @@ def test_parquet_filter_ne_missing(tmp_path):
     )
 
 
+@pytest.mark.parametrize("use_sql", [False, True])
+def test_parquet_filter_is_in_list_literal(engine: pl.GPUEngine, tmp_path, use_sql):
+    df = pl.DataFrame({"l_shipmode": ["MAIL", "SHIP", "AIR"]})
+    df.write_parquet(tmp_path / "df.parquet")
+    q = pl.scan_parquet(tmp_path / "df.parquet")
+    if use_sql:
+        q = q.sql("SELECT * FROM self WHERE l_shipmode IN ('MAIL', 'SHIP')")
+    else:
+        q = q.filter(pl.col("l_shipmode").is_in(pl.Series(["MAIL", "SHIP"]).implode()))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("negate", [False, True])
+def test_parquet_filter_is_in_empty_list_literal(
+    engine: pl.GPUEngine, tmp_path, negate
+):
+    df = pl.DataFrame({"l_shipmode": ["MAIL", "SHIP", "AIR"]})
+    df.write_parquet(tmp_path / "df.parquet")
+    predicate = pl.col("l_shipmode").is_in(pl.Series([], dtype=pl.String).implode())
+    q = pl.scan_parquet(tmp_path / "df.parquet").filter(
+        ~predicate if negate else predicate
+    )
+    assert_gpu_result_equal(q, engine=engine)
+
+
 def test_parquet_filter_boolean_column(engine: pl.GPUEngine, tmp_path):
     df = pl.DataFrame({"x": [1, 2, 3], "y": [True, False, True]})
     df.write_parquet(tmp_path / "df.parquet")

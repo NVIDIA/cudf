@@ -36,9 +36,8 @@ std::vector<cudf::size_type> make_splits(cudf::size_type rows, int multiplier)
 }
 }  // namespace
 
-// Disabled since the current implementation requires about 30GB of device memory for this test.
-// Run with --gtest_also_run_disabled_tests to verify more than max size_type chars.
-TEST_F(BPETest, DISABLED_LargeOutput)
+// Requires about 8GB of device memory.
+TEST_F(BPETest, LargeOutput)
 {
   // synthetic GPT-2 style table and byte-mapped text
   namespace bpe = cudf::test::bpe;
@@ -76,5 +75,39 @@ TEST_F(BPETest, DISABLED_LargeOutput)
             cudf::data_type{cudf::type_id::INT64});
   for (auto const& c : cudf::split(result->view(), make_splits(view.size(), multiplier))) {
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(c, expected->view());
+  }
+}
+
+// Disabled since this requires about 40GB of device memory.
+// Run with --gtest_also_run_disabled_tests to verify more than max size_type segments.
+TEST_F(BPETest, DISABLED_ManySegments)
+{
+  // every character is its own (unpairable) segment so the number
+  // of segments exceeds max size_type
+  auto const mpt = cudf::test::strings_column_wrapper({"a b", "ab c"});
+  auto const mp  = nvtext::load_merge_pairs(cudf::strings_column_view(mpt));
+
+  auto const rows     = std::vector<std::string>(1000, std::string(1000, 'x'));
+  auto const input    = cudf::test::strings_column_wrapper(rows.begin(), rows.end());
+  std::string encoded = "x";
+  for (int i = 1; i < 1000; ++i) {
+    encoded += " x";
+  }
+  auto const encoded_rows = std::vector<std::string>(1000, encoded);
+  auto const expected =
+    cudf::test::strings_column_wrapper(encoded_rows.begin(), encoded_rows.end());
+
+  auto const view             = cudf::column_view(input);
+  int constexpr max_size_type = std::numeric_limits<cudf::size_type>::max();
+  auto const multiplier =
+    static_cast<int>(max_size_type /
+                     cudf::strings_column_view(view).chars_size(cudf::get_default_stream())) +
+    1;
+  auto const large_input = cudf::concatenate(std::vector<cudf::column_view>(multiplier, view));
+
+  auto const result =
+    nvtext::byte_pair_encoding(cudf::strings_column_view(large_input->view()), *mp);
+  for (auto const& c : cudf::split(result->view(), make_splits(view.size(), multiplier))) {
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(c, expected);
   }
 }

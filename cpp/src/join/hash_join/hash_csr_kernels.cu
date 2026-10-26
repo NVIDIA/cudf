@@ -63,7 +63,7 @@ CUDF_KERNEL void hash_csr_retrieve_kernel(cuda::std::int64_t output_size,
           continue;
         }
       }
-      auto const local_match      = static_cast<size_type>(output_index - offsets[probe_row]);
+      auto const local_match      = output_index - offsets[probe_row];
       right_indices[output_index] = csr.values[csr.begin(group) + local_match];
     }
   }

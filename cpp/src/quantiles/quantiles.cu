@@ -9,6 +9,7 @@
 #include <cudf/detail/gather.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/sorting.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/quantiles.hpp>
 #include <cudf/table/table_view.hpp>
@@ -42,7 +43,7 @@ std::unique_ptr<table> quantiles(table_view const& input,
     });
 
   auto const q_device =
-    cudf::detail::make_device_uvector_async(q, stream, cudf::get_current_device_resource_ref());
+    cudf::detail::make_device_buffer_async(q, stream, cudf::get_current_device_resource_ref());
 
   auto quantile_idx_iter = cuda::transform_iterator(q_device.begin(), quantile_idx_lookup);
 

@@ -124,12 +124,69 @@ TEST_F(TextBytePairEncoding, BPE_Empty)
   EXPECT_EQ(0, results->size());
 }
 
+TEST_F(TextBytePairEncoding, BPE_AllEmptyRows)
+{
+  auto mpt         = cudf::test::strings_column_wrapper({"i s", "i t"});
+  auto merge_pairs = nvtext::load_merge_pairs(cudf::strings_column_view(mpt));
+  auto input       = cudf::test::strings_column_wrapper({"", "", ""}, {true, false, true});
+  auto results     = nvtext::byte_pair_encoding(cudf::strings_column_view(input), *merge_pairs);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(results->view(), input);
+}
+
 TEST_F(TextBytePairEncoding, BPE_Error)
 {
   auto empty = cudf::make_empty_column(cudf::type_id::STRING);
   EXPECT_THROW(nvtext::load_merge_pairs(cudf::strings_column_view(*empty)), cudf::logic_error);
   auto null_pairs = cudf::test::strings_column_wrapper({"", ""}, {true, false});
   EXPECT_THROW(nvtext::load_merge_pairs(cudf::strings_column_view(null_pairs)), cudf::logic_error);
+}
+
+TEST_F(TextBytePairEncoding, DuplicatePairs)
+{
+  // a duplicate pair keeps its lowest rank: "b c" (rank 0) merges before "a b" (rank 1)
+  auto mpt      = cudf::test::strings_column_wrapper({"b c", "a b", "c d", "b c", "a b"});
+  auto mp       = nvtext::load_merge_pairs(cudf::strings_column_view(mpt));
+  auto input    = cudf::test::strings_column_wrapper({"abc", "abcd", "cab"});
+  auto results  = nvtext::byte_pair_encoding(cudf::strings_column_view(input), *mp);
+  auto expected = cudf::test::strings_column_wrapper({"a bc", "a bc d", "c ab"});
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(results->view(), expected);
+
+  // many duplicates in reverse order give the same result as the unique pairs
+  std::vector<std::string> const pairs{"e n",
+                                       "i t",
+                                       "i s",
+                                       "e s",
+                                       "en t",
+                                       "c e",
+                                       "es t",
+                                       "en ce",
+                                       "t h",
+                                       "h i",
+                                       "th is",
+                                       "t est",
+                                       "s i",
+                                       "s ent"};
+  auto duplicates = pairs;
+  for (int i = 0; i < 50; ++i) {
+    duplicates.insert(duplicates.end(), pairs.rbegin(), pairs.rend());
+  }
+  auto unique_mpt = cudf::test::strings_column_wrapper(pairs.begin(), pairs.end());
+  auto dup_mpt    = cudf::test::strings_column_wrapper(duplicates.begin(), duplicates.end());
+  auto unique_mp  = nvtext::load_merge_pairs(cudf::strings_column_view(unique_mpt));
+  auto dup_mp     = nvtext::load_merge_pairs(cudf::strings_column_view(dup_mpt));
+  auto text      = cudf::test::strings_column_wrapper({"thisisit", "test sentence", "thisis test"});
+  auto text_view = cudf::strings_column_view(text);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(nvtext::byte_pair_encoding(text_view, *dup_mp)->view(),
+                                      nvtext::byte_pair_encoding(text_view, *unique_mp)->view());
+
+  // same strings split differently are not duplicates: "ab c" is needed to finish "abc"
+  auto split_mpt   = cudf::test::strings_column_wrapper({"a bc", "ab c", "a b"});
+  auto split_mp    = nvtext::load_merge_pairs(cudf::strings_column_view(split_mpt));
+  auto split_input = cudf::test::strings_column_wrapper({"abc"});
+  auto split_results =
+    nvtext::byte_pair_encoding(cudf::strings_column_view(split_input), *split_mp);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(split_results->view(),
+                                      cudf::test::strings_column_wrapper({"abc"}));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -343,12 +400,24 @@ TEST_F(TextBytePairEncoding, SyntheticSlicedWithNulls)
 
 TEST_F(TextBytePairEncoding, LongRunsOfSameCharacter)
 {
-  // "a a" overlapping same-rank pairs: exercises the adjacent equal-rank deferral logic
-  std::vector<std::string> pairs{"a a", "aa a", "aa aa", "aaaa aaaa", "b a"};
+  // overlapping same-rank pairs: only non-overlapping (left-to-right) pairs merge each round;
+  // lengths include runs crossing the long segment kernel's tiles of 64 positions
+  std::vector<std::string> pairs{
+    "a a", "aa a", "aa aa", "aaaa aaaa", "b a", "é é", "éé é", "éé éé", "c a", "a c"};
   std::vector<std::string> rows;
-  for (int n : {1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 33, 100, 1000, 5000}) {
+  auto repeat = [](std::string const& s, int n) {
+    std::string r;
+    for (int i = 0; i < n; ++i) {
+      r += s;
+    }
+    return r;
+  };
+  for (int n : {1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 33, 63, 64, 65, 100, 129, 300, 1000, 5000}) {
     rows.push_back(std::string(n, 'a'));
     rows.push_back("b" + std::string(n, 'a'));
+    rows.push_back(repeat("é", n));                                       // multi-byte characters
+    rows.push_back(std::string(n, 'a') + "x" + std::string(n + 1, 'a'));  // run is reset
+    rows.push_back(std::string(n, 'a') + "c" + std::string(n, 'a'));      // run continues past c
   }
   check_against_reference(pairs, rows);
 }
@@ -364,4 +433,26 @@ TEST_F(TextBytePairEncoding, SingleLongRow)
     s += alphabet[ch(rng)];
   }
   check_against_reference(pairs, {s});
+}
+
+TEST_F(TextBytePairEncoding, NonEmptyNulls)
+{
+  // null rows may contain chars data; output must be the same as with sanitized nulls
+  auto mpt = cudf::test::strings_column_wrapper({"e n", "i t", "i s", "t h", "th is"});
+  auto mp  = nvtext::load_merge_pairs(cudf::strings_column_view(mpt));
+
+  auto input    = cudf::test::strings_column_wrapper({"thisit", std::string(20000, 'x'), "isit"});
+  auto contents = input.release()->release();
+  // mark row 1 null without clearing its chars
+  auto null_mask  = cudf::test::detail::make_null_mask(cudf::test::iterators::null_at(1),
+                                                      cudf::test::iterators::null_at(1) + 3);
+  auto with_nulls = cudf::make_strings_column(3,
+                                              std::move(contents.children.front()),
+                                              std::move(*contents.data),
+                                              1,
+                                              std::move(null_mask.first));
+
+  auto results  = nvtext::byte_pair_encoding(cudf::strings_column_view(with_nulls->view()), *mp);
+  auto expected = cudf::test::strings_column_wrapper({"this it", "", "is it"}, {true, false, true});
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(results->view(), expected);
 }

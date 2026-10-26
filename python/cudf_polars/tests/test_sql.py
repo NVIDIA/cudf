@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
+from decimal import Decimal
+
 import pytest
 
 import polars as pl
@@ -82,3 +84,21 @@ def test_over_fill_null_of_cumulative_raises(engine: pl.GPUEngine, op):
         getattr(pl.col("v"), op)().fill_null(strategy="forward").over("g", order_by="o")
     )
     assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "SELECT price * (1 - discount) AS revenue FROM self",
+        "SELECT price * discount AS x, price * price * discount AS y FROM self",
+    ],
+)
+def test_decimal_mul(engine: pl.GPUEngine, query):
+    q = pl.LazyFrame(
+        {
+            "price": [Decimal("10.00"), Decimal("20.00"), None],
+            "discount": [Decimal("0.05"), Decimal("0.10"), Decimal("0.15")],
+        },
+        schema={"price": pl.Decimal(15, 2), "discount": pl.Decimal(15, 2)},
+    ).sql(query)
+    assert_gpu_result_equal(q, engine=engine)

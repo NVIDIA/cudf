@@ -30,6 +30,7 @@
 
 #include <cub/block/block_load.cuh>
 #include <cub/block/block_scan.cuh>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/utility>
@@ -505,7 +506,7 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
     cudf::detail::join_streams(streams, stream);
 
     auto chars          = char_storage.gather(stream, mr);
-    auto global_offsets = row_offset_storage.gather(stream, mr);
+    auto global_offsets = row_offset_storage.gather<cuda::device_buffer<byte_offset>>(stream, mr);
     return std::pair{std::move(global_offsets), std::move(chars)};
   }();
 
@@ -519,9 +520,17 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
   // insert an offset at the beginning if we started at the beginning of the input
   bool const insert_begin = first_row_offset.value_or(0) == 0;
   // insert an offset at the end if we have not terminated the last row
-  bool const insert_end =
-    not(last_row_offset.has_value() or
-        (global_offsets.size() > 0 and global_offsets.back_element(stream) == chunk_offset));
+  auto const last_offset_matches = [&] {
+    if (global_offsets.empty()) { return false; }
+    byte_offset last_offset{};
+    CUDF_CUDA_TRY(cudf::detail::memcpy_async(&last_offset,
+                                             global_offsets.data() + global_offsets.size() - 1,
+                                             sizeof(last_offset),
+                                             stream));
+    cudf::detail::sync_stream(stream);
+    return last_offset == chunk_offset;
+  };
+  bool const insert_end  = not(last_row_offset.has_value() or last_offset_matches());
   auto const chars_bytes = chunk_offset - *first_row_offset;
   auto offsets           = cudf::strings::detail::create_offsets_child_column(
     chars_bytes, global_offsets.size() + insert_begin + insert_end, stream, mr);

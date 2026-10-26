@@ -14,6 +14,7 @@
 #include <cudf/detail/stream_compaction.hpp>
 #include <cudf/detail/structs/utilities.hpp>
 #include <cudf/detail/transform.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/stream_pool.hpp>
 #include <cudf/dictionary/detail/encode.hpp>
 #include <cudf/io/parquet_schema.hpp>
@@ -184,7 +185,7 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
 
   // Create an empty device vector to store the initial str offset for large string columns from for
   // string decoders.
-  auto initial_str_offsets = rmm::device_uvector<size_t>{0, _stream, _mr};
+  auto initial_str_offsets = cuda::device_buffer<size_t>{_stream, _mr, 0, cuda::no_init};
 
   pass.chunks.host_to_device_async(_stream);
   chunk_nested_valids.host_to_device_async(_stream);
@@ -195,7 +196,7 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
       cudf::detail::make_pinned_vector_async<size_t>(_input_columns.size(), _stream);
     std::ranges::fill(host_offsets_vector, std::numeric_limits<size_t>::max());
     // Initialize the initial string offsets vector from the host vector
-    initial_str_offsets = cudf::detail::make_device_uvector(host_offsets_vector, _stream, _mr);
+    initial_str_offsets = cudf::detail::make_device_buffer(host_offsets_vector, _stream, _mr);
     chunk_nested_str_data.host_to_device_async(_stream);
   }
 

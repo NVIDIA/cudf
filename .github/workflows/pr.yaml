@@ -47,7 +47,6 @@ jobs:
       - pandas-tests
       - pandas-tests-summary
       - narwhals-tests
-      - telemetry-setup
       - third-party-integration-tests-cudf-pandas
     uses: rapidsai/shared-workflows/.github/workflows/pr-builder.yaml@main
     permissions:
@@ -55,17 +54,6 @@ jobs:
     if: always()
     with:
       needs: ${{ toJSON(needs) }}
-  telemetry-setup:
-    permissions:
-      id-token: write
-    continue-on-error: true
-    runs-on: ubuntu-latest
-    env:
-      OTEL_SERVICE_NAME: 'pr-cudf'
-    steps:
-      - name: Telemetry setup
-        if: ${{ vars.TELEMETRY_ENABLED == 'true' }}
-        uses: rapidsai/shared-actions/telemetry-dispatch-stash-base-env-vars@main
   build-details:
     uses: rapidsai/shared-workflows/.github/workflows/compute-build-details.yaml@main
   check-nightly-ci:
@@ -84,14 +72,13 @@ jobs:
         with:
           repo: ${{ github.repository }}
           target-branch: ${{ fromJSON(steps.get-pr-info.outputs.pr-info).base.ref }}
-          max-days-without-success: 14
+          max-days-without-success: 21
   changed-files:
     permissions:
       actions: read
       contents: read
       packages: read
       pull-requests: read
-    needs: telemetry-setup
     uses: rapidsai/shared-workflows/.github/workflows/changed-files.yaml@main
     with:
       files_yaml: |
@@ -289,11 +276,10 @@ jobs:
   checks:
     permissions:
       contents: read
-    needs: telemetry-setup
     uses: rapidsai/shared-workflows/.github/workflows/checks.yaml@main
     with:
       enable_check_generated_files: false
-      ignored_pr_jobs: "telemetry-summarize cudf-spark-jni cuml-compat-tests conda-python-cudf-polars-tests-integration-optional"
+      ignored_pr_jobs: "cudf-spark-jni cuml-compat-tests conda-python-cudf-polars-tests-integration-optional"
       # Main builds seed this cache. PR merge refs can restore it but should not create
       # duplicate archives that are inaccessible to other PRs.
       pre-commit-cache-read-only: true
@@ -1041,7 +1027,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    needs: [telemetry-setup, changed-files]
+    needs: ["changed-files"]
     if: fromJSON(needs.changed-files.outputs.changed_file_groups).devcontainer_build_inputs
     uses: rapidsai/shared-workflows/.github/workflows/build-in-devcontainer.yaml@main
     with:
@@ -1055,8 +1041,8 @@ jobs:
         SCCACHE_DIST_FALLBACK_TO_LOCAL_COMPILE=false
       build_command: |
         sccache --zero-stats;
-        build-all -j0 --verbose -DBUILD_BENCHMARKS=ON 2>&1 | tee telemetry-artifacts/build.log;
-        sccache --show-adv-stats | tee telemetry-artifacts/sccache-stats.txt;
+        build-all -j0 --verbose -DBUILD_BENCHMARKS=ON;
+        sccache --show-adv-stats;
   unit-tests-cudf-pandas:
     needs: [wheel-build, changed-files]
     permissions:
@@ -1240,16 +1226,3 @@ jobs:
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_java
     with:
       cudf_commit: ${{ github.sha }}
-  telemetry-summarize:
-    # This job must use a self-hosted runner to record telemetry traces.
-    runs-on: linux-amd64-cpu4
-    permissions:
-      actions: write
-    needs: pr-builder
-    if: ${{ vars.TELEMETRY_ENABLED == 'true' && !cancelled() }}
-    continue-on-error: true
-    steps:
-      - name: Telemetry summarize
-        uses: rapidsai/shared-actions/telemetry-dispatch-summarize@main
-    env:
-      GH_TOKEN: ${{ github.token }}

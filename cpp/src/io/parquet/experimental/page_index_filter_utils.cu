@@ -28,7 +28,6 @@
 #include <cudf/utilities/span.hpp>
 
 #include <rmm/device_buffer.hpp>
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_radix_sort.cuh>
@@ -623,7 +622,7 @@ thrust::host_vector<bool> compute_row_range_selection_mask(
                   host_tree_level_ptrs[level_idx] =
                     tree_levels_data.data() + tree_level_offsets[level_idx - 1];
                 });
-  auto tree_level_ptrs = cudf::detail::make_device_uvector_async(host_tree_level_ptrs, stream, mr);
+  auto tree_level_ptrs = cudf::detail::make_device_buffer_async(host_tree_level_ptrs, stream, mr);
 
   auto prev_level_size = total_rows;
   std::for_each(
@@ -645,7 +644,7 @@ thrust::host_vector<bool> compute_row_range_selection_mask(
   auto const num_ranges    = static_cast<cudf::size_type>(page_row_offsets.size() - 1);
   auto device_results      = cuda::device_buffer<bool>(stream, mr, num_ranges, cuda::no_init);
   auto pinned_page_offsets = cudf::detail::make_pinned_vector(page_row_offsets, stream);
-  auto page_offsets = cudf::detail::make_device_uvector_async(pinned_page_offsets, stream, mr);
+  auto page_offsets = cudf::detail::make_device_buffer_async(pinned_page_offsets, stream, mr);
   thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                     cuda::counting_iterator<cudf::size_type>{0},
                     cuda::counting_iterator{num_ranges},

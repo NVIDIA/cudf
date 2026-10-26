@@ -3070,13 +3070,38 @@ def test_parquet_reader_brotli(datadir):
     assert_eq(expect, got)
 
 
-def test_parquet_reader_one_level_list(datadir):
-    fname = datadir / "one_level_list.parquet"
+@pytest.mark.parametrize(
+    "fname", ["one_level_list.parquet", "one_level_list_in_struct.parquet"]
+)
+def test_parquet_reader_one_level_list(datadir, fname):
+    fname = datadir / fname
 
     expect = pd.read_parquet(fname)
     got = cudf.read_parquet(fname)
 
     assert_eq(expect, got)
+
+    with cudf.option_context("io.parquet.low_memory", True):
+        got = cudf.read_parquet([fname] * 3, _chunk_read_limit=160)
+    assert_eq(pd.concat([expect] * 3, ignore_index=True), got)
+
+
+@pytest.mark.skipif(
+    version.parse(pa.__version__) < version.parse("24"),
+    reason="pyarrow < 24 cannot read a one-level list under a stub",
+)
+def test_parquet_reader_one_level_list_in_stub(datadir):
+    fname = datadir / "one_level_list_in_stub.parquet"
+
+    # pyarrow reads the `repeated group list` stub as a struct; cudf as the
+    # list element
+    expect = [
+        None if row is None else [s["a"].tolist() for s in row]
+        for row in pd.read_parquet(fname)["l"]
+    ]
+    got = cudf.read_parquet(fname)["l"].to_arrow().to_pylist()
+
+    assert expect == got
 
 
 def test_parquet_reader_binary_decimal(datadir):

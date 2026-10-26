@@ -5,8 +5,8 @@ schema_version: 1
 context:
   version: ${{ env.get("RAPIDS_PACKAGE_VERSION") }}
   minor_version: ${{ (version | split("."))[:2] | join(".") }}
-  datetime_string: '${{ env.get("RAPIDS_DATETIME_STRING") }}'
-  head_rev: '${{ git.head_rev(".")[:8] }}'
+  datetime_string: ${{ env.get("RAPIDS_DATETIME_STRING") }}
+  head_rev: ${{ git.head_rev(".")[:8] }}
 
 package:
   name: dask-cudf

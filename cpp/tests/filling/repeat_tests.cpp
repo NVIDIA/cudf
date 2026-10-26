@@ -1,12 +1,14 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
+#include <cudf_test/memory_resource_utilities.hpp>
 #include <cudf_test/random.hpp>
+#include <cudf_test/table_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/detail/iterator.cuh>
@@ -20,6 +22,63 @@
 #include <numeric>
 
 constexpr cudf::test::debug_output_level verbosity{cudf::test::debug_output_level::ALL_ERRORS};
+
+class RepeatMemoryResourcesTest : public cudf::test::BaseFixture {};
+
+TEST_F(RepeatMemoryResourcesTest, ScalarCount)
+{
+  auto harness = cudf::test::memory_resource_test_harness{};
+  auto stream  = cudf::test::get_default_stream();
+  auto setup   = cudf::memory_resources{harness.setup_mr(), harness.setup_mr()};
+  cudf::test::fixed_width_column_wrapper<int32_t> values{
+    {1, 2, 3}, {true, false, true}, stream, setup};
+  cudf::test::strings_column_wrapper strings{
+    {"one", "two", "three"}, {true, false, true}, stream, setup};
+  cudf::test::fixed_width_column_wrapper<int32_t> expected_values{
+    {1, 1, 2, 2, 3, 3}, {true, true, false, false, true, true}, stream, setup};
+  cudf::test::strings_column_wrapper expected_strings{{"one", "one", "", "", "three", "three"},
+                                                      {true, true, false, false, true, true},
+                                                      stream,
+                                                      setup};
+  cudf::table_view input{{values, strings}};
+  cudf::table_view expected{{expected_values, expected_strings}};
+
+  cudf::test::expect_api_uses_memory_resources(
+    harness,
+    [&](cudf::memory_resources mr) { return cudf::repeat(input, 2, stream, mr); },
+    [](auto const& result) { return result->alloc_size(); },
+    [&](auto const& result) { CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result->view()); },
+    {cudf::test::output_allocation_expectation::EXACT,
+     cudf::test::temporary_allocation_expectation::SOME},
+    stream);
+}
+
+TEST_F(RepeatMemoryResourcesTest, ColumnCount)
+{
+  auto harness = cudf::test::memory_resource_test_harness{};
+  auto stream  = cudf::test::get_default_stream();
+  auto setup   = cudf::memory_resources{harness.setup_mr(), harness.setup_mr()};
+  cudf::test::fixed_width_column_wrapper<int32_t> values{
+    {1, 2, 3, 4}, {true, false, true, true}, stream, setup};
+  cudf::test::strings_column_wrapper strings{
+    {"one", "two", "three", "four"}, {true, false, true, true}, stream, setup};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> counts{{2, 1, 0, 1}, stream, setup};
+  cudf::test::fixed_width_column_wrapper<int32_t> expected_values{
+    {1, 1, 2, 4}, {true, true, false, true}, stream, setup};
+  cudf::test::strings_column_wrapper expected_strings{
+    {"one", "one", "", "four"}, {true, true, false, true}, stream, setup};
+  cudf::table_view input{{values, strings}};
+  cudf::table_view expected{{expected_values, expected_strings}};
+
+  cudf::test::expect_api_uses_memory_resources(
+    harness,
+    [&](cudf::memory_resources mr) { return cudf::repeat(input, counts, stream, mr); },
+    [](auto const& result) { return result->alloc_size(); },
+    [&](auto const& result) { CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result->view()); },
+    {cudf::test::output_allocation_expectation::EXACT,
+     cudf::test::temporary_allocation_expectation::SOME},
+    stream);
+}
 
 template <typename T>
 class RepeatTypedTestFixture : public cudf::test::BaseFixture,

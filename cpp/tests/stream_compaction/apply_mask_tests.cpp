@@ -25,19 +25,15 @@
 
 #include <tuple>
 
-struct ApplyRetentionMask : public cudf::test::BaseFixture {};
-
 enum class mask_selection { EMPTY, ALL, NONE, PARTIAL, NULLABLE };
 
 struct ApplyMaskMemoryResources
-  : public cudf::test::BaseFixture,
+  : public cudf::test::BaseFixtureWithHarness,
     public ::testing::WithParamInterface<std::tuple<bool, mask_selection>> {};
 
 TEST_P(ApplyMaskMemoryResources, OutputAndTemporaryAllocations)
 {
   auto const [is_retention, selection] = GetParam();
-  auto const stream                    = cudf::test::get_default_stream();
-  auto harness                         = cudf::test::memory_resource_test_harness{};
   cudf::test::fixed_width_column_wrapper<int32_t> input{{10, 20, 30, 40}, {1, 0, 1, 1}};
 
   auto const mask_size = selection == mask_selection::EMPTY ? 0 : 4;
@@ -66,10 +62,11 @@ TEST_P(ApplyMaskMemoryResources, OutputAndTemporaryAllocations)
     expected_values.begin(), expected_values.end(), expected_validity.begin()};
 
   cudf::test::expect_api_uses_memory_resources(
-    harness,
+    harness(),
     [&](cudf::memory_resources mr) {
-      return is_retention ? cudf::apply_retention_mask(cudf::table_view{{input}}, mask, stream, mr)
-                          : cudf::apply_deletion_mask(cudf::table_view{{input}}, mask, stream, mr);
+      return is_retention
+               ? cudf::apply_retention_mask(cudf::table_view{{input}}, mask, stream(), mr)
+               : cudf::apply_deletion_mask(cudf::table_view{{input}}, mask, stream(), mr);
     },
     [](auto const& result) { return result->get_column(0).alloc_size(); },
     [&](auto const& result) {
@@ -78,7 +75,7 @@ TEST_P(ApplyMaskMemoryResources, OutputAndTemporaryAllocations)
     {cudf::test::output_allocation_expectation::EXACT,
      selection == mask_selection::EMPTY ? cudf::test::temporary_allocation_expectation::NONE
                                         : cudf::test::temporary_allocation_expectation::SOME},
-    stream);
+    stream());
 }
 
 INSTANTIATE_TEST_SUITE_P(ApplyMask,
@@ -89,6 +86,8 @@ INSTANTIATE_TEST_SUITE_P(ApplyMask,
                                                               mask_selection::NONE,
                                                               mask_selection::PARTIAL,
                                                               mask_selection::NULLABLE)));
+
+struct ApplyRetentionMask : public cudf::test::BaseFixture {};
 
 TEST_F(ApplyRetentionMask, ZeroColumnsPreservesRowCount)
 {

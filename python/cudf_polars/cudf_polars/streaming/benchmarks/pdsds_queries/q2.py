@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Query 2."""
@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 from cudf_polars.streaming.benchmarks.pdsds_parameters import load_parameters
+from cudf_polars.streaming.benchmarks.pdsds_queries import sql_sum
 from cudf_polars.streaming.benchmarks.utils import QueryResult, get_data
 
 if TYPE_CHECKING:
@@ -166,11 +167,11 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
         .group_by("d_week_seq")
         .agg(
             [
-                pl.when(pl.col("d_day_name") == day)
-                .then(pl.col("sales_price"))
-                .otherwise(None)
-                .sum()
-                .alias(name)
+                sql_sum(
+                    pl.when(pl.col("d_day_name") == day)
+                    .then(pl.col("sales_price"))
+                    .otherwise(None)
+                ).alias(name)
                 for day, name in zip(days, day_cols, strict=True)
             ]
         )

@@ -1697,6 +1697,9 @@ TEST_F(OrcStatisticsTest, Overflow)
     0, [](auto i) { return i < 5 ? int128_limits::max() : int128_limits::min(); });
   auto int128_overflow_seq = cudf::detail::make_counting_transform_iterator(
     0, [](auto i) { return i == 0 ? int128_limits::max() : __int128_t{1}; });
+  // Fits __int128_t but exceeds ORC's 38-digit decimal limit
+  auto int128_too_many_digits_seq = cudf::detail::make_counting_transform_iterator(
+    0, [](auto i) { return i == 0 ? numeric::detail::exp10<__int128_t>(38) - 1 : __int128_t{1}; });
   auto validity = cudf::test::iterators::nulls_at_multiples_of(2);
 
   column_wrapper<int64_t, typename decltype(too_large_seq)::value_type> col1(
@@ -1712,7 +1715,9 @@ TEST_F(OrcStatisticsTest, Overflow)
   column_wrapper<double> col7(double_overflow_seq, double_overflow_seq + num_rows);
   dec128_col col8(int128_cancel_seq, int128_cancel_seq + num_rows, numeric::scale_type{0});
   dec128_col col9(int128_overflow_seq, int128_overflow_seq + num_rows, numeric::scale_type{0});
-  table_view tbl({col1, col2, col3, col4, col5, col6, col7, col8, col9});
+  dec128_col col10(
+    int128_too_many_digits_seq, int128_too_many_digits_seq + num_rows, numeric::scale_type{0});
+  table_view tbl({col1, col2, col3, col4, col5, col6, col7, col8, col9, col10});
 
   auto filepath = temp_env->get_temp_filepath("OrcStatsOverflow.orc");
 
@@ -1734,7 +1739,7 @@ TEST_F(OrcStatisticsTest, Overflow)
 
   auto const stats = cudf::io::read_parsed_orc_statistics(cudf::io::source_info{filepath});
   auto const expected_has_sum =
-    std::array{false, false, true, true, true, true, false, true, false};
+    std::array{false, false, true, true, true, true, false, true, false, false};
   for (auto const idx : std::views::iota(size_t{0}, expected_has_sum.size())) {
     EXPECT_EQ(has_sum(stats.file_stats[idx + 1]), expected_has_sum[idx]) << "column " << idx;
   }

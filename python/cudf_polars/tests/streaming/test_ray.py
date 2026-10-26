@@ -18,7 +18,9 @@ from cudf_polars.engine.hardware_binding import HardwareBindingPolicy
 from cudf_polars.utils.config import RayContext
 
 ray = pytest.importorskip("ray")
-from cudf_polars.engine.ray import RayEngine  # noqa: E402
+from cudf_polars.engine.ray import (  # noqa: E402
+    RayEngine,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

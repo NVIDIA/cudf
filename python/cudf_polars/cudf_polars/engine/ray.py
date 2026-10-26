@@ -81,6 +81,11 @@ if TYPE_CHECKING:
     from cudf_polars.utils.config import StreamingExecutor
 
 
+# Bound lifecycle and diagnostic RPCs so a failed rank cannot strand cleanup.
+# Query execution remains unbounded because valid workloads may run much longer.
+RAY_CONTROL_PLANE_TIMEOUT_SECONDS = 30.0
+
+
 class RayPersistedBackend(PersistedBackend):
     """Persisted-result backend for Ray."""
 
@@ -123,7 +128,8 @@ class RayPersistedBackend(PersistedBackend):
                 [
                     actor.drop_persisted.remote(self._uid, query_id)
                     for actor in self._rank_actors
-                ]
+                ],
+                timeout=RAY_CONTROL_PLANE_TIMEOUT_SECONDS,
             )
 
 
@@ -729,7 +735,7 @@ def get_num_gpus_in_ray_cluster() -> int:
 def _wait_for_actor_shutdown(ref: ObjectRef[Any]) -> None:
     """Wait for actor exit, ignoring Ray's expected termination error."""
     with contextlib.suppress(ray.exceptions.RayActorError):
-        ray.get(ref)
+        ray.get(ref, timeout=RAY_CONTROL_PLANE_TIMEOUT_SECONDS)
 
 
 def _shutdown_ray(
@@ -960,7 +966,11 @@ class RayEngine(StreamingEngine):
                 )
 
             root_ucxx_address_as_bytes = cast(
-                "bytes", ray.get(rank_actors[0].setup_root.remote())
+                "bytes",
+                ray.get(
+                    rank_actors[0].setup_root.remote(),
+                    timeout=RAY_CONTROL_PLANE_TIMEOUT_SECONDS,
+                ),
             )
             # Call setup_worker on all actors concurrently, including the root.
             # The root skips communicator creation and proceeds directly to the barrier.
@@ -969,7 +979,8 @@ class RayEngine(StreamingEngine):
                 [
                     rank.setup_worker.remote(root_ucxx_address_as_bytes)
                     for rank in rank_actors
-                ]
+                ],
+                timeout=RAY_CONTROL_PLANE_TIMEOUT_SECONDS,
             )
 
             self._rank_actors: list[ActorHandle[RankActor]] | None = rank_actors
@@ -1039,7 +1050,8 @@ class RayEngine(StreamingEngine):
                     kvikio_request_ceiling=executor_options["kvikio_request_ceiling"],
                 )
                 for rank in self._rank_actors
-            ]
+            ],
+            timeout=RAY_CONTROL_PLANE_TIMEOUT_SECONDS,
         )
 
         # Handle quent_context change.
@@ -1078,7 +1090,8 @@ class RayEngine(StreamingEngine):
             steps: list[Callable[[], object]] = [
                 # Workers first so the collector can drain before we close it.
                 lambda: ray.get(
-                    [rank.update_quent.remote(None, None) for rank in rank_actors]
+                    [rank.update_quent.remote(None, None) for rank in rank_actors],
+                    timeout=RAY_CONTROL_PLANE_TIMEOUT_SECONDS,
                 )
             ]
             steps.append(self._quent_runtime.close)
@@ -1100,7 +1113,8 @@ class RayEngine(StreamingEngine):
                         self._quent_runtime.collector_address,
                     )
                     for rank in self._rank_actors
-                ]
+                ],
+                timeout=RAY_CONTROL_PLANE_TIMEOUT_SECONDS,
             )
         except BaseException:  # pragma: no cover - defensive startup cleanup
             with contextlib.suppress(Exception):
@@ -1164,7 +1178,12 @@ class RayEngine(StreamingEngine):
             raise RuntimeError("rank_actors is not available after shutdown")
         return self._rank_actors
 
-    def _gather_by_rank(self, refs: list[ObjectRef]) -> dict[int, Any]:
+    def _gather_by_rank(
+        self,
+        refs: list[ObjectRef],
+        *,
+        timeout: float | None = RAY_CONTROL_PLANE_TIMEOUT_SECONDS,
+    ) -> dict[int, Any]:
         """
         Resolve ``(rank, result)`` object refs into results keyed by rank.
 
@@ -1172,12 +1191,21 @@ class RayEngine(StreamingEngine):
         ----------
         refs
             One object ref per actor, each resolving to ``(rank, result)``.
+        timeout
+            Maximum time to wait for control-plane results. Pass ``None`` for
+            workload results that may legitimately take an arbitrary amount
+            of time to execute and transfer.
 
         Returns
         -------
         One result per rank, keyed by rank and in rank order.
         """
-        return dict(sorted(ray.get(refs), key=lambda pair: pair[0]))
+        return dict(
+            sorted(
+                ray.get(refs, timeout=timeout),
+                key=lambda pair: pair[0],
+            )
+        )
 
     def gather_cluster_info(self) -> list[ClusterInfo]:
         """
@@ -1261,7 +1289,8 @@ class RayEngine(StreamingEngine):
                 [
                     rank._run_with_rank.remote(func, *args, **kwargs)
                     for rank in self.rank_actors
-                ]
+                ],
+                timeout=None,
             ).values()
         )
 

@@ -45,23 +45,27 @@ using parquet::detail::PageInfo;
  * @param dict_page_data Device spans of dictionary page data, one per input column chunk. Empty
  *                       for column chunks without a dictionary page
  * @param stream CUDA stream
- * @param mr Device memory resource used to allocate temporary device memory
+ * @param mr Memory resources used to allocate temporary and output device memory
  */
 void decode_dictionary_page_headers(
   cudf::detail::hostdevice_span<ColumnChunkDesc> chunks,
   cudf::detail::hostdevice_span<PageInfo> pages,
   std::span<cudf::device_span<uint8_t const> const> dict_page_data,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
-  auto const page_data = cudf::detail::make_device_buffer_async(dict_page_data, stream, mr);
+  auto const page_data =
+    cudf::detail::make_device_buffer_async(dict_page_data, stream, mr.get_temporary_mr());
 
   // Exactly one dictionary page per column chunk
-  cuda::device_buffer<size_type> chunk_page_offsets(stream, mr, chunks.size() + 1, cuda::no_init);
-  thrust::sequence(
-    rmm::exec_policy_nosync(stream, mr), chunk_page_offsets.begin(), chunk_page_offsets.end(), 0);
+  cuda::device_buffer<size_type> chunk_page_offsets(
+    stream, mr.get_temporary_mr(), chunks.size() + 1, cuda::no_init);
+  thrust::sequence(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+                   chunk_page_offsets.begin(),
+                   chunk_page_offsets.end(),
+                   0);
 
   parquet::kernel_error error_code(stream);
 
@@ -82,7 +86,7 @@ void decode_dictionary_page_headers(
 
   // Point each chunk at its dictionary page. A chunk whose span is empty keeps a zeroed page and is
   // not pruned with. A non-empty span must hold a dictionary page.
-  thrust::for_each(rmm::exec_policy_nosync(stream, mr),
+  thrust::for_each(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                    cuda::counting_iterator<cuda::std::size_t>(0),
                    cuda::counting_iterator<cuda::std::size_t>(chunks.size()),
                    [chunks     = chunks.device_begin(),
@@ -211,8 +215,7 @@ void hybrid_scan_reader_impl::setup_compressed_data(
     total_pages, _stream, _mr.as_temporary());
 
   // decoding of column/page information
-  parquet::detail::decode_page_headers(
-    pass, unsorted_pages, _has_offset_index, _stream, _mr.get_temporary_mr());
+  parquet::detail::decode_page_headers(pass, unsorted_pages, _has_offset_index, _stream, _mr);
   CUDF_EXPECTS(pass.page_offsets.size() - 1 == static_cast<size_t>(_input_columns.size()),
                "Encountered page_offsets / num_columns mismatch");
 }
@@ -248,8 +251,7 @@ void hybrid_scan_reader_impl::setup_sparse_compressed_data(
   // PageInfo as whole objects.
   auto unsorted_pages = cudf::detail::make_zeroed_device_buffer_async<PageInfo>(
     total_pages, _stream, _mr.as_temporary());
-  parquet::detail::decode_page_headers(
-    pass, unsorted_pages, page_data, _stream, _mr.get_temporary_mr());
+  parquet::detail::decode_page_headers(pass, unsorted_pages, page_data, _stream, _mr);
   CUDF_EXPECTS(pass.page_offsets.size() - 1 == static_cast<size_t>(_input_columns.size()),
                "Encountered page_offsets / num_columns mismatch");
 }

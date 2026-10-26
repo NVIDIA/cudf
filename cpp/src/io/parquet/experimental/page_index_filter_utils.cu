@@ -363,7 +363,7 @@ constexpr auto min_segments_for_device_offsets = 1024;
 compute_segment_row_offsets_host(std::span<page_statistics_input const> inputs,
                                  std::size_t total_page_row_offsets,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cudf::memory_resources mr)
 {
   auto all_page_row_offsets =
     cudf::detail::make_empty_pinned_vector<size_type>(total_page_row_offsets, stream);
@@ -389,7 +389,7 @@ compute_segment_row_offsets_host(std::span<page_statistics_input const> inputs,
   all_page_row_offsets.erase(std::unique(all_page_row_offsets.begin(), all_page_row_offsets.end()),
                              all_page_row_offsets.end());
 
-  return {cudf::detail::make_device_buffer_async(all_page_row_offsets, stream, mr),
+  return {cudf::detail::make_device_buffer_async(all_page_row_offsets, stream, mr.get_output_mr()),
           all_page_row_offsets.size()};
 }
 
@@ -403,20 +403,23 @@ compute_segment_row_offsets_host(std::span<page_statistics_input const> inputs,
 compute_segment_row_offsets_device(cudf::device_span<size_type const> all_page_row_offsets,
                                    size_type total_rows,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cudf::memory_resources mr)
 {
   auto const num_items = static_cast<cuda::std::int64_t>(all_page_row_offsets.size());
-  auto const mr_prop   = cuda::std::execution::prop{cuda::mr::get_memory_resource, mr};
-  auto const env       = cuda::std::execution::env{cuda::stream_ref{stream.get()}, mr_prop};
+  auto const mr_prop =
+    cuda::std::execution::prop{cuda::mr::get_memory_resource, mr.get_temporary_mr()};
+  auto const env = cuda::std::execution::env{cuda::stream_ref{stream.get()}, mr_prop};
 
   // Offsets are non-negative and at most `total_rows`, so only their low bits need sorting.
-  auto sorted_offsets = cuda::device_buffer<size_type>(stream, mr, num_items, cuda::no_init);
-  auto const end_bit  = static_cast<int>(cuda::std::bit_width(static_cast<uint32_t>(total_rows)));
+  auto sorted_offsets =
+    cuda::device_buffer<size_type>(stream, mr.get_temporary_mr(), num_items, cuda::no_init);
+  auto const end_bit = static_cast<int>(cuda::std::bit_width(static_cast<uint32_t>(total_rows)));
   CUDF_CUDA_TRY(cub::DeviceRadixSort::SortKeys(
     all_page_row_offsets.data(), sorted_offsets.data(), num_items, 0, end_bit, env));
 
-  auto segment_row_offsets = cuda::device_buffer<size_type>(stream, mr, num_items, cuda::no_init);
-  auto num_unique          = cudf::detail::device_scalar<cuda::std::int64_t>(stream, mr);
+  auto segment_row_offsets =
+    cuda::device_buffer<size_type>(stream, mr.get_output_mr(), num_items, cuda::no_init);
+  auto num_unique = cudf::detail::device_scalar<cuda::std::int64_t>(stream, mr.get_temporary_mr());
   CUDF_CUDA_TRY(cub::DeviceSelect::Unique(
     sorted_offsets.data(), segment_row_offsets.data(), num_unique.data(), num_items, env));
   auto const num_offsets = static_cast<std::size_t>(num_unique.value(stream));
@@ -433,13 +436,13 @@ compute_segment_row_offsets_device(cudf::device_span<size_type const> all_page_r
   cudf::device_span<size_type const> input_slice_bounds,
   cudf::device_span<size_type const> segment_row_offsets,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   auto const num_inputs   = input_slice_bounds.size() - 1;
   auto const num_segments = segment_row_offsets.size() - 1;
 
-  auto page_maps =
-    cuda::device_buffer<size_type>(stream, mr, num_inputs * num_segments, cuda::no_init);
+  auto page_maps = cuda::device_buffer<size_type>(
+    stream, mr.get_output_mr(), num_inputs * num_segments, cuda::no_init);
 
   // One thread per (input, segment) pair. `upper_bound` finds the containing page. Segments are
   // built from the union of all page boundaries, so containment is guaranteed.
@@ -672,14 +675,12 @@ std::unique_ptr<column> compute_row_mask_from_page_stats(
   CUDF_EXPECTS(
     total_rows > 0, "Parquet row groups must contain at least one row", cudf::logic_error);
 
-  auto const temp_mr = mr.get_temporary_mr();
-
   // Return an all true row mask if no compacted page statistics are provided
   if (inputs.empty()) {
     CUDF_LOG_WARN(
       "At least one set of compacted page statistics is required. Falling back to an all true row "
       "mask.");
-    auto const true_scalar = cudf::numeric_scalar<bool>{true, true, stream, temp_mr};
+    auto const true_scalar = cudf::numeric_scalar<bool>{true, true, stream, mr.get_temporary_mr()};
     return cudf::make_column_from_scalar(true_scalar, total_rows, stream, mr.get_output_mr());
   }
 
@@ -718,17 +719,18 @@ std::unique_ptr<column> compute_row_mask_from_page_stats(
                                       static_cast<size_type>(input.page_row_offsets.size()));
   });
 
-  auto const all_page_row_offsets =
-    cudf::detail::make_device_buffer_async(host_all_page_row_offsets, stream, temp_mr);
+  auto const all_page_row_offsets = cudf::detail::make_device_buffer_async(
+    host_all_page_row_offsets, stream, mr.get_temporary_mr());
   auto const input_slice_bounds =
-    cudf::detail::make_device_buffer_async(host_input_slice_bounds, stream, temp_mr);
+    cudf::detail::make_device_buffer_async(host_input_slice_bounds, stream, mr.get_temporary_mr());
 
   // Sorted, deduplicated union of all page boundaries. Host fold for small totals, device
   // sort+unique for larger.
   auto const [segment_row_offsets_storage, num_offsets] =
     total_page_row_offsets >= min_segments_for_device_offsets
-      ? compute_segment_row_offsets_device(all_page_row_offsets, total_rows, stream, temp_mr)
-      : compute_segment_row_offsets_host(inputs, total_page_row_offsets, stream, temp_mr);
+      ? compute_segment_row_offsets_device(
+          all_page_row_offsets, total_rows, stream, mr.as_temporary())
+      : compute_segment_row_offsets_host(inputs, total_page_row_offsets, stream, mr.as_temporary());
 
   auto const segment_row_offsets =
     cudf::device_span<size_type const>{segment_row_offsets_storage.data(), num_offsets};
@@ -736,17 +738,19 @@ std::unique_ptr<column> compute_row_mask_from_page_stats(
 
   // Compute all input columns' page maps in a single kernel launch.
   auto const page_maps = compute_segment_page_maps(
-    all_page_row_offsets, input_slice_bounds, segment_row_offsets, stream, temp_mr);
+    all_page_row_offsets, input_slice_bounds, segment_row_offsets, stream, mr.as_temporary());
 
   auto constexpr stats_cols_per_column = parquet::detail::stats_cols_per_column;
 
   // Stats of non-participating columns are never referenced by the expression so use a common
   // placeholder column for them.
-  auto const placeholder =
-    std::cmp_less(inputs.size(), num_columns)
-      ? cudf::make_numeric_column(
-          data_type{type_id::BOOL8}, num_segments, mask_state::UNALLOCATED, stream, temp_mr)
-      : std::unique_ptr<column>{};
+  auto const placeholder = std::cmp_less(inputs.size(), num_columns)
+                             ? cudf::make_numeric_column(data_type{type_id::BOOL8},
+                                                         num_segments,
+                                                         mask_state::UNALLOCATED,
+                                                         stream,
+                                                         mr.get_temporary_mr())
+                             : std::unique_ptr<column>{};
 
   // Convert per-segment page statistics into a table such that for each column `i`:
   //   min(col[i])     = segment_views[i * stats_cols_per_column + 0]
@@ -768,7 +772,7 @@ std::unique_ptr<column> compute_row_mask_from_page_stats(
                                                        out_of_bounds_policy::DONT_CHECK,
                                                        negative_index_policy::NOT_ALLOWED,
                                                        stream,
-                                                       temp_mr);
+                                                       mr.get_temporary_mr());
                   auto gathered_columns = gathered->release();
                   for (size_type stat_index = 0; stat_index < stats_cols_per_column; ++stat_index) {
                     segment_views[(stats_cols_per_column * input.column_index) + stat_index] =
@@ -779,20 +783,20 @@ std::unique_ptr<column> compute_row_mask_from_page_stats(
 
   // Filter segment-level statistics using AST expression and return the (BOOL8) predicate column.
   auto const page_segments_table = cudf::table_view{segment_views};
-  auto segment_mask =
-    cudf::detail::compute_column(page_segments_table, stats_expression.get(), stream, temp_mr);
+  auto segment_mask              = cudf::detail::compute_column(
+    page_segments_table, stats_expression.get(), stream, mr.get_temporary_mr());
   CUDF_EXPECTS(segment_mask->type().id() == type_id::BOOL8,
                "Page statistics expression must produce a boolean column");
 
   // Drop the null mask if it was allocated but ended up empty
   if (segment_mask->nullable() and segment_mask->null_count() == 0) {
     segment_mask->set_null_mask(
-      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, temp_mr), 0);
+      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr.get_temporary_mr()), 0);
   }
 
   // Compute row-level segment indices
   auto row_segment_indices =
-    cuda::device_buffer<size_type>(stream, temp_mr, total_rows, cuda::no_init);
+    cuda::device_buffer<size_type>(stream, mr.get_temporary_mr(), total_rows, cuda::no_init);
   cudf::detail::label_segments(segment_row_offsets.begin(),
                                segment_row_offsets.end(),
                                row_segment_indices.begin(),

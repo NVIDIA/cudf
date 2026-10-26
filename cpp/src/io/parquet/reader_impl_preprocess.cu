@@ -695,7 +695,7 @@ void reader_impl::read_compressed_data()
     total_pages, _stream, _mr.get_temporary_mr());
 
   // decoding of column/page information
-  decode_page_headers(pass, unsorted_pages, _has_offset_index, _stream, _mr.get_temporary_mr());
+  decode_page_headers(pass, unsorted_pages, _has_offset_index, _stream, _mr);
   CUDF_EXPECTS(pass.page_offsets.size() - 1 == static_cast<size_t>(_input_columns.size()),
                "Encountered page_offsets / num_columns mismatch");
 }

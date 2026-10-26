@@ -155,7 +155,7 @@ void reader_impl::setup_next_pass(read_mode mode)
       pass.chunks,
       uses_custom_row_bounds(mode) ? std::nullopt : std::make_optional(pass.num_rows),
       _stream,
-      _mr.get_temporary_mr());
+      _mr);
 
     // Get the decompressed size of dictionary pages to help estimate memory usage
     auto const decomp_dict_data_size = std::accumulate(
@@ -269,8 +269,8 @@ void reader_impl::setup_next_subpass(read_mode mode)
     // include scratch space needed for decompression and string offset buffers.
     // for certain codecs (eg ZSTD) this an be considerable.
     if (is_first_subpass) {
-      pass.decomp_scratch_sizes = compute_decompression_scratch_sizes(
-        pass.chunks, pass.pages, _stream, _mr.get_temporary_mr());
+      pass.decomp_scratch_sizes =
+        compute_decompression_scratch_sizes(pass.chunks, pass.pages, _stream, _mr.as_temporary());
       pass.string_offset_sizes = compute_string_offset_sizes(
         pass.chunks, pass.pages, pass.skip_rows, pass.num_rows, _stream, _mr.get_temporary_mr());
       pass.level_decode_sizes = compute_level_decode_sizes(pass.chunks,
@@ -281,9 +281,9 @@ void reader_impl::setup_next_subpass(read_mode mode)
                                                            _stream,
                                                            _mr.get_temporary_mr());
     }
-    include_scratch_size(pass.decomp_scratch_sizes, c_info, _stream, _mr.get_temporary_mr());
-    include_scratch_size(pass.string_offset_sizes, c_info, _stream, _mr.get_temporary_mr());
-    include_scratch_size(pass.level_decode_sizes, c_info, _stream, _mr.get_temporary_mr());
+    include_scratch_size(pass.decomp_scratch_sizes, c_info, _stream, _mr);
+    include_scratch_size(pass.string_offset_sizes, c_info, _stream, _mr);
+    include_scratch_size(pass.level_decode_sizes, c_info, _stream, _mr);
 
     auto iter               = cuda::counting_iterator<size_t>{0};
     auto const pass_max_row = pass.skip_rows + pass.num_rows;
@@ -291,7 +291,7 @@ void reader_impl::setup_next_subpass(read_mode mode)
                      iter,
                      iter + pass.pages.size(),
                      set_row_index{pass.chunks, pass.pages, c_info, pass_max_row});
-    // print_cumulative_page_info(pass.pages, pass.chunks, c_info, _stream, _mr.get_temporary_mr());
+    // print_cumulative_page_info(pass.pages, pass.chunks, c_info, _stream);
 
     // get the next batch of pages
     return compute_next_subpass(c_info,
@@ -304,7 +304,7 @@ void reader_impl::setup_next_subpass(read_mode mode)
                                 is_first_subpass,
                                 _has_offset_index,
                                 _stream,
-                                _mr.get_temporary_mr());
+                                _mr.as_temporary());
   }();
 
   // check to see if we are processing the entire pass (enabling us to skip a bunch of work)
@@ -625,7 +625,7 @@ void reader_impl::compute_output_chunks_for_subpass()
                                                               subpass.num_rows,
                                                               _output_chunk_read_limit,
                                                               _stream,
-                                                              _mr.get_temporary_mr());
+                                                              _mr);
 }
 
 void reader_impl::set_subpass_page_mask()

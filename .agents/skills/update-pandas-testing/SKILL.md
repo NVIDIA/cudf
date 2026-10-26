@@ -40,7 +40,7 @@ The vendored `pyproject.toml` in `run-pandas-tests.sh` sets `xfail_strict = true
 
 ## Skip tests of non-public pandas APIs
 
-cudf.pandas only aims to support the public pandas API. A unit test that exercises a non-public pandas API belongs in `NODEIDS_TO_SKIP` or `NODEIDS_PATHS_TO_SKIP` with the reason `"Tests private pandas APIs"`, regardless of whether it currently passes or fails. The public pandas API is the set of objects documented in the `.rst` files in `doc/source/reference` of the pandas repository.
+cudf.pandas only aims to support the public pandas API. A unit test that exercises a non-public pandas API belongs in `NODEIDS_TO_SKIP` or `NODEIDS_PATHS_TO_SKIP` with a reason that names one non-public API that the test uses, for example `"Tests private pandas APIs, for example pandas.core.apply.reconstruct_func"` or `"Tests private pandas APIs, for example the _mgr attribute"`, regardless of whether it currently passes or fails. The public pandas API is the set of objects documented in the `.rst` files in `doc/source/reference` of the pandas repository.
 
 The scripts in `.agents/skills/update-pandas-testing/scripts/` make this determination. Run them with the plain `python` of the development environment, not with `-m cudf.pandas`.
 
@@ -76,7 +76,8 @@ The scripts in `.agents/skills/update-pandas-testing/scripts/` make this determi
       --collected collected.txt \
       --plugin <cudf repo>/python/cudf/cudf/pandas/scripts/pandas-testing-plugin.py > private_api_entries.txt
     ```
-    If every test function in a file is flagged, the file is printed as a `NODEIDS_PATHS_TO_SKIP` candidate. Otherwise, each collected node id of a flagged test function is printed as a `NODEIDS_TO_SKIP` candidate. Add the entries that the review confirmed, and remove each of these tests from `NODEIDS_THAT_FAIL` and `NODEIDS_THAT_MAY_FAIL`.
+    If every test function in a file is flagged, the file is printed as a `NODEIDS_PATHS_TO_SKIP` candidate. Otherwise, each collected node id of a flagged test function is printed as a `NODEIDS_TO_SKIP` candidate. The reason of each entry names the first finding of the test function in the report, preferring a direct finding over one marked `(via <name>)`; a file's reason names the first finding of its first test function. Add the entries that the review confirmed, and remove each of these tests from `NODEIDS_THAT_FAIL` and `NODEIDS_THAT_MAY_FAIL`.
+    If the review found that the named API is only setup, change the reason to name the non-public API that the test checks instead, in the same `"Tests private pandas APIs, for example <API>"` form. Write a fully qualified name such as `pandas.core.dtypes.cast.dict_compat` for an object, and `the <name> attribute` for an underscore attribute.
 
 The static analysis does not see tests that a test class inherits from a base class in another file (for example the classes in `tests/extension/base/`), or fixtures defined in a `conftest.py`. Review these by hand if a failure in the next step points at a non-public API.
 
@@ -129,8 +130,9 @@ The `-m "not slow and not single_cpu and not db and not network"` filter in `run
     `python <cudf repo>/python/cudf/cudf/pandas/scripts/analyze-test-failures.py pandas-testing/pr.json "<file-or-pattern>"` prints the most common failures for a group of tests.
 3. For each failing test:
     * If a test is failing because it exercises behavior that cannot be supported in cudf.pandas, add a key, value pair to the `NODEIDS_TO_SKIP` dictionary where the key is the node id and the value is a short reason for skipping. If every test in a file or directory fails for the same reason, add the prefix to `NODEIDS_PATHS_TO_SKIP` instead.
-    * If a test is failing because of a bug in cudf.pandas, or a bug or bad assumption in pandas, add a key, value pair to the `NODEIDS_THAT_FAIL` dictionary where the key is the node id and the value is a short reason for failure, for example the exception type and message.
-    * If a test fails only on some runs, or only because of the installed version of an optional dependency, add it to `NODEIDS_THAT_MAY_FAIL`.
+    * If a test is failing because of a bug in cudf.pandas, or a bug or bad assumption in pandas, add a key, value pair to the `NODEIDS_THAT_FAIL` dictionary where the key is the node id and the value is `"TODO: Fails starting with pandas version <version>"`.
+    * If a test fails only on some runs, or only because of the installed version of an optional dependency, add a key, value pair to `NODEIDS_THAT_MAY_FAIL` where the key is the node id and the value is `"TODO: Fails starting with pandas version <version>"`.
+    * In both reasons, `<version>` is the pandas version installed in the development environment (`python -c "import pandas; print(pandas.__version__)"`), for example `"TODO: Fails starting with pandas version 3.0.6"`.
     * If a test in `NODEIDS_THAT_FAIL` reports `[XPASS(strict)]`, it now passes. Remove it from `NODEIDS_THAT_FAIL`.
     * If a test not in the plugin reports `[XPASS(strict)]` (pandas marks it `xfail(strict=True)` but it passes under cudf.pandas), it **must** go in `NODEIDS_TO_SKIP`, not `NODEIDS_THAT_FAIL`. Adding an `xfail` marker does not override pandas' own strict marker, so the strict XPASS would still fail.
 4. Repeat the process until the test output reports no failures.

@@ -59,10 +59,23 @@ TEST_INFRASTRUCTURE = (
 )
 
 #: Public pandas names that the API reference does not list.
-UNDOCUMENTED_PUBLIC = ("pandas.options",)
+UNDOCUMENTED_PUBLIC = (
+    "pandas.DataFrame._metadata",
+    "pandas.Series._metadata",
+    "pandas.api.extensions.ExtensionDtype.construct_from_string",
+    "pandas.api.extensions.ExtensionDtype.is_dtype",
+    "pandas.api.extensions.no_default",
+    "pandas.api.extensions.take",
+    "pandas.io.parsers.TextFileReader",
+    "pandas.io.stata.StataWriterUTF8",
+    "pandas.options",
+    "pandas.to_pickle",
+    "pandas.tseries.frequencies.is_subperiod",
+    "pandas.tseries.frequencies.is_superperiod",
+)
 
 #: Namespaces that pandas declares public in full.
-PUBLIC_NAMESPACES = ("pandas.api",)
+PUBLIC_NAMESPACES = ("pandas.api", "pandas.tseries.holiday")
 
 #: Underscore attributes that implement the IPython display protocol.
 PROTOCOL_ATTRIBUTES = frozenset(
@@ -86,10 +99,24 @@ class OutputFormat(Enum):
 @dataclass(frozen=True, slots=True)
 class Finding:
     line: int
-    description: str
+    #: A fully qualified pandas name, or an attribute name if ``attribute``.
+    name: str
+    attribute: bool = False
     #: The fixture or helper that contains the reference, or None if the
     #: test function itself contains it.
     via: str | None = None
+
+    @property
+    def description(self) -> str:
+        if self.attribute:
+            return f"attribute `{self.name}`"
+        return f"`{self.name}`"
+
+    @property
+    def skip_reason(self) -> str:
+        if self.attribute:
+            return f"{SKIP_REASON}, for example the {self.name} attribute"
+        return f"{SKIP_REASON}, for example {self.name}"
 
     def __str__(self) -> str:
         if self.via is None:
@@ -107,6 +134,11 @@ class TestFunction:
             include_indirect or finding.via is None
             for finding in self.findings
         )
+
+    @property
+    def skip_reason(self) -> str:
+        """The reason naming one finding, preferring a direct one."""
+        return self.findings[0].skip_reason
 
 
 def is_private_name(name: str) -> bool:
@@ -283,14 +315,14 @@ class FindingCollector(ast.NodeVisitor):
 
     def check_path(self, node: ast.AST, path: str) -> None:
         if not self.public_api.is_public(path):
-            self.findings.append(Finding(node.lineno, f"`{path}`"))
+            self.findings.append(Finding(node.lineno, path))
 
     def check_attribute(self, node: ast.AST, attr: str) -> None:
         if (
             self.public_api.is_private_member(attr)
             and attr not in self.local_names
         ):
-            self.findings.append(Finding(node.lineno, f"attribute `{attr}`"))
+            self.findings.append(Finding(node.lineno, attr, attribute=True))
 
     def visit_Name(self, node: ast.Name) -> None:
         self.referenced.add(node.id)
@@ -410,13 +442,11 @@ def gather_findings(
         if helper is None:
             continue
         findings.extend(
-            Finding(f.line, f.description, name) for f in helper.findings
+            Finding(f.line, f.name, f.attribute, name) for f in helper.findings
         )
         pending.extend(sorted(helper.referenced - seen))
     return tuple(
-        sorted(
-            set(findings), key=lambda f: (f.via or "", f.line, f.description)
-        )
+        sorted(set(findings), key=lambda f: (f.via or "", f.line, f.name))
     )
 
 
@@ -508,24 +538,24 @@ def print_plugin_entries(
     collected_by_test = defaultdict(list)
     for node_id in collected:
         collected_by_test[strip_parameters(node_id)].append(node_id)
-    paths, node_ids = [], []
+    paths, node_ids = {}, {}
     for file, tests in results.items():
         if any(file.startswith(path) for path in skipped_paths):
             continue
-        flagged = frozenset(
-            test.test_id
+        flagged = tuple(
+            test
             for test in tests
             if test.is_flagged(include_indirect=include_indirect)
         )
         if not flagged:
             continue
         if len(flagged) == len(tests):
-            paths.append(file)
+            paths[file] = flagged[0].skip_reason
             continue
-        node_ids.extend(
-            node_id
-            for test_id in flagged
-            for node_id in collected_by_test.get(test_id, ())
+        node_ids.update(
+            (node_id, test.skip_reason)
+            for test in flagged
+            for node_id in collected_by_test.get(test.test_id, ())
             if node_id not in skipped
             and not any(node_id.startswith(path) for path in skipped_paths)
         )
@@ -533,11 +563,11 @@ def print_plugin_entries(
         "# NODEIDS_PATHS_TO_SKIP candidates (every test function in the "
         "file is flagged)"
     )
-    for path in sorted(paths):
-        print(f'    "{path}": "{SKIP_REASON}",')  # noqa: T201
+    for path, reason in sorted(paths.items()):
+        print(f'    "{path}": "{reason}",')  # noqa: T201
     print("\n# NODEIDS_TO_SKIP candidates")  # noqa: T201
-    for node_id in sorted(node_ids):
-        print(f'    "{node_id}": "{SKIP_REASON}",')  # noqa: T201
+    for node_id, reason in sorted(node_ids.items()):
+        print(f'    "{node_id}": "{reason}",')  # noqa: T201
 
 
 def main() -> None:

@@ -10,6 +10,7 @@
 
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/io_metadata_utilities.hpp>
+#include <cudf_test/memory_resource_utilities.hpp>
 #include <cudf_test/table_utilities.hpp>
 
 #include <cudf/column/column.hpp>
@@ -595,6 +596,101 @@ TEST_F(HybridScanTest, ConsecutivePrunedPageOffsets)
   auto const keep_outer =
     cudf::ast::operation{cudf::ast::ast_operator::LOGICAL_OR, keep_first, keep_last};
   validate(keep_outer, {0, page_size_for_ordered_tests, 3 * page_size_for_ordered_tests, num_rows});
+}
+
+TEST_F(HybridScanTest, MaterializeUsesMemoryResources)
+{
+  srand(0xbeef);
+  using T = uint32_t;
+
+  // Nullable, compressed, non-constant strings so that materialization exercises decompression,
+  // null mask and string scratch buffers
+  auto constexpr num_concat = 2;
+  auto [written_table, parquet_buffer] =
+    create_parquet_with_stats<T, num_concat, false, true>(100, cudf::io::compression_type::SNAPPY);
+
+  // Filtering AST - table[0] < 1000
+  auto literal_value     = cudf::numeric_scalar<T>(1000);
+  auto literal           = cudf::ast::literal(literal_value);
+  auto col_ref_0         = cudf::ast::column_name_reference("col0");
+  auto filter_expression = cudf::ast::operation(cudf::ast::ast_operator::LESS, col_ref_0, literal);
+
+  auto const stream = cudf::test::get_default_stream();
+  auto const options =
+    cudf::io::parquet_reader_options::builder().filter(filter_expression).build();
+
+  cudf::test::memory_resource_test_harness resources;
+  cudf::io::table_with_metadata filter_result;
+  cudf::io::table_with_metadata payload_result;
+  {
+    auto datasource          = cudf::io::datasource::create(cudf::host_span<std::byte const>(
+      reinterpret_cast<std::byte const*>(parquet_buffer.data()), parquet_buffer.size()));
+    auto const footer_buffer = cudf::io::parquet::fetch_footer_to_host(*datasource);
+    auto reader = cudf::io::parquet::experimental::hybrid_scan_reader(*footer_buffer, options);
+    auto const page_index_buffer =
+      cudf::io::parquet::fetch_page_index_to_host(*datasource, reader.page_index_byte_range());
+    reader.setup_page_index(*page_index_buffer);
+
+    auto const row_group_indices = reader.all_row_groups(options);
+    auto row_mask                = reader.build_row_mask_with_page_index_stats(
+      row_group_indices, options, stream, cudf::get_current_device_resource_ref());
+    auto row_mask_view = row_mask->mutable_view();
+
+    auto [filter_buffers, filter_data, filter_tasks] =
+      cudf::io::parquet::fetch_byte_ranges_to_device_async(
+        *datasource,
+        reader.filter_column_chunks_byte_ranges(row_group_indices, options),
+        cudf::io::parquet::io_submission_policy::SERIALIZE,
+        stream,
+        cudf::get_current_device_resource_ref());
+    filter_tasks.get();
+    auto [payload_buffers, payload_data, payload_tasks] =
+      cudf::io::parquet::fetch_byte_ranges_to_device_async(
+        *datasource,
+        reader.payload_column_chunks_byte_ranges(row_group_indices, options),
+        cudf::io::parquet::io_submission_policy::SERIALIZE,
+        stream,
+        cudf::get_current_device_resource_ref());
+    payload_tasks.get();
+
+    // Intermediates must come from the temporary (current) resource, output from the passed
+    // resource
+    cudf::test::scoped_current_device_resource current_mr{resources.temporary_mr()};
+    filter_result =
+      reader.materialize_filter_columns(row_group_indices,
+                                        filter_data,
+                                        row_mask_view,
+                                        cudf::io::parquet::experimental::use_data_page_mask::YES,
+                                        options,
+                                        stream,
+                                        resources.output_mr());
+    payload_result =
+      reader.materialize_payload_columns(row_group_indices,
+                                         payload_data,
+                                         row_mask_view,
+                                         cudf::io::parquet::experimental::use_data_page_mask::YES,
+                                         options,
+                                         stream,
+                                         resources.output_mr());
+    resources.synchronize(stream);
+  }
+  // Columns are decoded on the output resource before the row mask is applied, so the output
+  // resource also sees the released unfiltered tables
+  resources.expect_resource_usage(
+    filter_result.tbl->alloc_size() + payload_result.tbl->alloc_size(),
+    {cudf::test::output_allocation_expectation::AT_LEAST_LIVE,
+     cudf::test::temporary_allocation_expectation::SOME},
+    stream);
+
+  auto col_ref   = cudf::ast::column_reference(0);
+  auto expr      = cudf::ast::operation(cudf::ast::ast_operator::LESS, col_ref, literal);
+  auto predicate = cudf::compute_column(written_table->view(), expr);
+  auto expected  = cudf::apply_retention_mask(written_table->view(), *predicate);
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected->view().select({0}), filter_result.tbl->view());
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected->view().select({1, 2}), payload_result.tbl->view());
+  filter_result.tbl.reset();
+  payload_result.tbl.reset();
+  resources.expect_no_live_allocations(stream);
 }
 
 TEST_F(HybridScanTest, MaterializeStructs)

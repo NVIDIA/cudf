@@ -571,8 +571,8 @@ void reader_impl::compute_page_string_offset_indices(size_t skip_rows, size_t nu
                                                       _stream);
 
   // Allocate the string offset buffer
-  subpass.string_offset_buffer =
-    cuda::device_buffer<uint32_t>(_stream, _mr, total_num_offsets, cuda::no_init);
+  subpass.string_offset_buffer = cuda::device_buffer<uint32_t>(
+    _stream, _mr.get_temporary_mr(), total_num_offsets, cuda::no_init);
 
   // Set the string offset buffer for non-dictionary, non-FLBA string columns
   for (size_t col_idx = 0; col_idx < pass.chunks.size(); ++col_idx) {
@@ -1118,7 +1118,7 @@ void reader_impl::allocate_columns(read_mode mode, size_t skip_rows, size_t num_
                      "Number of rows exceeds cudf's column size limit",
                      std::overflow_error);
         out_buf.create_with_mask(
-          out_buf_size, cudf::mask_state::UNINITIALIZED, false, _stream, _mr);
+          out_buf_size, cudf::mask_state::UNINITIALIZED, false, _stream, _mr.get_output_mr());
         nullmask_bufs.emplace_back(
           out_buf.null_mask(),
           cudf::util::round_up_safe(out_buf.null_mask_size(), sizeof(cudf::bitmask_type)) /
@@ -1251,7 +1251,7 @@ void reader_impl::allocate_columns(read_mode mode, size_t skip_rows, size_t num_
           // allocate
           // we're going to start null mask as all valid and then turn bits off if necessary
           out_buf.create_with_mask(
-            buffer_size, cudf::mask_state::UNINITIALIZED, false, _stream, _mr);
+            buffer_size, cudf::mask_state::UNINITIALIZED, false, _stream, _mr.get_output_mr());
           nullmask_bufs.emplace_back(
             out_buf.null_mask(),
             cudf::util::round_up_safe(out_buf.null_mask_size(), sizeof(cudf::bitmask_type)) /

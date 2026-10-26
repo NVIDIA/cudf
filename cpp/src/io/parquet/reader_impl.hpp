@@ -513,7 +513,7 @@ class reader_impl {
   void apply_decimal_width_cast(std::vector<std::unique_ptr<cudf::column>>& out_columns);
 
   cuda::stream_ref _stream;
-  rmm::device_async_resource_ref _mr{cudf::get_current_device_resource_ref()};
+  cudf::memory_resources _mr{cudf::get_current_device_resource_ref()};
 
   // Reader configs.
   struct {

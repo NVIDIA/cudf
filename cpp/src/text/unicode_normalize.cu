@@ -544,9 +544,10 @@ __device__ int32_t decompose_cp(int64_t idx,
           auto copy_size =
             cuda::std::min(end - start, static_cast<uint32_t>(MAX_DECOMP_EXPAND - count_b));
           // Plain loops copy whole uint32_t elements here and below.
-          // cuda::std::memcpy with a runtime size compiles to a byte-wise copy, and
-          // cuda::std::copy/copy_n on pointers dispatch to cuda::std::memmove (also
-          // byte-wise), which measured slower than these element copies.
+          // cuda::std::memcpy with a runtime size compiles to a byte-wise copy unless the
+          // pointers are wrapped in cuda::std::assume_aligned, and cuda::std::copy/copy_n on
+          // pointers dispatch to cuda::std::memmove (also byte-wise). The element loops
+          // measured as fast as or faster than either alternative.
           for (uint32_t j = 0; j < copy_size; ++j) {
             buf_b[count_b + j] = decomp_table[start + j];
           }

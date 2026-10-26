@@ -491,7 +491,8 @@ def test_hybrid_scan_payload_page_mask_without_page_index(
     num_rows: int,
 ) -> None:
     """Test payload page pruning without a page index set up on the reader,
-    then page-level (sparse) I/O once the page index is set up."""
+    then page-level (sparse) I/O once the page index is set up.
+    """
     reader = simple_hybrid_scan_reader
     row_groups = reader.all_row_groups(simple_parquet_options)
 

@@ -18,7 +18,8 @@ namespace cudf::io::parquet::experimental {
 hybrid_scan_multifile::hybrid_scan_multifile(
   cudf::host_span<cudf::host_span<uint8_t const> const> footer_bytes,
   parquet_reader_options const& options)
-  : _impl{std::make_unique<detail::hybrid_scan_reader_impl>(footer_bytes, options)}
+  : _impl{std::make_unique<detail::hybrid_scan_reader_impl>(
+      std::vector<std::span<uint8_t const>>(footer_bytes.begin(), footer_bytes.end()), options)}
 {
 }
 
@@ -50,7 +51,8 @@ void hybrid_scan_multifile::setup_page_indexes(
   cudf::host_span<cudf::host_span<uint8_t const> const> page_index_bytes) const
 {
   CUDF_FUNC_RANGE();
-  _impl->setup_page_indexes(page_index_bytes);
+  _impl->setup_page_indexes(
+    std::vector<std::span<uint8_t const>>(page_index_bytes.begin(), page_index_bytes.end()));
 }
 
 std::vector<std::vector<size_type>> hybrid_scan_multifile::all_row_groups(

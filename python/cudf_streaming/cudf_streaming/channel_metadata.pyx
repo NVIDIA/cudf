@@ -127,6 +127,76 @@ cdef class OrderKey:
         return f"OrderKey({self.column_index}, {self.order!r}, {self.null_order!r})"
 
 
+cdef class RowOrdering:
+    """
+    A row-ordering guarantee for a data stream.
+
+    Parameters
+    ----------
+    order_keys
+        Non-empty sequence of keys that order rows.
+    scope
+        Rows covered by the ordering guarantee.
+    group_keys
+        Columns defining equality groups. When empty, all rows in the selected
+        scope are ordered together. Otherwise, each group's subsequence is
+        ordered independently. Group keys must not also appear in
+        ``order_keys``.
+    """
+
+    def __init__(
+        self,
+        object order_keys,
+        RowOrderingScope scope,
+        object group_keys=(),
+    ):
+        cdef vector[cpp_OrderKey] cpp_order_keys
+        cdef vector[int32_t] cpp_group_keys
+        for key in order_keys:
+            cpp_order_keys.push_back((<OrderKey?>key)._handle)
+        for key in group_keys:
+            cpp_group_keys.push_back(<int32_t?>key)
+        self._handle = cpp_RowOrdering(
+            move(cpp_order_keys), scope, move(cpp_group_keys)
+        )
+
+    @staticmethod
+    cdef RowOrdering from_cpp(cpp_RowOrdering ordering):
+        cdef RowOrdering ret = RowOrdering.__new__(RowOrdering)
+        ret._handle = move(ordering)
+        return ret
+
+    @property
+    def order_keys(self) -> tuple:
+        """Keys that order rows."""
+        cdef int i
+        cdef int n = self._handle.order_keys.size()
+        return tuple(
+            OrderKey.from_cpp(self._handle.order_keys[i]) for i in range(n)
+        )
+
+    @property
+    def scope(self) -> RowOrderingScope:
+        """Scope of the ordering guarantee."""
+        return self._handle.scope
+
+    @property
+    def group_keys(self) -> tuple:
+        """Columns defining equality groups."""
+        return tuple(self._handle.group_keys)
+
+    def __eq__(self, other):
+        if not isinstance(other, RowOrdering):
+            return NotImplemented
+        return self._handle == (<RowOrdering>other)._handle
+
+    def __repr__(self):
+        return (
+            f"RowOrdering({self.order_keys!r}, {self.scope!r}, "
+            f"group_keys={self.group_keys!r})"
+        )
+
+
 cdef class Ordering:
     """A valid ordering description for order-partitioned data."""
 
@@ -318,7 +388,7 @@ cdef object _from_spec(const cpp_PartitioningSpec& spec):
 
 cdef class Partitioning:
     """
-    Hierarchical partitioning metadata for a data stream.
+    Partitioning and row-ordering metadata for a data stream.
 
     Parameters
     ----------
@@ -328,11 +398,18 @@ cdef class Partitioning:
     local
         Distribution within a rank. Can be a HashScheme, OrderScheme, None,
         or 'inherit'.
+    row_orderings
+        Independent row-ordering guarantees for the stream. Producers are
+        responsible for ensuring that every guarantee is valid (default: none).
     """
 
-    def __init__(self, inter_rank=None, local=None):
+    def __init__(self, inter_rank=None, local=None, *, object row_orderings=()):
+        cdef vector[cpp_RowOrdering] cpp_row_orderings
         _apply_spec(self._handle.inter_rank, inter_rank)
         _apply_spec(self._handle.local, local)
+        for ordering in row_orderings:
+            cpp_row_orderings.push_back((<RowOrdering?>ordering)._handle)
+        self._handle.row_orderings = move(cpp_row_orderings)
 
     @staticmethod
     cdef Partitioning from_cpp(cpp_Partitioning data):
@@ -350,8 +427,21 @@ cdef class Partitioning:
         """Intra-rank (local) partitioning spec."""
         return _from_spec(self._handle.local)
 
+    @property
+    def row_orderings(self) -> tuple:
+        """Row-ordering guarantees for the stream."""
+        cdef int i
+        cdef int n = self._handle.row_orderings.size()
+        return tuple(
+            RowOrdering.from_cpp(self._handle.row_orderings[i])
+            for i in range(n)
+        )
+
     def __repr__(self):
-        return f"Partitioning(inter_rank={self.inter_rank!r}, local={self.local!r})"
+        return (
+            f"Partitioning(inter_rank={self.inter_rank!r}, "
+            f"local={self.local!r}, row_orderings={self.row_orderings!r})"
+        )
 
 
 cdef class ChannelMetadata:
@@ -363,7 +453,7 @@ cdef class ChannelMetadata:
     local_count
         Estimated number of chunks for this rank.
     partitioning
-        How the data is partitioned (default: no partitioning).
+        Partitioning and row-ordering metadata (default: none).
     duplicated
         Whether data is duplicated on all workers (default: False).
     """
@@ -382,9 +472,7 @@ cdef class ChannelMetadata:
         if partitioning is not None:
             part = (<Partitioning?>partitioning)._handle
 
-        self._handle = make_unique[cpp_ChannelMetadata](
-            local_count, part, duplicated
-        )
+        self._handle = make_unique[cpp_ChannelMetadata](local_count, part, duplicated)
 
     def __dealloc__(self):
         with nogil:
@@ -433,7 +521,7 @@ cdef class ChannelMetadata:
 
     @property
     def partitioning(self) -> Partitioning:
-        """How the data is partitioned."""
+        """Partitioning and row-ordering metadata for the stream."""
         return Partitioning.from_cpp(self.handle_ptr().partitioning)
 
     @property

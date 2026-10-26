@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from enum import IntEnum
 from typing import Literal, Self
 
 import pylibcudf as plc
@@ -32,6 +33,26 @@ class OrderKey:
     column_index: int
     order: plc.types.Order
     null_order: plc.types.NullOrder
+
+class RowOrderingScope(IntEnum):
+    GLOBAL = ...
+    RANK_LOCAL = ...
+
+class RowOrdering:
+    def __init__(
+        self,
+        order_keys: Sequence[OrderKey],
+        scope: RowOrderingScope,
+        group_keys: Sequence[int] = (),
+    ) -> None: ...
+    @property
+    def order_keys(self) -> tuple[OrderKey, ...]: ...
+    @property
+    def scope(self) -> RowOrderingScope: ...
+    @property
+    def group_keys(self) -> tuple[int, ...]: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __repr__(self) -> str: ...
 
 class Ordering:
     def __init__(
@@ -73,11 +94,15 @@ class Partitioning:
         self,
         inter_rank: PartitioningSpecValue = None,
         local: PartitioningSpecValue = None,
+        *,
+        row_orderings: Sequence[RowOrdering] = (),
     ) -> None: ...
     @property
     def inter_rank(self) -> PartitioningSpecValue: ...
     @property
     def local(self) -> PartitioningSpecValue: ...
+    @property
+    def row_orderings(self) -> tuple[RowOrdering, ...]: ...
     def __eq__(self, other: object) -> bool: ...
     def __repr__(self) -> str: ...
 

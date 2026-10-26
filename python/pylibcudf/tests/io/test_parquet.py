@@ -1722,3 +1722,32 @@ def test_read_parquet_prepend_source_index_column_with_filter(
         plc.io.parquet.read_parquet(options),
         check_field_nullability=False,
     )
+
+
+@pytest.mark.parametrize("use_builder", [True, False])
+def test_read_parquet_output_dict_columns(tmp_path, use_builder):
+    path = tmp_path / "strings.parquet"
+    pq.write_table(
+        pa.table({"a": ["x", None, "y", "x"], "b": [1, 2, 3, 4]}), path
+    )
+    builder = plc.io.parquet.ParquetReaderOptions.builder(
+        plc.io.SourceInfo([str(path)])
+    )
+    if use_builder:
+        options = builder.output_dict_columns(True).build()
+    else:
+        options = builder.build()
+        options.enable_output_dict_columns(True)
+
+    result = plc.io.parquet.read_parquet(options)
+
+    assert options.is_enabled_output_dict_columns()
+    strings, ints = result.tbl.columns()
+    assert strings.type().id() == plc.TypeId.DICTIONARY32
+    assert ints.type().id() == plc.TypeId.INT64
+    assert strings.to_arrow().dictionary_decode().to_pylist() == [
+        "x",
+        None,
+        "y",
+        "x",
+    ]

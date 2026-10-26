@@ -318,9 +318,8 @@ class StreamingEngine(pl.GPUEngine):
     environment variable to control the thread count. Under ``MULTI_POLL``,
     cudf-polars does not resolve a thread-pool size at all (kvikio itself may
     still honor ``KVIKIO_NTHREADS`` via its own deferred default); remote I/O
-    concurrency is instead controlled by the ``kvikio_reactor_count``,
-    ``kvikio_reactor_dispatch``, and ``kvikio_request_ceiling`` executor
-    options.
+    concurrency is instead controlled by the ``kvikio_reactor_count`` and
+    ``kvikio_request_ceiling`` executor options.
 
     Parameters
     ----------

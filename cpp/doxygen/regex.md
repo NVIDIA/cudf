@@ -123,6 +123,21 @@ With `EXT_NEWLINE`, a carriage-return/line-feed pair (`\r\n`) is treated as a si
 | Capturing group | `(regex)` | Parentheses group the regex between them. They capture the text matched by the regex inside them into a numbered group. They allow you to apply regex operators to the entire grouped regex. | `(abc⎮def)ghi` matches `abcghi` or `defghi` |
 | Non-capturing group | `(?:regex)` | Non-capturing parentheses group the regex so you can apply regex operators, but do not capture anything. | `(?:abc⎮def)ghi` matches `abcghi` or `defghi` |
 
+### Mode Modifiers
+
+| Feature  | Syntax | Description | Example |
+| ---------- | ------------- | ------------- | ------------- |
+| Ignore case | `(?i)` | Turns on [cudf::strings::regex_flags::IGNORECASE](@ref cudf::strings::regex_flags) for the remainder of the enclosing group | `(?i)abc` matches `abc`, `ABC`, and `aBc` |
+| Multiline | `(?m)` | Turns on [cudf::strings::regex_flags::MULTILINE](@ref cudf::strings::regex_flags) for the remainder of the enclosing group | `(?m)^.` matches `a` and `d` in `abc\ndef` |
+| Dot all | `(?s)` | Turns on [cudf::strings::regex_flags::DOTALL](@ref cudf::strings::regex_flags) for the remainder of the enclosing group | `(?s)a.c` matches `a\nc` |
+| Combined | `(?ims)` | Any combination of `i`, `m`, and `s` turns on each corresponding flag | `(?is)a.c` matches `A\nC` |
+| Modifier span | `(?ims:regex)` | Turns on the specified flags only for the regex inside the non-capturing group | `(?i:a)bc` matches `abc` and `Abc` but not `aBc` |
+
+Mode modifiers may appear anywhere in the pattern. A modifier appearing inside a group applies only
+from that point to the end of the enclosing group. For example, `(a(?i)b)c` matches `abc` and `aBc`
+but not `abC`. The flags can only be turned on using modifiers. Turning off flags (e.g. `(?-i)`)
+and other modifiers (e.g. `(?x)`) are not supported.
+
 ### Replacement Backreferences
 
 | Feature  | Syntax | Description | Example |
@@ -142,4 +157,4 @@ For example, this feature does not include matching characters which have multip
 Character classes (defined by `[]`) have the further restriction that any range of characters are expected to map appropriately between
 lower case and upper case ranges. For example the range `[a-z]` would also try to match characters in `[A-Z]` when the `IGNORECASE` is specified.
 
-The inline `(?i...)` ignore case format pattern is not supported.
+The inline `(?i)` and `(?i:regex)` mode modifiers can also be used to specify ignore case within the pattern.

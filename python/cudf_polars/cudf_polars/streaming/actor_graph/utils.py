@@ -1986,7 +1986,7 @@ def _is_already_partitioned(
 def make_spill_function(
     spillable_messages_list: list[SpillableMessages],
     context: Context,
-) -> Callable[[int], int]:
+) -> Callable[[MemoryType, int], int]:
     """
     Create a spill function for a list of SpillableMessages containers.
 
@@ -2008,8 +2008,9 @@ def make_spill_function(
 
     Returns
     -------
-    A spill function that takes an amount (in bytes) and returns the
-    actual amount spilled (in bytes).
+    A spill function that takes the memory type to free and an amount (in
+    bytes), and returns the actual amount spilled (in bytes). Only device
+    memory is spilled; requests for other memory types spill nothing.
 
     Notes
     -----
@@ -2019,8 +2020,10 @@ def make_spill_function(
     data can remain in slower memory before it's needed.
     """
 
-    def spill_func(amount: int) -> int:
-        """Spill messages from the buffers to free device/host memory."""
+    def spill_func(mem_type: MemoryType, amount: int) -> int:
+        """Spill messages from the buffers to free device memory."""
+        if mem_type != MemoryType.DEVICE:
+            return 0
         spilled = 0
 
         # Collect all messages with metadata for smart spilling

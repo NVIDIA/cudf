@@ -125,7 +125,7 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
         )
         .select(
             [
-                pl.when(pl.count() > 0)
+                pl.when(pl.len() > 0)
                 .then(pl.col("ss_ext_sales_price").sum())
                 .otherwise(None)
                 .alias("promotions")
@@ -149,7 +149,7 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
         )
         .select(
             [
-                pl.when(pl.count() > 0)
+                pl.when(pl.len() > 0)
                 .then(pl.col("ss_ext_sales_price").sum())
                 .otherwise(None)
                 .alias("total")

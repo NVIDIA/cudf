@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -38,10 +39,16 @@ SORT_NOT_SUPPORTED = "sort currently only supports column names as `by` keys."
 EXPECTED_WARNINGS: dict[int, str] = {
     14: CONDITIONAL_JOIN_NOT_SUPPORTED,
     23: CONDITIONAL_JOIN_NOT_SUPPORTED,
-    24: CONDITIONAL_JOIN_NOT_SUPPORTED,
     36: SORT_NOT_SUPPORTED,
     70: SORT_NOT_SUPPORTED,
     86: SORT_NOT_SUPPORTED,
+}
+
+# Whether these warn depends on how many partitions the inputs have, which
+# varies with the scale factor and hardware. Tolerate the warning but don't
+# require it.
+OPTIONAL_WARNINGS: dict[int, str] = {
+    24: CONDITIONAL_JOIN_NOT_SUPPORTED,
 }
 
 
@@ -114,18 +121,25 @@ def test_tpcds_query(
 ) -> None:
     reason = PDSDSPolarsQueries.EXPECTED_FAILURES_TPCDS.get(q_id)
     if reason is not None:
-        request.applymarker(pytest.mark.xfail(reason=reason))
+        request.applymarker(pytest.mark.xfail(reason=reason, strict=False))
 
     warning = EXPECTED_WARNINGS.get(q_id)
-    ctx = (
-        warns_on_spmd(tpc_spmd_engine, UserWarning, match=warning)
-        if warning is not None
-        else contextlib.nullcontext()
-    )
+    optional_warning = OPTIONAL_WARNINGS.get(q_id)
+    ctx: contextlib.AbstractContextManager[object]
+    if warning is not None:
+        ctx = warns_on_spmd(tpc_spmd_engine, UserWarning, match=warning)
+    elif optional_warning is not None:
+        ctx = warnings.catch_warnings()
+    else:
+        ctx = contextlib.nullcontext()
 
     query_result = getattr(PDSDSPolarsQueries, f"q{q_id}")(tpcds_run_config)
 
     with ctx:
+        if optional_warning is not None:
+            warnings.filterwarnings(
+                "ignore", message=optional_warning, category=UserWarning
+            )
         qr = run_polars_query(
             q_id=q_id,
             query_result=query_result,

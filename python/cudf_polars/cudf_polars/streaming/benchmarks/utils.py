@@ -129,19 +129,17 @@ class RunOptions:
     def from_args(cls, args: argparse.Namespace) -> RunOptions:
         """Create a RunOptions from a parsed argparse.Namespace."""
         return cls(
-            debug=getattr(args, "debug", False),
-            explain=getattr(args, "explain", False),
-            explain_logical=getattr(args, "explain_logical", False),
-            explain_partition_plan=getattr(args, "explain_partition_plan", False),
-            print_plans=getattr(args, "print_plans", False),
-            print_results=getattr(args, "print_results", False),
-            summarize=getattr(args, "summarize", False),
-            output=getattr(args, "output", None),
-            output_expected_directory=getattr(args, "output_expected_directory", None),
-            results_directory=getattr(args, "results_directory", None),
-            validation_abs_tol=getattr(
-                args, "validation_abs_tol", POLARS_VALIDATION_OPTIONS["abs_tol"]
-            ),
+            debug=args.debug,
+            explain=args.explain,
+            explain_logical=args.explain_logical,
+            explain_partition_plan=args.explain_partition_plan,
+            print_plans=args.print_plans,
+            print_results=args.print_results,
+            summarize=args.summarize,
+            output=args.output,
+            output_expected_directory=args.output_expected_directory,
+            results_directory=args.results_directory,
+            validation_abs_tol=args.validation_abs_tol,
         )
 
 

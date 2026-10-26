@@ -533,7 +533,12 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
   _stream.sync();
 }
 
-reader_impl::reader_impl() : _stream{cudaStream_t{cudaStreamDefault}}, _options{} {}
+reader_impl::reader_impl()
+  : _stream{cudaStream_t{cudaStreamDefault}},
+    _mr{cudf::get_current_device_resource_ref()},
+    _options{}
+{
+}
 
 reader_impl::reader_impl(std::vector<std::unique_ptr<datasource>>&& sources,
                          std::vector<FileMetaData>&& parquet_metadatas,

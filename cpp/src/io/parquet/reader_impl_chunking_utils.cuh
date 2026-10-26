@@ -112,7 +112,8 @@ int64_t find_next_split(int64_t cur_pos,
 std::pair<cuda::device_buffer<cumulative_page_info>, cuda::device_buffer<int32_t>>
 adjust_cumulative_sizes(device_span<cumulative_page_info const> c_info,
                         device_span<PageInfo const> pages,
-                        cuda::stream_ref stream);
+                        cuda::stream_ref stream,
+                        rmm::device_async_resource_ref mr);
 
 /**
  * @brief Computes the next subpass within the current pass
@@ -134,6 +135,7 @@ adjust_cumulative_sizes(device_span<cumulative_page_info const> c_info,
  * @param is_first_subpass Boolean indicating if this is the first subpass
  * @param has_offset_index Boolean indicating if offset indexes are available
  * @param stream The stream to execute cuda operations on
+ * @param mr Device memory resource used to allocate temporary device memory
  * @returns A tuple containing a vector of page_span structs indicating the page indices to include
  * for each column to be processed, the total number of pages over all columns, and the total
  * expected memory usage (including scratch space)
@@ -149,7 +151,8 @@ std::tuple<cuda::device_buffer<page_span>, size_t, size_t> compute_next_subpass(
   size_t num_columns,
   bool is_first_subpass,
   bool has_offset_index,
-  cuda::stream_ref stream);
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr);
 
 /**
  * @brief Computes the page splits for a given set of pages based on row count and size limit
@@ -164,6 +167,7 @@ std::tuple<cuda::device_buffer<page_span>, size_t, size_t> compute_next_subpass(
  * @param num_rows The total number of rows to consider for splitting
  * @param size_limit The size limit in bytes for each split
  * @param stream The stream to execute cuda operations on
+ * @param mr Device memory resource used to allocate temporary device memory
  * @returns A vector of row_range structs indicating the start and end rows for each split
  */
 std::vector<row_range> compute_page_splits_by_row(device_span<cumulative_page_info const> c_info,
@@ -171,7 +175,8 @@ std::vector<row_range> compute_page_splits_by_row(device_span<cumulative_page_in
                                                   size_t skip_rows,
                                                   size_t num_rows,
                                                   size_t size_limit,
-                                                  cuda::stream_ref stream);
+                                                  cuda::stream_ref stream,
+                                                  rmm::device_async_resource_ref mr);
 
 /**
  * @brief Decompresses a mix of dictionary and non-dictionary pages from a set of column chunks
@@ -213,11 +218,13 @@ decompress_page_data(host_span<ColumnChunkDesc const> chunks,
  * @param chunks Chunk data
  * @param expected_row_count Expected row count, if applicable
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource used to allocate temporary device memory
  */
 void detect_malformed_pages(device_span<PageInfo const> pages,
                             device_span<ColumnChunkDesc const> chunks,
                             std::optional<size_t> expected_row_count,
-                            cuda::stream_ref stream);
+                            cuda::stream_ref stream,
+                            rmm::device_async_resource_ref mr);
 
 /**
  * @brief Computes the per-page scratch space required for decompression.
@@ -225,7 +232,8 @@ void detect_malformed_pages(device_span<PageInfo const> pages,
 cuda::device_buffer<size_t> compute_decompression_scratch_sizes(
   device_span<ColumnChunkDesc const> chunks,
   device_span<PageInfo const> pages,
-  cuda::stream_ref stream);
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr);
 
 /**
  * @brief Computes the per-page buffer sizes required for string offsets.
@@ -302,7 +310,8 @@ CUDF_HOST_DEVICE inline void compute_page_level_decode_sizes(PageType const& pag
  */
 void include_scratch_size(device_span<size_t const> pages,
                           device_span<cumulative_page_info> c_info,
-                          cuda::stream_ref stream);
+                          cuda::stream_ref stream,
+                          rmm::device_async_resource_ref mr);
 
 /**
  * @brief Struct to store split information

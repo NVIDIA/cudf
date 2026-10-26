@@ -151,7 +151,8 @@ void hybrid_scan_reader_impl::setup_next_pass(
                            uses_custom_row_bounds(read_mode::READ_ALL)
                              ? std::nullopt
                              : std::make_optional(pass.num_rows),
-                           _stream);
+                           _stream,
+                           _mr.get_temporary_mr());
 
     // Get the decompressed size of dictionary pages to help estimate memory usage
     auto const decomp_dict_data_size = std::accumulate(

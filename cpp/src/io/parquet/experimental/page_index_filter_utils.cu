@@ -405,19 +405,18 @@ compute_segment_row_offsets_device(cudf::device_span<size_type const> all_page_r
                                    cuda::stream_ref stream,
                                    rmm::device_async_resource_ref mr)
 {
-  auto const temp_mr   = mr;
   auto const num_items = static_cast<cuda::std::int64_t>(all_page_row_offsets.size());
-  auto const mr_prop   = cuda::std::execution::prop{cuda::mr::get_memory_resource, temp_mr};
+  auto const mr_prop   = cuda::std::execution::prop{cuda::mr::get_memory_resource, mr};
   auto const env       = cuda::std::execution::env{cuda::stream_ref{stream.get()}, mr_prop};
 
   // Offsets are non-negative and at most `total_rows`, so only their low bits need sorting.
-  auto sorted_offsets = cuda::device_buffer<size_type>(stream, temp_mr, num_items, cuda::no_init);
+  auto sorted_offsets = cuda::device_buffer<size_type>(stream, mr, num_items, cuda::no_init);
   auto const end_bit  = static_cast<int>(cuda::std::bit_width(static_cast<uint32_t>(total_rows)));
   CUDF_CUDA_TRY(cub::DeviceRadixSort::SortKeys(
     all_page_row_offsets.data(), sorted_offsets.data(), num_items, 0, end_bit, env));
 
   auto segment_row_offsets = cuda::device_buffer<size_type>(stream, mr, num_items, cuda::no_init);
-  auto num_unique          = cudf::detail::device_scalar<cuda::std::int64_t>(stream, temp_mr);
+  auto num_unique          = cudf::detail::device_scalar<cuda::std::int64_t>(stream, mr);
   CUDF_CUDA_TRY(cub::DeviceSelect::Unique(
     sorted_offsets.data(), segment_row_offsets.data(), num_unique.data(), num_items, env));
   auto const num_offsets = static_cast<std::size_t>(num_unique.value(stream));

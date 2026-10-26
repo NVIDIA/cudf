@@ -442,10 +442,10 @@ void reader_impl::assemble_dict_transcoded_columns(
 
       // Device copies of the per-chunk row/key boundaries, reused by the strided key gather below
       // and by `remap_dict_indices_by_chunk`.
-      auto const d_row_offsets = cudf::detail::make_device_buffer_async(
-        chunk_row_offsets, _stream, get_current_device_resource_ref());
-      auto const d_key_counts_prefix = cudf::detail::make_device_buffer_async(
-        key_counts_prefix, _stream, get_current_device_resource_ref());
+      auto const d_row_offsets =
+        cudf::detail::make_device_buffer_async(chunk_row_offsets, _stream, _mr.get_temporary_mr());
+      auto const d_key_counts_prefix =
+        cudf::detail::make_device_buffer_async(key_counts_prefix, _stream, _mr.get_temporary_mr());
 
       // Host source for the strided gather's per-chunk base offsets. Declared at iteration scope
       // (populated only in the strided branch) so it outlives its async copy until the synchronize.
@@ -470,8 +470,8 @@ void reader_impl::assemble_dict_transcoded_columns(
                        cuda::counting_iterator{chunk_indices.size()},
                        key_base_offsets.begin(),
                        [&](size_t k) { return key_offset_of(k); });
-        auto const d_key_base_offsets = cudf::detail::make_device_buffer_async(
-          key_base_offsets, _stream, get_current_device_resource_ref());
+        auto const d_key_base_offsets =
+          cudf::detail::make_device_buffer_async(key_base_offsets, _stream, _mr.get_temporary_mr());
 
         auto const keys_begin = cudf::detail::make_counting_transform_iterator(
           size_type{0},
@@ -481,7 +481,7 @@ void reader_impl::assemble_dict_transcoded_columns(
                                 cudf::device_span<size_type const>{d_key_base_offsets.data(),
                                                                    d_key_base_offsets.size()}});
         stacked_keys_owner = cudf::strings::detail::make_strings_column(
-          keys_begin, keys_begin + total_keys, _stream, get_current_device_resource_ref());
+          keys_begin, keys_begin + total_keys, _stream, _mr.get_temporary_mr());
       }
       column_view const stacked_keys = stacked_keys_owner->view();
 

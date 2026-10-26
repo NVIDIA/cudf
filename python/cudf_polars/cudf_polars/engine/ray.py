@@ -7,6 +7,7 @@ from __future__ import annotations
 import contextlib
 import functools
 import os
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, cast
@@ -732,10 +733,11 @@ def get_num_gpus_in_ray_cluster() -> int:
     return free_gpus
 
 
-def _wait_for_actor_shutdown(ref: ObjectRef[Any]) -> None:
+def _wait_for_actor_shutdown(ref: ObjectRef[Any], deadline: float) -> None:
     """Wait for actor exit, ignoring Ray's expected termination error."""
+    timeout = max(0.0, deadline - time.monotonic())
     with contextlib.suppress(ray.exceptions.RayActorError):
-        ray.get(ref, timeout=RAY_CONTROL_PLANE_TIMEOUT_SECONDS)
+        ray.get(ref, timeout=timeout)
 
 
 def _shutdown_ray(
@@ -753,12 +755,16 @@ def _shutdown_ray(
     if ray_running:
 
         def shutdown_actors() -> None:
+            deadline = time.monotonic() + RAY_CONTROL_PLANE_TIMEOUT_SECONDS
             refs: list[ObjectRef[Any]] = [
                 actor.shutdown.remote() for actor in rank_actors
             ]
             run_cleanup_steps(
                 "Ray actor shutdown failed",
-                *(lambda ref=ref: _wait_for_actor_shutdown(ref) for ref in refs),
+                *(
+                    lambda ref=ref: _wait_for_actor_shutdown(ref, deadline)
+                    for ref in refs
+                ),
             )
 
         steps.append(shutdown_actors)

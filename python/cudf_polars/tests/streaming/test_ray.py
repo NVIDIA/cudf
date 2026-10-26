@@ -148,12 +148,12 @@ def test_reset_keeps_actors_alive(reset_engine: RayEngine) -> None:
 
     reset_engine._reset(
         executor_options={"max_rows_per_partition": 7},
-        engine_options={"allow_gpu_sharing": True},
     )
 
     actors_after = list(reset_engine.rank_actors)
     pids_after = reset_engine._run(os.getpid)
 
+    assert reset_engine._allow_gpu_sharing is True
     # The Python ``ActorHandle`` objects are the same instances …
     assert all(a is b for a, b in zip(actors_before, actors_after, strict=True))
     # … and the actors are running in the same OS processes.

@@ -45,6 +45,9 @@ rapids-logger "Install polars test requirements"
 sed -i '/^polars-cloud$/d' polars/py-polars/requirements-dev.txt
 # Pin pyarrow to avoid FutureWarning https://github.com/pola-rs/polars/pull/28323.
 sed -i 's/^pyarrow$/pyarrow<25/' polars/py-polars/requirements-dev.txt
+# Polars 2.0 tests use a connection API removed in DuckDB 2.0.
+# TODO: Remove after this is resolved upstream.
+sed -i 's/^duckdb$/duckdb<2/' polars/py-polars/requirements-ci.txt
 
 # notes:
 #

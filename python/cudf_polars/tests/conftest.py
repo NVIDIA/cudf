@@ -65,6 +65,12 @@ def with_nulls(request: pytest.FixtureRequest):
     return request.param
 
 
+@pytest.fixture(params=["ms", "us", "ns"], scope="session")
+def time_unit(request: pytest.FixtureRequest) -> str:
+    """Time units of polars ``Datetime`` and ``Duration`` types."""
+    return request.param
+
+
 @pytest.fixture(autouse=True)
 def _skip_unless_spmd(request: pytest.FixtureRequest) -> None:
     """Skip tests in SPMD multi-rank mode unless marked with ``pytest.mark.spmd``."""

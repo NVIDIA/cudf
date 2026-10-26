@@ -9,9 +9,11 @@
 #include <cudf/reduction/unique_count.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/stream>
 #include <thrust/count.h>
@@ -32,7 +34,7 @@ cudf::size_type unique_count(table_view const& keys,
     // Using a temporary buffer for intermediate transform results from the lambda containing
     // the comparator speeds up compile-time significantly without much degradation in
     // runtime performance over using the comparator directly in thrust::count_if.
-    auto d_results = rmm::device_uvector<bool>(keys.num_rows(), stream, temp_mr);
+    auto d_results = cuda::device_buffer<bool>(stream, temp_mr, keys.num_rows(), cuda::no_init);
     thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
                       cuda::counting_iterator<size_type>{0},
                       cuda::counting_iterator<size_type>{keys.num_rows()},

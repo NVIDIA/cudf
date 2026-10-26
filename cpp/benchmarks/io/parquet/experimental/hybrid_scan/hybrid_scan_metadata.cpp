@@ -4,6 +4,7 @@
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 #include <benchmarks/io/cuio_common.hpp>
 #include <benchmarks/io/nvbench_helpers.hpp>
 #include <benchmarks/io/parquet/parquet_common.hpp>
@@ -54,6 +55,7 @@ void BM_hybrid_scan_setup_page_index(nvbench::state& state,
   auto const page_index =
     cudf::io::parquet::fetch_page_index_to_host(*datasource, page_index_byte_range);
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync | nvbench::exec_tag::timer,
              [&](nvbench::launch& launch, auto& timer) {
                // A reader sets up its page index only once, so every sample needs a new reader
@@ -63,6 +65,8 @@ void BM_hybrid_scan_setup_page_index(nvbench::state& state,
                reader.setup_page_index(*page_index);
                timer.stop();
              });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 
   state.add_buffer_size(source_sink.size(), "encoded_file_size", "encoded_file_size");
 }

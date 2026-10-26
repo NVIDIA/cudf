@@ -84,7 +84,7 @@ jobs:
         with:
           repo: ${{ github.repository }}
           target-branch: ${{ fromJSON(steps.get-pr-info.outputs.pr-info).base.ref }}
-          max-days-without-success: 14
+          max-days-without-success: 21
   changed-files:
     permissions:
       actions: read

@@ -171,7 +171,7 @@ def test_hint_sorted_marks_column_metadata(descending, nulls_last) -> None:
     assert result.column_map["b"].is_sorted == plc.types.Sorted.NO
 
 
-def test_hint_sorted_marks_multiple_column_metadata() -> None:
+def test_hint_sorted_marks_only_first_column_metadata() -> None:
     schema = {
         "a": DataType(pl.Int64()),
         "b": DataType(pl.Int64()),
@@ -181,8 +181,8 @@ def test_hint_sorted_marks_multiple_column_metadata() -> None:
         schema,
         pl.DataFrame(
             {
-                "a": [2, None, 1],
-                "b": [2, None, 3],
+                "a": [1, 1, 2],
+                "b": [2, 3, 1],
                 "c": [3, 1, 2],
             }
         )._df,
@@ -191,7 +191,7 @@ def test_hint_sorted_marks_multiple_column_metadata() -> None:
     node = MapFunction(
         schema,
         "hint_sorted",
-        [[("a", False, False), ("b", True, False)]],
+        [[("a", False, False), ("b", False, False)]],
         child,
     )
 
@@ -202,11 +202,7 @@ def test_hint_sorted_marks_multiple_column_metadata() -> None:
         null_order=plc.types.NullOrder.BEFORE,
         stream=result.stream,
     )
-    assert result.column_map["b"].check_sorted(
-        order=plc.types.Order.DESCENDING,
-        null_order=plc.types.NullOrder.AFTER,
-        stream=result.stream,
-    )
+    assert result.column_map["b"].is_sorted == plc.types.Sorted.NO
     assert result.column_map["c"].is_sorted == plc.types.Sorted.NO
 
 

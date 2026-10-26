@@ -1509,10 +1509,9 @@ std::unique_ptr<table> aggregate_reader_metadata::read_column_chunk_bounds(
       schema_indices_per_source[src_idx] = schema_idx;
     }
 
-    auto [min_col, max_col, _] = cudf::type_dispatcher<dispatch_storage_type>(
-      dtype, stats_col, schema_indices_per_source, dtype, stream, mr);
-    columns.push_back(std::move(min_col));
-    columns.push_back(std::move(max_col));
+    std::ranges::move(cudf::type_dispatcher<dispatch_storage_type>(
+                        dtype, stats_col, schema_indices_per_source, dtype, stream, mr),
+                      std::back_inserter(columns));
   }
 
   return std::make_unique<table>(std::move(columns));

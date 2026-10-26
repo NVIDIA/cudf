@@ -1193,7 +1193,7 @@ struct dictionary_caster {
 
     // Device vector of pointers to the result buffers
     auto results_ptrs =
-      cudf::detail::make_device_uvector_async(host_results_ptrs, stream, default_mr);
+      cudf::detail::make_device_buffer_async(host_results_ptrs, stream, default_mr);
 
     // Query one predicate against all cuco hash sets of this column using a thread block
     query_dictionaries<T>
@@ -1264,7 +1264,7 @@ struct dictionary_caster {
 
     // Device vector of pointers to the result buffers
     auto results_ptrs =
-      cudf::detail::make_device_uvector_async(host_results_ptrs, stream, default_mr);
+      cudf::detail::make_device_buffer_async(host_results_ptrs, stream, default_mr);
 
     // Error code for the dictionary decode kernel
     kernel_error error_code(stream);

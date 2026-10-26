@@ -154,12 +154,15 @@ class CompactProtocolReader {
  public:
   // Generate Thrift structure parsing routines
   void read(SchemaElement* s);
-  void read(LogicalType* l);
+  void read(LogicalType* l, LogicalTypePayload* payload);
   void read(DecimalType* d);
   void read(TimeType* t);
   void read(TimeUnit* u);
   void read(TimestampType* t);
   void read(IntType* t);
+  void read(GeometryType* g);
+  void read(VariantType* v);
+  void read(GeographyType* g);
   void read(RowGroup* r);
   void read(ColumnChunk* c);
   void read(BloomFilterAlgorithm* bf);

@@ -11,6 +11,7 @@
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/io/datasource.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
@@ -27,6 +28,7 @@
 #include <cstring>
 #include <span>
 #include <string>
+#include <vector>
 
 using cudf::device_span;
 using cudf::host_span;
@@ -227,6 +229,15 @@ TEST(SpanTest, CanUseStdSpan)
   std::span std_span = message_span;
   EXPECT_EQ(std_span.data(), message_span.data());
   EXPECT_EQ(std_span.size(), message_span.size());
+}
+
+TEST(SpanTest, CanConvertDatasourceBufferToStdSpan)
+{
+  auto const buffer = cudf::io::datasource::buffer::create(std::vector<uint8_t>{1, 2, 3});
+
+  std::span<uint8_t const> const std_span = *buffer;
+  EXPECT_EQ(std_span.data(), buffer->data());
+  EXPECT_EQ(std_span.size(), buffer->size());
 }
 
 CUDF_KERNEL void simple_device_kernel(device_span<bool> result) { result[0] = true; }

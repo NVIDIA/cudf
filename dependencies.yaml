@@ -1790,7 +1790,6 @@ dependencies:
           - pytest-xdist
           - python-calamine
           - pyxlsb
-          - qtpy
           - scipy
           - tabulate
           - xarray
@@ -1800,8 +1799,15 @@ dependencies:
       - output_types: [requirements, constraints, pyproject]
         packages:
           - matplotlib
-          - PyQt5
           - tables
+      # Excluded from requirements because pip builds PyQt5 from source on
+      # arm64, which fails without qmake.
+      - output_types: [conda, pyproject]
+        packages:
+          - qtpy
+      - output_types: [pyproject]
+        packages:
+          - PyQt5
       - output_types: [conda]
         packages:
           - matplotlib-base

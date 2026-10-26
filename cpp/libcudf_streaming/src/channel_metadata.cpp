@@ -7,6 +7,7 @@
 #include <cudf/binaryop.hpp>
 #include <cudf/reduction.hpp>
 #include <cudf/scalar/scalar.hpp>
+#include <cudf/stream_compaction.hpp>
 
 #include <cudf_streaming/channel_metadata.hpp>
 
@@ -17,6 +18,7 @@
 
 #include <algorithm>
 #include <memory>
+#include <numeric>
 #include <stdexcept>
 #include <utility>
 
@@ -40,6 +42,21 @@ void validate_ordering(ordering const& ordering)
 
 }  // namespace
 
+row_ordering::row_ordering(std::vector<order_key> order_keys,
+                           row_ordering_scope scope,
+                           std::vector<cudf::size_type> group_keys)
+  : order_keys{std::move(order_keys)}, scope{scope}, group_keys{std::move(group_keys)}
+{
+  RAPIDSMPF_EXPECTS(
+    !this->order_keys.empty(), "row_ordering: order_keys must not be empty", std::invalid_argument);
+  for (auto const& key : this->order_keys) {
+    RAPIDSMPF_EXPECTS(
+      std::ranges::find(this->group_keys, key.column_index) == this->group_keys.end(),
+      "row_ordering: order_keys and group_keys must not overlap",
+      std::invalid_argument);
+  }
+}
+
 ordering::ordering(std::vector<order_key> keys,
                    std::shared_ptr<table_chunk> boundaries,
                    bool strict_boundaries,
@@ -60,6 +77,27 @@ ordering ordering::with_keys(std::vector<order_key> new_keys) const
 ordering ordering::with_locally_ordered(bool locally_ordered) const
 {
   return ordering{keys, boundaries, strict_boundaries, locally_ordered};
+}
+
+ordering ordering::as_strict(rapidsmpf::BufferResource& br) const
+{
+  if (strict_boundaries) { return *this; }
+
+  auto const boundary_view = boundaries->table_view();
+  std::vector<cudf::size_type> key_columns(boundary_view.num_columns());
+  std::iota(key_columns.begin(), key_columns.end(), 0);
+  auto const stream = boundaries->stream();
+  // Equal boundary rows are adjacent because boundaries are ordered.
+  auto unique_boundaries = cudf::unique(boundary_view,
+                                        key_columns,
+                                        cudf::duplicate_keep_option::KEEP_FIRST,
+                                        cudf::null_equality::EQUAL,
+                                        stream,
+                                        br.device_mr());
+  return ordering{keys,
+                  std::make_shared<table_chunk>(std::move(unique_boundaries), stream),
+                  true,
+                  locally_ordered};
 }
 
 bool ordering::boundaries_aligned_with(ordering const& other, rapidsmpf::BufferResource& br) const

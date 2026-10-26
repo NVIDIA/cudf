@@ -270,11 +270,17 @@ void hybrid_scan_multifile::setup_chunking_for_payload_pages(
   cudf::host_span<cudf::device_span<uint8_t const> const> page_data,
   parquet_reader_options const& options,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  _impl->setup_chunked_sparse_payload_materialization(
-    chunk_read_limit, pass_read_limit, row_group_indices, page_data, row_mask, options, stream, mr);
+  _impl->setup_chunked_sparse_payload_materialization(chunk_read_limit,
+                                                      pass_read_limit,
+                                                      row_group_indices,
+                                                      page_data,
+                                                      row_mask,
+                                                      options,
+                                                      stream,
+                                                      mr.get_output_mr());
 }
 
 table_with_metadata hybrid_scan_multifile::materialize_payload_columns_chunk(

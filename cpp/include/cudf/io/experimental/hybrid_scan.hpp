@@ -11,6 +11,7 @@
 #include <cudf/io/types.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/export.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/resource_ref.hpp>
 
@@ -835,7 +836,7 @@ class hybrid_scan_reader {
    * @param page_data Device spans of page data of payload columns
    * @param options Parquet reader options
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resource used to allocate the device memory for the output table chunks
+   * @param mr Memory resources used to allocate the device memory for the output table chunks
    */
   void setup_chunking_for_payload_pages(std::size_t chunk_read_limit,
                                         std::size_t pass_read_limit,
@@ -844,7 +845,7 @@ class hybrid_scan_reader {
                                         std::span<cudf::device_span<uint8_t const> const> page_data,
                                         parquet_reader_options const& options,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr);
+                                        cudf::memory_resources mr);
 
   /**
    * @brief Materializes a chunk of payload columns and applies the corresponding range of input row

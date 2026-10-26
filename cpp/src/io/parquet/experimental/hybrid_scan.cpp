@@ -476,7 +476,7 @@ void hybrid_scan_reader::setup_chunking_for_payload_pages(
   std::span<cudf::device_span<uint8_t const> const> page_data,
   parquet_reader_options const& options,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -491,7 +491,7 @@ void hybrid_scan_reader::setup_chunking_for_payload_pages(
                                                       row_mask,
                                                       options,
                                                       stream,
-                                                      mr);
+                                                      mr.get_output_mr());
 }
 
 table_with_metadata hybrid_scan_reader::materialize_payload_columns_chunk(

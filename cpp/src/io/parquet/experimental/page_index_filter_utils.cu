@@ -405,7 +405,7 @@ compute_segment_row_offsets_device(cudf::device_span<size_type const> all_page_r
                                    cuda::stream_ref stream,
                                    rmm::device_async_resource_ref mr)
 {
-  auto const temp_mr   = cudf::get_current_device_resource_ref();
+  auto const temp_mr   = mr;
   auto const num_items = static_cast<cuda::std::int64_t>(all_page_row_offsets.size());
   auto const mr_prop   = cuda::std::execution::prop{cuda::mr::get_memory_resource, temp_mr};
   auto const env       = cuda::std::execution::env{cuda::stream_ref{stream.get()}, mr_prop};

@@ -59,9 +59,8 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
    * @param footer_bytes Span of parquet file footer byte spans, one per source
    * @param options Parquet reader options
    */
-  explicit hybrid_scan_reader_impl(
-    cudf::host_span<cudf::host_span<uint8_t const> const> footer_bytes,
-    parquet_reader_options const& options);
+  explicit hybrid_scan_reader_impl(std::span<std::span<uint8_t const> const> footer_bytes,
+                                   parquet_reader_options const& options);
 
   /**
    * @brief Constructor for the experimental parquet reader implementation
@@ -69,7 +68,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
    * @param parquet_metadatas Span of pre-populated Parquet file metadata, one per source
    * @param options Parquet reader options
    */
-  explicit hybrid_scan_reader_impl(cudf::host_span<FileMetaData const> parquet_metadatas,
+  explicit hybrid_scan_reader_impl(std::span<FileMetaData const> parquet_metadatas,
                                    parquet_reader_options const& options);
 
   /**
@@ -101,8 +100,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
   /**
    * @copydoc cudf::io::parquet::experimental::hybrid_scan_multifile::setup_page_indexes
    */
-  void setup_page_indexes(
-    cudf::host_span<cudf::host_span<uint8_t const> const> page_index_bytes) const;
+  void setup_page_indexes(std::span<std::span<uint8_t const> const> page_index_bytes) const;
 
   /**
    * @copydoc cudf::io::parquet::experimental::hybrid_scan_multifile::all_row_groups
@@ -151,7 +149,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
    *        footer has neither a `dictionary_page_offset` nor an offset index
    */
   [[nodiscard]] std::pair<std::vector<dictionary_byte_range>, std::vector<cudf::size_type>>
-  dictionary_pages_byte_ranges(cudf::host_span<std::vector<size_type> const> row_group_indices,
+  dictionary_pages_byte_ranges(std::span<std::vector<size_type> const> row_group_indices,
                                parquet_reader_options const& options,
                                bool include_unbounded = false);
 

@@ -486,7 +486,7 @@ class hybrid_scan_multifile {
    * ranges from `payload_pages_byte_ranges`
    * @param options Parquet reader options
    * @param stream CUDA stream used for preprocessing
-   * @param mr Memory resources used for output table chunks
+   * @param mr Memory resources used for temporary allocations and the output table chunks
    */
   void setup_chunking_for_payload_pages(
     std::size_t chunk_read_limit,

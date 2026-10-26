@@ -836,7 +836,7 @@ class hybrid_scan_reader {
    * @param page_data Device spans of page data of payload columns
    * @param options Parquet reader options
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Memory resources used to allocate the device memory for the output table chunks
+   * @param mr Memory resources used for temporary allocations and the output table chunks
    */
   void setup_chunking_for_payload_pages(std::size_t chunk_read_limit,
                                         std::size_t pass_read_limit,

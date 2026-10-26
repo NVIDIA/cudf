@@ -22,7 +22,7 @@ auto constexpr bloom_filter_alignment = rmm::CUDA_ALLOCATION_ALIGNMENT;
  * @param payload_column_names List of paths of select payload column names, if any
  * @param case_sensitive_names Whether column names are case sensitive
  * @param stream CUDA stream for hybrid scan reader
- * @param mr Device memory resource
+ * @param mr Memory resources used to allocate temporary and output device memory
  * @param aligned_mr Device memory resource to allocate aligned memory for bloom filters
  *
  * @return Tuple of filter and payload tables
@@ -33,7 +33,7 @@ std::tuple<std::unique_ptr<cudf::table>, std::unique_ptr<cudf::table>> hybrid_sc
   std::optional<std::vector<std::string>> const& payload_column_names,
   bool case_sensitive_names,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr,
+  cudf::memory_resources mr,
   rmm::mr::aligned_resource_adaptor& aligned_mr);
 
 /**

@@ -146,7 +146,7 @@ std::tuple<std::unique_ptr<cudf::table>, std::unique_ptr<cudf::table>> hybrid_sc
   std::optional<std::vector<std::string>> const& payload_column_names,
   bool case_sensitive_names,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr,
+  cudf::memory_resources mr,
   rmm::mr::aligned_resource_adaptor& aligned_mr)
 {
   // Create reader options with empty source info
@@ -161,7 +161,7 @@ std::tuple<std::unique_ptr<cudf::table>, std::unique_ptr<cudf::table>> hybrid_sc
   auto reader_ref   = std::ref(*reader);
 
   auto const filtered_row_group_indices =
-    apply_hybrid_scan_filters(datasource, reader_ref, options, stream, mr);
+    apply_hybrid_scan_filters(datasource, reader_ref, options, stream, mr.get_temporary_mr());
 
   auto const current_row_group_indices =
     cudf::host_span<cudf::size_type const>(filtered_row_group_indices);
@@ -169,8 +169,9 @@ std::tuple<std::unique_ptr<cudf::table>, std::unique_ptr<cudf::table>> hybrid_sc
   // Build a row mask for the filtered row groups using page index stats, or all true if no filter
   auto row_mask =
     options.get_filter().has_value()
-      ? reader->build_row_mask_with_page_index_stats(current_row_group_indices, options, stream, mr)
-      : reader->build_all_true_row_mask(current_row_group_indices, stream, mr);
+      ? reader->build_row_mask_with_page_index_stats(
+          current_row_group_indices, options, stream, mr.get_temporary_mr())
+      : reader->build_all_true_row_mask(current_row_group_indices, stream, mr.get_temporary_mr());
 
   // Get column chunk byte ranges from the reader
   auto const filter_column_chunk_byte_ranges =
@@ -183,7 +184,7 @@ std::tuple<std::unique_ptr<cudf::table>, std::unique_ptr<cudf::table>> hybrid_sc
       filter_column_chunk_byte_ranges,
       cudf::io::parquet::io_submission_policy::SERIALIZE,
       stream,
-      mr);
+      mr.get_temporary_mr());
   filter_col_tasks.get();
 
   // Materialize the table with only the filter columns
@@ -195,7 +196,7 @@ std::tuple<std::unique_ptr<cudf::table>, std::unique_ptr<cudf::table>> hybrid_sc
                                        cudf::io::parquet::experimental::use_data_page_mask::YES,
                                        options,
                                        stream,
-                                       mr);
+                                       mr.get_output_mr());
 
   // Get column chunk byte ranges from the reader
   auto const payload_column_chunk_byte_ranges =
@@ -208,7 +209,7 @@ std::tuple<std::unique_ptr<cudf::table>, std::unique_ptr<cudf::table>> hybrid_sc
       payload_column_chunk_byte_ranges,
       cudf::io::parquet::io_submission_policy::SERIALIZE,
       stream,
-      mr);
+      mr.get_temporary_mr());
   payload_col_tasks.get();
 
   // Materialize the table with only the payload columns
@@ -219,7 +220,7 @@ std::tuple<std::unique_ptr<cudf::table>, std::unique_ptr<cudf::table>> hybrid_sc
                                         cudf::io::parquet::experimental::use_data_page_mask::YES,
                                         options,
                                         stream,
-                                        mr);
+                                        mr.get_output_mr());
 
   return std::tuple{std::move(filter_table), std::move(payload_table)};
 }

@@ -1253,7 +1253,7 @@ parquet_column_schema walk_schema(aggregate_reader_metadata const* mt, int idx)
 }
 }  // namespace
 
-parquet_metadata read_parquet_metadata(host_span<std::unique_ptr<datasource> const> sources)
+parquet_metadata read_parquet_metadata(std::span<std::unique_ptr<datasource> const> sources)
 {
   // Do not use arrow schema when only reading the parquet footer metadata.
   constexpr auto use_arrow_schema = false;

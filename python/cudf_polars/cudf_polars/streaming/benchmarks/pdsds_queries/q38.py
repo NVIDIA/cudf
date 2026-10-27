@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Query 38."""
@@ -102,29 +102,28 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
         .select(["c_last_name", "c_first_name", "d_date"])
         .unique()
     )
-    # Find INTERSECT of all three using a different approach
-    # Combine all three and find tuples that appear exactly 3 times
-    all_customers = pl.concat(
-        [
-            store_customers.with_columns(pl.lit("store").alias("source")),
-            catalog_customers.with_columns(pl.lit("catalog").alias("source")),
-            web_customers.with_columns(pl.lit("web").alias("source")),
-        ]
-    )
-    # Find combinations that appear in all three sources
-    intersect_final = (
-        all_customers.group_by(["c_last_name", "c_first_name", "d_date"])
-        .agg(pl.col("source").n_unique().alias("source_count"))
-        .filter(pl.col("source_count") == 3)
-        .select(["c_last_name", "c_first_name", "d_date"])
+    # Implement INTERSECT via semi-joins: keep only store rows that also appear
+    # in catalog and web (nulls_equal so NULL keys match, as SQL INTERSECT does).
+    intersect_final = store_customers.join(
+        catalog_customers,
+        on=["c_last_name", "c_first_name", "d_date"],
+        how="semi",
+        nulls_equal=True,
+    ).join(
+        web_customers,
+        on=["c_last_name", "c_first_name", "d_date"],
+        how="semi",
+        nulls_equal=True,
     )
     limit = 100
-    # Count the final result
+    # Count the final result.
+    # Use pl.col("d_date").len() instead of pl.len() to avoid the zero-column
+    # streaming chunk bug (https://github.com/rapidsai/cudf/issues/21428).
     return QueryResult(
         frame=(
-            intersect_final
-            # Cast -> Int64 to match DuckDB
-            .select([pl.len().cast(pl.Int64).alias("count_star()")]).limit(limit)
+            intersect_final.select(
+                [pl.col("d_date").len().cast(pl.Int64).alias("count_star()")]
+            ).limit(limit)
         ),
         sort_by=[],
         limit=limit,

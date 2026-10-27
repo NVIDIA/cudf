@@ -27,8 +27,8 @@
 namespace cudf::io::parquet::detail {
 
 bool aggregate_reader_metadata::any_row_group_stats_available(
-  host_span<std::vector<size_type> const> input_row_group_indices,
-  host_span<int const> filter_column_schemas) const
+  std::span<std::vector<size_type> const> input_row_group_indices,
+  std::span<int const> filter_column_schemas) const
 {
   auto const colchunk_has_stats = [](ColumnChunk const& colchunk) {
     auto const& stats = colchunk.meta_data.statistics;
@@ -57,10 +57,10 @@ bool aggregate_reader_metadata::any_row_group_stats_available(
 }
 
 std::optional<std::vector<std::vector<size_type>>> aggregate_reader_metadata::apply_stats_filters(
-  host_span<std::vector<size_type> const> input_row_group_indices,
+  std::span<std::vector<size_type> const> input_row_group_indices,
   size_type total_row_groups,
-  host_span<data_type const> output_dtypes,
-  host_span<int const> output_column_schemas,
+  std::span<data_type const> output_dtypes,
+  std::span<int const> output_column_schemas,
   std::reference_wrapper<ast::expression const> filter,
   cuda::stream_ref stream) const
 {
@@ -140,11 +140,11 @@ std::optional<std::vector<std::vector<size_type>>> aggregate_reader_metadata::ap
 
 std::pair<std::optional<std::vector<std::vector<size_type>>>, surviving_row_group_metrics>
 aggregate_reader_metadata::filter_row_groups(
-  host_span<std::unique_ptr<datasource> const> sources,
-  host_span<std::vector<size_type> const> input_row_group_indices,
+  std::span<std::unique_ptr<datasource> const> sources,
+  std::span<std::vector<size_type> const> input_row_group_indices,
   size_type total_row_groups,
-  host_span<data_type const> output_dtypes,
-  host_span<int const> output_column_schemas,
+  std::span<data_type const> output_dtypes,
+  std::span<int const> output_column_schemas,
   std::reference_wrapper<ast::expression const> filter,
   cuda::stream_ref stream) const
 {
@@ -173,9 +173,8 @@ aggregate_reader_metadata::filter_row_groups(
                                                : input_row_group_indices;
 
   // Timestamp columns stored with another precision in any source cannot use bloom filters
-  auto const mismatched_timestamp_mask = calc_mismatched_timestamp_mask(
-    std::span{output_dtypes.data(), output_dtypes.size()},
-    std::span{output_column_schemas.data(), output_column_schemas.size()});
+  auto const mismatched_timestamp_mask =
+    calc_mismatched_timestamp_mask(output_dtypes, output_column_schemas);
 
   // Collect equality literals for each input table column for bloom filtering
   auto literals_collector = equality_literals_collector{

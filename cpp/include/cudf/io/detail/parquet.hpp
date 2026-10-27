@@ -254,7 +254,7 @@ class writer {
  * @return parquet_metadata with parquet schema, number of rows, number of row groups and key-value
  * metadata.
  */
-parquet_metadata read_parquet_metadata(host_span<std::unique_ptr<datasource> const> sources);
+parquet_metadata read_parquet_metadata(std::span<std::unique_ptr<datasource> const> sources);
 
 /**
  * @brief Constructs FileMetaData objects from parquet dataset

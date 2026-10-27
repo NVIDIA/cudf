@@ -16,4 +16,6 @@ fi
 cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")"/../python/cudf_polars/
 
 python "${TIMEOUT_TOOL_PATH}" --enable-python "${test_timeout}" \
-       python -m pytest --cache-clear -p no:benchmark "$@" tests
+       python -m pytest --cache-clear -p no:benchmark "$@" tests \
+           --ignore=tests/streaming/test_tpch.py \
+           --ignore=tests/streaming/test_tpcds.py

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Query 87."""
@@ -130,52 +130,15 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
         .select(["c_last_name", "c_first_name", "d_date"])
         .unique()
     )
-    store_customers_sentinel = store_customers.with_columns(
-        [
-            pl.col("c_last_name").fill_null("NULL_SENTINEL_LAST"),
-            pl.col("c_first_name").fill_null("NULL_SENTINEL_FIRST"),
-        ]
-    )
-    catalog_customers_sentinel = catalog_customers.with_columns(
-        [
-            pl.col("c_last_name").fill_null("NULL_SENTINEL_LAST"),
-            pl.col("c_first_name").fill_null("NULL_SENTINEL_FIRST"),
-        ]
-    )
-    web_customers_sentinel = web_customers.with_columns(
-        [
-            pl.col("c_last_name").fill_null("NULL_SENTINEL_LAST"),
-            pl.col("c_first_name").fill_null("NULL_SENTINEL_FIRST"),
-        ]
-    )
-    result_after_first_except = store_customers_sentinel.join(
-        catalog_customers_sentinel,
-        on=["c_last_name", "c_first_name", "d_date"],
-        how="anti",
-    ).unique()
-    result_after_second_except = (
-        result_after_first_except.join(
-            web_customers_sentinel,
-            on=["c_last_name", "c_first_name", "d_date"],
-            how="anti",
-        )
-        .with_columns(
-            [
-                pl.when(pl.col("c_last_name") == "NULL_SENTINEL_LAST")
-                .then(None)
-                .otherwise(pl.col("c_last_name"))
-                .alias("c_last_name"),
-                pl.when(pl.col("c_first_name") == "NULL_SENTINEL_FIRST")
-                .then(None)
-                .otherwise(pl.col("c_first_name"))
-                .alias("c_first_name"),
-            ]
-        )
-        .unique()
-    )
+    join_keys = ["c_last_name", "c_first_name", "d_date"]
+    result = store_customers.join(
+        catalog_customers, on=join_keys, how="anti", nulls_equal=True
+    ).join(web_customers, on=join_keys, how="anti", nulls_equal=True)
     return QueryResult(
-        frame=result_after_second_except.select(
-            [pl.len().cast(pl.Int64).alias("count_star()")]
+        # Use pl.col("d_date").len() instead of pl.len() to avoid the zero-column
+        # streaming chunk bug (https://github.com/rapidsai/cudf/issues/21428)
+        frame=result.select(
+            [pl.col("d_date").len().cast(pl.Int64).alias("count_star()")]
         ),
         sort_by=[],
         limit=None,

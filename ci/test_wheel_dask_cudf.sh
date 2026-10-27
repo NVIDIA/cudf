@@ -17,7 +17,7 @@ CUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_pyth
 rapids-logger "Install dask_cudf, cudf, pylibcudf, and test requirements"
 
 # generate constraints (possibly pinning to oldest support versions of dependencies)
-rapids-generate-pip-constraints py_test_dask_cudf "${PIP_CONSTRAINT}" constraints
+rapids-generate-pip-constraints py_test_dask_cudf "${PIP_CONSTRAINT}"
 
 # notes:
 #

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Query 5."""
@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 from cudf_polars.streaming.benchmarks.pdsds_parameters import load_parameters
+from cudf_polars.streaming.benchmarks.pdsds_queries import sql_sum
 from cudf_polars.streaming.benchmarks.utils import QueryResult, get_data
 
 if TYPE_CHECKING:
@@ -202,10 +203,10 @@ def _channel_agg(
         .join(entity, left_on="entity_sk", right_on=entity_join_key)
         .group_by(entity_id_col)
         .agg(
-            pl.col("sales_price").sum().alias("sales"),
-            pl.col("profit").sum().alias("profit"),
-            pl.col("return_amt").sum().alias("returns1"),
-            pl.col("net_loss").sum().alias("profit_loss"),
+            sql_sum("sales_price").alias("sales"),
+            sql_sum("profit").alias("profit"),
+            sql_sum("return_amt").alias("returns1"),
+            sql_sum("net_loss").alias("profit_loss"),
         )
     )
 
@@ -326,15 +327,28 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
     )
     all_channels = pl.concat([store_channel, catalog_channel, web_channel])
 
+    agg_exprs = [
+        sql_sum("sales").alias("sales"),
+        sql_sum("returns1").alias("returns1"),
+        sql_sum("profit").alias("profit"),
+    ]
+    per_id = all_channels.group_by(["channel", "id"]).agg(agg_exprs)
+    per_channel = (
+        all_channels.group_by("channel")
+        .agg(agg_exprs)
+        .with_columns(pl.lit(None, dtype=pl.String).alias("id"))
+        .select(["channel", "id", "sales", "returns1", "profit"])
+    )
+    grand_total = all_channels.select(
+        pl.lit(None, dtype=pl.String).alias("channel"),
+        pl.lit(None, dtype=pl.String).alias("id"),
+        *agg_exprs,
+    )
+
     return QueryResult(
         frame=(
-            all_channels.group_by(["channel", "id"])
-            .agg(
-                pl.col("sales").sum().alias("sales"),
-                pl.col("returns1").sum().alias("returns1"),
-                pl.col("profit").sum().alias("profit"),
-            )
-            .sort(["channel", "id"])
+            pl.concat([per_id, per_channel, grand_total])
+            .sort(["channel", "id"], nulls_last=True)
             .limit(100)
         ),
         sort_by=[("channel", False), ("id", False)],

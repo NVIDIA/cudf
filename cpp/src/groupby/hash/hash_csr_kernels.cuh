@@ -102,15 +102,22 @@ struct hash_set_ref {
  * the rows still to come are skipped: the caller then rebuilds with a larger set.
  */
 template <typename Equal, typename Hasher>
-CUDF_KERNEL void hash_csr_build_kernel(size_type num_rows,
-                                       bitmask_type const* valid_rows,
-                                       build_position_type* positions,
-                                       size_type* slot_counts,
-                                       bool count_by_representative,
-                                       hash_set_ref set,
-                                       Equal equal,
-                                       Hasher hasher,
-                                       cuda::std::int32_t* overflow)
+CUDF_KERNEL void
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 800 && __CUDA_ARCH__ < 1000
+// Ampere and Hopper compile this kernel to over 120 registers, two blocks per SM; bounding it
+// trades a few spills for 2.5x the occupancy. Any bound raises Blackwell's register count, and
+// Turing cannot fit five 256-thread blocks per SM.
+__launch_bounds__(hash_csr_block_size, 5)
+#endif
+  hash_csr_build_kernel(size_type num_rows,
+                        bitmask_type const* valid_rows,
+                        build_position_type* positions,
+                        size_type* slot_counts,
+                        bool count_by_representative,
+                        hash_set_ref set,
+                        Equal equal,
+                        Hasher hasher,
+                        cuda::std::int32_t* overflow)
 {
   auto const block  = cooperative_groups::this_thread_block();
   auto const warp   = cooperative_groups::tiled_partition<cudf::detail::warp_size>(block);

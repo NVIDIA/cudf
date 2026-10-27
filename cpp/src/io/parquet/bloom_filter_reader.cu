@@ -447,9 +447,9 @@ std::optional<std::pair<int64_t, std::size_t>> parse_bloom_filter_header(
 std::pair<std::vector<cuda::device_buffer<uint8_t>>,
           std::vector<cudf::device_span<cuda::std::byte const>>>
 aggregate_reader_metadata::read_bloom_filters(
-  host_span<std::unique_ptr<datasource> const> sources,
-  host_span<std::vector<size_type> const> row_group_indices,
-  host_span<int const> column_schemas,
+  std::span<std::unique_ptr<datasource> const> sources,
+  std::span<std::vector<size_type> const> row_group_indices,
+  std::span<int const> column_schemas,
   size_type total_row_groups,
   cuda::stream_ref stream,
   rmm::device_async_resource_ref mr) const
@@ -592,10 +592,8 @@ std::optional<std::vector<std::vector<size_type>>> aggregate_reader_metadata::ap
   auto const mr = cudf::memory_resources{cudf::get_current_device_resource_ref()};
 
   // Copy bloom filter bitset spans to device
-  auto const device_bloom_filter_data = cudf::detail::make_device_buffer_async(
-    cudf::host_span{bloom_filter_data.data(), bloom_filter_data.size()},
-    stream,
-    mr.get_temporary_mr());
+  auto const device_bloom_filter_data =
+    cudf::detail::make_device_buffer_async(bloom_filter_data, stream, mr.get_temporary_mr());
 
   // Create a bloom filter query table caster
   bloom_filter_caster const bloom_filter_col{device_bloom_filter_data,

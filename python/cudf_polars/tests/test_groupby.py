@@ -706,6 +706,38 @@ def test_groupby_null_count(engine: pl.GPUEngine, df: pl.LazyFrame):
     assert_gpu_result_equal(q, engine=engine, check_row_order=False)
 
 
+def test_groupby_has_nulls(engine: pl.GPUEngine, df: pl.LazyFrame):
+    q = df.group_by("key1").agg(pl.col("uint16_with_null").has_nulls())
+
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
+def test_groupby_has_nulls_in_one_group(engine: pl.GPUEngine):
+    df = pl.LazyFrame({"brand": ["a", "a", "b", "b"], "supplier": [1, 1, 2, None]})
+    q = df.group_by("brand").agg(pl.col("supplier").has_nulls())
+
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
+def test_groupby_has_nulls_literal(engine: pl.GPUEngine):
+    df = pl.LazyFrame({"g": ["a", "a", "b"]})
+    q = df.group_by("g").agg(
+        pl.lit(None).has_nulls().alias("has_nulls"),
+        pl.lit(1).has_nulls().alias("has_no_nulls"),
+    )
+
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
+def test_groupby_count_distinct_sql(engine: pl.GPUEngine):
+    df = pl.LazyFrame({"brand": ["a", "a", "b", "b"], "supplier": [1, 1, 2, None]})
+    q = df.sql(
+        "SELECT brand, count(DISTINCT supplier) AS supplier_cnt FROM self GROUP BY brand"
+    )
+
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
 @pytest.mark.parametrize(
     "expr",
     [

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Query 32."""
@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 from cudf_polars.streaming.benchmarks.pdsds_parameters import load_parameters
+from cudf_polars.streaming.benchmarks.pdsds_queries import sql_sum
 from cudf_polars.streaming.benchmarks.utils import QueryResult, get_data
 
 if TYPE_CHECKING:
@@ -94,9 +95,7 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
                 & (pl.col("d_date").is_between(start_date, end_date))
                 & (pl.col("cs_ext_discount_amt") > pl.col("threshold_discount"))
             )
-            .select(
-                [pl.col("cs_ext_discount_amt").sum().alias("excess discount amount")]
-            )
+            .select([sql_sum("cs_ext_discount_amt").alias("excess discount amount")])
             .limit(100)
         ),
         sort_by=[],

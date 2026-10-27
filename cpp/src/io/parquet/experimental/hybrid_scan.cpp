@@ -51,7 +51,7 @@ std::optional<int64_t> dictionary_page_length(std::span<uint8_t const> page_byte
 hybrid_scan_metadata::hybrid_scan_metadata(cudf::host_span<uint8_t const> footer_bytes,
                                            parquet_reader_options const& options)
   : _metadata{std::make_shared<detail::aggregate_reader_metadata>(
-      std::vector<cudf::host_span<uint8_t const>>{footer_bytes},
+      std::vector<std::span<uint8_t const>>{footer_bytes},
       options.is_enabled_use_arrow_schema(),
       options.is_enabled_allow_mismatched_pq_schemas())}
 {
@@ -71,7 +71,7 @@ hybrid_scan_metadata::~hybrid_scan_metadata() = default;
 hybrid_scan_reader::hybrid_scan_reader(cudf::host_span<uint8_t const> footer_bytes,
                                        parquet_reader_options const& options)
   : _impl{std::make_unique<detail::hybrid_scan_reader_impl>(
-      std::vector<cudf::host_span<uint8_t const>>{footer_bytes}, options)}
+      std::vector<std::span<uint8_t const>>{footer_bytes}, options)}
 {
 }
 
@@ -102,7 +102,7 @@ hybrid_scan_reader::~hybrid_scan_reader() = default;
 void hybrid_scan_reader::setup_page_index(cudf::host_span<uint8_t const> page_index_bytes) const
 {
   CUDF_FUNC_RANGE();
-  return _impl->setup_page_indexes(std::vector<cudf::host_span<uint8_t const>>{page_index_bytes});
+  return _impl->setup_page_indexes(std::vector<std::span<uint8_t const>>{page_index_bytes});
 }
 
 std::vector<cudf::size_type> hybrid_scan_reader::all_row_groups(

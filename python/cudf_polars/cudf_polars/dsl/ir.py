@@ -2593,7 +2593,13 @@ class GroupBy(IR):
                     (child,) = value.children
                 # libcudf will return int64 when summing integers
                 # but the schema may be a lower bit width
-                col = child.evaluate(df, context=ExecutionContext.GROUPBY).obj
+                child_col = child.evaluate(df, context=ExecutionContext.GROUPBY)
+                if child_col.size != keys[0].size:
+                    # e.g. an aggregation over a literal
+                    child_col = broadcast(
+                        child_col, target_length=keys[0].size, stream=df.stream
+                    )[0]
+                col = child_col.obj
                 should_cast = value.name == "sum" and plc.traits.is_integral_not_bool(
                     col.type()
                 )

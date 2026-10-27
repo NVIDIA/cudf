@@ -918,6 +918,25 @@ def _(node: plrs._ir_nodes.Sort, translator: Translator, schema: Schema) -> ir.I
     order, null_order = sorting.sort_order(
         descending, nulls_last=nulls_last, num_keys=len(by)
     )
+    # CPU Polars allows duplicate keys, but they may break streaming
+    # GPU code (see https://github.com/pola-rs/polars/issues/30116).
+    # Repeated columns cannot break ties left by their first occurrence.
+    # Keep the first occurrence's direction and null placement.
+    seen: set[str] = set()
+    unique_by = []
+    unique_order = []
+    unique_null_order = []
+    for key, key_order, key_null_order in zip(by, order, null_order, strict=True):
+        if isinstance(key.value, expr.Col):
+            if key.value.name in seen:
+                continue
+            seen.add(key.value.name)
+        unique_by.append(key)
+        unique_order.append(key_order)
+        unique_null_order.append(key_null_order)
+    by = unique_by
+    order = unique_order
+    null_order = unique_null_order
     # TODO: use the DynamicPred hint from node.slice (offset, length,
     # dynamic_pred_id). dynamic_pred_id is an int (u128 UUID) matching a
     # DynamicPred Function node in an upstream scan. The sort actor could
@@ -1402,6 +1421,33 @@ def _translate_function(
         if name == "kurtosis":
             fisher, bias = options
             return expr.Kurtosis(dtype, fisher, bias, *children)
+        if name == "decimal_div":
+            # libcudf division yields scale s1 - s2 and truncates, so divide
+            # with one extra digit of scale and then round to the output scale.
+            # TODO: Replace with a libcudf decimal division that takes an output
+            # scale and rounds half to even:
+            # https://github.com/NVIDIA/cudf/issues/24774
+            left, right = children
+            out_type = dtype.polars_type
+            right_type = right.dtype.polars_type
+            assert isinstance(out_type, pl.Decimal)
+            assert isinstance(right_type, pl.Decimal)
+            out_scale = out_type.scale
+            return expr.UnaryFunction(
+                dtype,
+                "round",
+                (out_scale, "half_away_from_zero"),
+                expr.BinOp(
+                    DataType(pl.Decimal(38, out_scale + 1)),
+                    plc.binaryop.BinaryOperator.DIV,
+                    expr.Cast(
+                        DataType(pl.Decimal(38, out_scale + 1 + right_type.scale)),
+                        True,  # noqa: FBT003
+                        left,
+                    ),
+                    right,
+                ),
+            )
         if name == "arg_max" and len(options) == 2:
             # IRFunctionExpr::ArgSort is exposed as ("arg_max", descending, nulls_last)
             name = "arg_sort"

@@ -60,6 +60,59 @@ struct order_key {
 };
 
 /**
+ * @brief Rows covered by a row-ordering guarantee.
+ *
+ * `GLOBAL` applies to the complete logical dataset. For duplicated data, this
+ * means one logical copy rather than all copies concatenated together.
+ * `RANK_LOCAL` applies independently to each rank.
+ */
+enum class row_ordering_scope : std::uint8_t {
+  GLOBAL,      ///< The complete logical dataset.
+  RANK_LOCAL,  ///< Each rank's local data independently.
+};
+
+/**
+ * @brief A row-ordering guarantee for a data stream.
+ *
+ * An empty `group_keys` denotes an ungrouped ordering: all rows in the selected
+ * scope are ordered by `order_keys`. Otherwise, each group's subsequence is
+ * ordered by `order_keys`. Groups need not be contiguous or ordered relative
+ * to one another.
+ *
+ * A global ordering applies to the rank-ordered concatenation of FIFO streams.
+ * For duplicated data, each rank contains an ordered copy of the same logical
+ * stream. A rank-local ordering makes no guarantee between ranks.
+ */
+struct row_ordering {
+  std::vector<order_key> order_keys;                     ///< Keys that order rows.
+  row_ordering_scope scope{row_ordering_scope::GLOBAL};  ///< Scope of the guarantee.
+  std::vector<cudf::size_type> group_keys;               ///< Columns defining equality groups.
+
+  /// @brief Default constructor. Produces an invalid (empty) row ordering.
+  row_ordering() = default;
+
+  /**
+   * @brief Construct a row-ordering guarantee.
+   *
+   * @param order_keys Non-empty keys that order rows.
+   * @param scope Scope of the ordering guarantee.
+   * @param group_keys Columns defining equality groups. These must not also
+   * appear in `order_keys`.
+   * @throws std::invalid_argument if `order_keys` is empty or overlaps with
+   * `group_keys`.
+   */
+  row_ordering(std::vector<order_key> order_keys,
+               row_ordering_scope scope,
+               std::vector<cudf::size_type> group_keys = {});
+
+  /**
+   * @brief Equality comparison.
+   * @return True if all fields are equal.
+   */
+  bool operator==(row_ordering const&) const = default;
+};
+
+/**
  * @brief A valid ordering description for order-partitioned data.
  *
  * Data is partitioned by value ranges based on predetermined boundaries.
@@ -88,6 +141,7 @@ struct ordering {
   /// See struct-level note on `strict_boundaries` semantics.
   bool strict_boundaries{false};
   /// See struct-level note on `locally_ordered` semantics.
+  // TODO: Remove after cudf-polars migrates local row-order metadata to `row_ordering`.
   bool locally_ordered{true};
 
   /// @brief Default constructor. Produces an invalid (empty) ordering.
@@ -129,6 +183,16 @@ struct ordering {
    * @return A new ordering with the same keys, boundaries, and strictness.
    */
   [[nodiscard]] ordering with_locally_ordered(bool locally_ordered) const;
+
+  /**
+   * @brief Return an equivalent ordering with strict boundaries.
+   *
+   * Duplicate boundary rows are removed when converting a non-strict ordering.
+   *
+   * @param br Buffer resource used to allocate new boundary rows.
+   * @return A strict ordering equivalent to this ordering.
+   */
+  [[nodiscard]] ordering as_strict(rapidsmpf::BufferResource& br) const;
 
   /**
    * @brief Check whether boundary values are aligned with another ordering.
@@ -235,7 +299,7 @@ struct partitioning_spec {
 };
 
 /**
- * @brief Hierarchical partitioning metadata for a data stream.
+ * @brief Partitioning and row-ordering metadata for a data stream.
  *
  * Describes how data flowing through a channel is partitioned at multiple
  * levels of the system hierarchy. Each level corresponds to a communicator
@@ -247,12 +311,17 @@ struct partitioning_spec {
  * - `local`: Distribution within a rank, corresponding to a single-rank
  *   communicator. Operations at this level repartition data locally without
  *   network communication.
+ * - `row_orderings`: Independent row-ordering guarantees for the stream. These
+ *   guarantees do not require either partitioning level to have a known scheme.
+ *   Producers are responsible for ensuring that every guarantee is valid.
  */
 struct partitioning {
   /// Distribution across ranks (corresponds to primary communicator).
   partitioning_spec inter_rank;
   /// Distribution within a rank (corresponds to local/single communicator).
   partitioning_spec local;
+  /// Row-ordering guarantees for the stream.
+  std::vector<row_ordering> row_orderings{};
 };
 
 /**

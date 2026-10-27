@@ -377,6 +377,24 @@ jobs:
         --cudf-polars-num-shards ${{ matrix.num_shards }}
       # https://github.com/NVIDIA/cudf/issues/23498
       matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
+  tpc-tests-cudf-polars:
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: read
+      pull-requests: read
+    secrets: inherit # zizmor: ignore[secrets-inherit]
+    uses: rapidsai/shared-workflows/.github/workflows/wheels-test.yaml@main
+    with:
+      build_type: ${{ inputs.build_type }}
+      branch: ${{ inputs.branch }}
+      date: ${{ inputs.date }}
+      sha: ${{ inputs.sha }}
+      # This selects "ARCH=amd64 + the latest supported Python + CUDA".
+      matrix_filter: map(select(.ARCH == "amd64")) | group_by(.CUDA_VER|split(".")|map(tonumber)|.[0]) | map(max_by([(.PY_VER|split(".")|map(tonumber)), (.CUDA_VER|split(".")|map(tonumber))]))
+      container-options: "--cap-add CAP_SYS_PTRACE --shm-size=8g --ulimit=nofile=1000000:1000000"
+      script: "ci/run_cudf_polars_tpc.sh"
   cudf-polars-test-summary:
     needs: cudf-polars-polars-tests
     if: ${{ !cancelled() && needs.cudf-polars-polars-tests.result != 'skipped' }}

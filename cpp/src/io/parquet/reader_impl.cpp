@@ -43,7 +43,7 @@ namespace cudf::io::parquet::detail {
 namespace {
 
 /**
- * @brief Recursively cast fixed-point columns, including nested ones, to the given decimal type
+ * @brief Recursively cast decimal columns, including nested ones, to the specified type
  *
  * @param col Column to cast
  * @param decimal_width Target decimal type id
@@ -52,7 +52,7 @@ namespace {
  * @return The cast column
  */
 std::unique_ptr<column> cast_decimals_to_width(std::unique_ptr<column>&& col,
-                                               type_id decimal_width,
+                                               cudf::type_id decimal_width,
                                                cuda::stream_ref stream,
                                                cudf::memory_resources mr)
 {

@@ -40,6 +40,46 @@
 
 namespace cudf::io::parquet::detail {
 
+namespace {
+
+/**
+ * @brief Recursively cast fixed-point columns, including nested ones, to the given decimal type
+ *
+ * @param col Column to cast
+ * @param decimal_width Target decimal type id
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used to allocate temporary and output device memory
+ * @return The cast column
+ */
+std::unique_ptr<column> cast_decimal_width(std::unique_ptr<column> col,
+                                           type_id decimal_width,
+                                           cuda::stream_ref stream,
+                                           cudf::memory_resources mr)
+{
+  auto const col_type = col->type();
+  if (cudf::is_fixed_point(col_type)) {
+    if (col_type.id() == decimal_width) { return col; }
+    return cudf::cast(
+      col->view(), data_type{decimal_width, col_type.scale()}, stream, mr.get_output_mr());
+  }
+  if (col_type.id() != type_id::LIST and col_type.id() != type_id::STRUCT) { return col; }
+
+  auto const size       = col->size();
+  auto const null_count = col->null_count();
+  auto contents         = col->release();
+  for (auto& child : contents.children) {
+    child = cast_decimal_width(std::move(child), decimal_width, stream, mr);
+  }
+  return std::make_unique<column>(col_type,
+                                  size,
+                                  std::move(*contents.data),
+                                  std::move(*contents.null_mask),
+                                  null_count,
+                                  std::move(contents.children));
+}
+
+}  // namespace
+
 void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_rows)
 {
   CUDF_FUNC_RANGE();
@@ -940,13 +980,7 @@ void reader_impl::apply_decimal_width_cast(std::vector<std::unique_ptr<column>>&
   // be able to decode data directly into the target decimal type buffer.
   if (_options.decimal_width == type_id::EMPTY) { return; }
   for (auto& col : out_columns) {
-    auto const col_type = col->type();
-    if (cudf::is_fixed_point(col_type) && col_type.id() != _options.decimal_width) {
-      col = cudf::cast(col->view(),
-                       data_type{_options.decimal_width, col_type.scale()},
-                       _stream,
-                       mr.get_output_mr());
-    }
+    col = cast_decimal_width(std::move(col), _options.decimal_width, _stream, mr);
   }
 }
 

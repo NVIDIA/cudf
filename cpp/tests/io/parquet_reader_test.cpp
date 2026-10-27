@@ -6471,6 +6471,94 @@ TEST_F(ParquetReaderTest, DecimalTypeOption)
   }
 }
 
+namespace {
+
+// list<decimal>, struct<decimal, int>, list<struct<decimal>> columns with the given decimal rep
+template <typename Rep>
+std::unique_ptr<cudf::table> make_nested_decimal_table()
+{
+  auto const scale    = numeric::scale_type{-2};
+  auto const decimals = cudf::test::fixed_point_column_wrapper<Rep>(
+    {100, 200, 300, 400, 500, 600}, {1, 0, 1, 1, 1, 1}, scale);
+  auto const offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 2, 3, 6};
+
+  std::vector<std::unique_ptr<cudf::column>> columns;
+  columns.push_back(
+    cudf::make_lists_column(3,
+                            std::make_unique<cudf::column>(offsets),
+                            std::make_unique<cudf::column>(decimals),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED)));
+
+  auto struct_decimals = cudf::test::fixed_point_column_wrapper<Rep>({10, 20, 30}, scale);
+  auto struct_ints     = cudf::test::fixed_width_column_wrapper<int32_t>{1, 2, 3};
+  columns.push_back(cudf::test::structs_column_wrapper{{struct_decimals, struct_ints}}.release());
+
+  auto list_struct_decimals = cudf::test::fixed_point_column_wrapper<Rep>(
+    {100, 200, 300, 400, 500, 600}, {1, 0, 1, 1, 1, 1}, scale);
+  columns.push_back(
+    cudf::make_lists_column(3,
+                            std::make_unique<cudf::column>(offsets),
+                            cudf::test::structs_column_wrapper{{list_struct_decimals}}.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED)));
+  return std::make_unique<cudf::table>(std::move(columns));
+}
+
+}  // namespace
+
+TEST_F(ParquetReaderTest, NestedDecimalTypeOption)
+{
+  auto const input    = make_nested_decimal_table<int32_t>();
+  auto const filepath = temp_env->get_temp_filepath("NestedDecimalTypeOption.parquet");
+  cudf::io::write_parquet(
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, input->view())
+      .build());
+
+  auto const read = [&](cudf::type_id decimal_width) {
+    auto const options = cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+                           .decimal_width(decimal_width)
+                           .build();
+    return cudf::io::read_parquet(options).tbl;
+  };
+  CUDF_TEST_EXPECT_TABLES_EQUAL(make_nested_decimal_table<__int128_t>()->view(),
+                                read(cudf::type_id::DECIMAL128)->view());
+  CUDF_TEST_EXPECT_TABLES_EQUAL(make_nested_decimal_table<int64_t>()->view(),
+                                read(cudf::type_id::DECIMAL64)->view());
+}
+
+TEST_F(ParquetReaderTest, NestedDecimalTypeOptionUsesMemoryResources)
+{
+  auto const input    = make_nested_decimal_table<int32_t>();
+  auto const expected = make_nested_decimal_table<__int128_t>();
+  auto const filepath =
+    temp_env->get_temp_filepath("NestedDecimalTypeOptionUsesMemoryResources.parquet");
+  cudf::io::write_parquet(
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, input->view())
+      .build());
+  auto const read_options =
+    cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+      .decimal_width(cudf::type_id::DECIMAL128)
+      .build();
+  auto const stream = cudf::test::get_default_stream();
+
+  // Decimals decoded before the cast must come from the temporary (current) resource
+  cudf::test::memory_resource_test_harness resources;
+  cudf::io::table_with_metadata result;
+  {
+    cudf::test::scoped_current_device_resource current_mr{resources.temporary_mr()};
+    result = cudf::io::read_parquet(read_options, stream, resources.output_mr());
+    resources.synchronize(stream);
+  }
+  resources.expect_resource_usage(result.tbl->alloc_size(),
+                                  {cudf::test::output_allocation_expectation::EXACT,
+                                   cudf::test::temporary_allocation_expectation::SOME},
+                                  stream);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected->view(), result.tbl->view());
+  result.tbl.reset();
+  resources.expect_no_live_allocations(stream);
+}
+
 TEST_F(ParquetReaderTest, CaseInsensitiveColumnSelection)
 {
   auto col0 = cudf::test::fixed_width_column_wrapper<int32_t>{1, 2, 3, 4, 5};

@@ -107,6 +107,11 @@ template <typename T>
 std::unique_ptr<cudf::column> make_parquet_list_list_col(
   int skip_rows, int num_rows, int lists_per_row, int list_size, bool include_validity);
 
+// decimal, list<decimal>, struct<decimal, int>, and list<struct<decimal>> columns with the given
+// decimal rep
+template <typename Rep>
+std::unique_ptr<cudf::table> make_decimal_table();
+
 // given a datasource pointing to a parquet file, read the footer
 // of the file to populate the FileMetaData pointed to by file_meta_data.
 // throws cudf::logic_error if the file or metadata is invalid.

@@ -6336,84 +6336,8 @@ TEST_F(ParquetReaderTest, CorruptPlainStringLengthThrows)
 
 TEST_F(ParquetReaderTest, DecimalTypeOption)
 {
-  auto const data = std::vector<int32_t>{1000, 2000, 3000, 4000, 5000};
-  auto col        = cudf::test::fixed_point_column_wrapper<int32_t>(
-    data.begin(), data.end(), numeric::scale_type{-2});
-
-  auto expected_table = cudf::table_view{{col}};
-
-  auto filepath = temp_env->get_temp_filepath("DecimalTypeOption.parquet");
-
-  // Write the table with DECIMAL32
-  {
-    auto options =
-      cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected_table)
-        .build();
-    cudf::io::write_parquet(options);
-  }
-
-  // Read back with decimal_width set to DECIMAL128
-  {
-    auto options = cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
-                     .decimal_width(cudf::type_id::DECIMAL128)
-                     .build();
-    auto result = cudf::io::read_parquet(options);
-
-    EXPECT_EQ(result.tbl->view().column(0).type().id(), cudf::type_id::DECIMAL128);
-    EXPECT_EQ(result.tbl->view().column(0).type().scale(), -2);
-  }
-  // Read back with decimal_width set to DECIMAL64
-  {
-    auto options = cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
-                     .decimal_width(cudf::type_id::DECIMAL64)
-                     .build();
-    auto result = cudf::io::read_parquet(options);
-
-    EXPECT_EQ(result.tbl->view().column(0).type().id(), cudf::type_id::DECIMAL64);
-    EXPECT_EQ(result.tbl->view().column(0).type().scale(), -2);
-  }
-}
-
-namespace {
-
-// list<decimal>, struct<decimal, int>, list<struct<decimal>> columns with the given decimal rep
-template <typename Rep>
-std::unique_ptr<cudf::table> make_nested_decimal_table()
-{
-  auto const scale    = numeric::scale_type{-2};
-  auto const decimals = cudf::test::fixed_point_column_wrapper<Rep>(
-    {100, 200, 300, 400, 500, 600}, {1, 0, 1, 1, 1, 1}, scale);
-  auto const offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 2, 3, 6};
-
-  std::vector<std::unique_ptr<cudf::column>> columns;
-  columns.push_back(
-    cudf::make_lists_column(3,
-                            std::make_unique<cudf::column>(offsets),
-                            std::make_unique<cudf::column>(decimals),
-                            0,
-                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED)));
-
-  auto struct_decimals = cudf::test::fixed_point_column_wrapper<Rep>({10, 20, 30}, scale);
-  auto struct_ints     = cudf::test::fixed_width_column_wrapper<int32_t>{1, 2, 3};
-  columns.push_back(cudf::test::structs_column_wrapper{{struct_decimals, struct_ints}}.release());
-
-  auto list_struct_decimals = cudf::test::fixed_point_column_wrapper<Rep>(
-    {100, 200, 300, 400, 500, 600}, {1, 0, 1, 1, 1, 1}, scale);
-  columns.push_back(
-    cudf::make_lists_column(3,
-                            std::make_unique<cudf::column>(offsets),
-                            cudf::test::structs_column_wrapper{{list_struct_decimals}}.release(),
-                            0,
-                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED)));
-  return std::make_unique<cudf::table>(std::move(columns));
-}
-
-}  // namespace
-
-TEST_F(ParquetReaderTest, NestedDecimalTypeOption)
-{
-  auto const input    = make_nested_decimal_table<int32_t>();
-  auto const filepath = temp_env->get_temp_filepath("NestedDecimalTypeOption.parquet");
+  auto const input    = make_decimal_table<int32_t>();
+  auto const filepath = temp_env->get_temp_filepath("DecimalTypeOption.parquet");
   cudf::io::write_parquet(
     cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, input->view())
       .build());
@@ -6424,9 +6348,9 @@ TEST_F(ParquetReaderTest, NestedDecimalTypeOption)
                            .build();
     return cudf::io::read_parquet(options).tbl;
   };
-  CUDF_TEST_EXPECT_TABLES_EQUAL(make_nested_decimal_table<__int128_t>()->view(),
+  CUDF_TEST_EXPECT_TABLES_EQUAL(make_decimal_table<__int128_t>()->view(),
                                 read(cudf::type_id::DECIMAL128)->view());
-  CUDF_TEST_EXPECT_TABLES_EQUAL(make_nested_decimal_table<int64_t>()->view(),
+  CUDF_TEST_EXPECT_TABLES_EQUAL(make_decimal_table<int64_t>()->view(),
                                 read(cudf::type_id::DECIMAL64)->view());
 }
 

@@ -51,10 +51,10 @@ namespace {
  * @param mr Memory resources used to allocate temporary and output device memory
  * @return The cast column
  */
-std::unique_ptr<column> cast_decimal_width(std::unique_ptr<column>&& col,
-                                           type_id decimal_width,
-                                           cuda::stream_ref stream,
-                                           cudf::memory_resources mr)
+std::unique_ptr<column> cast_decimals_to_width(std::unique_ptr<column>&& col,
+                                               type_id decimal_width,
+                                               cuda::stream_ref stream,
+                                               cudf::memory_resources mr)
 {
   auto const col_type = col->type();
   if (cudf::is_fixed_point(col_type)) {
@@ -68,7 +68,7 @@ std::unique_ptr<column> cast_decimal_width(std::unique_ptr<column>&& col,
   auto const null_count = col->null_count();
   auto contents         = col->release();
   for (auto& child : contents.children) {
-    child = cast_decimal_width(std::move(child), decimal_width, stream, mr);
+    child = cast_decimals_to_width(std::move(child), decimal_width, stream, mr);
   }
   return std::make_unique<column>(col_type,
                                   size,
@@ -969,7 +969,7 @@ void reader_impl::apply_decimal_width_cast(std::vector<std::unique_ptr<column>>&
   // be able to decode data directly into the target decimal type buffer.
   if (_options.decimal_width == type_id::EMPTY) { return; }
   for (auto& col : out_columns) {
-    col = cast_decimal_width(std::move(col), _options.decimal_width, _stream, _mr);
+    col = cast_decimals_to_width(std::move(col), _options.decimal_width, _stream, _mr);
   }
 }
 

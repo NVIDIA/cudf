@@ -206,44 +206,6 @@ template std::unique_ptr<cudf::column> make_parquet_list_list_col<int>(
 template std::unique_ptr<cudf::column> make_parquet_list_list_col<bool>(
   int skip_rows, int num_rows, int lists_per_row, int list_size, bool include_validity);
 
-template <typename Rep>
-std::unique_ptr<cudf::table> make_decimal_table()
-{
-  auto const scale   = numeric::scale_type{-2};
-  auto const offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 2, 3, 6};
-
-  std::vector<std::unique_ptr<cudf::column>> columns;
-  columns.push_back(
-    cudf::test::fixed_point_column_wrapper<Rep>({1000, 2000, 3000}, scale).release());
-
-  columns.push_back(
-    cudf::make_lists_column(3,
-                            std::make_unique<cudf::column>(offsets),
-                            cudf::test::fixed_point_column_wrapper<Rep>(
-                              {100, 200, 300, 400, 500, 600}, {1, 0, 1, 1, 1, 1}, scale)
-                              .release(),
-                            0,
-                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED)));
-
-  auto struct_decimals = cudf::test::fixed_point_column_wrapper<Rep>({10, 20, 30}, scale);
-  auto struct_ints     = cudf::test::fixed_width_column_wrapper<int32_t>{1, 2, 3};
-  columns.push_back(cudf::test::structs_column_wrapper{{struct_decimals, struct_ints}}.release());
-
-  auto list_struct_decimals = cudf::test::fixed_point_column_wrapper<Rep>(
-    {100, 200, 300, 400, 500, 600}, {1, 0, 1, 1, 1, 1}, scale);
-  columns.push_back(
-    cudf::make_lists_column(3,
-                            std::make_unique<cudf::column>(offsets),
-                            cudf::test::structs_column_wrapper{{list_struct_decimals}}.release(),
-                            0,
-                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED)));
-  return std::make_unique<cudf::table>(std::move(columns));
-}
-
-template std::unique_ptr<cudf::table> make_decimal_table<int32_t>();
-template std::unique_ptr<cudf::table> make_decimal_table<int64_t>();
-template std::unique_ptr<cudf::table> make_decimal_table<__int128_t>();
-
 template <typename T>
 std::vector<T> random_values(size_t size)
 {

@@ -65,6 +65,12 @@ def with_nulls(request: pytest.FixtureRequest):
     return request.param
 
 
+@pytest.fixture(params=["ms", "us", "ns"], scope="session")
+def time_unit(request: pytest.FixtureRequest) -> str:
+    """Time units of polars ``Datetime`` and ``Duration`` types."""
+    return request.param
+
+
 @pytest.fixture(autouse=True)
 def _skip_unless_spmd(request: pytest.FixtureRequest) -> None:
     """Skip tests in SPMD multi-rank mode unless marked with ``pytest.mark.spmd``."""
@@ -333,6 +339,23 @@ def timeout_seconds() -> int:
     Conservative timeout for APIs that accept a timeout parameter.
     """
     return 30
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--iterations",
+        type=int,
+        default=1,
+        help="Number of times to collect each TPC query result and validate it.",
+    )
+
+
+@pytest.fixture(scope="session")
+def tpc_iterations(request: pytest.FixtureRequest) -> int:
+    iterations = request.config.getoption("--iterations")
+    if iterations < 1:
+        raise pytest.UsageError("--iterations must be >= 1")
+    return iterations
 
 
 def pytest_configure(config: pytest.Config):

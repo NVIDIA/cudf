@@ -102,9 +102,9 @@ enum class Compression : uint8_t {
   SNAPPY       = 1,
   GZIP         = 2,
   LZO          = 3,
-  BROTLI       = 4,  // Added in 2.3.2
+  BROTLI       = 4,  // Added in 2.4
   LZ4          = 5,  // deprecated; based on LZ4, but with an additional undocumented framing scheme
-  ZSTD         = 6,  // Added in 2.3.2
+  ZSTD         = 6,  // Added in 2.4
   LZ4_RAW      = 7,  // "standard" LZ4 block format
 };
 
@@ -236,26 +236,76 @@ struct IntType {
 };
 
 /**
+ * @brief Struct that describes the variant logical type annotation
+ *
+ * The optional `specification_version` field is kept so a round-tripped footer preserves the
+ * variant's declared logical-type version.
+ */
+struct VariantType {
+  /// Version of the Variant logical type specification
+  std::optional<int8_t> specification_version;
+};
+
+/**
+ * @brief Algorithms for the interpolation between references of geographical coordinates
+ *
+ * Uses an explicit `int32_t` base so an out-of-range wire value round-trips numerically instead
+ * of being truncated into a different enumerator.
+ */
+enum class EdgeInterpolationAlgorithm : int32_t {
+  SPHERICAL = 0,
+  VINCENTY  = 1,
+  THOMAS    = 2,
+  ANDOYER   = 3,
+  KARNEY    = 4,
+};
+
+/**
+ * @brief Struct that describes the geometry logical type annotation
+ *
+ * Only the presence of the thrift `crs` string is kept, not its value.
+ */
+struct GeometryType {
+  bool has_crs{false};  ///< Whether the thrift `crs` string (field id 1) was present
+};
+
+/**
+ * @brief Struct that describes the geography logical type annotation
+ *
+ * Only the presence of the thrift `crs` string is kept, not its value.
+ */
+struct GeographyType {
+  bool has_crs{false};  ///< Whether the thrift `crs` string (field id 1) was present
+  /// Edge interpolation algorithm (thrift id 2); SPHERICAL if unset
+  std::optional<EdgeInterpolationAlgorithm> algorithm;
+};
+
+/**
  * @brief Struct that describes the logical type annotation
  */
 struct LogicalType {
   /// Logical type annotations to replace ConvertedType.
   enum Type : uint8_t {
-    UNDEFINED,
-    STRING,
-    MAP,
-    LIST,
-    ENUM,
-    DECIMAL,
-    DATE,
-    TIME,
-    TIMESTAMP,
+    UNDEFINED = 0,
+    STRING    = 1,
+    MAP       = 2,
+    LIST      = 3,
+    ENUM      = 4,
+    DECIMAL   = 5,
+    DATE      = 6,
+    TIME      = 7,
+    TIMESTAMP = 8,
     // 9 is reserved
-    INTEGER = 10,
-    UNKNOWN,
-    JSON,
-    BSON,
-    VARIANT = 16,
+    INTEGER   = 10,
+    UNKNOWN   = 11,
+    JSON      = 12,
+    BSON      = 13,
+    UUID      = 14,
+    FLOAT16   = 15,
+    VARIANT   = 16,
+    GEOMETRY  = 17,
+    GEOGRAPHY = 18,
+    FILE      = 19,
   };
 
   /// Logical type
@@ -403,11 +453,33 @@ struct LogicalType {
 };
 
 /**
+ * @brief Payloads of the `LogicalType` union fields that the decode kernels do not read
+ *
+ * `LogicalType` is copied into shared memory by the decode kernels, so it carries only the
+ * payloads they read; the rest live here, beside `SchemaElement::logical_type`. Only the member
+ * matching `LogicalType::type` is used, and a disengaged member writes an empty struct, which
+ * thrift allows.
+ */
+struct LogicalTypePayload {
+  /// Variant payload (thrift field 16)
+  cuda::std::optional<VariantType> variant_type;
+  /// Geometry payload (thrift field 17)
+  cuda::std::optional<GeometryType> geometry_type;
+  /// Geography payload (thrift field 18)
+  cuda::std::optional<GeographyType> geography_type;
+};
+
+/**
  * @brief Union to specify the order used for the min_value and max_value fields for a column.
  */
 struct ColumnOrder {
   /// Available column order types
-  enum Type : uint8_t { UNDEFINED, TYPE_ORDER };
+  enum Type : uint8_t {
+    UNDEFINED             = 0,
+    TYPE_ORDER            = 1,
+    IEEE_754_TOTAL_ORDER  = 2,
+    INT96_TIMESTAMP_ORDER = 3,
+  };
   /// Column order type
   Type type;
 };
@@ -439,6 +511,8 @@ struct SchemaElement {
   std::optional<int32_t> field_id;
   /// 10: replaces converted type
   cuda::std::optional<LogicalType> logical_type;
+  /// Host-only payloads of `logical_type`; must travel with it whenever it is copied
+  LogicalTypePayload logical_type_payload;
 
   /// extra cudf specific fields
   bool output_as_byte_array = false;
@@ -593,6 +667,8 @@ struct Statistics {
   std::optional<bool> is_max_value_exact;
   /// If true, min_value is the actual minimum value for a column
   std::optional<bool> is_min_value_exact;
+  /// count of NaN values in a floating point column. NaNs may be present if absent
+  std::optional<int64_t> nan_count;
 };
 
 /**
@@ -663,6 +739,8 @@ struct ColumnIndex {
   std::optional<std::vector<int64_t>> repetition_level_histogram;
   /// Definition level histogram for the column chunk
   std::optional<std::vector<int64_t>> definition_level_histogram;
+  /// Optional count of NaN values per page of a floating point column
+  std::optional<std::vector<int64_t>> nan_counts;
 };
 
 /**

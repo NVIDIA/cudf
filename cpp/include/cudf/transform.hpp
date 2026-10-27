@@ -122,6 +122,7 @@ struct transform_output_spec {
  * Construction retrieves the kernel for the UDF and the supplied input and output specifications.
  * Subsequent calls to `run` reuse that kernel.
  * Runtime inputs and outputs must be compatible with the specifications used at construction.
+ * UDF output initialization follows the contract documented by `transform`.
  *
  */
 struct transform_program {
@@ -259,6 +260,12 @@ struct transform_program {
  *
  * Computes:
  * `(outputs[i]...) =  UDF(inputs[i]...)`.
+ *
+ * For both null-aware and non-null-aware UDFs, output values have the following initialization:
+ * - Fixed-width outputs have uninitialized values.
+ * - Mutable string outputs (`cuda::std::span<char>`, used with preallocated string offsets) contain
+ *   a valid data pointer and size, but the character data is uninitialized.
+ * - String-view outputs (`cudf::string_view`) have uninitialized values.
  *
  * @throws std::invalid_argument if any of the input columns have different sizes (except scalars)
  * @throws std::invalid_argument if `output_type` or any of the inputs are not fixed-width or string

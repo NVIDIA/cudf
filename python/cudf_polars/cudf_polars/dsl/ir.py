@@ -2593,7 +2593,13 @@ class GroupBy(IR):
                     (child,) = value.children
                 # libcudf will return int64 when summing integers
                 # but the schema may be a lower bit width
-                col = child.evaluate(df, context=ExecutionContext.GROUPBY).obj
+                child_col = child.evaluate(df, context=ExecutionContext.GROUPBY)
+                if child_col.size != keys[0].size:
+                    # e.g. an aggregation over a literal
+                    child_col = broadcast(
+                        child_col, target_length=keys[0].size, stream=df.stream
+                    )[0]
+                col = child_col.obj
                 should_cast = value.name == "sum" and plc.traits.is_integral_not_bool(
                     col.type()
                 )
@@ -4102,13 +4108,11 @@ class MapFunction(IR):
                 num_keys=len(column_names),
             )
             result = DataFrame([col.copy() for col in df.columns], stream=df.stream)
-            for column_name, order, null_order in zip(
-                column_names, orders, null_orders, strict=True
-            ):
-                result.column_map[column_name].set_sorted(
+            if column_names:
+                result.column_map[column_names[0]].set_sorted(
                     is_sorted=plc.types.Sorted.YES,
-                    order=order,
-                    null_order=null_order,
+                    order=orders[0],
+                    null_order=null_orders[0],
                 )
             return result
         else:

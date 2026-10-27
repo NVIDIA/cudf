@@ -121,31 +121,49 @@ class QuentControllerRuntime:
     def create(
         cls,
         config: QuentConfig,
-        collector_address: str,
         *,
         backend: str,
-        collector: quent_bindings.Collector | None = None,
     ) -> QuentControllerRuntime:
-        """Create a controller runtime and emit its Engine init event."""
-        runtime = cls(
-            config=config,
-            session=QuentSession(collector_address),
-            collector=collector,
-        )
-        runtime._engine_handle = (
-            runtime.session.binding_context.engine_observer()
-            .handle(config.engine_id)
-            .init(
-                instance_name=f"cudf-polars-{str(config.engine_id)[:8]}",
-                implementation={
-                    "name": config.implementation_name,
-                    "version": config.implementation_version,
-                    "backend": backend,
-                    "custom_attributes": {"backend": backend},
-                },
+        """Start the Collector and create its controller runtime."""
+        with contextlib.ExitStack() as cleanup:
+            collector = start_collector(config.run_root)
+            cleanup.callback(lambda: collector.close(timeout=10.0))
+            collector_address = collector.address
+            if collector_address is None:  # pragma: no cover - Collector invariant
+                raise RuntimeError("Quent Collector did not advertise an address")
+            session = QuentSession(collector_address)
+            cleanup.callback(session.close)
+            engine_handle = (
+                session.binding_context.engine_observer()
+                .handle(config.engine_id)
+                .init(
+                    instance_name=f"cudf-polars-{str(config.engine_id)[:8]}",
+                    implementation={
+                        "name": config.implementation_name,
+                        "version": config.implementation_version,
+                        "backend": backend,
+                        "custom_attributes": {"backend": backend},
+                    },
+                )
             )
-        )
-        return runtime
+            runtime = cls(
+                config=config,
+                session=session,
+                collector=collector,
+                _engine_handle=engine_handle,
+            )
+            cleanup.pop_all()
+            return runtime
+
+    @property
+    def collector_address(self) -> str:
+        """Return the live Collector's advertised address."""
+        if self.collector is None:  # pragma: no cover - caller lifecycle invariant
+            raise RuntimeError("Quent controller runtime is closed")
+        address = self.collector.address
+        if address is None:  # pragma: no cover - Collector invariant
+            raise RuntimeError("Quent Collector did not advertise an address")
+        return address
 
     @contextlib.contextmanager
     def query(
@@ -224,19 +242,28 @@ class QuentWorkerRuntime:
         from cudf_polars.quent._context import WorkerResources
 
         session = QuentSession(collector_address)
-        worker_handle = (
-            session.binding_context.worker_observer()
-            .handle(worker_id)
-            .init(instance_name=instance_name, engine=config.engine_id)
-        )
-        resources = WorkerResources.build(
-            instance_suffix=instance_name,
-            engine_id=config.engine_id,
-            worker_id=worker_id,
-            rank=rank,
-            nranks=nranks,
-        )
-        resources.declare(session)
+        worker_handle: quent_bindings.WorkerInitHandle | None = None
+        try:
+            worker_handle = (
+                session.binding_context.worker_observer()
+                .handle(worker_id)
+                .init(instance_name=instance_name, engine=config.engine_id)
+            )
+            resources = WorkerResources.build(
+                instance_suffix=instance_name,
+                engine_id=config.engine_id,
+                worker_id=worker_id,
+                rank=rank,
+                nranks=nranks,
+            )
+            resources.declare(session)
+        except BaseException:  # pragma: no cover
+            if worker_handle is not None:
+                with contextlib.suppress(Exception):
+                    worker_handle.exit()
+            with contextlib.suppress(Exception):
+                session.close()
+            raise
         return cls(
             config=config,
             session=session,

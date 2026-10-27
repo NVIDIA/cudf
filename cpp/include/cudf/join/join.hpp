@@ -469,6 +469,8 @@ filter_join_indices_output_size(
  * right_col1, ...)
  * ```
  * The first parameter is a pointer to a bool that the function must set to `true` or `false`.
+ * For both null-aware and non-null-aware predicates, the output value is uninitialized and must
+ * be set on every execution path.
  * The remaining parameters correspond to columns in the left table followed by the right table.
  * The CUDA function may return `cudf::errc` instead of `void` to report evaluation errors. PTX UDFs
  * do not support returning errors.

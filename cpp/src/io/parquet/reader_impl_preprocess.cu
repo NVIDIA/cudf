@@ -241,6 +241,10 @@ void reader_impl::allocate_nesting_info()
       // stub columns (basically the inner field of a list schema element) are not real columns.
       // we can ignore them for the purposes of output nesting info
       if (!cur_schema.is_stub()) {
+        // a one-level list (bare repeated leaf) maps to two output levels: an implicit list and
+        // its leaf. See `get_output_nesting_depth`
+        auto const one_level_list =
+          cur_schema.is_one_level_list(_metadata->get_schema(cur_schema.parent_idx));
         // initialize each page within the chunk
         for (size_t p_idx = 0; p_idx < subpass.column_page_count[idx]; p_idx++) {
           // Source file index for the current page.
@@ -283,10 +287,16 @@ void reader_impl::allocate_nesting_info()
                                            _options.timestamp_type.id(),
                                            _options.decimal_width);
           pni[cur_depth].nullable = cur_schema.repetition_type == FieldRepetitionType::OPTIONAL;
+
+          // the implicit list of a one-level list is a required list with its parent's def level
+          if (one_level_list) {
+            nesting_info[cur_depth - 1].max_def_level = actual_cur_schema.max_definition_level - 1;
+            pni[cur_depth - 1] = {.type = type_id::LIST, .nullable = false, .size = 0};
+          }
         }
 
         // move up the hierarchy
-        cur_depth--;
+        cur_depth -= one_level_list ? 2 : 1;
       }
 
       // next schema

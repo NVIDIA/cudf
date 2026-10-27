@@ -268,6 +268,8 @@ def test_hconcat_binds_unique_child_columns() -> None:
         "a": ColumnBinding(0, "a"),
         "b": ColumnBinding(1, "b"),
     }
+    node.streaming_safe = False
+    assert column_domain_bindings(node) == {}
 
 
 def test_passthrough_nodes_bind_same_named_columns() -> None:

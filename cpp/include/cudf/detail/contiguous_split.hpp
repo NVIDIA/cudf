@@ -14,6 +14,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <span>
 
 namespace cudf {
 namespace detail {
@@ -32,6 +33,11 @@ std::vector<packed_table> contiguous_split(cudf::table_view const& input,
 packed_columns pack(cudf::table_view const& input,
                     cuda::stream_ref stream,
                     rmm::device_async_resource_ref mr);
+
+/**
+ * @copydoc cudf::unpack(std::span<uint8_t const>, uint8_t const*)
+ **/
+table_view unpack(std::span<uint8_t const> metadata, uint8_t const* gpu_data);
 
 // opaque implementation of `metadata_builder` since it needs to use
 // `serialized_column`, which is only defined in pack.cpp

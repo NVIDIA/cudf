@@ -1778,7 +1778,7 @@ def test_read_parquet_nested_decimal_width(
         )
 
     # Precision 5 decimals are read as DECIMAL32 unless cast
-    path = tmp_path / "nested_decimal.parquet"
+    path = tmp_path / "cast_decimals.parquet"
     write_table(make_table(pa.decimal128(5, 2)), path)
     options = (
         plc.io.parquet.ParquetReaderOptions.builder(

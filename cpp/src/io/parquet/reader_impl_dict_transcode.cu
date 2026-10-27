@@ -489,8 +489,8 @@ void reader_impl::assemble_dict_transcoded_columns(
 
       // Deduplicate the stacked keys. `encode` yields the compact unique keys (on `_mr`, the output
       // keys child) plus an INT32 map from each stacked-key position to its compact index.
-      auto encoded = cudf::dictionary::detail::encode(
-        stacked_keys, data_type{type_id::INT32}, _stream, _mr.get_output_mr());
+      auto encoded =
+        cudf::dictionary::detail::encode(stacked_keys, data_type{type_id::INT32}, _stream, _mr);
       auto encoded_contents  = encoded->release();
       auto stacked_to_unique = std::move(
         encoded_contents.children[dictionary_column_view::indices_column_index]);  // INT32 map

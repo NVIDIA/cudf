@@ -1218,14 +1218,14 @@ table_with_metadata hybrid_scan_reader_impl::finalize_output(
     if (_options.prepend_row_index_column) {
       out_columns.emplace(out_columns.begin(),
                           parquet::detail::synthesize_row_index_column(
-                            _file_itm_data.row_groups, read_info, _stream, _mr.get_output_mr()));
+                            _file_itm_data.row_groups, read_info, _stream, _mr));
       out_metadata.schema_info.emplace(out_metadata.schema_info.begin(),
                                        column_name_info{.name = "row_index", .is_nullable = false});
     }
     if (_options.prepend_source_index_column) {
       out_columns.emplace(out_columns.begin(),
                           parquet::detail::synthesize_source_index_column(
-                            out_metadata.num_rows_per_source, _stream, _mr.get_output_mr()));
+                            out_metadata.num_rows_per_source, _stream, _mr));
       out_metadata.schema_info.emplace(
         out_metadata.schema_info.begin(),
         column_name_info{.name = "source_index", .is_nullable = false});
@@ -1266,11 +1266,8 @@ table_with_metadata hybrid_scan_reader_impl::finalize_output(
                  "Predicate filter should return a boolean");
 
     // Apply the final row mask to get the final output table
-    auto output_table = cudf::detail::apply_mask(read_table->view(),
-                                                 *final_row_mask,
-                                                 cudf::detail::mask_type::RETENTION,
-                                                 _stream,
-                                                 _mr.get_output_mr());
+    auto output_table = cudf::detail::apply_mask(
+      read_table->view(), *final_row_mask, cudf::detail::mask_type::RETENTION, _stream, _mr);
 
     // Update the input row mask to reflect the final row mask.
     update_row_mask(final_row_mask->view(), row_mask, mask_offset, _stream);
@@ -1288,11 +1285,8 @@ table_with_metadata hybrid_scan_reader_impl::finalize_output(
       (read_table->num_rows() == row_mask.size())
         ? row_mask
         : cudf::split(row_mask, {mask_offset, mask_offset + read_table->num_rows()}, _stream)[1];
-    auto output_table = cudf::detail::apply_mask(read_table->view(),
-                                                 effective_row_mask,
-                                                 cudf::detail::mask_type::RETENTION,
-                                                 _stream,
-                                                 _mr.get_output_mr());
+    auto output_table = cudf::detail::apply_mask(
+      read_table->view(), effective_row_mask, cudf::detail::mask_type::RETENTION, _stream, _mr);
     return {std::move(output_table), std::move(out_metadata)};
   }
 }

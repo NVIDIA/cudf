@@ -421,6 +421,8 @@ def _sort_partitioning(
         )
         or Partitioning()
     )
+    if not all(isinstance(ne.value, Col) for ne in ir.by):
+        return partitioning
     return replace_row_orderings(
         partitioning,
         (RowOrdering(sort_to_order_keys(ir), RowOrderingScope.GLOBAL),),

@@ -271,26 +271,32 @@ def test_ordered_join_after_set_sorted_inputs(spmd_engine_factory):
 
 
 @pytest.mark.parametrize(
-    "maintain_order,expected_column",
-    [("left", "left_value"), ("right", "right_value")],
+    "how,maintain_order,expected_column",
+    [
+        ("inner", "left", "left_value"),
+        ("inner", "right", "right_value"),
+        ("cross", "left", "left_value"),
+        ("cross", "right", None),
+        ("semi", "left", None),
+        ("anti", "left", None),
+    ],
 )
 def test_partitionwise_join_preserves_maintained_side_ordering(
-    spmd_engine, maintain_order, expected_column
+    spmd_engine, how, maintain_order, expected_column
 ) -> None:
     left = pl.LazyFrame({"k": [1], "left_value": [2]})
     right = pl.LazyFrame({"k": [1], "right_value": [3]})
-    join = _join_ir(
-        left.join(
-            right,
-            on="k",
-            how="inner",
-            maintain_order=maintain_order,
-        )
+    q = (
+        left.join(right, how=how, maintain_order=maintain_order)
+        if how == "cross"
+        else left.join(right, on="k", how=how, maintain_order=maintain_order)
     )
+    join = _join_ir(q)
     child_metadatas = []
     for child, column in zip(join.children, ("left_value", "right_value"), strict=True):
+        ordering_column = column if column in child.schema else "k"
         key = OrderKey(
-            tuple(child.schema).index(column),
+            tuple(child.schema).index(ordering_column),
             plc.types.Order.ASCENDING,
             plc.types.NullOrder.BEFORE,
         )
@@ -309,6 +315,9 @@ def test_partitionwise_join_preserves_maintained_side_ordering(
         spmd_engine.context,
     )
 
+    if expected_column is None:
+        assert result is None or result.row_orderings == ()
+        return
     assert result is not None
     (row_ordering,) = result.row_orderings
     (key,) = row_ordering.order_keys

@@ -119,8 +119,8 @@ def _join_preserves_side_order(
 ) -> bool:
     """Return whether a join preserves one input's row order."""
     return maintain_order.startswith(side) and (
-        how in ("Inner", "Cross")
-        or (side == "left" and how in ("Left", "Semi", "Anti"))
+        how == "Inner"
+        or (side == "left" and how in ("Left", "Cross"))
         or (side == "right" and how == "Right")
     )
 

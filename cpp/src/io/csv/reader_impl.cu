@@ -276,7 +276,8 @@ std::pair<rmm::device_uvector<char>, selected_rows_offsets> load_data_and_gather
 
   auto const max_blocks =
     std::max<size_t>((buffer_size / cudf::io::csv::gpu::rowofs_block_bytes) + 1, 2);
-  cudf::detail::hostdevice_vector<uint64_t> row_ctx(max_blocks, stream);
+  cudf::detail::hostdevice_vector<uint64_t> row_ctx(
+    max_blocks, stream, cudf::get_current_device_resource_ref());
   do {
     auto const target_pos = std::min(pos + max_chunk_bytes, max_input_size);
     auto const chunk_size = target_pos - pos;

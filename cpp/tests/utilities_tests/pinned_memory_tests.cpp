@@ -147,13 +147,13 @@ TEST_F(PinnedMemoryTest, HostSpan)
   // hostdevice vectors use pinned memory for the host side; test that host_span can be constructed
   // from a hostdevice_vector with correct device accessibility
 
-  hostdevice_vector<int16_t> hd_vec(10, stream);
+  hostdevice_vector<int16_t> hd_vec(10, stream, cudf::get_current_device_resource_ref());
   auto const span = host_span<int16_t>{hd_vec};
   EXPECT_TRUE(span.is_device_accessible());
 
   // test host_view and operator[]
   {
-    hostdevice_2dvector<int16_t> hd_2dvec(10, 10, stream);
+    hostdevice_2dvector<int16_t> hd_2dvec(10, 10, stream, cudf::get_current_device_resource_ref());
     auto const span2d = hd_2dvec.host_view().flat_view();
     EXPECT_TRUE(span2d.is_device_accessible());
 

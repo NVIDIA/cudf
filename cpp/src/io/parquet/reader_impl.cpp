@@ -51,7 +51,7 @@ namespace {
  * @param mr Memory resources used to allocate temporary and output device memory
  * @return The cast column
  */
-std::unique_ptr<column> cast_decimal_width(std::unique_ptr<column> col,
+std::unique_ptr<column> cast_decimal_width(std::unique_ptr<column>&& col,
                                            type_id decimal_width,
                                            cuda::stream_ref stream,
                                            cudf::memory_resources mr)

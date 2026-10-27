@@ -194,8 +194,7 @@ void hybrid_scan_reader_impl::mark_buffers_nullable_for_pruned_pages()
 }
 
 hybrid_scan_reader_impl::hybrid_scan_reader_impl(
-  cudf::host_span<cudf::host_span<uint8_t const> const> footer_bytes,
-  parquet_reader_options const& options)
+  std::span<std::span<uint8_t const> const> footer_bytes, parquet_reader_options const& options)
 {
   _metadata =
     std::make_shared<aggregate_reader_metadata>(footer_bytes,
@@ -205,8 +204,8 @@ hybrid_scan_reader_impl::hybrid_scan_reader_impl(
   _extended_metadata = static_cast<aggregate_reader_metadata*>(_metadata.get());
 }
 
-hybrid_scan_reader_impl::hybrid_scan_reader_impl(
-  cudf::host_span<FileMetaData const> parquet_metadatas, parquet_reader_options const& options)
+hybrid_scan_reader_impl::hybrid_scan_reader_impl(std::span<FileMetaData const> parquet_metadatas,
+                                                 parquet_reader_options const& options)
 {
   _metadata =
     std::make_shared<aggregate_reader_metadata>(parquet_metadatas,
@@ -244,7 +243,7 @@ std::vector<byte_range_info> hybrid_scan_reader_impl::page_index_byte_ranges() c
 }
 
 void hybrid_scan_reader_impl::setup_page_indexes(
-  cudf::host_span<cudf::host_span<uint8_t const> const> page_index_bytes) const
+  std::span<std::span<uint8_t const> const> page_index_bytes) const
 {
   _extended_metadata->setup_page_indexes(page_index_bytes);
 }
@@ -390,7 +389,7 @@ std::vector<std::vector<size_type>> hybrid_scan_reader_impl::filter_row_groups_w
 
 std::pair<std::vector<dictionary_byte_range>, std::vector<cudf::size_type>>
 hybrid_scan_reader_impl::dictionary_pages_byte_ranges(
-  cudf::host_span<std::vector<size_type> const> row_group_indices,
+  std::span<std::vector<size_type> const> row_group_indices,
   parquet_reader_options const& options,
   bool include_unbounded)
 {

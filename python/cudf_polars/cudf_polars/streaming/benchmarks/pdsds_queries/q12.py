@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Query 12."""
@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 from cudf_polars.streaming.benchmarks.pdsds_parameters import load_parameters
+from cudf_polars.streaming.benchmarks.pdsds_queries import sql_sum
 from cudf_polars.streaming.benchmarks.utils import QueryResult, get_data
 
 if TYPE_CHECKING:
@@ -95,23 +96,13 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
             .group_by(
                 ["i_item_id", "i_item_desc", "i_category", "i_class", "i_current_price"]
             )
-            .agg(
-                [
-                    pl.when(pl.col("ws_ext_sales_price").count() > 0)
-                    .then(pl.col("ws_ext_sales_price").sum())
-                    .otherwise(None)
-                    .alias("itemrevenue")
-                ]
-            )
+            .agg([sql_sum("ws_ext_sales_price").alias("itemrevenue")])
             .with_columns(
                 [
                     (
                         pl.col("itemrevenue")
                         * 100
-                        / pl.when(pl.col("itemrevenue").count() > 0)
-                        .then(pl.col("itemrevenue").sum())
-                        .otherwise(None)
-                        .over("i_class")
+                        / sql_sum("itemrevenue").over("i_class")
                     ).alias("revenueratio")
                 ]
             )

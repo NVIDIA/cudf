@@ -5,7 +5,8 @@
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING, Any
+import time
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -18,7 +19,12 @@ from cudf_polars.engine.hardware_binding import HardwareBindingPolicy
 from cudf_polars.utils.config import RayContext
 
 ray = pytest.importorskip("ray")
-from cudf_polars.engine.ray import RayEngine  # noqa: E402
+from cudf_polars.engine.ray import (  # noqa: E402
+    RayEngine,
+    _wait_for_actor_shutdown,
+)
+
+_TEST_TIMEOUT_SECONDS = 5
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -30,6 +36,37 @@ pytestmark = [
         reason="RayEngine must not be created from within an rrun cluster",
     ),
 ]
+
+
+@ray.remote(num_cpus=0)
+class _ShutdownActor:
+    def __ray_shutdown__(self, error: str) -> None:
+        if error == "timeout":
+            raise ray.exceptions.GetTimeoutError("Actor shutdown timed out")
+        ray.actor.exit_actor()
+
+    def ping(self) -> None:
+        time.sleep(_TEST_TIMEOUT_SECONDS)
+
+
+@pytest.mark.usefixtures("ray_engine")
+def test_wait_for_actor_shutdown_force_kills_timeout() -> None:
+    actor = cast("Any", _ShutdownActor).remote()
+    ref = actor.__ray_shutdown__.remote("timeout")
+
+    with pytest.raises(ray.exceptions.GetTimeoutError):
+        _wait_for_actor_shutdown(actor, ref, time.monotonic() + _TEST_TIMEOUT_SECONDS)
+
+    with pytest.raises(ray.exceptions.RayActorError):
+        ray.get(actor.ping.remote(), timeout=_TEST_TIMEOUT_SECONDS)
+
+
+@pytest.mark.usefixtures("ray_engine")
+def test_wait_for_actor_shutdown_ignores_actor_error() -> None:
+    actor = cast("Any", _ShutdownActor).remote()
+    ref = actor.__ray_shutdown__.remote("actor")
+
+    _wait_for_actor_shutdown(actor, ref, time.monotonic() + _TEST_TIMEOUT_SECONDS)
 
 
 # ---------------------------------------------------------------------------

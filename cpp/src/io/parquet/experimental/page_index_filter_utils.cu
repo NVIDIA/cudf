@@ -666,14 +666,14 @@ std::unique_ptr<column> compute_row_mask_from_page_stats(
   size_type total_rows,
   std::reference_wrapper<ast::expression const> stats_expression,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
   CUDF_EXPECTS(
     total_rows > 0, "Parquet row groups must contain at least one row", cudf::logic_error);
 
-  auto const temp_mr = cudf::get_current_device_resource_ref();
+  auto const temp_mr = mr.get_temporary_mr();
 
   // Return an all true row mask if no compacted page statistics are provided
   if (inputs.empty()) {
@@ -681,7 +681,7 @@ std::unique_ptr<column> compute_row_mask_from_page_stats(
       "At least one set of compacted page statistics is required. Falling back to an all true row "
       "mask.");
     auto const true_scalar = cudf::numeric_scalar<bool>{true, true, stream, temp_mr};
-    return cudf::make_column_from_scalar(true_scalar, total_rows, stream, mr);
+    return cudf::make_column_from_scalar(true_scalar, total_rows, stream, mr.get_output_mr());
   }
 
   // Ensure all compacted page statistics refer to a valid input column, are internally consistent,

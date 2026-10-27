@@ -498,7 +498,7 @@ std::unique_ptr<cudf::column> hybrid_scan_reader_impl::build_all_true_row_mask(
 {
   CUDF_EXPECTS(not row_group_indices.empty(), "Empty input row group indices encountered");
 
-  return _extended_metadata->build_all_true_row_mask(row_group_indices, stream, mr.get_output_mr());
+  return _extended_metadata->build_all_true_row_mask(row_group_indices, stream, mr);
 }
 
 std::unique_ptr<cudf::column> hybrid_scan_reader_impl::build_row_mask_with_page_index_stats(
@@ -516,7 +516,7 @@ std::unique_ptr<cudf::column> hybrid_scan_reader_impl::build_row_mask_with_page_
     _output_column_schemas,
     expr_conv.get_converted_expr().value(),
     stream,
-    mr.get_output_mr());
+    mr);
 }
 
 std::pair<std::vector<byte_range_info>, std::vector<cudf::size_type>>

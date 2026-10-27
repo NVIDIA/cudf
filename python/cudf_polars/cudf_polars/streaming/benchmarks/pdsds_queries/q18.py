@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Query 18."""
@@ -72,7 +72,6 @@ def duckdb_impl(run_config: RunConfig) -> str:
 def level(  # noqa: D103
     base_query: pl.LazyFrame,
     agg_exprs: list[pl.Expr],
-    null_sentinel: str,
     group_cols: list[str],
 ) -> pl.LazyFrame:
     if group_cols:
@@ -85,7 +84,7 @@ def level(  # noqa: D103
         if c not in group_cols
     ]
     if missing:
-        lf = lf.with_columns([pl.lit(null_sentinel).alias(c) for c in missing])
+        lf = lf.with_columns([pl.lit(None, dtype=pl.String).alias(c) for c in missing])
     return lf.select(
         [
             "i_item_id",
@@ -117,7 +116,6 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
     es = params["es"]
     gen = params["gen"]
 
-    null_sentinel = "NULL"
     catalog_sales = get_data(
         run_config.dataset_path, "catalog_sales", run_config.suffix
     )
@@ -189,18 +187,17 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
         pl.col("cd_dep_count").mean().alias("agg7"),
     ]
 
+    # ROLLUP(i_item_id, ca_country, ca_state, ca_county) drops columns from the right:
+    # level1: all four, level2: drop ca_county, level3: drop ca_state, level4: drop ca_country, level5: grand total
     level1 = level(
         base_query,
         agg_exprs,
-        null_sentinel,
         ["i_item_id", "ca_country", "ca_state", "ca_county"],
     )
-    level2 = level(
-        base_query, agg_exprs, null_sentinel, ["ca_country", "ca_state", "ca_county"]
-    )
-    level3 = level(base_query, agg_exprs, null_sentinel, ["ca_country", "ca_state"])
-    level4 = level(base_query, agg_exprs, null_sentinel, ["ca_country"])
-    level5 = level(base_query, agg_exprs, null_sentinel, [])
+    level2 = level(base_query, agg_exprs, ["i_item_id", "ca_country", "ca_state"])
+    level3 = level(base_query, agg_exprs, ["i_item_id", "ca_country"])
+    level4 = level(base_query, agg_exprs, ["i_item_id"])
+    level5 = level(base_query, agg_exprs, [])
 
     sort_by = {
         "ca_country": False,
@@ -213,7 +210,6 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
     return QueryResult(
         frame=(
             pl.concat([level1, level2, level3, level4, level5])
-            .filter(pl.col("i_item_id") != null_sentinel)
             .sort(sort_by.keys(), nulls_last=True)
             .limit(limit)
         ),

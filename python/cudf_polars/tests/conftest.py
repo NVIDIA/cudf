@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import concurrent.futures
-import contextlib
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -111,87 +110,70 @@ def _engine_param(request: pytest.FixtureRequest) -> EngineFixtureParam:
 
 
 @pytest.fixture(scope="session")
-def _engine_cache(
-    ray_num_ranks: int,
-    ray_init_options: dict[str, Any],
-) -> Generator[Callable[[EngineFixtureParam], pl.GPUEngine], None, None]:
-    """
-    Lazily construct and cache one engine of each kind for this pytest worker.
-
-    Each xdist worker runs an independent pytest session and therefore has its
-    own cache. Keeping ownership of the engines in this unparameterized fixture
-    prevents pytest from shutting down an engine when the parameterized
-    ``_unconfigured_engine`` fixture changes to another engine kind. All cached
-    engines are shut down at the end of the worker's session.
-    """
-    cache: dict[str, pl.GPUEngine] = {}
-
-    with contextlib.ExitStack() as stack:
-
-        def get_engine(param: EngineFixtureParam) -> pl.GPUEngine:
-            if (engine := cache.get(param.engine_name)) is not None:
-                return engine
-
-            if param.engine_name == "in-memory":
-                engine = pl.GPUEngine(executor="in-memory", raise_on_fail=True)
-                cache[param.engine_name] = engine
-                return engine
-
-            if param.engine_name in ("dask", "ray") and is_running_with_rrun():
-                pytest.skip(
-                    f"{param.engine_name} engine cannot be constructed "
-                    "inside an rrun cluster"
-                )
-
-            match param.engine_name:
-                case "spmd":
-                    from cudf_polars.engine.spmd import SPMDEngine
-
-                    engine = SPMDEngine()
-                case "dask":  # pragma: no cover
-                    from cudf_polars.engine.dask import DaskEngine
-
-                    engine = DaskEngine(engine_options={"allow_gpu_sharing": True})
-                case "ray":  # pragma: no cover
-                    from cudf_polars.engine.ray import RayEngine
-
-                    # Always specify num_ranks so the engine has a fixed size
-                    # regardless of how many GPUs the host happens to have;
-                    # otherwise ``RayEngine`` defaults to
-                    # ``get_num_gpus_in_ray_cluster()``
-                    engine = RayEngine(
-                        num_ranks=ray_num_ranks,
-                        engine_options={"allow_gpu_sharing": True},
-                        ray_init_options=ray_init_options,
-                    )
-                case _:  # pragma: no cover
-                    raise ValueError(f"Unknown streaming engine: {param.engine_name!r}")
-
-            cache[param.engine_name] = stack.enter_context(engine)
-            return cache[param.engine_name]
-
-        yield get_engine
-
-
-@pytest.fixture(scope="session")
 def _unconfigured_engine(
     _engine_param: EngineFixtureParam,
-    _engine_cache: Callable[[EngineFixtureParam], pl.GPUEngine],
-) -> tuple[pl.GPUEngine, StreamingOptions | None]:
+    ray_num_ranks: int,
+    ray_init_options: dict[str, Any],
+) -> Generator[tuple[pl.GPUEngine, StreamingOptions | None], None, None]:
     """
-    Return the cached engine resource and options to apply before use.
+    Fixture generating an engine resource and options to apply before use.
 
-    Tests should not use this fixture directly, but rather one of the
-    parameterized public engine fixtures. Those apply the configuration to
-    the cached base engine each time it is used in a test.
+    Parameters
+    ----------
+    _engine_param
+        The parameterisation of the engine
+
+    Returns
+    -------
+    tuple
+        Of an engine and options to apply to the engine to configure it (or
+        None if no configuration is needed).
+
+    Notes
+    -----
+    This session-scoped fixture keeps the heavy state of an engine alive
+    for the lifetime of its use, shutting it down once the particular
+    engine is not required any more. Tests should not use this fixture
+    directly, but rather one of the parameterised "public" engine fixtures.
+    Those take care of applying the configuration to the base engine each
+    time it is used in a test.
     """
-    engine = _engine_cache(_engine_param)
-    options = (
-        None
-        if _engine_param.engine_name == "in-memory"
-        else create_streaming_options(_engine_param.blocksize_mode)
-    )
-    return engine, options
+    if _engine_param.engine_name == "in-memory":
+        yield pl.GPUEngine(executor="in-memory", raise_on_fail=True), None
+    else:
+        engine: StreamingEngine
+        if _engine_param.engine_name in ("dask", "ray") and is_running_with_rrun():
+            pytest.skip(
+                f"{_engine_param.engine_name} engine cannot be constructed "
+                "inside an rrun cluster"
+            )
+        match _engine_param.engine_name:
+            case "spmd":
+                from cudf_polars.engine.spmd import SPMDEngine
+
+                engine = SPMDEngine()
+            case "dask":  # pragma: no cover
+                from cudf_polars.engine.dask import DaskEngine
+
+                engine = DaskEngine(engine_options={"allow_gpu_sharing": True})
+            case "ray":  # pragma: no cover
+                from cudf_polars.engine.ray import RayEngine
+
+                # Always specify num_ranks so the engine has a fixed size
+                # regardless of how many GPUs the host happens to have;
+                # otherwise ``RayEngine`` defaults to
+                # ``get_num_gpus_in_ray_cluster()``
+                engine = RayEngine(
+                    num_ranks=ray_num_ranks,
+                    engine_options={"allow_gpu_sharing": True},
+                    ray_init_options=ray_init_options,
+                )
+            case _:  # pragma: no cover
+                raise ValueError(
+                    f"Unknown streaming engine: {_engine_param.engine_name!r}"
+                )
+        with engine:
+            yield engine, create_streaming_options(_engine_param.blocksize_mode)
 
 
 @pytest.fixture
@@ -459,11 +441,11 @@ def pytest_collection_modifyitems(
     depending on the public engine fixture a test requests (see
     :func:`pytest_generate_tests`), so the same engine (e.g. ``"ray"``) has a
     different param index in different tests. Pytest's own reordering keys on
-    that index and therefore does not group them. Sorting by the engine id
-    (stable, and running last to override pytest's reordering) minimizes
-    configuration changes. ``_engine_cache`` independently ensures that an
-    engine is constructed at most once per worker even if xdist work stealing
-    disrupts this order.
+    that index and therefore does not group them, which makes the
+    session-scoped ``_unconfigured_engine`` be torn down and rebuilt (very
+    expensive for Ray and Dask) every time the engine changes. Sorting by the
+    engine id (stable, and running last to override pytest's reordering)
+    builds each engine once.
     """
     engine_order = {name: i for i, name in enumerate(ALL_ENGINE_FIXTURE_PARAMS)}
 

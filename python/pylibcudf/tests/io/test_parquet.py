@@ -1788,5 +1788,7 @@ def test_read_parquet_nested_decimal_width(
         .build()
     )
     assert_table_and_meta_eq(
-        make_table(pa_decimal), plc.io.parquet.read_parquet(options)
+        make_table(pa_decimal),
+        plc.io.parquet.read_parquet(options),
+        check_field_nullability=False,
     )

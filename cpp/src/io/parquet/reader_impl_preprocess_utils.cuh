@@ -121,13 +121,11 @@ std::string encoding_to_string(Encoding encoding);
  * @param unsorted_pages Device span of page information to decode
  * @param has_offset_index Boolean indicating if the offset index is available
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Memory resources used to allocate temporary and output device memory
  */
 void decode_page_headers(pass_intermediate_data& pass,
                          device_span<PageInfo> unsorted_pages,
                          bool has_offset_index,
-                         cuda::stream_ref stream,
-                         cudf::memory_resources mr);
+                         cuda::stream_ref stream);
 
 /**
  * @brief Decode page information using one exact span per logical indexed page
@@ -138,13 +136,11 @@ void decode_page_headers(pass_intermediate_data& pass,
  * @param unsorted_pages Device span of page information to decode
  * @param page_data Host span of page data device spans, one per logical indexed page
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Memory resources used to allocate temporary and output device memory
  */
 void decode_page_headers(pass_intermediate_data& pass,
                          device_span<PageInfo> unsorted_pages,
                          std::span<cudf::device_span<uint8_t const> const> page_data,
-                         cuda::stream_ref stream,
-                         cudf::memory_resources mr);
+                         cuda::stream_ref stream);
 
 /**
  * @brief Check if the column chunk has a string (byte array or FLBA) type

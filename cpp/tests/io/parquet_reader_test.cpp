@@ -14,11 +14,9 @@
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/io_metadata_utilities.hpp>
 #include <cudf_test/iterator_utilities.hpp>
-#include <cudf_test/memory_resource_utilities.hpp>
 #include <cudf_test/table_utilities.hpp>
 
 #include <cudf/column/column.hpp>
-#include <cudf/concatenate.hpp>
 #include <cudf/copying.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/io/parquet_metadata.hpp>
@@ -41,7 +39,6 @@
 #include <limits>
 #include <locale>
 #include <memory>
-#include <numeric>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -57,35 +54,6 @@ auto page_boundary_slices(cudf::size_type const num_rows)
 {
   return std::array<std::pair<cudf::size_type, cudf::size_type>, 5>{
     {{0, num_rows}, {31, 3}, {32, 3}, {33, 3}, {255, 2}}};
-}
-
-// Write a nullable, compressed, multi-page table so that reads exercise decompression, null mask
-// and string scratch buffers
-std::unique_ptr<cudf::table> write_memory_resources_test_file(std::string const& filepath)
-{
-  constexpr cudf::size_type num_rows = 20'000;
-
-  std::vector<int32_t> ints(num_rows);
-  std::vector<std::string> strings(num_rows);
-  std::vector<bool> valids(num_rows);
-  for (cudf::size_type i = 0; i < num_rows; ++i) {
-    ints[i]    = i * 3;
-    strings[i] = "value_" + std::to_string(i % 1000);
-    valids[i]  = i % 7 != 0;
-  }
-  cudf::test::fixed_width_column_wrapper<int32_t> int_col(ints.begin(), ints.end(), valids.begin());
-  cudf::test::strings_column_wrapper string_col(strings.begin(), strings.end(), valids.begin());
-  auto input = std::make_unique<cudf::table>(cudf::table_view{{int_col, string_col}});
-
-  auto const write_options =
-    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, input->view())
-      .compression(cudf::io::compression_type::SNAPPY)
-      .row_group_size_rows(num_rows / 4)
-      .max_page_size_rows(num_rows / 16)
-      .build();
-  cudf::io::write_parquet(write_options);
-
-  return input;
 }
 
 }  // namespace
@@ -121,71 +89,6 @@ TEST_F(ParquetReaderTest, ManyTinyStringPages)
   auto const result = cudf::io::read_parquet(read_options);
 
   CUDF_TEST_EXPECT_TABLES_EQUAL(input, result.tbl->view());
-}
-
-TEST_F(ParquetReaderTest, ReadUsesMemoryResources)
-{
-  auto const filepath = temp_env->get_temp_filepath("ReadUsesMemoryResources.parquet");
-  auto const input    = write_memory_resources_test_file(filepath);
-  auto const read_options =
-    cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath}).build();
-  auto const stream = cudf::test::get_default_stream();
-
-  // Intermediates must come from the temporary (current) resource, output from the passed resource
-  cudf::test::memory_resource_test_harness resources;
-  cudf::io::table_with_metadata result;
-  {
-    cudf::test::scoped_current_device_resource current_mr{resources.temporary_mr()};
-    result = cudf::io::read_parquet(read_options, stream, resources.output_mr());
-    resources.synchronize(stream);
-  }
-  resources.expect_resource_usage(result.tbl->alloc_size(),
-                                  {cudf::test::output_allocation_expectation::EXACT,
-                                   cudf::test::temporary_allocation_expectation::SOME},
-                                  stream);
-  CUDF_TEST_EXPECT_TABLES_EQUAL(input->view(), result.tbl->view());
-  result.tbl.reset();
-  resources.expect_no_live_allocations(stream);
-}
-
-TEST_F(ParquetReaderTest, ChunkedReadUsesMemoryResources)
-{
-  auto const filepath = temp_env->get_temp_filepath("ChunkedReadUsesMemoryResources.parquet");
-  auto const input    = write_memory_resources_test_file(filepath);
-  auto const read_options =
-    cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath}).build();
-  auto const stream = cudf::test::get_default_stream();
-
-  // Small output and pass limits to read multiple chunks over multiple subpasses
-  cudf::test::memory_resource_test_harness resources;
-  std::vector<std::unique_ptr<cudf::table>> chunks;
-  {
-    cudf::test::scoped_current_device_resource current_mr{resources.temporary_mr()};
-    auto reader = cudf::io::chunked_parquet_reader(
-      100'000, 100'000, read_options, stream, resources.output_mr());
-    while (reader.has_next()) {
-      chunks.push_back(std::move(reader.read_chunk().tbl));
-    }
-    resources.synchronize(stream);
-  }
-  EXPECT_GT(chunks.size(), 1);
-  auto const output_bytes =
-    std::accumulate(chunks.begin(), chunks.end(), std::size_t{0}, [](auto acc, auto const& chunk) {
-      return acc + chunk->alloc_size();
-    });
-  resources.expect_resource_usage(output_bytes,
-                                  {cudf::test::output_allocation_expectation::EXACT,
-                                   cudf::test::temporary_allocation_expectation::SOME},
-                                  stream);
-
-  std::vector<cudf::table_view> chunk_views;
-  std::transform(
-    chunks.begin(), chunks.end(), std::back_inserter(chunk_views), [](auto const& chunk) {
-      return chunk->view();
-    });
-  CUDF_TEST_EXPECT_TABLES_EQUAL(input->view(), cudf::concatenate(chunk_views)->view());
-  chunks.clear();
-  resources.expect_no_live_allocations(stream);
 }
 
 // TODO: delete this test once the nz map is on by default.
@@ -6525,38 +6428,6 @@ TEST_F(ParquetReaderTest, NestedDecimalTypeOption)
                                 read(cudf::type_id::DECIMAL128)->view());
   CUDF_TEST_EXPECT_TABLES_EQUAL(make_nested_decimal_table<int64_t>()->view(),
                                 read(cudf::type_id::DECIMAL64)->view());
-}
-
-TEST_F(ParquetReaderTest, NestedDecimalTypeOptionUsesMemoryResources)
-{
-  auto const input    = make_nested_decimal_table<int32_t>();
-  auto const expected = make_nested_decimal_table<__int128_t>();
-  auto const filepath =
-    temp_env->get_temp_filepath("NestedDecimalTypeOptionUsesMemoryResources.parquet");
-  cudf::io::write_parquet(
-    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, input->view())
-      .build());
-  auto const read_options =
-    cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
-      .decimal_width(cudf::type_id::DECIMAL128)
-      .build();
-  auto const stream = cudf::test::get_default_stream();
-
-  // Decimals decoded before the cast must come from the temporary (current) resource
-  cudf::test::memory_resource_test_harness resources;
-  cudf::io::table_with_metadata result;
-  {
-    cudf::test::scoped_current_device_resource current_mr{resources.temporary_mr()};
-    result = cudf::io::read_parquet(read_options, stream, resources.output_mr());
-    resources.synchronize(stream);
-  }
-  resources.expect_resource_usage(result.tbl->alloc_size(),
-                                  {cudf::test::output_allocation_expectation::EXACT,
-                                   cudf::test::temporary_allocation_expectation::SOME},
-                                  stream);
-  CUDF_TEST_EXPECT_TABLES_EQUAL(expected->view(), result.tbl->view());
-  result.tbl.reset();
-  resources.expect_no_live_allocations(stream);
 }
 
 TEST_F(ParquetReaderTest, CaseInsensitiveColumnSelection)

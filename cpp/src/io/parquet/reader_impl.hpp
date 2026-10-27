@@ -51,13 +51,13 @@ class reader_impl {
    * @param parquet_metadatas Pre-materialized Parquet file metadata(s). Read from sources if empty
    * @param options Settings for controlling reading behavior
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Memory resources used to allocate temporary and output device memory
+   * @param mr Device memory resource to use for device memory allocation
    */
   explicit reader_impl(std::vector<std::unique_ptr<datasource>>&& sources,
                        std::vector<FileMetaData>&& parquet_metadatas,
                        parquet_reader_options const& options,
                        cuda::stream_ref stream,
-                       cudf::memory_resources mr);
+                       rmm::device_async_resource_ref mr);
 
   /**
    * @brief Read an entire set or a subset of data and returns a set of columns
@@ -98,7 +98,7 @@ class reader_impl {
    * @param parquet_metadatas Pre-materialized Parquet file metadata(s). Read from sources if empty
    * @param options Settings for controlling reading behavior
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Memory resources used to allocate temporary and output device memory
+   * @param mr Device memory resource to use for device memory allocation
    */
   explicit reader_impl(std::size_t chunk_read_limit,
                        std::size_t pass_read_limit,
@@ -106,14 +106,12 @@ class reader_impl {
                        std::vector<FileMetaData>&& parquet_metadatas,
                        parquet_reader_options const& options,
                        cuda::stream_ref stream,
-                       cudf::memory_resources mr);
+                       rmm::device_async_resource_ref mr);
 
   reader_impl(reader_impl const&)            = delete;
   reader_impl& operator=(reader_impl const&) = delete;
   reader_impl(reader_impl&&)                 = delete;
   reader_impl& operator=(reader_impl&&)      = delete;
-
-  virtual ~reader_impl() = default;
 
   /**
    * @copydoc cudf::io::chunked_parquet_reader::has_next
@@ -332,13 +330,11 @@ class reader_impl {
    * @param mode Value indicating if the data sources are read all at once or chunk by chunk
    * @param out_metadata The output table metadata
    * @param out_columns The columns for building the output table
-   * @param mr Memory resources used to allocate temporary and output device memory
    * @return The output table along with columns' metadata
    */
   table_with_metadata finalize_output(read_mode mode,
                                       table_metadata& out_metadata,
-                                      std::vector<std::unique_ptr<column>>& out_columns,
-                                      cudf::memory_resources mr);
+                                      std::vector<std::unique_ptr<column>>& out_columns);
 
   /**
    * @brief Allocate data buffers for the output columns.
@@ -346,12 +342,8 @@ class reader_impl {
    * @param mode Value indicating if the data sources are read all at once or chunk by chunk
    * @param skip_rows Crop all rows below skip_rows
    * @param num_rows Number of rows to read
-   * @param mr Memory resources used to allocate temporary and output device memory
    */
-  void allocate_columns(read_mode mode,
-                        size_t skip_rows,
-                        size_t num_rows,
-                        cudf::memory_resources mr);
+  void allocate_columns(read_mode mode, size_t skip_rows, size_t num_rows);
 
   /**
    * @brief Calculate per-page offsets for string data
@@ -517,13 +509,11 @@ class reader_impl {
    * @brief Cast any fixed-point output columns to the decimal width specified in options.
    *
    * @param out_columns Output columns to cast
-   * @param mr Memory resources used to allocate temporary and output device memory
    */
-  void apply_decimal_width_cast(std::vector<std::unique_ptr<cudf::column>>& out_columns,
-                                cudf::memory_resources mr);
+  void apply_decimal_width_cast(std::vector<std::unique_ptr<cudf::column>>& out_columns);
 
   cuda::stream_ref _stream;
-  cudf::memory_resources _mr;
+  rmm::device_async_resource_ref _mr{cudf::get_current_device_resource_ref()};
 
   // Reader configs.
   struct {

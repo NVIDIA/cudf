@@ -306,7 +306,7 @@ struct partitioning {
   /// Distribution within a rank (corresponds to local/single communicator).
   partitioning_spec local;
   /// Row-ordering guarantees for the stream.
-  std::vector<row_ordering> row_orderings;
+  std::vector<row_ordering> row_orderings{};
 };
 
 /**

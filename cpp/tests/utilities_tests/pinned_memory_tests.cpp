@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -166,7 +166,8 @@ TEST_F(PinnedMemoryTest, HostSpan)
 
   // test const versions of host_view and operator[]
   {
-    hostdevice_2dvector<int16_t> const const_hd_2dvec(10, 10, stream);
+    hostdevice_2dvector<int16_t> const const_hd_2dvec(
+      10, 10, stream, cudf::get_current_device_resource_ref());
     auto const const_span2d = const_hd_2dvec.host_view().flat_view();
     EXPECT_TRUE(const_span2d.is_device_accessible());
 

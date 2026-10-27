@@ -178,10 +178,10 @@ void reader_impl::allocate_nesting_info()
       return total + (per_page_nesting_info_size[index] * subpass.column_page_count[index]);
     });
 
-  page_nesting_info =
-    cudf::detail::hostdevice_vector<PageNestingInfo>{total_page_nesting_infos, _stream};
-  page_nesting_decode_info =
-    cudf::detail::hostdevice_vector<PageNestingDecodeInfo>{total_page_nesting_infos, _stream};
+  page_nesting_info = cudf::detail::hostdevice_vector<PageNestingInfo>{
+    total_page_nesting_infos, _stream, cudf::get_current_device_resource_ref()};
+  page_nesting_decode_info = cudf::detail::hostdevice_vector<PageNestingDecodeInfo>{
+    total_page_nesting_infos, _stream, cudf::get_current_device_resource_ref()};
 
   // update pointers in the PageInfos
   int target_page_index = 0;
@@ -241,6 +241,10 @@ void reader_impl::allocate_nesting_info()
       // stub columns (basically the inner field of a list schema element) are not real columns.
       // we can ignore them for the purposes of output nesting info
       if (!cur_schema.is_stub()) {
+        // a one-level list (bare repeated leaf) maps to two output levels: an implicit list and
+        // its leaf. See `get_output_nesting_depth`
+        auto const one_level_list =
+          cur_schema.is_one_level_list(_metadata->get_schema(cur_schema.parent_idx));
         // initialize each page within the chunk
         for (size_t p_idx = 0; p_idx < subpass.column_page_count[idx]; p_idx++) {
           // Source file index for the current page.
@@ -283,10 +287,16 @@ void reader_impl::allocate_nesting_info()
                                            _options.timestamp_type.id(),
                                            _options.decimal_width);
           pni[cur_depth].nullable = cur_schema.repetition_type == FieldRepetitionType::OPTIONAL;
+
+          // the implicit list of a one-level list is a required list with its parent's def level
+          if (one_level_list) {
+            nesting_info[cur_depth - 1].max_def_level = actual_cur_schema.max_definition_level - 1;
+            pni[cur_depth - 1] = {.type = type_id::LIST, .nullable = false, .size = 0};
+          }
         }
 
         // move up the hierarchy
-        cur_depth--;
+        cur_depth -= one_level_list ? 2 : 1;
       }
 
       // next schema
@@ -406,7 +416,8 @@ void reader_impl::allocate_level_decode_space()
   }
   if (num_mapped == 0) { return; }
 
-  subpass.nz_map_buf = cudf::detail::hostdevice_vector<page_nz_map>(num_mapped, _stream);
+  subpass.nz_map_buf = cudf::detail::hostdevice_vector<page_nz_map>(
+    num_mapped, _stream, cudf::get_current_device_resource_ref());
 
   auto host_state = [&](size_t idx) -> page_nz_map* {
     return nz_map_slot[idx] != std::numeric_limits<size_t>::max()
@@ -1141,7 +1152,8 @@ void reader_impl::allocate_columns(read_mode mode, size_t skip_rows, size_t num_
       h_cols_info, _stream, cudf::get_current_device_resource_ref());
 
     // Vector to store page sizes for each column at each depth
-    cudf::detail::hostdevice_vector<size_t> sizes{_input_columns.size() * max_depth, _stream};
+    cudf::detail::hostdevice_vector<size_t> sizes{
+      _input_columns.size() * max_depth, _stream, cudf::get_current_device_resource_ref()};
 
     // Total number of keys to process
     auto const num_keys = _input_columns.size() * max_depth * subpass.pages.size();

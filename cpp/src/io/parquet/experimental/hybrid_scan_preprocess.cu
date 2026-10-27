@@ -49,7 +49,7 @@ using parquet::detail::PageInfo;
 void decode_dictionary_page_headers(
   cudf::detail::hostdevice_span<ColumnChunkDesc> chunks,
   cudf::detail::hostdevice_span<PageInfo> pages,
-  cudf::host_span<cudf::device_span<uint8_t const> const> dict_page_data,
+  std::span<cudf::device_span<uint8_t const> const> dict_page_data,
   cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
@@ -123,17 +123,8 @@ void hybrid_scan_reader_impl::prepare_row_groups(
            _file_itm_data.num_rows_per_source,
            _file_itm_data.num_input_row_groups,
            _file_itm_data.surviving_row_groups) =
-    _extended_metadata->select_row_groups({},
-                                          cudf::host_span<std::vector<size_type> const>{
-                                            row_group_indices.data(), row_group_indices.size()},
-                                          {},
-                                          {},
-                                          {},
-                                          {},
-                                          {},
-                                          {},
-                                          {},
-                                          _stream);
+    _extended_metadata->select_row_groups(
+      {}, row_group_indices, {}, {}, {}, {}, {}, {}, {}, _stream);
 
   CUDF_EXPECTS(
     std::cmp_less_equal(_file_itm_data.global_num_rows, std::numeric_limits<size_type>::max()),
@@ -274,18 +265,8 @@ hybrid_scan_reader_impl::prepare_dictionaries(
   cuda::stream_ref stream)
 {
   // Create row group information for the input row group indices
-  auto const row_groups_info = std::get<2>(
-    _extended_metadata->select_row_groups({},
-                                          cudf::host_span<std::vector<size_type> const>{
-                                            row_group_indices.data(), row_group_indices.size()},
-                                          {},
-                                          {},
-                                          {},
-                                          {},
-                                          {},
-                                          {},
-                                          {},
-                                          stream));
+  auto const row_groups_info = std::get<2>(_extended_metadata->select_row_groups(
+    {}, row_group_indices, {}, {}, {}, {}, {}, {}, {}, stream));
 
   CUDF_EXPECTS(
     row_groups_info.size() * dictionary_col_schemas.size() == dictionary_page_data.size(),
@@ -300,7 +281,7 @@ hybrid_scan_reader_impl::prepare_dictionaries(
 
   // Initialize column chunk descriptors
   auto chunks = cudf::detail::hostdevice_vector<cudf::io::parquet::detail::ColumnChunkDesc>(
-    total_column_chunks, stream);
+    total_column_chunks, stream, cudf::get_current_device_resource_ref());
   auto chunk_idx = 0;
 
   // For all row groups
@@ -364,16 +345,13 @@ hybrid_scan_reader_impl::prepare_dictionaries(
   chunks.host_to_device_async(stream);
 
   // Create page infos for each column chunk's dictionary page
-  cudf::detail::hostdevice_vector<PageInfo> pages(total_column_chunks, stream);
+  cudf::detail::hostdevice_vector<PageInfo> pages(
+    total_column_chunks, stream, cudf::get_current_device_resource_ref());
   CUDF_CUDA_TRY(
     cudaMemsetAsync(pages.device_ptr(), 0, pages.size() * sizeof(PageInfo), stream.get()));
 
   // Decode dictionary page headers
-  decode_dictionary_page_headers(
-    chunks,
-    pages,
-    cudf::host_span{dictionary_page_data.data(), dictionary_page_data.size()},
-    stream);
+  decode_dictionary_page_headers(chunks, pages, dictionary_page_data, stream);
 
   return {has_compressed_data, std::move(chunks), std::move(pages)};
 }

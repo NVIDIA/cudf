@@ -14,6 +14,7 @@
 #include <cudf/detail/stream_compaction.hpp>
 #include <cudf/detail/structs/utilities.hpp>
 #include <cudf/detail/transform.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/stream_pool.hpp>
 #include <cudf/dictionary/detail/encode.hpp>
 #include <cudf/io/parquet_schema.hpp>
@@ -93,12 +94,13 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
   // In order to reduce the number of allocations of hostdevice_vector, we allocate a single vector
   // to store all per-chunk pointers to nested data/nullmask. `chunk_offsets[i]` will store the
   // offset into `chunk_nested_data`/`chunk_nested_valids` for the array of pointers for chunk `i`
-  auto chunk_nested_valids =
-    cudf::detail::hostdevice_vector<bitmask_type*>(sum_max_depths, _stream);
-  auto chunk_nested_data = cudf::detail::hostdevice_vector<void*>(sum_max_depths, _stream);
-  auto chunk_offsets     = std::vector<size_t>();
-  auto chunk_nested_str_data =
-    cudf::detail::hostdevice_vector<void*>(has_strings ? sum_max_depths : 0, _stream);
+  auto chunk_nested_valids = cudf::detail::hostdevice_vector<bitmask_type*>(
+    sum_max_depths, _stream, cudf::get_current_device_resource_ref());
+  auto chunk_nested_data = cudf::detail::hostdevice_vector<void*>(
+    sum_max_depths, _stream, cudf::get_current_device_resource_ref());
+  auto chunk_offsets         = std::vector<size_t>();
+  auto chunk_nested_str_data = cudf::detail::hostdevice_vector<void*>(
+    has_strings ? sum_max_depths : 0, _stream, cudf::get_current_device_resource_ref());
 
   // Update chunks with pointers to column data.
   for (size_t c = 0, chunk_off = 0; c < pass.chunks.size(); c++) {
@@ -184,7 +186,7 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
 
   // Create an empty device vector to store the initial str offset for large string columns from for
   // string decoders.
-  auto initial_str_offsets = rmm::device_uvector<size_t>{0, _stream, _mr};
+  auto initial_str_offsets = cuda::device_buffer<size_t>{_stream, _mr, 0, cuda::no_init};
 
   pass.chunks.host_to_device_async(_stream);
   chunk_nested_valids.host_to_device_async(_stream);
@@ -195,7 +197,7 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
       cudf::detail::make_pinned_vector_async<size_t>(_input_columns.size(), _stream);
     std::ranges::fill(host_offsets_vector, std::numeric_limits<size_t>::max());
     // Initialize the initial string offsets vector from the host vector
-    initial_str_offsets = cudf::detail::make_device_uvector(host_offsets_vector, _stream, _mr);
+    initial_str_offsets = cudf::detail::make_device_buffer(host_offsets_vector, _stream, _mr);
     chunk_nested_str_data.host_to_device_async(_stream);
   }
 
@@ -1252,7 +1254,7 @@ parquet_column_schema walk_schema(aggregate_reader_metadata const* mt, int idx)
 }
 }  // namespace
 
-parquet_metadata read_parquet_metadata(host_span<std::unique_ptr<datasource> const> sources)
+parquet_metadata read_parquet_metadata(std::span<std::unique_ptr<datasource> const> sources)
 {
   // Do not use arrow schema when only reading the parquet footer metadata.
   constexpr auto use_arrow_schema = false;

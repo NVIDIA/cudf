@@ -207,15 +207,15 @@ std::unique_ptr<table> drop_nans(
  * @param[in] retention_mask A nullable column_view of type type_id::BOOL8 used
  * as a mask to filter the `input`.
  * @param[in] stream CUDA stream used for device memory operations and kernel launches
- * @param[in] mr Device memory resource used to allocate the returned table's device memory
+ * @param[in] mr Memory resources used for temporary allocations and the returned table
  * @return Table containing copy of all rows of @p input passing the filter defined by
  * @p retention_mask.
  */
 std::unique_ptr<table> apply_retention_mask(
   table_view const& input,
   column_view const& retention_mask,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Filters `input` using `boolean_mask` of boolean values as a mask.
@@ -255,15 +255,15 @@ std::unique_ptr<table> apply_retention_mask(
  * @param[in] deletion_mask A nullable column_view of type type_id::BOOL8 used
  * as a mask to filter the `input`.
  * @param[in] stream CUDA stream used for device memory operations and kernel launches
- * @param[in] mr Device memory resource used to allocate the returned table's device memory
+ * @param[in] mr Memory resources used for temporary allocations and the returned table
  * @return Table containing copy of all rows of @p input that are not marked for deletion
  * by @p deletion_mask.
  */
 std::unique_ptr<table> apply_deletion_mask(
   table_view const& input,
   column_view const& deletion_mask,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Choices for drop_duplicates API for retainment of duplicate rows

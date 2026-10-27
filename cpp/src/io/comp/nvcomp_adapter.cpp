@@ -933,13 +933,16 @@ void load_nvcomp_library()
       stream, cudf::get_current_device_resource_ref(), max_compressed_size, cuda::no_init);
 
     // Prepare parameters for compression
-    cudf::detail::hostdevice_vector<device_span<uint8_t const>> hd_inputs(1, stream);
+    cudf::detail::hostdevice_vector<device_span<uint8_t const>> hd_inputs(
+      1, stream, cudf::get_current_device_resource_ref());
     hd_inputs[0] = d_input;
     hd_inputs.host_to_device_async(stream);
-    cudf::detail::hostdevice_vector<device_span<uint8_t>> hd_outputs(1, stream);
+    cudf::detail::hostdevice_vector<device_span<uint8_t>> hd_outputs(
+      1, stream, cudf::get_current_device_resource_ref());
     hd_outputs[0] = d_compressed;
     hd_outputs.host_to_device_async(stream);
-    cudf::detail::hostdevice_vector<codec_exec_result> hd_results(1, stream);
+    cudf::detail::hostdevice_vector<codec_exec_result> hd_results(
+      1, stream, cudf::get_current_device_resource_ref());
     hd_results[0] = codec_exec_result{0, codec_status::FAILURE};
     hd_results.host_to_device_async(stream);
 

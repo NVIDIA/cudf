@@ -8,7 +8,7 @@ from __future__ import annotations
 from functools import partial, reduce, singledispatch
 from typing import TYPE_CHECKING, TypedDict, cast
 
-import polars as pl  # noqa: TC002 (used at runtime for pl.datatypes, pl.Series etc.)
+import polars as pl
 
 import pylibcudf as plc
 from pylibcudf import expressions as plc_expr
@@ -202,33 +202,41 @@ def _(node: expr.BinOp, self: Transformer) -> plc_expr.Expression:
 def _(node: expr.BooleanFunction, self: Transformer) -> plc_expr.Expression:
     if node.name is expr.BooleanFunction.Name.IsIn:
         needles, haystack = node.children
-        if isinstance(haystack, expr.LiteralColumn) and len(haystack.value) < 16:
-            # 16 is an arbitrary limit
-            needle_ref = self(needles)
-            if haystack.dtype.id() == plc.TypeId.LIST:
-                # Because we originally translated pl_expr.Literal with a list scalar
-                # to a expr.LiteralColumn, so the actual type is in the inner type
-                # .inner returns DataTypeClass | DataType, need to cast to DataType
-                plc_dtype = DataType(
-                    cast(
-                        "pl.DataType", cast("pl.List", haystack.dtype.polars_type).inner
+        if isinstance(haystack, expr.LiteralColumn):
+            haystack_values = haystack.value
+            if haystack_values.dtype == pl.List:
+                # An imploded literal is a one-row list column, use the inner values
+                haystack_values = haystack_values.explode()
+            if 0 < len(haystack_values) < 16:
+                # 16 is an arbitrary limit
+                needle_ref = self(needles)
+                if haystack.dtype.id() == plc.TypeId.LIST:
+                    # Because we originally translated pl_expr.Literal with a list scalar
+                    # to a expr.LiteralColumn, so the actual type is in the inner type
+                    # .inner returns DataTypeClass | DataType, need to cast to DataType
+                    plc_dtype = DataType(
+                        cast(
+                            "pl.DataType",
+                            cast("pl.List", haystack.dtype.polars_type).inner,
+                        )
+                    ).plc_type
+                else:
+                    plc_dtype = haystack.dtype.plc_type  # pragma: no cover
+                values = (
+                    plc_expr.Literal(
+                        plc.Scalar.from_py(val, plc_dtype, stream=self.state["stream"])
                     )
-                ).plc_type
-            else:
-                plc_dtype = haystack.dtype.plc_type  # pragma: no cover
-            values = (
-                plc_expr.Literal(
-                    plc.Scalar.from_py(val, plc_dtype, stream=self.state["stream"])
+                    for val in haystack_values
                 )
-                for val in haystack.value
-            )
-            return reduce(
-                partial(plc_expr.Operation, plc_expr.ASTOperator.LOGICAL_OR),
-                (
-                    plc_expr.Operation(plc_expr.ASTOperator.EQUAL, needle_ref, value)
-                    for value in values
-                ),
-            )
+                return reduce(
+                    partial(plc_expr.Operation, plc_expr.ASTOperator.LOGICAL_OR),
+                    (
+                        plc_expr.Operation(
+                            plc_expr.ASTOperator.EQUAL, needle_ref, value
+                        )
+                        for value in values
+                    ),
+                )
     if self.state["for_parquet"] and isinstance(node.children[0], expr.Col):
         if node.name not in (
             expr.BooleanFunction.Name.IsNull,

@@ -861,7 +861,7 @@ class GroupedWindow(Expr):
     def _reorder_to_input(
         self,
         row_id: plc.Column,
-        by_cols: list[Column],
+        grouper: plc.groupby.GroupBy,
         n_rows: int,
         rank_tables: list[plc.Table],
         rank_out_names: list[str],
@@ -872,14 +872,13 @@ class GroupedWindow(Expr):
     ) -> list[Column]:
         # Reorder scan results from grouped-order back to input row order
         if order_index is None:
-            key_orders = [k.order for k in by_cols]
-            key_nulls = [k.null_order for k in by_cols]
-            order_index = plc.sorting.stable_sorted_order(
-                plc.Table([*(c.obj for c in by_cols), row_id]),
-                [*key_orders, plc.types.Order.ASCENDING],
-                [*key_nulls, plc.types.NullOrder.AFTER],
-                stream=stream,
+            # The grouper keeps input order within each group but places the
+            # groups in an unspecified order, so ask it for the row ids in
+            # the order it produced the results rather than sorting the keys.
+            _, _, grouped_row_ids = grouper.get_groups(
+                plc.Table([row_id]), stream=stream
             )
+            order_index = grouped_row_ids.columns()[0]
 
         return [
             Column(
@@ -1150,7 +1149,7 @@ class GroupedWindow(Expr):
         )
         return self._reorder_to_input(
             row_id,
-            by_cols,
+            grouper,
             df.num_rows,
             tables,
             names,
@@ -1367,7 +1366,7 @@ class GroupedWindow(Expr):
                     broadcasted_cols.extend(
                         self._reorder_to_input(
                             row_id,
-                            by_cols,
+                            grouper,
                             df.num_rows,
                             tables,
                             names,
@@ -1387,7 +1386,7 @@ class GroupedWindow(Expr):
                 broadcasted_cols.extend(
                     self._reorder_to_input(
                         row_id,
-                        by_cols,
+                        grouper,
                         df.num_rows,
                         tables,
                         names,
@@ -1436,7 +1435,7 @@ class GroupedWindow(Expr):
                 broadcasted_cols.extend(
                     self._reorder_to_input(
                         row_id,
-                        by_cols,
+                        grouper,
                         df.num_rows,
                         tables,
                         names,

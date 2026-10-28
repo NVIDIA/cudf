@@ -6,6 +6,8 @@
 #include "parquet_common.hpp"
 
 #include <cudf_test/base_fixture.hpp>
+#include <cudf_test/column_utilities.hpp>
+#include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/table_utilities.hpp>
 
 #include <cudf/io/parquet.hpp>
@@ -14,7 +16,37 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <vector>
+
+template <typename T>
+struct ParquetSignedZeroTest : public ParquetWriterTest {};
+
+using SignedZeroTypes = ::testing::Types<float, double>;
+TYPED_TEST_SUITE(ParquetSignedZeroTest, SignedZeroTypes);
+
+TYPED_TEST(ParquetSignedZeroTest, DictionaryRoundTripPreservesSign)
+{
+  using T = TypeParam;
+  std::vector<T> values(512);
+  for (std::size_t i = 0; i < values.size(); ++i) {
+    values[i] = i % 2 == 0 ? T{0.0} : T{-0.0};
+  }
+  auto const input = cudf::test::fixed_width_column_wrapper<T>(values.begin(), values.end());
+  auto const expected = table_view{{input}};
+  auto const filepath = temp_env->get_temp_filepath("DictionarySignedZero.parquet");
+  auto const out_opts =
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
+      .dictionary_policy(cudf::io::dictionary_policy::ALWAYS);
+  cudf::io::write_parquet(out_opts);
+  auto const in_opts = cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath});
+  auto const result = cudf::io::read_parquet(in_opts);
+  auto const actual = cudf::test::to_host<T>(result.tbl->view().column(0)).first;
+  ASSERT_EQ(actual.size(), values.size());
+  for (std::size_t i = 0; i < values.size(); ++i) {
+    EXPECT_EQ(std::signbit(actual[i]), std::signbit(values[i])) << "row " << i;
+  }
+}
 
 ////////////////////////////////
 // delta encoding writer tests

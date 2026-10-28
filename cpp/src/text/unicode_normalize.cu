@@ -801,6 +801,7 @@ struct composer {
   }
 };
 
+// cudf::bit_is_set takes a size_type index; slot indices here can exceed 2^31
 __device__ inline bool is_bit_set(cudf::bitmask_type const* bits, int64_t idx)
 {
   return (bits[idx / cudf::detail::warp_size] >> (idx % cudf::detail::warp_size)) & 1u;

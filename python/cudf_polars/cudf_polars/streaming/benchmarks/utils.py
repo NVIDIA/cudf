@@ -92,7 +92,7 @@ except ImportError:
     CUDF_POLARS_AVAILABLE = False
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Mapping
+    from collections.abc import Callable, Mapping
 
     from cudf_polars.engine.options import StreamingOptions
     from cudf_polars.quent import QuentConfig
@@ -1089,6 +1089,14 @@ class QueryResult:
 _QUERY_ATTRIBUTE = re.compile(r"q\d+")
 
 
+def _sql_query_path(directory: Path, q_id: int) -> Path:
+    """Return the SQL file path for a query, preferring the zero-padded name."""
+    padded = directory / f"q{q_id:02d}.sql"
+    if padded.exists():
+        return padded
+    return directory / f"q{q_id}.sql"
+
+
 @dataclasses.dataclass(frozen=True)
 class SQLQueryFiles:
     """
@@ -1107,14 +1115,7 @@ class SQLQueryFiles:
 
     def path(self, q_id: int) -> Path:
         """Return the SQL file path for a query, preferring the zero-padded name."""
-        padded = self.directory / f"q{q_id:02d}.sql"
-        if padded.exists():
-            return padded
-        return self.directory / f"q{q_id}.sql"
-
-    def missing(self, q_ids: Iterable[int]) -> tuple[Path, ...]:
-        """Return the SQL file paths that do not exist for the given queries."""
-        return tuple(path for path in map(self.path, q_ids) if not path.exists())
+        return _sql_query_path(self.directory, q_id)
 
     def __getattr__(self, attr: str) -> Callable[[RunConfig], str]:
         """Query lookup."""
@@ -2481,6 +2482,17 @@ def parse_args(
         parser.error(
             f"--sql-directory {parsed_args.sql_directory} is not a local directory."
         )
+    if parsed_args.sql_directory is not None:
+        missing = tuple(
+            f"q{q_id:02d}.sql or q{q_id}.sql"
+            for q_id in parsed_args.query
+            if not _sql_query_path(parsed_args.sql_directory, q_id).exists()
+        )
+        if missing:
+            parser.error(
+                f"--sql-directory {parsed_args.sql_directory} has no SQL file for "
+                f"the requested queries: {', '.join(missing)}."
+            )
 
     if (
         parsed_args.suffix
@@ -2498,14 +2510,6 @@ def run_polars(benchmark: Any, args: argparse.Namespace) -> None:
         benchmark = SQLQueries(benchmark.name, args.sql_directory)
     vars(args).update({"query_set": benchmark.name})
     run_config = RunConfig.from_args(args)
-
-    if run_config.query_mode is QueryMode.SQL:
-        missing = benchmark.duckdb_queries.missing(run_config.queries)
-        if missing:
-            raise ValueError(
-                "Missing SQL files for the requested queries: "
-                + ", ".join(map(str, missing))
-            )
 
     if run_config.connect is not None and run_config.frontend not in ("dask", "ray"):
         raise ValueError("--connect is only supported with --frontend ray or dask.")

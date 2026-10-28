@@ -121,6 +121,10 @@ def test_sql_cli_parse(tmp_path: Path) -> None:
             ("--query-mode", "sql", "--sql-directory", "{missing_directory}"),
             "is not a local directory",
         ),
+        (
+            ("--query-mode", "sql", "--sql-directory", "{sql_directory}"),
+            "has no SQL file for the requested queries: q02.sql or q2.sql.",
+        ),
     ],
 )
 def test_sql_cli_parse_raises(
@@ -135,7 +139,7 @@ def test_sql_cli_parse_raises(
         for arg in extra_args
     )
     with pytest.raises(SystemExit):
-        parse_args(["1", "--frontend", "in-memory", *formatted_args])
+        parse_args(["1,2", "--frontend", "in-memory", *formatted_args])
     assert message in capsys.readouterr().err
 
 
@@ -156,9 +160,3 @@ def test_sql_query_files_path_prefers_padded(tmp_path: Path) -> None:
 def test_sql_queries_duckdb_queries(tmp_path: Path) -> None:
     benchmark = SQLQueries("pdsh", tmp_path)
     assert benchmark().duckdb_queries == SQLQueryFiles(name="pdsh", directory=tmp_path)
-
-
-def test_sql_query_files_missing(tmp_path: Path) -> None:
-    (tmp_path / "q01.sql").write_text("SELECT 1")
-    sql_files = SQLQueryFiles(name="pdsh", directory=tmp_path)
-    assert sql_files.missing([1, 2]) == (tmp_path / "q2.sql",)

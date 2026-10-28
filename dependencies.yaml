@@ -1787,7 +1787,7 @@ dependencies:
           - bottleneck
           - fsspec
           - html5lib
-          - hypothesis
+          - hypothesis>=6.131.7
           - jinja2
           - lxml
           - matplotlib-base

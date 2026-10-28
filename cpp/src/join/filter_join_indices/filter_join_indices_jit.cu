@@ -69,7 +69,6 @@ std::vector<std::string> build_join_filter_template_params(
     if (auto* col = std::get_if<column_view>(&input)) {
       accessors.emplace_back(rtcx::reflect_template("cudf::jit::column_accessor",
                                                     rtcx::reflect(i),
-                                                    "cudf::column_device_view_core",
                                                     cudf::type_to_name(col->type()),
                                                     rtcx::reflect(false),
                                                     rtcx::reflect(table_sources[i].value())));
@@ -78,7 +77,6 @@ std::vector<std::string> build_join_filter_template_params(
       accessors.emplace_back(rtcx::reflect_template(
         "cudf::jit::column_accessor",
         rtcx::reflect(i),
-        "cudf::column_device_view_core",
         cudf::type_to_name(scalar.as_column_view().type()),
         rtcx::reflect(true),
         rtcx::reflect(0)  // scalars don't belong to a table, so just use 0 as placeholder

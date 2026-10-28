@@ -91,6 +91,53 @@ TEST_F(ParquetReaderTest, ManyTinyStringPages)
   CUDF_TEST_EXPECT_TABLES_EQUAL(input, result.tbl->view());
 }
 
+TEST_F(ParquetReaderTest, PlainStringOffsetsAcrossPageGroups)
+{
+  constexpr cudf::size_type num_rows  = 1027;
+  constexpr cudf::size_type page_rows = 37;
+  std::vector<std::string> short_values;
+  std::vector<std::string> long_values;
+  std::vector<bool> validity;
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    // Keep the page's average length below the buffering cutoff, but put a prefix
+    // near the 1 KiB refill boundary. Other lengths vary the prefix alignment.
+    auto const length = i % page_rows == 0 ? 1019 + (i / page_rows) % 3 : (i * 17) % 49;
+    short_values.emplace_back(length, static_cast<char>('a' + i % 26));
+    long_values.emplace_back(256 + i % 64, static_cast<char>('A' + i % 26));
+    validity.push_back((i / page_rows) % 7 != 2 && i % 11 != 0);
+  }
+  cudf::test::strings_column_wrapper short_strings(short_values.begin(), short_values.end());
+  cudf::test::strings_column_wrapper nullable_strings(
+    short_values.begin(), short_values.end(), validity.begin());
+  cudf::test::strings_column_wrapper long_strings(long_values.begin(), long_values.end());
+  cudf::table_view const input{{short_strings, nullable_strings, long_strings}};
+
+  auto const filepath = temp_env->get_temp_filepath("PlainStringOffsetsAcrossPageGroups.parquet");
+  auto const write_options =
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, input)
+      .compression(cudf::io::compression_type::NONE)
+      .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+      .row_group_size_rows(num_rows)
+      .max_page_size_rows(page_rows)
+      .max_page_fragment_size(page_rows)
+      .build();
+  cudf::io::write_parquet(write_options);
+
+  // Exercise a partial final page group, masked pages, and crops spanning page boundaries.
+  for (auto const [first, count] : std::array<std::pair<cudf::size_type, cudf::size_type>, 4>{
+         {{0, num_rows}, {36, 5}, {38, 77}, {996, 31}}}) {
+    SCOPED_TRACE(first);
+    auto const read_options =
+      cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+        .skip_rows(first)
+        .num_rows(count)
+        .build();
+    auto const result   = cudf::io::read_parquet(read_options);
+    auto const expected = cudf::slice(input, {first, first + count});
+    CUDF_TEST_EXPECT_TABLES_EQUAL(expected.front(), result.tbl->view());
+  }
+}
+
 // TODO: delete this test once the nz map is on by default.
 //
 // This test reads one file twice, with the nz map producer and its delta binary consumer off and
@@ -6324,14 +6371,16 @@ TEST_F(ParquetReaderTest, CorruptPlainStringLengthThrows)
   // real-world corruption where a stray byte shifts the length window, producing a bogus length.
   // The offset preprocessor detects `string_offset + len > dict_size` and must raise
   // decode_error::STRING_DATA_OVERRUN rather than truncating and back-filling empty strings.
-  int32_t const bad_len = 1'000'000;
-  std::memcpy(buffer.data() + length_pos, &bad_len, sizeof(bad_len));
-
   auto const read_opts = cudf::io::parquet_reader_options::builder(
                            cudf::io::source_info{cudf::host_span<std::byte const>{
                              reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
                            .build();
-  EXPECT_THROW(cudf::io::read_parquet(read_opts), cudf::logic_error);
+  for (int32_t const bad_len :
+       {1'000'000, -1, std::numeric_limits<int32_t>::min(), std::numeric_limits<int32_t>::max()}) {
+    SCOPED_TRACE(bad_len);
+    std::memcpy(buffer.data() + length_pos, &bad_len, sizeof(bad_len));
+    EXPECT_THROW(cudf::io::read_parquet(read_opts), cudf::logic_error);
+  }
 }
 
 TEST_F(ParquetReaderTest, DecimalTypeOption)

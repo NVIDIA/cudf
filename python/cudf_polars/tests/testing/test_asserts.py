@@ -279,6 +279,21 @@ def test_assert_tpch_result_equal_raises_result_mismatch() -> None:
         assert_tpch_result_equal(left, right, sort_by=[])
 
 
+def test_assert_tpch_result_equal_sort_by_none() -> None:
+    left = pl.DataFrame({"a": [3, 1, 2], "b": ["z", "x", "y"]})
+    right = pl.DataFrame({"a": [3, 1, 2], "b": ["z", "x", "y"]})
+
+    assert_tpch_result_equal(left, right, sort_by=None, limit=2)
+
+
+def test_assert_tpch_result_equal_sort_by_none_raises_row_order_mismatch() -> None:
+    left = pl.DataFrame({"a": [3, 1, 2], "b": ["z", "x", "y"]})
+    right = pl.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
+
+    with pytest.raises(ValidationError, match="Result mismatch"):
+        assert_tpch_result_equal(left, right, sort_by=None)
+
+
 def test_assert_tpch_result_equal_raises_result_mismatch_non_ties() -> None:
     # Same sort_by values, but a differing value in the "before" part.
     left = pl.DataFrame({"a": [1.0, 2.0, 3.0, 3.0], "b": ["a", "b", "c", "d"]})

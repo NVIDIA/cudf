@@ -671,23 +671,6 @@ def _prepare_parquet_predicate(
     return predicate
 
 
-def _has_nested_narrow_decimal(
-    dtype: pl.DataType | pl.datatypes.DataTypeClass, *, nested: bool = False
-) -> bool:
-    """Whether ``dtype`` has a Decimal(precision <= 18) inside a List/Array/Struct."""
-    if isinstance(dtype, type):
-        dtype = dtype()
-    if isinstance(dtype, pl.Decimal):
-        return nested and (dtype.precision or 38) <= 18
-    if isinstance(dtype, (pl.List, pl.Array)):
-        return _has_nested_narrow_decimal(dtype.inner, nested=True)
-    if isinstance(dtype, pl.Struct):
-        return any(
-            _has_nested_narrow_decimal(f.dtype, nested=True) for f in dtype.fields
-        )
-    return False
-
-
 class Scan(IR):
     """Input from files."""
 
@@ -809,17 +792,6 @@ class Scan(IR):
             # This line is unhittable ATM since IPC/Anonymous scan raise
             # on the polars side
             raise NotImplementedError(f"Unhandled scan type: {self.typ}")
-        if self.typ == "parquet" and any(
-            _has_nested_narrow_decimal(dtype.polars_type)
-            for dtype in self.schema.values()
-        ):
-            # libcudf's decimal_width option only widens top-level columns, so
-            # nested Decimal(p <= 18) children come back as DECIMAL32/64 and
-            # break the conversion to polars.
-            # See https://github.com/NVIDIA/cudf/issues/24838
-            raise NotImplementedError(
-                "Nested Decimal with precision <= 18 in parquet scan"
-            )
         if self.typ == "ndjson" and (self.n_rows != -1 or self.skip_rows != 0):
             raise NotImplementedError("row limit in scan for json reader")
         if self.skip_rows < 0:

@@ -5,7 +5,7 @@
 #pragma once
 
 #include "common.cuh"
-#include "regcomp.h"
+#include "regcomp.hpp"
 
 #include <cudf/strings/regex/flags.hpp>
 #include <cudf/strings/string_view.cuh>

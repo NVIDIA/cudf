@@ -114,7 +114,8 @@ void reader_impl::setup_next_pass(read_mode mode)
     auto chunk_start = _file_itm_data.chunks.begin() + (row_group_start * chunks_per_rowgroup);
     auto chunk_end   = _file_itm_data.chunks.begin() + (row_group_end * chunks_per_rowgroup);
 
-    pass.chunks = cudf::detail::hostdevice_vector<ColumnChunkDesc>(num_chunks, _stream);
+    pass.chunks = cudf::detail::hostdevice_vector<ColumnChunkDesc>(
+      num_chunks, _stream, cudf::get_current_device_resource_ref());
     std::copy(chunk_start, chunk_end, pass.chunks.begin());
 
     // compute skip_rows / num_rows for this pass.
@@ -311,7 +312,8 @@ void reader_impl::setup_next_subpass(read_mode mode)
   // copy the appropriate subset of pages from each column and store the mapping back to the source
   // (pass) pages
   else {
-    subpass.page_buf       = cudf::detail::hostdevice_vector<PageInfo>(total_pages, _stream);
+    subpass.page_buf = cudf::detail::hostdevice_vector<PageInfo>(
+      total_pages, _stream, cudf::get_current_device_resource_ref());
     subpass.page_src_index = cuda::device_buffer<size_t>(
       _stream, cudf::get_current_device_resource_ref(), total_pages, cuda::no_init);
     auto iter = cuda::counting_iterator<size_t>{0};
@@ -624,8 +626,8 @@ void reader_impl::set_subpass_page_mask()
   auto const& subpass = pass->subpass;
 
   // Create a hostdevice vector to store the subpass page mask
-  _subpass_page_mask =
-    std::make_unique<cudf::detail::hostdevice_vector<bool>>(subpass->pages.size(), _stream);
+  _subpass_page_mask = std::make_unique<cudf::detail::hostdevice_vector<bool>>(
+    subpass->pages.size(), _stream, cudf::get_current_device_resource_ref());
 
   // Fill with all true if no pass level page mask is available
   if (_pass_page_mask.empty()) {

@@ -252,7 +252,7 @@ class Translator:
         # IR is versioned with major.minor, minor is bumped for backwards
         # compatible changes (e.g. adding new nodes), major is bumped for
         # incompatible changes (e.g. renaming nodes).
-        if (version := self.visitor.version()) >= (15, 3):
+        if (version := self.visitor.version()) >= (16, 1):
             e = NotImplementedError(
                 f"No support for polars IR {version=}"
             )  # pragma: no cover; no such version for now.
@@ -625,6 +625,9 @@ def _(node: plrs._ir_nodes.Scan, translator: Translator, schema: Schema) -> ir.I
     else:
         reader_options, cloud_options = map(json.loads, options)
     file_options = node.file_options
+    if typ == "csv":
+        # Not part of the CSV reader options, but needed to read the files.
+        reader_options["extra_columns"] = file_options.extra_columns_policy
     with_columns = file_options.with_columns
     row_index = file_options.row_index
     include_file_paths = file_options.include_file_paths
@@ -795,7 +798,7 @@ def _(node: plrs._ir_nodes.Join, translator: Translator, schema: Schema) -> ir.I
         "Semi",
         "Anti",
     }:
-        if how != "Cross" and not left_on:
+        if how != "Cross" and not left_on:  # pragma: no cover; polars 2.0 only
             raise NotImplementedError(
                 "Joins without keys carry a predicate that polars does not expose"
             )
@@ -807,12 +810,18 @@ def _(node: plrs._ir_nodes.Join, translator: Translator, schema: Schema) -> ir.I
             inp_left,
             inp_right,
         )
+    elif len(how) == 2 and how[1] == "cross_and_filter":
+        return _translate_cross_and_filter(
+            node, translator, schema, inp_left, inp_right, left_on, right_on
+        )
+    elif len(how) == 2 and how[1] == "fused_predicate":
+        return _translate_fused_predicate(
+            node, translator, schema, inp_left, inp_right, left_on, right_on
+        )
     else:
-        how, op1, op2 = node.options[0]
-        if how != "IEJoin":
-            raise NotImplementedError(
-                f"Unsupported join type {how}"
-            )  # pragma: no cover; asof joins not yet exposed
+        if how[0] != "IEJoin":  # pragma: no cover; asof joins not yet exposed
+            raise NotImplementedError(f"Unsupported join type {how}")
+        _, op1, op2 = how
         if op2 is None:
             ops = [op1]
         else:
@@ -847,6 +856,44 @@ def _(node: plrs._ir_nodes.Join, translator: Translator, schema: Schema) -> ir.I
         )
 
         return ir.ConditionalJoin(schema, predicate, node.options, inp_left, inp_right)
+
+
+def _translate_cross_and_filter(
+    node: plrs._ir_nodes.Join,
+    translator: Translator,
+    schema: Schema,
+    inp_left: ir.IR,
+    inp_right: ir.IR,
+    left_on: list[expr.NamedExpr],
+    right_on: list[expr.NamedExpr],
+) -> ir.IR:
+    """
+    Translate a join that Polars plans as a nested loop join.
+
+    The join type is ``(<how>, "cross_and_filter")`` and ``node.predicate`` is the
+    condition that is applied to the cross product, for example from
+    ``x NOT IN (SELECT ...)`` in SQL. Not supported yet, so it falls back to the CPU.
+    """
+    raise NotImplementedError(f"Unsupported join type {node.options[0]}")
+
+
+def _translate_fused_predicate(
+    node: plrs._ir_nodes.Join,
+    translator: Translator,
+    schema: Schema,
+    inp_left: ir.IR,
+    inp_right: ir.IR,
+    left_on: list[expr.NamedExpr],
+    right_on: list[expr.NamedExpr],
+) -> ir.IR:
+    """
+    Translate an equi join that Polars plans with an extra, fused predicate.
+
+    The join type is ``(<how>, "fused_predicate")``, ``left_on`` and ``right_on`` are
+    the equality keys and ``node.predicate`` is the extra condition. Not supported
+    yet, so it falls back to the CPU.
+    """
+    raise NotImplementedError(f"Unsupported join type {node.options[0]}")
 
 
 @_translate_ir.register
@@ -928,7 +975,7 @@ def _(node: plrs._ir_nodes.Sort, translator: Translator, schema: Schema) -> ir.I
     unique_null_order = []
     for key, key_order, key_null_order in zip(by, order, null_order, strict=True):
         if isinstance(key.value, expr.Col):
-            if key.value.name in seen:
+            if key.value.name in seen:  # pragma: no cover; polars 2.0 only
                 continue
             seen.add(key.value.name)
         unique_by.append(key)
@@ -1249,9 +1296,9 @@ def _translate_function(
         )
     elif isinstance(name, plrs._expr_nodes.BooleanFunction):
         if name == plrs._expr_nodes.BooleanFunction.IsBetween:
-            column, lo, hi = (
-                translator.translate_expr(n=n, schema=schema) for n in node.input
-            )
+            column, lo, hi = _int128_comparison_operands(
+                translator, node.input, schema
+            ) or (translator.translate_expr(n=n, schema=schema) for n in node.input)
             (closed,) = options
             lop, rop = expr.BooleanFunction._BETWEEN_OPS[closed]
             # IsBetween type coercion does not
@@ -1421,6 +1468,33 @@ def _translate_function(
         if name == "kurtosis":
             fisher, bias = options
             return expr.Kurtosis(dtype, fisher, bias, *children)
+        if name == "decimal_div":
+            # libcudf division yields scale s1 - s2 and truncates, so divide
+            # with one extra digit of scale and then round to the output scale.
+            # TODO: Replace with a libcudf decimal division that takes an output
+            # scale and rounds half to even:
+            # https://github.com/NVIDIA/cudf/issues/24774
+            left, right = children
+            out_type = dtype.polars_type
+            right_type = right.dtype.polars_type
+            assert isinstance(out_type, pl.Decimal)
+            assert isinstance(right_type, pl.Decimal)
+            out_scale = out_type.scale
+            return expr.UnaryFunction(
+                dtype,
+                "round",
+                (out_scale, "half_away_from_zero"),
+                expr.BinOp(
+                    DataType(pl.Decimal(38, out_scale + 1)),
+                    plc.binaryop.BinaryOperator.DIV,
+                    expr.Cast(
+                        DataType(pl.Decimal(38, out_scale + 1 + right_type.scale)),
+                        True,  # noqa: FBT003
+                        left,
+                    ),
+                    right,
+                ),
+            )
         if name == "arg_max" and len(options) == 2:
             # IRFunctionExpr::ArgSort is exposed as ("arg_max", descending, nulls_last)
             name = "arg_sort"
@@ -1739,6 +1813,11 @@ def _(
 
     # Push casts into literals so we can handle Cast(Literal(Null))
     if isinstance(inner, expr.Literal):
+        if dtype.id() == plc.TypeId.LIST:
+            # TODO: Remove once pylibcudf.Scalar supports lists
+            if inner.value is not None:  # pragma: no cover; polars rejects this cast
+                raise NotImplementedError("Casting a non-null literal to a list")
+            return expr.LiteralColumn(dtype, pl.Series([None], dtype=dtype.polars_type))
         return inner.astype(dtype)
     else:
         return expr.Cast(dtype, strict, inner)
@@ -1805,6 +1884,77 @@ def _(
     )
 
 
+_INT128_COMPARISON_OPS = frozenset(
+    {
+        plrs._expr_nodes.Operator.Eq,
+        plrs._expr_nodes.Operator.EqValidity,
+        plrs._expr_nodes.Operator.NotEq,
+        plrs._expr_nodes.Operator.NotEqValidity,
+        plrs._expr_nodes.Operator.Lt,
+        plrs._expr_nodes.Operator.LtEq,
+        plrs._expr_nodes.Operator.Gt,
+        plrs._expr_nodes.Operator.GtEq,
+    }
+)
+_NARROW_INTEGER_DTYPES = (
+    pl.Int8,
+    pl.Int16,
+    pl.Int32,
+    pl.Int64,
+    pl.UInt8,
+    pl.UInt16,
+    pl.UInt32,
+    pl.UInt64,
+)
+
+
+def _int128_comparison_operands(
+    translator: Translator, nodes: Sequence[int], schema: Schema
+) -> list[expr.Expr] | None:
+    """
+    Translate the operands of a comparison that polars widened to Int128.
+
+    Polars has no 64-bit type that holds both a UInt64 and an Int64 value, so
+    when it compares them (for example a ``pl.len()`` count from the 64-bit
+    runtime with an Int64 column) it casts every operand to Int128. libcudf has
+    no 128-bit integer type, but Decimal(38, 0) holds every such value exactly,
+    so compare the operands as that. Int128 is not otherwise supported, so this
+    only recognizes casts of integers, and integer literals next to them, and
+    returns None for anything else.
+    """
+    visitor = translator.visitor
+    # (the input expression node, or the value of a literal), and whether it is a literal
+    operands: list[tuple[int, bool]] = []
+    for n in nodes:
+        node = visitor.view_expression(n)
+        if not isinstance(visitor.get_dtype(n), pl.Int128):
+            return None
+        if isinstance(node, plrs._expr_nodes.Cast) and isinstance(
+            visitor.get_dtype(node.expr), _NARROW_INTEGER_DTYPES
+        ):
+            operands.append((node.expr, False))
+        elif isinstance(node, plrs._expr_nodes.Literal) and type(node.value) is int:
+            operands.append((node.value, True))
+        else:
+            return None
+    decimal = DataType(pl.Decimal(38, 0))
+    result: list[expr.Expr] = []
+    for operand, is_literal in operands:
+        if is_literal:
+            # polars drops literals outside the 64-bit range from a comparison
+            if -(2**63) <= operand < 2**63:
+                literal_dtype = DataType(pl.Int64())
+            elif 0 <= operand < 2**64:
+                literal_dtype = DataType(pl.UInt64())
+            else:  # pragma: no cover; polars simplifies these away
+                raise NotImplementedError(f"Int128 literal {operand}")
+            translated: expr.Expr = expr.Literal(literal_dtype, operand)
+        else:
+            translated = translator.translate_expr(n=operand, schema=schema)
+        result.append(expr.Cast(decimal, True, translated))  # noqa: FBT003
+    return result
+
+
 @_translate_expr.register
 def _(
     node: plrs._expr_nodes.BinaryExpr,
@@ -1812,6 +1962,12 @@ def _(
     dtype: DataType,
     schema: Schema,
 ) -> expr.Expr:
+    if node.op in _INT128_COMPARISON_OPS and (
+        operands := _int128_comparison_operands(
+            translator, (node.left, node.right), schema
+        )
+    ):
+        return expr.BinOp(dtype, expr.BinOp._MAPPING[node.op], *operands)
     left = translator.translate_expr(n=node.left, schema=schema)
     right = translator.translate_expr(n=node.right, schema=schema)
     if isinstance(left.dtype.polars_type, pl.Array) or isinstance(

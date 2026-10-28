@@ -7,6 +7,7 @@
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/strings/convert/convert_durations.hpp>
 #include <cudf/strings/detail/convert/int_to_string.cuh>
@@ -17,6 +18,7 @@
 
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/algorithm>
 #include <cuda/std/cmath>
@@ -78,9 +80,9 @@ struct alignas(4) format_item {
  */
 struct format_compiler {
   std::string_view const format;
-  rmm::device_uvector<format_item> d_items;
+  cuda::device_buffer<format_item> d_items;
   format_compiler(std::string_view format, cuda::stream_ref stream)
-    : format(format), d_items(0, stream)
+    : format(format), d_items(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init)
   {
     static std::map<char, int8_t> const specifier_lengths = {
       {'-', -1},  // '-' if negative
@@ -146,7 +148,7 @@ struct format_compiler {
 
     // create program in device memory
     d_items =
-      cudf::detail::make_device_uvector(items, stream, cudf::get_current_device_resource_ref());
+      cudf::detail::make_device_buffer(items, stream, cudf::get_current_device_resource_ref());
   }
 
   format_item const* compiled_format_items() { return d_items.data(); }

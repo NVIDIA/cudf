@@ -1068,13 +1068,13 @@ table_with_metadata reader_impl::finalize_output(read_mode mode,
     // Clear the number of rows per source as it is not valid after filtering
     out_metadata.num_rows_per_source.clear();
 
-    bool use_jit = cudf::get_context().use_jit() || _options.use_jit_filter;
+    bool const use_jit = cudf::get_context().use_jit() || _options.use_jit_filter;
     auto predicate =
-      !use_jit
-        ? cudf::detail::compute_column(
-            *read_table, final_filter_expr.value().get(), _stream, _mr.get_temporary_mr())
-        : cudf::compute_column_jit(
-            read_table->view(), final_filter_expr.value().get(), _stream, _mr.get_temporary_mr());
+      use_jit
+        ? cudf::compute_column_jit(
+            read_table->view(), final_filter_expr.value().get(), _stream, _mr.get_temporary_mr())
+        : cudf::detail::compute_column(
+            *read_table, final_filter_expr.value().get(), _stream, _mr.get_temporary_mr());
 
     CUDF_EXPECTS(predicate->view().type().id() == type_id::BOOL8,
                  "Predicate filter should return a boolean");

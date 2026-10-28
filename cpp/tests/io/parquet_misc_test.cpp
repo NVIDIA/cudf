@@ -35,16 +35,78 @@ TYPED_TEST(ParquetSignedZeroTest, DictionaryRoundTripPreservesSign)
   auto const input    = cudf::test::fixed_width_column_wrapper<T>(values.begin(), values.end());
   auto const expected = table_view{{input}};
   auto const filepath = temp_env->get_temp_filepath("DictionarySignedZero.parquet");
-  auto const out_opts =
+  cudf::io::parquet_writer_options const out_opts =
     cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
       .dictionary_policy(cudf::io::dictionary_policy::ALWAYS);
   cudf::io::write_parquet(out_opts);
-  auto const in_opts = cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath});
-  auto const result  = cudf::io::read_parquet(in_opts);
-  auto const actual  = cudf::test::to_host<T>(result.tbl->view().column(0)).first;
+  cudf::io::parquet_reader_options const in_opts =
+    cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath});
+  auto const result = cudf::io::read_parquet(in_opts);
+  auto const actual = cudf::test::to_host<T>(result.tbl->view().column(0)).first;
   ASSERT_EQ(actual.size(), values.size());
   for (std::size_t i = 0; i < values.size(); ++i) {
+    EXPECT_EQ(actual[i], T{0}) << "row " << i;
     EXPECT_EQ(std::signbit(actual[i]), std::signbit(values[i])) << "row " << i;
+  }
+}
+
+TYPED_TEST(ParquetSignedZeroTest, DictionaryRoundTripSlicedNullableMultipleFragments)
+{
+  using T                          = TypeParam;
+  constexpr cudf::size_type offset = 512;
+  constexpr cudf::size_type rows   = 512;
+  std::vector<T> values(offset + rows);
+  std::vector<bool> valid(offset + rows);
+  for (cudf::size_type i = 0; i < offset + rows; ++i) {
+    values[i] = i % 2 == 0 ? T{0.0} : T{-0.0};
+    valid[i]  = i % 11 != 0;
+  }
+  auto const input =
+    cudf::test::fixed_width_column_wrapper<T>(values.begin(), values.end(), valid.begin());
+  auto const input_table = table_view{{input}};
+  auto const sliced      = cudf::slice(input_table, {offset, offset + rows});
+  auto buffer            = std::vector<char>{};
+  cudf::io::parquet_writer_options const out_opts =
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info(&buffer), sliced.front())
+      .compression(cudf::io::compression_type::NONE)
+      .stats_level(cudf::io::statistics_freq::STATISTICS_COLUMN)
+      .dictionary_policy(cudf::io::dictionary_policy::ALWAYS)
+      .max_page_fragment_size(128)
+      .max_page_size_rows(128);
+  cudf::io::write_parquet(out_opts);
+
+  auto const bytes =
+    cudf::host_span<std::byte>(reinterpret_cast<std::byte*>(buffer.data()), buffer.size());
+  cudf::io::parquet_reader_options const in_opts =
+    cudf::io::parquet_reader_options::builder(cudf::io::source_info(bytes));
+  auto const result = cudf::io::read_parquet(in_opts);
+  auto const col    = result.tbl->view().column(0);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(sliced.front(), result.tbl->view());
+  auto const actual = cudf::test::to_host<T>(col).first;
+  ASSERT_EQ(actual.size(), rows);
+  for (cudf::size_type i = 0; i < rows; ++i) {
+    if (valid[offset + i]) {
+      EXPECT_EQ(actual[i], T{0}) << "row " << i;
+      EXPECT_EQ(std::signbit(actual[i]), std::signbit(values[offset + i])) << "row " << i;
+    }
+  }
+
+  auto const source = cudf::io::datasource::create(cudf::host_span<std::byte const>{bytes});
+  cudf::io::parquet::FileMetaData fmd;
+  read_footer(source, &fmd);
+  ASSERT_EQ(fmd.row_groups.size(), 1);
+  ASSERT_EQ(fmd.row_groups.front().columns.size(), 1);
+  auto const& chunk     = fmd.row_groups.front().columns.front();
+  auto const& encodings = chunk.meta_data.encodings;
+  ASSERT_TRUE(
+    std::find(encodings.begin(), encodings.end(), cudf::io::parquet::Encoding::RLE_DICTIONARY) !=
+      encodings.end() ||
+    std::find(encodings.begin(), encodings.end(), cudf::io::parquet::Encoding::PLAIN_DICTIONARY) !=
+      encodings.end());
+  auto const index = read_offset_index(source, chunk);
+  ASSERT_EQ(index.page_locations.size(), 4);
+  for (std::size_t i = 0; i < index.page_locations.size(); ++i) {
+    EXPECT_EQ(index.page_locations[i].first_row_index, i * 128);
   }
 }
 

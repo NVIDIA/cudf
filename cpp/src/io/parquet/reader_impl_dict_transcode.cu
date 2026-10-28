@@ -143,17 +143,18 @@ void update_from_chunk(column_eligibility& e, ColumnChunkDesc const& chunk)
  * @param begin Pointer to the first `string_index_pair` entry for this chunk's dictionary
  * @param entry_count Number of dictionary entries (keys) for this chunk
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column's memory
+ * @param mr Memory resources used to allocate temporary and returned column device memory
  * @return A STRING column holding this chunk's dictionary keys (empty if `entry_count <= 0`)
  */
 [[nodiscard]] std::unique_ptr<column> make_keys_column_from_index_pairs(
   string_index_pair const* begin,
   size_type entry_count,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   if (entry_count <= 0) { return cudf::make_empty_column(data_type{type_id::STRING}); }
-  return cudf::strings::detail::make_strings_column(begin, begin + entry_count, stream, mr);
+  return cudf::strings::detail::make_strings_column(
+    begin, begin + entry_count, stream, mr.get_output_mr());
 }
 
 /**
@@ -380,7 +381,7 @@ void reader_impl::assemble_dict_transcoded_columns(
       auto const emit_single_row_group_column = [&]() -> bool {
         auto const& chunk = pass.chunks[chunk_indices[0]];
         auto keys         = make_keys_column_from_index_pairs(
-          chunk.str_dict_index, chunk_key_counts[0], _stream, _mr.get_output_mr());
+          chunk.str_dict_index, chunk_key_counts[0], _stream, _mr);
         auto const num_distinct_keys = cudf::detail::distinct_count(
           keys->view(), null_policy::INCLUDE, nan_policy::NAN_IS_VALID, _stream);
         if (num_distinct_keys != keys->size()) { return true; }  // fall back: dedup below
@@ -461,11 +462,8 @@ void reader_impl::assemble_dict_transcoded_columns(
       // iterator.
       std::unique_ptr<column> stacked_keys_owner;
       if (contiguous) {
-        stacked_keys_owner =
-          make_keys_column_from_index_pairs(pass.chunks[chunk_indices[0]].str_dict_index,
-                                            total_keys,
-                                            _stream,
-                                            _mr.get_temporary_mr());
+        stacked_keys_owner = make_keys_column_from_index_pairs(
+          pass.chunks[chunk_indices[0]].str_dict_index, total_keys, _stream, _mr.as_temporary());
       } else {
         key_base_offsets.resize(chunk_indices.size());
         std::transform(cuda::counting_iterator<size_t>{0},

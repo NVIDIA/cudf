@@ -108,3 +108,35 @@ def test_float_to_decimal_rounding(engine: pl.GPUEngine):
     )
     q = df.select(pl.col("foo") / pl.col("bar"))
     assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("dtype", [pl.UInt16, pl.Int32, pl.Int64])
+def test_cast_integer_to_date(engine: pl.GPUEngine, dtype):
+    df = pl.LazyFrame({"a": [0, 1, 2, 35, None]}, schema={"a": dtype})
+    query = df.select(pl.col("a").cast(pl.Date()))
+    assert_gpu_result_equal(query, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "from_dtype,to_dtype,data",
+    [
+        (pl.Int16, pl.Int8, [-1, 100, 127, 128, -128, -129, 200, None]),
+        (pl.Int16, pl.UInt8, [-1, 0, 255, 256, None]),
+        (pl.UInt8, pl.Int8, [0, 127, 128, 255, None]),
+        (pl.Int64, pl.UInt64, [-1, 0, 2**62, None]),
+        (pl.UInt64, pl.Int64, [0, 2**63 - 1, 2**63, None]),
+        (pl.Int8, pl.Int64, [-128, 127, None]),
+    ],
+)
+def test_non_strict_integer_narrowing_cast_overflow_is_null(
+    engine: pl.GPUEngine, from_dtype, to_dtype, data
+):
+    df = pl.LazyFrame({"a": data}, schema={"a": from_dtype})
+    q = df.select(pl.col("a").cast(to_dtype, strict=False))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_wrapping_integer_cast_still_wraps(engine: pl.GPUEngine):
+    df = pl.LazyFrame({"a": [-1, 200, None]}, schema={"a": pl.Int16})
+    q = df.select(pl.col("a").cast(pl.Int8, wrap_numerical=True))
+    assert_gpu_result_equal(q, engine=engine)

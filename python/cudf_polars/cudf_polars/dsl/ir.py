@@ -671,6 +671,23 @@ def _prepare_parquet_predicate(
     return predicate
 
 
+def _has_nested_narrow_decimal(
+    dtype: pl.DataType | pl.datatypes.DataTypeClass, *, nested: bool = False
+) -> bool:
+    """Whether ``dtype`` has a Decimal(precision <= 18) inside a List/Array/Struct."""
+    if isinstance(dtype, type):
+        dtype = dtype()
+    if isinstance(dtype, pl.Decimal):
+        return nested and (dtype.precision or 38) <= 18
+    if isinstance(dtype, (pl.List, pl.Array)):
+        return _has_nested_narrow_decimal(dtype.inner, nested=True)
+    if isinstance(dtype, pl.Struct):
+        return any(
+            _has_nested_narrow_decimal(f.dtype, nested=True) for f in dtype.fields
+        )
+    return False
+
+
 class Scan(IR):
     """Input from files."""
 
@@ -792,6 +809,17 @@ class Scan(IR):
             # This line is unhittable ATM since IPC/Anonymous scan raise
             # on the polars side
             raise NotImplementedError(f"Unhandled scan type: {self.typ}")
+        if self.typ == "parquet" and any(
+            _has_nested_narrow_decimal(dtype.polars_type)
+            for dtype in self.schema.values()
+        ):
+            # libcudf's decimal_width option only widens top-level columns, so
+            # nested Decimal(p <= 18) children come back as DECIMAL32/64 and
+            # break the conversion to polars.
+            # See https://github.com/NVIDIA/cudf/issues/24838
+            raise NotImplementedError(
+                "Nested Decimal with precision <= 18 in parquet scan"
+            )
         if self.typ == "ndjson" and (self.n_rows != -1 or self.skip_rows != 0):
             raise NotImplementedError("row limit in scan for json reader")
         if self.skip_rows < 0:
@@ -822,6 +850,11 @@ class Scan(IR):
             if self.reader_options["skip_rows_after_header"] != 0:
                 raise NotImplementedError("Skipping rows after header in CSV reader")
             parse_options = self.reader_options["parse_options"]
+            if parse_options.get("encoding", "Utf8") != "Utf8":
+                # libcudf does not repair invalid UTF-8 (polars' "utf8-lossy")
+                raise NotImplementedError(
+                    f"CSV encoding {parse_options['encoding']!r} is not supported"
+                )
             if (
                 null_values := parse_options["null_values"]
             ) is not None and "Named" in null_values:
@@ -1147,7 +1180,7 @@ class Scan(IR):
 
             parse_options = reader_options["parse_options"]
             sep = chr(parse_options["separator"])
-            quote = chr(parse_options["quote_char"])
+            quote_char = parse_options["quote_char"]
             eol = chr(parse_options["eol_char"])
             if reader_options["schema"] is not None:
                 # Reader schema provides names
@@ -1168,6 +1201,13 @@ class Scan(IR):
                 # file provides column names
                 column_names = None
             usecols = with_columns
+            if usecols is None and reader_options.get("extra_columns") == "ignore":
+                # Files may have columns beyond the schema (extra_columns="ignore");
+                # read only the schema's columns so the pieces concatenate.
+                generated = {include_file_paths}
+                if row_index is not None:
+                    generated.add(row_index[0])
+                usecols = [name for name in schema if name not in generated]
             has_header = reader_options["has_header"]
             header = 0 if has_header else -1
 
@@ -1192,24 +1232,30 @@ class Scan(IR):
             seen_paths = []
             read_partial = n_rows != -1
             for p in paths:
-                skiprows = reader_options["skip_rows"]
+                # skip_lines skips raw lines (ignoring quoting) before anything else
+                skiprows = reader_options["skip_rows"] + reader_options["skip_lines"]
                 path = Path(p)
                 with path.open(encoding="utf-8") as f:
+                    for _ in range(reader_options["skip_lines"]):
+                        f.readline()
                     while f.readline() == "\n":
                         skiprows += 1
-                options = (
+                csv_builder = (
                     plc.io.csv.CsvReaderOptions.builder(plc.io.SourceInfo([path]))
                     .nrows(n_rows)
                     .skiprows(skiprows + skip_rows)
                     .skip_blank_lines(skip_blank_lines=False)
                     .lineterminator(str(eol))
-                    .quotechar(str(quote))
                     .decimal(decimal)
                     .keep_default_na(keep_default_na=False)
                     .na_filter(na_filter=True)
                     .delimiter(str(sep))
-                    .build()
                 )
+                if quote_char is None:
+                    csv_builder = csv_builder.quoting(plc.io.types.QuoteStyle.NONE)
+                else:
+                    csv_builder = csv_builder.quotechar(chr(quote_char))
+                options = csv_builder.build()
                 if column_names is not None:
                     options.set_names([str(name) for name in column_names])
                 else:
@@ -1222,7 +1268,12 @@ class Scan(IR):
                     {name: dtype.plc_type for name, dtype in schema.items()}
                 )
                 if usecols is not None:
-                    options.set_use_cols_names([str(name) for name in usecols])
+                    if usecols:
+                        options.set_use_cols_names([str(name) for name in usecols])
+                    else:
+                        # An empty selection means "all columns" to libcudf, so
+                        # read one column and discard it below to get the row count.
+                        options.set_use_cols_indexes([0])
                 options.set_na_values(null_values)
                 if comment is not None:
                     options.set_comment(comment)
@@ -1241,8 +1292,14 @@ class Scan(IR):
                 ),
                 strict=True,
             )
+            if usecols == []:
+                # Only the number of rows is needed.
+                table = plc.Table([], num_rows=sum(t.num_rows() for t in tables))
+                colnames = []
+            else:
+                table = plc.concatenate.concatenate(list(tables), stream=stream)
             df = DataFrame.from_table(
-                plc.concatenate.concatenate(list(tables), stream=stream),
+                table,
                 colnames,
                 [schema[colname] for colname in colnames],
                 stream=stream,
@@ -1436,8 +1493,25 @@ class Scan(IR):
             if filters is not None and effective_predicate is None:
                 return df
         elif typ == "ndjson":
+
+            def _json_dtype(name: str, dtype: DataType) -> plc.io.json.NameAndType:
+                # libcudf needs the names of nested children; lists use "element".
+                if dtype.id() == plc.TypeId.STRUCT:
+                    assert isinstance(dtype.polars_type, pl.Struct)
+                    children = [
+                        _json_dtype(f.name, c)
+                        for f, c in zip(
+                            dtype.polars_type.fields, dtype.children, strict=True
+                        )
+                    ]
+                elif dtype.id() == plc.TypeId.LIST:
+                    children = [_json_dtype("element", dtype.children[0])]
+                else:
+                    children = []
+                return (name, dtype.plc_type, children)
+
             json_schema: list[plc.io.json.NameAndType] = [
-                (name, typ.plc_type, []) for name, typ in schema.items()
+                _json_dtype(name, dtype) for name, dtype in schema.items()
             ]
             json_reader_options = (
                 plc.io.json.JsonReaderOptions.builder(plc.io.SourceInfo(paths))
@@ -1459,6 +1533,20 @@ class Scan(IR):
             col_order = list(schema.keys())
             if row_index is not None:
                 col_order.remove(row_index[0])
+            if missing := [name for name in col_order if name not in df.column_map]:
+                # The reader drops columns that are not in the data; polars
+                # fills the columns of a user-provided schema with nulls.
+                nulls = pl.DataFrame(
+                    {
+                        name: pl.Series(
+                            name, [None] * df.num_rows, dtype=schema[name].polars_type
+                        )
+                        for name in missing
+                    }
+                )
+                df = df.with_columns(
+                    DataFrame.from_polars(nulls, stream=stream).columns, stream=stream
+                )
             df = df.select(col_order)
         else:
             raise NotImplementedError(
@@ -2606,7 +2694,7 @@ class GroupBy(IR):
             else:
                 # Anything else, we pre-evaluate
                 column = value.evaluate(df, context=ExecutionContext.GROUPBY)
-                if column.size != keys[0].size:
+                if column.size != keys[0].size:  # pragma: no cover; polars 2.0 only
                     column = broadcast(
                         column, target_length=keys[0].size, stream=df.stream
                     )[0]
@@ -4282,21 +4370,12 @@ class Empty(IR):
     @classmethod
     @log_do_evaluate
     @nvtx_annotate_cudf_polars(message="Empty")
-    def do_evaluate(
-        cls, schema: Schema, *, context: IRExecutionContext
-    ) -> DataFrame:  # pragma: no cover
+    def do_evaluate(cls, schema: Schema, *, context: IRExecutionContext) -> DataFrame:
         """Evaluate and return a dataframe."""
-        stream = context.get_cuda_stream()
-        return DataFrame(
-            [
-                Column(
-                    plc.column_factories.make_empty_column(
-                        dtype.plc_type, stream=stream
-                    ),
-                    dtype=dtype,
-                    name=name,
-                )
-                for name, dtype in schema.items()
-            ],
-            stream=stream,
+        # libcudf cannot make an empty column of a nested type directly.
+        return DataFrame.from_polars(
+            pl.DataFrame(
+                schema={name: dtype.polars_type for name, dtype in schema.items()}
+            ),
+            stream=context.get_cuda_stream(),
         )

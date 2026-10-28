@@ -8,8 +8,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from rapidsmpf.memory.buffer import MemoryType
 from rapidsmpf.memory.buffer_resource import (
-    ReservationEventMemoryType,
     ReservationReleaseReason,
     ReservationRequestOutcome,
     ReservationRequestPolicy,
@@ -59,7 +59,7 @@ def _submitted(sequence: int = 0, identifier: int = 1) -> dict[str, object]:
         "kind": "request_submitted",
         "id": identifier,
         "size": 64,
-        "memory_types": [ReservationEventMemoryType.DEVICE],
+        "memory_types": [MemoryType.DEVICE],
         "policy": ReservationRequestPolicy.WAIT,
         "net_memory_delta": None,
         "attributes": {},
@@ -79,9 +79,7 @@ def _resolved(
         "outcome": outcome,
         "reservation_id": 0,
         "memory_type": (
-            ReservationEventMemoryType.DEVICE
-            if outcome == ReservationRequestOutcome.GRANTED
-            else None
+            MemoryType.DEVICE if outcome == ReservationRequestOutcome.GRANTED else None
         ),
         "size": 0,
         "overbooked_bytes": 0,
@@ -102,7 +100,7 @@ def _created(
         "timestamp_ns": 1_000 + sequence,
         "kind": "reservation_created",
         "id": identifier,
-        "memory_type": ReservationEventMemoryType.DEVICE,
+        "memory_type": MemoryType.DEVICE,
         "size": 64,
         "attributes": {},
         "request_id": request_id,
@@ -196,7 +194,7 @@ def test_forwards_grant_split_resize_release_and_limit_change(
                 "sequence": 7,
                 "timestamp_ns": 1_007,
                 "kind": "memory_limit_changed",
-                "memory_type": ReservationEventMemoryType.DEVICE,
+                "memory_type": MemoryType.DEVICE,
                 "configured_limit": -1,
             },
         ]
@@ -277,6 +275,62 @@ def test_malformed_batch_is_atomic(
         )
     request_observer.handle.assert_not_called()
     ingestor.ingest([_submitted()])
+
+
+def test_failed_batch_can_be_skipped(
+    bindings: tuple[ReservationEventIngestor, MagicMock, MagicMock, MagicMock],
+) -> None:
+    ingestor = bindings[0]
+    bad_batch = [
+        _submitted(),
+        {
+            "sequence": 1,
+            "timestamp_ns": 1_001,
+            "kind": "request_waiting",
+            "id": 99,
+        },
+    ]
+    with pytest.raises(ValueError, match="waiting for unknown request 99") as caught:
+        ingestor.ingest(bad_batch)
+
+    ingestor.skip_failed_batch(bad_batch, caught.value)
+    ingestor.ingest([_submitted(sequence=2, identifier=2), _resolved(3, identifier=2)])
+    assert "discarded reservation event batch" in ingestor.diagnostics()[0]
+    ingestor.close()
+
+
+def test_recording_sessions_namespace_reused_ids(
+    bindings: tuple[ReservationEventIngestor, MagicMock, MagicMock, MagicMock],
+) -> None:
+    ingestor, request_observer, _, _ = bindings
+    ingestor.ingest([_submitted(), _resolved(1)])
+    first_id = request_observer.handle.call_args.args[0]
+
+    ingestor.begin_recording_session()
+    ingestor.ingest([_submitted(), _resolved(1)])
+    second_id = request_observer.handle.call_args.args[0]
+
+    assert first_id != second_id
+    ingestor.close()
+
+
+def test_lifecycle_history_is_bounded(
+    bindings: tuple[ReservationEventIngestor, MagicMock, MagicMock, MagicMock],
+) -> None:
+    ingestor = bindings[0]
+    for identifier in range(1, 101):
+        sequence = (identifier - 1) * 2
+        ingestor.ingest(
+            [
+                _submitted(sequence, identifier),
+                _resolved(sequence + 1, identifier),
+            ]
+        )
+
+    assert ingestor._lifecycle.requests == set()
+    assert ingestor._lifecycle.reservations == {}
+    assert ingestor._lifecycle.max_request_id == 100
+    ingestor.close()
 
 
 def test_close_rejects_incomplete_and_ingest_after_close(

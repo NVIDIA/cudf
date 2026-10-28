@@ -8,6 +8,7 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import ipaddress
+import logging
 import socket
 import sys
 import threading
@@ -40,6 +41,8 @@ try:
     import cudf_polars_quent as _quent
 except ImportError:  # pragma: no cover - depends on optional extension
     _quent = None  # type: ignore[assignment]
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclasses.dataclass
@@ -338,7 +341,92 @@ class QuentWorkerRuntime:
                 self._record_reservation_event_metrics(
                     events, time.perf_counter() - start
                 )
-            self._reservation_ingestor.ingest(events)
+            self._ingest_reservation_events(events)
+
+    def retarget_buffer_resource(self, buffer_resource: BufferResource) -> None:
+        """Finish recording on the old resource and start a fresh session."""
+        with self._reservation_events_lock:
+            ingestor = self._reservation_ingestor
+            if ingestor is None:
+                return
+            old_resource = self._buffer_resource
+            if old_resource is buffer_resource:
+                return
+            if old_resource is not None:
+                try:
+                    events = old_resource.stop_reservation_event_recording()
+                except Exception:
+                    _logger.warning(
+                        "Failed to stop reservation event recording",
+                        exc_info=True,
+                    )
+                else:
+                    self._ingest_reservation_events(events)
+            ingestor.begin_recording_session()
+            self._buffer_resource = buffer_resource
+            try:
+                buffer_resource.start_reservation_event_recording()
+            except Exception:
+                _logger.warning(
+                    "Failed to start reservation event recording",
+                    exc_info=True,
+                )
+            else:
+                try:
+                    self._record_current_memory_limits(buffer_resource)
+                except Exception:
+                    _logger.warning(
+                        "Failed to record current memory limits",
+                        exc_info=True,
+                    )
+
+    def _record_current_memory_limits(self, buffer_resource: BufferResource) -> None:
+        """Seed a new recording session with the resource's current limits."""
+        from rapidsmpf.memory.buffer import MemoryType
+
+        memory_types = {
+            "device": MemoryType.DEVICE,
+            "host": MemoryType.HOST,
+            "pinned_host": MemoryType.PINNED_HOST,
+            "disk": MemoryType.DISK,
+        }
+        for name in self.worker_resources.reservable_memory_ids:
+            memory_type = memory_types[name]
+            buffer_resource.set_memory_limit(
+                memory_type, buffer_resource.memory_limit(memory_type)
+            )
+
+    def detach_buffer_resource(self) -> None:
+        """Finish recording before the owning streaming Context is shut down."""
+        with self._reservation_events_lock:
+            buffer_resource = self._buffer_resource
+            self._buffer_resource = None
+            if buffer_resource is None:
+                return
+            try:
+                events = buffer_resource.stop_reservation_event_recording()
+            except Exception:
+                _logger.warning(
+                    "Failed to stop reservation event recording",
+                    exc_info=True,
+                )
+            else:
+                self._ingest_reservation_events(events)
+
+    def _ingest_reservation_events(
+        self, events: Iterable[Mapping[str, object]]
+    ) -> None:
+        ingestor = self._reservation_ingestor
+        if ingestor is None:
+            return
+        event_batch = events if isinstance(events, list) else list(events)
+        try:
+            ingestor.ingest(event_batch)
+        except Exception as error:
+            ingestor.skip_failed_batch(event_batch, error)
+            _logger.warning(
+                "Discarding invalid reservation telemetry batch", exc_info=True
+            )
 
     def enable_reservation_event_metrics(self) -> None:
         """Enable event-buffer measurements for the overhead benchmark."""
@@ -480,12 +568,8 @@ class QuentWorkerRuntime:
             worker_handle = self._worker_handle
             buffer_resource = self._buffer_resource
             ingestor = self._reservation_ingestor
-            self._worker_handle = None
-            self._buffer_resource = None
-            self._reservation_ingestor = None
 
             def finalize_reservation_events() -> None:
-                errors: list[Exception] = []
                 final_events: Iterable[Mapping[str, object]] | None = None
                 if buffer_resource is not None:
                     try:
@@ -501,49 +585,41 @@ class QuentWorkerRuntime:
                             self._record_reservation_event_metrics(
                                 final_events, time.perf_counter() - start
                             )
-                    except Exception as error:
-                        errors.append(error)
+                    except Exception:
+                        _logger.warning(
+                            "Failed to stop reservation event recording",
+                            exc_info=True,
+                        )
                 if ingestor is not None:
                     if final_events is not None:
-                        try:
-                            ingestor.ingest(final_events)
-                        except Exception as error:
-                            errors.append(error)
+                        self._ingest_reservation_events(final_events)
                     try:
                         diagnostics = ingestor.diagnostics()
                         if diagnostics:
-                            errors.append(
-                                RuntimeError(
-                                    "Reservation event diagnostics: "
-                                    + "; ".join(diagnostics)
-                                )
+                            _logger.warning(
+                                "Reservation event diagnostics: %s",
+                                "; ".join(diagnostics),
                             )
-                    except Exception as error:
-                        errors.append(error)
+                    except Exception:
+                        _logger.warning(
+                            "Failed to read reservation event diagnostics",
+                            exc_info=True,
+                        )
                     try:
                         ingestor.close()
-                    except Exception as error:
-                        errors.append(error)
-                if errors:
-                    raise ExceptionGroup(
-                        "Reservation event finalization failed", errors
-                    )
+                    except Exception:
+                        _logger.warning(
+                            "Reservation event lifecycle was incomplete",
+                            exc_info=True,
+                        )
 
-            finalization_error: Exception | None = None
             if buffer_resource is not None or ingestor is not None:
-                try:
-                    finalize_reservation_events()
-                except Exception as error:
-                    finalization_error = error
+                finalize_reservation_events()
+            self._worker_handle = None
+            self._buffer_resource = None
+            self._reservation_ingestor = None
 
         steps: list[Callable[[], object]] = []
-        if finalization_error is not None:
-            captured_finalization_error = finalization_error
-
-            def raise_finalization_error() -> None:
-                raise captured_finalization_error
-
-            steps.append(raise_finalization_error)
         if worker_handle is not None:
             steps.append(worker_handle.exit)
         steps.append(self.session.close)

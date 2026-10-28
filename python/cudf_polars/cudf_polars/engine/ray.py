@@ -389,6 +389,7 @@ class RankActor:
                 self._quent_worker_runtime = None
         if quent_context is not None and collector_address is not None:
             assert self._comm is not None
+            assert self._ctx is not None
             self._quent_worker_runtime = QuentWorkerRuntime.create(
                 quent_context,
                 collector_address,
@@ -453,6 +454,8 @@ class RankActor:
             barrier(self._comm)
         # Drop persisted partitions before tearing down the Context.
         rank_local_store.close_all()
+        if self._quent_worker_runtime is not None:
+            self._quent_worker_runtime.detach_buffer_resource()
         self._ctx.shutdown()
         self._ctx = None
         self._rapidsmpf_options = Options.deserialize(rapidsmpf_options_as_bytes)
@@ -475,6 +478,8 @@ class RankActor:
         # to the now-shutdown Context.
         self._mr = self._ctx.br().device_mr_adaptor()
         rmm.mr.set_current_device_resource(self._mr)
+        if self._quent_worker_runtime is not None:
+            self._quent_worker_runtime.retarget_buffer_resource(self._ctx.br())
 
     def shutdown(self) -> None:
         """
@@ -785,10 +790,6 @@ def _shutdown_ray(
             )
 
         steps.append(shutdown_actors)
-    if quent_runtime is not None:
-        steps.append(quent_runtime.close)
-    elif quent_collector is not None:
-        steps.append(quent_collector.close)
     if shutdown_ray:
         steps.append(ray.shutdown)
     run_cleanup_steps("Ray engine shutdown failed", *steps)

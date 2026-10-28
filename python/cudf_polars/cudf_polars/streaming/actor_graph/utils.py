@@ -350,7 +350,7 @@ async def shutdown_on_error(
                     values=prefilter,
                 )
             try:
-                runtime.drain_reservation_events()
+                await ir_context.to_thread(runtime.drain_reservation_events)
             except BaseException as error:
                 actor_finalization_errors.append(error)
             try:

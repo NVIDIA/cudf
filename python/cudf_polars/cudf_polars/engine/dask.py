@@ -471,6 +471,7 @@ def _update_quent_on_worker(
             mp_ctx.quent_worker_runtime = None
     if quent_context is not None and collector_address is not None:
         assert mp_ctx.comm is not None
+        assert mp_ctx.ctx is not None
         worker_id = uuid.uuid4()
         mp_ctx.quent_worker_runtime = QuentWorkerRuntime.create(
             quent_context,
@@ -479,6 +480,7 @@ def _update_quent_on_worker(
             rank=mp_ctx.comm.rank,
             nranks=mp_ctx.comm.nranks,
             instance_name=f"DaskWorker-rank{mp_ctx.comm.rank}",
+            buffer_resource=mp_ctx.ctx.br(),
         )
 
 
@@ -616,6 +618,8 @@ def _reset_worker(
     # Drop this engine's persisted partitions before the Context is torn down, so they
     # don't outlive their allocator. This invalidates any live QueryResult from execute().
     rank_local_store.close_store(uid)
+    if mp_ctx.quent_worker_runtime is not None:
+        mp_ctx.quent_worker_runtime.detach_buffer_resource()
     # Explicit shutdown is thread-affine. ``distributed.worker.run``
     # dispatches sync work onto the worker's event-loop thread, which is
     # the same thread that built the Context in ``_setup_worker``.
@@ -632,6 +636,8 @@ def _reset_worker(
     )
     mp_ctx.mr = mp_ctx.ctx.br().device_mr_adaptor()
     rmm.mr.set_current_device_resource(mp_ctx.mr)
+    if mp_ctx.quent_worker_runtime is not None:
+        mp_ctx.quent_worker_runtime.retarget_buffer_resource(mp_ctx.ctx.br())
 
 
 def _get_cluster_info(

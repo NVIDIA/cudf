@@ -10,8 +10,8 @@ import uuid
 from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING, Any
 
+from rapidsmpf.memory.buffer import MemoryType
 from rapidsmpf.memory.buffer_resource import (
-    ReservationEventMemoryType,
     ReservationReleaseReason,
     ReservationRequestOutcome,
     ReservationRequestPolicy,
@@ -22,10 +22,10 @@ if TYPE_CHECKING:
     import cudf_polars_quent as quent_bindings
 
 _MEMORY_TYPES = {
-    ReservationEventMemoryType.DEVICE: "device",
-    ReservationEventMemoryType.HOST: "host",
-    ReservationEventMemoryType.PINNED_HOST: "pinned_host",
-    ReservationEventMemoryType.DISK: "disk",
+    MemoryType.DEVICE: "device",
+    MemoryType.HOST: "host",
+    MemoryType.PINNED_HOST: "pinned_host",
+    MemoryType.DISK: "disk",
 }
 _MEMORY_TYPE_VALUES = {name: value for value, name in _MEMORY_TYPES.items()}
 _POLICIES = {
@@ -65,18 +65,18 @@ class _Event:
 class _Lifecycle:
     next_sequence: int = 0
     requests: set[int] = dataclasses.field(default_factory=set)
-    known_requests: set[int] = dataclasses.field(default_factory=set)
+    max_request_id: int = 0
     reservations: dict[int, int] = dataclasses.field(default_factory=dict)
-    known_reservations: set[int] = dataclasses.field(default_factory=set)
+    max_reservation_id: int = 0
 
     def copy(self) -> _Lifecycle:
         """Return an independent lifecycle snapshot."""
         return _Lifecycle(
             next_sequence=self.next_sequence,
             requests=self.requests.copy(),
-            known_requests=self.known_requests.copy(),
+            max_request_id=self.max_request_id,
             reservations=self.reservations.copy(),
-            known_reservations=self.known_reservations.copy(),
+            max_reservation_id=self.max_reservation_id,
         )
 
 
@@ -111,6 +111,7 @@ class ReservationEventIngestor:
             int, quent_bindings.MemoryReservationDynamicFsmHandle
         ] = {}
         self._lifecycle = _Lifecycle()
+        self._session_nonce = 0
         self._diagnostics: list[str] = []
         self._closed = False
 
@@ -127,8 +128,38 @@ class ReservationEventIngestor:
         current = self._lifecycle.copy()
         for event in parsed:
             self._forward(event, current)
-            self._validate(event, current)
+            self._apply(event, current)
         self._lifecycle = next_lifecycle
+
+    def begin_recording_session(self) -> None:
+        """Reset producer-local IDs and namespace the next recording session."""
+        if self._lifecycle.requests or self._lifecycle.reservations:
+            self._diagnostics.append(
+                "recording session ended with "
+                f"{len(self._lifecycle.requests)} live request(s) and "
+                f"{len(self._lifecycle.reservations)} live reservation(s)"
+            )
+        self._session_nonce += 1
+        self._lifecycle = _Lifecycle()
+        self._requests.clear()
+        self._reservations.clear()
+
+    def skip_failed_batch(
+        self, events: Iterable[Mapping[str, object]], error: BaseException
+    ) -> None:
+        """Advance beyond a destructively drained batch that could not be ingested."""
+        sequences = [
+            value
+            for event in events
+            if isinstance(event, Mapping)
+            and isinstance((value := event.get("sequence")), int)
+            and not isinstance(value, bool)
+        ]
+        if sequences:
+            self._lifecycle.next_sequence = max(
+                self._lifecycle.next_sequence, max(sequences) + 1
+            )
+        self._diagnostics.append(f"discarded reservation event batch: {error}")
 
     def diagnostics(self) -> list[str]:
         """Return non-fatal attribute conversion diagnostics."""
@@ -162,13 +193,11 @@ class ReservationEventIngestor:
         data = event.data
         if event.kind == "request_submitted":
             identifier = data["id"]
-            if identifier in lifecycle.known_requests:
+            if identifier <= lifecycle.max_request_id:
                 raise ValueError(f"duplicate request id {identifier}")
             for memory_type in data["memory_types"]:
                 _memory_type_name(memory_type)
             _enum_name(_POLICIES, data["policy"], "reservation policy")
-            lifecycle.known_requests.add(identifier)
-            lifecycle.requests.add(identifier)
         elif event.kind == "request_waiting":
             identifier = data["id"]
             if identifier not in lifecycle.requests:
@@ -177,14 +206,13 @@ class ReservationEventIngestor:
             identifier = data["id"]
             if identifier not in lifecycle.requests:
                 raise ValueError(f"resolution for unknown request {identifier}")
-            lifecycle.requests.remove(identifier)
             outcome = data["outcome"]
             if outcome not in _OUTCOMES:
                 raise ValueError(f"invalid request outcome {outcome}")
             if outcome == ReservationRequestOutcome.GRANTED:
                 _memory_type_name(data["memory_type"])
                 reservation_id = data["reservation_id"]
-                if reservation_id not in lifecycle.known_reservations:
+                if not 0 < reservation_id <= lifecycle.max_reservation_id:
                     raise ValueError(
                         f"request {identifier} granted unknown reservation "
                         f"{reservation_id}"
@@ -201,7 +229,7 @@ class ReservationEventIngestor:
                     "reservation uses undeclared "
                     f"{_memory_type_description(memory_type)}"
                 )
-            if identifier in lifecycle.known_reservations:
+            if identifier <= lifecycle.max_reservation_id:
                 raise ValueError(f"duplicate reservation id {identifier}")
             request_id = data["request_id"]
             if request_id and request_id not in lifecycle.requests:
@@ -209,12 +237,10 @@ class ReservationEventIngestor:
                     f"reservation {identifier} references unknown request {request_id}"
                 )
             parent_id = data["parent_id"]
-            if parent_id and parent_id not in lifecycle.known_reservations:
+            if parent_id and parent_id > lifecycle.max_reservation_id:
                 raise ValueError(
                     f"reservation {identifier} references unknown parent {parent_id}"
                 )
-            lifecycle.known_reservations.add(identifier)
-            lifecycle.reservations[identifier] = memory_type
         elif event.kind == "reservation_resized":
             identifier = data["id"]
             if data["size"] == 0:
@@ -227,7 +253,6 @@ class ReservationEventIngestor:
             _enum_name(_RELEASE_REASONS, data["reason"], "reservation release reason")
             if identifier not in lifecycle.reservations:
                 raise ValueError(f"release for unknown reservation {identifier}")
-            del lifecycle.reservations[identifier]
         else:
             memory_type = data["memory_type"]
             if memory_type not in self._memory_ids:
@@ -235,6 +260,23 @@ class ReservationEventIngestor:
                     "memory limit changed for undeclared "
                     f"{_memory_type_description(memory_type)}"
                 )
+        self._apply(event, lifecycle)
+
+    @staticmethod
+    def _apply(event: _Event, lifecycle: _Lifecycle) -> None:
+        data = event.data
+        if event.kind == "request_submitted":
+            identifier = data["id"]
+            lifecycle.max_request_id = identifier
+            lifecycle.requests.add(identifier)
+        elif event.kind == "request_resolved":
+            lifecycle.requests.remove(data["id"])
+        elif event.kind == "reservation_created":
+            identifier = data["id"]
+            lifecycle.max_reservation_id = identifier
+            lifecycle.reservations[identifier] = data["memory_type"]
+        elif event.kind == "reservation_released":
+            del lifecycle.reservations[data["id"]]
 
     def _forward(self, event: _Event, lifecycle: _Lifecycle) -> None:
         data = event.data
@@ -243,7 +285,7 @@ class ReservationEventIngestor:
         if event.kind == "request_submitted":
             site, actor, attributes = self._translate_attributes(data["attributes"])
             request_handle = self._request_observer.handle(
-                _stable_id(self._worker_id, b"request", data["id"])
+                _stable_id(self._worker_id, "request", self._session_nonce, data["id"])
             ).into_dynamic()
             request_handle.submitted_at(
                 timestamp,
@@ -350,10 +392,12 @@ class ReservationEventIngestor:
             )
 
     def _request_id(self, identifier: int) -> uuid.UUID:
-        return _stable_id(self._worker_id, b"request", identifier)
+        return _stable_id(self._worker_id, "request", self._session_nonce, identifier)
 
     def _reservation_id(self, identifier: int) -> uuid.UUID:
-        return _stable_id(self._worker_id, b"reservation", identifier)
+        return _stable_id(
+            self._worker_id, "reservation", self._session_nonce, identifier
+        )
 
     def _memory_usage(
         self, memory_type: int, size: int
@@ -519,13 +563,10 @@ def _uuid(value: uuid.UUID | str, field: str) -> uuid.UUID:
         raise ValueError(f"{field}: {error}") from error
 
 
-def _stable_id(worker_id: uuid.UUID, namespace: bytes, identifier: int) -> uuid.UUID:
-    value = bytearray(worker_id.bytes)
-    for index, source in enumerate(namespace):
-        value[index] ^= source
-    for index, source in enumerate(identifier.to_bytes(8, "big"), start=8):
-        value[index] ^= source
-    return uuid.UUID(bytes=bytes(value))
+def _stable_id(
+    worker_id: uuid.UUID, namespace: str, session_nonce: int, identifier: int
+) -> uuid.UUID:
+    return uuid.uuid5(worker_id, f"{namespace}:{session_nonce}:{identifier}")
 
 
 def _memory_type_name(value: int) -> str:

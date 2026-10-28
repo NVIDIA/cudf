@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import dataclasses
 import uuid
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, call
 
 import pytest
@@ -30,6 +31,9 @@ from cudf_polars.quent._context import (
 )
 from cudf_polars.quent._runtime import QuentWorkerRuntime
 from cudf_polars.streaming.actor_graph.utils import reservation_attributes
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 def test_context_serialization_roundtrip(tmp_path) -> None:
@@ -303,7 +307,47 @@ def test_worker_runtime_drains_events() -> None:
     assert metrics.drain_conversion_seconds >= 0
 
 
-def test_worker_runtime_close_aggregates_event_errors() -> None:
+def test_worker_runtime_retargets_and_seeds_memory_limits() -> None:
+    events: list[str] = []
+
+    def record(name: str, result: object = None) -> Callable[..., object]:
+        def side_effect(*_: object) -> object:
+            events.append(name)
+            return result
+
+        return side_effect
+
+    old_resource = MagicMock()
+    old_resource.stop_reservation_event_recording.side_effect = record(
+        "stop", [{"sequence": 0}]
+    )
+    new_resource = MagicMock()
+    new_resource.start_reservation_event_recording.side_effect = record("start")
+    new_resource.memory_limit.side_effect = record("limit", 42)
+    new_resource.set_memory_limit.side_effect = record("set-limit")
+    ingestor = MagicMock()
+    ingestor.ingest.side_effect = record("ingest")
+    ingestor.begin_recording_session.side_effect = record("session")
+    resources = MagicMock()
+    resources.reservable_memory_ids = {"device": uuid.uuid4()}
+    runtime = QuentWorkerRuntime(
+        config=QuentConfig(),
+        session=MagicMock(),
+        worker_resources=resources,
+        _worker_handle=MagicMock(),
+        _buffer_resource=old_resource,
+        _reservation_ingestor=ingestor,
+    )
+
+    runtime.retarget_buffer_resource(new_resource)
+
+    assert events == ["stop", "ingest", "session", "start", "limit", "set-limit"]
+    new_resource.set_memory_limit.assert_called_once_with(MemoryType.DEVICE, 42)
+
+
+def test_worker_runtime_close_logs_event_errors(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     buffer_resource = MagicMock()
     buffer_resource.stop_reservation_event_recording.side_effect = RuntimeError(
         "stop failed"
@@ -322,13 +366,11 @@ def test_worker_runtime_close_aggregates_event_errors() -> None:
         _reservation_ingestor=ingestor,
     )
 
-    with pytest.raises(ExceptionGroup) as caught:
-        runtime.close()
+    runtime.close()
 
-    rendered = repr(caught.value)
-    assert "stop failed" in rendered
-    assert "bad attribute" in rendered
-    assert "live reservation" in rendered
+    assert "Failed to stop reservation event recording" in caplog.text
+    assert "Reservation event diagnostics: bad attribute" in caplog.text
+    assert "Reservation event lifecycle was incomplete" in caplog.text
     ingestor.close.assert_called_once_with()
     worker_handle.exit.assert_called_once_with()
     session.close.assert_called_once_with()

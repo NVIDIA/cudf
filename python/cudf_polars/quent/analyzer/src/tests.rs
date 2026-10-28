@@ -516,14 +516,14 @@ fn builds_query_bundle_from_generated_events() {
     let reservation_peak = statistics
         .custom_statistics
         .iter()
-        .find(|statistic| statistic.value.key == "reservation_peak_bytes")
+        .find(|statistic| statistic.value.key == "reservation_peak_unconsumed_bytes")
         .unwrap();
     assert_eq!(reservation_peak.value.value, Some(DynamicValue::U64(8)));
     assert_eq!(reservation_peak.quantity.as_deref(), Some("bytes"));
     let reservation_byte_seconds = statistics
         .custom_statistics
         .iter()
-        .find(|statistic| statistic.value.key == "reservation_byte_seconds")
+        .find(|statistic| statistic.value.key == "reservation_unconsumed_byte_seconds")
         .unwrap();
     assert_eq!(
         reservation_byte_seconds.value.value,
@@ -536,7 +536,7 @@ fn builds_query_bundle_from_generated_events() {
     let reservation_count = statistics
         .custom_statistics
         .iter()
-        .find(|statistic| statistic.value.key == "reservation_count")
+        .find(|statistic| statistic.value.key == "reservation_handle_count")
         .unwrap();
     assert_eq!(reservation_count.value.value, Some(DynamicValue::U64(1)));
     assert!(reservation_count.quantity.is_none());

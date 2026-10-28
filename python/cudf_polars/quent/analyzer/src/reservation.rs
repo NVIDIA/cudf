@@ -122,6 +122,7 @@ impl RequestSpan {
 
 pub(crate) fn build_reservations(
     events: Vec<quent_events::Event<MemoryReservationEvent>>,
+    trace_end: TimeUnixNanoSec,
 ) -> AnalyzerResult<Vec<ReservationSpan>> {
     let store = NativeStore::<MemoryReservation>::try_from_events(events)
         .map_err(|error| AnalyzerError::Validation(error.to_string()))?;
@@ -133,19 +134,20 @@ pub(crate) fn build_reservations(
                 .entity(id)
                 .map_err(|error| AnalyzerError::Validation(error.to_string()))?
                 .expect("ID came from this store");
-            build_reservation(entity)
+            build_reservation(entity, trace_end)
         })
         .collect()
 }
 
-fn build_reservation(entity: &NativeEntity<MemoryReservation>) -> AnalyzerResult<ReservationSpan> {
+fn build_reservation(
+    entity: &NativeEntity<MemoryReservation>,
+    trace_end: TimeUnixNanoSec,
+) -> AnalyzerResult<ReservationSpan> {
     let id = entity.id().uuid();
     let created = entity.created().ok_or_else(|| {
         AnalyzerError::IncompleteEntity(format!("reservation {id} has no created event"))
     })?;
-    let released = entity.released().ok_or_else(|| {
-        AnalyzerError::IncompleteEntity(format!("reservation {id} has no released event"))
-    })?;
+    let released = entity.released();
     let actor_id = created.actor().as_ref().map(|actor| actor.target);
     let held = entity.held().collect::<Vec<_>>();
     let mut segments = Vec::with_capacity(held.len());
@@ -177,9 +179,10 @@ fn build_reservation(entity: &NativeEntity<MemoryReservation>) -> AnalyzerResult
         attributes: created_attributes,
     }];
     for (index, current) in held.iter().enumerate() {
-        let end = held
-            .get(index + 1)
-            .map_or_else(|| released.timestamp(), |next| next.timestamp());
+        let end = held.get(index + 1).map_or_else(
+            || released.map_or(trace_end, |released| released.timestamp()),
+            |next| next.timestamp(),
+        );
         let memory = current.memory();
         if end > current.timestamp() {
             segments.push(ReservationUsageSegment {
@@ -199,14 +202,20 @@ fn build_reservation(entity: &NativeEntity<MemoryReservation>) -> AnalyzerResult
             ],
         });
     }
+    let release_attributes = released.map_or_else(
+        || vec![DynamicAttribute::string("reason", "truncated".to_owned())],
+        |released| {
+            vec![
+                DynamicAttribute::string("reason", released.reason().clone()),
+                DynamicAttribute::u64("sequence", *released.sequence()),
+            ]
+        },
+    );
     transitions.push(ReservationTransition {
-        timestamp: released.timestamp(),
+        timestamp: released.map_or(trace_end, |released| released.timestamp()),
         name: "released".to_owned(),
         usage: None,
-        attributes: vec![
-            DynamicAttribute::string("reason", released.reason().clone()),
-            DynamicAttribute::u64("sequence", *released.sequence()),
-        ],
+        attributes: release_attributes,
     });
     Ok(ReservationSpan {
         id,
@@ -218,6 +227,7 @@ fn build_reservation(entity: &NativeEntity<MemoryReservation>) -> AnalyzerResult
 
 pub(crate) fn build_requests(
     events: Vec<quent_events::Event<MemoryReservationRequestEvent>>,
+    trace_end: TimeUnixNanoSec,
 ) -> AnalyzerResult<Vec<RequestSpan>> {
     let store = NativeStore::<MemoryReservationRequest>::try_from_events(events)
         .map_err(|error| AnalyzerError::Validation(error.to_string()))?;
@@ -229,12 +239,15 @@ pub(crate) fn build_requests(
                 .entity(id)
                 .map_err(|error| AnalyzerError::Validation(error.to_string()))?
                 .expect("ID came from this store");
-            build_request(entity)
+            build_request(entity, trace_end)
         })
         .collect()
 }
 
-fn build_request(entity: &NativeEntity<MemoryReservationRequest>) -> AnalyzerResult<RequestSpan> {
+fn build_request(
+    entity: &NativeEntity<MemoryReservationRequest>,
+    trace_end: TimeUnixNanoSec,
+) -> AnalyzerResult<RequestSpan> {
     let id = entity.id().uuid();
     let submitted = entity.submitted().ok_or_else(|| {
         AnalyzerError::IncompleteEntity(format!("reservation request {id} has no submitted event"))
@@ -278,11 +291,13 @@ fn build_request(entity: &NativeEntity<MemoryReservationRequest>) -> AnalyzerRes
                 .cancelled()
                 .map(|event| (event.timestamp(), "cancelled", vec![]))
         })
-        .ok_or_else(|| {
-            AnalyzerError::IncompleteEntity(format!(
-                "reservation request {id} has no terminal event"
-            ))
-        })?;
+        .unwrap_or_else(|| {
+            (
+                trace_end,
+                "cancelled",
+                vec![DynamicAttribute::u8("truncated", 1)],
+            )
+        });
     let mut transitions = vec![(
         submitted.timestamp(),
         "submitted".to_owned(),
@@ -329,57 +344,60 @@ mod tests {
         let reservation_id = Uuid::from_u128(1);
         let actor_id = Uuid::from_u128(2);
         let memory_id = Uuid::from_u128(3);
-        let reservations = build_reservations(vec![
-            Event::new(
-                reservation_id,
-                10,
-                MemoryReservationEvent::Created {
-                    seq: 0,
-                    worker: EntityRef::<Worker>::new(Uuid::from_u128(4), ()),
-                    actor: Some(EntityRef::<Actor>::new(actor_id, ())),
-                    site: "test.reserve".to_owned(),
-                    request: None,
-                    parent: None,
-                    attributes: DynamicAttributes::new(),
-                    sequence: 0,
-                },
-            ),
-            Event::new(
-                reservation_id,
-                10,
-                MemoryReservationEvent::Held {
-                    seq: 1,
-                    memory: EntityRef::<ReservableMemory, _>::new(
-                        memory_id,
-                        ReservableMemoryUsage { bytes: 64 },
-                    ),
-                    change: "granted".to_owned(),
-                    sequence: 1,
-                },
-            ),
-            Event::new(
-                reservation_id,
-                20,
-                MemoryReservationEvent::Held {
-                    seq: 2,
-                    memory: EntityRef::<ReservableMemory, _>::new(
-                        memory_id,
-                        ReservableMemoryUsage { bytes: 16 },
-                    ),
-                    change: "consumed".to_owned(),
-                    sequence: 2,
-                },
-            ),
-            Event::new(
-                reservation_id,
-                30,
-                MemoryReservationEvent::Released {
-                    seq: 3,
-                    reason: "consumed".to_owned(),
-                    sequence: 3,
-                },
-            ),
-        ])
+        let reservations = build_reservations(
+            vec![
+                Event::new(
+                    reservation_id,
+                    10,
+                    MemoryReservationEvent::Created {
+                        seq: 0,
+                        worker: EntityRef::<Worker>::new(Uuid::from_u128(4), ()),
+                        actor: Some(EntityRef::<Actor>::new(actor_id, ())),
+                        site: "test.reserve".to_owned(),
+                        request: None,
+                        parent: None,
+                        attributes: DynamicAttributes::new(),
+                        sequence: 0,
+                    },
+                ),
+                Event::new(
+                    reservation_id,
+                    10,
+                    MemoryReservationEvent::Held {
+                        seq: 1,
+                        memory: EntityRef::<ReservableMemory, _>::new(
+                            memory_id,
+                            ReservableMemoryUsage { bytes: 64 },
+                        ),
+                        change: "granted".to_owned(),
+                        sequence: 1,
+                    },
+                ),
+                Event::new(
+                    reservation_id,
+                    20,
+                    MemoryReservationEvent::Held {
+                        seq: 2,
+                        memory: EntityRef::<ReservableMemory, _>::new(
+                            memory_id,
+                            ReservableMemoryUsage { bytes: 16 },
+                        ),
+                        change: "consumed".to_owned(),
+                        sequence: 2,
+                    },
+                ),
+                Event::new(
+                    reservation_id,
+                    30,
+                    MemoryReservationEvent::Released {
+                        seq: 3,
+                        reason: "consumed".to_owned(),
+                        sequence: 3,
+                    },
+                ),
+            ],
+            30,
+        )
         .unwrap();
 
         assert_eq!(reservations[0].actor_id, Some(actor_id));
@@ -485,12 +503,138 @@ mod tests {
             events.push(Event::new(id, 30, terminal));
         }
 
-        let requests = build_requests(events).unwrap();
+        let requests = build_requests(events, 30).unwrap();
         assert_eq!(requests.len(), 4);
         assert!(
             requests
                 .iter()
                 .all(|request| request.wait.unwrap().duration() == 10)
         );
+    }
+
+    #[test]
+    fn repairs_incomplete_lifecycles_at_trace_end() {
+        let worker = EntityRef::<Worker>::new(Uuid::from_u128(1), ());
+        let memory_id = Uuid::from_u128(2);
+        let reservation_id = Uuid::from_u128(3);
+        let request_id = Uuid::from_u128(4);
+        let reservations = build_reservations(
+            vec![
+                Event::new(
+                    reservation_id,
+                    10,
+                    MemoryReservationEvent::Created {
+                        seq: 0,
+                        worker: worker.clone(),
+                        actor: None,
+                        site: "test.reserve".to_owned(),
+                        request: None,
+                        parent: None,
+                        attributes: DynamicAttributes::new(),
+                        sequence: 0,
+                    },
+                ),
+                Event::new(
+                    reservation_id,
+                    20,
+                    MemoryReservationEvent::Held {
+                        seq: 1,
+                        memory: EntityRef::<ReservableMemory, _>::new(
+                            memory_id,
+                            ReservableMemoryUsage { bytes: 64 },
+                        ),
+                        change: "granted".to_owned(),
+                        sequence: 1,
+                    },
+                ),
+            ],
+            40,
+        )
+        .unwrap();
+        assert_eq!(reservations[0].segments[0].span.duration(), 20);
+        assert_eq!(reservations[0].transitions.last().unwrap().name, "released");
+        assert!(
+            reservations[0]
+                .transitions
+                .last()
+                .unwrap()
+                .attributes
+                .contains(&DynamicAttribute::string("reason", "truncated".to_owned()))
+        );
+
+        let requests = build_requests(
+            vec![
+                Event::new(
+                    request_id,
+                    10,
+                    MemoryReservationRequestEvent::Submitted {
+                        seq: 0,
+                        worker,
+                        actor: None,
+                        site: "test.reserve".to_owned(),
+                        size: 64,
+                        memory_types: vec!["device".to_owned()],
+                        policy: "wait".to_owned(),
+                        net_memory_delta: None,
+                        attributes: DynamicAttributes::new(),
+                        sequence: 0,
+                    },
+                ),
+                Event::new(
+                    request_id,
+                    20,
+                    MemoryReservationRequestEvent::Waiting {
+                        seq: 1,
+                        sequence: 1,
+                    },
+                ),
+            ],
+            40,
+        )
+        .unwrap();
+        assert_eq!(requests[0].wait.unwrap().duration(), 20);
+        assert_eq!(requests[0].transitions.last().unwrap().1, "cancelled");
+        assert!(
+            requests[0]
+                .transitions
+                .last()
+                .unwrap()
+                .2
+                .contains(&DynamicAttribute::u8("truncated", 1))
+        );
+    }
+
+    #[test]
+    fn rejects_lifecycles_without_initial_events() {
+        let reservation = build_reservations(
+            vec![Event::new(
+                Uuid::from_u128(1),
+                10,
+                MemoryReservationEvent::Held {
+                    seq: 0,
+                    memory: EntityRef::<ReservableMemory, _>::new(
+                        Uuid::from_u128(2),
+                        ReservableMemoryUsage { bytes: 64 },
+                    ),
+                    change: "granted".to_owned(),
+                    sequence: 0,
+                },
+            )],
+            20,
+        );
+        assert!(reservation.is_err());
+
+        let request = build_requests(
+            vec![Event::new(
+                Uuid::from_u128(3),
+                10,
+                MemoryReservationRequestEvent::Waiting {
+                    seq: 0,
+                    sequence: 0,
+                },
+            )],
+            20,
+        );
+        assert!(request.is_err());
     }
 }

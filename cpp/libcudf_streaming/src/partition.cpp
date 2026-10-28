@@ -83,7 +83,7 @@ rapidsmpf::streaming::Actor unpack_and_concat(std::shared_ptr<rapidsmpf::streami
 
     std::unique_ptr<cudf::table> ret = cudf_streaming::unpack_and_concat(
       rapidsmpf::unspill_partitions(
-        std::move(data), ctx->br().get(), rapidsmpf::AllowOverbooking::NO),
+        std::move(data), ctx->br().get(), rapidsmpf::AllowOverbooking::NO, attributes),
       stream,
       ctx->br().get(),
       rapidsmpf::AllowOverbooking::YES,

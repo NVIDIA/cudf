@@ -39,12 +39,14 @@ impl CudfPolarsUiAnalyzer {
         let mut resource_groups = HashMap::new();
         let mut reservation_events = Vec::new();
         let mut request_events = Vec::new();
+        let mut trace_end = 0;
         for event in events {
             let Event {
                 id,
                 timestamp,
                 data,
             } = event;
+            trace_end = trace_end.max(timestamp);
             let event = match data {
                 CudfPolarsEvent::MemoryReservation(data) => {
                     reservation_events.push(Event::new(id, timestamp, data));
@@ -174,13 +176,13 @@ impl CudfPolarsUiAnalyzer {
             .enumerate()
             .map(|(index, evaluate)| (evaluate.id, index))
             .collect();
-        let reservations = build_reservations(reservation_events)?;
+        let reservations = build_reservations(reservation_events, trace_end)?;
         let reservation_indices = reservations
             .iter()
             .enumerate()
             .map(|(index, reservation)| (reservation.id, index))
             .collect();
-        let requests = build_requests(request_events)?;
+        let requests = build_requests(request_events, trace_end)?;
         Ok(Self {
             model,
             actors,

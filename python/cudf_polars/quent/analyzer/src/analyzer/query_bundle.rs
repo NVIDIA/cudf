@@ -336,15 +336,24 @@ impl CudfPolarsUiAnalyzer {
                 });
             statistics.custom_statistics.extend([
                 OperatorStatistic {
-                    value: DynamicAttribute::u64("reservation_peak_bytes", metrics.peak_bytes),
+                    value: DynamicAttribute::u64(
+                        "reservation_peak_unconsumed_bytes",
+                        metrics.peak_bytes,
+                    ),
                     quantity: Some("bytes".to_owned()),
                 },
                 OperatorStatistic {
-                    value: DynamicAttribute::f64("reservation_byte_seconds", metrics.byte_seconds),
+                    value: DynamicAttribute::f64(
+                        "reservation_unconsumed_byte_seconds",
+                        metrics.byte_seconds,
+                    ),
                     quantity: Some("byte-seconds".to_owned()),
                 },
                 OperatorStatistic {
-                    value: DynamicAttribute::u64("reservation_count", metrics.reservation_count),
+                    value: DynamicAttribute::u64(
+                        "reservation_handle_count",
+                        metrics.reservation_count,
+                    ),
                     quantity: None,
                 },
             ]);

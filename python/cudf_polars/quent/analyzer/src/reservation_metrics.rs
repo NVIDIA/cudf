@@ -184,7 +184,7 @@ mod tests {
             &[(10, 1_000, "granted")],
             50,
         ));
-        let reservations = build_reservations(events).unwrap();
+        let reservations = build_reservations(events, 50).unwrap();
         let actors = [(
             actor_id,
             ActorSpan {
@@ -212,13 +212,16 @@ mod tests {
     fn excludes_actors_outside_the_query() {
         let actor_id = Uuid::from_u128(1);
         let operator_id = Uuid::from_u128(2);
-        let reservations = build_reservations(reservation_events(
-            Uuid::from_u128(10),
-            Some(actor_id),
-            None,
-            &[(10, 10, "granted")],
+        let reservations = build_reservations(
+            reservation_events(
+                Uuid::from_u128(10),
+                Some(actor_id),
+                None,
+                &[(10, 10, "granted")],
+                20,
+            ),
             20,
-        ))
+        )
         .unwrap();
         let actors = [(
             actor_id,

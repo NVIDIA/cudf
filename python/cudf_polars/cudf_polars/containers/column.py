@@ -319,8 +319,16 @@ class Column:
         elif plc.traits.is_integral_not_bool(
             self.obj.type()
         ) and plc.traits.is_timestamp(plc_dtype):
+            # The target's physical type: TIMESTAMP_DAYS is stored as int32,
+            # every other timestamp as int64.
             upcasted = plc.unary.cast(
-                self.obj, plc.DataType(plc.TypeId.INT64), stream=stream
+                self.obj,
+                plc.DataType(
+                    plc.TypeId.INT32
+                    if plc_dtype.id() == plc.TypeId.TIMESTAMP_DAYS
+                    else plc.TypeId.INT64
+                ),
+                stream=stream,
             )
             plc_col = plc.column.Column(
                 plc_dtype,

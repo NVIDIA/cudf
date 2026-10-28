@@ -59,6 +59,12 @@ def test_array_dtype_uses_physical_list():
     assert result.id() == plc.TypeId.LIST
 
 
+@pytest.mark.parametrize("inner", [pl.String(), pl.List(pl.Int8())])
+def test_array_dtype_requires_fixed_width_inner(inner):
+    with pytest.raises(NotImplementedError, match="fixed-width"):
+        DataType(pl.Array(inner, 2))
+
+
 def test_time_dtype_uses_nanosecond_timestamp():
     result = DataType(pl.Time())
 

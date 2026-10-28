@@ -34,9 +34,9 @@ from cudf_polars.streaming.actor_graph.dispatch import (
 )
 from cudf_polars.streaming.actor_graph.partitioning import (
     NormalizedPartitioning,
+    is_row_ordered_by,
     maybe_remap_partitioning,
     remap_ordering_keys,
-    satisfies_row_ordering,
 )
 from cudf_polars.streaming.actor_graph.tracing import send_chunk
 from cudf_polars.streaming.actor_graph.utils import (
@@ -884,7 +884,7 @@ async def groupby_actor(
             level=partitioning_level,
         )
         input_ordering = None if metadata_in.duplicated else partitioning.get_ordering()
-        input_rows_ordered = input_ordering is not None and satisfies_row_ordering(
+        input_rows_ordered = input_ordering is not None and is_row_ordered_by(
             metadata_in.partitioning,
             input_ordering.keys,
             scope=RowOrderingScope.RANK_LOCAL,

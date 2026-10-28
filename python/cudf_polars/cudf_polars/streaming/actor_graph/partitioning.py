@@ -29,6 +29,7 @@ from cudf_polars.dsl.utils.naming import indices_to_names, names_to_indices
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from cudf_streaming.channel_metadata import PartitioningSpecValue
     from rapidsmpf.memory.buffer_resource import BufferResource
     from rapidsmpf.streaming.core.context import Context
 
@@ -52,11 +53,10 @@ def _hash_keys_match(
 
 def _ordering_keys_match(
     ordering: Ordering,
-    keys: Sequence[int | OrderKey],
     key_indices: tuple[int, ...],
     *,
+    order_keys: tuple[OrderKey, ...] | None,
     allow_subset: bool,
-    order_based: bool,
 ) -> bool:
     n_keys = len(ordering.keys)
     if allow_subset:
@@ -66,28 +66,26 @@ def _ordering_keys_match(
         return False
     else:
         n_keys = len(key_indices)
-    if order_based:
-        return all(ok == k for ok, k in zip(ordering.keys, keys[:n_keys], strict=True))
+    if order_keys is not None:
+        return ordering.keys == order_keys[:n_keys]
     return tuple(k.column_index for k in ordering.keys) == key_indices[:n_keys]
 
 
 def _matching_order_scheme(
     scheme: OrderScheme,
-    keys: Sequence[int | OrderKey],
     key_indices: tuple[int, ...],
     *,
+    order_keys: tuple[OrderKey, ...] | None,
     allow_subset: bool,
-    order_based: bool,
 ) -> OrderScheme | None:
     matches = [
         (index, ordering)
         for index, ordering in enumerate(scheme.orderings)
         if _ordering_keys_match(
             ordering,
-            keys,
             key_indices,
+            order_keys=order_keys,
             allow_subset=allow_subset,
-            order_based=order_based,
         )
     ]
     if not matches:
@@ -104,12 +102,11 @@ def _matching_order_scheme(
 
 
 def _keys_match(
-    scheme: object,
-    keys: Sequence[int | OrderKey],
+    scheme: PartitioningSpecValue,
     key_indices: tuple[int, ...],
     *,
+    order_keys: tuple[OrderKey, ...] | None,
     allow_subset: bool,
-    order_based: bool,
 ) -> InterRankScheme:
     if isinstance(scheme, HashScheme) and _hash_keys_match(
         scheme, key_indices, allow_subset=allow_subset
@@ -118,15 +115,14 @@ def _keys_match(
     if isinstance(scheme, OrderScheme):
         return _matching_order_scheme(
             scheme,
-            keys,
             key_indices,
+            order_keys=order_keys,
             allow_subset=allow_subset,
-            order_based=order_based,
         )
     return None
 
 
-def _row_ordering_satisfies(actual: RowOrdering, required: RowOrdering) -> bool:
+def _row_ordering_implies(actual: RowOrdering, required: RowOrdering) -> bool:
     """
     Return whether ``actual`` proves ``required``.
 
@@ -151,7 +147,7 @@ def _row_ordering_satisfies(actual: RowOrdering, required: RowOrdering) -> bool:
     return remaining_keys[: len(required.order_keys)] == required.order_keys
 
 
-def satisfies_row_ordering(
+def is_row_ordered_by(
     partitioning: Partitioning | None,
     order_keys: Sequence[OrderKey],
     *,
@@ -163,8 +159,7 @@ def satisfies_row_ordering(
         return False
     required = RowOrdering(order_keys, scope, group_keys=group_keys)
     return any(
-        _row_ordering_satisfies(actual, required)
-        for actual in partitioning.row_orderings
+        _row_ordering_implies(actual, required) for actual in partitioning.row_orderings
     )
 
 
@@ -658,14 +653,23 @@ class NormalizedPartitioning:
         partitioning_metadata: Partitioning | None,
         nranks: int,
         *,
-        keys: Sequence[int | OrderKey],
+        keys: Sequence[int] | Sequence[OrderKey],
         allow_subset: bool = True,
     ) -> NormalizedPartitioning:
-        """Resolve partitioning from metadata for the requested keys."""
+        """Resolve partitioning for column indices or fully specified order keys."""
+        if not keys:
+            return cls(None, None)
+        if isinstance(keys[0], OrderKey):
+            order_keys = tuple(cast("Sequence[OrderKey]", keys))
+            key_indices = tuple(key.column_index for key in order_keys)
+        else:
+            order_keys = None
+            key_indices = tuple(cast("Sequence[int]", keys))
         inter_rank_scheme, local_scheme = cls._normalize_schemes(
             partitioning_metadata,
-            keys,
+            key_indices,
             nranks,
+            order_keys=order_keys,
             allow_subset=allow_subset,
         )
         return cls(inter_rank_scheme, local_scheme)
@@ -673,38 +677,27 @@ class NormalizedPartitioning:
     @staticmethod
     def _normalize_schemes(
         partitioning_metadata: Partitioning | None,
-        keys: Sequence[int | OrderKey],
+        key_indices: tuple[int, ...],
         nranks: int,
         *,
+        order_keys: tuple[OrderKey, ...] | None,
         allow_subset: bool = False,
     ) -> tuple[InterRankScheme, PartitioningScheme]:
         """Translate metadata into schemes matching the requested keys."""
-        if not keys:
+        if not key_indices:
             return None, None
-        order_based = isinstance(keys[0], OrderKey)
-        if order_based:
-            if not all(isinstance(key, OrderKey) for key in keys):
-                raise TypeError("keys must be all int or all OrderKey")
-            key_indices = tuple(
-                key.column_index for key in cast("Sequence[OrderKey]", keys)
-            )
-        else:
-            if not all(isinstance(key, int) for key in keys):
-                raise TypeError("keys must be all int or all OrderKey")
-            key_indices = tuple(keys)
 
         trivial = (
-            HashScheme(key_indices, 1) if nranks == 1 and not order_based else None
+            HashScheme(key_indices, 1) if nranks == 1 and order_keys is None else None
         )
         if partitioning_metadata is None:
             return trivial, None
 
         matched_inter_rank = _keys_match(
             partitioning_metadata.inter_rank,
-            keys,
             key_indices,
+            order_keys=order_keys,
             allow_subset=allow_subset,
-            order_based=order_based,
         )
         inter_rank_scheme = matched_inter_rank or trivial
         if inter_rank_scheme is None and nranks > 1:
@@ -712,10 +705,9 @@ class NormalizedPartitioning:
 
         matched_local = _keys_match(
             partitioning_metadata.local,
-            keys,
             key_indices,
+            order_keys=order_keys,
             allow_subset=allow_subset,
-            order_based=order_based,
         )
         local_scheme: PartitioningScheme
         if matched_local is not None:

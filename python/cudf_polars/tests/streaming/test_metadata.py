@@ -47,8 +47,8 @@ from cudf_polars.streaming.actor_graph.collectives.sort_utils import (
 from cudf_polars.streaming.actor_graph.core import evaluate_logical_plan
 from cudf_polars.streaming.actor_graph.partitioning import (
     NormalizedPartitioning,
+    is_row_ordered_by,
     maybe_remap_partitioning,
-    satisfies_row_ordering,
 )
 from cudf_polars.streaming.actor_graph.utils import (
     _apply_ordering_metadata,
@@ -119,11 +119,11 @@ def _row_ordering(
         ),
     ],
 )
-def test_satisfies_row_ordering(actual, required, expected) -> None:
+def test_is_row_ordered_by(actual, required, expected) -> None:
     partitioning = Partitioning(row_orderings=(actual,))
 
     assert (
-        satisfies_row_ordering(
+        is_row_ordered_by(
             partitioning,
             required.order_keys,
             group_keys=required.group_keys,

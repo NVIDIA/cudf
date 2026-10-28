@@ -48,9 +48,9 @@ from cudf_polars.streaming.actor_graph.join_planning import JoinPlanningState
 from cudf_polars.streaming.actor_graph.nodes import default_node_multi
 from cudf_polars.streaming.actor_graph.partitioning import (
     NormalizedPartitioning,
+    is_row_ordered_by,
     maybe_remap_partitioning,
     remap_ordering_keys,
-    satisfies_row_ordering,
 )
 from cudf_polars.streaming.actor_graph.prefilter import (
     JoinPrefilterExecution,
@@ -1746,12 +1746,12 @@ async def choose_strategy(
     )
     left_ordering = left_partitioning.get_ordering()
     right_ordering = right_partitioning.get_ordering()
-    left_rows_ordered = left_ordering is not None and satisfies_row_ordering(
+    left_rows_ordered = left_ordering is not None and is_row_ordered_by(
         left_metadata.partitioning,
         left_ordering.keys,
         scope=RowOrderingScope.RANK_LOCAL,
     )
-    right_rows_ordered = right_ordering is not None and satisfies_row_ordering(
+    right_rows_ordered = right_ordering is not None and is_row_ordered_by(
         right_metadata.partitioning,
         right_ordering.keys,
         scope=RowOrderingScope.RANK_LOCAL,

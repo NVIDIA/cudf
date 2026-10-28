@@ -41,7 +41,7 @@ __all__ = [
 
 @dataclass(frozen=True)
 class ColumnBinding:
-    """A direct, value-preserving binding to a column on one child edge."""
+    """An output column copied directly from one child column."""
 
     child_index: int
     name: str

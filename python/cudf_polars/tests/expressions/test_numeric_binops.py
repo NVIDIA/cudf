@@ -41,6 +41,8 @@ _BINOPS = [
     pl.Expr.mod,
 ]
 
+_COMPARISONS = _BINOPS[:8]
+
 # Preserve the complete promotion matrix for both SPMD configurations. Other
 # backends exercise every operator and nullability path with pairs covering
 # each dtype in both operand positions, without duplicating the full matrix.
@@ -106,7 +108,7 @@ def test_numeric_binop(engine: pl.GPUEngine, df, binop, ltype, rtype):
 
     q = df.select(binop(left, right))
 
-    if _promotes_to_int128(ltype, rtype):
+    if _promotes_to_int128(ltype, rtype) and binop not in _COMPARISONS:
         assert_ir_translation_raises(q, engine, NotImplementedError)
     else:
         assert_gpu_result_equal(q, engine=engine)

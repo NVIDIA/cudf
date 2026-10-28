@@ -43,6 +43,7 @@
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/memory_resource>
+#include <cuda/std/bit>
 #include <cuda/std/execution>
 #include <cuda/std/functional>
 #include <cuda/std/iterator>
@@ -377,7 +378,7 @@ __device__ cudf::size_type find_longest_prefix(Tile const& tile,
     }
     auto const mask = tile.ballot(found);
     if (mask != 0) {
-      auto const src = __ffs(mask) - 1;  // lowest lane has the longest prefix
+      auto const src = cuda::std::countr_zero(mask);  // lowest lane has the longest prefix
       token          = tile.shfl(found_token, src);
       return base - src;
     }
@@ -511,6 +512,7 @@ struct all_words_fn {
   int64_t chars_size;
   int64_t const* d_starts;
   cudf::bitmask_type const* d_row_starts;
+
   __device__ cudf::string_view operator()(cudf::size_type idx) const
   {
     auto const start = d_starts[idx];
@@ -519,7 +521,7 @@ struct all_words_fn {
     for (auto pos = start + 1; pos < last; pos = cuda::round_up(pos + 1, row_starts_word_bits)) {
       auto const bits = d_row_starts[pos / row_starts_word_bits] >> (pos % row_starts_word_bits);
       if (bits != 0) {
-        last = cuda::std::min(last, pos + __ffs(bits) - 1);
+        last = cuda::std::min(last, pos + cuda::std::countr_zero(bits));
         break;
       }
     }

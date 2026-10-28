@@ -1766,53 +1766,48 @@ dependencies:
     common:
       - output_types: [conda, requirements, constraints, pyproject]
         packages:
-          # dependencies to run pandas tests
-          # https://github.com/pandas-dev/pandas/blob/main/environment.yml
-          # Intentionally excluding `postgresql` because of
-          # installation issues with `psycopg2`.
+          # not in an extra but used in pandas tests
+          - ipython
+          # Used in cudf/ci/cudf_pandas_scripts/pandas-tests/run.sh
+          - pytest-reportlog
+      - output_types: [pyproject]
+        packages:
+          - pandas[test, pyarrow, performance, computation, fss, excel, parquet, feather, hdf5, spss, html, xml, plot, output-formatting, clipboard, compression]
+      # Excludes `clipboard` from above because pip builds its PyQt5
+      # dependency from source on arm64, which fails without qmake.
+      - output_types: [requirements, constraints]
+        packages:
+          - pandas[test, pyarrow, performance, computation, fss, excel, parquet, feather, hdf5, spss, html, xml, plot, output-formatting, compression]
+      # mimics pandas extras for conda
+      - output_types: [conda]
+        packages:
           - beautifulsoup4
           - bottleneck
           - fsspec
           - html5lib
-          - hypothesis>=6.131.7
-          - ipython
+          - hypothesis
           - jinja2
           - lxml
+          - matplotlib-base
           - numba
           - numexpr
           - odfpy
           - openpyxl
           - pyarrow
+          - pyqt
           - pyreadstat
+          - pytables
           - pytest<9.1.0
-          # Used in cudf/ci/cudf_pandas_scripts/pandas-tests/run.sh
-          - pytest-reportlog
           - pytest-xdist
           - python-calamine
           - pyxlsb
+          - qtpy
           - scipy
           - tabulate
           - xarray
           - xlrd
           - xlsxwriter
           - zstandard
-      - output_types: [requirements, constraints, pyproject]
-        packages:
-          - matplotlib
-          - tables
-      # Excluded from requirements because pip builds PyQt5 from source on
-      # arm64, which fails without qmake.
-      - output_types: [conda, pyproject]
-        packages:
-          - qtpy
-      - output_types: [pyproject]
-        packages:
-          - PyQt5
-      - output_types: [conda]
-        packages:
-          - matplotlib-base
-          - pyqt
-          - pytables
   test_python_cudf_pandas:
     common:
       - output_types: [conda, requirements, constraints, pyproject]

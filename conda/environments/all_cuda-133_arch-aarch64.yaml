@@ -41,6 +41,7 @@ dependencies:
 - gcc_linux-aarch64=14.*
 - gdb
 - html5lib
+- hypothesis
 - hypothesis>=6.131.7
 - identify>=2.5.20
 - include-what-you-use==0.24.0

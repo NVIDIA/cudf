@@ -1068,7 +1068,7 @@ table_with_metadata reader_impl::finalize_output(read_mode mode,
     // Clear the number of rows per source as it is not valid after filtering
     out_metadata.num_rows_per_source.clear();
 
-    bool const use_jit = cudf::get_context().use_jit() || _options.use_jit_filter;
+    bool const use_jit = cudf::get_context().use_jit() or _options.use_jit_filter;
     auto predicate =
       use_jit
         ? cudf::compute_column_jit(

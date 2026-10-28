@@ -110,6 +110,7 @@ exclude_also = [
 omit = [
   "cudf_polars/testing/inject_gpu_engine.py",
   "cudf_polars/testing/fallback_report.py",
+  "cudf_polars/testing/observation.py",
   "cudf_polars/streaming/**",
   "cudf_polars/engine/**",
   "cudf_polars/quent/**",  # packaging component of https://github.com/NVIDIA/cudf/issues/22949

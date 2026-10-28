@@ -260,6 +260,45 @@ def decompose_single_agg(
         return [(sum_agg, True)], named_expr.reconstruct(
             expr.Cast(dtype, True, expr.Col(dtype, sum_name))  # noqa: FBT003
         )
+    if (
+        isinstance(agg, expr.BooleanFunction)
+        and agg.name == expr.BooleanFunction.Name.HasNulls
+    ):
+        (child,) = agg.children
+
+        is_null_bool = expr.BooleanFunction(
+            DataType(pl.Boolean()),
+            expr.BooleanFunction.Name.IsNull,
+            (),
+            child,
+        )
+        count_dtype = DataType(pl.UInt32())
+        sum_name = next(name_generator)
+        sum_agg = expr.NamedExpr(
+            sum_name,
+            expr.Agg(
+                count_dtype,
+                "sum",
+                (),
+                context,
+                expr.Cast(count_dtype, True, is_null_bool),  # noqa: FBT003
+            ),
+        )
+        # The sum is null for an empty group or window, which has no nulls.
+        null_count = expr.UnaryFunction(
+            count_dtype,
+            "fill_null",
+            (),
+            expr.Cast(count_dtype, True, expr.Col(count_dtype, sum_name)),  # noqa: FBT003
+            expr.Literal(count_dtype, 0),
+        )
+        has_nulls = expr.BinOp(
+            agg.dtype,
+            plc.binaryop.BinaryOperator.GREATER,
+            null_count,
+            expr.Literal(count_dtype, 0),
+        )
+        return [(sum_agg, True)], named_expr.reconstruct(has_nulls)
     if isinstance(agg, expr.Col):
         # TODO: collect_list produces null for empty group in libcudf, empty list in polars.
         # But we need the nested value type, so need to track proper dtypes in our DSL.

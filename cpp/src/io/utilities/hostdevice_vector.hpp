@@ -42,15 +42,22 @@ class hostdevice_vector {
  public:
   using value_type = T;
 
-  hostdevice_vector() : hostdevice_vector(0, cudf::get_default_stream()) {}
+  hostdevice_vector()
+    : hostdevice_vector(0, cudf::get_default_stream(), cudf::get_current_device_resource_ref())
+  {
+  }
 
-  explicit hostdevice_vector(size_t size, cuda::stream_ref stream)
+  /**
+   * @brief Construct a host-device vector of `size` uninitialized elements
+   *
+   * @param size Number of elements
+   * @param stream CUDA stream used for device memory operations
+   * @param mr Memory resources used to allocate temporary and output device memory
+   */
+  explicit hostdevice_vector(size_t size, cuda::stream_ref stream, cudf::memory_resources mr)
     : keep_single_copy{cudf::io::integrated_memory_optimization::is_enabled()},
       h_data{make_pinned_vector_async<T>(size, stream)},
-      d_data{stream,
-             cudf::get_current_device_resource_ref(),
-             keep_single_copy ? 0 : size,
-             cuda::no_init},
+      d_data{stream, mr.get_output_mr(), keep_single_copy ? 0 : size, cuda::no_init},
       _device_ptr{keep_single_copy ? h_data.data() : d_data.data()}
   {
   }
@@ -143,10 +150,24 @@ class hostdevice_vector {
 template <typename T>
 class hostdevice_2dvector {
  public:
-  hostdevice_2dvector() : hostdevice_2dvector(0, 0, cudf::get_default_stream()) {}
+  hostdevice_2dvector()
+    : hostdevice_2dvector(0, 0, cudf::get_default_stream(), cudf::get_current_device_resource_ref())
+  {
+  }
 
-  hostdevice_2dvector(size_t rows, size_t columns, cuda::stream_ref stream)
-    : _data{rows * columns, stream}, _size{rows, columns}
+  /**
+   * @brief Construct a host-device 2D vector of `rows` x `columns` uninitialized elements
+   *
+   * @param rows Number of rows
+   * @param columns Number of columns
+   * @param stream CUDA stream used for device memory operations
+   * @param mr Memory resources used to allocate temporary and output device memory
+   */
+  hostdevice_2dvector(size_t rows,
+                      size_t columns,
+                      cuda::stream_ref stream,
+                      cudf::memory_resources mr)
+    : _data{rows * columns, stream, mr}, _size{rows, columns}
   {
   }
 

@@ -64,11 +64,11 @@ build_wheel() (
   # environment variable so it does not constrain the frontend installation.
   unset PIP_CONSTRAINT
 
-  rapids-telemetry-record build-${package_name}.log rapids-python-build-retry \
+  rapids-python-build-retry \
     "${rapids_build_args[@]}" \
     .
 
-  rapids-telemetry-record sccache-stats-${package_name}.txt sccache --show-adv-stats
+  sccache --show-adv-stats
   sccache --stop-server >/dev/null 2>&1 || true
 )
 

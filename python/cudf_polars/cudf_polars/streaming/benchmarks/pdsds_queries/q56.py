@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 from cudf_polars.streaming.benchmarks.pdsds_parameters import load_parameters
+from cudf_polars.streaming.benchmarks.pdsds_queries import sql_sum
 from cudf_polars.streaming.benchmarks.utils import QueryResult, get_data
 
 if TYPE_CHECKING:
@@ -167,14 +168,9 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
                 & (pl.col("ca_gmt_offset") == gmt_offset)
             )
             .group_by("i_item_id")
-            .agg(
-                # Polars sum() returns 0 for all-null groups; SQL returns NULL.
-                # See https://github.com/NVIDIA/cudf/issues/19560.
-                pl.when(pl.col(str(ch["ext_col"])).count() > 0)
-                .then(pl.col(str(ch["ext_col"])).sum())
-                .otherwise(None)
-                .alias("total_sales")
-            )
+            # Polars sum() returns 0 for all-null groups; SQL returns NULL.
+            # See https://github.com/NVIDIA/cudf/issues/19560.
+            .agg(sql_sum(pl.col(str(ch["ext_col"]))).alias("total_sales"))
             .select(["i_item_id", "total_sales"])
         )
         for ch in channels
@@ -186,14 +182,9 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
         frame=(
             pl.concat(per_channel)
             .group_by("i_item_id")
-            .agg(
-                # Polars sum() returns 0 for all-null groups; SQL returns NULL.
-                # See https://github.com/NVIDIA/cudf/issues/19560.
-                pl.when(pl.col("total_sales").count() > 0)
-                .then(pl.col("total_sales").sum())
-                .otherwise(None)
-                .alias("total_sales")
-            )
+            # Polars sum() returns 0 for all-null groups; SQL returns NULL.
+            # See https://github.com/NVIDIA/cudf/issues/19560.
+            .agg(sql_sum("total_sales").alias("total_sales"))
             .select(["i_item_id", "total_sales"])
             .sort(sort_by.keys(), nulls_last=True)
             .limit(limit)

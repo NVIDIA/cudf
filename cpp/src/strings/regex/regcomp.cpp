@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "strings/regex/regcomp.h"
+#include "strings/regex/regcomp.hpp"
 
 #include <cudf/strings/detail/utf8.hpp>
 #include <cudf/utilities/error.hpp>
@@ -168,7 +168,8 @@ class regex_parser {
   char32_t const* const _pattern_begin;
   char32_t const* _expr_ptr;
   bool _lex_done{false};
-  regex_flags const _flags;
+  regex_flags _flags;                    // current flags; may be modified by inline flags
+  std::stack<regex_flags> _flags_stack;  // flags to restore at the end of each group
   capture_groups const _capture;
 
   int32_t _id_cclass_w{-1};  // alphanumeric [a-zA-Z0-9_]
@@ -429,9 +430,52 @@ class regex_parser {
     return type;
   }
 
-  int32_t lex(int32_t dot_type)
+  /**
+   * @brief Parses inline flags `(?ims)` or `(?ims:` at the current expression position
+   *
+   * The current position is expected to be just after the '('.
+   * Only the IGNORECASE (i), MULTILINE (m), and DOTALL (s) flags are supported.
+   * If found, the expression position is moved past the closing ')' or ':'.
+   *
+   * @return The flags and the terminating character (')' or ':') or 0 if no inline flags found
+   */
+  std::pair<regex_flags, char32_t> parse_inline_flags()
+  {
+    if (*_expr_ptr != '?') { return {regex_flags::DEFAULT, 0}; }
+    auto ptr   = _expr_ptr + 1;
+    auto flags = static_cast<uint32_t>(regex_flags::DEFAULT);
+    for (; *ptr != 0; ++ptr) {
+      switch (*ptr) {
+        case 'i': flags |= regex_flags::IGNORECASE; continue;
+        case 'm': flags |= regex_flags::MULTILINE; continue;
+        case 's': flags |= regex_flags::DOTALL; continue;
+      }
+      break;
+    }
+    if ((ptr == _expr_ptr + 1) || (*ptr != ')' && *ptr != ':')) {
+      return {regex_flags::DEFAULT, 0};
+    }
+    _expr_ptr = ptr + 1;
+    return {static_cast<regex_flags>(flags), *ptr};
+  }
+
+  int32_t lex()
   {
     _chr = 0;
+
+    // consume any flag-only groups: (?i) applies to the remainder of the enclosing group
+    bool found_flags = false;
+    while (!_lex_done && *_expr_ptr == '(') {
+      auto const expr_ptr_save        = _expr_ptr++;
+      auto const [inline_flags, term] = parse_inline_flags();
+      if (term != ')') {
+        _expr_ptr = expr_ptr_save;  // not a flag-only group
+        break;
+      }
+      _flags = static_cast<regex_flags>(_flags | inline_flags);
+      _prog.add_flags(inline_flags);
+      found_flags = true;
+    }
 
     auto [is_quoted, chr] = next_char();
     if (is_quoted) {
@@ -551,7 +595,16 @@ class regex_parser {
     // handle regex characters
     switch (chr) {
       case 0: return END;
-      case '(':
+      case '(': {
+        // flags set inside this group are restored at its closing ')'
+        _flags_stack.push(_flags);
+        // flag-only groups (?i) are consumed above so only the scoped (?i:...) is found here
+        auto const [inline_flags, term] = parse_inline_flags();
+        if (term == ':') {
+          _flags = static_cast<regex_flags>(_flags | inline_flags);
+          _prog.add_flags(inline_flags);
+          return LBRA_NC;
+        }
         if (*_expr_ptr == '?' && *(_expr_ptr + 1) == ':')  // non-capturing group
         {
           _expr_ptr += 2;
@@ -559,7 +612,13 @@ class regex_parser {
         }
         return (_capture == capture_groups::NON_CAPTURE) ? static_cast<int32_t>(LBRA_NC)
                                                          : static_cast<int32_t>(LBRA);
-      case ')': return RBRA;
+      }
+      case ')':
+        if (!_flags_stack.empty()) {
+          _flags = _flags_stack.top();
+          _flags_stack.pop();
+        }
+        return RBRA;
       case '^': {
         if (is_ext_newline(_flags)) {
           _chr = is_multiline(_flags) ? 'S' : 'N';
@@ -579,7 +638,7 @@ class regex_parser {
       case '[': return build_cclass();
       case '.': {
         _chr = is_ext_newline(_flags) ? 'N' : chr;
-        return dot_type;
+        return is_dotall(_flags) ? ANYNL : ANY;
       }
     }
 
@@ -609,7 +668,8 @@ class regex_parser {
     // If the previous item is a capture group, we need to check items inside the
     // capture group can be used with quantifiers too.
     // (Note that capture groups can be nested).
-    auto previous_type = _items.back().type;
+    // a flag-only group (?i) cannot be quantified
+    auto previous_type = found_flags ? static_cast<int32_t>(END) : _items.back().type;
     if (previous_type == RBRA) {  // previous item is a capture group
       // look for matching LBRA
       auto nested_count = 1;
@@ -815,10 +875,8 @@ class regex_parser {
                reprog& prog)
     : _prog(prog), _pattern_begin(pattern), _expr_ptr(pattern), _flags(flags), _capture(capture)
   {
-    auto const dot_type = is_dotall(_flags) ? ANYNL : ANY;
-
     int32_t type = 0;
-    while ((type = lex(dot_type)) != END) {
+    while ((type = lex()) != END) {
       auto const item = [type, chr = _chr, cid = _cclass_id, n = _min_count, m = _max_count] {
         if (type == CCLASS || type == NCCLASS) return Item{type, cid};
         if (type == COUNTED || type == COUNTED_LAZY) return Item{type, n, m};
@@ -1078,6 +1136,8 @@ reprog reprog::create_from(std::string_view pattern,
 }
 
 reprog::reprog(regex_flags flags) : _flags{flags} {}
+
+void reprog::add_flags(regex_flags flags) { _flags = static_cast<regex_flags>(_flags | flags); }
 
 void reprog::optimize() { collapse_nops(); }
 

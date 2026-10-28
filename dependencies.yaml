@@ -1301,6 +1301,8 @@ dependencies:
       - output_types: [conda, requirements, pyproject]
         packages:
           - duckdb
+          # duckdb's ``.pl()`` needs pyarrow to hand results to polars
+          - pyarrow>=19.0.0
           # added lower bound pinning to get pytest-subtests for free
           - pytest>=9
           - tpchgen-cli>=3.0.0

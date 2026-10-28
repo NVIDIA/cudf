@@ -36,6 +36,7 @@
 #include <cooperative_groups.h>
 #include <cub/block/block_scan.cuh>
 #include <cub/device/device_segmented_reduce.cuh>
+#include <cub/warp/warp_scan.cuh>
 #include <cuco/static_map.cuh>
 #include <cuda/atomic>
 #include <cuda/buffer>
@@ -647,22 +648,21 @@ CUDF_KERNEL void tokenize_deferred_kernel(WordsFn words,
   // Reserve space in d_overflow for the words with more than one token.
   // This only synchronizes within the warp since the tokenize time varies by word.
   constexpr auto warp_size = cudf::detail::warp_size;
-  auto const warp_lane     = threadIdx.x % warp_size;
-  auto const needed        = static_cast<int64_t>((lane == 0 && count > 1) ? count : 0);
-  auto offset              = needed;  // inclusive scan within the warp
-  for (uint32_t delta = 1; delta < warp_size; delta *= 2) {
-    auto const value = __shfl_up_sync(all_lanes, offset, delta);
-    if (warp_lane >= delta) { offset += value; }
-  }
-  auto const warp_needed = __shfl_sync(all_lanes, offset, warp_size - 1);
-  int64_t warp_overflow  = 0;
-  if ((warp_lane == warp_size - 1) && (warp_needed > 0)) {
+  using warp_scan          = cub::WarpScan<int64_t>;
+  __shared__ typename warp_scan::TempStorage scan_storage[words_block_size / warp_size];
+  auto const warp_lane = threadIdx.x % warp_size;
+  auto const needed    = static_cast<int64_t>((lane == 0 && count > 1) ? count : 0);
+  int64_t offset       = 0;
+  int64_t warp_needed  = 0;
+  warp_scan(scan_storage[threadIdx.x / warp_size]).ExclusiveSum(needed, offset, warp_needed);
+  int64_t warp_overflow = 0;
+  if ((warp_lane == 0) && (warp_needed > 0)) {
     warp_overflow =
       cuda::atomic_ref<int64_t, cuda::thread_scope_device>{*d_overflow_size}.fetch_add(
         warp_needed, cuda::memory_order_relaxed);
   }
-  warp_overflow = __shfl_sync(all_lanes, warp_overflow, warp_size - 1);
-  offset        = tile.shfl(warp_overflow + offset - needed, 0);
+  warp_overflow = __shfl_sync(all_lanes, warp_overflow, 0);
+  offset        = tile.shfl(warp_overflow + offset, 0);
 
   if (!active) { return; }
   // words whose tokens do not fit in d_overflow are left as deferred to be tokenized again

@@ -24,6 +24,7 @@ auto constexpr bloom_filter_alignment = rmm::CUDA_ALLOCATION_ALIGNMENT;
  * @param stream CUDA stream for hybrid scan reader
  * @param mr Device memory resource
  * @param aligned_mr Device memory resource to allocate aligned memory for bloom filters
+ * @param use_jit_filter Whether to evaluate the filter expression with JIT
  *
  * @return Tuple of filter and payload tables
  */
@@ -34,7 +35,8 @@ std::tuple<std::unique_ptr<cudf::table>, std::unique_ptr<cudf::table>> hybrid_sc
   bool case_sensitive_names,
   cuda::stream_ref stream,
   rmm::device_async_resource_ref mr,
-  rmm::mr::aligned_resource_adaptor& aligned_mr);
+  rmm::mr::aligned_resource_adaptor& aligned_mr,
+  bool use_jit_filter = false);
 
 /**
  * @brief Read parquet file with the hybrid scan reader
@@ -67,6 +69,7 @@ std::tuple<std::unique_ptr<cudf::table>, std::unique_ptr<cudf::table>> chunked_h
  * @param case_sensitive_names Whether column names are case sensitive
  * @param stream CUDA stream
  * @param mr Device memory resource
+ * @param use_jit_filter Whether to evaluate the filter expression with JIT
  *
  * @return Materialized table
  */
@@ -76,7 +79,8 @@ std::unique_ptr<cudf::table> hybrid_scan_single_step(
   std::optional<std::vector<std::string>> const& column_names,
   bool case_sensitive_names,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  rmm::device_async_resource_ref mr,
+  bool use_jit_filter = false);
 
 /**
  * @brief Read parquet file with the hybrid scan reader in a single step using chunked reading

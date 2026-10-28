@@ -2237,7 +2237,9 @@ def build_parser(num_queries: int = 22) -> argparse.ArgumentParser:
         help=textwrap.dedent("""\
             How queries are defined:
                 - dataframe : Polars LazyFrame queries built into the benchmark (default)
-                - sql       : SQL files from --sql-directory, run with polars.SQLContext"""),
+                - sql       : SQL files from --sql-directory, run with polars.SQLContext
+            In sql mode, --validate-against duckdb does not align result dtypes or
+            column names, so validation may fail on schema differences alone."""),
     )
     parser.add_argument(
         "--sql-directory",

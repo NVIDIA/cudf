@@ -49,7 +49,8 @@ Ground rules:
   shows only a handful of tests. In the Polars 2.1 upgrade CI showed 3 unit and 4 upstream failures per job; the full local runs
   had 37 unit failures and 153 (in-memory) / 65 (spmd) upstream failures. Treat CI as a smoke signal and triage from full local
   runs (`--maxfail=300`, `--maxfail=100000`). Read CI logs with
-  `gh pr checks <pr>` and `gh run view --job <job-id> --log-failed`.
+  `gh pr checks <pr>` and `gh run view --job <job-id> --log-failed`. PR CI also runs only the upstream tests selected by the GPU run
+  list (see "GPU test selection in PR CI" in Step 5), so a green PR says nothing about the unselected tests.
 - **Shared GPUs.** Check `nvidia-smi` before every run and never disturb other people's work. Use one GPU per process
   (`CUDA_VISIBLE_DEVICES`) and keep concurrent jobs on different GPUs. The streaming engine (and the xdist plugin runs) abort with
   `No GPUs found on current NUMA node N` when the process runs on CPUs of the other NUMA node. Find the GPU's node with
@@ -322,10 +323,35 @@ pass. Install the requirements with the constraints file from Step 4 (`pip insta
 move polars/pandas/pytest. Check whether each `sed` pin in the CI script is still needed (for example `duckdb<2` once polars
 supports duckdb 2). Long runs: use a timeout and the default `-m "not slow"`; run `--run-slow` once at the end.
 
+### GPU test selection in PR CI
+
+PR CI does not run the whole upstream suite. It runs only the tests listed in `ci/cudf_polars/gpu_test_run_list.json`, under the key
+`<exact polars version>|spmd|default` (`CUDF_POLARS_GPU_RUN_LIST` in `.github/workflows/pr.yaml`). A selected test that passes must have
+executed a query on the GPU in its test body. Nightlies run the full suites and audit the list. To run the PR configuration locally:
+
+```bash
+CUDF_POLARS_GPU_RUN_LIST=ci/cudf_polars/gpu_test_run_list.json POLARS_DIR=<dir>/polars \
+    ./ci/run_cudf_polars_polars_tests.sh --engine spmd --inject-gpu-engine-blocksize default
+```
+
+What this means for an upgrade:
+
+- **The new Polars version needs its own entry, including a patch release.** Without one, PR CI stops with
+  `Cannot select GPU tests for 2.2.0|spmd|default`. Generate it with the `update-cudf-polars-polars-tests-selection` skill. That needs a
+  full default-blocksize SPMD run with `--run-slow` on every shard, all exiting zero, so triage the failures below first and regenerate
+  the list last.
+- **Renamed or removed upstream tests** fail PR CI with `Stale GPU run-list nodes`. Update the list in the same PR.
+- **Turning a GPU execution into a CPU fallback fails the selected test** with `Selected GPU test passed without observed GPU
+  execution`. When a fallback is the right fix (triage step 2 below), also remove that node from the run list.
+- Skipped or xfailed items are not checked for GPU execution, so the xfail and skip dicts keep working as before.
+- When the PR raises the minimum supported Polars version, run
+  `.agents/skills/update-cudf-polars-polars-tests-selection/prune-run-list.py` in the same PR.
+
 ### Triage each failure
 
 1. Real, small bug: fix it in cudf-polars and add a unit test.
-2. Unsupported feature: make the translator fall back to CPU (the test then passes). Preferred over xfail.
+2. Unsupported feature: make the translator fall back to CPU (the test then passes). Preferred over xfail. If the test is in the GPU run
+   list, remove its node from the list as well.
 3. Larger fix needed: add the test to `EXPECTED_FAILURES` (or the streaming variants) in
    `python/cudf_polars/cudf_polars/testing/inject_gpu_engine.py` with a reason **and an issue link**.
 4. Flaky, non-deterministic, hangs, only checks CPU logs, or would XPASS on one engine and fail on another: `TESTS_TO_SKIP`
@@ -350,7 +376,7 @@ Conventions for the dicts (`EXPECTED_FAILURES`, `TESTS_TO_SKIP`, `STREAMING_ENGI
 
 If the new polars adds an optional dependency that its tests need, install it too: read the `[project.optional-dependencies]` of the cloned
 `py-polars/pyproject.toml` (2.1 needs `polars-iceberg`, without which ~110 Iceberg/catalog tests fail with a `PerformanceWarning`). Add it to
-`ci/test_cudf_polars_polars_tests.sh` conditionally on the cloned repo declaring it, so older tags keep working.
+`ci/test_cudf_polars_polars_tests.sh` unconditionally: CI only runs the upstream tests against the installed Polars version.
 
 If an upstream test requirement breaks (a new dependency release or a warning under `-W error`), patch the requirement with `sed -i`
 in `ci/test_cudf_polars_polars_tests.sh` or add a `-W ignore:` filter in `ci/run_cudf_polars_polars_tests.sh`, with a comment that
@@ -380,6 +406,8 @@ cudf and cudf.pandas variants test cudf and pandas, not polars. If Narwhals itse
 - `git diff --stat` after any merge (an earlier PR accidentally pulled in unrelated Java changes).
 - Run the sync check from "Resuming work on an open PR" before every push.
 - Run the cudf-polars unit tests on the oldest supported polars (Step 4) and confirm the upstream suites ran on the newest.
+- Confirm `ci/cudf_polars/gpu_test_run_list.json` has an entry for the new Polars version, has no stale or fallback-only nodes, and that
+  the PR configuration command in Step 5 passes locally.
 - Grep again for stale version guards and for `TODO`s that mention the old version.
 - Write the PR description: old and new range, the user-visible behaviour changes, every new fallback, every new xfail/skip with its
   issue, the commands you ran and their results, and the follow-up issues drafted.
@@ -419,4 +447,7 @@ replace the `TODO` placeholders in the dicts with the issue URLs and commit. Gro
 - Upstream test lists: `python/cudf_polars/cudf_polars/testing/inject_gpu_engine.py`
 - CI scripts: `ci/test_python_cudf_polars.sh`, `ci/run_cudf_polars_pytests.sh`, `ci/test_cudf_polars_polars_tests.sh`,
   `ci/run_cudf_polars_polars_tests.sh`, `ci/test_narwhals.sh`, `ci/narwhals_cudf_*_test_plugin.py`
+- GPU test selection: `ci/cudf_polars/gpu_test_run_list.json`, `ci/analyze_cudf_polars_fallbacks.py`,
+  `python/cudf_polars/cudf_polars/testing/{observation,fallback,fallback_report}.py`, and the
+  `update-cudf-polars-polars-tests-selection` skill
 - Coverage config: `[tool.coverage.report]` in `python/cudf_polars/pyproject.toml`

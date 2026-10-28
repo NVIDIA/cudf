@@ -226,6 +226,60 @@ TYPED_TEST(groupby_keys_test, pre_sorted_keys_nulls_before_include_nulls)
                   cudf::sorted::YES);
 }
 
+TYPED_TEST(groupby_keys_test, pre_sorted_keys_sliced)
+{
+  using K = TypeParam;
+  using V = int32_t;
+  using R = int64_t;
+
+  // clang-format off
+  cudf::test::fixed_width_column_wrapper<K> keys        { 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 4, 4};
+  cudf::test::fixed_width_column_wrapper<V> vals        { 9, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 4, 9};
+
+  cudf::test::fixed_width_column_wrapper<K> expect_keys {       1,       2,          3,       4   };
+  cudf::test::fixed_width_column_wrapper<R> expect_vals {       3,       18,         24,      4   };
+  // clang-format on
+
+  auto agg = cudf::make_sum_aggregation<cudf::groupby_aggregation>();
+  test_single_agg(cudf::slice(keys, {2, 13})[0],
+                  cudf::slice(vals, {2, 13})[0],
+                  expect_keys,
+                  expect_vals,
+                  std::move(agg),
+                  force_use_sort_impl::YES,
+                  cudf::null_policy::EXCLUDE,
+                  cudf::sorted::YES);
+}
+
+TYPED_TEST(groupby_keys_test, pre_sorted_multi_column_keys)
+{
+  using K = TypeParam;
+  using V = int32_t;
+  using R = int64_t;
+
+  // The group at row 4 starts where only the first key changes, and the one at row 2 where only
+  // the second key changes.
+  // clang-format off
+  cudf::test::fixed_width_column_wrapper<K> keys0       { 1, 1, 1, 1, 2, 2, 2, 3};
+  cudf::test::fixed_width_column_wrapper<K> keys1       { 1, 1, 2, 2, 2, 3, 3, 3};
+  cudf::test::fixed_width_column_wrapper<V> vals        { 0, 1, 2, 3, 4, 5, 6, 7};
+
+  cudf::test::fixed_width_column_wrapper<K> expect_keys0{ 1,    1,    2, 2,    3};
+  cudf::test::fixed_width_column_wrapper<K> expect_keys1{ 1,    2,    2, 3,    3};
+  cudf::test::fixed_width_column_wrapper<R> expect_vals { 1,    5,    4, 11,   7};
+  // clang-format on
+
+  std::vector<cudf::groupby::aggregation_request> requests(1);
+  requests[0].values = vals;
+  requests[0].aggregations.push_back(cudf::make_sum_aggregation<cudf::groupby_aggregation>());
+  cudf::groupby::groupby gb(
+    cudf::table_view{{keys0, keys1}}, cudf::null_policy::EXCLUDE, cudf::sorted::YES);
+  auto const [result_keys, results] = gb.aggregate(requests);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(cudf::table_view({expect_keys0, expect_keys1}),
+                                result_keys->view());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expect_vals, *results[0].results[0]);
+}
+
 TYPED_TEST(groupby_keys_test, mismatch_num_rows)
 {
   using K = TypeParam;
@@ -358,6 +412,55 @@ TEST_F(groupby_dictionary_keys_test, basic)
                   expect_vals,
                   cudf::make_sum_aggregation<cudf::groupby_aggregation>(),
                   force_use_sort_impl::YES);
+}
+
+struct groupby_pre_sorted_keys_test : public cudf::test::BaseFixture {};
+
+TEST_F(groupby_pre_sorted_keys_test, timestamp_keys)
+{
+  using K = cudf::timestamp_s;
+  using V = int32_t;
+  using R = int64_t;
+
+  // clang-format off
+  cudf::test::fixed_width_column_wrapper<K, K::rep> keys        { 1, 1, 2, 2, 2, 5};
+  cudf::test::fixed_width_column_wrapper<V>         vals        { 0, 1, 2, 3, 4, 5};
+
+  cudf::test::fixed_width_column_wrapper<K, K::rep> expect_keys { 1,    2,       5};
+  cudf::test::fixed_width_column_wrapper<R>         expect_vals { 1,    9,       5};
+  // clang-format on
+
+  test_single_agg(keys,
+                  vals,
+                  expect_keys,
+                  expect_vals,
+                  cudf::make_sum_aggregation<cudf::groupby_aggregation>(),
+                  force_use_sort_impl::YES,
+                  cudf::null_policy::EXCLUDE,
+                  cudf::sorted::YES);
+}
+
+TEST_F(groupby_pre_sorted_keys_test, bool_keys)
+{
+  using V = int32_t;
+  using R = int64_t;
+
+  // clang-format off
+  cudf::test::fixed_width_column_wrapper<bool> keys        { false, false, true, true, true};
+  cudf::test::fixed_width_column_wrapper<V>    vals        {     0,     1,    2,    3,    4};
+
+  cudf::test::fixed_width_column_wrapper<bool> expect_keys { false,        true            };
+  cudf::test::fixed_width_column_wrapper<R>    expect_vals {     1,           9            };
+  // clang-format on
+
+  test_single_agg(keys,
+                  vals,
+                  expect_keys,
+                  expect_vals,
+                  cudf::make_sum_aggregation<cudf::groupby_aggregation>(),
+                  force_use_sort_impl::YES,
+                  cudf::null_policy::EXCLUDE,
+                  cudf::sorted::YES);
 }
 
 struct groupby_cache_test : public cudf::test::BaseFixture {};

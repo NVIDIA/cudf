@@ -9,6 +9,7 @@
 #include "io/utilities/parsing_utils.cuh"
 #include "io/utilities/trie.cuh"
 
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
@@ -27,6 +28,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/atomic>
+#include <cuda/buffer>
 #include <cuda/std/algorithm>
 #include <cuda/stream>
 #include <thrust/count.h>
@@ -853,7 +855,7 @@ cudf::detail::host_vector<column_type_histogram> detect_column_types(
   int const block_size = csvparse_block_dim;
   int const grid_size  = (row_starts.size() + block_size - 1) / block_size;
 
-  auto d_stats = cudf::detail::make_zeroed_device_uvector_async<column_type_histogram>(
+  auto d_stats = cudf::detail::make_zeroed_device_buffer_async<column_type_histogram>(
     num_active_columns, stream, cudf::get_current_device_resource_ref());
 
   data_type_detection<<<grid_size, block_size, 0, stream.get()>>>(
@@ -917,7 +919,8 @@ uint32_t __host__ gather_row_offsets(parse_options_view const& options,
                                      cuda::stream_ref stream)
 {
   uint32_t dim_grid = 1 + (chunk_size / rowofs_block_bytes);
-  auto ctxtree      = rmm::device_uvector<packed_rowctx_t>(dim_grid * bk_ctxtree_size, stream);
+  auto ctxtree      = cuda::device_buffer<packed_rowctx_t>(
+    stream, cudf::get_current_device_resource_ref(), dim_grid * bk_ctxtree_size, cuda::no_init);
 
   gather_row_offsets_gpu<<<dim_grid, rowofs_block_dim, 0, stream.get()>>>(
     row_ctx,

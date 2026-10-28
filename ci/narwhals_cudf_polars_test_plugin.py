@@ -13,24 +13,24 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
 
-TESTS_TO_SKIP: Mapping[str, str] = {}
+TESTS_TO_SKIP: Mapping[str, str] = {
+    "tests/expr_and_series/cum_sum_test.py::test_cum_sum_does_not_overflow[polars[lazy]-False-Int32-2147483647]": "Passes under this constructor but Narwhals marks it xfail(strict).",
+    "tests/expr_and_series/cum_sum_test.py::test_cum_sum_does_not_overflow[polars[lazy]-False-UInt32-4294967295]": "Passes under this constructor but Narwhals marks it xfail(strict).",
+    "tests/expr_and_series/cum_sum_test.py::test_cum_sum_does_not_overflow[polars[lazy]-True-Int32-2147483647]": "Passes under this constructor but Narwhals marks it xfail(strict).",
+    "tests/expr_and_series/cum_sum_test.py::test_cum_sum_does_not_overflow[polars[lazy]-True-UInt32-4294967295]": "Passes under this constructor but Narwhals marks it xfail(strict).",
+}
 
 
 EXPECTED_FAILURES: Mapping[str, str] = {
-    "tests/frame/interchange_native_namespace_test.py::test_interchange": "Polars 2.0 removed the dataframe interchange protocol (`__dataframe__`).",
-    "tests/frame/interchange_schema_test.py::test_interchange_schema": "Polars 2.0 removed the dataframe interchange protocol (`__dataframe__`).",
-    "tests/frame/interchange_schema_test.py::test_interchange_schema_float16": "Polars 2.0 removed the dataframe interchange protocol (`__dataframe__`).",
-    "tests/frame/interchange_schema_test.py::test_invalid": "Polars 2.0 removed the dataframe interchange protocol (`__dataframe__`).",
-    "tests/frame/interchange_to_arrow_test.py::test_interchange_to_arrow": "Polars 2.0 removed the dataframe interchange protocol (`__dataframe__`).",
-    "tests/v1_test.py::test_get_level": "Polars 2.0 removed the dataframe interchange protocol (`__dataframe__`).",
-    "tests/frame/concat_test.py::test_concat_vertical[polars[lazy]]": "Polars 2.0 changed the vertical-concat error message.",
+    "tests/expr_and_series/dt/convert_time_zone_test.py::test_convert_time_zone[polars[lazy]]": "https://github.com/NVIDIA/cudf/issues/23935",
+    "tests/expr_and_series/dt/convert_time_zone_test.py::test_convert_time_zone_from_none[polars[lazy]]": "https://github.com/NVIDIA/cudf/issues/23935",
+    "tests/expr_and_series/dt/replace_time_zone_test.py::test_replace_time_zone[polars[lazy]]": "https://github.com/NVIDIA/cudf/issues/23935",
+    "tests/expr_and_series/fill_null_test.py::test_fill_null_scalar_receiver[polars[lazy]]": "https://github.com/NVIDIA/cudf/issues/24864",
+    "tests/expr_and_series/is_in_test.py::test_expr_is_in_with_only_null_in_other[polars[lazy]]": "https://github.com/NVIDIA/cudf/issues/24863",
     "tests/expr_and_series/str/zfill_test.py::test_str_zfill[polars[lazy]-non_ascii]": "cudf-polars zfill only supports ascii strings.",
     "tests/expr_and_series/str/zfill_test.py::test_str_zfill[polars[lazy]-non_ascii_plus_w3]": "cudf-polars zfill only supports ascii strings.",
     "tests/expr_and_series/str/zfill_test.py::test_str_zfill[polars[lazy]-non_ascii_plus_w4]": "cudf-polars zfill only supports ascii strings.",
     "tests/expr_and_series/str/zfill_test.py::test_str_zfill[polars[lazy]-non_ascii_sign_w5]": "cudf-polars zfill only supports ascii strings.",
-    "tests/expr_and_series/dt/replace_time_zone_test.py::test_replace_time_zone[polars[lazy]]": "https://github.com/NVIDIA/cudf/issues/23935",
-    "tests/expr_and_series/dt/convert_time_zone_test.py::test_convert_time_zone[polars[lazy]]": "https://github.com/NVIDIA/cudf/issues/23935",
-    "tests/expr_and_series/dt/convert_time_zone_test.py::test_convert_time_zone_from_none[polars[lazy]]": "https://github.com/NVIDIA/cudf/issues/23935",
 }
 
 

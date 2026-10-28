@@ -1858,7 +1858,7 @@ dependencies:
     common:
       - output_types: [conda, requirements, constraints, pyproject]
         packages:
-          - narwhals==2.24.0
+          - narwhals==2.28.0
   test_cudf_pandas_compat:
     specific:
       - output_types: [requirements, constraints]

@@ -172,6 +172,24 @@ when the code must behave differently on two supported versions, and delete it w
 bound passes it. Parenthesize conditional expressions (`x == (A if cond else B)`); an unparenthesized
 one was a real bug in an earlier upgrade.
 
+### Remove run-list entries for dropped versions
+
+PR CI selects upstream tests from `ci/cudf_polars/gpu_test_run_list.json`, which has one entry per supported Polars version
+(`<version>|spmd|default`). Regenerating the list keeps entries for old versions, so when the lower bound moves, remove the entries
+below it in the same PR. After the `pyproject.toml` regeneration above, run from the repo root:
+
+```bash
+python .agents/skills/update-cudf-polars-polars-tests-selection/prune-run-list.py
+```
+
+The script reads the minimum supported version from the `polars` requirement in
+`python/cudf_polars/pyproject.toml`, prints each entry it removes, and rewrites
+the list in place. Check that `git diff ci/cudf_polars/gpu_test_run_list.json`
+only removes entries for versions below the new minimum.
+
+The newest supported version also needs an entry, or PR CI fails before running any tests. Generate it with the
+`update-cudf-polars-polars-tests-selection` skill once the upstream suite passes (Step 5).
+
 ### Build the environment the way CI does
 
 Do this right after the pin and the generator run, so the environment matches what CI will use:

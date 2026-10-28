@@ -103,3 +103,32 @@ def test_bottom_k_expr_k(engine: pl.GPUEngine, df, k_expr):
 def test_top_k_by_expr_k(engine: pl.GPUEngine, df, k_expr, reverse):
     q = df.select(pl.col("val").top_k_by("col_with_nulls", k_expr, reverse=reverse))
     assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
+@pytest.mark.parametrize("k_expr", [pl.col("test").max(), pl.lit(2.0)])
+def test_top_k_by_scalar_key(engine: pl.GPUEngine, df, k_expr):
+    # With only scalar keys every row ties, so only the row count is defined.
+    q = df.select(pl.col("val").top_k_by(pl.col("test").max(), k_expr))
+    got = q.collect(engine=engine)["val"]
+    expect = q.collect()["val"]
+    assert got.len() == expect.len()
+    assert set(got) <= set(df.collect()["val"])
+
+
+@pytest.mark.parametrize(
+    "k_expr",
+    [
+        pl.lit(None, dtype=pl.Int64),
+        pl.lit(-1),
+        pl.lit(float("nan")),
+        pl.lit("a"),
+        pl.lit(pl.Series([], dtype=pl.Int64)),
+        pl.lit(pl.Series([1, 2])),
+    ],
+)
+@pytest.mark.parametrize("method", ["top_k", "top_k_by"])
+def test_top_k_invalid_k_raises(in_memory_engine, df, k_expr, method):
+    col = pl.col("val")
+    expr = col.top_k(k_expr) if method == "top_k" else col.top_k_by("test", k_expr)
+    with pytest.raises(pl.exceptions.PolarsError):
+        df.select(expr).collect(engine=in_memory_engine)

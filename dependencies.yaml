@@ -723,7 +723,7 @@ files:
   test_cudf_polars_compat:
     output: none
     matrix:
-      polars_compat_version: ["2.0"]
+      polars_compat_version: ["2.0", "2.1"]
     includes:
       - test_cudf_polars_compat
 channels:
@@ -1103,7 +1103,7 @@ dependencies:
           # 'nvidia-ml-py' provides the 'pynvml' module
           - &nvidia_ml_py nvidia-ml-py>=12
           - packaging
-          - polars>=2.0,<2.1
+          - polars>=2.0,<2.2
           - typing_extensions>=4.0.0
   run_cudf_polars_dask:
     common:
@@ -1301,6 +1301,8 @@ dependencies:
       - output_types: [conda, requirements, pyproject]
         packages:
           - duckdb
+          # duckdb's ``.pl()`` needs pyarrow to hand results to polars
+          - pyarrow>=19.0.0
           # added lower bound pinning to get pytest-subtests for free
           - pytest>=9
           - tpchgen-cli>=3.0.0
@@ -1876,5 +1878,9 @@ dependencies:
               polars_compat_version: "2.0"
             packages:
               - polars==2.0.*
+          - matrix:
+              polars_compat_version: "2.1"
+            packages:
+              - polars==2.1.*
           - matrix:
             packages:

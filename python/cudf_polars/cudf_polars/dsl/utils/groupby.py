@@ -27,9 +27,10 @@ def rewrite_groupby(
     schema: Schema,
     keys: Sequence[expr.NamedExpr],
     aggs: Sequence[expr.NamedExpr],
-    maintain_order: bool,  # noqa: FBT001
-    zlice: Zlice | None,
     inp: ir.IR,
+    *,
+    maintain_order: bool,
+    zlice: Zlice | None,
 ) -> ir.IR:
     """
     Rewrite a groupby plan node into something we can handle.
@@ -42,12 +43,12 @@ def rewrite_groupby(
         Grouping keys.
     aggs
         Originally requested aggregations.
+    inp
+        Input plan node to the groupby.
     maintain_order
         Whether groups are produced in order of first appearance.
     zlice
         Optional slice of the result.
-    inp
-        Input plan node to the groupby.
 
     Returns
     -------

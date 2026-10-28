@@ -59,12 +59,12 @@ def _null_order(dtype: DataType) -> plc.types.NullOrder:
 
 
 def rewrite_groupby_dynamic(
-    options: Any,
     schema: Schema,
     keys: Sequence[expr.NamedExpr],
     aggs: Sequence[expr.NamedExpr],
     inp: ir.IR,
-) -> ir.IR:
+    options: Any,
+) -> ir.Select:
     """Rewrite a supported ``group_by_dynamic`` as a grouped truncation."""
     dynamic = options.dynamic
     _check_supported(dynamic)
@@ -96,9 +96,9 @@ def rewrite_groupby_dynamic(
         group_schema,
         [expr.NamedExpr(start_name, start_col), *keys],
         aggs,
-        True,  # noqa: FBT003
-        None,
         with_start,
+        maintain_order=True,
+        zlice=None,
     )
 
     sort_by = [expr.NamedExpr(k.name, expr.Col(k.value.dtype, k.name)) for k in keys]

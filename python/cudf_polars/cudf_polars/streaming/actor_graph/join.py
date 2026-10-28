@@ -15,6 +15,7 @@ from cudf_streaming.channel_metadata import (
     OrderKey,
     OrderScheme,
     Partitioning,
+    RowOrderingScope,
 )
 from cudf_streaming.table_chunk import (
     TableChunk,
@@ -45,6 +46,12 @@ from cudf_polars.streaming.actor_graph.dispatch import (
 )
 from cudf_polars.streaming.actor_graph.join_planning import JoinPlanningState
 from cudf_polars.streaming.actor_graph.nodes import default_node_multi
+from cudf_polars.streaming.actor_graph.partitioning import (
+    NormalizedPartitioning,
+    is_row_ordered_by,
+    maybe_remap_partitioning,
+    remap_ordering_keys,
+)
 from cudf_polars.streaming.actor_graph.prefilter import (
     JoinPrefilterExecution,
     RuntimePrefilterStatistics,
@@ -58,17 +65,12 @@ from cudf_polars.streaming.actor_graph.utils import (
     ChannelManager,
     ChunkSampler,
     ChunkStore,
-    NormalizedPartitioning,
     TableSample,
     TableSizeStats,
-    _update_ordering_indices,
     allgather_reduce,
     chunk_to_frame,
-    clear_local_ordering,
     empty_table_chunk,
     gather_in_task_group,
-    join_preserves_side_order,
-    maybe_remap_partitioning,
     process_children,
     recv_metadata,
     replay_buffered_channel,
@@ -108,6 +110,45 @@ if TYPE_CHECKING:
         PushdownFilterHint,
     )
     from cudf_polars.utils.config import StreamingExecutor
+
+
+def _join_preserves_side_order(
+    how: Literal["Inner", "Left", "Right", "Full", "Semi", "Anti", "Cross"],
+    maintain_order: Literal["none", "left", "right", "left_right", "right_left"],
+    side: Literal["left", "right"],
+) -> bool:
+    """Return whether a join preserves one input's row order."""
+    return maintain_order.startswith(side) and (
+        how == "Inner"
+        or (side == "left" and how in ("Left", "Cross"))
+        or (side == "right" and how == "Right")
+    )
+
+
+def _preserved_join_side(ir: Join) -> Literal["left", "right"] | None:
+    """Return the input side whose row order the join preserves."""
+    how, maintain_order = ir.options[0], ir.options[5]
+    for side in ("left", "right"):
+        if _join_preserves_side_order(how, maintain_order, side):
+            return side
+    return None
+
+
+def _remap_join_partitioning(
+    ir: Join,
+    metadata: ChannelMetadata,
+    child_index: int,
+    context: Context,
+) -> Partitioning | None:
+    """Remap one join input's metadata to the output schema."""
+    side: Literal["left", "right"] = "left" if child_index == 0 else "right"
+    return maybe_remap_partitioning(
+        ir,
+        metadata.partitioning,
+        child_index=child_index,
+        context=context,
+        preserves_row_order=_preserved_join_side(ir) == side,
+    )
 
 
 @dataclass(frozen=True)
@@ -159,6 +200,10 @@ class OrderedJoinStrategy:
     """Aligned output ordering for the right side."""
     output_ordering: Ordering
     """Join-output ordering metadata."""
+    left_input_rows_ordered: bool
+    """Whether left input rows follow ``left_input_ordering``."""
+    right_input_rows_ordered: bool
+    """Whether right input rows follow ``right_input_ordering``."""
 
 
 type JoinStrategy = BroadcastJoinStrategy | ShuffleJoinStrategy | OrderedJoinStrategy
@@ -473,31 +518,13 @@ async def broadcast_join(
         small_child, large_child = right, left
         small_metadata, large_metadata = right_metadata, left_metadata
         local_count = left_metadata.local_count
-        partitioning = maybe_remap_partitioning(
-            ir,
-            left_metadata.partitioning,
-            child_ir=ir.children[0],
-            context=context,
-        )
-        if not join_preserves_side_order(ir.options[5], "left"):
-            partitioning = clear_local_ordering(partitioning)
+        partitioning = _remap_join_partitioning(ir, left_metadata, 0, context)
     else:
         small_ch, large_ch = ch_left, ch_right
         small_child, large_child = left, right
         small_metadata, large_metadata = left_metadata, right_metadata
         local_count = right_metadata.local_count
-        partitioning = (
-            maybe_remap_partitioning(
-                ir,
-                right_metadata.partitioning,
-                child_ir=ir.children[1],
-                context=context,
-            )
-            if ir.options[0] == "Right"
-            else None
-        )
-        if not join_preserves_side_order(ir.options[5], "right"):
-            partitioning = clear_local_ordering(partitioning)
+        partitioning = _remap_join_partitioning(ir, right_metadata, 1, context)
 
     small_duplicated = small_metadata.duplicated
     need_allgather = comm.nranks > 1 and not small_duplicated
@@ -764,6 +791,9 @@ def _make_ordered_strategy(
     ir: Join,
     left_partitioning: NormalizedPartitioning,
     right_partitioning: NormalizedPartitioning,
+    *,
+    left_input_rows_ordered: bool = False,
+    right_input_rows_ordered: bool = False,
 ) -> OrderedJoinStrategy | None:
     """Make an ordered strategy when both sides can align to strict boundaries."""
     if ir.options[0] not in ("Inner", "Left", "Semi", "Anti"):
@@ -804,17 +834,8 @@ def _make_ordered_strategy(
     if not _ordering_prefix_matches(right_ordering, reference, right_key_indices):
         return None
 
-    left_output_ordering = _update_ordering_indices(reference, left_key_indices)
-    output_ordering = _update_ordering_indices(reference, output_key_indices)
-    if not (
-        left_ordering.locally_ordered
-        and join_preserves_side_order(ir.options[5], "left")
-    ):
-        left_output_ordering = left_output_ordering.with_locally_ordered(
-            locally_ordered=False
-        )
-        output_ordering = output_ordering.with_locally_ordered(locally_ordered=False)
-
+    left_output_ordering = remap_ordering_keys(reference, left_key_indices)
+    output_ordering = remap_ordering_keys(reference, output_key_indices)
     return OrderedJoinStrategy(
         output_indices=output_key_indices,
         left_indices=left_key_indices,
@@ -824,10 +845,10 @@ def _make_ordered_strategy(
         left_input_ordering=left_ordering,
         right_input_ordering=right_ordering,
         left_output_ordering=left_output_ordering,
-        right_output_ordering=_update_ordering_indices(
-            reference, right_key_indices
-        ).with_locally_ordered(locally_ordered=False),
+        right_output_ordering=remap_ordering_keys(reference, right_key_indices),
         output_ordering=output_ordering,
+        left_input_rows_ordered=left_input_rows_ordered,
+        right_input_rows_ordered=right_input_rows_ordered,
     )
 
 
@@ -889,11 +910,13 @@ async def _join_chunks(
             await reserve_memory(context, size=input_bytes, net_memory_delta=0)
         ):
             df = await ir_context.to_thread(
-                ir.do_evaluate,
-                *ir._non_child_args,
-                chunk_to_frame(left_chunk, left),
-                chunk_to_frame(right_chunk, right),
-                context=ir_context,
+                partial(
+                    ir.do_evaluate,
+                    *ir._non_child_args,
+                    chunk_to_frame(left_chunk, left),
+                    chunk_to_frame(right_chunk, right),
+                    context=ir_context,
+                )
             )
             del left_chunk, right_chunk
 
@@ -1046,6 +1069,7 @@ async def _adjust_ordered_join_side(
     input_ordering: Ordering,
     output_ordering: Ordering,
     *,
+    input_rows_ordered: bool,
     already_aligned: bool,
     collective_id: int,
 ) -> None:
@@ -1079,6 +1103,7 @@ async def _adjust_ordered_join_side(
         ch_in,
         input_ordering,
         output_ordering,
+        input_rows_ordered=input_rows_ordered,
         collective_id=collective_id,
     )
 
@@ -1152,6 +1177,7 @@ async def _ordered_join(
                 ch_left,
                 strategy.left_input_ordering,
                 strategy.left_output_ordering,
+                input_rows_ordered=strategy.left_input_rows_ordered,
                 collective_id=collective_ids.shuffle("left"),
                 already_aligned=left_aligned,
             ),
@@ -1164,6 +1190,7 @@ async def _ordered_join(
                 ch_right,
                 strategy.right_input_ordering,
                 strategy.right_output_ordering,
+                input_rows_ordered=strategy.right_input_rows_ordered,
                 collective_id=collective_ids.shuffle("right"),
                 already_aligned=right_aligned,
             ),
@@ -1242,7 +1269,7 @@ def _can_join_build_chunks_separately(
 ) -> bool:
     """Return whether broadcast execution may retain separate build chunks."""
     need_allgather = comm.nranks > 1 and not metadata.duplicated
-    return not need_allgather and ir.options[0] == "Inner"
+    return not need_allgather and ir.options[0] == "Inner" and ir.options[5] == "none"
 
 
 def _allow_decomposed_broadcast(
@@ -1717,7 +1744,18 @@ async def choose_strategy(
     chunkwise = hash_chunkwise and left_partitioning.is_aligned_with(
         right_partitioning, context.br()
     )
-
+    left_ordering = left_partitioning.get_ordering()
+    right_ordering = right_partitioning.get_ordering()
+    left_rows_ordered = left_ordering is not None and is_row_ordered_by(
+        left_metadata.partitioning,
+        left_ordering.keys,
+        scope=RowOrderingScope.RANK_LOCAL,
+    )
+    right_rows_ordered = right_ordering is not None and is_row_ordered_by(
+        right_metadata.partitioning,
+        right_ordering.keys,
+        scope=RowOrderingScope.RANK_LOCAL,
+    )
     if chunkwise:
         join_state.left.sample = TableSizeStats(
             local_sample=TableSample(ChunkStore(context)),
@@ -1735,6 +1773,8 @@ async def choose_strategy(
                 ir,
                 left_partitioning,
                 right_partitioning,
+                left_input_rows_ordered=left_rows_ordered,
+                right_input_rows_ordered=right_rows_ordered,
             )
         )
         is not None
@@ -2077,17 +2117,16 @@ def _forward_join_partitioning(
     context: Context,
 ) -> Partitioning | None:
     """Build partitioning metadata for a partition-wise join."""
-    child_index = 1 if ir.options[0] == "Right" else 0
-    side: Literal["left", "right"] = "left" if child_index == 0 else "right"
-    partitioning = maybe_remap_partitioning(
-        ir,
-        child_metadatas[child_index].partitioning,
-        child_ir=ir.children[child_index],
-        context=context,
+    preserved_side = _preserved_join_side(ir)
+    child_index = (
+        1
+        if preserved_side == "right"
+        or (preserved_side is None and ir.options[0] == "Right")
+        else 0
     )
-    if not join_preserves_side_order(ir.options[5], side):
-        partitioning = clear_local_ordering(partitioning)
-    return partitioning
+    return _remap_join_partitioning(
+        ir, child_metadatas[child_index], child_index, context
+    )
 
 
 @generate_ir_sub_network.register(Join)

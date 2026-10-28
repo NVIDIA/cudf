@@ -102,7 +102,7 @@ void test_hybrid_scan(std::vector<cudf::column_view> const& columns,
 
   // Read parquet using the hybrid scan reader
   auto const [read_filter_table, read_payload_table] = hybrid_scan(
-    datasource_ref, filter_expression, {}, case_sensitive_names, stream, mr, aligned_mr);
+    datasource_ref, filter_expression, {}, case_sensitive_names, false, stream, mr, aligned_mr);
 
   // Read parquet using the chunked hybrid scan reader
   auto const [read_filter_table_chunked, read_payload_table_chunked] = chunked_hybrid_scan(
@@ -136,7 +136,7 @@ void test_hybrid_scan(std::vector<cudf::column_view> const& columns,
 
   // Read parquet using the hybrid scan reader in a single step
   auto const read_single_step_table = hybrid_scan_single_step(
-    datasource_ref, filter_expression, {}, case_sensitive_names, stream, mr);
+    datasource_ref, filter_expression, {}, case_sensitive_names, false, stream, mr);
 
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected_tbl->view(), read_single_step_table->view());
 
@@ -185,6 +185,7 @@ std::unique_ptr<cudf::table> test_hybrid_scan_column_selection(
                                                                      filter_expression,
                                                                      payload_column_names,
                                                                      case_sensitive_names,
+                                                                     false,
                                                                      stream,
                                                                      mr,
                                                                      aligned_mr);
@@ -225,7 +226,7 @@ std::unique_ptr<cudf::table> test_hybrid_scan_column_selection(
   }
 
   auto read_single_step = hybrid_scan_single_step(
-    datasource_ref, filter_expression, all_column_names, case_sensitive_names, stream, mr);
+    datasource_ref, filter_expression, all_column_names, case_sensitive_names, false, stream, mr);
 
   auto const read_chunked_single_step = chunked_hybrid_scan_single_step(
     datasource_ref, filter_expression, all_column_names, case_sensitive_names, stream, mr);
@@ -557,7 +558,7 @@ TEST_F(HybridScanTest, ConsecutivePrunedPageOffsets)
     auto const expected = cudf::concatenate(cudf::slice(input, expected_slices));
     // Read with column chunk-level and page-level payload I/O
     auto const results =
-      std::array{hybrid_scan(*datasource, filter, {}, true, stream, mr, aligned_mr),
+      std::array{hybrid_scan(*datasource, filter, {}, true, false, stream, mr, aligned_mr),
                  chunked_sparse_hybrid_scan_multifile(
                    cudf::io::source_info{filepath}, filter, {}, true, stream, mr)};
 
@@ -888,13 +889,13 @@ TEST_F(HybridScanTest, ExtendedFilterExpressions)
                                                      filter,
                                                      std::nullopt,
                                                      case_sensitive_names,
+                                                     use_jit_filter,
                                                      stream,
                                                      mr,
-                                                     aligned_mr,
-                                                     use_jit_filter);
+                                                     aligned_mr);
 
     auto read_single_step = hybrid_scan_single_step(
-      datasource_ref, filter, std::nullopt, case_sensitive_names, stream, mr, use_jit_filter);
+      datasource_ref, filter, std::nullopt, case_sensitive_names, use_jit_filter, stream, mr);
 
     auto predicate = cudf::compute_column(written_table->view(), filter);
     auto expected  = cudf::apply_retention_mask(written_table->view(), *predicate);
@@ -928,13 +929,13 @@ TEST_F(HybridScanTest, ExtendedFilterExpressions)
                                                      filter,
                                                      std::nullopt,
                                                      case_sensitive_names,
+                                                     use_jit_filter,
                                                      stream,
                                                      mr,
-                                                     aligned_mr,
-                                                     use_jit_filter);
+                                                     aligned_mr);
 
     auto read_single_step = hybrid_scan_single_step(
-      datasource_ref, filter, std::nullopt, case_sensitive_names, stream, mr, use_jit_filter);
+      datasource_ref, filter, std::nullopt, case_sensitive_names, use_jit_filter, stream, mr);
 
     auto predicate = cudf::compute_column(written_table->view(), filter);
     auto expected  = cudf::apply_retention_mask(written_table->view(), *predicate);

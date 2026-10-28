@@ -178,10 +178,10 @@ void reader_impl::allocate_nesting_info()
       return total + (per_page_nesting_info_size[index] * subpass.column_page_count[index]);
     });
 
-  page_nesting_info =
-    cudf::detail::hostdevice_vector<PageNestingInfo>{total_page_nesting_infos, _stream};
-  page_nesting_decode_info =
-    cudf::detail::hostdevice_vector<PageNestingDecodeInfo>{total_page_nesting_infos, _stream};
+  page_nesting_info = cudf::detail::hostdevice_vector<PageNestingInfo>{
+    total_page_nesting_infos, _stream, cudf::get_current_device_resource_ref()};
+  page_nesting_decode_info = cudf::detail::hostdevice_vector<PageNestingDecodeInfo>{
+    total_page_nesting_infos, _stream, cudf::get_current_device_resource_ref()};
 
   // update pointers in the PageInfos
   int target_page_index = 0;
@@ -416,7 +416,8 @@ void reader_impl::allocate_level_decode_space()
   }
   if (num_mapped == 0) { return; }
 
-  subpass.nz_map_buf = cudf::detail::hostdevice_vector<page_nz_map>(num_mapped, _stream);
+  subpass.nz_map_buf = cudf::detail::hostdevice_vector<page_nz_map>(
+    num_mapped, _stream, cudf::get_current_device_resource_ref());
 
   auto host_state = [&](size_t idx) -> page_nz_map* {
     return nz_map_slot[idx] != std::numeric_limits<size_t>::max()
@@ -1151,7 +1152,8 @@ void reader_impl::allocate_columns(read_mode mode, size_t skip_rows, size_t num_
       h_cols_info, _stream, cudf::get_current_device_resource_ref());
 
     // Vector to store page sizes for each column at each depth
-    cudf::detail::hostdevice_vector<size_t> sizes{_input_columns.size() * max_depth, _stream};
+    cudf::detail::hostdevice_vector<size_t> sizes{
+      _input_columns.size() * max_depth, _stream, cudf::get_current_device_resource_ref()};
 
     // Total number of keys to process
     auto const num_keys = _input_columns.size() * max_depth * subpass.pages.size();

@@ -10,6 +10,7 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/strings/convert/convert_datetime.hpp>
 #include <cudf/strings/detail/converters.hpp>
@@ -26,6 +27,7 @@
 
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/algorithm>
 #include <cuda/std/optional>
@@ -97,7 +99,7 @@ using specifier_map = std::map<char, int8_t>;
 
 struct format_compiler {
   std::string_view const format;
-  rmm::device_uvector<format_item> d_items;
+  cuda::device_buffer<format_item> d_items;
 
   // clang-format off
   // The specifiers are documented here (not all are supported):
@@ -111,7 +113,7 @@ struct format_compiler {
   format_compiler(std::string_view fmt,
                   cuda::stream_ref stream,
                   specifier_map extra_specifiers = {})
-    : format(fmt), d_items(0, stream)
+    : format(fmt), d_items(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init)
   {
     specifiers.insert(extra_specifiers.begin(), extra_specifiers.end());
     auto items  = cudf::detail::make_empty_host_vector<format_item>(format.length(), stream);
@@ -155,7 +157,7 @@ struct format_compiler {
 
     // copy format_items to device memory
     d_items =
-      cudf::detail::make_device_uvector(items, stream, cudf::get_current_device_resource_ref());
+      cudf::detail::make_device_buffer(items, stream, cudf::get_current_device_resource_ref());
   }
 
   device_span<format_item const> format_items() { return device_span<format_item const>(d_items); }

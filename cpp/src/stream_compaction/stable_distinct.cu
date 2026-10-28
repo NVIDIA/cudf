@@ -11,6 +11,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <thrust/scatter.h>
 #include <thrust/uninitialized_fill.h>
@@ -45,7 +46,8 @@ std::unique_ptr<table> stable_distinct(table_view const& input,
   // the need to sort the distinct indices, which is slower.
 
   auto const output_markers = [&] {
-    auto markers = rmm::device_uvector<bool>(input.num_rows(), stream);
+    auto markers = cuda::device_buffer<bool>(
+      stream, cudf::get_current_device_resource_ref(), input.num_rows(), cuda::no_init);
     thrust::uninitialized_fill(
       rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
       markers.begin(),

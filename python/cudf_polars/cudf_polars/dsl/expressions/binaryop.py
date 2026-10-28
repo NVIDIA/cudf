@@ -6,9 +6,11 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import TYPE_CHECKING, ClassVar
 
 from polars import _plr as polars
+from polars.exceptions import ComputeError
 
 import pylibcudf as plc
 
@@ -18,6 +20,8 @@ from cudf_polars.dsl.expressions.base import ExecutionContext, Expr
 pl_expr = polars._expr_nodes
 
 if TYPE_CHECKING:
+    from rmm.pylibrmm.stream import Stream
+
     from cudf_polars.containers import DataFrame, DataType
 
 __all__ = ["BinOp"]
@@ -132,9 +136,48 @@ class BinOp(Expr):
                     ),
                     stream=df.stream,
                 )
-        return Column(
-            plc.binaryop.binary_operation(
-                lop, rop, self.op, self.dtype.plc_type, stream=df.stream
-            ),
-            dtype=self.dtype,
+        result = plc.binaryop.binary_operation(
+            lop, rop, self.op, self.dtype.plc_type, stream=df.stream
         )
+        if self.op == plc.binaryop.BinaryOperator.DIV and plc.traits.is_fixed_point(
+            self.dtype.plc_type
+        ):
+            self._raise_on_decimal_division_by_zero(right, result, df.stream)
+        return Column(result, dtype=self.dtype)
+
+    @staticmethod
+    def _raise_on_decimal_division_by_zero(
+        right: Column, result: plc.Column, stream: Stream
+    ) -> None:
+        bool_type = plc.DataType(plc.TypeId.BOOL8)
+
+        def any_true(mask: plc.Column) -> bool:
+            return bool(
+                plc.reduce.reduce(
+                    mask, plc.aggregation.any(), bool_type, stream=stream
+                ).to_py(stream=stream)
+            )
+
+        is_zero = plc.binaryop.binary_operation(
+            right.obj,
+            plc.Scalar.from_py(Decimal(0), right.obj.type(), stream=stream),
+            plc.binaryop.BinaryOperator.EQUAL,
+            bool_type,
+            stream=stream,
+        )
+        if right.size == 1:
+            # A scalar divisor: one value decides, so the result is only
+            # looked at when that value is zero.
+            if not any_true(is_zero):
+                return
+            divides_by_zero = plc.unary.is_valid(result, stream=stream)
+        else:
+            divides_by_zero = plc.binaryop.binary_operation(
+                is_zero,
+                plc.unary.is_valid(result, stream=stream),
+                plc.binaryop.BinaryOperator.LOGICAL_AND,
+                bool_type,
+                stream=stream,
+            )
+        if any_true(divides_by_zero):
+            raise ComputeError("division by zero Decimal")

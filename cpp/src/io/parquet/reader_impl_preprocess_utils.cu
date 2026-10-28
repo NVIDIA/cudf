@@ -369,7 +369,8 @@ cudf::detail::hostdevice_vector<PageInfo> sort_pages(device_span<PageInfo const>
     page_keys.end(),
     sort_indices.begin(),
     cuda::std::less<int>());
-  auto pass_pages = cudf::detail::hostdevice_vector<PageInfo>(unsorted_pages.size(), stream);
+  auto pass_pages = cudf::detail::hostdevice_vector<PageInfo>(
+    unsorted_pages.size(), stream, cudf::get_current_device_resource_ref());
   thrust::gather(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                  sort_indices.begin(),
                  sort_indices.end(),

@@ -187,7 +187,8 @@ cuda::device_buffer<std::uint8_t> decompress_stripe_data(
 
   // Value for checking whether we decompress successfully.
   // It doesn't need to be atomic as there is no race condition: we only write `true` if needed.
-  cudf::detail::hostdevice_vector<bool> any_block_failure(1, stream);
+  cudf::detail::hostdevice_vector<bool> any_block_failure(
+    1, stream, cudf::get_current_device_resource_ref());
   any_block_failure[0] = false;
   any_block_failure.host_to_device_async(stream);
 
@@ -659,8 +660,8 @@ std::vector<range> find_table_splits(table_view const& input,
   auto const d_segmented_sizes = cudf::detail::segmented_row_bit_count(
     input, segment_length, stream, cudf::get_current_device_resource_ref());
 
-  auto segmented_sizes =
-    cudf::detail::hostdevice_vector<cumulative_size>(d_segmented_sizes->size(), stream);
+  auto segmented_sizes = cudf::detail::hostdevice_vector<cumulative_size>(
+    d_segmented_sizes->size(), stream, cudf::get_current_device_resource_ref());
 
   thrust::transform(
     rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
@@ -769,7 +770,8 @@ void reader_impl::decompress_and_decode_stripes(read_mode mode)
         max_num_streams = std::max(max_num_streams, stream_range.size());
       }
     }
-    return cudf::detail::hostdevice_vector<compressed_stream_info>{max_num_streams, _stream};
+    return cudf::detail::hostdevice_vector<compressed_stream_info>{
+      max_num_streams, _stream, cudf::get_current_device_resource_ref()};
   }();
 
   auto& col_meta = *_col_meta;
@@ -786,7 +788,8 @@ void reader_impl::decompress_and_decode_stripes(read_mode mode)
     auto& chunks      = lvl_chunks[level];
 
     auto const num_lvl_columns = columns_level.size();
-    chunks = cudf::detail::hostdevice_2dvector<column_desc>(stripe_count, num_lvl_columns, _stream);
+    chunks                     = cudf::detail::hostdevice_2dvector<column_desc>(
+      stripe_count, num_lvl_columns, _stream, cudf::get_current_device_resource_ref());
     memset(chunks.base_host_ptr(), 0, chunks.size_bytes());
 
     bool const use_index =
@@ -902,8 +905,8 @@ void reader_impl::decompress_and_decode_stripes(read_mode mode)
     if (stripe_data.empty()) { continue; }
 
     // Process dataset chunks into output columns.
-    auto row_groups =
-      cudf::detail::hostdevice_2dvector<row_group>(num_rowgroups, num_lvl_columns, _stream);
+    auto row_groups = cudf::detail::hostdevice_2dvector<row_group>(
+      num_rowgroups, num_lvl_columns, _stream, cudf::get_current_device_resource_ref());
     if (level > 0 and row_groups.size().first) {
       cudf::host_span<row_group> row_groups_span(row_groups.base_host_ptr(),
                                                  num_rowgroups * num_lvl_columns);

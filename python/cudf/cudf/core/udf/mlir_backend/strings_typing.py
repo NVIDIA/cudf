@@ -215,3 +215,18 @@ class MLIRStringArgHandler:
 
 
 mlir_string_arg_handler = MLIRStringArgHandler()
+
+
+def NRT_decref(st):
+    """Sentinel for an explicit ``NRT_decref`` on an ``mlir_string``.
+
+    Typed and lowered in
+    :mod:`cudf.core.udf.mlir_backend.strings_lowering`. Used by the host-side
+    freeing kernel that releases a column of produced strings once they have
+    been copied out (the teardown half of the string-return marshalling).
+
+    Parameters
+    ----------
+    st : mlir_string
+        The string whose ``MemInfo`` reference should be released.
+    """

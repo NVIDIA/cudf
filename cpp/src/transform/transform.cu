@@ -855,48 +855,6 @@ std::unique_ptr<table> transform(std::string const& udf,
                            mr);
 }
 
-std::unique_ptr<table> multi_transform(std::string const& udf,
-                                       udf_source_type source_type,
-                                       null_aware is_null_aware,
-                                       std::optional<void*> user_data,
-                                       std::span<transform_input const> inputs,
-                                       std::span<transform_output const> outputs,
-                                       std::vector<std::unique_ptr<column>>&& string_offsets,
-                                       std::optional<size_type> row_size,
-                                       cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
-{
-  return transform(udf,
-                   source_type,
-                   is_null_aware,
-                   user_data,
-                   inputs,
-                   outputs,
-                   std::move(string_offsets),
-                   row_size,
-                   stream,
-                   mr);
-}
-
-std::unique_ptr<column> transform_extended(std::span<transform_input const> inputs,
-                                           std::string const& udf,
-                                           data_type output_type,
-                                           udf_source_type source_type,
-                                           std::optional<void*> user_data,
-                                           null_aware is_null_aware,
-                                           std::optional<size_type> row_size,
-                                           output_nullability null_policy,
-                                           cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
-{
-  transform_output outputs[] = {{.type = output_type, .nullability = null_policy}};
-
-  auto result = transform(
-    udf, source_type, is_null_aware, user_data, inputs, outputs, {}, row_size, stream, mr);
-  auto columns = result->release();
-  return std::move(columns.front());
-}
-
 std::unique_ptr<column> compute_column_jit(table_view const& table,
                                            ast::expression const& expr,
                                            cuda::stream_ref stream,

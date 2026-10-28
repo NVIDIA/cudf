@@ -5,7 +5,7 @@
 #pragma once
 
 #include "common.cuh"
-#include "regcomp.h"
+#include "regcomp.hpp"
 
 #include <cuda/std/optional>
 
@@ -15,7 +15,6 @@
 #include <vector>
 
 /**
- * @file glushkov_regcomp.h
  * @brief Host-side Glushkov NFA construction via ε-elimination from Thompson NFA.
  *
  * Glushkov's NFA (position automaton) has two key advantages over Thompson's NFA:

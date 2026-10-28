@@ -152,7 +152,8 @@ TEST_F(JsonTest, StackContext)
   cudf::string_scalar const d_scalar(input, true, stream);
   auto const d_input =
     cudf::device_span<SymbolT const>{d_scalar.data(), static_cast<size_t>(d_scalar.size())};
-  cudf::detail::hostdevice_vector<StackSymbolT> stack_context(input.size(), stream);
+  cudf::detail::hostdevice_vector<StackSymbolT> stack_context(
+    input.size(), stream, cudf::get_current_device_resource_ref());
 
   // Run algorithm
   constexpr auto stack_behavior = cuio_json::stack_behavior_t::PushPopWithoutReset;
@@ -203,7 +204,8 @@ TEST_F(JsonTest, StackContextUtf8)
   cudf::string_scalar const d_scalar(input, true, stream);
   auto const d_input =
     cudf::device_span<SymbolT const>{d_scalar.data(), static_cast<size_t>(d_scalar.size())};
-  cudf::detail::hostdevice_vector<StackSymbolT> stack_context(input.size(), stream);
+  cudf::detail::hostdevice_vector<StackSymbolT> stack_context(
+    input.size(), stream, cudf::get_current_device_resource_ref());
 
   // Run algorithm
   constexpr auto stack_behavior = cuio_json::stack_behavior_t::PushPopWithoutReset;
@@ -271,7 +273,8 @@ TEST_P(JsonDelimiterParamTest, StackContextRecovering)
   cudf::string_scalar const d_scalar(input, true, stream);
   auto const d_input =
     cudf::device_span<SymbolT const>{d_scalar.data(), static_cast<size_t>(d_scalar.size())};
-  cudf::detail::hostdevice_vector<StackSymbolT> stack_context(input.size(), stream);
+  cudf::detail::hostdevice_vector<StackSymbolT> stack_context(
+    input.size(), stream, cudf::get_current_device_resource_ref());
 
   // Run algorithm
   constexpr auto stack_behavior = cuio_json::stack_behavior_t::ResetOnDelimiter;
@@ -379,7 +382,8 @@ TEST_P(JsonDelimiterParamTest, StackContextRecoveringFuzz)
   cudf::string_scalar const d_scalar(input, true, stream);
   auto const d_input =
     cudf::device_span<SymbolT const>{d_scalar.data(), static_cast<size_t>(d_scalar.size())};
-  cudf::detail::hostdevice_vector<StackSymbolT> stack_context(input.size(), stream);
+  cudf::detail::hostdevice_vector<StackSymbolT> stack_context(
+    input.size(), stream, cudf::get_current_device_resource_ref());
 
   // Run algorithm
   constexpr auto stack_behavior = cuio_json::stack_behavior_t::ResetOnDelimiter;

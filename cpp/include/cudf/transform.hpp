@@ -52,36 +52,6 @@ struct transform_output {
 };
 
 /**
- * @brief Creates a new column by applying a transform function against every element of the input
- * columns.
- *
- * @deprecated in release 26.10. Use `transform` instead.
- *
- * @param inputs Immutable views of the inputs to transform
- * @param udf The PTX/CUDA string of the transform function to apply
- * @param output_type The output type that is compatible with the output type in the UDF
- * @param source_type The source type of the UDF (CUDA or PTX)
- * @param user_data User-defined device data to pass to the UDF
- * @param is_null_aware Signifies the UDF will receive row inputs as optional values
- * @param row_size The row size of the transform operation
- * @param null_policy Signifies if a null mask should be created for the output column
- * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column's device memory
- * @return The column resulting from applying the transform function
- */
-[[deprecated("Use transform instead")]] std::unique_ptr<column> transform_extended(
-  std::span<transform_input const> inputs,
-  std::string const& udf,
-  data_type output_type,
-  udf_source_type source_type,
-  std::optional<void*> user_data    = std::nullopt,
-  null_aware is_null_aware          = null_aware::NO,
-  std::optional<size_type> row_size = std::nullopt,
-  output_nullability null_policy    = output_nullability::PRESERVE,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
-
-/**
  * @brief Describes a transform input independently of a particular column.
  *
  * An input specification contains the type information needed to reflect and retrieve a transform
@@ -302,36 +272,6 @@ struct transform_program {
  *
  */
 std::unique_ptr<table> transform(
-  std::string const& udf,
-  udf_source_type source_type,
-  null_aware is_null_aware,
-  std::optional<void*> user_data,
-  std::span<transform_input const> inputs,
-  std::span<transform_output const> outputs,
-  std::vector<std::unique_ptr<column>>&& string_offsets,
-  std::optional<size_type> row_size,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
-
-/**
- * @brief Creates a new table by applying a transform function against every element of the input
- * columns.
- *
- * @deprecated in release 26.10. Use `transform` instead.
- *
- * @param udf The PTX/CUDA string of the transform function to apply
- * @param source_type The source type of the UDF (CUDA or PTX)
- * @param is_null_aware Signifies the UDF will receive row inputs as optional values
- * @param user_data User-defined device data to pass to the UDF
- * @param inputs Immutable views of the inputs to transform (columns and scalar columns)
- * @param outputs Specification of the output columns to be created
- * @param string_offsets Pre-allocated offsets for string output columns
- * @param row_size The row size of the transform operation
- * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column's device memory
- * @return A table containing the transformed output columns
- */
-[[deprecated("Use transform instead")]] std::unique_ptr<table> multi_transform(
   std::string const& udf,
   udf_source_type source_type,
   null_aware is_null_aware,

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "strings/regex/regcomp.h"
+#include "strings/regex/regcomp.hpp"
 #include "strings/regex/regex.cuh"
 
 #include <cudf/detail/utilities/cuda_memcpy.hpp>

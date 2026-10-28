@@ -281,7 +281,7 @@ hybrid_scan_reader_impl::prepare_dictionaries(
 
   // Initialize column chunk descriptors
   auto chunks = cudf::detail::hostdevice_vector<cudf::io::parquet::detail::ColumnChunkDesc>(
-    total_column_chunks, stream);
+    total_column_chunks, stream, cudf::get_current_device_resource_ref());
   auto chunk_idx = 0;
 
   // For all row groups
@@ -345,7 +345,8 @@ hybrid_scan_reader_impl::prepare_dictionaries(
   chunks.host_to_device_async(stream);
 
   // Create page infos for each column chunk's dictionary page
-  cudf::detail::hostdevice_vector<PageInfo> pages(total_column_chunks, stream);
+  cudf::detail::hostdevice_vector<PageInfo> pages(
+    total_column_chunks, stream, cudf::get_current_device_resource_ref());
   CUDF_CUDA_TRY(
     cudaMemsetAsync(pages.device_ptr(), 0, pages.size() * sizeof(PageInfo), stream.get()));
 

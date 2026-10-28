@@ -110,7 +110,8 @@ void hybrid_scan_reader_impl::setup_next_pass(
     auto chunk_start = _file_itm_data.chunks.begin() + (row_group_start * chunks_per_rowgroup);
     auto chunk_end   = _file_itm_data.chunks.begin() + (row_group_end * chunks_per_rowgroup);
 
-    pass.chunks = cudf::detail::hostdevice_vector<ColumnChunkDesc>(num_chunks, _stream);
+    pass.chunks = cudf::detail::hostdevice_vector<ColumnChunkDesc>(
+      num_chunks, _stream, cudf::get_current_device_resource_ref());
     std::copy(chunk_start, chunk_end, pass.chunks.begin());
 
     // compute skip_rows / num_rows for this pass.

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "strings/regex/regex_program_impl.h"
+#include "strings/regex/regex_program_impl.hpp"
 #include "strings/regex/utilities.cuh"
 
 #include <cudf/column/column.hpp>

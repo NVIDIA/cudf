@@ -94,12 +94,13 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
   // In order to reduce the number of allocations of hostdevice_vector, we allocate a single vector
   // to store all per-chunk pointers to nested data/nullmask. `chunk_offsets[i]` will store the
   // offset into `chunk_nested_data`/`chunk_nested_valids` for the array of pointers for chunk `i`
-  auto chunk_nested_valids =
-    cudf::detail::hostdevice_vector<bitmask_type*>(sum_max_depths, _stream);
-  auto chunk_nested_data = cudf::detail::hostdevice_vector<void*>(sum_max_depths, _stream);
-  auto chunk_offsets     = std::vector<size_t>();
-  auto chunk_nested_str_data =
-    cudf::detail::hostdevice_vector<void*>(has_strings ? sum_max_depths : 0, _stream);
+  auto chunk_nested_valids = cudf::detail::hostdevice_vector<bitmask_type*>(
+    sum_max_depths, _stream, cudf::get_current_device_resource_ref());
+  auto chunk_nested_data = cudf::detail::hostdevice_vector<void*>(
+    sum_max_depths, _stream, cudf::get_current_device_resource_ref());
+  auto chunk_offsets         = std::vector<size_t>();
+  auto chunk_nested_str_data = cudf::detail::hostdevice_vector<void*>(
+    has_strings ? sum_max_depths : 0, _stream, cudf::get_current_device_resource_ref());
 
   // Update chunks with pointers to column data.
   for (size_t c = 0, chunk_off = 0; c < pass.chunks.size(); c++) {
@@ -1057,26 +1058,18 @@ table_with_metadata reader_impl::finalize_output(read_mode mode,
     out_metadata.num_rows_per_source.clear();
 
     bool use_jit = cudf::get_context().use_jit() || _options.use_jit_filter;
+    auto predicate =
+      !use_jit
+        ? cudf::detail::compute_column(*read_table, final_filter_expr.value().get(), _stream, _mr)
+        : cudf::compute_column_jit(
+            read_table->view(), final_filter_expr.value().get(), _stream, _mr);
 
-    if (!use_jit) {
-      auto predicate =
-        cudf::detail::compute_column(*read_table, final_filter_expr.value().get(), _stream, _mr);
-      CUDF_EXPECTS(predicate->view().type().id() == type_id::BOOL8,
-                   "Predicate filter should return a boolean");
-      // Exclude columns present in filter only in output
-      auto output_table = cudf::detail::apply_mask(
-        only_output, *predicate, cudf::detail::mask_type::RETENTION, _stream, _mr);
-      return {encode_output_dict_columns(std::move(output_table)), std::move(out_metadata)};
-    } else {
-      auto predicate =
-        cudf::compute_column_jit(read_table->view(), final_filter_expr.value().get(), _stream, _mr);
-      CUDF_EXPECTS(predicate->view().type().id() == type_id::BOOL8,
-                   "Predicate filter should return a boolean");
-      // Exclude columns present in filter only in output
-      auto output_table = cudf::apply_retention_mask(only_output, predicate->view(), _stream, _mr);
-
-      return {encode_output_dict_columns(std::move(output_table)), std::move(out_metadata)};
-    }
+    CUDF_EXPECTS(predicate->view().type().id() == type_id::BOOL8,
+                 "Predicate filter should return a boolean");
+    // Exclude columns present in filter only in output
+    auto output_table = cudf::detail::apply_mask(
+      only_output, *predicate, cudf::detail::mask_type::RETENTION, _stream, _mr);
+    return {encode_output_dict_columns(std::move(output_table)), std::move(out_metadata)};
   }
   return {encode_output_dict_columns(std::make_unique<table>(std::move(out_columns))),
           std::move(out_metadata)};

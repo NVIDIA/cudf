@@ -270,9 +270,12 @@ class MdSpanTest : public cudf::test::BaseFixture {};
 
 TEST(MdSpanTest, CanDetermineEmptiness)
 {
-  auto const vector            = hostdevice_2dvector<int>(1, 2, cudf::get_default_stream());
-  auto const no_rows_vector    = hostdevice_2dvector<int>(0, 2, cudf::get_default_stream());
-  auto const no_columns_vector = hostdevice_2dvector<int>(1, 0, cudf::get_default_stream());
+  auto const vector = hostdevice_2dvector<int>(
+    1, 2, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
+  auto const no_rows_vector = hostdevice_2dvector<int>(
+    0, 2, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
+  auto const no_columns_vector = hostdevice_2dvector<int>(
+    1, 0, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
 
   EXPECT_FALSE(host_2dspan<int const>{vector}.is_empty());
   EXPECT_FALSE(device_2dspan<int const>{vector}.is_empty());
@@ -293,7 +296,8 @@ CUDF_KERNEL void readwrite_kernel(device_2dspan<int> result)
 
 TEST(MdSpanTest, DeviceReadWrite)
 {
-  auto vector = hostdevice_2dvector<int>(11, 23, cudf::get_default_stream());
+  auto vector = hostdevice_2dvector<int>(
+    11, 23, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
 
   readwrite_kernel<<<1, 1, 0, cudf::get_default_stream().get()>>>(vector);
   readwrite_kernel<<<1, 1, 0, cudf::get_default_stream().get()>>>(vector);
@@ -303,9 +307,10 @@ TEST(MdSpanTest, DeviceReadWrite)
 
 TEST(MdSpanTest, HostReadWrite)
 {
-  auto vector = hostdevice_2dvector<int>(11, 23, cudf::get_default_stream());
-  auto span   = host_2dspan<int>{vector};
-  span[5][6]  = 5;
+  auto vector = hostdevice_2dvector<int>(
+    11, 23, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
+  auto span  = host_2dspan<int>{vector};
+  span[5][6] = 5;
   if (span[5][6] == 5) { span[5][6] *= 6; }
 
   EXPECT_EQ(vector[5][6], 30);
@@ -313,7 +318,8 @@ TEST(MdSpanTest, HostReadWrite)
 
 TEST(MdSpanTest, CanGetSize)
 {
-  auto const vector = hostdevice_2dvector<int>(1, 2, cudf::get_default_stream());
+  auto const vector = hostdevice_2dvector<int>(
+    1, 2, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
 
   EXPECT_EQ(host_2dspan<int const>{vector}.size(), vector.size());
   EXPECT_EQ(device_2dspan<int const>{vector}.size(), vector.size());
@@ -321,7 +327,8 @@ TEST(MdSpanTest, CanGetSize)
 
 TEST(MdSpanTest, CanGetCount)
 {
-  auto const vector = hostdevice_2dvector<int>(11, 23, cudf::get_default_stream());
+  auto const vector = hostdevice_2dvector<int>(
+    11, 23, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
 
   EXPECT_EQ(host_2dspan<int const>{vector}.count(), 11ul * 23);
   EXPECT_EQ(device_2dspan<int const>{vector}.count(), 11ul * 23);
@@ -330,7 +337,8 @@ TEST(MdSpanTest, CanGetCount)
 auto get_test_hostdevice_vector()
 {
   auto const msg = create_hello_world_message();
-  auto v         = cudf::detail::hostdevice_vector<char>(msg.size(), cudf::get_default_stream());
+  auto v         = cudf::detail::hostdevice_vector<char>(
+    msg.size(), cudf::get_default_stream(), cudf::get_current_device_resource_ref());
   std::memcpy(v.host_ptr(), msg.data(), msg.size());
 
   return v;
@@ -389,9 +397,9 @@ TEST(HostDeviceSpanTest, CanGetSize)
 
 TEST(HostDeviceSpanTest, CanGetSizeBytes)
 {
-  auto doubles = std::vector<double>({6, 3, 2});
-  auto doubles_hdv =
-    cudf::detail::hostdevice_vector<double>(doubles.size(), cudf::get_default_stream());
+  auto doubles     = std::vector<double>({6, 3, 2});
+  auto doubles_hdv = cudf::detail::hostdevice_vector<double>(
+    doubles.size(), cudf::get_default_stream(), cudf::get_current_device_resource_ref());
   std::memcpy(doubles_hdv.host_ptr(), doubles.data(), doubles.size() * sizeof(double));
 
   auto const doubles_span = cudf::detail::hostdevice_span<double>(doubles_hdv);

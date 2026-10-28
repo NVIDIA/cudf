@@ -40,7 +40,8 @@ class kernel_error {
    *
    * @param stream CUDA stream to use
    */
-  kernel_error(cuda::stream_ref stream) : _error_code(1, stream)
+  kernel_error(cuda::stream_ref stream)
+    : _error_code(1, stream, cudf::get_current_device_resource_ref())
   {
     _error_code[0] = 0;
     _error_code.host_to_device_async(stream);

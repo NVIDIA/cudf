@@ -363,7 +363,9 @@ void reader_impl::preprocess_file(read_mode mode)
   // This will be used only for CHUNKED_READ mode when there is a read limit.
   // Otherwise, we do not need this since we just load all stripes.
   cudf::detail::hostdevice_vector<cumulative_size> total_stripe_sizes(
-    load_all_stripes ? std::size_t{0} : num_total_stripes, _stream);
+    load_all_stripes ? std::size_t{0} : num_total_stripes,
+    _stream,
+    cudf::get_current_device_resource_ref());
 
   for (std::size_t stripe_global_idx = 0; stripe_global_idx < num_total_stripes;
        ++stripe_global_idx) {
@@ -632,8 +634,8 @@ void reader_impl::load_next_stripe_data(read_mode mode)
   //
 
   // This is for estimating the decompressed sizes of the loaded stripes.
-  cudf::detail::hostdevice_vector<cumulative_size_and_row> stripe_decomp_sizes(stripe_count,
-                                                                               _stream);
+  cudf::detail::hostdevice_vector<cumulative_size_and_row> stripe_decomp_sizes(
+    stripe_count, _stream, cudf::get_current_device_resource_ref());
 
   // Fill up the `cumulative_size_and_row` array with initial values.
   // Note: `hostdevice_vector::begin()` mirrors `std::vector::data()` using incorrect API name.
@@ -660,7 +662,8 @@ void reader_impl::load_next_stripe_data(read_mode mode)
         max_num_streams = std::max(max_num_streams, stream_range.size());
       }
     }
-    return cudf::detail::hostdevice_vector<compressed_stream_info>(max_num_streams, _stream);
+    return cudf::detail::hostdevice_vector<compressed_stream_info>(
+      max_num_streams, _stream, cudf::get_current_device_resource_ref());
   }();
 
   for (std::size_t level = 0; level < num_levels; ++level) {

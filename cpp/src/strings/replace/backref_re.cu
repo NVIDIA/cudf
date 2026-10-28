@@ -4,7 +4,7 @@
  */
 
 #include "backref_re.cuh"
-#include "strings/regex/regex_program_impl.h"
+#include "strings/regex/regex_program_impl.hpp"
 #include "strings/regex/utilities.cuh"
 
 #include <cudf/column/column.hpp>

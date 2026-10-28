@@ -85,14 +85,14 @@ struct subpass_intermediate_data {
     : decomp_page_data(stream, cudf::get_current_device_resource_ref()),
       level_decode_data(stream, cudf::get_current_device_resource_ref()),
       flat_nz_map_data(stream, cudf::get_current_device_resource_ref()),
-      nz_map_buf(0, stream),
-      page_buf(0, stream),
+      nz_map_buf(0, stream, cudf::get_current_device_resource_ref()),
+      page_buf(0, stream, cudf::get_current_device_resource_ref()),
       page_src_index(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init),
       page_string_offset_indices(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init),
       string_offset_buffer(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init),
       delta_temp_buf(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init),
-      page_nesting_info(0, stream),
-      page_nesting_decode_info(0, stream)
+      page_nesting_info(0, stream, cudf::get_current_device_resource_ref()),
+      page_nesting_decode_info(0, stream, cudf::get_current_device_resource_ref())
   {
   }
 
@@ -163,8 +163,8 @@ struct pass_intermediate_data {
   pass_intermediate_data(cuda::stream_ref stream)
     : raw_page_data{},
       row_groups{},
-      chunks(0, stream),
-      pages(0, stream),
+      chunks(0, stream, cudf::get_current_device_resource_ref()),
+      pages(0, stream, cudf::get_current_device_resource_ref()),
       page_offsets(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init),
       decomp_dict_data{stream, cudf::get_current_device_resource_ref()},
       decomp_scratch_sizes(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init),

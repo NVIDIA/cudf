@@ -771,7 +771,7 @@ std::unique_ptr<column> compute_row_mask_from_page_stats(
                                                        out_of_bounds_policy::DONT_CHECK,
                                                        negative_index_policy::NOT_ALLOWED,
                                                        stream,
-                                                       temp_mr);
+                                                       mr.as_temporary());
                   auto gathered_columns = gathered->release();
                   for (size_type stat_index = 0; stat_index < stats_cols_per_column; ++stat_index) {
                     segment_views[(stats_cols_per_column * input.column_index) + stat_index] =

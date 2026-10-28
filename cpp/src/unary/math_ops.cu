@@ -10,6 +10,7 @@
 #include <cudf/detail/unary.hpp>
 #include <cudf/dictionary/detail/encode.hpp>
 #include <cudf/dictionary/detail/iterator.cuh>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
@@ -536,17 +537,16 @@ struct LogicalOpDispatcher {
 struct FixedPointOpDispatcher {
   template <typename T, typename... Args>
   std::unique_ptr<column> operator()(Args&&...)
-    requires(not cudf::is_fixed_point<T>())
+    requires(not cudf::concepts::fixed_point<T>)
   {
     CUDF_FAIL("FixedPointOpDispatcher only for fixed_point");
   }
 
-  template <typename T>
+  template <cudf::concepts::fixed_point T>
   std::unique_ptr<column> operator()(column_view const& input,
                                      cudf::unary_operator op,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
-    requires(cudf::is_fixed_point<T>())
   {
     // clang-format off
     switch (op) {

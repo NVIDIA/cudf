@@ -307,7 +307,6 @@ def _partitioning_from_task_bounds(
                             br=context.br(),
                         ),
                         strict_boundaries=strict,
-                        locally_ordered=False,
                     )
                 ]
             ),

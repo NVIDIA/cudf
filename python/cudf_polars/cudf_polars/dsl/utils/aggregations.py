@@ -358,6 +358,30 @@ def decompose_single_agg(
                     True,
                 )
             ], named_expr.reconstruct(expr.Col(agg.dtype, name))
+        # These reductions ignore nulls, so mask_nans gives the same result.
+        if (
+            context == ExecutionContext.GROUPBY
+            and (
+                agg.name
+                in {
+                    "max",
+                    "mean",
+                    "median",
+                    "min",
+                    "product",
+                    "quantile",
+                    "std",
+                    "sum",
+                    "var",
+                }
+                or (agg.name == "count" and not agg.options)
+            )
+            and isinstance(child, expr.UnaryFunction)
+            and child.name == "drop_nans"
+            and plc.traits.is_floating_point(child.children[0].dtype.plc_type)
+        ):
+            (child,) = child.children
+            child = expr.UnaryFunction(child.dtype, "mask_nans", (), child)
         # Fuse drop_nulls().n_unique() into nunique(null_handling=EXCLUDE)
         # rather than materializing a filtered intermediate column.
         if (

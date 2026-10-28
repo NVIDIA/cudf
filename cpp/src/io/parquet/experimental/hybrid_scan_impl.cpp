@@ -1262,7 +1262,7 @@ table_with_metadata hybrid_scan_reader_impl::finalize_output(
     auto const final_filter      = compute_offset_filter();
     auto const final_filter_expr = final_filter.get_converted_expr();
 
-    bool const use_jit = cudf::get_context().use_jit() or _options.use_jit_filter;
+    auto const use_jit = cudf::get_context().use_jit() or _options.use_jit_filter;
     auto final_row_mask =
       use_jit
         ? cudf::compute_column_jit(

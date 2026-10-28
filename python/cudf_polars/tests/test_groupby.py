@@ -827,6 +827,18 @@ def test_groupby_drop_nans_aggs(engine: pl.GPUEngine) -> None:
     assert_gpu_result_equal(q, engine=engine, check_row_order=False)
 
 
+def test_groupby_drop_nans_include_null_count_unsupported(
+    engine: pl.GPUEngine,
+) -> None:
+    q = (
+        pl.LazyFrame({"key": [1, 1, 1], "value": [1.0, float("nan"), None]})
+        .group_by("key")
+        .agg(pl.col("value").drop_nans().len())
+    )
+
+    assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
 def test_groupby_sum_all_null_group_returns_null(engine: pl.GPUEngine):
     df = pl.LazyFrame(
         {

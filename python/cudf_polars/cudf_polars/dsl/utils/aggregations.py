@@ -358,20 +358,13 @@ def decompose_single_agg(
                     True,
                 )
             ], named_expr.reconstruct(expr.Col(agg.dtype, name))
-        # These reductions ignore nulls, so mask_nans will give the correct
-        # answer without changing the row count.
+        # These reductions ignore nulls, so mask_nans gives the same result.
         if (
             context == ExecutionContext.GROUPBY
-            and agg.name
-            in {
-                "count",
-                "max",
-                "mean",
-                "min",
-                "std",
-                "sum",
-                "var",
-            }
+            and (
+                agg.name in {"max", "mean", "min", "std", "sum", "var"}
+                or (agg.name == "count" and not agg.options)
+            )
             and isinstance(child, expr.UnaryFunction)
             and child.name == "drop_nans"
             and plc.traits.is_floating_point(child.children[0].dtype.plc_type)

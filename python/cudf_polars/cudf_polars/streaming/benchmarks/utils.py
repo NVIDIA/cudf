@@ -1124,7 +1124,7 @@ class SQLQueryFiles:
         path = self.path(int(attr[1:]))
 
         def query(run_config: RunConfig) -> str:
-            return path.read_text()
+            return path.read_text(encoding="utf-8")
 
         return query
 

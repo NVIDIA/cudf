@@ -362,7 +362,18 @@ def decompose_single_agg(
         if (
             context == ExecutionContext.GROUPBY
             and (
-                agg.name in {"max", "mean", "min", "std", "sum", "var"}
+                agg.name
+                in {
+                    "max",
+                    "mean",
+                    "median",
+                    "min",
+                    "product",
+                    "quantile",
+                    "std",
+                    "sum",
+                    "var",
+                }
                 or (agg.name == "count" and not agg.options)
             )
             and isinstance(child, expr.UnaryFunction)

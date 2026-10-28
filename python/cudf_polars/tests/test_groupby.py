@@ -827,6 +827,25 @@ def test_groupby_drop_nans_aggs(engine: pl.GPUEngine) -> None:
     assert_gpu_result_equal(q, engine=engine, check_row_order=False)
 
 
+def test_groupby_drop_nans_product_median_quantile(
+    in_memory_engine: pl.GPUEngine,
+) -> None:
+    df = pl.LazyFrame(
+        {
+            "key": [1, 1, 1, 2, 2],
+            "value": [1.0, float("nan"), None, float("nan"), None],
+        }
+    )
+    value = pl.col("value").drop_nans()
+    q = df.group_by("key").agg(
+        value.product().alias("product"),
+        value.median().alias("median"),
+        value.quantile(0.5).alias("quantile"),
+    )
+
+    assert_gpu_result_equal(q, engine=in_memory_engine, check_row_order=False)
+
+
 def test_groupby_drop_nans_include_null_count_unsupported(
     engine: pl.GPUEngine,
 ) -> None:

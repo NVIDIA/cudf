@@ -1103,45 +1103,84 @@ __device__ void prefetch_string_data(string_offset_page const& page,
 {
   int const misalignment = (reinterpret_cast<uintptr_t>(page.data) + next) & 127;
   base                   = static_cast<int32_t>(next) - misalignment;
-  int const count        = static_cast<int>(
-    cuda::std::min<int64_t>(string_offset_window_bytes, int64_t{page.bytes} - base));
-  end                = static_cast<int32_t>(int64_t{base} + count);
-  int const first    = base < 0 ? 128 : 0;
-  int const bulk_end = count & ~15;
-
-  for (int offset = first + lane * 16; offset < bulk_end; offset += cudf::detail::warp_size * 16) {
-    auto const* src = page.data + base + offset;
-    auto* dst       = window.data + offset / sizeof(uint32_t);
+  if (base >= 0 && static_cast<uint32_t>(page.bytes) - base >= string_offset_window_bytes) {
+    // Interior windows need exactly two aligned vectors per lane, with no scalar edges.
+    constexpr int stripe_bytes = cudf::detail::warp_size * 16;
+    static_assert(string_offset_window_bytes == 2 * stripe_bytes);
+    end             = base + string_offset_window_bytes;
+    auto* dst       = window.data + lane * 4;
+    auto const* src = page.data + base + lane * 16;
 #if __CUDA_ARCH__ >= 800
-    asm volatile("cp.async.cg.shared.global [%0], [%1], 16;" ::"r"(
-                   static_cast<uint32_t>(__cvta_generic_to_shared(dst))),
-                 "l"(src)
-                 : "memory");
+    asm volatile(
+      "cp.async.cg.shared.global [%0], [%1], 16;\n"
+      "cp.async.cg.shared.global [%0+%2], [%1+%2], 16;" ::"r"(
+        static_cast<uint32_t>(__cvta_generic_to_shared(dst))),
+      "l"(src),
+      "n"(stripe_bytes)
+      : "memory");
+    asm volatile("cp.async.commit_group;" ::: "memory");
 #else
     *reinterpret_cast<uint4*>(dst) = *reinterpret_cast<uint4 const*>(src);
+    *reinterpret_cast<uint4*>(dst + stripe_bytes / sizeof(uint32_t)) =
+      *reinterpret_cast<uint4 const*>(src + stripe_bytes);
 #endif
-  }
+    if (lane == 0) { window.data[string_offset_window_bytes / sizeof(uint32_t)] = 0; }
+  } else {
+    int const count = static_cast<int>(
+      cuda::std::min<int64_t>(string_offset_window_bytes, int64_t{page.bytes} - base));
+    end                = static_cast<int32_t>(int64_t{base} + count);
+    int const first    = base < 0 ? 128 : 0;
+    int const bulk_end = count & ~15;
+
+    for (int offset = first + lane * 16; offset < bulk_end;
+         offset += cudf::detail::warp_size * 16) {
+      auto const* src = page.data + base + offset;
+      auto* dst       = window.data + offset / sizeof(uint32_t);
 #if __CUDA_ARCH__ >= 800
-  asm volatile("cp.async.commit_group;" ::: "memory");
+      asm volatile("cp.async.cg.shared.global [%0], [%1], 16;" ::"r"(
+                     static_cast<uint32_t>(__cvta_generic_to_shared(dst))),
+                   "l"(src)
+                   : "memory");
+#else
+      *reinterpret_cast<uint4*>(dst) = *reinterpret_cast<uint4 const*>(src);
+#endif
+    }
+#if __CUDA_ARCH__ >= 800
+    asm volatile("cp.async.commit_group;" ::: "memory");
 #endif
 
-  // Scalar stores never overlap the asynchronous copies.
-  for (int word_index = lane; word_index < (count + 3) / 4; word_index += cudf::detail::warp_size) {
-    int const offset = word_index * 4;
-    if (offset >= first && offset < bulk_end) { continue; }
-    uint32_t word = 0;
+    // Scalar stores never overlap the asynchronous copies.
+    for (int word_index = lane; word_index < (count + 3) / 4;
+         word_index += cudf::detail::warp_size) {
+      int const offset = word_index * 4;
+      if (offset >= first && offset < bulk_end) { continue; }
+      uint32_t word = 0;
 #pragma unroll
-    for (int byte = 0; byte < 4; ++byte) {
-      int64_t const index = int64_t{base} + offset + byte;
-      if (index >= 0 && index < page.bytes) { word |= uint32_t{page.data[index]} << (8 * byte); }
+      for (int byte = 0; byte < 4; ++byte) {
+        int64_t const index = int64_t{base} + offset + byte;
+        if (index >= 0 && index < page.bytes) { word |= uint32_t{page.data[index]} << (8 * byte); }
+      }
+      window.data[word_index] = word;
     }
-    window.data[word_index] = word;
+    if (lane == 0) { window.data[(count + 3) / 4] = 0; }
   }
-  if (lane == 0) { window.data[(count + 3) / 4] = 0; }
 #if __CUDA_ARCH__ >= 800
   asm volatile("cp.async.wait_group 0;" ::: "memory");
 #endif
   __syncwarp();
+}
+
+/** @brief Fill unwritten offsets, including the terminal offset used to recover string lengths. */
+__device__ void fill_string_offset_tail(string_offset_page const& page,
+                                        int lane,
+                                        uint32_t written,
+                                        uint32_t next)
+{
+  __syncwarp();
+  for (uint64_t pos = uint64_t{written} + lane; pos <= page.num_values;
+       pos += cudf::detail::warp_size) {
+    page.offsets[pos] = next + uint32_t{4};
+  }
 }
 
 /** @brief Cooperatively scan length prefixes using one warp's shared-memory window. */
@@ -1151,47 +1190,48 @@ __device__ void read_string_offsets_buffered(string_offset_page const& page,
                                              kernel_error::pointer error_code)
 {
   if (page.bytes <= 0) { return; }
+  uint32_t pos = 0, next = 0;
+  if (page.bytes < 4 || page.num_values == 0) {
+    fill_string_offset_tail(page, lane, pos, next);
+    return;
+  }
   int32_t base = 0, end = 0;
-  uint32_t next = 0, written = page.num_values;
-  __syncwarp();
   prefetch_string_data(page, lane, next, window, base, end);
 
-  for (uint32_t pos = 0; pos < page.num_values; ++pos) {
-    // Every accepted length keeps next <= page.bytes <= INT32_MAX, so next + 4
-    // cannot overflow uint32_t, including the natural end-of-data check.
-    auto const string_offset = next + uint32_t{4};
-    if (string_offset > static_cast<uint32_t>(page.bytes)) {
-      written = pos;
-      break;
-    }
-    if (string_offset > static_cast<uint32_t>(end)) {
-      __syncwarp();  // All consumers finish before this warp reuses its window.
-      prefetch_string_data(page, lane, next, window, base, end);
-    }
-
+  while (true) {
+    // A complete prefix inside this window is also inside the page. Keep page-end
+    // and refill handling outside the common loop, using a window-relative cursor.
     // Unsigned subtraction also yields the correct index when the initial base is negative.
-    auto const index = next - static_cast<uint32_t>(base);
-    auto const len   = static_cast<int32_t>(
-      __funnelshift_r(window.data[index / 4], window.data[index / 4 + 1], (index & 3) * 8));
-    // The prefix check bounds remaining bytes by INT32_MAX. Casting a negative
-    // length to uint32_t makes it exceed that bound, rejecting negative lengths too.
-    if (static_cast<uint32_t>(len) > static_cast<uint32_t>(page.bytes) - string_offset) {
-      written = pos;
-      if (lane == 0) {
-        set_error(static_cast<kernel_error::value_type>(decode_error::STRING_DATA_OVERRUN),
-                  error_code);
+    uint32_t index           = next - static_cast<uint32_t>(base);
+    uint32_t const limit     = static_cast<uint32_t>(end) - static_cast<uint32_t>(base) - 4;
+    uint32_t const remaining = static_cast<uint32_t>(page.bytes) - static_cast<uint32_t>(base) - 4;
+    uint32_t const bias      = static_cast<uint32_t>(base) + 4;
+    do {
+      uint32_t const len =
+        __funnelshift_r(window.data[index / 4], window.data[index / 4 + 1], (index & 3) * 8);
+      // Remaining page bytes fit in INT32_MAX, so this also rejects negative lengths.
+      if (len > remaining - index) {
+        next = static_cast<uint32_t>(base) + index;
+        if (lane == 0) {
+          set_error(static_cast<kernel_error::value_type>(decode_error::STRING_DATA_OVERRUN),
+                    error_code);
+        }
+        goto done;
       }
-      break;
-    }
-    if (lane == 0) { page.offsets[pos] = string_offset; }
-    next = string_offset + len;
+      uint32_t const offset = bias + index;
+      index += len + 4;
+      ++pos;
+      if (lane == 0) { page.offsets[pos - 1] = offset; }
+    } while (index <= limit && pos < page.num_values);
+
+    next = static_cast<uint32_t>(base) + index;
+    // Accepted lengths keep next <= page.bytes <= INT32_MAX; next + 4 cannot overflow.
+    if (pos == page.num_values || next + 4 > static_cast<uint32_t>(page.bytes)) { break; }
+    __syncwarp();  // All consumers finish before this warp reuses its window.
+    prefetch_string_data(page, lane, next, window, base, end);
   }
-  __syncwarp();
-  // Include the terminal offset; decoding subtracts the next prefix's four bytes.
-  for (uint64_t pos = uint64_t{written} + lane; pos <= page.num_values;
-       pos += cudf::detail::warp_size) {
-    page.offsets[pos] = next + sizeof(int32_t);
-  }
+done:
+  fill_string_offset_tail(page, lane, pos, next);
 }
 
 /** @brief Read long strings' length prefixes directly, avoiding unused payload copies. */

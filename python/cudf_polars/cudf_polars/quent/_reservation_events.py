@@ -438,11 +438,16 @@ def _parse_data(kind: str, event: Mapping[str, object]) -> dict[str, Any]:
         if not isinstance(timed_out, bool):
             raise TypeError("timed_out must be a bool")
         error = _string(event["error"], "error")
+        memory_type = event["memory_type"]
         return {
             "id": u64("id"),
             "outcome": u32("outcome"),
             "reservation_id": u64("reservation_id"),
-            "memory_type": u32("memory_type"),
+            "memory_type": (
+                None
+                if memory_type is None
+                else _integer(memory_type, "memory_type", 32, signed=False)
+            ),
             "size": u64("size"),
             "overbooked_bytes": u64("overbooked_bytes"),
             "timed_out": timed_out,

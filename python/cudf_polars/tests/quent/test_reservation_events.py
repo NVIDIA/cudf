@@ -78,7 +78,11 @@ def _resolved(
         "id": identifier,
         "outcome": outcome,
         "reservation_id": 0,
-        "memory_type": ReservationEventMemoryType.DEVICE,
+        "memory_type": (
+            ReservationEventMemoryType.DEVICE
+            if outcome == ReservationRequestOutcome.GRANTED
+            else None
+        ),
         "size": 0,
         "overbooked_bytes": 0,
         "timed_out": outcome == ReservationRequestOutcome.EMPTY,

@@ -131,6 +131,15 @@ class BooleanFunction(Expr):
             and plc.traits.is_nested(children[1].dtype.plc_type)
         ):
             raise NotImplementedError("is_in with a nested column haystack")
+        if (
+            self.name is BooleanFunction.Name.IsIn
+            and len(children) == 2
+            and isinstance(children[1], LiteralColumn)
+            and isinstance(children[1].value.dtype, pl.List)
+            and len(children[1].value) > 1
+        ):
+            # One list per row, rather than a single list to test membership of.
+            raise NotImplementedError("is_in with a per-row list haystack")
         if self.name is BooleanFunction.Name.IsClose:
             abs_tol, rel_tol, _ = self.options
             if abs_tol < 0.0:

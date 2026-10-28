@@ -342,7 +342,9 @@ def decompose_single_agg(
                     is_top=False,
                     context=context,
                 )
-                if any(nested_agg for _, nested_agg in child_aggs):
+                if any(
+                    nested_agg for _, nested_agg in child_aggs
+                ):  # pragma: no cover; polars 2.1 drops scalar sort keys
                     raise NotImplementedError(
                         "Nested aggs in sorted groupby aggregation not supported"
                     )
@@ -613,6 +615,14 @@ def decompose_single_agg(
                 aggs,
                 named_expr.reconstruct(agg.reconstruct([p.value for p in posts])),
             )
+        elif is_top and all(
+            isinstance(node, expr.Literal)
+            for node in traversal([agg])
+            if not node.children
+        ):
+            # An expression built only from scalar literals is itself a
+            # scalar: it yields one value per group rather than a list.
+            return [], named_expr
         else:
             # Or pre-evaluation if inside an aggregation.
             return (

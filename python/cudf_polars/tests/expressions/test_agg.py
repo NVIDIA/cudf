@@ -15,6 +15,7 @@ from cudf_polars.testing.asserts import (
     assert_ir_translation_raises,
 )
 from cudf_polars.testing.engine_utils import is_streaming_engine
+from cudf_polars.utils.versions import POLARS_VERSION_LT_21
 
 
 @pytest.fixture(
@@ -181,7 +182,6 @@ def test_max_min_by_float_nan(engine: pl.GPUEngine, expr: str, by) -> None:
     [
         pl.col("b").filter(pl.col("b") > 20),
         pl.col("b").head(2),
-        pl.lit(1),
     ],
 )
 def test_max_min_by_mismatched_length_raises(
@@ -197,16 +197,35 @@ def test_max_min_by_mismatched_length_raises(
             q.collect(engine=engine)
 
 
+@pytest.mark.skipif(
+    POLARS_VERSION_LT_21,
+    reason="Polars 2.0 raises ShapeError for a length-1 value or key",
+)
 @pytest.mark.parametrize("expr", ["max_by", "min_by"])
-def test_max_min_by_scalar_value(engine: pl.GPUEngine, expr: str) -> None:
+@pytest.mark.parametrize("value", [pl.lit(99), pl.col("b").max()])
+def test_max_min_by_scalar_value(engine: pl.GPUEngine, expr: str, value) -> None:
+    # polars >= 2.1 broadcasts a scalar value over the `by` keys.
     df = pl.LazyFrame({"b": [1, 5, 2]})
-    q = df.select(getattr(pl.lit(99), expr)("b"))
-    if is_streaming_engine(engine):
-        with pytest.RaisesGroup(pl.exceptions.ShapeError):
-            q.collect(engine=engine)
-    else:
-        with pytest.raises(pl.exceptions.ShapeError):
-            q.collect(engine=engine)
+    q = df.select(getattr(value, expr)("b").alias("out"))
+    assert_gpu_result_equal(q, engine=engine)
+    empty = df.clear().select(getattr(value, expr)("b").alias("out"))
+    assert_gpu_result_equal(empty, engine=engine)
+
+
+@pytest.mark.skipif(
+    POLARS_VERSION_LT_21,
+    reason="Polars 2.0 raises ShapeError for a length-1 value or key",
+)
+@pytest.mark.parametrize("expr", ["max_by", "min_by"])
+def test_max_min_by_scalar_key(engine: pl.GPUEngine, expr: str) -> None:
+    # A scalar `by` ties every row, so any row of the input may be returned.
+    df = pl.LazyFrame({"a": [1, 2, 3, 4]})
+    for by in [pl.lit(1), pl.col("a").max()]:
+        q = df.select(getattr(pl.col("a"), expr)(by))
+        out = q.collect(engine=engine).item()
+        assert out in {1, 2, 3, 4}
+    q = df.select(getattr(pl.col("a"), expr)(pl.lit(None, dtype=pl.Int64)))
+    assert_gpu_result_equal(q, engine=engine)
 
 
 @pytest.mark.parametrize("agg", ["max_by", "min_by"])
@@ -571,4 +590,9 @@ def test_hist_no_bin_count_unsupported(engine: pl.GPUEngine):
 def test_temporal_quantile_median_not_supported(engine: pl.GPUEngine, expr):
     df = pl.LazyFrame({"a": [date(2025, 1, 1), date(2025, 1, 2), date(2025, 1, 3)]})
     q = df.select(expr)
+    assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+def test_n_unique_null_dtype_unsupported(engine: pl.GPUEngine) -> None:
+    q = pl.LazyFrame({"x": [1, 2, 3]}).select(pl.lit(None).drop_nulls().n_unique())
     assert_ir_translation_raises(q, engine, NotImplementedError)

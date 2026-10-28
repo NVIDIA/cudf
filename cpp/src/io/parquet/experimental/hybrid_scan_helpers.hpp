@@ -323,7 +323,7 @@ class aggregate_reader_metadata : public aggregate_reader_metadata_base {
    *
    * @param row_group_indices Input row groups indices
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Memory resources used to allocate the returned column's device memory
+   * @param mr Memory resources used to allocate temporary and returned column device memory
    *
    * @return A boolean column representing a mask of rows with all rows set to true
    */
@@ -341,7 +341,7 @@ class aggregate_reader_metadata : public aggregate_reader_metadata_base {
    * @param output_column_schemas schema indices of output columns
    * @param filter AST expression to filter data pages based on page index statistics
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Memory resources used to allocate the returned column's device memory
+   * @param mr Memory resources used to allocate temporary and returned column device memory
    *
    * @return A boolean column representing a mask of rows surviving the predicate filter at
    *         page-level

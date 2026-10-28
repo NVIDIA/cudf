@@ -602,7 +602,7 @@ class hybrid_scan_reader {
    *
    * @param row_group_indices Input row groups indices
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Memory resources used to allocate the returned column's device memory
+   * @param mr Memory resources used to allocate temporary and returned column device memory
    * @return An all-true boolean (survival) column of size equal to the total number of rows in the
    * row groups
    */
@@ -618,7 +618,7 @@ class hybrid_scan_reader {
    * @param row_group_indices Input row groups indices
    * @param options Parquet reader options
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Memory resources used to allocate the returned column's device memory
+   * @param mr Memory resources used to allocate temporary and returned column device memory
    * @return A boolean column indicating which filter column rows survive the statistics in the page
    * index
    */
@@ -648,7 +648,7 @@ class hybrid_scan_reader {
    * @param mask_data_pages Whether to build and use a data page mask using the row mask
    * @param options Parquet reader options
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Memory resources used to allocate the device memory for the output table
+   * @param mr Memory resources used to allocate temporary and output table device memory
    * @return Table of materialized filter columns and metadata
    */
   [[nodiscard]] table_with_metadata materialize_filter_columns(
@@ -679,7 +679,7 @@ class hybrid_scan_reader {
    * @param mask_data_pages Whether to build and use a data page mask using the row mask
    * @param options Parquet reader options
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Memory resources used to allocate the device memory for the output table
+   * @param mr Memory resources used to allocate temporary and output table device memory
    * @return Table of materialized payload columns and metadata
    */
   [[nodiscard]] table_with_metadata materialize_payload_columns(
@@ -708,7 +708,7 @@ class hybrid_scan_reader {
    * @param column_chunk_data Device spans of column chunk data of all columns
    * @param options Parquet reader options
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Memory resources used to allocate the device memory for the output table
+   * @param mr Memory resources used to allocate temporary and output table device memory
    * @return Table of all materialized columns and metadata
    */
   [[nodiscard]] table_with_metadata materialize_all_columns(
@@ -730,7 +730,7 @@ class hybrid_scan_reader {
    * @param mask_data_pages Whether to build and use a data page mask using the row mask
    * @param column_chunk_data Device spans of column chunk data of filter columns
    * @param options Parquet reader options
-   * @param mr Memory resources used to allocate the device memory for the output table chunks
+   * @param mr Memory resources used to allocate temporary and output table chunk device memory
    * @param stream CUDA stream used for device memory operations and kernel launches
    */
   void setup_chunking_for_filter_columns(
@@ -768,7 +768,7 @@ class hybrid_scan_reader {
    * @param column_chunk_data Device spans of column chunk data of payload columns
    * @param options Parquet reader options
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Memory resources used to allocate the device memory for the output table chunks
+   * @param mr Memory resources used to allocate temporary and output table chunk device memory
    */
   void setup_chunking_for_payload_columns(
     std::size_t chunk_read_limit,
@@ -804,7 +804,7 @@ class hybrid_scan_reader {
    * @param column_chunk_data Device spans of column chunk data of all columns
    * @param options Parquet reader options
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Memory resources used to allocate the device memory for the output table chunks
+   * @param mr Memory resources used to allocate temporary and output table chunk device memory
    */
   void setup_chunking_for_all_columns(
     std::size_t chunk_read_limit,

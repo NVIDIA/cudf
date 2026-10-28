@@ -1020,8 +1020,7 @@ class parquet_reader_options_builder {
  *
  * @param options Settings for controlling reading behavior
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Memory resources used to allocate device memory of the table in the returned
- * table_with_metadata
+ * @param mr Memory resources used to allocate temporary and output table device memory
  *
  * @return The set of columns along with metadata
  */
@@ -1049,8 +1048,7 @@ table_with_metadata read_parquet(
  * @param parquet_metadatas Pre-materialized Parquet file metadata(s). Read from sources if empty
  * @param options Settings for controlling reading behavior
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Memory resources used to allocate device memory of the table in the returned
- * table_with_metadata
+ * @param mr Memory resources used to allocate temporary and output table device memory
  *
  * @return The set of columns along with metadata
  */

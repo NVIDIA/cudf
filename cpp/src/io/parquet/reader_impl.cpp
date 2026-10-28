@@ -564,7 +564,7 @@ reader_impl::reader_impl(std::size_t chunk_read_limit,
                          cuda::stream_ref stream,
                          cudf::memory_resources mr)
   : _stream{std::move(stream)},
-    _mr{std::move(mr)},
+    _mr{mr},
     _options{options.get_timestamp_type(),
              options.get_decimal_width(),
              options.get_skip_rows(),

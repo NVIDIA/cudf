@@ -225,7 +225,9 @@ def test_groupby_dynamic_preserves_index_ordering(spmd_engine_factory) -> None:
     (ordering,) = metadata.partitioning.inter_rank.orderings
     assert tuple(key.column_index for key in ordering.keys) == (0,)
     assert ordering.strict_boundaries is True
-    assert ordering.locally_ordered is True
+    assert metadata.partitioning.row_orderings == (
+        RowOrdering(ordering.keys, RowOrderingScope.GLOBAL),
+    )
 
 
 @pytest.mark.parametrize("keys", [("key",), ("key", "key2")])

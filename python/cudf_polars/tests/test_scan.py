@@ -1165,7 +1165,6 @@ def test_scan_parquet_decimal(engine: pl.GPUEngine, tmp_path, dtype):
 
 
 def test_scan_parquet_nested_narrow_decimal(engine: pl.GPUEngine, tmp_path):
-    # https://github.com/NVIDIA/cudf/issues/24838
     path = tmp_path / "nested_decimal.parquet"
     pl.DataFrame(
         {"l": [[Decimal("1.0"), None], [Decimal("2.5")]]},

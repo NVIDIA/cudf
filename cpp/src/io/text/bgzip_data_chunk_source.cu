@@ -18,10 +18,12 @@
 #include <cudf/io/text/detail/bgzip_utils.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/device_buffer.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/tuple>
 #include <cuda/stream>
@@ -58,15 +60,33 @@ struct bgzip_nvcomp_transform_functor {
 
 class bgzip_data_chunk_reader : public data_chunk_reader {
  private:
+  // Reuse scratch storage across batches. Previous batch contents are no longer needed
+  // when a larger allocation is required.
+  // TODO: Replace these with resizable buffers once https://github.com/NVIDIA/cccl/issues/12051 is
+  // resolved
+  template <typename T>
+  static void ensure_capacity(cuda::device_buffer<T>& device,
+                              std::size_t size,
+                              cuda::stream_ref stream)
+  {
+    if (size > device.size()) {
+      device = cuda::device_buffer<T>{stream, device.memory_resource(), size, cuda::no_init};
+    } else {
+      device.set_stream(stream);
+    }
+  }
+
   template <typename T>
   static void copy_to_device(cudf::detail::host_vector<T> const& host,
-                             rmm::device_uvector<T>& device,
+                             cuda::device_buffer<T>& device,
                              cuda::stream_ref stream)
   {
     // Buffer needs to be padded.
     // Required by `inflate_kernel`.
-    device.resize(cudf::util::round_up_safe(host.size(), cudf::io::detail::BUFFER_PADDING_MULTIPLE),
-                  stream);
+    ensure_capacity(
+      device,
+      cudf::util::round_up_safe(host.size(), cudf::io::detail::BUFFER_PADDING_MULTIPLE),
+      stream);
     cudf::detail::cuda_memcpy_async<T>(
       device_span<T>{device}.subspan(0, host.size()), host, stream);
   }
@@ -86,13 +106,13 @@ class bgzip_data_chunk_reader : public data_chunk_reader {
     cudf::detail::host_vector<char> h_compressed_blocks;
     cudf::detail::host_vector<std::size_t> h_compressed_offsets;
     cudf::detail::host_vector<std::size_t> h_decompressed_offsets;
-    rmm::device_uvector<char> d_compressed_blocks;
-    rmm::device_uvector<char> d_decompressed_blocks;
-    rmm::device_uvector<std::size_t> d_compressed_offsets;
-    rmm::device_uvector<std::size_t> d_decompressed_offsets;
-    rmm::device_uvector<device_span<uint8_t const>> d_compressed_spans;
-    rmm::device_uvector<device_span<uint8_t>> d_decompressed_spans;
-    rmm::device_uvector<cudf::io::detail::codec_exec_result> d_decompression_results;
+    cuda::device_buffer<char> d_compressed_blocks;
+    cuda::device_buffer<char> d_decompressed_blocks;
+    cuda::device_buffer<std::size_t> d_compressed_offsets;
+    cuda::device_buffer<std::size_t> d_decompressed_offsets;
+    cuda::device_buffer<device_span<uint8_t const>> d_compressed_spans;
+    cuda::device_buffer<device_span<uint8_t>> d_decompressed_spans;
+    cuda::device_buffer<cudf::io::detail::codec_exec_result> d_decompression_results;
     std::size_t compressed_size_with_headers{};
     std::size_t max_decompressed_size{};
     // this is usually equal to decompressed_size()
@@ -105,13 +125,18 @@ class bgzip_data_chunk_reader : public data_chunk_reader {
       : h_compressed_blocks{cudf::detail::make_pinned_vector_async<char>(0, init_stream)},
         h_compressed_offsets{cudf::detail::make_pinned_vector_async<std::size_t>(0, init_stream)},
         h_decompressed_offsets{cudf::detail::make_pinned_vector_async<std::size_t>(0, init_stream)},
-        d_compressed_blocks(0, init_stream),
-        d_decompressed_blocks(0, init_stream),
-        d_compressed_offsets(0, init_stream),
-        d_decompressed_offsets(0, init_stream),
-        d_compressed_spans(0, init_stream),
-        d_decompressed_spans(0, init_stream),
-        d_decompression_results(0, init_stream)
+        d_compressed_blocks(init_stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init),
+        d_decompressed_blocks(
+          init_stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init),
+        d_compressed_offsets(
+          init_stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init),
+        d_decompressed_offsets(
+          init_stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init),
+        d_compressed_spans(init_stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init),
+        d_decompressed_spans(
+          init_stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init),
+        d_decompression_results(
+          init_stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init)
     {
       CUDF_CUDA_TRY(cudaEventCreate(&event));
       h_compressed_blocks.reserve(default_buffer_alloc);
@@ -127,10 +152,10 @@ class bgzip_data_chunk_reader : public data_chunk_reader {
       copy_to_device(h_compressed_blocks, d_compressed_blocks, stream);
       copy_to_device(h_compressed_offsets, d_compressed_offsets, stream);
       copy_to_device(h_decompressed_offsets, d_decompressed_offsets, stream);
-      d_decompressed_blocks.resize(decompressed_size(), stream);
-      d_compressed_spans.resize(num_blocks(), stream);
-      d_decompressed_spans.resize(num_blocks(), stream);
-      d_decompression_results.resize(num_blocks(), stream);
+      ensure_capacity(d_decompressed_blocks, decompressed_size(), stream);
+      ensure_capacity(d_compressed_spans, num_blocks(), stream);
+      ensure_capacity(d_decompressed_spans, num_blocks(), stream);
+      ensure_capacity(d_decompression_results, num_blocks(), stream);
 
       auto offset_it = cuda::make_zip_iterator(d_compressed_offsets.begin(),
                                                d_compressed_offsets.begin() + 1,
@@ -146,14 +171,16 @@ class bgzip_data_chunk_reader : public data_chunk_reader {
         bgzip_nvcomp_transform_functor{reinterpret_cast<uint8_t const*>(d_compressed_blocks.data()),
                                        reinterpret_cast<uint8_t*>(d_decompressed_blocks.data())});
 
-      cudf::io::detail::decompress(cudf::io::compression_type::ZLIB,
-                                   d_compressed_spans,
-                                   d_decompressed_spans,
-                                   d_decompression_results,
-                                   max_decompressed_size,
-                                   decompressed_size(),
-                                   stream,
-                                   cudf::get_current_device_resource_ref());
+      cudf::io::detail::decompress(
+        cudf::io::compression_type::ZLIB,
+        device_span<device_span<uint8_t const> const>{d_compressed_spans.data(), num_blocks()},
+        device_span<device_span<uint8_t> const>{d_decompressed_spans.data(), num_blocks()},
+        device_span<cudf::io::detail::codec_exec_result>{d_decompression_results.data(),
+                                                         num_blocks()},
+        max_decompressed_size,
+        decompressed_size(),
+        stream,
+        cudf::get_current_device_resource_ref());
       is_decompressed = true;
     }
 
@@ -162,15 +189,15 @@ class bgzip_data_chunk_reader : public data_chunk_reader {
       h_compressed_blocks.resize(0);
       h_compressed_offsets.resize(1);
       h_decompressed_offsets.resize(1);
-      // shrinking doesn't allocate/free, so we don't need to worry about streams
+      // Retain scratch capacity and update the streams used for subsequent destruction.
       auto stream = cudf::get_default_stream();
-      d_compressed_blocks.resize(0, stream);
-      d_decompressed_blocks.resize(0, stream);
-      d_compressed_offsets.resize(0, stream);
-      d_decompressed_offsets.resize(0, stream);
-      d_compressed_spans.resize(0, stream);
-      d_decompressed_spans.resize(0, stream);
-      d_decompression_results.resize(0, stream);
+      d_compressed_blocks.set_stream(stream);
+      d_decompressed_blocks.set_stream(stream);
+      d_compressed_offsets.set_stream(stream);
+      d_decompressed_offsets.set_stream(stream);
+      d_compressed_spans.set_stream(stream);
+      d_decompressed_spans.set_stream(stream);
+      d_decompression_results.set_stream(stream);
       compressed_size_with_headers = 0;
       max_decompressed_size        = 0;
       available_decompressed_size  = 0;
@@ -250,7 +277,7 @@ class bgzip_data_chunk_reader : public data_chunk_reader {
                           uint64_t virtual_end)
     : _data_stream(std::move(input_stream)),
       _prev_blocks{cudf::get_default_stream()},  // here we can use the default stream because
-      _curr_blocks{cudf::get_default_stream()},  // we only initialize empty device_uvectors
+      _curr_blocks{cudf::get_default_stream()},  // we only initialize empty device buffers
       _local_end{virtual_end & 0xFFFFu},
       _compressed_pos{virtual_begin >> 16},
       _compressed_end{virtual_end >> 16}
@@ -293,7 +320,8 @@ class bgzip_data_chunk_reader : public data_chunk_reader {
     CUDF_FUNC_RANGE();
     if (read_size <= _curr_blocks.remaining_size()) {
       _curr_blocks.decompress(stream);
-      rmm::device_uvector<char> data(read_size, stream);
+      cuda::device_buffer<char> data(
+        stream, cudf::get_current_device_resource_ref(), read_size, cuda::no_init);
       CUDF_CUDA_TRY(cudf::detail::memcpy_async(
         data.data(),
         _curr_blocks.d_decompressed_blocks.data() + _curr_blocks.read_pos,
@@ -302,13 +330,14 @@ class bgzip_data_chunk_reader : public data_chunk_reader {
       // record the host-to-device copy, decompression and device copy
       CUDF_CUDA_TRY(cudaEventRecord(_curr_blocks.event, stream.get()));
       _curr_blocks.consume_bytes(read_size);
-      return std::make_unique<device_uvector_data_chunk>(std::move(data));
+      return std::make_unique<device_buffer_data_chunk>(std::move(data));
     }
     read_next_compressed_chunk(read_size /* - _curr_blocks.remaining_size()*/);
     _prev_blocks.decompress(stream);
     _curr_blocks.decompress(stream);
     read_size = std::min(read_size, _prev_blocks.remaining_size() + _curr_blocks.remaining_size());
-    rmm::device_uvector<char> data(read_size, stream);
+    cuda::device_buffer<char> data(
+      stream, cudf::get_current_device_resource_ref(), read_size, cuda::no_init);
     CUDF_CUDA_TRY(
       cudf::detail::memcpy_async(data.data(),
                                  _prev_blocks.d_decompressed_blocks.data() + _prev_blocks.read_pos,
@@ -325,7 +354,7 @@ class bgzip_data_chunk_reader : public data_chunk_reader {
     read_size -= _prev_blocks.remaining_size();
     _prev_blocks.consume_bytes(_prev_blocks.remaining_size());
     _curr_blocks.consume_bytes(read_size);
-    return std::make_unique<device_uvector_data_chunk>(std::move(data));
+    return std::make_unique<device_buffer_data_chunk>(std::move(data));
   }
 
  private:

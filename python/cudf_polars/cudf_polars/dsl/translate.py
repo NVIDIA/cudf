@@ -253,7 +253,7 @@ class Translator:
         # IR is versioned with major.minor, minor is bumped for backwards
         # compatible changes (e.g. adding new nodes), major is bumped for
         # incompatible changes (e.g. renaming nodes).
-        if (version := self.visitor.version()) >= (15, 3):
+        if (version := self.visitor.version()) >= (16, 1):
             e = NotImplementedError(
                 f"No support for polars IR {version=}"
             )  # pragma: no cover; no such version for now.
@@ -435,16 +435,10 @@ class Translator:
         )
         if (
             _contains_dtype(dtype.polars_type, (pl.Time,)) and not is_time_passthrough
-        ) or (
-            # dt.time() children were already validated with allow_passthrough=True.
-            not is_time_function
-            and any(
-                _contains_dtype(child.dtype.polars_type, (pl.Time,))
-                for child in traversal(list(translated.children))
-            )
-        ):
+        ) or _contains_time_input(translated):
             error = NotImplementedError(
-                "Only dt.time() and pass-through of Time columns are supported"
+                "Only dt.time(), dt.combine() and pass-through of Time columns "
+                "are supported"
             )
             self.errors.append(error)
             return expr.ErrorExpr(dtype, str(error))
@@ -632,6 +626,9 @@ def _(node: plrs._ir_nodes.Scan, translator: Translator, schema: Schema) -> ir.I
     else:
         reader_options, cloud_options = map(json.loads, options)
     file_options = node.file_options
+    if typ == "csv":
+        # Not part of the CSV reader options, but needed to read the files.
+        reader_options["extra_columns"] = file_options.extra_columns_policy
     with_columns = file_options.with_columns
     row_index = file_options.row_index
     include_file_paths = file_options.include_file_paths
@@ -809,7 +806,7 @@ def _(node: plrs._ir_nodes.Join, translator: Translator, schema: Schema) -> ir.I
         "Semi",
         "Anti",
     }:
-        if how != "Cross" and not left_on:
+        if how != "Cross" and not left_on:  # pragma: no cover; polars 2.0 only
             raise NotImplementedError(
                 "Joins without keys carry a predicate that polars does not expose"
             )
@@ -821,12 +818,18 @@ def _(node: plrs._ir_nodes.Join, translator: Translator, schema: Schema) -> ir.I
             inp_left,
             inp_right,
         )
+    elif len(how) == 2 and how[1] == "cross_and_filter":
+        return _translate_cross_and_filter(
+            node, translator, schema, inp_left, inp_right, left_on, right_on
+        )
+    elif len(how) == 2 and how[1] == "fused_predicate":
+        return _translate_fused_predicate(
+            node, translator, schema, inp_left, inp_right, left_on, right_on
+        )
     else:
-        how, op1, op2 = node.options[0]
-        if how != "IEJoin":
-            raise NotImplementedError(
-                f"Unsupported join type {how}"
-            )  # pragma: no cover; asof joins not yet exposed
+        if how[0] != "IEJoin":  # pragma: no cover; asof joins not yet exposed
+            raise NotImplementedError(f"Unsupported join type {how}")
+        _, op1, op2 = how
         if op2 is None:
             ops = [op1]
         else:
@@ -861,6 +864,44 @@ def _(node: plrs._ir_nodes.Join, translator: Translator, schema: Schema) -> ir.I
         )
 
         return ir.ConditionalJoin(schema, predicate, node.options, inp_left, inp_right)
+
+
+def _translate_cross_and_filter(
+    node: plrs._ir_nodes.Join,
+    translator: Translator,
+    schema: Schema,
+    inp_left: ir.IR,
+    inp_right: ir.IR,
+    left_on: list[expr.NamedExpr],
+    right_on: list[expr.NamedExpr],
+) -> ir.IR:
+    """
+    Translate a join that Polars plans as a nested loop join.
+
+    The join type is ``(<how>, "cross_and_filter")`` and ``node.predicate`` is the
+    condition that is applied to the cross product, for example from
+    ``x NOT IN (SELECT ...)`` in SQL. Not supported yet, so it falls back to the CPU.
+    """
+    raise NotImplementedError(f"Unsupported join type {node.options[0]}")
+
+
+def _translate_fused_predicate(
+    node: plrs._ir_nodes.Join,
+    translator: Translator,
+    schema: Schema,
+    inp_left: ir.IR,
+    inp_right: ir.IR,
+    left_on: list[expr.NamedExpr],
+    right_on: list[expr.NamedExpr],
+) -> ir.IR:
+    """
+    Translate an equi join that Polars plans with an extra, fused predicate.
+
+    The join type is ``(<how>, "fused_predicate")``, ``left_on`` and ``right_on`` are
+    the equality keys and ``node.predicate`` is the extra condition. Not supported
+    yet, so it falls back to the CPU.
+    """
+    raise NotImplementedError(f"Unsupported join type {node.options[0]}")
 
 
 @_translate_ir.register
@@ -932,6 +973,25 @@ def _(node: plrs._ir_nodes.Sort, translator: Translator, schema: Schema) -> ir.I
     order, null_order = sorting.sort_order(
         descending, nulls_last=nulls_last, num_keys=len(by)
     )
+    # CPU Polars allows duplicate keys, but they may break streaming
+    # GPU code (see https://github.com/pola-rs/polars/issues/30116).
+    # Repeated columns cannot break ties left by their first occurrence.
+    # Keep the first occurrence's direction and null placement.
+    seen: set[str] = set()
+    unique_by = []
+    unique_order = []
+    unique_null_order = []
+    for key, key_order, key_null_order in zip(by, order, null_order, strict=True):
+        if isinstance(key.value, expr.Col):
+            if key.value.name in seen:  # pragma: no cover; polars 2.0 only
+                continue
+            seen.add(key.value.name)
+        unique_by.append(key)
+        unique_order.append(key_order)
+        unique_null_order.append(key_null_order)
+    by = unique_by
+    order = unique_order
+    null_order = unique_null_order
     # TODO: use the DynamicPred hint from node.slice (offset, length,
     # dynamic_pred_id). dynamic_pred_id is an int (u128 UUID) matching a
     # DynamicPred Function node in an upstream scan. The sort actor could
@@ -1140,6 +1200,25 @@ def translate_named_expr(
     )
 
 
+def _contains_time_input(node: expr.Expr) -> bool:
+    """
+    Whether a descendant of ``node`` is a Time expression used as an input.
+
+    Inputs of ``dt.time()`` and ``dt.combine()`` are not checked, since
+    they were validated when those expressions were translated.
+    """
+    return any(
+        _contains_dtype(child.dtype.polars_type, (pl.Time,))
+        for parent in traversal([node])
+        if not (
+            isinstance(parent, expr.TemporalFunction)
+            and parent.name
+            in {expr.TemporalFunction.Name.Time, expr.TemporalFunction.Name.Combine}
+        )
+        for child in parent.children
+    )
+
+
 def _contains_nested_lists(val: Any) -> bool:
     if not val:
         return False
@@ -1259,6 +1338,28 @@ def _translate_function(
             plrs._expr_nodes.TemporalFunction.Second,
             plrs._expr_nodes.TemporalFunction.Millisecond,
         }
+        if name == plrs._expr_nodes.TemporalFunction.Combine:
+            date, time = node.input
+            time_node = translator.visitor.view_expression(time)
+            if (
+                isinstance(time_node, plrs._expr_nodes.Literal)
+                and not isinstance(time_node.value, plrs.PySeries)
+                and isinstance(translator.visitor.get_dtype(time), pl.Time)
+            ):
+                time_expr: expr.Expr = expr.Literal(
+                    DataType(pl.Time()), time_node.value
+                ).astype(DataType(pl.Duration("ns")))
+            else:
+                time_expr = translator.translate_expr(
+                    n=time, schema=schema, allow_passthrough=True
+                )
+            return expr.TemporalFunction(
+                dtype,
+                expr.TemporalFunction.Name.Combine,
+                options,
+                translator.translate_expr(n=date, schema=schema),
+                time_expr,
+            )
         result_expr = expr.TemporalFunction(
             dtype,
             expr.TemporalFunction.Name.from_polars(name),
@@ -1357,6 +1458,8 @@ def _translate_function(
             )
         elif name == "pow":
             return expr.BinOp(dtype, plc.binaryop.BinaryOperator.POW, *children)
+        elif name == "decimal_mul":
+            return expr.BinOp(dtype, plc.binaryop.BinaryOperator.MUL, *children)
         elif name == "product":
             return expr.Agg(dtype, "product", None, translator._expr_context, *children)
         elif name == "quantile":
@@ -1373,6 +1476,33 @@ def _translate_function(
         if name == "kurtosis":
             fisher, bias = options
             return expr.Kurtosis(dtype, fisher, bias, *children)
+        if name == "decimal_div":
+            # libcudf division yields scale s1 - s2 and truncates, so divide
+            # with one extra digit of scale and then round to the output scale.
+            # TODO: Replace with a libcudf decimal division that takes an output
+            # scale and rounds half to even:
+            # https://github.com/NVIDIA/cudf/issues/24774
+            left, right = children
+            out_type = dtype.polars_type
+            right_type = right.dtype.polars_type
+            assert isinstance(out_type, pl.Decimal)
+            assert isinstance(right_type, pl.Decimal)
+            out_scale = out_type.scale
+            return expr.UnaryFunction(
+                dtype,
+                "round",
+                (out_scale, "half_away_from_zero"),
+                expr.BinOp(
+                    DataType(pl.Decimal(38, out_scale + 1)),
+                    plc.binaryop.BinaryOperator.DIV,
+                    expr.Cast(
+                        DataType(pl.Decimal(38, out_scale + 1 + right_type.scale)),
+                        True,  # noqa: FBT003
+                        left,
+                    ),
+                    right,
+                ),
+            )
         if name == "arg_max" and len(options) == 2:
             # IRFunctionExpr::ArgSort is exposed as ("arg_max", descending, nulls_last)
             name = "arg_sort"
@@ -1691,6 +1821,11 @@ def _(
 
     # Push casts into literals so we can handle Cast(Literal(Null))
     if isinstance(inner, expr.Literal):
+        if dtype.id() == plc.TypeId.LIST:
+            # TODO: Remove once pylibcudf.Scalar supports lists
+            if inner.value is not None:  # pragma: no cover; polars rejects this cast
+                raise NotImplementedError("Casting a non-null literal to a list")
+            return expr.LiteralColumn(dtype, pl.Series([None], dtype=dtype.polars_type))
         return inner.astype(dtype)
     else:
         return expr.Cast(dtype, strict, inner)

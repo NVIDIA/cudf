@@ -15,6 +15,7 @@ from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
 )
+from cudf_polars.testing.engine_utils import is_streaming_engine
 
 
 @pytest.mark.parametrize(
@@ -1081,3 +1082,217 @@ def test_datetime_time_unsupported(engine: pl.GPUEngine, make_query):
     )
     q = make_query(ldf)
     assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    [
+        pl.Date(),
+        pl.Datetime("ms"),
+        pl.Datetime("ns"),
+        pl.Datetime("us", time_zone="UTC"),
+        pl.Datetime("us", time_zone="America/New_York"),
+    ],
+    ids=repr,
+)
+@pytest.mark.parametrize(
+    "make_query",
+    [
+        pytest.param(
+            lambda lf, time_unit: lf.with_columns(t=pl.col("b").dt.time()).select(
+                pl.col("a").dt.combine(pl.col("t"), time_unit)
+            ),
+            id="column",
+        ),
+        pytest.param(
+            lambda lf, time_unit: lf.select(
+                pl.col("a").dt.combine(pl.col("b").dt.time(), time_unit)
+            ),
+            id="expression",
+        ),
+        pytest.param(
+            lambda lf, time_unit: lf.select(
+                pl.col("a").dt.combine(datetime.time(12, 34, 56, 789123), time_unit)
+            ),
+            id="literal",
+        ),
+    ],
+)
+def test_datetime_combine(
+    engine: pl.GPUEngine,
+    dtype: pl.DataType,
+    make_query,
+    time_unit: Literal["ms", "us", "ns"],
+):
+    dates = pl.Series(
+        [
+            datetime.datetime(1969, 12, 31, 23, 59, 59, 999999),
+            datetime.datetime(2024, 3, 10, 22, 34, 56),
+            datetime.datetime(1900, 6, 15, 6, 30),
+            None,
+            datetime.datetime(2020, 1, 1),
+        ],
+        dtype=pl.Datetime("ns"),
+    )
+    if isinstance(dtype, pl.Datetime) and dtype.time_zone is not None:
+        dates = dates.dt.replace_time_zone(dtype.time_zone)
+    times = pl.Series(
+        [1, 45_296_789_123_456, 86_399_999_999_999, 3_600_000_000_000, None],
+        dtype=pl.Int64,
+    ).cast(pl.Datetime("ns"))
+    ldf = pl.LazyFrame({"a": dates.cast(dtype), "b": times})
+    q = make_query(ldf, time_unit)
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("time_input", ["column", "expression"])
+@pytest.mark.parametrize(
+    "make_query",
+    [
+        pytest.param(lambda lf, dtm: lf.select(dtm.dt.hour()), id="hour"),
+        pytest.param(
+            lambda lf, dtm: lf.select(dtm + datetime.timedelta(hours=1)), id="add"
+        ),
+        pytest.param(
+            lambda lf, dtm: lf.filter(dtm > datetime.datetime(2024, 1, 1, 6)),
+            id="filter",
+        ),
+        pytest.param(
+            lambda lf, dtm: lf.group_by("g").agg(dtm.max()), id="group_by_agg"
+        ),
+    ],
+)
+def test_datetime_combine_consumed(engine: pl.GPUEngine, time_input: str, make_query):
+    ldf = pl.LazyFrame(
+        {
+            "a": [datetime.date(2024, 1, 1), datetime.date(2024, 1, 2), None],
+            "b": [
+                datetime.datetime(2020, 5, 5, 5, 6, 7),
+                None,
+                datetime.datetime(2020, 5, 5, 8, 9, 10),
+            ],
+            "g": [1, 1, 2],
+        }
+    )
+    if time_input == "column":
+        ldf = ldf.with_columns(b=pl.col("b").dt.time())
+        time = pl.col("b")
+    else:
+        time = pl.col("b").dt.time()
+    q = make_query(ldf, pl.col("a").dt.combine(time))
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
+@pytest.mark.parametrize("duration_unit", ["ms", "us", "ns"])
+def test_datetime_combine_duration(
+    engine: pl.GPUEngine,
+    time_unit: Literal["ms", "us", "ns"],
+    duration_unit: Literal["ms", "us", "ns"],
+):
+    ldf = pl.LazyFrame(
+        {
+            "a": [
+                datetime.date(2024, 1, 1),
+                datetime.date(1969, 12, 31),
+                None,
+                datetime.date(2000, 2, 29),
+                datetime.date(2000, 3, 1),
+                datetime.date(2000, 3, 1),
+                datetime.date(2000, 3, 1),
+            ],
+            "b": pl.Series(
+                [-1, -1999, 1999, 123_456_789_012, None, 2**62, -(2**62)],
+                dtype=pl.Duration(duration_unit),
+            ),
+        }
+    )
+    q = ldf.select(pl.col("a").dt.combine(pl.col("b"), time_unit))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_datetime_combine_out_of_range(
+    engine: pl.GPUEngine, time_unit: Literal["ms", "us", "ns"]
+):
+    days = [-(2**31), 2**31 - 1]
+    for unit in ["us", "ns"]:
+        max_days = 2**63 // _TICKS_PER_DAY[unit]
+        days.extend([-max_days - 1, -max_days, max_days, max_days + 1])
+    ldf = pl.LazyFrame({"a": pl.Series(days, dtype=pl.Int32).cast(pl.Date())})
+    q = ldf.select(pl.col("a").dt.combine(datetime.time(23, 59, 59), time_unit))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("input_unit", ["ms", "us", "ns"])
+def test_datetime_combine_datetime_out_of_range(
+    engine: pl.GPUEngine,
+    input_unit: Literal["ms", "us", "ns"],
+    time_unit: Literal["ms", "us", "ns"],
+):
+    ticks_per_day = _TICKS_PER_DAY[input_unit]
+    ticks = [
+        -(2**63) + 1,
+        -(2**31) * ticks_per_day - 1,
+        -(2**31) * ticks_per_day,
+        -1,
+        0,
+        2**31 * ticks_per_day - 1,
+        2**31 * ticks_per_day,
+        2**63 - 1,
+    ]
+    ldf = pl.LazyFrame(
+        {
+            "a": pl.Series(
+                [t for t in ticks if -(2**63) <= t < 2**63], dtype=pl.Int64
+            ).cast(pl.Datetime(input_unit))
+        }
+    )
+    q = ldf.select(pl.col("a").dt.combine(datetime.time(1, 2, 3), time_unit))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "day",
+    [datetime.date(2020, 10, 25), datetime.date(2020, 3, 29)],
+    ids=["ambiguous", "non_existent"],
+)
+def test_datetime_combine_time_zone_raises(engine: pl.GPUEngine, day: datetime.date):
+    ldf = pl.LazyFrame(
+        {"a": pl.Series([day]).cast(pl.Datetime("us", time_zone="Europe/London"))}
+    )
+    q = ldf.select(pl.col("a").dt.combine(datetime.time(1, 30)))
+    if is_streaming_engine(engine):
+        with pytest.RaisesGroup(pl.exceptions.ComputeError):
+            q.collect(engine=engine)
+    else:
+        with pytest.raises(pl.exceptions.ComputeError):
+            q.collect(engine=engine)
+
+
+@pytest.mark.parametrize(
+    "make_expr",
+    [
+        pytest.param(
+            lambda: pl.lit(datetime.date(2026, 1, 1)).dt.combine(pl.col("b").dt.time()),
+            id="literal_date",
+        ),
+        pytest.param(
+            lambda: pl.col("a").dt.combine(pl.lit(None, dtype=pl.Time())),
+            id="null_time",
+        ),
+    ],
+)
+def test_datetime_combine_literal(engine: pl.GPUEngine, make_expr):
+    ldf = pl.LazyFrame(
+        {
+            "a": [datetime.date(2024, 1, 1), None],
+            "b": [datetime.datetime(2024, 1, 1, 12, 34, 56), None],
+        }
+    )
+    q = ldf.select(make_expr())
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_datetime_combine_integer_time_unsupported(in_memory_engine: pl.GPUEngine):
+    ldf = pl.LazyFrame({"a": [datetime.date(2024, 1, 1)], "b": [1]})
+    q = ldf.select(pl.col("a").dt.combine(pl.col("b")))
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)

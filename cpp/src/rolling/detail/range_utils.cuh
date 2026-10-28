@@ -53,7 +53,7 @@ namespace rolling {
  */
 template <typename T>
 struct less {
-  __device__ constexpr bool operator()(T const& x, T const& y) const noexcept
+  CUDF_HOST_DEVICE constexpr bool operator()(T const& x, T const& y) const noexcept
   {
     if constexpr (cuda::std::is_floating_point_v<T>) {
       if (cuda::std::isnan(x)) { return false; }
@@ -66,7 +66,7 @@ struct less {
 
 template <typename T>
 struct less_equal {
-  __device__ constexpr bool operator()(T const& x, T const& y) const noexcept
+  CUDF_HOST_DEVICE constexpr bool operator()(T const& x, T const& y) const noexcept
   {
     if constexpr (cuda::std::is_floating_point_v<T>) {
       if (cuda::std::isnan(x)) { return cuda::std::isnan(y); }
@@ -78,7 +78,7 @@ struct less_equal {
 };
 template <typename T>
 struct greater {
-  __device__ constexpr bool operator()(T const& x, T const& y) const noexcept
+  CUDF_HOST_DEVICE constexpr bool operator()(T const& x, T const& y) const noexcept
   {
     if constexpr (cuda::std::is_floating_point_v<T>) {
       if (cuda::std::isnan(x)) { return !cuda::std::isnan(y); }
@@ -91,7 +91,7 @@ struct greater {
 
 template <typename T>
 struct greater_equal {
-  __device__ constexpr bool operator()(T const& x, T const& y) const noexcept
+  CUDF_HOST_DEVICE constexpr bool operator()(T const& x, T const& y) const noexcept
   {
     if constexpr (cuda::std::is_floating_point_v<T>) {
       if (cuda::std::isnan(x)) { return true; }

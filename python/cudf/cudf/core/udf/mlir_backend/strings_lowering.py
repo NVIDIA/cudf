@@ -3,8 +3,9 @@
 """Typing and lowering for ``mlir_string`` operations.
 
 Covers ``len`` (UTF-8 character count), the string comparison operators
-(``==``/``!=``/``<``/``<=``/``>``/``>=``), and the affix methods
-``startswith``/``endswith`` over ``mlir_string``, ``Masked(mlir_string)`` and
+(``==``/``!=``/``<``/``<=``/``>``/``>=``), the affix/search/predicate methods,
+and ``+`` (concatenation) --- the first string-*producing* op, which allocates a
+new buffer via NRT --- over ``mlir_string``, ``Masked(mlir_string)`` and
 string-literal operands; masked operands yield a ``Masked`` result whose validity
 is the AND of the operand validity bits. All lowerings are pure MLIR (see
 :mod:`cudf.core.udf.mlir_backend.string_lowering_impl`). Registered with
@@ -18,9 +19,14 @@ from typing import TYPE_CHECKING
 
 from numba_cuda_mlir import types
 from numba_cuda_mlir._mlir import ir
-from numba_cuda_mlir._mlir.dialects import arith, llvm
+from numba_cuda_mlir._mlir.dialects import arith, func, llvm
 from numba_cuda_mlir.extending import lowering_registry, typing_registry
-from numba_cuda_mlir.lowering_utilities import DeferredMethodCall
+from numba_cuda_mlir.lowering_utilities import (
+    GEP_DYNAMIC_INDEX,
+    DeferredMethodCall,
+    convert,
+    get_or_insert_function,
+)
 from numba_cuda_mlir.numba_cuda.typing.templates import (
     AbstractTemplate,
     AttributeTemplate,
@@ -38,6 +44,7 @@ from cudf.core.udf.mlir_backend.masked_lowering import (
 from cudf.core.udf.mlir_backend.masked_typing import MaskedType
 from cudf.core.udf.mlir_backend.strings_typing import (
     MLIRStringType,
+    NRT_decref,
     mlir_string,
 )
 
@@ -355,6 +362,47 @@ for _name in _IS_METHODS:
     )
 
 
+class ConcatMLIRStringTemplate(AbstractTemplate):
+    """``a + b`` (``operator.add``) over (masked) strings.
+
+    Produces a newly allocated ``mlir_string`` (``Masked(mlir_string)`` when
+    either operand is masked, with validity the AND of the operand bits). At
+    least one operand must be a real ``mlir_string``; two literals are not
+    concatenated here.
+    """
+
+    key = operator.add
+
+    def generic(
+        self, args: tuple[types.Type, ...], kws: dict
+    ) -> Signature | None:
+        """Resolve ``a + b`` for string operands.
+
+        Parameters
+        ----------
+        args : tuple of types.Type
+            ``(lhs, rhs)`` types.
+        kws : dict
+            Keyword argument types (must be empty).
+
+        Returns
+        -------
+        Signature or None
+            ``mlir_string`` (all-plain) or ``Masked(mlir_string)`` (any masked),
+            else ``None``.
+        """
+        if len(args) != 2 or kws:
+            return None
+        a, b = args
+        if not (_is_string_arg(a) and _is_string_arg(b)):
+            return None
+        if _is_masked_string(a) or _is_masked_string(b):
+            return nb_signature(MaskedType(mlir_string), a, b)
+        if isinstance(a, MLIRStringType) or isinstance(b, MLIRStringType):
+            return nb_signature(mlir_string, a, b)
+        return None
+
+
 class ContainsMLIRStringTemplate(AbstractTemplate):
     """``item in container`` (``operator.contains``) over (masked) strings."""
 
@@ -573,6 +621,94 @@ def _lower_contains_op(
     _store_maybe_masked(builder, target, result, arith.andi(vc, vi))
 
 
+def _lower_concat_op(
+    builder: MLIRLower, target: Var, args: list[Var], kwargs: list
+) -> None:
+    """``a + b`` -> newly allocated ``mlir_string`` / ``Masked(mlir_string)``.
+
+    The result buffer is allocated via NRT (see
+    :func:`string_lowering_impl.lower_concat`); numba's reference counting then
+    owns and eventually frees it.
+    """
+    valid_ty = builder.get_mlir_type(types.boolean)
+    true_val = arith.constant(valid_ty, 1)
+    lhs, vl = _view_and_valid(builder, args[0], true_val)
+    rhs, vr = _view_and_valid(builder, args[1], true_val)
+    result = _impl.lower_concat(builder.mlir_gpu_module, lhs, rhs)
+    _store_maybe_masked(builder, target, result, arith.andi(vl, vr))
+
+
+class NRTDecrefMLIRStringTemplate(AbstractTemplate):
+    """``NRT_decref(mlir_string)`` -> ``void`` (release one reference)."""
+
+    key = NRT_decref
+
+    def generic(
+        self, args: tuple[types.Type, ...], kws: dict
+    ) -> Signature | None:
+        """Resolve ``NRT_decref(mlir_string)``.
+
+        Parameters
+        ----------
+        args : tuple of types.Type
+            A single ``mlir_string`` argument.
+        kws : dict
+            Keyword argument types (must be empty).
+
+        Returns
+        -------
+        Signature or None
+            ``void(mlir_string)``, else ``None``.
+        """
+        if len(args) == 1 and not kws and isinstance(args[0], MLIRStringType):
+            return nb_signature(types.void, mlir_string)
+        return None
+
+
+def _lower_nrt_decref(
+    builder: MLIRLower, target: Var, args: list[Var], kwargs: list
+) -> None:
+    """``NRT_decref(s)``: drop one reference on ``s``'s ``MemInfo``.
+
+    When the count reaches zero the varsize destructor frees the buffer (a
+    no-op under the arena allocator).
+    """
+    ms_val = builder.load_var(args[0])
+    ptr_ty = llvm.PointerType.get()
+    meminfo = llvm.extractvalue(ptr_ty, ms_val, [0])
+    decref_ty = ir.FunctionType.get([ptr_ty], [])
+    callee = get_or_insert_function(
+        "NRT_decref", decref_ty, builder.mlir_gpu_module
+    )
+    func.call(result=[], callee=callee.name.value, operands_=[meminfo])
+
+
+def _lower_setitem_cpointer_mlir_string(
+    builder: MLIRLower, target: Var, args: list[Var], kwargs: list
+) -> None:
+    """``out[i] = s`` for ``out: CPointer(mlir_string)``, ``s: mlir_string``.
+
+    Stores the value struct into the output array and increfs its ``MemInfo``,
+    so the produced string survives past the kernel (the numba-inserted decref
+    of the local at scope exit would otherwise free it). This is how a
+    string-returning UDF marshals its result into the output buffer.
+    """
+    ptr, idx, val = (builder.load_var(a) for a in args)
+    ptr_ty = llvm.PointerType.get()
+    ms_ty = builder.get_mlir_type(mlir_string)
+    idx_i64 = convert(idx, ir.IntegerType.get_signless(64))
+    elem_ptr = llvm.getelementptr(
+        ptr_ty, ptr, [idx_i64], [GEP_DYNAMIC_INDEX], ms_ty, None
+    )
+    llvm.store(value=val, addr=elem_ptr)
+    meminfo = llvm.extractvalue(ptr_ty, val, [0])
+    incref_ty = ir.FunctionType.get([ptr_ty], [])
+    callee = get_or_insert_function(
+        "NRT_incref", incref_ty, builder.mlir_gpu_module
+    )
+    func.call(result=[], callee=callee.name.value, operands_=[meminfo])
+
+
 def _register() -> None:
     """Register string op typing and lowering with ``numba_cuda_mlir``."""
     typing_registry.register_global(len)(LenMLIRStringTemplate)
@@ -593,6 +729,23 @@ def _register() -> None:
         lowering_registry.lower(operator.contains, lhs_ty, rhs_ty)(
             _lower_contains_op
         )
+
+    # ``+`` (concatenation): the first string-producing op, allocates via NRT
+    typing_registry.register_global(operator.add)(ConcatMLIRStringTemplate)
+    for lhs_ty, rhs_ty in _STR_COMBOS:
+        lowering_registry.lower(operator.add, lhs_ty, rhs_ty)(_lower_concat_op)
+
+    # ``out[i] = s`` marshalling a produced string into an output array
+    lowering_registry.lower(
+        operator.setitem,
+        types.CPointer(mlir_string),
+        types.Integer,
+        types.Any,
+    )(_lower_setitem_cpointer_mlir_string)
+
+    # ``NRT_decref(s)`` for the teardown/freeing kernel
+    typing_registry.register_global(NRT_decref)(NRTDecrefMLIRStringTemplate)
+    lowering_registry.lower(NRT_decref, mlir_string)(_lower_nrt_decref)
 
     # one-string-arg methods on mlir_string and Masked(mlir_string):
     # startswith/endswith (-> bool) and find/rfind/count (-> int32)

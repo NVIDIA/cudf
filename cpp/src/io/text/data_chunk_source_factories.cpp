@@ -10,6 +10,9 @@
 #include <cudf/detail/utilities/host_vector.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/text/data_chunk_source_factories.hpp>
+#include <cudf/utilities/memory_resource.hpp>
+
+#include <cuda/buffer>
 
 #include <fstream>
 
@@ -52,7 +55,8 @@ class datasource_chunk_reader : public data_chunk_reader {
     read_size = std::min(_source->size() - _offset, read_size);
 
     // get a device buffer containing read data on the device.
-    auto chunk = rmm::device_uvector<char>(read_size, stream);
+    auto chunk = cuda::device_buffer<char>(
+      stream, cudf::get_current_device_resource_ref(), read_size, cuda::no_init);
 
     if (_source->supports_device_read() && _source->is_device_read_preferred(read_size)) {
       _source->device_read(_offset, read_size, reinterpret_cast<uint8_t*>(chunk.data()), stream);
@@ -84,7 +88,7 @@ class datasource_chunk_reader : public data_chunk_reader {
     _offset += read_size;
 
     // return the device buffer so it can be processed.
-    return std::make_unique<device_uvector_data_chunk>(std::move(chunk));
+    return std::make_unique<device_buffer_data_chunk>(std::move(chunk));
   }
 
  private:
@@ -137,7 +141,8 @@ class istream_data_chunk_reader : public data_chunk_reader {
     read_size = _datastream->gcount();
 
     // get a device buffer containing read data on the device.
-    auto chunk = rmm::device_uvector<char>(read_size, stream);
+    auto chunk = cuda::device_buffer<char>(
+      stream, cudf::get_current_device_resource_ref(), read_size, cuda::no_init);
 
     // copy the host-pinned data on to device
     cudf::detail::cuda_memcpy_async<char>(
@@ -149,7 +154,7 @@ class istream_data_chunk_reader : public data_chunk_reader {
     CUDF_CUDA_TRY(cudaEventRecord(h_ticket.event, stream.get()));
 
     // return the device buffer so it can be processed.
-    return std::make_unique<device_uvector_data_chunk>(std::move(chunk));
+    return std::make_unique<device_buffer_data_chunk>(std::move(chunk));
   }
 
  private:
@@ -179,7 +184,8 @@ class host_span_data_chunk_reader : public data_chunk_reader {
     read_size = std::min(read_size, _data.size() - _position);
 
     // get a device buffer containing read data on the device.
-    auto chunk = rmm::device_uvector<char>(read_size, stream);
+    auto chunk = cuda::device_buffer<char>(
+      stream, cudf::get_current_device_resource_ref(), read_size, cuda::no_init);
 
     // copy the host data to device
     cudf::detail::cuda_memcpy_async<char>(
@@ -190,7 +196,7 @@ class host_span_data_chunk_reader : public data_chunk_reader {
     _position += read_size;
 
     // return the device buffer so it can be processed.
-    return std::make_unique<device_uvector_data_chunk>(std::move(chunk));
+    return std::make_unique<device_buffer_data_chunk>(std::move(chunk));
   }
 
  private:

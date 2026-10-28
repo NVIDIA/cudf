@@ -15,6 +15,7 @@
 #include <future>
 #include <memory>
 #include <optional>
+#include <span>
 
 /**
  * @file
@@ -76,6 +77,13 @@ class datasource {
     {
       return cudf::host_span<uint8_t const>{data(), size()};
     }
+
+    /**
+     * @brief Implicit conversion operator to std::span<uint8_t const>
+     *
+     * @return A std::span view of the buffer's data
+     */
+    operator std::span<uint8_t const>() const { return {data(), size()}; }
 
     /**
      * @brief Factory to construct a datasource buffer object from a container.

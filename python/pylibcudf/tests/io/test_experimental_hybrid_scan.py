@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import decimal
 import io
+import struct
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -1390,3 +1391,58 @@ def test_hybrid_scan_page_index_stats_all_null_page(
     ).to_arrow()
 
     assert row_mask.to_pylist() == [expected_keep] * num_rows
+
+
+# Row group 0 holds [1.0, NaN, 2.5] and row group 1 holds [10.0, 20.0, 30.0].
+# `nan_stat` is the row group 0 min (1.0) or max (2.5) to replace with a `NaN`.
+@pytest.mark.parametrize(
+    "nan_stat, op, value, expected_row_groups",
+    [
+        pytest.param(2.5, ASTOperator.EQUAL, 2.5, [0], id="nan_max_equal"),
+        pytest.param(
+            2.5, ASTOperator.GREATER, 2.0, [0, 1], id="nan_max_greater"
+        ),
+        pytest.param(2.5, ASTOperator.LESS, 0.5, [], id="nan_max_min_prunes"),
+        pytest.param(1.0, ASTOperator.EQUAL, 1.0, [0], id="nan_min_equal"),
+        pytest.param(1.0, ASTOperator.LESS, 2.0, [0], id="nan_min_less"),
+        pytest.param(
+            1.0, ASTOperator.GREATER, 5.0, [1], id="nan_min_max_prunes"
+        ),
+    ],
+)
+def test_hybrid_scan_filter_row_groups_with_nan_stats(
+    nan_stat: float,
+    op: ASTOperator,
+    value: float,
+    expected_row_groups: list[int],
+    simple_parquet_options: plc.io.parquet.ParquetReaderOptions,
+) -> None:
+    """Row groups whose stats carry a NaN stat must not be pruned by it."""
+    table = pa.table(
+        {
+            "a": pa.array(
+                [1.0, float("nan"), 2.5, 10.0, 20.0, 30.0], pa.float64()
+            )
+        }
+    )
+    # pyarrow does not write `NaN`s to stats, so patch the footer to write one
+    footer = bytes(
+        extract_parquet_footer(write_hybrid_scan_parquet_bytes(table, 3))
+    )
+    old_stat = struct.pack("<d", nan_stat)
+    # Both the deprecated and the new min (or max) fields of row group 0
+    assert footer.count(old_stat) == 2
+    footer = footer.replace(old_stat, struct.pack("<d", float("nan")))
+
+    simple_parquet_options.set_filter(
+        Operation(
+            op,
+            ColumnNameReference("a"),
+            Literal(plc.Scalar.from_arrow(pa.scalar(value, pa.float64()))),
+        )
+    )
+    reader = HybridScanReader(memoryview(footer), simple_parquet_options)
+    filtered = reader.filter_row_groups_with_stats(
+        reader.all_row_groups(simple_parquet_options), simple_parquet_options
+    )
+    assert filtered == expected_row_groups

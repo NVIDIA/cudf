@@ -386,8 +386,8 @@ def test_groupby_sort_by_first_last(streaming_engine_factory):
 
     q = df.group_by("g").agg(
         pl.col("val").sum().alias("volume"),
-        pl.col("val").sort_by("idx").first().alias("open"),
-        pl.col("val").sort_by("idx").last().alias("close"),
+        pl.col("val").sort_by("idx", maintain_order=True).first().alias("open"),
+        pl.col("val").sort_by("idx", maintain_order=True).last().alias("close"),
     )
     assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=False)
 
@@ -481,8 +481,8 @@ def test_groupby_sort_by_preserves_sorted_key_order(streaming_engine_factory):
         df.sort("g", descending=True)
         .group_by("g", maintain_order=True)
         .agg(
-            pl.col("val").sort_by("idx").first().alias("open"),
-            pl.col("val").sort_by("idx").last().alias("close"),
+            pl.col("val").sort_by("idx", maintain_order=True).first().alias("open"),
+            pl.col("val").sort_by("idx", maintain_order=True).last().alias("close"),
         )
     )
     assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=True)

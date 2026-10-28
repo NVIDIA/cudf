@@ -802,6 +802,31 @@ def test_groupby_mean_type_promotion(engine: pl.GPUEngine, df: pl.LazyFrame) -> 
     assert_gpu_result_equal(q, engine=engine, check_row_order=False)
 
 
+def test_groupby_drop_nans_aggs(engine: pl.GPUEngine) -> None:
+    df = pl.LazyFrame(
+        {
+            "key": ["mixed"] * 16
+            + ["all_nan"] * 16
+            + ["all_null"] * 16
+            + ["clean"] * 16,
+            "value": [1.0, float("nan"), None, 3.0] * 4
+            + [float("nan")] * 16
+            + [None] * 16
+            + [2.0, 4.0] * 8,
+        }
+    )
+
+    value = pl.col("value").drop_nans()
+    q = df.group_by("key").agg(
+        *(
+            getattr(value, agg)().alias(agg)
+            for agg in ("count", "max", "mean", "min", "std", "sum", "var")
+        )
+    )
+
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
 def test_groupby_sum_all_null_group_returns_null(engine: pl.GPUEngine):
     df = pl.LazyFrame(
         {

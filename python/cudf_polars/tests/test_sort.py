@@ -46,8 +46,8 @@ def test_sort_time(engine: pl.GPUEngine, sort_kind: str) -> None:
     ldf = pl.LazyFrame(
         {
             "datetime": [
-                datetime(2026, 1, 1, 12),
-                datetime(2026, 1, 1, 9),
+                datetime(2026, 1, 2, 12),
+                datetime(2026, 1, 3, 9),
                 datetime(2026, 1, 1, 12),
                 None,
             ],

@@ -1150,6 +1150,10 @@ class SQLQueries:
         self.name = name
         self.duckdb_queries = SQLQueryFiles(name=name, directory=sql_directory)
 
+    def __call__(self) -> SQLQueries:
+        """Return this instance, matching the ``benchmark()`` calls made on query classes."""
+        return self
+
     def __getattr__(self, attr: str) -> Callable[[RunConfig], QueryResult]:
         """Query lookup."""
         if _QUERY_ATTRIBUTE.fullmatch(attr) is None:
@@ -1167,13 +1171,6 @@ class SQLQueries:
             return QueryResult(frame=context.execute(get_sql(run_config)), sort_by=None)
 
         return query
-
-
-def _duckdb_queries(benchmark: Any) -> Any:
-    """Return the DuckDB query definitions for a benchmark class or ``SQLQueries``."""
-    if isinstance(benchmark, SQLQueries):
-        return benchmark.duckdb_queries
-    return benchmark().duckdb_queries
 
 
 def _collect_statistics(engine: pl.GPUEngine | None) -> dict[str, Any] | None:
@@ -1308,7 +1305,7 @@ def run_polars_query(
             case "polars-cpu":
                 expected = q.collect()
             case "duckdb":
-                duckdb_queries_cls = _duckdb_queries(benchmark)
+                duckdb_queries_cls = benchmark().duckdb_queries
                 get_ddb = getattr(duckdb_queries_cls, f"q{q_id}")
                 base_sql = get_ddb(run_config)
                 expected = execute_duckdb_query(
@@ -2568,7 +2565,7 @@ def run_polars(benchmark: Any, args: argparse.Namespace) -> None:
                 benchmark, args, run_config, parquet_options, numeric_type, date_type
             )
         case "duckdb":
-            run_duckdb(_duckdb_queries(benchmark), args)
+            run_duckdb(benchmark().duckdb_queries, args)
         case "in-memory":
             run_polars_in_memory(
                 benchmark, args, run_config, parquet_options, numeric_type, date_type

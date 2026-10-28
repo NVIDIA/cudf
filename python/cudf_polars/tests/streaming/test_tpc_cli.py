@@ -17,6 +17,7 @@ from cudf_polars.streaming.benchmarks.pdsh import PDSHQueries
 from cudf_polars.streaming.benchmarks.utils import (
     QueryMode,
     RunConfig,
+    SQLQueries,
     SQLQueryFiles,
     parse_args,
 )
@@ -150,6 +151,11 @@ def test_sql_query_files_path_prefers_padded(tmp_path: Path) -> None:
     (tmp_path / "q1.sql").write_text("SELECT 2")
     sql_files = SQLQueryFiles(name="pdsh", directory=tmp_path)
     assert sql_files.path(1) == tmp_path / "q01.sql"
+
+
+def test_sql_queries_duckdb_queries(tmp_path: Path) -> None:
+    benchmark = SQLQueries("pdsh", tmp_path)
+    assert benchmark().duckdb_queries == SQLQueryFiles(name="pdsh", directory=tmp_path)
 
 
 def test_sql_query_files_missing(tmp_path: Path) -> None:

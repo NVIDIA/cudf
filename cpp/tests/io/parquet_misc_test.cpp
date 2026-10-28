@@ -16,7 +16,10 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
+#include <cstdint>
+#include <limits>
 #include <vector>
 
 template <typename T>
@@ -48,6 +51,45 @@ TYPED_TEST(ParquetSignedZeroTest, DictionaryRoundTripPreservesSign)
     EXPECT_EQ(actual[i], T{0}) << "row " << i;
     EXPECT_EQ(std::signbit(actual[i]), std::signbit(values[i])) << "row " << i;
   }
+}
+
+TYPED_TEST(ParquetSignedZeroTest, DistinctNaNPayloadsShareDictionaryEntry)
+{
+  using T         = TypeParam;
+  auto const nan0 = std::numeric_limits<T>::quiet_NaN();
+  auto const nan1 = [nan0] {
+    if constexpr (sizeof(T) == sizeof(uint32_t)) {
+      return std::bit_cast<T>(std::bit_cast<uint32_t>(nan0) ^ uint32_t{1});
+    } else {
+      return std::bit_cast<T>(std::bit_cast<uint64_t>(nan0) ^ uint64_t{1});
+    }
+  }();
+  ASSERT_TRUE(std::isnan(nan0));
+  ASSERT_TRUE(std::isnan(nan1));
+
+  std::vector<T> values(512);
+  for (std::size_t i = 0; i < values.size(); ++i) {
+    values[i] = i % 2 == 0 ? nan0 : nan1;
+  }
+  auto const input    = cudf::test::fixed_width_column_wrapper<T>(values.begin(), values.end());
+  auto const expected = table_view{{input}};
+  auto const filepath = temp_env->get_temp_filepath("DictionaryNaNPayloads.parquet");
+  cudf::io::parquet_writer_options const out_opts =
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
+      .dictionary_policy(cudf::io::dictionary_policy::ALWAYS);
+  cudf::io::write_parquet(out_opts);
+
+  auto const source = cudf::io::datasource::create(filepath);
+  cudf::io::parquet::FileMetaData fmd;
+  read_footer(source, &fmd);
+  ASSERT_EQ(fmd.row_groups.size(), 1);
+  ASSERT_EQ(fmd.row_groups.front().columns.size(), 1);
+  auto const& chunk = fmd.row_groups.front().columns.front();
+  ASSERT_GT(chunk.meta_data.dictionary_page_offset, 0);
+  auto const header = read_page_header(
+    source, {chunk.meta_data.dictionary_page_offset, sizeof(cudf::io::parquet::PageHeader), 0});
+  ASSERT_EQ(header.type, cudf::io::parquet::PageType::DICTIONARY_PAGE);
+  EXPECT_EQ(header.dictionary_page_header.num_values, 1);
 }
 
 TYPED_TEST(ParquetSignedZeroTest, DictionaryRoundTripSlicedNullableMultipleFragments)

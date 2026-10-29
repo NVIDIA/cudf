@@ -700,6 +700,7 @@ add_library(
   src/column/column_factories.cpp
   src/column/column_factories.cu
   src/column/column_view.cpp
+  src/copying/batch_gather.cu
   src/copying/concatenate.cu
   src/copying/contiguous_split.cu
   src/copying/copy.cpp

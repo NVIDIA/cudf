@@ -246,17 +246,17 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
   // create this before we fork streams
   kernel_error error_code(_stream);
 
-  // Both halves of the delta routing decision, taken in one walk so they cannot drift apart. The
-  // second is the complement of the skip that `decode_delta_binary_kernel` applies per page: if it
-  // ever came out false while some page still needed level decoding, that page would be decoded by
-  // neither kernel.
-  auto has_flat_nz_map     = false;
-  auto needs_level_decoder = false;
+  // Both halves of the delta routing decision, taken in one walk so they cannot drift apart.
+  // `needs_level_decoder` collects the kernels that still have a page the consumer is not taking,
+  // and is the complement of the skip each level-decoding kernel applies per page: if a kernel's
+  // bit ever came out clear while one of its pages still needed level decoding, that page would be
+  // decoded by neither kernel.
+  auto has_flat_nz_map              = false;
+  std::uint32_t needs_level_decoder = 0;
   std::for_each(subpass.pages.host_begin(), subpass.pages.host_end(), [&](PageInfo const& page) {
     auto const mapped = _nz_map_enabled && page.has_nz_map(nz_map_kind::DELTA_FLAT);
     has_flat_nz_map |= mapped;
-    needs_level_decoder |=
-      BitAnd(page.kernel_mask, decode_kernel_mask::DELTA_BINARY) != 0 && not mapped;
+    if (not mapped) { needs_level_decoder |= static_cast<std::uint32_t>(page.kernel_mask); }
   });
 
   // The producer and the consumer that reads its output share a stream, so the other decoders
@@ -358,20 +358,26 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
 
   // launch delta length byte array decoder
   if (BitAnd(kernel_mask, decode_kernel_mask::DELTA_LENGTH_BA) != 0) {
+    auto const dlba_stream  = streams[s_idx++];
+    auto const needs_levels = BitAnd(needs_level_decoder, decode_kernel_mask::DELTA_LENGTH_BA) != 0;
     decode_delta_length_byte_array(subpass.pages,
                                    pass.chunks,
                                    num_rows,
                                    skip_rows,
                                    level_type_size,
                                    subpass_page_mask_span(),
+                                   has_flat_nz_map,
+                                   needs_levels,
                                    initial_str_offsets,
                                    error_code.data(),
-                                   streams[s_idx++]);
+                                   dlba_stream,
+                                   nz_map_stream);
   }
 
   // launch delta binary decoder
   if (BitAnd(kernel_mask, decode_kernel_mask::DELTA_BINARY) != 0) {
     auto const delta_stream = streams[s_idx++];
+    auto const needs_levels = BitAnd(needs_level_decoder, decode_kernel_mask::DELTA_BINARY) != 0;
     decode_delta_binary(subpass.pages,
                         pass.chunks,
                         num_rows,
@@ -379,7 +385,7 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
                         level_type_size,
                         subpass_page_mask_span(),
                         has_flat_nz_map,
-                        needs_level_decoder,
+                        needs_levels,
                         error_code.data(),
                         delta_stream,
                         nz_map_stream);

@@ -9,6 +9,7 @@
 
 #include <cooperative_groups/reduce.h>
 #include <cooperative_groups/scan.h>
+#include <cuda/std/limits>
 
 #include <climits>
 
@@ -176,7 +177,15 @@ struct delta_binary_decoder {
     // Validate the header against the DELTA_BINARY_PACKED spec: the mini-block count must evenly
     // divide the block size, and each mini-block must hold a multiple of 32 values. The decoders
     // rely on the latter to advance from one mini-block to the next.
-    if (mini_block_count == 0 or block_size == 0 or (block_size % mini_block_count) != 0 or
+    //
+    // `block_size` is a uleb128 and so is 64 bits wide, while `values_per_mb` below and the pass
+    // counts derived from it are 32. A block size above 2^32 divides evenly here and then narrows
+    // to zero, which leaves the block-wide loop with no pass to run and no way to advance, so
+    // reject it as a malformed header rather than letting the decode hang. The bound is what
+    // fits in 32 bits, so a block size of exactly 2^32 is already too large.
+    constexpr uleb128_t max_block_size = cuda::std::numeric_limits<uint32_t>::max();
+    if (mini_block_count == 0 or block_size == 0 or block_size > max_block_size or
+        (block_size % mini_block_count) != 0 or
         ((block_size / mini_block_count) % delta_mini_block_size_multiple) != 0) {
       error         = true;
       value_count   = 0;
@@ -197,6 +206,15 @@ struct delta_binary_decoder {
     if (value_count > 1) { init_mini_block(false); }
   }
 
+  // Byte length of one mini-block at `bits` per value. Computed in 64 bits because the bitwidth
+  // comes from the page unvalidated and `values_per_mb` is bounded only by what fits in 32, so the
+  // product can exceed a `uint32_t`. An offset past the page is caught by the `block_end` checks
+  // that guard every read.
+  [[nodiscard]] inline __device__ uint64_t mini_block_bytes(uint32_t bits) const
+  {
+    return static_cast<uint64_t>(bits) * values_per_mb / CHAR_BIT;
+  }
+
   // skip to the start of the next mini-block. should only be called on thread 0.
   // calls init_binary_block if currently on the last mini-block in a block.
   // is_decode indicates whether this is being called from initialization code (false) or
@@ -209,12 +227,12 @@ struct delta_binary_decoder {
 
     // just set pointer to start of next mini_block
     if (cur_mb < mini_block_count - 1) {
-      cur_mb_start += cur_bitwidths[cur_mb] * values_per_mb / CHAR_BIT;
+      cur_mb_start += mini_block_bytes(cur_bitwidths[cur_mb]);
       cur_mb++;
     }
     // out of mini-blocks, start a new block
     else {
-      block_start = cur_mb_start + cur_bitwidths[cur_mb] * values_per_mb / CHAR_BIT;
+      block_start = cur_mb_start + mini_block_bytes(cur_bitwidths[cur_mb]);
       init_mini_block(is_decode);
     }
   }
@@ -408,6 +426,154 @@ struct delta_binary_decoder {
         setup_next_mini_block(true);
       }
     }
+  }
+
+  // Decode up to `num_warps_t` passes of the current DELTA block, one pass per warp, and insert
+  // the output for stream index `lane_idx` into the local `lane_value` variable, avoiding local
+  // memory writes. Consecutive lanes of a warp take consecutive stream indices, starting from the
+  // first index of that warp's pass. Called by all threads of a `block` holding exactly
+  // `num_warps_t` warps. Within a block the header is already parsed into `cur_min_delta` and
+  // `cur_bitwidths`, so every pass is addressable with O(num_warps_t) pointer arithmetic and
+  // a single call never crosses into the next DELTA block.
+  //
+  // There are `active = min(num_warps_t, passes remaining in the current block)` warps with a pass
+  // to decode on this call. In practice the spec requires a DELTA block to hold a multiple of 128
+  // values, so a multiple of four passes, and `active` is then always just `num_warps_t` -- which
+  // holds only while `num_warps_t` divides those four passes, hence the static_assert below.
+  // However, `init_binary_block` is weaker than the spec and accepts any block whose mini-blocks
+  // hold a multiple of 32 values, so a narrower block really does run fewer warps.
+  //
+  // `warp_pass_total` is block-shared scratch for the per-warp sums that carry the running total
+  // across warps; the scan itself stays shuffle-only. The caller owns it so that a kernel running
+  // two decoders can give each its own.
+  //
+  // `lane_value` is only meaningful on a lane whose warp was active and whose `lane_idx` is below
+  // `value_count`. Inactive warps carry `lane_idx == UINT32_MAX`, but lanes of an active warp past
+  // `value_count` carry an ordinary index and a value built from the block's min delta alone, so
+  // callers must bound `lane_idx` by `value_count`, not only by how many values they want. The
+  // DELTA_LENGTH_BYTE_ARRAY consumer does that by rejecting a page that wants more than
+  // `value_count` before it starts. Returns false at end of page. Ends with a block barrier, so all
+  // state is visible to the block on exit.
+  template <int num_warps_t>
+  inline __device__ bool decode_next_passes_wide(
+    cg::thread_block const& block,
+    cg::thread_block_tile<cudf::detail::warp_size, cg::thread_block> const& warp,
+    zigzag128_t& lane_value,
+    uint32_t& lane_idx,
+    zigzag128_t (&warp_pass_total)[num_warps_t])
+  {
+    using cudf::detail::warp_size;
+
+    // Passes in the smallest spec-conforming DELTA block, which is the one cuDF writes.
+    constexpr int passes_in_min_block = 128 / warp_size;
+    static_assert(passes_in_min_block % num_warps_t == 0,
+                  "num_warps_t must divide the four passes of a 128-value DELTA block, the "
+                  "smallest the spec allows");
+
+    if (current_value_idx >= value_count) { return false; }
+
+    // The header's first value occupies stream index 0 but is encoded in no mini-block. Step past
+    // it once per page, block-scoped; `advance_past_first_value` is the warp-scoped equivalent.
+    if (current_value_idx == 0) {
+      block.sync();
+      if (block.thread_rank() == 0) { current_value_idx++; }
+      block.sync();
+      if (current_value_idx >= value_count) { return false; }
+    }
+
+    auto const warp_idx = static_cast<uint32_t>(warp.meta_group_rank());
+    auto const lane     = static_cast<int>(warp.thread_rank());
+
+    uint32_t const passes_per_mini_block = values_per_mb / warp_size;
+    uint32_t const passes_in_block       = block_size / warp_size;
+    uint32_t const first_pass            = cur_mb * passes_per_mini_block + cur_pass;
+    uint32_t const active = min(static_cast<uint32_t>(num_warps_t), passes_in_block - first_pass);
+    bool const is_active  = warp_idx < active;
+
+    // Because `active` stops at the block boundary, `mini_block_idx` is provably
+    // < mini_block_count, so cur_bitwidths[mini_block_idx] never reads past the bitwidth array.
+    uint32_t const pass_idx           = first_pass + warp_idx;
+    uint32_t const mini_block_idx     = is_active ? pass_idx / passes_per_mini_block : cur_mb;
+    uint32_t const pass_in_mini_block = is_active ? pass_idx % passes_per_mini_block : 0;
+    // Inactive warps take the sentinel the contract above requires callers to reject.
+    lane_idx = is_active ? current_value_idx + (mini_block_idx - cur_mb) * values_per_mb +
+                             pass_in_mini_block * warp_size + lane
+                         : cuda::std::numeric_limits<uint32_t>::max();
+
+    uint32_t const mb_bits  = cur_bitwidths[mini_block_idx];
+    uint8_t const* mb_start = cur_mb_start;
+    for (uint32_t m = cur_mb; m < mini_block_idx; ++m) {
+      mb_start += mini_block_bytes(cur_bitwidths[m]);
+    }
+    // position at the end of this pass's values; the unpack below uses negative indexes
+    auto const d_start = mb_start + (pass_in_mini_block + 1) * (warp_size * mb_bits / CHAR_BIT);
+
+    // Unpack deltas, mirroring calc_mini_block_pass() above.
+    // TODO: factor the shared body into a free device function once that constraint lifts.
+    zigzag128_t delta = 0;
+    if (is_active && lane_idx < value_count) {
+      int32_t ofs      = (lane - warp_size) * mb_bits;
+      uint8_t const* q = d_start + (ofs >> 3);
+      ofs &= 7;
+      if (q < block_end) {
+        uint32_t c = CHAR_BIT - ofs;
+        delta      = (*q++) >> ofs;
+
+        while (c < mb_bits && q < block_end) {
+          delta |= static_cast<zigzag128_t>(*q++) << c;
+          c += CHAR_BIT;
+        }
+        delta &= (static_cast<zigzag128_t>(1) << mb_bits) - 1;
+      }
+    }
+    delta += cur_min_delta;
+
+    // Running sum within this warp's pass. Shuffle-based, so concurrent decoders on other warps
+    // cannot alias; only the already-reduced per-warp totals below cross warps.
+    zigzag128_t const local = cg::inclusive_scan(warp, delta, cg::plus<int64_t>{});
+    if (lane == warp_size - 1) { warp_pass_total[warp_idx] = is_active ? local : zigzag128_t{0}; }
+
+    // `active` is uniform across the block, so every thread reaches this barrier. It makes the
+    // warp totals visible and orders every warp's reads of cur_mb_start / cur_mb / cur_bitwidths
+    // above against thread 0's rewrite of them below.
+    block.sync();
+
+    // Both sums are taken here, before the barrier below rather than after it: the caller's loop
+    // has no barrier between iterations, so a warp that re-enters this function can overwrite its
+    // `warp_pass_total` slot while a later read is still in flight.
+    //
+    // Unrolled over `num_warps_t` with predicated adds because `w` and `active` are runtime
+    // values; a loop bounded by them compiles to a variable-length ladder over what is a
+    // four-element array.
+    bool const sums_block   = block.thread_rank() == 0;
+    zigzag128_t carry       = last_value;
+    zigzag128_t block_total = last_value;
+#pragma unroll
+    for (int j = 0; j < num_warps_t; ++j) {
+      auto const total = warp_pass_total[j];
+      if (j < static_cast<int>(warp_idx)) { carry += total; }
+      if (sums_block and j < static_cast<int>(active)) { block_total += total; }
+    }
+    lane_value = local + carry;
+
+    if (block.thread_rank() == 0) {
+      // `passes_per_mini_block >= 1` because `init_binary_block` requires mini-blocks of a
+      // multiple of 32 values,
+      // without which this loop could not terminate.
+      uint32_t next = cur_pass + active;
+      // setup_next_mini_block carries the end-of-page freeze and the block transition; reusing it
+      // keeps this path's cursor arithmetic identical to the single-warp one.
+      while (next >= passes_per_mini_block) {
+        next -= passes_per_mini_block;
+        setup_next_mini_block(true);
+      }
+      cur_pass = next;
+    }
+
+    block.sync();
+    // Every warp reads `last_value` for its carry above, so the update lands after this barrier.
+    if (block.thread_rank() == 0) { last_value = block_total; }
+    return true;
   }
 };
 

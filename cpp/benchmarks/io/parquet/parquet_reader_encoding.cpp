@@ -121,11 +121,17 @@ void bench_read_encoding(nvbench::state& state,
   auto const nesting     = use_nullable_page_size_matrix
                              ? cudf::size_type{0}
                              : static_cast<cudf::size_type>(state.get_int64("nesting"));
-  auto const validity =
-    use_nullable_page_size_matrix ? state.get_string("validity") : "no_validity";
-  auto const page_rows = use_nullable_page_size_matrix
-                           ? static_cast<cudf::size_type>(state.get_int64("page_rows"))
-                           : cudf::size_type{0};
+  auto const validity    = state.get_string("validity");
+  auto const page_rows   = use_nullable_page_size_matrix
+                             ? static_cast<cudf::size_type>(state.get_int64("page_rows"))
+                             : cudf::size_type{0};
+  // `create_nested_table` builds its own profile, so the nested path ignores `validity` and every
+  // value of it yields the same table. Run that configuration once.
+  if (nesting > 0 and validity != "no_validity") {
+    state.skip("validity does not apply to the nested table builder");
+    return;
+  }
+
   cuio_source_sink_pair source_sink(source_type);
 
   auto const num_rows_written = [&]() {
@@ -185,6 +191,7 @@ void BM_parquet_read_delta_string_nullable_page_sizes(nvbench::state& state)
 
 NVBENCH_BENCH(BM_parquet_read_delta_binary)
   .set_name("parquet_read_delta_binary")
+  .add_string_axis("validity", {"no_validity", "nullable_1", "nullable_50"})
   .add_string_axis("encoding", {"PLAIN", "DELTA_BINARY_PACKED"})
   .add_string_axis("io_type", {"DEVICE_BUFFER"})
   .set_min_samples(4)
@@ -195,6 +202,7 @@ NVBENCH_BENCH(BM_parquet_read_delta_binary)
 
 NVBENCH_BENCH(BM_parquet_read_delta_string)
   .set_name("parquet_read_delta_string")
+  .add_string_axis("validity", {"no_validity", "nullable_1", "nullable_50"})
   .add_string_axis("encoding", {"PLAIN", "DELTA_LENGTH_BYTE_ARRAY", "DELTA_BYTE_ARRAY"})
   .add_string_axis("io_type", {"DEVICE_BUFFER"})
   .set_min_samples(4)

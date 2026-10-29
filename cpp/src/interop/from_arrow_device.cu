@@ -245,6 +245,7 @@ dispatch_tuple_t dispatch_from_arrow_device::operator()<cudf::dictionary32>(
                                          nullptr,
                                          0,
                                          0};
+  // Widen the full [0, offset + num_rows) range since the parent offset applies to the indices
   if (indices_types.storage != indices_types.output) {
     auto widened = cudf::detail::cast(indices_view, indices_types.output, stream, mr);
     indices_view = widened->view();

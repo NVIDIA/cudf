@@ -45,7 +45,8 @@ namespace {
 /// Whether the presorted keys can be split into groups by comparing adjacent values directly.
 bool supports_typed_group_offsets(table_view const& keys)
 {
-  return std::all_of(keys.begin(), keys.end(), [](column_view const& col) {
+  return keys.num_columns() != 0 &&
+         std::all_of(keys.begin(), keys.end(), [](column_view const& col) {
     return !col.has_nulls() && cudf::is_fixed_width(col.type()) &&
            !cudf::is_floating_point(col.type());
   });

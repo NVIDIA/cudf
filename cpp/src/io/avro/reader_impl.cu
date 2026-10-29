@@ -12,6 +12,7 @@
 
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/structs/utilities.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/datasource.hpp>
@@ -22,7 +23,6 @@
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
@@ -297,7 +297,8 @@ cuda::device_buffer<std::uint8_t> decompress_data(
 
     cuda::device_buffer<std::uint8_t> decompressed_data(
       stream, cudf::get_current_device_resource_ref(), uncompressed_data_size, cuda::no_init);
-    rmm::device_uvector<device_span<uint8_t>> decompressed_blocks(num_blocks, stream);
+    cuda::device_buffer<device_span<uint8_t>> decompressed_blocks(
+      stream, cudf::get_current_device_resource_ref(), num_blocks, cuda::no_init);
     thrust::tabulate(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                      decompressed_blocks.begin(),
                      decompressed_blocks.end(),
@@ -307,7 +308,8 @@ cuda::device_buffer<std::uint8_t> decompress_data(
                        return device_span<uint8_t>{data + off[i], size[i]};
                      });
 
-    rmm::device_uvector<codec_exec_result> decomp_results(num_blocks, stream);
+    cuda::device_buffer<codec_exec_result> decomp_results(
+      stream, cudf::get_current_device_resource_ref(), num_blocks, cuda::no_init);
     thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                  decomp_results.begin(),
                  decomp_results.end(),
@@ -425,7 +427,7 @@ std::vector<column_buffer> decode_data(metadata& meta,
     }
   }
 
-  auto block_list = cudf::detail::make_device_uvector_async(
+  auto block_list = cudf::detail::make_device_buffer_async(
     meta.block_list, stream, cudf::get_current_device_resource_ref());
 
   schema_desc.host_to_device_async(stream);
@@ -539,8 +541,10 @@ table_with_metadata read_avro(std::unique_ptr<cudf::io::datasource>&& source,
         }
       }
 
-      auto d_global_dict      = rmm::device_uvector<string_index_pair>(0, stream);
-      auto d_global_dict_data = rmm::device_uvector<char>(0, stream);
+      cuda::device_buffer<string_index_pair> d_global_dict(
+        stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init);
+      cuda::device_buffer<char> d_global_dict_data(
+        stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init);
 
       if (total_dictionary_entries > 0) {
         auto h_global_dict =
@@ -566,9 +570,9 @@ table_with_metadata read_avro(std::unique_ptr<cudf::io::datasource>&& source,
           }
         }
 
-        d_global_dict = cudf::detail::make_device_uvector_async(
+        d_global_dict = cudf::detail::make_device_buffer_async(
           h_global_dict, stream, cudf::get_current_device_resource_ref());
-        d_global_dict_data = cudf::detail::make_device_uvector_async(
+        d_global_dict_data = cudf::detail::make_device_buffer_async(
           h_global_dict_data, stream, cudf::get_current_device_resource_ref());
 
         stream.sync();

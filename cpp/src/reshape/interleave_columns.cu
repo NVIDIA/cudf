@@ -22,6 +22,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/stream>
@@ -170,7 +171,8 @@ struct interleave_columns_impl<T, std::enable_if_t<std::is_same_v<T, cudf::strin
     auto d_table     = table_device_view::create(strings_columns, stream);
     auto num_strings = num_columns * strings_count;
 
-    rmm::device_uvector<cudf::strings::detail::string_index_pair> indices(num_strings, stream);
+    cuda::device_buffer<cudf::strings::detail::string_index_pair> indices(
+      stream, cudf::get_current_device_resource_ref(), num_strings, cuda::no_init);
     thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                       cuda::counting_iterator<size_type>{0},
                       cuda::counting_iterator<size_type>{num_strings},

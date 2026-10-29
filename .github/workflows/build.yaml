@@ -30,7 +30,7 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}-${{ inputs.build_type || 'branch' }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
 
 permissions: {}
 
@@ -445,8 +445,8 @@ jobs:
           if-no-files-found: error
 
   # Publish the assembled Maven repository. maven-publish.yaml routes on
-  # rapids-is-release-build. Release tags -> Maven Central (human-gated via the
-  # Publisher Portal). Other runs -> Sonatype snapshots (immediate, overwrites
+  # rapids-is-release-build. Release tags -> Maven Central, then Java docs.
+  # Other runs -> Sonatype snapshots (immediate, overwrites
   # -SNAPSHOT).
   java-publish:
     needs: [java-gather]
@@ -461,6 +461,4 @@ jobs:
     with:
       artifact-name: cudf_java_maven_repo
       source-git-sha: ${{ inputs.sha || github.sha }}
-      # Release path only: false = validate + drop (safe). true = stage
-      # PENDING for manual publish. Ignored on the Sonatype snapshot path.
-      stage-for-maven-central-publish: true
+      docs-project: cudf-java

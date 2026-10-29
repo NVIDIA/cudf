@@ -489,7 +489,7 @@ void hybrid_scan_reader::setup_chunking_for_payload_pages(
                                                       row_mask,
                                                       options,
                                                       stream,
-                                                      mr.get_output_mr());
+                                                      mr);
 }
 
 table_with_metadata hybrid_scan_reader::materialize_payload_columns_chunk(

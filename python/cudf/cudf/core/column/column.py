@@ -1190,7 +1190,11 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
         -------
         numpy.ndarray
         """
-        if is_dtype_obj_numeric(self.dtype):
+        if is_dtype_obj_numeric(self.dtype) and not (
+            self.has_nulls()
+            and is_pandas_nullable_extension_dtype(self.dtype)
+            and pd.options.future.distinguish_nan_and_na
+        ):
             return self.values.get()
         return self.to_pandas().to_numpy()
 

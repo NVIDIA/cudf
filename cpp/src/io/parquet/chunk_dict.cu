@@ -21,6 +21,7 @@
 #include <cuda/atomic>
 #include <cuda/functional>
 #include <cuda/std/bit>
+#include <cuda/std/type_traits>
 
 namespace cudf::io::parquet::detail {
 
@@ -48,8 +49,17 @@ struct equality_functor {
   __device__ bool operator()(key_type lhs_idx, key_type rhs_idx) const
   {
     // We don't call this for nulls so this is fine.
-    auto constexpr equal = cudf::detail::row::equality::nan_equal_physical_equality_comparator{};
-    return equal(col.element<T>(lhs_idx), col.element<T>(rhs_idx));
+    auto const lhs = col.element<T>(lhs_idx);
+    auto const rhs = col.element<T>(rhs_idx);
+    if constexpr (cuda::std::is_same_v<T, float> || cuda::std::is_same_v<T, double>) {
+      // Keep NaNs equivalent while preserving the sign of zero in the dictionary.
+      if (lhs != lhs && rhs != rhs) { return true; }
+      using bits_type = cuda::std::conditional_t<sizeof(T) == 4, uint32_t, uint64_t>;
+      return cuda::std::bit_cast<bits_type>(lhs) == cuda::std::bit_cast<bits_type>(rhs);
+    } else {
+      auto constexpr equal = cudf::detail::row::equality::nan_equal_physical_equality_comparator{};
+      return equal(lhs, rhs);
+    }
   }
 };
 

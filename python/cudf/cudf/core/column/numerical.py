@@ -565,6 +565,17 @@ class NumericalColumn(NumericalBaseColumn):
                     out_dtype, np.dtype(np.bool_)
                 )
 
+            if (
+                op in {"__and__", "__or__"}
+                and out_dtype.kind == "b"
+                and is_pandas_nullable_extension_dtype(out_dtype)
+            ):
+                op = (
+                    "__null_logical_and__"
+                    if op == "__and__"
+                    else "__null_logical_or__"
+                )
+
         elif (
             op == "__pow__"
             and self.dtype.kind in "iu"

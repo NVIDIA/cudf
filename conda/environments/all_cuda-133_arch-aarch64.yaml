@@ -6,9 +6,11 @@ channels:
 - conda-forge
 dependencies:
 - aiobotocore>=2.2.0,<3
+- beautifulsoup4
 - binutils
 - boto3>=1.21.21
 - botocore>=1.24.21
+- bottleneck
 - breathe>=4.35.0
 - c-compiler
 - cachetools
@@ -34,14 +36,17 @@ dependencies:
 - doxygen=1.18.0
 - fastavro>=0.22.9
 - flatbuffers==24.3.25
+- fsspec
 - fsspec>=0.6.0
 - gcc_linux-aarch64=14.*
 - gdb
+- html5lib
 - hypothesis>=6.131.7
 - identify>=2.5.20
 - include-what-you-use==0.24.0
 - ipykernel
 - ipython
+- jinja2
 - jupyter_client
 - kvikio==26.12.*,>=0.0.0a0
 - libcufile-dev
@@ -52,8 +57,9 @@ dependencies:
 - librdkafka<2.15.0a0
 - librmm==26.12.*,>=0.0.0a0
 - libucxx==0.53.*,>=0.0.0a0
+- lxml
 - make
-- matplotlib-base<3.11
+- matplotlib-base
 - mmh3
 - moto>=4.0.8
 - msgpack-python
@@ -64,6 +70,7 @@ dependencies:
 - nbsphinx
 - ninja
 - notebook
+- numba
 - numba-cuda-mlir>=0.3.0
 - numba-cuda>=0.22.2,<0.31.0
 - numba>=0.60.0,<0.65.0
@@ -80,12 +87,16 @@ dependencies:
 - polars>=2.0,<2.2
 - pre-commit
 - psutil
+- pyarrow
 - pyarrow>=19.0.0
+- pyqt
+- pyreadstat
 - pytables
 - pytest-benchmark
 - pytest-cases>=3.8.2
 - pytest-cov
 - pytest-httpserver
+- pytest-reportlog
 - pytest-rerunfailures!=16.0.0
 - pytest-xdist
 - pytest<9.1.0
@@ -95,6 +106,7 @@ dependencies:
 - python>=3.12
 - pytorch>=2.10.0
 - pyxlsb
+- qtpy
 - rapids-build-backend>=0.4.0,<0.5.0
 - rapids-cli
 - rapids-dask-dependency==26.12.*,>=0.0.0a0
@@ -114,8 +126,10 @@ dependencies:
 - sphinxcontrib-websupport
 - streamz
 - sysroot_linux-aarch64==2.28
+- tabulate
 - typing_extensions>=4.0.0
 - ucxx==0.53.*,>=0.0.0a0
+- xarray
 - xlrd
 - xlsxwriter
 - zlib>=1.2.13

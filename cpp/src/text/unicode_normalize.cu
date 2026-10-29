@@ -309,7 +309,7 @@ struct unicode_normalizer::unicode_normalizer_impl {
 unicode_normalizer::unicode_normalizer(cudf::table_view const& unicode_data,
                                        unicode_normalization_form form,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cudf::memory_resources mr)
 {
   CUDF_EXPECTS(unicode_data.num_columns() == 3,
                "unicode_data table must have exactly 3 columns",
@@ -330,7 +330,8 @@ unicode_normalizer::unicode_normalizer(cudf::table_view const& unicode_data,
   cudf::size_type const num_rows = unicode_data.num_rows();
   CUDF_EXPECTS(num_rows > 0, "unicode_data table must not be empty", std::invalid_argument);
 
-  auto temp_mr = cudf::get_current_device_resource_ref();
+  auto const output_mr = mr.get_output_mr();
+  auto const temp_mr   = mr.get_temporary_mr();
   auto codepoints_col =
     cudf::strings::detail::hex_to_integers(cudf::strings_column_view(unicode_data.column(0)),
                                            cudf::data_type{cudf::type_id::UINT32},
@@ -339,8 +340,9 @@ unicode_normalizer::unicode_normalizer(cudf::table_view const& unicode_data,
   auto d_codepoints = cuda::std::span<uint32_t const>(codepoints_col->view().data<uint32_t>(),
                                                       static_cast<std::size_t>(num_rows));
 
-  auto const d_ccc_col    = cudf::column_device_view::create(unicode_data.column(1), stream);
-  auto const d_decomp_map = cudf::column_device_view::create(unicode_data.column(2), stream);
+  auto const d_ccc_col = cudf::column_device_view::create(unicode_data.column(1), stream, temp_mr);
+  auto const d_decomp_map =
+    cudf::column_device_view::create(unicode_data.column(2), stream, temp_mr);
   bool const apply_compat =
     (form == unicode_normalization_form::NFKD || form == unicode_normalization_form::NFKC);
   auto const policy   = rmm::exec_policy_nosync(stream, temp_mr);
@@ -348,14 +350,14 @@ unicode_normalizer::unicode_normalizer(cudf::table_view const& unicode_data,
 
   // Build Canonical Combining Class (CCC) table
   auto ccc_table = cuda::make_buffer(
-    stream, mr, static_cast<std::size_t>(detail::CODEPOINT_TABLE_SIZE), uint8_t{0});
+    stream, output_mr, static_cast<std::size_t>(detail::CODEPOINT_TABLE_SIZE), uint8_t{0});
 
   // Allocate compat_decomp_flags only for NFC/NFKC (NFD/NFKD never run the quick check).
   bool const need_compat_flags =
     (form == unicode_normalization_form::NFC || form == unicode_normalization_form::NFKC);
   auto compat_decomp_flags = cuda::make_buffer(
     stream,
-    mr,
+    output_mr,
     static_cast<std::size_t>(
       need_compat_flags ? cudf::num_bitmask_words(detail::CODEPOINT_TABLE_SIZE) : 0),
     cudf::bitmask_type{0});
@@ -364,7 +366,7 @@ unicode_normalizer::unicode_normalizer(cudf::table_view const& unicode_data,
   // token counts into decomp_offsets, and (for NFC/NFKC) set initial quick-check flags
   // for compat decompositions and singleton canonical decompositions.
   auto decomp_offsets = cuda::make_buffer(
-    stream, mr, static_cast<std::size_t>(detail::DECOMP_OFFSETS_SIZE), uint32_t{0});
+    stream, output_mr, static_cast<std::size_t>(detail::DECOMP_OFFSETS_SIZE), uint32_t{0});
   thrust::for_each_n(policy,
                      row_iter,
                      num_rows,
@@ -388,12 +390,16 @@ unicode_normalizer::unicode_normalizer(cudf::table_view const& unicode_data,
   // In-place exclusive scan of decomp_offsets: each codepoint's slot becomes
   // its start offset in the flat decomp_table.  The extra sentinel slot at
   // MAX_CODEPOINT+1 accumulates the total via the scan.
-  auto const total_decomp_size = cudf::detail::sizes_to_offsets(
-    decomp_offsets.begin(), decomp_offsets.end(), decomp_offsets.begin(), 0, stream, temp_mr);
+  auto const total_decomp_size = cudf::detail::sizes_to_offsets(decomp_offsets.begin(),
+                                                                decomp_offsets.end(),
+                                                                decomp_offsets.begin(),
+                                                                0,
+                                                                stream,
+                                                                mr.as_temporary());
 
   // Fill decomp_table
   auto decomp_table = cuda::device_buffer<uint32_t>{
-    stream, mr, static_cast<std::size_t>(total_decomp_size), cuda::no_init};
+    stream, output_mr, static_cast<std::size_t>(total_decomp_size), cuda::no_init};
   auto write_tokens_fn = detail::write_decomp_tokens_fn{
     *d_decomp_map, apply_compat, d_codepoints, decomp_offsets, decomp_table};
   thrust::for_each_n(policy, row_iter, num_rows, write_tokens_fn);
@@ -404,8 +410,8 @@ unicode_normalizer::unicode_normalizer(cudf::table_view const& unicode_data,
                               std::move(decomp_table),
                               std::move(ccc_table),
                               std::move(compat_decomp_flags),  // empty for NFD/NFKD
-                              cuda::device_buffer<uint64_t>{stream, mr},
-                              cuda::device_buffer<uint32_t>{stream, mr},
+                              cuda::device_buffer<uint64_t>{stream, output_mr},
+                              cuda::device_buffer<uint32_t>{stream, output_mr},
                               form});
     return;
   }
@@ -428,10 +434,10 @@ unicode_normalizer::unicode_normalizer(cudf::table_view const& unicode_data,
 
   // Copy only the compacted prefix into exact-size allocations; the tail past
   // comp_size holds unspecified leftovers from remove_if.
-  auto comp_keys =
-    cuda::device_buffer<uint64_t>{stream, mr, d_comp_keys.begin(), d_comp_keys.begin() + comp_size};
+  auto comp_keys = cuda::device_buffer<uint64_t>{
+    stream, output_mr, d_comp_keys.begin(), d_comp_keys.begin() + comp_size};
   auto comp_values = cuda::device_buffer<uint32_t>{
-    stream, mr, d_comp_values.begin(), d_comp_values.begin() + comp_size};
+    stream, output_mr, d_comp_values.begin(), d_comp_values.begin() + comp_size};
 
   thrust::sort_by_key(policy, comp_keys.begin(), comp_keys.end(), comp_values.begin());
 
@@ -450,7 +456,7 @@ unicode_normalizer::~unicode_normalizer() {}
 std::unique_ptr<unicode_normalizer> create_unicode_normalizer(cudf::table_view const& unicode_data,
                                                               unicode_normalization_form form,
                                                               cuda::stream_ref stream,
-                                                              rmm::device_async_resource_ref mr)
+                                                              cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return std::make_unique<unicode_normalizer>(unicode_data, form, stream, mr);
@@ -980,12 +986,12 @@ void segmented_sum(InputIterator d_in,
                    cudf::size_type size,
                    OffsetIterator d_begin,
                    OffsetIterator d_end,
-                   cuda::stream_ref stream)
+                   cuda::stream_ref stream,
+                   cudf::memory_resources mr)
 {
-  auto const env =
-    cuda::std::execution::env{cuda::std::execution::prop{cuda::get_stream_t{}, stream},
-                              cuda::std::execution::prop{cuda::mr::get_memory_resource_t{},
-                                                         cudf::get_current_device_resource_ref()}};
+  auto const env = cuda::std::execution::env{
+    cuda::std::execution::prop{cuda::get_stream_t{}, stream},
+    cuda::std::execution::prop{cuda::mr::get_memory_resource_t{}, mr.get_temporary_mr()}};
   CUDF_CUDA_TRY(cub::DeviceSegmentedReduce::Sum(d_in, d_out, size, d_begin, d_end, env));
 }
 
@@ -993,12 +999,11 @@ void segmented_sum(InputIterator d_in,
  * @brief In-place exclusive sum of `d_data[0, num_items)`
  */
 template <typename T>
-void exclusive_sum(T* d_data, int64_t num_items, cuda::stream_ref stream)
+void exclusive_sum(T* d_data, int64_t num_items, cuda::stream_ref stream, cudf::memory_resources mr)
 {
-  auto const env =
-    cuda::std::execution::env{cuda::std::execution::prop{cuda::get_stream_t{}, stream},
-                              cuda::std::execution::prop{cuda::mr::get_memory_resource_t{},
-                                                         cudf::get_current_device_resource_ref()}};
+  auto const env = cuda::std::execution::env{
+    cuda::std::execution::prop{cuda::get_stream_t{}, stream},
+    cuda::std::execution::prop{cuda::mr::get_memory_resource_t{}, mr.get_temporary_mr()}};
   CUDF_CUDA_TRY(cub::DeviceScan::ExclusiveSum(d_data, num_items, env));
 }
 
@@ -1006,12 +1011,12 @@ void exclusive_sum(T* d_data, int64_t num_items, cuda::stream_ref stream)
  * @brief Exclusive sum of `d_in` written through a tabulate output iterator calling `fn`
  */
 template <typename InputIterator, typename Fn>
-void scan_with(InputIterator d_in, Fn fn, int64_t num_items, cuda::stream_ref stream)
+void scan_with(
+  InputIterator d_in, Fn fn, int64_t num_items, cuda::stream_ref stream, cudf::memory_resources mr)
 {
-  auto const env =
-    cuda::std::execution::env{cuda::std::execution::prop{cuda::get_stream_t{}, stream},
-                              cuda::std::execution::prop{cuda::mr::get_memory_resource_t{},
-                                                         cudf::get_current_device_resource_ref()}};
+  auto const env = cuda::std::execution::env{
+    cuda::std::execution::prop{cuda::get_stream_t{}, stream},
+    cuda::std::execution::prop{cuda::mr::get_memory_resource_t{}, mr.get_temporary_mr()}};
   CUDF_CUDA_TRY(
     cub::DeviceScan::ExclusiveSum(d_in, cuda::tabulate_output_iterator(fn), num_items, env));
 }
@@ -1021,17 +1026,18 @@ void scan_with(InputIterator d_in, Fn fn, int64_t num_items, cuda::stream_ref st
 std::unique_ptr<cudf::column> normalize_unicode(cudf::strings_column_view const& input,
                                                 unicode_normalizer const& normalizer,
                                                 cuda::stream_ref stream,
-                                                rmm::device_async_resource_ref mr)
+                                                cudf::memory_resources mr)
 {
   if (input.is_empty()) { return cudf::make_empty_column(cudf::data_type{cudf::type_id::STRING}); }
 
   auto const [first_offset, last_offset] =
     cudf::strings::detail::get_first_and_last_offset(input, stream);
   auto const chars_size = last_offset - first_offset;
-  if (chars_size == 0) { return std::make_unique<cudf::column>(input.parent(), stream, mr); }
+  auto const output_mr  = mr.get_output_mr();
+  if (chars_size == 0) { return std::make_unique<cudf::column>(input.parent(), stream, output_mr); }
 
   auto const& p          = *normalizer._impl;
-  auto const temp_mr     = cudf::get_current_device_resource_ref();
+  auto const temp_mr     = mr.get_temporary_mr();
   auto const policy      = rmm::exec_policy_nosync(stream, temp_mr);
   auto const byte_iter   = cuda::make_counting_iterator(int64_t{0});
   auto const d_raw_chars = input.chars_begin(stream) + first_offset;
@@ -1044,7 +1050,7 @@ std::unique_ptr<cudf::column> normalize_unicode(cudf::strings_column_view const&
   if (p.form == unicode_normalization_form::NFC || p.form == unicode_normalization_form::NFKC) {
     auto nfc_qc_fn = detail::nfc_quick_check_fn{chars_span, p.ccc_table, p.compat_decomp_flags};
     if (!cudf::detail::any_of(byte_iter, byte_iter + chars_size, nfc_qc_fn, stream)) {
-      return std::make_unique<cudf::column>(input.parent(), stream, mr);
+      return std::make_unique<cudf::column>(input.parent(), stream, output_mr);
     }
   }
 
@@ -1067,7 +1073,7 @@ std::unique_ptr<cudf::column> normalize_unicode(cudf::strings_column_view const&
       decompose_count_kernel<<<grid.num_blocks, grid.num_threads_per_block, 0, stream.get()>>>(
         decomposer, d_counts.data(), d_block_offsets.data());
     CUDF_CUDA_TRY(cudaGetLastError());
-    detail::exclusive_sum(d_block_offsets.data(), grid.num_blocks, stream);
+    detail::exclusive_sum(d_block_offsets.data(), grid.num_blocks, stream, mr.as_temporary());
 
     // the counts are indexed from first_offset so the row offsets are normalized to match
     auto const d_offsets =
@@ -1076,8 +1082,13 @@ std::unique_ptr<cudf::column> normalize_unicode(cudf::strings_column_view const&
       d_offsets, cuda::proclaim_return_type<int64_t>([first = first_offset] __device__(int64_t o) {
         return o - first;
       }));
-    detail::segmented_sum(
-      d_counts.data(), str_cp_offsets.data(), num_rows, d_row_offsets, d_row_offsets + 1, stream);
+    detail::segmented_sum(d_counts.data(),
+                          str_cp_offsets.data(),
+                          num_rows,
+                          d_row_offsets,
+                          d_row_offsets + 1,
+                          stream,
+                          mr.as_temporary());
     CUDF_CUDA_TRY(
       cudaMemsetAsync(str_cp_offsets.data() + num_rows, 0, sizeof(int64_t), stream.get()));
     auto const total_cps = cudf::detail::sizes_to_offsets(str_cp_offsets.begin(),
@@ -1085,7 +1096,7 @@ std::unique_ptr<cudf::column> normalize_unicode(cudf::strings_column_view const&
                                                           str_cp_offsets.begin(),
                                                           int64_t{0},
                                                           stream,
-                                                          temp_mr);
+                                                          mr.as_temporary());
 
     // Fill the packed (cp|ccc|width) slots for each input byte
     auto cps = cuda::device_buffer<uint32_t>{
@@ -1136,15 +1147,21 @@ std::unique_ptr<cudf::column> normalize_unicode(cudf::strings_column_view const&
   auto [offsets_column, total_bytes] = [&] {
     auto sizes = cuda::device_buffer<cudf::size_type>{
       stream, temp_mr, static_cast<std::size_t>(num_rows), cuda::no_init};
-    detail::segmented_sum(
-      d_widths, sizes.data(), num_rows, str_cp_offsets.data(), str_cp_offsets.data() + 1, stream);
+    detail::segmented_sum(d_widths,
+                          sizes.data(),
+                          num_rows,
+                          str_cp_offsets.data(),
+                          str_cp_offsets.data() + 1,
+                          stream,
+                          mr.as_temporary());
     return cudf::strings::detail::make_offsets_child_column(sizes.begin(), sizes.end(), stream, mr);
   }();
-  auto chars = rmm::device_uvector<char>(total_bytes, stream, mr);
+  auto chars = rmm::device_uvector<char>(total_bytes, stream, output_mr);
   detail::scan_with(d_widths,
                     detail::write_utf8_fn{cps.data(), chars.data()},
                     static_cast<int64_t>(cps.size()),
-                    stream);
+                    stream,
+                    mr.as_temporary());
 
   return cudf::make_strings_column(num_rows,
                                    std::move(offsets_column),
@@ -1158,7 +1175,7 @@ std::unique_ptr<cudf::column> normalize_unicode(cudf::strings_column_view const&
 std::unique_ptr<cudf::column> normalize_unicode(cudf::strings_column_view const& input,
                                                 unicode_normalizer const& normalizer,
                                                 cuda::stream_ref stream,
-                                                rmm::device_async_resource_ref mr)
+                                                cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::normalize_unicode(input, normalizer, stream, mr);

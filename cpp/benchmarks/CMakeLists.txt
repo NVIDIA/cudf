@@ -251,6 +251,7 @@ ConfigureNVBench(
   groupby/group_sum.cpp
   groupby/streaming_groupby.cpp
 )
+ConfigureNVBench(DIRECT_GROUPBY_NVBENCH groupby/group_direct.cu)
 
 # ##################################################################################################
 # * hashing benchmark -----------------------------------------------------------------------------

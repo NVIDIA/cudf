@@ -274,16 +274,16 @@ class StringColumn(ColumnBase, Scannable):
 
         cast_func: Callable[[plc.Column, plc.DataType], plc.Column]
         data = self
+        if dtype.kind in {"i", "u", "f"} and data.str_contains("_").any():
+            # Python (PEP 515) allows underscores between digits in numeric
+            # literals (e.g. "123_1" == 1231) but libcudf does not. Strip
+            # only the valid underscores so invalid ones (e.g. "_12",
+            # "12_", "1__2") still fail like pandas.
+            # Two passes: the first can skip an underscore whose neighboring
+            # digit was consumed by a previous match.
+            data = data.replace_with_backrefs(r"(\d)_(\d)", r"\1\2")
+            data = data.replace_with_backrefs(r"(\d)_(\d)", r"\1\2")
         if dtype.kind in {"i", "u"}:
-            if data.str_contains("_").any():
-                # Python (PEP 515) allows underscores between digits in
-                # integer literals (e.g. "123_1" == 1231) but libcudf does
-                # not. Strip only the valid underscores so invalid ones
-                # (e.g. "_12", "12_", "1__2") still fail like pandas.
-                # Two passes: the first can skip an underscore whose
-                # neighboring digit was consumed by a previous match.
-                data = data.replace_with_backrefs(r"(\d)_(\d)", r"\1\2")
-                data = data.replace_with_backrefs(r"(\d)_(\d)", r"\1\2")
             if not data.is_all_integer():
                 raise ValueError(
                     "Could not convert strings to integer "
@@ -291,7 +291,7 @@ class StringColumn(ColumnBase, Scannable):
                 )
             cast_func = plc.strings.convert.convert_integers.to_integers
         elif dtype.kind == "f":
-            if not self.is_all_float():
+            if not data.is_all_float():
                 raise ValueError(
                     "Could not convert strings to float "
                     "type due to presence of non-floating values."

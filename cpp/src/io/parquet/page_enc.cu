@@ -647,6 +647,7 @@ CUDF_KERNEL void __launch_bounds__(128)
         page_g.dict_rle_bits   = ck_g.dict_rle_bits;     // TODO: shouldn't matter for dict page
         page_offset += cuda::round_up(page_g.max_hdr_size + page_g.max_data_size, page_align);
         if (not comp_page_sizes.empty()) {
+          // Pad to `page_align` so the next page's compressor output stays aligned
           comp_page_offset +=
             cuda::round_up(page_g.max_hdr_size + comp_page_sizes[ck_g.first_page], page_align);
           page_g.comp_data_size = comp_page_sizes[ck_g.first_page + num_pages];

@@ -25,9 +25,8 @@ std::unique_ptr<cudf::column> two_table_comparison(cudf::table_view lhs,
                                                    cuda::stream_ref stream,
                                                    cudf::memory_resources mr)
 {
-  // TODO: lexicographic::two_table_comparator still allocates from the current device resource.
   auto const table_comparator =
-    cudf::detail::row::lexicographic::two_table_comparator{lhs, rhs, column_order, {}, stream};
+    cudf::detail::row::lexicographic::two_table_comparator{lhs, rhs, column_order, {}, stream, mr};
   auto const lhs_it = cudf::detail::row::lhs_iterator(0);
   auto const rhs_it = cudf::detail::row::rhs_iterator(0);
 

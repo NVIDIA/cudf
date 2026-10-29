@@ -95,10 +95,11 @@ class arg_minmax_binop_generator {
         std::vector<null_order>{DEFAULT_NULL_ORDER},
         cudf::structs::detail::column_nullability::MATCH_INCOMING,
         stream,
-        mr.get_temporary_mr())},
+        mr.get_output_mr())},
       row_comparator{[&input_,
                       &input_tview     = input_tview,
                       &flattened_input = flattened_input,
+                      mr,
                       is_min_op_,
                       stream_]() {
         if (is_min_op_ && input_.has_nulls()) {
@@ -114,7 +115,7 @@ class arg_minmax_binop_generator {
             auto null_orders    = flattened_input->null_orders();
             null_orders.front() = cudf::null_order::AFTER;
             return cudf::detail::row::lexicographic::self_comparator{
-              flattened_input->flattened_columns(), {}, null_orders, stream_};
+              flattened_input->flattened_columns(), {}, null_orders, stream_, mr};
           } else {
             // For list type, we cannot set a separate null order for the top level column.
             // Thus, we have to workaround this by creating a dummy (empty) struct column view
@@ -130,11 +131,11 @@ class arg_minmax_binop_generator {
                                                   0,
                                                   {}};
             return cudf::detail::row::lexicographic::self_comparator{
-              cudf::table_view{{dummy_struct, input_}}, {}, null_orders, stream_};
+              cudf::table_view{{dummy_struct, input_}}, {}, null_orders, stream_, mr};
           }
         } else {
           return cudf::detail::row::lexicographic::self_comparator{
-            input_tview, {}, std::vector<null_order>{DEFAULT_NULL_ORDER}, stream_};
+            input_tview, {}, std::vector<null_order>{DEFAULT_NULL_ORDER}, stream_, mr};
         }
       }()}
   {
@@ -154,9 +155,7 @@ class arg_minmax_binop_generator {
   auto binop() const { return row_arg_minmax_fn(input_tview.num_rows(), less(), is_min_op); }
 
   template <typename BinOp>
-  static auto create(column_view const& input,
-                     cuda::stream_ref stream,
-                     cudf::memory_resources mr = cudf::get_current_device_resource_ref())
+  static auto create(column_view const& input, cuda::stream_ref stream, cudf::memory_resources mr)
   {
     CUDF_EXPECTS(cudf::is_nested(input.type()),
                  "This utility class is designed exclusively for nested input types.");
@@ -168,9 +167,7 @@ class arg_minmax_binop_generator {
   }
 
   template <cudf::aggregation::Kind K>
-  static auto create(column_view const& input,
-                     cuda::stream_ref stream,
-                     cudf::memory_resources mr = cudf::get_current_device_resource_ref())
+  static auto create(column_view const& input, cuda::stream_ref stream, cudf::memory_resources mr)
   {
     CUDF_EXPECTS(cudf::is_nested(input.type()),
                  "This utility class is designed exclusively for nested input types.");

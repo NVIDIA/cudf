@@ -30,6 +30,28 @@ import java.nio.channels.FileChannel.MapMode;
  * Be aware that the off heap memory limits set by Java do not apply to these buffers.
  */
 public class HostMemoryBuffer extends MemoryBuffer {
+  /** Optional handler for device-to-host copies into specialized host allocations. */
+  public interface DeviceToHostCopyHandler {
+    /**
+     * Return true only if the copy has completed. Return false to use the default CUDA copy.
+     * The handler must check whether it owns the destination and may receive any host buffer.
+     */
+    boolean copy(HostMemoryBuffer dst, long dstOffset, BaseDeviceMemoryBuffer src,
+                 long srcOffset, long length, Cuda.Stream stream);
+  }
+
+  private static volatile DeviceToHostCopyHandler deviceToHostCopyHandler;
+
+  /** Register a process-wide copy handler, or pass null to restore the default CUDA copy. */
+  public static void setDeviceToHostCopyHandler(DeviceToHostCopyHandler handler) {
+    deviceToHostCopyHandler = handler;
+  }
+
+  private boolean tryDeviceToHostCopy(BaseDeviceMemoryBuffer src, long length,
+                                      Cuda.Stream stream) {
+    DeviceToHostCopyHandler handler = deviceToHostCopyHandler;
+    return handler != null && handler.copy(this, 0, src, 0, length, stream);
+  }
   static final boolean defaultPreferPinned;
   private static final Logger log = LoggerFactory.getLogger(HostMemoryBuffer.class);
 
@@ -577,8 +599,11 @@ public class HostMemoryBuffer extends MemoryBuffer {
   public final void copyFromDeviceBuffer(BaseDeviceMemoryBuffer deviceMemoryBuffer) {
     addressOutOfBoundsCheck(address, deviceMemoryBuffer.length, "copy range dest");
     assert !deviceMemoryBuffer.closed;
-    Cuda.memcpy(address, deviceMemoryBuffer.address, deviceMemoryBuffer.length,
-        CudaMemcpyKind.DEVICE_TO_HOST);
+    if (!tryDeviceToHostCopy(deviceMemoryBuffer, deviceMemoryBuffer.length,
+        Cuda.DEFAULT_STREAM)) {
+      Cuda.memcpy(address, deviceMemoryBuffer.address, deviceMemoryBuffer.length,
+          CudaMemcpyKind.DEVICE_TO_HOST);
+    }
   }
 
   /**
@@ -592,8 +617,10 @@ public class HostMemoryBuffer extends MemoryBuffer {
                                          Cuda.Stream stream) {
     addressOutOfBoundsCheck(address, deviceMemoryBuffer.length, "copy range dest");
     assert !deviceMemoryBuffer.closed;
-    Cuda.memcpy(address, deviceMemoryBuffer.address, deviceMemoryBuffer.length,
-        CudaMemcpyKind.DEVICE_TO_HOST, stream);
+    if (!tryDeviceToHostCopy(deviceMemoryBuffer, deviceMemoryBuffer.length, stream)) {
+      Cuda.memcpy(address, deviceMemoryBuffer.address, deviceMemoryBuffer.length,
+          CudaMemcpyKind.DEVICE_TO_HOST, stream);
+    }
   }
 
   /**
@@ -606,8 +633,10 @@ public class HostMemoryBuffer extends MemoryBuffer {
                                               Cuda.Stream stream) {
     addressOutOfBoundsCheck(address, deviceMemoryBuffer.length, "copy range dest");
     assert !deviceMemoryBuffer.closed;
-    Cuda.asyncMemcpy(address, deviceMemoryBuffer.address, deviceMemoryBuffer.length,
-        CudaMemcpyKind.DEVICE_TO_HOST, stream);
+    if (!tryDeviceToHostCopy(deviceMemoryBuffer, deviceMemoryBuffer.length, stream)) {
+      Cuda.asyncMemcpy(address, deviceMemoryBuffer.address, deviceMemoryBuffer.length,
+          CudaMemcpyKind.DEVICE_TO_HOST, stream);
+    }
   }
 
   /**

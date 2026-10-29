@@ -329,7 +329,8 @@ installed version's tag, `python -c 'import polars; print(f"py-{polars.__version
 ```bash
 # install the test requirements, applying the sed patches from ci/test_cudf_polars_polars_tests.sh
 # (it removes polars-cloud and pins pyarrow/duckdb; check whether each is still needed)
-pip install -r <dir>/polars/py-polars/requirements-dev.txt -r <dir>/polars/py-polars/requirements-ci.txt
+pip install -r <dir>/polars/py-polars/requirements-dev.txt -r <dir>/polars/py-polars/requirements-ci.txt \
+    "polars-iceberg>=0.1.0,<1.0.0"
 POLARS_DIR=<dir>/polars ./ci/run_cudf_polars_polars_tests.sh --engine in-memory
 POLARS_DIR=<dir>/polars ./ci/run_cudf_polars_polars_tests.sh --engine spmd
 POLARS_DIR=<dir>/polars ./ci/run_cudf_polars_polars_tests.sh --engine spmd --inject-gpu-engine-blocksize small
@@ -355,9 +356,9 @@ CUDF_POLARS_GPU_RUN_LIST=ci/cudf_polars/gpu_test_run_list.json POLARS_DIR=<dir>/
 What this means for an upgrade:
 
 - **The new Polars version needs its own entry, including a patch release.** Without one, PR CI stops with
-  `Cannot select GPU tests for 2.2.0|spmd|default`. Generate it with the `update-cudf-polars-polars-tests-selection` skill. That needs a
-  full default-blocksize SPMD run with `--run-slow` on every shard, all exiting zero, so triage the failures below first and regenerate
-  the list last.
+  `Cannot select GPU tests for 2.2.0|spmd|default`. Generate it with the `update-cudf-polars-polars-tests-selection` skill. Use complete
+  nightly telemetry for the target revision when it exists. Only when none exists, bootstrap the entry with a full default-blocksize SPMD
+  run with `--run-slow` on every shard, all exiting zero. In that case, triage the failures below first and regenerate the list last.
 - **Renamed or removed upstream tests** fail PR CI with `Stale GPU run-list nodes`. Update the list in the same PR.
 - **Turning a GPU execution into a CPU fallback fails the selected test** with `Selected GPU test passed without observed GPU
   execution`. When a fallback is the right fix (triage step 2 below), also remove that node from the run list.

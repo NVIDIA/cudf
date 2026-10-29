@@ -1675,8 +1675,8 @@ TEST_F(OrcWriterTest, Decimal32)
 
 TEST_F(OrcStatisticsTest, Overflow)
 {
-  using int64_limits     = std::numeric_limits<int64_t>;
-  using double_limits    = std::numeric_limits<double>;
+  using int64_limits     = cuda::std::numeric_limits<int64_t>;
+  using double_limits    = cuda::std::numeric_limits<double>;
   using int128_limits    = cuda::std::numeric_limits<__int128_t>;
   constexpr int num_rows = 10;
 
@@ -1764,7 +1764,7 @@ TEST_F(OrcStatisticsTest, Overflow)
 
 TEST_F(OrcStatisticsTest, DecimalSum)
 {
-  using int64_limits = std::numeric_limits<int64_t>;
+  using int64_limits = cuda::std::numeric_limits<int64_t>;
   // Negative sum
   dec32_col col1{{-3, -2}, numeric::scale_type{0}};
   // Negative sum below int64 min

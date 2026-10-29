@@ -1749,6 +1749,11 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
                     if not is_scalar(value) and len(self) == 0:
                         value = as_column(value)
                         length = len(value)
+                        if length == 0:
+                            # No rows to add to the other columns: replace
+                            # only this column instead of rebuilding them.
+                            self._data[arg] = value
+                            return
                         new_columns = (
                             value
                             if key == arg

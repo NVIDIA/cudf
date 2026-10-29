@@ -38,11 +38,12 @@ struct bpe_merge_pairs {
    *
    * @param input Strings column of merge pair halves
    * @param stream CUDA stream used for device memory operations and kernel launches.
-   * @param mr Device memory resource used to allocate the device memory
+   * @param mr Memory resources used for temporary allocations and the returned object's device
+   * memory
    */
   bpe_merge_pairs(std::unique_ptr<cudf::column>&& input,
-                  cuda::stream_ref stream           = cudf::get_default_stream(),
-                  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+                  cuda::stream_ref stream   = cudf::get_default_stream(),
+                  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Construct a new bpe merge pairs object
@@ -51,11 +52,12 @@ struct bpe_merge_pairs {
    *
    * @param input Strings column with one merge pair per row
    * @param stream CUDA stream used for device memory operations and kernel launches.
-   * @param mr Device memory resource used to allocate the device memory
+   * @param mr Memory resources used for temporary allocations and the returned object's device
+   * memory
    */
   bpe_merge_pairs(cudf::strings_column_view const& input,
-                  cuda::stream_ref stream           = cudf::get_default_stream(),
-                  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+                  cuda::stream_ref stream   = cudf::get_default_stream(),
+                  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   ~bpe_merge_pairs();
   bpe_merge_pairs();
@@ -86,13 +88,13 @@ struct bpe_merge_pairs {
  *
  * @param merge_pairs Column containing the merge pairs
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Memory resource to allocate any returned objects
+ * @param mr Memory resources used for temporary allocations and the returned object's device memory
  * @return A nvtext::bpe_merge_pairs object
  */
 std::unique_ptr<bpe_merge_pairs> load_merge_pairs(
   cudf::strings_column_view const& merge_pairs,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Byte pair encode the input strings.
@@ -125,7 +127,7 @@ std::unique_ptr<bpe_merge_pairs> load_merge_pairs(
  * @param separator String used to build the output after encoding.
  *                  Default is a space.
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Memory resource to allocate any returned objects.
+ * @param mr Memory resources used for temporary allocations and the returned column
  * @return An encoded column of strings.
  */
 std::unique_ptr<cudf::column> byte_pair_encoding(
@@ -133,7 +135,7 @@ std::unique_ptr<cudf::column> byte_pair_encoding(
   bpe_merge_pairs const& merges_pairs,
   cudf::string_scalar const& separator = cudf::string_scalar(" "),
   cuda::stream_ref stream              = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr    = cudf::get_current_device_resource_ref());
+  cudf::memory_resources mr            = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 }  // namespace CUDF_EXPORT nvtext

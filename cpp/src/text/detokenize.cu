@@ -85,12 +85,14 @@ struct index_changed_fn {
  * @param sorted_indices Map of row_indices sorted
  * @param tokens_counts Token counts for each row
  * @param stream CUDA stream used for kernel launches
+ * @param mr Memory resources used for temporary allocations and the returned buffer
  */
 cuda::device_buffer<cudf::size_type> create_token_row_offsets(
   cudf::column_view const& row_indices,
   cudf::column_view const& sorted_indices,
   cudf::size_type tokens_counts,
-  cuda::stream_ref stream)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   index_changed_fn fn{cudf::detail::indexalator_factory::make_input_iterator(row_indices),
                       sorted_indices.data<cudf::size_type>()};
@@ -102,7 +104,7 @@ cuda::device_buffer<cudf::size_type> create_token_row_offsets(
                            stream);
 
   auto tokens_offsets = cuda::device_buffer<cudf::size_type>(
-    stream, cudf::get_current_device_resource_ref(), output_count + 1, cuda::no_init);
+    stream, mr.get_output_mr(), output_count + 1, cuda::no_init);
 
   cudf::detail::copy_if_async(cuda::counting_iterator<cudf::size_type>{0},
                               cuda::counting_iterator<cudf::size_type>{tokens_counts},
@@ -127,7 +129,7 @@ std::unique_ptr<cudf::column> detokenize(cudf::strings_column_view const& string
                                          cudf::column_view const& row_indices,
                                          cudf::string_scalar const& separator,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cudf::memory_resources mr)
 {
   CUDF_EXPECTS(separator.is_valid(stream), "Parameter separator must be valid");
   CUDF_EXPECTS(row_indices.size() == strings.size(),
@@ -138,15 +140,16 @@ std::unique_ptr<cudf::column> detokenize(cudf::strings_column_view const& string
   if (tokens_counts == 0)  // if no input strings, return an empty column
     return cudf::make_empty_column(cudf::data_type{cudf::type_id::STRING});
 
-  auto strings_column = cudf::column_device_view::create(strings.parent(), stream);
+  auto const temp_mr  = mr.get_temporary_mr();
+  auto strings_column = cudf::column_device_view::create(strings.parent(), stream, temp_mr);
   // the indices may not be in order so we need to build a sorted map
-  auto sorted_rows = cudf::detail::stable_sorted_order(
-    cudf::table_view({row_indices}), {}, {}, stream, cudf::get_current_device_resource_ref());
+  auto sorted_rows =
+    cudf::detail::stable_sorted_order(cudf::table_view({row_indices}), {}, {}, stream, temp_mr);
   auto const d_row_map = sorted_rows->view().data<cudf::size_type>();
 
   // create offsets for the tokens for each output string
-  auto tokens_offsets =
-    create_token_row_offsets(row_indices, sorted_rows->view(), tokens_counts, stream);
+  auto tokens_offsets = create_token_row_offsets(
+    row_indices, sorted_rows->view(), tokens_counts, stream, mr.as_temporary());
   auto const output_count = tokens_offsets.size() - 1;  // number of output strings
 
   cudf::string_view const d_separator(separator.data(), separator.size());
@@ -155,14 +158,15 @@ std::unique_ptr<cudf::column> detokenize(cudf::strings_column_view const& string
     detokenizer_fn{*strings_column, d_row_map, tokens_offsets.data(), d_separator},
     output_count,
     stream,
-    mr);
+    mr.get_output_mr());
 
   // make the output strings column from the offsets and chars column
-  return cudf::make_strings_column(output_count,
-                                   std::move(offsets_column),
-                                   chars.release(),
-                                   0,
-                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+  return cudf::make_strings_column(
+    output_count,
+    std::move(offsets_column),
+    chars.release(),
+    0,
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr));
 }
 
 }  // namespace detail
@@ -171,7 +175,7 @@ std::unique_ptr<cudf::column> detokenize(cudf::strings_column_view const& input,
                                          cudf::column_view const& row_indices,
                                          cudf::string_scalar const& separator,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::detokenize(input, row_indices, separator, stream, mr);

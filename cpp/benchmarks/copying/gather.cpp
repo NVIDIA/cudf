@@ -55,6 +55,6 @@ static void bench_gather(nvbench::state& state)
 
 NVBENCH_BENCH(bench_gather)
   .set_name("gather")
-  .add_int64_axis("num_rows", {4096, 32768, 262144, 2097152, 16777216})
-  .add_int64_axis("num_cols", {1, 8, 100, 1000})
+  .add_int64_axis("num_rows", {4096, 32768, 65536, 262144, 1048576, 2097152, 16777216})
+  .add_int64_axis("num_cols", {1, 8, 100, 256, 512, 1000})
   .add_int64_axis("coalesce", {true, false});

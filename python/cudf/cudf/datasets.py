@@ -60,14 +60,16 @@ def timeseries(
     state = np.random.RandomState(seed)
     columns = {k: make[dt](len(index), state) for k, dt in dtypes.items()}
     df = pd.DataFrame(columns, index=index, columns=sorted(columns))
-    if df.index[-1] == end:
+    if len(df) > 0 and df.index[-1] == end:
         df = df.iloc[:-1]
 
     gdf = cudf.from_pandas(df)
+    if len(gdf) == 0:
+        return gdf
     for col in gdf:
         mask = state.choice(
             [False, True],
-            size=len(index),
+            size=len(gdf),
             p=[1 - nulls_frequency, nulls_frequency],
         )
         gdf.loc[mask, col] = None

@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import numpy as np
+import pandas as pd
 
 import cudf
 from cudf.testing import assert_eq
@@ -47,6 +48,33 @@ def test_dataset_timeseries():
     assert gdf["a"].head().dtype == int
     assert gdf["b"].head().dtype == float
     assert len(gdf) == 20
+
+
+def test_dataset_timeseries_empty_range():
+    gdf = cudf.datasets.timeseries(
+        start="2020-01-03",
+        end="2020-01-01",
+        freq="D",
+        dtypes={"value": float},
+        nulls_frequency=0.5,
+        seed=1,
+    )
+    assert len(gdf) == 0
+    assert list(gdf.columns) == ["value"]
+    assert gdf.index.name == "timestamp"
+
+
+def test_dataset_timeseries_exclusive_end_null_mask():
+    gdf = cudf.datasets.timeseries(
+        start="2020-01-01",
+        end=pd.Timestamp("2020-01-03"),
+        freq="D",
+        dtypes={"value": float, "count": int},
+        nulls_frequency=0.5,
+        seed=1,
+    )
+    assert len(gdf) == 2
+    assert gdf.index.name == "timestamp"
 
 
 def test_make_bool():

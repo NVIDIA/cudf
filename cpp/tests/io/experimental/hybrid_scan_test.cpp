@@ -852,7 +852,8 @@ TEST_F(HybridScanTest, MaterializeMixedPayloadColumns)
     {col0, col1, *col2, *col3, col4, *col5, *col6, *col7, *col8, *col9}, false);
 }
 
-TEST_F(HybridScanTest, ExtendedFilterExpressions)
+template <bool use_jit_filter>
+void extended_filter_expressions_test()
 {
   srand(0xbeef);
   using T = uint64_t;
@@ -874,7 +875,6 @@ TEST_F(HybridScanTest, ExtendedFilterExpressions)
   auto col_ref1 = cudf::ast::column_reference(1);
 
   auto constexpr case_sensitive_names = true;
-  auto constexpr use_jit_filter       = true;
 
   // Filter: (col0 < 100) and (col0 < col1)
   {
@@ -945,6 +945,10 @@ TEST_F(HybridScanTest, ExtendedFilterExpressions)
     CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected->select({2}), payload_table->view());
   }
 }
+
+TEST_F(HybridScanTest, ExtendedFilterExpressions) { extended_filter_expressions_test<false>(); }
+
+TEST_F(HybridScanTest, ExtendedFilterExpressionsJIT) { extended_filter_expressions_test<true>(); }
 
 TEST_F(HybridScanTest, DecimalTypeOption)
 {
@@ -1302,7 +1306,8 @@ TEST_F(HybridScanTest, AllRowsPrunedReportsInputRowGroups)
             static_cast<cudf::size_type>(row_groups.size()));
 }
 
-TEST_F(HybridScanTest, ChunkedReadRowMaskPerPass)
+template <bool use_jit_filter>
+void chunked_read_row_mask_per_pass_test()
 {
   using T = uint32_t;
 
@@ -1321,7 +1326,7 @@ TEST_F(HybridScanTest, ChunkedReadRowMaskPerPass)
 
   auto const options = cudf::io::parquet_reader_options::builder()
                          .filter(filter_expression)
-                         .use_jit_filter(true)
+                         .use_jit_filter(use_jit_filter)
                          .build();
 
   auto datasource = cudf::io::datasource::create(cudf::host_span<std::byte const>(
@@ -1419,6 +1424,13 @@ TEST_F(HybridScanTest, ChunkedReadRowMaskPerPass)
   // The filter column (col0) and payload columns (col1, col2) must match the mainline reader
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected->select({0}), filter_table->view());
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected->select({1, 2}), payload_table->view());
+}
+
+TEST_F(HybridScanTest, ChunkedReadRowMaskPerPass) { chunked_read_row_mask_per_pass_test<false>(); }
+
+TEST_F(HybridScanTest, ChunkedReadRowMaskPerPassJIT)
+{
+  chunked_read_row_mask_per_pass_test<true>();
 }
 
 TEST_F(HybridScanTest, RowGroupPassesMatchesChunkedReader)

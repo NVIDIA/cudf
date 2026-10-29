@@ -46,15 +46,15 @@ def _filter_row_groups_with_dictionary_pages(
     dictionary_ranges = reader.dictionary_pages_byte_ranges(
         all_row_groups, options
     )
-    # Keep source bytes alive until synchronize_stream() runs
+    # Keep the host slices alive until synchronize_stream() runs
+    dictionary_bytes = [
+        parquet_bytes[r.offset : r.offset + r.size] for r in dictionary_ranges
+    ]
     dictionary_data = [
         plc.gpumemoryview(
-            rmm.DeviceBuffer.to_device(
-                memoryview(parquet_bytes)[r.offset : r.offset + r.size],
-                plc.utils._get_stream(),
-            )
+            rmm.DeviceBuffer.to_device(src, plc.utils._get_stream())
         )
-        for r in dictionary_ranges
+        for src in dictionary_bytes
     ]
     synchronize_stream()
     return reader.filter_row_groups_with_dictionary_pages(
@@ -398,14 +398,16 @@ def test_hybrid_scan_materialize_columns(
     filter_ranges = simple_hybrid_scan_reader.filter_column_chunks_byte_ranges(
         filtered_row_groups, simple_parquet_options
     )
+    # Keep the host slices alive until synchronize_stream() runs
+    filter_bytes = [
+        simple_parquet_bytes[r.offset : r.offset + r.size]
+        for r in filter_ranges
+    ]
     filter_data = [
         plc.gpumemoryview(
-            rmm.DeviceBuffer.to_device(
-                memoryview(simple_parquet_bytes)[r.offset : r.offset + r.size],
-                plc.utils._get_stream(stream),
-            )
+            rmm.DeviceBuffer.to_device(src, plc.utils._get_stream(stream))
         )
-        for r in filter_ranges
+        for src in filter_bytes
     ]
 
     synchronize_stream(stream)
@@ -433,14 +435,16 @@ def test_hybrid_scan_materialize_columns(
             filtered_row_groups, simple_parquet_options
         )
     )
+    # Keep the host slices alive until synchronize_stream() runs
+    payload_bytes = [
+        simple_parquet_bytes[r.offset : r.offset + r.size]
+        for r in payload_ranges
+    ]
     payload_data = [
         plc.gpumemoryview(
-            rmm.DeviceBuffer.to_device(
-                memoryview(simple_parquet_bytes)[r.offset : r.offset + r.size],
-                plc.utils._get_stream(stream),
-            )
+            rmm.DeviceBuffer.to_device(src, plc.utils._get_stream(stream))
         )
-        for r in payload_ranges
+        for src in payload_bytes
     ]
 
     synchronize_stream(stream)
@@ -650,14 +654,16 @@ def test_hybrid_scan_single_step_materialize(
         )
     )
 
+    # Keep the host slices alive until synchronize_stream() runs
+    all_columns_bytes = [
+        simple_parquet_bytes[r.offset : r.offset + r.size]
+        for r in all_columns_ranges
+    ]
     all_columns_data = [
         plc.gpumemoryview(
-            rmm.DeviceBuffer.to_device(
-                memoryview(simple_parquet_bytes)[r.offset : r.offset + r.size],
-                plc.utils._get_stream(stream),
-            )
+            rmm.DeviceBuffer.to_device(src, plc.utils._get_stream(stream))
         )
-        for r in all_columns_ranges
+        for src in all_columns_bytes
     ]
 
     synchronize_stream(stream)
@@ -732,14 +738,16 @@ def test_hybrid_scan_has_next_table_chunk(
     filter_ranges = simple_hybrid_scan_reader.filter_column_chunks_byte_ranges(
         filtered_row_groups, simple_parquet_options
     )
+    # Keep the host slices alive until synchronize_stream() runs
+    filter_bytes = [
+        simple_parquet_bytes[r.offset : r.offset + r.size]
+        for r in filter_ranges
+    ]
     filter_data = [
         plc.gpumemoryview(
-            rmm.DeviceBuffer.to_device(
-                memoryview(simple_parquet_bytes)[r.offset : r.offset + r.size],
-                plc.utils._get_stream(),
-            )
+            rmm.DeviceBuffer.to_device(src, plc.utils._get_stream())
         )
-        for r in filter_ranges
+        for src in filter_bytes
     ]
 
     synchronize_stream()
@@ -802,14 +810,16 @@ def test_hybrid_scan_chunked_reading(
     filter_ranges = simple_hybrid_scan_reader.filter_column_chunks_byte_ranges(
         filtered_row_groups, simple_parquet_options
     )
+    # Keep the host slices alive until synchronize_stream() runs
+    filter_bytes = [
+        simple_parquet_bytes[r.offset : r.offset + r.size]
+        for r in filter_ranges
+    ]
     filter_data = [
         plc.gpumemoryview(
-            rmm.DeviceBuffer.to_device(
-                memoryview(simple_parquet_bytes)[r.offset : r.offset + r.size],
-                plc.utils._get_stream(stream),
-            )
+            rmm.DeviceBuffer.to_device(src, plc.utils._get_stream(stream))
         )
-        for r in filter_ranges
+        for src in filter_bytes
     ]
 
     synchronize_stream(stream)

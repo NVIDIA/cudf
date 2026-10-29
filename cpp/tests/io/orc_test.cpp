@@ -34,6 +34,7 @@
 #include <rmm/mr/cuda_memory_resource.hpp>
 
 #include <cuda/iterator>
+#include <cuda/std/limits>
 
 #include <algorithm>
 #include <array>
@@ -1676,7 +1677,7 @@ TEST_F(OrcStatisticsTest, Overflow)
 {
   using int64_limits     = std::numeric_limits<int64_t>;
   using double_limits    = std::numeric_limits<double>;
-  using int128_limits    = std::numeric_limits<__int128_t>;
+  using int128_limits    = cuda::std::numeric_limits<__int128_t>;
   constexpr int num_rows = 10;
 
   auto too_large_seq = cudf::detail::make_counting_transform_iterator(

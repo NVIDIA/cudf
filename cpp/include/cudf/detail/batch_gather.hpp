@@ -79,22 +79,27 @@ std::unique_ptr<table> batch_gather(table_view const& source_table,
 /**
  * @brief Classifies the gather map's locality and returns the fused kernel tile width to use.
  *
- * Samples a small number of windows from the map (one batched device-to-host copy plus one
- * stream synchronization, no kernel launch) and reports `kCoalescedTileCols` (8) only when
- * every sampled window spans at most one window length of source rows — near-sorted or
- * contiguous maps, in either direction. Anything else returns `kRandomTileCols` (1), the safe
- * choice given that misrouting a random map to the wide tile costs far more than the reverse.
- * Sampling is skipped entirely — returning 1 without touching the map — when the tile width is
- * measured K-insensitive: fewer than 8 fused columns, fewer than 65536 rows, or a map that is
- * not an index-type column.
+ * Sampling is skipped entirely — returning the unsampled width without touching the map — when
+ * the tile width is measured K-insensitive: fewer than 2 fused columns (K1 always), a
+ * source/map shape whose sampled work `num_rows x num_fused_cols` is below 4M or with fewer
+ * than 262144 rows (K2 while two fused columns plus the map fit half of the device L2, else
+ * K1). When sampling runs, a small number of windows is copied device-to-host in one batched
+ * copy plus one stream synchronization (no kernel launch) and 8 is reported only when every
+ * sampled window spans at most one window length of source rows — near-sorted or contiguous
+ * maps, in either direction; anything else returns 1, the safe choice given that misrouting a
+ * random map to the wide tile costs far more than the reverse.
  *
+ * @param[in] source_table View of the table being gathered (row count feeds the L2 check)
  * @param[in] gather_map View of the gather map column to classify
  * @param[in] num_fused_cols Number of fixed-width columns the fused kernel will process
+ * @param[in] max_fused_element_size Largest element size in bytes among the fused columns
  * @param[in] stream CUDA stream used for the sample copy and its synchronization
- * @return Tile width in {1, 8} for the `batch_gather` tile_cols overload
+ * @return Tile width in {1, 2, 8} for the `batch_gather` tile_cols overload
  */
-size_type select_gather_map_tile_cols(column_view const& gather_map,
+size_type select_gather_map_tile_cols(table_view const& source_table,
+                                      column_view const& gather_map,
                                       size_type num_fused_cols,
+                                      size_type max_fused_element_size,
                                       cuda::stream_ref stream);
 
 }  // namespace detail

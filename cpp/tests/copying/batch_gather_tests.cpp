@@ -11,11 +11,13 @@
 #include <cudf_test/table_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
+#include <cudf/column/column_factories.hpp>
 #include <cudf/column/column_view.hpp>
 #include <cudf/copying.hpp>
 #include <cudf/detail/batch_gather.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/fixed_point/fixed_point.hpp>
+#include <cudf/null_mask.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
@@ -49,6 +51,10 @@ std::unique_ptr<cudf::table> run_batch_gather(
     cudf::get_default_stream(),
     cudf::memory_resources{cudf::get_current_device_resource_ref()});
 }
+
+std::unique_ptr<cudf::table> run_batch_gather_tile(cudf::table_view const& source,
+                                                   cudf::column_view const& map,
+                                                   cudf::size_type tile_cols);
 
 std::unique_ptr<cudf::table> run_reference(
   cudf::table_view const& source,
@@ -571,6 +577,24 @@ TEST_F(BatchGatherPolicyTest, NullifyMakesNullable)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view(), result->view().column(0));
 }
 
+TEST_F(BatchGatherPolicyTest, ExplicitWideTileMaskedDifferential)
+{
+  // The K=8 instantiation's in-kernel mask path (per-column warp_valid[k] + valid_counts) is
+  // only reachable via the explicit tile_cols overload on a null-bearing table.
+  constexpr cudf::size_type num_rows{1000};
+  auto source_column = make_fixed_column<int32_t>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type i) { return i % 2 != 0; });
+  auto const host_map = shuffled_iota(num_rows);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  cudf::table_view source_table({source_column->view()});
+  auto result    = run_batch_gather_tile(source_table, gather_map, 8);
+  auto reference = run_reference(source_table, gather_map);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+  EXPECT_TRUE(result->view().column(0).nullable());
+}
+
 // ============================================================================
 // §5.6 Mixed tables: fused + fallback must agree with the stock gather.
 // ============================================================================
@@ -677,6 +701,42 @@ TEST_F(BatchGatherMixedTest, MixedNullableStrings)
   auto result    = run_batch_gather(source_table, gather_map);
   auto reference = run_reference(source_table, gather_map);
 
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+TEST_F(BatchGatherMixedTest, MixedNullableFixedWidthWithNullFreeLists)
+{
+  // Divergence regression (test-first RED): a fixed-width column WITH nulls next to a nullable
+  // list (no nulls) whose elements are nullable (no nulls). Stock gates the mask phase on the
+  // WHOLE table, so the list takes the gather_bitmask path and its gatherer-produced child is
+  // left alone; a fallback-subset gate sees no possible nulls and fabricates all-valid child
+  // masks via recursive set_all_valid_null_masks — an observable child-nullability difference.
+  constexpr cudf::size_type num_rows{10};
+  auto col_i32 = make_fixed_column<int32_t>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type i) { return i % 2 != 0; });
+
+  // Nullable list column (ALL_VALID mask, zero nulls) whose element child is nullable with
+  // zero nulls: offsets give 10 lists over 13 elements, several empty.
+  constexpr cudf::size_type num_elements{13};
+  auto elements = make_fixed_column<int32_t>(
+    num_elements, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+  auto offsets =
+    cudf::test::fixed_width_column_wrapper<cudf::size_type>{{0, 2, 2, 5, 5, 8, 8, 9, 10, 13, 13}}
+      .release();
+  auto list_col =
+    cudf::make_lists_column(num_rows,
+                            std::move(offsets),
+                            std::move(elements),
+                            0,
+                            cudf::create_null_mask(num_rows, cudf::mask_state::ALL_VALID));
+
+  cudf::table_view source_table({col_i32->view(), list_col->view()});
+  auto const host_map = shuffled_iota(num_rows);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
   CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
 }
 
@@ -930,55 +990,98 @@ std::unique_ptr<cudf::table> run_batch_gather_tile(cudf::table_view const& sourc
                                     tile_cols);
 }
 
-TEST_F(BatchGatherRoutingTest, ClassifierRoutesAscendingMapToWideTile)
+TEST_F(BatchGatherRoutingTest, ClassifierWorkGateSamplesTallFewColumnTables)
 {
-  constexpr cudf::size_type num_rows{65536};
+  // 1048576 rows x 8 fused columns crosses both sampling floors: the sampler runs and an
+  // ascending map routes to the wide tile.
+  constexpr cudf::size_type num_rows{1'048'576};
+  auto const source_table = cudf::table_view{std::vector<cudf::column_view>{}, num_rows};
+  auto gather_map         = make_fixed_column<cudf::size_type>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+  EXPECT_EQ(cudf::detail::select_gather_map_tile_cols(
+              source_table, gather_map->view(), 8, 4, cudf::get_default_stream()),
+            8);
+}
+
+TEST_F(BatchGatherRoutingTest, ClassifierUnsampledRegimesPreferK2WithinL2)
+{
+  // Below either sampling floor the decision is unsampled: K2 while two fused columns plus the
+  // map fit half of L2 with margin on any realistic device (65536 rows x 8 x 4B doubled is
+  // ~0.8MB — two orders below every GPU L2).
+  constexpr cudf::size_type mid_rows{65'536};
+  auto const mid_source = cudf::table_view{std::vector<cudf::column_view>{}, mid_rows};
+  auto mid_map          = make_fixed_column<cudf::size_type>(
+    mid_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+  EXPECT_EQ(cudf::detail::select_gather_map_tile_cols(
+              mid_source, mid_map->view(), 8, 4, cudf::get_default_stream()),
+            2);
+
+  // Wide shape under the row floor: K-insensitive regime, tiny L2 footprint -> K2.
+  constexpr cudf::size_type wide_rows{65'536};
+  auto const wide_source = cudf::table_view{std::vector<cudf::column_view>{}, wide_rows};
+  auto wide_map          = make_fixed_column<cudf::size_type>(
+    wide_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+  EXPECT_EQ(cudf::detail::select_gather_map_tile_cols(
+              wide_source, wide_map->view(), 512, 4, cudf::get_default_stream()),
+            2);
+
+  // Short table: same unsampled K2 (rule: num_fused_cols >= 2).
+  constexpr cudf::size_type small_rows{100};
+  auto const small_source = cudf::table_view{std::vector<cudf::column_view>{}, small_rows};
+  auto small_map          = make_fixed_column<cudf::size_type>(
+    small_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+  EXPECT_EQ(cudf::detail::select_gather_map_tile_cols(
+              small_source, small_map->view(), 8, 4, cudf::get_default_stream()),
+            2);
+}
+
+TEST_F(BatchGatherRoutingTest, ClassifierUnsampledFallsBackToK1BeyondL2)
+{
+  // A source footprint no device L2 halves (2 x 8M x 8B = 128MB) forces the safe K1 even with
+  // an ascending map.
+  constexpr cudf::size_type huge_src_rows{8'000'000};
+  auto const huge_source = cudf::table_view{std::vector<cudf::column_view>{}, huge_src_rows};
+  constexpr cudf::size_type num_rows{100};
   auto gather_map = make_fixed_column<cudf::size_type>(
     num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
-  // >= kMinSampledCols fused columns: the sampler runs and routes ascending maps wide.
-  EXPECT_EQ(
-    cudf::detail::select_gather_map_tile_cols(gather_map->view(), 16, cudf::get_default_stream()),
-    8);
-  // Exactly kMinSampledCols - 1 fused columns: the sync-dominated skip regime (measured
-  // fatal on 30-90us kernels) — safe K=1 without sampling.
-  EXPECT_EQ(
-    cudf::detail::select_gather_map_tile_cols(gather_map->view(), 8, cudf::get_default_stream()),
-    1);
+  EXPECT_EQ(cudf::detail::select_gather_map_tile_cols(
+              huge_source, gather_map->view(), 8, 8, cudf::get_default_stream()),
+            1);
 }
 
 TEST_F(BatchGatherRoutingTest, ClassifierRoutesShuffledMapToSingleColumn)
 {
-  constexpr cudf::size_type num_rows{65536};
-  auto const host_map = shuffled_iota(num_rows);
+  // 1048576-row shuffled map: sampled (both floors crossed), classified random -> K1.
+  constexpr cudf::size_type num_rows{1'048'576};
+  auto const source_table = cudf::table_view{std::vector<cudf::column_view>{}, num_rows};
+  auto const host_map     = shuffled_iota(num_rows);
   cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
                                                                      host_map.end());
-  EXPECT_EQ(cudf::detail::select_gather_map_tile_cols(gather_map, 8, cudf::get_default_stream()),
+  EXPECT_EQ(cudf::detail::select_gather_map_tile_cols(
+              source_table, gather_map, 8, 4, cudf::get_default_stream()),
             1);
 }
 
-TEST_F(BatchGatherRoutingTest, ClassifierSkipsInsensitiveRegimes)
+TEST_F(BatchGatherRoutingTest, ClassifierKeepsSingleColumnTablesAtK1)
 {
-  // Small table: the sampler is skipped and the safe K=1 returned regardless of map shape.
-  constexpr cudf::size_type small_rows{100};
-  auto small_ascending = make_fixed_column<cudf::size_type>(
-    small_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
-  EXPECT_EQ(cudf::detail::select_gather_map_tile_cols(
-              small_ascending->view(), 8, cudf::get_default_stream()),
-            1);
-
-  // Few fused columns: sampler skipped even with enough rows.
-  constexpr cudf::size_type num_rows{65536};
-  auto long_map = make_fixed_column<cudf::size_type>(
+  // 0/1 fused columns always take K1 regardless of shape.
+  constexpr cudf::size_type num_rows{1'048'576};
+  auto const source_table = cudf::table_view{std::vector<cudf::column_view>{}, num_rows};
+  auto gather_map         = make_fixed_column<cudf::size_type>(
     num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
-  EXPECT_EQ(
-    cudf::detail::select_gather_map_tile_cols(long_map->view(), 4, cudf::get_default_stream()), 1);
+  EXPECT_EQ(cudf::detail::select_gather_map_tile_cols(
+              source_table, gather_map->view(), 1, 4, cudf::get_default_stream()),
+            1);
+  EXPECT_EQ(cudf::detail::select_gather_map_tile_cols(
+              source_table, gather_map->view(), 0, 4, cudf::get_default_stream()),
+            1);
 }
 
 TEST_F(BatchGatherRoutingTest, RoutedPathMatchesExplicitTileWidths)
 {
-  // 8 fixed-width columns x 65536 rows: the routed path samples (ascending -> wide tile,
-  // shuffled -> single column) and must agree with BOTH explicit widths, since results are
-  // tile-width independent.
+  // 8 fixed-width columns x 65536 rows: below the sampling floors both maps take the unsampled
+  // K2 path (the L2 footprint fits), and results are tile-width independent — the routed
+  // result must agree with BOTH explicit widths.
   constexpr cudf::size_type num_rows{65536};
   constexpr cudf::size_type num_cols{8};
   std::vector<std::unique_ptr<cudf::column>> source_columns;

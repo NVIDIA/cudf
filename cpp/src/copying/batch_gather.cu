@@ -16,6 +16,7 @@
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
+#include <cudf/detail/utilities/host_vector.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/table/table.hpp>
@@ -38,12 +39,30 @@
 #include <array>
 #include <cstring>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <type_traits>
 #include <vector>
 
 namespace cudf {
 namespace detail {
+
+// Handle for an enqueued map-locality sample: the pinned staging plus its decode context. The
+// staging frees stream-ordered, so it may outlive the resolve without a use-after-free.
+// rmm_host_allocator has no default constructor, so empty handles come
+// from empty(stream) — an unallocated pinned vector, not a plain std::vector.
+struct sampled_map_locality {
+  cudf::detail::host_vector<std::byte> staging;
+  cudf::type_id map_type{cudf::type_id::EMPTY};
+  size_t elem_size{};
+
+  static sampled_map_locality empty(cuda::stream_ref stream)
+  {
+    return sampled_map_locality{
+      cudf::detail::make_pinned_vector_async<std::byte>(0, stream), cudf::type_id::EMPTY, 0};
+  }
+};
+
 namespace {
 
 // Block size of the fused kernel; matches the valid_if_n_kernel/concatenate precedent.
@@ -56,14 +75,15 @@ constexpr size_type kDefaultTileCols{8};
 
 // Map-locality routing. Misrouting a random map to the wide tile costs up to ~51% while the
 // reverse only forfeits the ~17% coalesced win, so the classifier is strict: coalesced is
-// reported only when EVERY sampled window is near-contiguous; anything else (and every regime
-// where tile width measured K-insensitive) takes the safe K=1.
+// reported only when EVERY sampled window is near-contiguous; anything else takes the safe
+// narrow tile.
 constexpr size_type kCoalescedTileCols{8};
 constexpr size_type kRandomTileCols{1};
-// 8-column kernels run 30-90us; the sampler's pinned-D2H sync (~10us flat, measured) is a
-// 10-30% tax there, so they take the safe K=1 unsampled (win-or-tie at every 8-col cell).
-constexpr size_type kMinSampledCols{9};
-constexpr size_type kMinSampledRows{65536};
+constexpr size_type kUnsampledTileCols{2};
+// Sampling floors (measured): the row gate keeps the sync off short/wide K-insensitive shapes,
+// the work gate keeps it off narrow mid-height shapes; 1048576x8 crosses both and must sample.
+constexpr size_type kMinSampledRows{262'144};
+constexpr int64_t kMinSampledWork{4'000'000};
 constexpr size_type kSampleWindows{16};
 constexpr size_type kSampleWindowLen{8};
 
@@ -219,16 +239,11 @@ CUDF_KERNEL __launch_bounds__(BlockSize) void batch_gather_kernel(
   }
 }
 
-}  // namespace
-
-size_type select_gather_map_tile_cols(column_view const& gather_map,
-                                      size_type num_fused_cols,
-                                      cuda::stream_ref stream)
+// Enqueues the map-locality sample copies on the stream (one batched D2H into pinned staging —
+// no kernel launch, no sync). Returns a handle with empty staging for unclassifiable maps.
+sampled_map_locality enqueue_map_locality_sample(column_view const& gather_map,
+                                                 cuda::stream_ref stream)
 {
-  auto const num_rows = gather_map.size();
-  // Regimes where tile width measured K-insensitive: skip the sampler (its sync would dominate
-  // a small kernel) and take the safe K=1. Also the guard for maps too short to sample.
-  if (num_fused_cols < kMinSampledCols || num_rows < kMinSampledRows) { return kRandomTileCols; }
   switch (gather_map.type().id()) {
     case cudf::type_id::INT8:
     case cudf::type_id::INT16:
@@ -238,11 +253,11 @@ size_type select_gather_map_tile_cols(column_view const& gather_map,
     case cudf::type_id::UINT16:
     case cudf::type_id::UINT32:
     case cudf::type_id::UINT64: break;
-    default: return kRandomTileCols;  // Not an index type: unclassifiable, safe default.
+    default:
+      return sampled_map_locality::empty(
+        stream);  // Not an index type: unclassifiable, safe default.
   }
-
-  // Sample kSampleWindows windows of kSampleWindowLen consecutive map elements, evenly spread
-  // over the map, with one batched D2H into pinned staging (no kernel launch).
+  auto const num_rows    = gather_map.size();
   auto const elem_size   = static_cast<size_t>(cudf::size_of(gather_map.type()));
   auto const window_size = static_cast<size_t>(kSampleWindowLen) * elem_size;
   auto staging           = cudf::detail::make_pinned_vector_async<std::byte>(
@@ -262,12 +277,19 @@ size_type select_gather_map_tile_cols(column_view const& gather_map,
   }
   CUDF_CUDA_TRY(cudf::detail::memcpy_batch_async(
     dsts.data(), srcs.data(), sizes.data(), static_cast<size_t>(kSampleWindows), stream));
-  // The decision is needed on host before the kernel launch; this waits only for the sample
-  // copies and for work already enqueued on the stream (never for a kernel of ours).
-  cudf::detail::sync_stream(stream);
+  return sampled_map_locality{std::move(staging), gather_map.type().id(), elem_size};
+}
 
+// Synchronizes the stream (the sample copies plus whatever was enqueued before them — never a
+// kernel of ours) and classifies the staged windows.
+size_type resolve_map_locality_tile_cols(sampled_map_locality const& sampled,
+                                         cuda::stream_ref stream)
+{
+  if (sampled.staging.empty()) { return kRandomTileCols; }
+  cudf::detail::sync_stream(stream);
+  auto const elem_size    = sampled.elem_size;
   auto const read_element = [&](std::byte const* p) -> int64_t {
-    switch (gather_map.type().id()) {
+    switch (sampled.map_type) {
       case cudf::type_id::INT8: {
         int8_t v;
         std::memcpy(&v, p, sizeof(v));
@@ -308,13 +330,13 @@ size_type select_gather_map_tile_cols(column_view const& gather_map,
         std::memcpy(&v, p, sizeof(v));
         return static_cast<int64_t>(v);
       }
-      default: CUDF_UNREACHABLE("Map type excluded by the classifier guard");
+      default: CUDF_UNREACHABLE("Map type excluded at enqueue time");
     }
   };
   // A window is local when its values span at most one window length; classify coalesced only
-  // if EVERY sampled window is local (reversed/ascending maps have spread kSampleWindowLen - 1).
+  // if EVERY sampled window is local (ascending/reversed maps have spread kSampleWindowLen - 1).
   for (size_t w = 0; w < kSampleWindows; ++w) {
-    auto const* window = staging.data() + w * window_size;
+    auto const* window = sampled.staging.data() + w * kSampleWindowLen * elem_size;
     auto const first   = read_element(window);
     auto min_value     = first;
     auto max_value     = first;
@@ -328,6 +350,61 @@ size_type select_gather_map_tile_cols(column_view const& gather_map,
   return kCoalescedTileCols;
 }
 
+// Tile width for regimes where sampling is skipped; nullopt means "sample the map". Zero/one
+// fused columns keep K1; otherwise the unsampled choice is K2 while the two-column working set
+// plus the map fit half of L2 (a failed L2 query reports 0 bytes and takes the safe K1).
+std::optional<size_type> unsampled_tile_width(size_type num_map_rows,
+                                              size_type num_src_rows,
+                                              size_type num_fused_cols,
+                                              size_type max_fused_element_size,
+                                              size_type map_element_size)
+{
+  if (num_fused_cols < 2) { return kRandomTileCols; }
+  auto const work = static_cast<int64_t>(num_map_rows) * static_cast<int64_t>(num_fused_cols);
+  if (num_map_rows >= kMinSampledRows && work >= kMinSampledWork) { return std::nullopt; }
+  static int const l2_bytes = [] {
+    int device = 0;
+    if (cudaGetDevice(&device) != cudaSuccess) { return 0; }
+    int value = 0;
+    if (cudaDeviceGetAttribute(&value, cudaDevAttrL2CacheSize, device) != cudaSuccess) { return 0; }
+    return value;
+  }();
+  auto const footprint =
+    static_cast<int64_t>(num_src_rows) * static_cast<int64_t>(max_fused_element_size) * 2 +
+    static_cast<int64_t>(num_map_rows) * static_cast<int64_t>(map_element_size);
+  if (footprint * 2 > static_cast<int64_t>(l2_bytes)) { return kRandomTileCols; }
+  return kUnsampledTileCols;
+}
+
+}  // namespace
+
+size_type select_gather_map_tile_cols(table_view const& source_table,
+                                      column_view const& gather_map,
+                                      size_type num_fused_cols,
+                                      size_type max_fused_element_size,
+                                      cuda::stream_ref stream)
+{
+  auto const gate = unsampled_tile_width(gather_map.size(),
+                                         source_table.num_rows(),
+                                         num_fused_cols,
+                                         max_fused_element_size,
+                                         static_cast<size_type>(cudf::size_of(gather_map.type())));
+  if (gate.has_value()) { return *gate; }
+  auto const sampled = enqueue_map_locality_sample(gather_map, stream);
+  return resolve_map_locality_tile_cols(sampled, stream);
+}
+
+// Shared body of the routed and explicit entry points; the routed entry enqueues the sampler
+// before its allocation work and leaves the tile width unresolved until just before the launch.
+std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
+                                         column_view const& gather_map,
+                                         out_of_bounds_policy bounds_policy,
+                                         negative_index_policy neg_indices,
+                                         cuda::stream_ref stream,
+                                         memory_resources mr,
+                                         std::optional<size_type> explicit_tile_cols,
+                                         sampled_map_locality const& sampled);
+
 std::unique_ptr<table> batch_gather(table_view const& source_table,
                                     column_view const& gather_map,
                                     out_of_bounds_policy bounds_policy,
@@ -335,17 +412,37 @@ std::unique_ptr<table> batch_gather(table_view const& source_table,
                                     cuda::stream_ref stream,
                                     memory_resources mr)
 {
-  // Routed entry: pick the tile width from sampled map locality. The fused-column count is
-  // recomputed here (one host-side type pass) so K-insensitive regimes skip the sampler; a
-  // null gather map skips it too (the delegate below rejects it).
-  size_type num_fused_cols = 0;
+  // Routed entry: one host-side type pass gathers the fused-column count and the widest fused
+  // element for the gate; when sampling is warranted it is ENQUEUED here and RESOLVED inside
+  // the body just before the kernel launch, hiding its latency behind the allocation work.
+  size_type num_fused_cols      = 0;
+  size_type max_fused_elem_size = 0;
   for (size_type i = 0; i < source_table.num_columns(); ++i) {
-    num_fused_cols += cudf::is_fixed_width(source_table.column(i).type()) ? 1 : 0;
+    auto const& col = source_table.column(i);
+    if (cudf::is_fixed_width(col.type())) {
+      ++num_fused_cols;
+      max_fused_elem_size =
+        std::max(max_fused_elem_size, static_cast<size_type>(cudf::size_of(col.type())));
+    }
   }
-  auto const tile_cols = (num_fused_cols == 0 or gather_map.has_nulls())
-                           ? kDefaultTileCols
-                           : select_gather_map_tile_cols(gather_map, num_fused_cols, stream);
-  return batch_gather(source_table, gather_map, bounds_policy, neg_indices, stream, mr, tile_cols);
+  if (num_fused_cols == 0 or gather_map.has_nulls()) {
+    // Nothing to fuse (or the delegate rejects the map): no sampler, no measurable tile width.
+    return batch_gather(
+      source_table, gather_map, bounds_policy, neg_indices, stream, mr, kDefaultTileCols);
+  }
+  auto const tile_cols =
+    unsampled_tile_width(gather_map.size(),
+                         source_table.num_rows(),
+                         num_fused_cols,
+                         max_fused_elem_size,
+                         static_cast<size_type>(cudf::size_of(gather_map.type())));
+  if (tile_cols.has_value()) {
+    return batch_gather(
+      source_table, gather_map, bounds_policy, neg_indices, stream, mr, *tile_cols);
+  }
+  auto const sampled = enqueue_map_locality_sample(gather_map, stream);
+  return batch_gather_impl(
+    source_table, gather_map, bounds_policy, neg_indices, stream, mr, std::nullopt, sampled);
 }
 
 std::unique_ptr<table> batch_gather(table_view const& source_table,
@@ -355,6 +452,25 @@ std::unique_ptr<table> batch_gather(table_view const& source_table,
                                     cuda::stream_ref stream,
                                     memory_resources mr,
                                     size_type tile_cols)
+{
+  return batch_gather_impl(source_table,
+                           gather_map,
+                           bounds_policy,
+                           neg_indices,
+                           stream,
+                           mr,
+                           std::optional<size_type>{tile_cols},
+                           sampled_map_locality::empty(stream));
+}
+
+std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
+                                         column_view const& gather_map,
+                                         out_of_bounds_policy bounds_policy,
+                                         negative_index_policy neg_indices,
+                                         cuda::stream_ref stream,
+                                         memory_resources mr,
+                                         std::optional<size_type> explicit_tile_cols,
+                                         sampled_map_locality const& sampled)
 {
   cudf::scoped_range rng{"batch_gather"};
 
@@ -397,7 +513,12 @@ std::unique_ptr<table> batch_gather(table_view const& source_table,
                                                      mr));
     }
 
-    // Null-mask phase over the fallback subset, mirroring the stock gather's conditions.
+    // Null-mask phase over the fallback subset, mirroring the stock gather's WHOLE-TABLE
+    // conditions: a null-bearing fused column must push the fallback
+    // through gather_bitmask exactly as stock does. The APPLICATION stays subset-scoped — the
+    // fused columns' masks are kernel-written per the mask-policy table, which matches stock's
+    // per-column outcome (gather_bitmask is per-column self-guarding,
+    // and set_all_valid_null_masks is a no-op for non-nullable inputs).
     auto fallback_views = std::vector<cudf::column_view>{};
     fallback_views.reserve(indices.size());
     for (auto const idx : indices) {
@@ -405,9 +526,8 @@ std::unique_ptr<table> batch_gather(table_view const& source_table,
     }
     auto const fallback_table = cudf::table_view{fallback_views};
     if (bounds_policy == out_of_bounds_policy::NULLIFY or
-        cudf::has_nested_nullable_columns(fallback_table)) {
-      if (bounds_policy == out_of_bounds_policy::NULLIFY or
-          cudf::has_nested_nulls(fallback_table)) {
+        cudf::has_nested_nullable_columns(source_table)) {
+      if (bounds_policy == out_of_bounds_policy::NULLIFY or cudf::has_nested_nulls(source_table)) {
         gather_bitmask(fallback_table,
                        map_it_begin,
                        fallback_columns,
@@ -512,7 +632,12 @@ std::unique_ptr<table> batch_gather(table_view const& source_table,
                                                 any_kernel_masks ? valid_counts.data() : nullptr);
       CUDF_CUDA_TRY(cudaGetLastError());
     };
-    switch (tile_cols) {
+    // Resolve the routed tile width only now: the sync waits for the enqueued sample copies
+    // AND for the allocation/descriptor work above, hiding the sampler latency behind it.
+    auto const effective_tile_cols = explicit_tile_cols.has_value()
+                                       ? *explicit_tile_cols
+                                       : resolve_map_locality_tile_cols(sampled, stream);
+    switch (effective_tile_cols) {
       case 1: launch_tile(std::integral_constant<size_type, 1>{}); break;
       case 2: launch_tile(std::integral_constant<size_type, 2>{}); break;
       case 4: launch_tile(std::integral_constant<size_type, 4>{}); break;

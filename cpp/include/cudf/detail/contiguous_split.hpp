@@ -27,6 +27,14 @@ std::vector<packed_table> contiguous_split(cudf::table_view const& input,
                                            rmm::device_async_resource_ref mr);
 
 /**
+ * @copydoc cudf::contiguous_split_packed_sizes
+ **/
+std::vector<std::size_t> contiguous_split_packed_sizes(cudf::table_view const& input,
+                                                       std::vector<size_type> const& splits,
+                                                       rmm::cuda_stream_view stream,
+                                                       rmm::device_async_resource_ref mr);
+
+/**
  * @copydoc cudf::pack
  **/
 packed_columns pack(cudf::table_view const& input,

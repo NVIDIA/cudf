@@ -1,7 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import gc
 import io
+import sys
 
 import pytest
 
@@ -133,3 +135,36 @@ def test_filepath_source_mixed_sources_invalid():
                 "s3://bucket/other.parquet",
             ]
         )
+
+
+def _parquet_bytes(values):
+    sink = io.BytesIO()
+    table = plc.Table([plc.Column.from_iterable_of_py(values)])
+    plc.io.parquet.write_parquet(
+        plc.io.parquet.ParquetWriterOptions.builder(
+            plc.io.SinkInfo([sink]), table
+        ).build()
+    )
+    return sink.getvalue()
+
+
+@pytest.mark.parametrize("make_source", [bytes, io.BytesIO])
+def test_source_info_keeps_host_buffers_alive(make_source):
+    values = list(range(1000))
+    data = _parquet_bytes(values)
+    nbytes = len(data)
+    source = make_source(data)
+    del data
+    refcount = sys.getrefcount(source)
+    source_info = plc.io.SourceInfo([source])
+    assert sys.getrefcount(source) > refcount
+
+    del source
+    gc.collect()
+    overwrite = [b"\xff" * nbytes for _ in range(16)]  # noqa: F841
+
+    read_opts = plc.io.parquet.ParquetReaderOptions.builder(
+        source_info
+    ).build()
+    result = plc.io.parquet.read_parquet(read_opts)
+    assert result.columns[0].to_arrow().to_pylist() == values

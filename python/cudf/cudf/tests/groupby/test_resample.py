@@ -137,6 +137,38 @@ def test_dataframe_resample_on():
     )
 
 
+def test_dataframe_resample_on_empty_column_name():
+    pdf = pd.DataFrame(
+        {
+            "": pd.date_range("2020-01-01", periods=3, freq="h"),
+            "value": [1, 2, 3],
+        }
+    )
+    gdf = cudf.from_pandas(pdf)
+    assert_resample_results_equal(
+        pdf.resample("D", on="").sum(),
+        gdf.resample("D", on="").sum(),
+    )
+
+
+def test_dataframe_resample_level_zero():
+    pdf = pd.DataFrame(
+        {"value": [1, 2, 3]},
+        index=pd.MultiIndex.from_arrays(
+            [
+                pd.date_range("2020-01-01", periods=3, freq="h"),
+                [0, 0, 1],
+            ],
+            names=["timestamp", "group"],
+        ),
+    )
+    gdf = cudf.from_pandas(pdf)
+    assert_resample_results_equal(
+        pdf.resample("D", level=0).sum(),
+        gdf.resample("D", level=0).sum(),
+    )
+
+
 def test_dataframe_resample_level():
     rng = np.random.default_rng(seed=0)
     # test resampling on a specific level of a MultIndex

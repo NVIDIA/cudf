@@ -1230,7 +1230,12 @@ class Scan(IR):
             # polars skips blank lines at the beginning of the file
             pieces = []
             seen_paths = []
+            # libcudf can only skip rows within one file, so the scan-level
+            # offset is applied once to the concatenated result for several files.
+            csv_skip_rows = skip_rows if len(paths) == 1 else 0
             read_partial = n_rows != -1
+            if read_partial:
+                n_rows += skip_rows - csv_skip_rows
             for p in paths:
                 # skip_lines skips raw lines (ignoring quoting) before anything else
                 skiprows = reader_options["skip_rows"] + reader_options["skip_lines"]
@@ -1243,7 +1248,7 @@ class Scan(IR):
                 csv_builder = (
                     plc.io.csv.CsvReaderOptions.builder(plc.io.SourceInfo([path]))
                     .nrows(n_rows)
-                    .skiprows(skiprows + skip_rows)
+                    .skiprows(skiprows + csv_skip_rows)
                     .skip_blank_lines(skip_blank_lines=False)
                     .lineterminator(str(eol))
                     .decimal(decimal)
@@ -1259,7 +1264,7 @@ class Scan(IR):
                 if column_names is not None:
                     options.set_names([str(name) for name in column_names])
                 else:
-                    if header > -1 and skip_rows > header:  # pragma: no cover
+                    if header > -1 and csv_skip_rows > header:  # pragma: no cover
                         # We need to read the header otherwise we would skip it
                         column_names = read_csv_header(path, str(sep))
                         options.set_names(column_names)
@@ -1311,6 +1316,8 @@ class Scan(IR):
                     df,
                     rows_per_path=[t.num_rows() for t in tables],
                 )
+            if skip_rows != csv_skip_rows:
+                df = df.slice((skip_rows, None))
         elif typ == "parquet":
             if cached_parquet_info is not None:
                 Scan._validate_cached_parquet_info(paths, cached_parquet_info)

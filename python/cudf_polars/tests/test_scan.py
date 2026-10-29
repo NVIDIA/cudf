@@ -327,6 +327,45 @@ def test_scan_csv_multi(engine: pl.GPUEngine, tmp_path, filename, glob, nrows_sk
     assert_gpu_result_equal(q, engine=engine)
 
 
+@pytest.fixture
+def csv_files(tmp_path):
+    paths = []
+    for name, start in (("a.csv", 0), ("b.csv", 100), ("c.csv", 200)):
+        path = tmp_path / name
+        path.write_text("x\n" + "".join(f"{start + i}\n" for i in range(8)))
+        paths.append(path)
+    return paths
+
+
+@pytest.mark.parametrize(
+    "zlice",
+    [
+        (5, 6),
+        (0, 3),
+        (8, 4),
+        (9, 10),
+        (16, 8),
+        (3, None),
+        (13, None),
+        (23, 5),
+        (24, 5),
+        (30, 5),
+        (4, 0),
+    ],
+)
+def test_scan_csv_multi_slice(engine: pl.GPUEngine, csv_files, zlice):
+    q = pl.scan_csv(csv_files).slice(*zlice)
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("zlice", [(5, 6), (10, None)])
+def test_scan_csv_multi_slice_include_file_paths(
+    engine: pl.GPUEngine, csv_files, zlice
+):
+    q = pl.scan_csv(csv_files, include_file_paths="path").slice(*zlice)
+    assert_gpu_result_equal(q, engine=engine)
+
+
 def test_scan_csv_multi_differing_colnames(tmp_path):
     with (tmp_path / "test1.csv").open("w") as f:
         f.write("""foo,bar,baz\n1,2\n3,4,5""")

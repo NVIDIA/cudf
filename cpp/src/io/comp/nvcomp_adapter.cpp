@@ -158,8 +158,8 @@ auto batched_decompress_get_temp_size(compression_type compression,
 template <typename Opts>
 [[nodiscard]] Opts with_backend(Opts opts, std::optional<bool> use_hw_decompression)
 {
-  opts.backend = use_hw_decompression.value_or(false) ? NVCOMP_DECOMPRESS_BACKEND_DEFAULT
-                                                      : NVCOMP_DECOMPRESS_BACKEND_CUDA;
+  opts.backend = use_hw_decompression.value_or(true) ? NVCOMP_DECOMPRESS_BACKEND_DEFAULT
+                                                     : NVCOMP_DECOMPRESS_BACKEND_CUDA;
   return opts;
 }
 

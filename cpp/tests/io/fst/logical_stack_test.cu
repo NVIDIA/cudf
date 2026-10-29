@@ -201,7 +201,8 @@ TEST_F(LogicalStackTest, GroundTruth)
 
   rmm::device_uvector<SymbolT> d_stack_ops{stack_symbols.size(), stream_view};
   rmm::device_uvector<SymbolOffsetT> d_stack_op_indexes{stack_op_indexes.size(), stream_view};
-  cudf::detail::hostdevice_vector<SymbolT> top_of_stack_gpu{string_size, stream_view};
+  cudf::detail::hostdevice_vector<SymbolT> top_of_stack_gpu{
+    string_size, stream_view, cudf::get_current_device_resource_ref()};
   cudf::device_span<SymbolOffsetT> d_stack_op_idx_span{d_stack_op_indexes};
 
   CUDF_CUDA_TRY(cudaMemcpyAsync(d_stack_ops.data(),

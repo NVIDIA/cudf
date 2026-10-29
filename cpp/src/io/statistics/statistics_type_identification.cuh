@@ -179,14 +179,13 @@ class aggregation_type {
     cudf::is_fixed_point<T>() or cudf::is_duration<T>() or
       cudf::is_timestamp<T>()  // To be disabled with static_assert
       or std::is_same_v<T, string_view> or std::is_same_v<T, byte_array_view>,
-    typename std::conditional_t<std::is_same_v<T, numeric::decimal128>, __int128_t, int64_t>,
+    typename std::conditional_t<cudf::is_fixed_point<T>(), __int128_t, int64_t>,
     void>;
 
   // unsigned int/bool -> uint64_t
   // signed int        -> int64_t
   // float/double      -> double
-  // decimal32/64      -> int64_t
-  // decimal128        -> __int128_t
+  // decimal32/64/128  -> __int128_t
   // duration_[T]      -> int64_t
   // string_view       -> int64_t
   // byte_array        -> int64_t

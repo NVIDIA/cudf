@@ -6,6 +6,8 @@
 
 #include <cudf_test/print_utilities.cuh>
 
+#include <cudf/detail/utilities/cuda.hpp>
+#include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
@@ -455,9 +457,12 @@ void sparse_stack_op_to_top_of_stack(StackSymbolItT d_symbols,
   // temp_storage_bytes
   total_temp_storage_bytes = temp_storage.size();
 
-  rmm::device_uvector<SymbolPositionT> d_symbol_position_alt{num_symbols_in, stream};
-  rmm::device_uvector<StackOpT> d_kv_ops_current{num_symbols_in, stream};
-  rmm::device_uvector<StackOpT> d_kv_ops_alt{num_symbols_in, stream};
+  cuda::device_buffer<SymbolPositionT> d_symbol_position_alt(
+    stream, cudf::get_current_device_resource_ref(), num_symbols_in, cuda::no_init);
+  cuda::device_buffer<StackOpT> d_kv_ops_current{
+    stream, cudf::get_current_device_resource_ref(), num_symbols_in, cuda::no_init};
+  cuda::device_buffer<StackOpT> d_kv_ops_alt(
+    stream, cudf::get_current_device_resource_ref(), num_symbols_in, cuda::no_init);
 
   //------------------------------------------------------------------------------
   // ALGORITHM
@@ -476,7 +481,8 @@ void sparse_stack_op_to_top_of_stack(StackSymbolItT d_symbols,
       d_symbols,
       detail::NewlineToResetStackSegmentOp<StackSymbolToStackOpTypeT>{symbol_to_stack_op});
 
-    rmm::device_uvector<StackSegmentT> key_segments{num_symbols_in, stream};
+    cuda::device_buffer<StackSegmentT> key_segments(
+      stream, cudf::get_current_device_resource_ref(), num_symbols_in, cuda::no_init);
     CUDF_CUDA_TRY(cub::DeviceScan::InclusiveSum(
       temp_storage.data(),
       total_temp_storage_bytes,
@@ -508,7 +514,10 @@ void sparse_stack_op_to_top_of_stack(StackSymbolItT d_symbols,
 
   // Check if the last element of d_kv_operations is 0. If not, then we have a problem.
   if (num_symbols_in && !supports_reset_op) {
-    StackOpT last_symbol = d_kv_ops_current.element(num_symbols_in - 1, stream);
+    StackOpT last_symbol;
+    CUDF_CUDA_TRY(cudf::detail::memcpy_async(
+      &last_symbol, d_kv_ops_current.data() + num_symbols_in - 1, sizeof(last_symbol), stream));
+    cudf::detail::sync_stream(stream);
     CUDF_EXPECTS(last_symbol.stack_level == 0, "The logical stack is not empty!");
   }
 

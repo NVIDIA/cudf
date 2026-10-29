@@ -83,14 +83,14 @@ std::unique_ptr<column> make_dictionary_column(std::unique_ptr<column> keys_colu
  * @brief Construct a dictionary column by taking ownership of the provided keys
  * and indices columns.
  *
- * The `keys_column` must contain no nulls and is assumed to have elements
- * that are unique and are in a strict, total order. Meaning, `keys_column[i]`
- * is ordered before `keys_column[i+1]` for all `i in [0,n-1)` where `n` is the
- * number of keys.
+ * The `keys_column` must contain no nulls. The keys are not required to be sorted
+ * or unique.
  *
  * The `indices_column` can be any integer type and should contain the null-mask
  * to be used for the output column.
  * The indices values must be in the range [0,keys_column.size()).
+ * Unsigned indices are converted to the signed type of the same width, or to the
+ * next wider signed type if the same width cannot hold `keys_column.size() - 1`.
  *
  * @throw cudf::logic_error if keys_column contains nulls
  *

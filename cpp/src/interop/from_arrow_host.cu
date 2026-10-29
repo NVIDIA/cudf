@@ -257,18 +257,9 @@ std::unique_ptr<column> dispatch_copy_from_arrow_host::operator()<cudf::dictiona
   auto keys_column =
     get_column_copy(&keys_schema_view, input->dictionary, keys_type, true, stream, mr);
 
-  auto const dict_indices_type = [&schema]() -> data_type {
-    // cudf dictionary requires a signed type for the indices
-    switch (schema->storage_type) {
-      case NANOARROW_TYPE_INT8: return data_type(type_id::INT8);
-      case NANOARROW_TYPE_INT16: return data_type(type_id::INT16);
-      case NANOARROW_TYPE_INT32: return data_type(type_id::INT32);
-      case NANOARROW_TYPE_INT64: return data_type(type_id::INT64);
-      default: CUDF_FAIL("Unsupported type_id for dictionary indices", cudf::data_type_error);
-    }
-  }();
-
-  auto indices_column = get_column_copy(schema, input, dict_indices_type, skip_mask, stream, mr);
+  auto const indices_type =
+    get_dictionary_indices_types(schema->storage_type, input->dictionary->length).storage;
+  auto indices_column = get_column_copy(schema, input, indices_type, skip_mask, stream, mr);
 
   return make_dictionary_column(std::move(keys_column), std::move(indices_column), stream, mr);
 }

@@ -920,7 +920,8 @@ std::unique_ptr<cudf::column> byte_pair_encoding(cudf::strings_column_view const
   }
 
   // compute the output sizes
-  auto output_sizes = rmm::device_uvector<cudf::size_type>(input.size(), stream);
+  auto output_sizes = cuda::device_buffer<cudf::size_type>(
+    stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
   bpe_finalize<<<input.size(), block_size, 0, stream.get()>>>(
     *d_strings, d_input_chars, d_spaces.data(), output_sizes.data());
   CUDF_CUDA_TRY(cudaGetLastError());

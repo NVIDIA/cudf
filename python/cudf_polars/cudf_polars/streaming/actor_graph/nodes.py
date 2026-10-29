@@ -25,17 +25,16 @@ from cudf_polars.streaming.actor_graph.dispatch import (
     ir_context_for_node,
 )
 from cudf_polars.streaming.actor_graph.hconcat import build_hconcat_partitioning
+from cudf_polars.streaming.actor_graph.partitioning import maybe_remap_partitioning
 from cudf_polars.streaming.actor_graph.tracing import send_chunk
 from cudf_polars.streaming.actor_graph.utils import (
     ChannelManager,
     _leading_order_keys,
     chunk_to_frame,
     chunkwise_evaluate,
-    clear_local_ordering,
     empty_table_chunk,
     gather_in_task_group,
     make_spill_function,
-    maybe_remap_partitioning,
     process_children,
     recv_metadata,
     send_metadata,
@@ -67,6 +66,8 @@ async def default_node_single(
     ir_context: IRExecutionContext,
     ch_out: Channel[TableChunk],
     ch_in: Channel[TableChunk],
+    *,
+    partitioning_callback: PartitioningCallback | None = None,
 ) -> None:
     """
     Single-channel default node for rapidsmpf.
@@ -83,6 +84,8 @@ async def default_node_single(
         The output Channel[TableChunk].
     ch_in
         The input Channel[TableChunk].
+    partitioning_callback
+        Optional builder for output partitioning metadata.
 
     Notes
     -----
@@ -99,11 +102,11 @@ async def default_node_single(
         ir_context = actor_scope.require_ir_context()
         # Recv metadata and prepare output metadata
         metadata_in = await recv_metadata(ch_in, context)
-        partitioning = maybe_remap_partitioning(
-            ir, metadata_in.partitioning, context=context
+        partitioning = (
+            partitioning_callback((metadata_in,), context)
+            if partitioning_callback is not None
+            else maybe_remap_partitioning(ir, metadata_in.partitioning, context=context)
         )
-        if not ir.preserves_output_order:
-            partitioning = clear_local_ordering(partitioning)
         metadata_out = ChannelMetadata(
             local_count=metadata_in.local_count,
             partitioning=partitioning,

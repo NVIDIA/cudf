@@ -163,6 +163,30 @@ ArrowType id_to_arrow_storage_type(cudf::type_id id)
   }
 }
 
+dictionary_indices_types get_dictionary_indices_types(ArrowType storage_type, int64_t num_keys)
+{
+  auto const same = [](type_id id) {
+    return dictionary_indices_types{data_type{id}, data_type{id}};
+  };
+  auto const max_index = num_keys - 1;
+  switch (storage_type) {
+    case NANOARROW_TYPE_INT8: return same(type_id::INT8);
+    case NANOARROW_TYPE_INT16: return same(type_id::INT16);
+    case NANOARROW_TYPE_INT32: return same(type_id::INT32);
+    case NANOARROW_TYPE_INT64: return same(type_id::INT64);
+    case NANOARROW_TYPE_UINT8:
+      return max_index <= std::numeric_limits<int8_t>::max()
+               ? same(type_id::INT8)
+               : dictionary_indices_types{data_type{type_id::UINT8}, data_type{type_id::INT16}};
+    case NANOARROW_TYPE_UINT16:
+      return max_index <= std::numeric_limits<int16_t>::max()
+               ? same(type_id::INT16)
+               : dictionary_indices_types{data_type{type_id::UINT16}, data_type{type_id::INT32}};
+    case NANOARROW_TYPE_UINT32: return same(type_id::INT32);
+    default: CUDF_FAIL("Unsupported type_id for dictionary indices", cudf::data_type_error);
+  }
+}
+
 int initialize_array(ArrowArray* arr, ArrowType storage_type, cudf::column_view column)
 {
   NANOARROW_RETURN_NOT_OK(ArrowArrayInitFromType(arr, storage_type));

@@ -14,6 +14,7 @@
 #include "statistics.cuh"
 
 #include <cudf/fixed_point/fixed_point.hpp>
+#include <cudf/reduction/detail/sum_overflow.cuh>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/wrappers/durations.hpp>
 #include <cudf/wrappers/timestamps.hpp>
@@ -28,6 +29,11 @@ namespace detail {
 template <typename T, int block_size>
 using cub_temp_storage = typename cub::BlockReduce<T, block_size>::TempStorage;
 using statistics::byte_array_view;
+
+// Overflow-tracking sum accumulators of the integral aggregation types
+using int64_sum  = reduction::detail::sum_overflow_result<int64_t>;
+using uint64_sum = reduction::detail::sum_overflow_result<uint64_t>;
+using int128_sum = reduction::detail::sum_overflow_result<__int128_t>;
 
 #define MEMBER_NAME(TYPE) TYPE##_stats
 
@@ -55,6 +61,9 @@ union block_reduce_storage {
   DECLARE_MEMBER(double)
   DECLARE_MEMBER(string_view)
   DECLARE_MEMBER(byte_array_view)
+  DECLARE_MEMBER(int64_sum)
+  DECLARE_MEMBER(uint64_sum)
+  DECLARE_MEMBER(int128_sum)
 };
 
 #define STORAGE_WRAPPER_GET(TYPE)                      \
@@ -92,6 +101,9 @@ struct storage_wrapper {
   STORAGE_WRAPPER_GET(double);
   STORAGE_WRAPPER_GET(string_view);
   STORAGE_WRAPPER_GET(byte_array_view);
+  STORAGE_WRAPPER_GET(int64_sum);
+  STORAGE_WRAPPER_GET(uint64_sum);
+  STORAGE_WRAPPER_GET(int128_sum);
 };
 
 #undef DECLARE_MEMBER

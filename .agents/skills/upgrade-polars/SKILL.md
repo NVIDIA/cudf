@@ -362,8 +362,8 @@ What this means for an upgrade:
 - **Turning a GPU execution into a CPU fallback fails the selected test** with `Selected GPU test passed without observed GPU
   execution`. When a fallback is the right fix (triage step 2 below), also remove that node from the run list.
 - Skipped or xfailed items are not checked for GPU execution, so the xfail and skip dicts keep working as before.
-- When the PR raises the minimum supported Polars version, run
-  `.agents/skills/update-cudf-polars-polars-tests-selection/prune-run-list.py` in the same PR.
+- When the PR raises the minimum supported Polars version, prune the entries for dropped versions in the same PR (see "Remove run-list
+  entries for dropped versions" in Step 2).
 
 ### Triage each failure
 

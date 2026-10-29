@@ -15,6 +15,7 @@
 #include <cudf/strings/detail/strings_children.cuh>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/strings/strings_column_view.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
@@ -101,11 +102,10 @@ inline __device__ bool is_integer(string_view const& d_str)
  * @brief The dispatch functions for checking if strings are valid integers.
  */
 struct dispatch_is_integer_fn {
-  template <typename T>
+  template <cudf::concepts::integral_not_bool T>
   std::unique_ptr<column> operator()(strings_column_view const& input,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr) const
-    requires(cudf::is_integral_not_bool<T>())
   {
     auto const d_column = column_device_view::create(input.parent(), stream);
     auto results        = make_numeric_column(data_type{type_id::BOOL8},
@@ -140,7 +140,6 @@ struct dispatch_is_integer_fn {
   std::unique_ptr<column> operator()(strings_column_view const&,
                                      cuda::stream_ref,
                                      rmm::device_async_resource_ref) const
-    requires(not cudf::is_integral_not_bool<T>())
   {
     CUDF_FAIL("is_integer is expecting an integer type");
   }
@@ -237,11 +236,10 @@ struct string_to_integer_fn {
  * The output_column is expected to be one of the integer types only.
  */
 struct dispatch_to_integers_fn {
-  template <typename IntegerType>
+  template <cudf::concepts::integral_not_bool IntegerType>
   void operator()(column_device_view const& strings_column,
                   mutable_column_view& output_column,
                   cuda::stream_ref stream) const
-    requires(cudf::is_integral_not_bool<IntegerType>())
   {
     thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                       cuda::counting_iterator<size_type>{0},
@@ -252,7 +250,6 @@ struct dispatch_to_integers_fn {
   // non-integer types throw an exception
   template <typename T>
   void operator()(column_device_view const&, mutable_column_view&, cuda::stream_ref) const
-    requires(not cudf::is_integral_not_bool<T>())
   {
     CUDF_FAIL("Output for to_integers must be an integer type.");
   }
@@ -343,11 +340,10 @@ struct from_integers_fn {
  * The template function declaration ensures only integer types are used.
  */
 struct dispatch_from_integers_fn {
-  template <typename IntegerType>
+  template <cudf::concepts::integral_not_bool IntegerType>
   std::unique_ptr<column> operator()(column_view const& integers,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr) const
-    requires(cudf::is_integral_not_bool<IntegerType>())
   {
     size_type strings_count = integers.size();
     auto column             = column_device_view::create(integers, stream);
@@ -372,7 +368,6 @@ struct dispatch_from_integers_fn {
   std::unique_ptr<column> operator()(column_view const&,
                                      cuda::stream_ref,
                                      rmm::device_async_resource_ref) const
-    requires(not cudf::is_integral_not_bool<T>())
   {
     CUDF_FAIL("Values for from_integers function must be an integer type.");
   }

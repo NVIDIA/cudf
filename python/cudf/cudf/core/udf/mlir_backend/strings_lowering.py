@@ -4,8 +4,9 @@
 
 Covers ``len`` (UTF-8 character count), the string comparison operators
 (``==``/``!=``/``<``/``<=``/``>``/``>=``), the affix/search/predicate methods,
-and ``+`` (concatenation) --- the first string-*producing* op, which allocates a
-new buffer via NRT --- over ``mlir_string``, ``Masked(mlir_string)`` and
+``+`` (concatenation) and ``strip``/``lstrip``/``rstrip`` --- the
+string-*producing* ops, which allocate a new buffer via NRT --- over
+``mlir_string``, ``Masked(mlir_string)`` and
 string-literal operands; masked operands yield a ``Masked`` result whose validity
 is the AND of the operand validity bits. All lowerings are pure MLIR (see
 :mod:`cudf.core.udf.mlir_backend.string_lowering_impl`). Registered with
@@ -93,6 +94,13 @@ _INT_METHODS = {
     "find": _impl._lower_find,
     "rfind": _impl._lower_rfind,
     "count": _impl._lower_count,
+}
+
+# strip method name -> its pure-MLIR impl (optional chars arg -> mlir_string).
+_STRIP_METHODS = {
+    "strip": _impl.lower_strip,
+    "lstrip": _impl.lower_lstrip,
+    "rstrip": _impl.lower_rstrip,
 }
 
 # character-class predicate method name -> its pure-MLIR impl (no arg -> bool).
@@ -279,6 +287,51 @@ def _make_method_attr(
     return resolve
 
 
+def _make_strip_attr(attrname: str, masked: bool) -> object:
+    """Build a ``resolve_<strip>`` for an optional-arg method returning a string.
+
+    Parameters
+    ----------
+    attrname : str
+        Method name (``"strip"``/``"lstrip"``/``"rstrip"``).
+    masked : bool
+        Whether the receiver is ``Masked(mlir_string)`` (wraps the result).
+
+    Returns
+    -------
+    callable
+        A ``resolve_`` function for the attribute template.
+    """
+    recvr = _masked_string if masked else mlir_string
+
+    class _StripTemplate(AbstractTemplate):
+        key = f"MLIRString.{attrname}.{'m' if masked else 's'}"
+
+        def generic(self, args, kws):
+            """Resolve ``s.strip()`` / ``s.strip(chars)``.
+
+            Zero args (whitespace mode) or one string arg (chars set); the
+            result is ``Masked(mlir_string)`` when the receiver or the argument
+            is masked, else ``mlir_string``.
+            """
+            if kws or len(args) > 1:
+                return None
+            arg_masked = len(args) == 1 and _is_masked_string(args[0])
+            result_ty = (
+                MaskedType(mlir_string)
+                if masked or arg_masked
+                else mlir_string
+            )
+            if len(args) == 0:
+                return nb_signature(result_ty, recvr=self.this)
+            return nb_signature(result_ty, args[0], recvr=self.this)
+
+    def resolve(self, mod):
+        return types.BoundFunction(_StripTemplate, recvr)
+
+    return resolve
+
+
 @typing_registry.register_attr
 class MLIRStringAttrs(AttributeTemplate):
     """Attribute typing for ``mlir_string`` methods."""
@@ -359,6 +412,17 @@ for _name in _IS_METHODS:
         MaskedMLIRStringAttrs,
         f"resolve_{_name}",
         _make_is_attr(_name, masked=True),
+    )
+for _name in _STRIP_METHODS:
+    setattr(
+        MLIRStringAttrs,
+        f"resolve_{_name}",
+        _make_strip_attr(_name, masked=False),
+    )
+    setattr(
+        MaskedMLIRStringAttrs,
+        f"resolve_{_name}",
+        _make_strip_attr(_name, masked=True),
     )
 
 
@@ -609,6 +673,33 @@ def _make_lower_is(impl_fn: object) -> object:
     return _getattr
 
 
+def _make_lower_strip(impl_fn: object) -> object:
+    """Build the ``lower_getattr`` for a strip method (optional chars arg).
+
+    With no argument the strip set is empty (whitespace mode); with one string
+    argument the argument supplies the strip set. A ``Masked`` result is packed
+    when the receiver or the argument is masked.
+    """
+
+    def _impl_lower(builder, target, args, kwargs):
+        valid_ty = builder.get_mlir_type(types.boolean)
+        true_val = arith.constant(valid_ty, 1)
+        recv, vr = _view_and_valid(builder, args[0], true_val)
+        if len(args) == 2:
+            strip_view, vo = _view_and_valid(builder, args[1], true_val)
+            valid = arith.andi(vr, vo)
+        else:
+            strip_view = _impl._empty_view()
+            valid = vr
+        result = impl_fn(builder.mlir_gpu_module, recv, strip_view)
+        _store_maybe_masked(builder, target, result, valid)
+
+    def _getattr(context, builder, target, value, attr=None):
+        builder.store_var(target, DeferredMethodCall(value, _impl_lower))
+
+    return _getattr
+
+
 def _lower_contains_op(
     builder: MLIRLower, target: Var, args: list[Var], kwargs: list
 ) -> None:
@@ -759,6 +850,12 @@ def _register() -> None:
         getattr_fn = _make_lower_is(impl_fn)
         lowering_registry.lower_getattr(mlir_string, name)(getattr_fn)
         lowering_registry.lower_getattr(_masked_string, name)(getattr_fn)
+
+    # strip/lstrip/rstrip (optional chars arg) -> (masked) mlir_string
+    for name, strip_impl in _STRIP_METHODS.items():
+        strip_getattr = _make_lower_strip(strip_impl)
+        lowering_registry.lower_getattr(mlir_string, name)(strip_getattr)
+        lowering_registry.lower_getattr(_masked_string, name)(strip_getattr)
 
 
 _register()

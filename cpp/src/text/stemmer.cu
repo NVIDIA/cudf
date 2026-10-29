@@ -13,6 +13,7 @@
 #include <cudf/strings/detail/utilities.hpp>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/strings/strings_column_view.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
@@ -116,13 +117,12 @@ namespace {
  * @brief For dispatching index-type of indices parameter in the nvtext::is_letter API.
  */
 struct dispatch_is_letter_fn {
-  template <typename T>
+  template <cudf::concepts::index_type T>
   std::unique_ptr<cudf::column> operator()(cudf::strings_column_view const& strings,
                                            letter_type ltype,
                                            cudf::column_view const& indices,
                                            cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr) const
-    requires(cudf::is_index_type<T>())
   {
     CUDF_EXPECTS(strings.size() == indices.size(),
                  "strings column and indices column must be the same size");
@@ -133,7 +133,7 @@ struct dispatch_is_letter_fn {
 
   template <typename T, typename... Args>
   std::unique_ptr<cudf::column> operator()(Args&&...) const
-    requires(not cudf::is_index_type<T>())
+    requires(not cudf::concepts::index_type<T>)
   {
     CUDF_FAIL("The is_letter indices parameter must be an integer type.");
   }

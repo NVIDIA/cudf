@@ -494,7 +494,7 @@ std::vector<std::vector<size_type>> hybrid_scan_reader_impl::filter_row_groups_w
 std::unique_ptr<cudf::column> hybrid_scan_reader_impl::build_all_true_row_mask(
   std::span<std::vector<size_type> const> row_group_indices,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   CUDF_EXPECTS(not row_group_indices.empty(), "Empty input row group indices encountered");
 
@@ -505,7 +505,7 @@ std::unique_ptr<cudf::column> hybrid_scan_reader_impl::build_row_mask_with_page_
   std::span<std::vector<size_type> const> row_group_indices,
   parquet_reader_options const& options,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   CUDF_EXPECTS(not row_group_indices.empty(), "Empty input row group indices encountered");
   auto [expr_conv, output_dtypes] = prepare_filter_and_output_types(options);
@@ -706,7 +706,7 @@ void hybrid_scan_reader_impl::prepare_materialization(
   bool sparse_page_io,
   parquet_reader_options const& options,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   auto const is_all_columns = columns_mode == read_columns_mode::ALL_COLUMNS;
 
@@ -770,7 +770,7 @@ table_with_metadata hybrid_scan_reader_impl::materialize_table(
   use_data_page_mask mask_data_pages,
   parquet_reader_options const& options,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   auto constexpr sparse_page_io = false;
   prepare_materialization(read_mode::READ_ALL,
@@ -799,7 +799,7 @@ void hybrid_scan_reader_impl::setup_chunked_table_materialization(
   use_data_page_mask mask_data_pages,
   parquet_reader_options const& options,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   auto constexpr sparse_page_io = false;
   prepare_materialization(read_mode::CHUNKED_READ,
@@ -824,7 +824,7 @@ void hybrid_scan_reader_impl::setup_chunked_sparse_payload_materialization(
   cudf::column_view const& row_mask,
   parquet_reader_options const& options,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   auto constexpr sparse_page_io = true;
   prepare_materialization(read_mode::CHUNKED_READ,
@@ -997,7 +997,7 @@ void hybrid_scan_reader_impl::initialize_reader_config(parquet_reader_options co
 void hybrid_scan_reader_impl::initialize_options(parquet_reader_options const& options,
                                                  std::size_t num_sources,
                                                  cuda::stream_ref stream,
-                                                 rmm::device_async_resource_ref mr)
+                                                 cudf::memory_resources mr)
 {
   // Binary columns can be read as binary or strings
   _reader_column_schema = options.get_column_schema();
@@ -1152,8 +1152,8 @@ table_with_metadata hybrid_scan_reader_impl::read_chunk_internal(read_mode mode,
     }
   }
 
-  out_columns =
-    cudf::structs::detail::enforce_null_consistency(std::move(out_columns), _stream, _mr);
+  out_columns = cudf::structs::detail::enforce_null_consistency(
+    std::move(out_columns), _stream, _mr.get_output_mr());
 
   // Compute the output number of rows per source
   if (mode == read_mode::CHUNKED_READ) {
@@ -1180,9 +1180,11 @@ table_with_metadata hybrid_scan_reader_impl::finalize_output(
   for (std::size_t i = out_columns.size(); i < _output_buffers.size(); ++i) {
     if (!_output_metadata) {
       column_name_info& col_name = out_metadata.schema_info[i];
-      out_columns.emplace_back(io::detail::empty_like(_output_buffers[i], &col_name, _stream, _mr));
+      out_columns.emplace_back(
+        io::detail::empty_like(_output_buffers[i], &col_name, _stream, _mr.get_output_mr()));
     } else {
-      out_columns.emplace_back(io::detail::empty_like(_output_buffers[i], nullptr, _stream, _mr));
+      out_columns.emplace_back(
+        io::detail::empty_like(_output_buffers[i], nullptr, _stream, _mr.get_output_mr()));
     }
   }
 
@@ -1258,10 +1260,8 @@ table_with_metadata hybrid_scan_reader_impl::finalize_output(
     auto const final_filter      = compute_offset_filter();
     auto const final_filter_expr = final_filter.get_converted_expr();
 
-    auto final_row_mask = cudf::detail::compute_column(*read_table,
-                                                       final_filter_expr.value().get(),
-                                                       _stream,
-                                                       cudf::get_current_device_resource_ref());
+    auto final_row_mask = cudf::detail::compute_column(
+      *read_table, final_filter_expr.value().get(), _stream, _mr.get_temporary_mr());
     CUDF_EXPECTS(final_row_mask->view().type().id() == type_id::BOOL8,
                  "Predicate filter should return a boolean");
 
@@ -1471,7 +1471,7 @@ void hybrid_scan_reader_impl::set_sparse_pass_page_mask(
     use_data_page_mask,                                                                \
     parquet_reader_options const&,                                                     \
     cuda::stream_ref,                                                                  \
-    rmm::device_async_resource_ref);                                                   \
+    cudf::memory_resources);                                                           \
   template void hybrid_scan_reader_impl::setup_chunked_table_materialization<mode>(    \
     std::size_t,                                                                       \
     std::size_t,                                                                       \
@@ -1481,7 +1481,7 @@ void hybrid_scan_reader_impl::set_sparse_pass_page_mask(
     use_data_page_mask,                                                                \
     parquet_reader_options const&,                                                     \
     cuda::stream_ref,                                                                  \
-    rmm::device_async_resource_ref);                                                   \
+    cudf::memory_resources);                                                           \
   template table_with_metadata hybrid_scan_reader_impl::materialize_table_chunk<mode>( \
     row_mask_view_t<mode> const&);
 

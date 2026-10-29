@@ -5,6 +5,7 @@
 
 #include <cudf/column/column_child_offsets.hpp>
 #include <cudf/strings/strings_column_view.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
@@ -14,7 +15,6 @@
 #include <jit/util.hpp>
 #include <rtcx/rtcx.hpp>
 
-#include <concepts>
 #include <format>
 #include <iterator>
 #include <numeric>
@@ -30,15 +30,14 @@ std::string get_element_type_name(transform_input_spec const& spec, bool use_phy
 struct element_type_name_fn {
   template <typename T>
   std::string operator()(transform_input_spec const& spec, bool use_physical_type) const
-    requires(is_fixed_width<T>() || std::same_as<T, cudf::string_view>)
+    requires(cudf::concepts::fixed_width<T> || cudf::concepts::string_view<T>)
   {
     auto type = data_type{spec.type};
     return type_to_name(use_physical_type ? jit::physical_type_of(type) : type);
   }
 
-  template <typename T>
+  template <cudf::concepts::dictionary T>
   std::string operator()(transform_input_spec const& spec, bool use_physical_type) const
-    requires(std::same_as<T, cudf::dictionary32>)
   {
     return std::format(
       "cudf::dictionary_element<{}, {}>",
@@ -48,8 +47,6 @@ struct element_type_name_fn {
 
   template <typename T>
   std::string operator()(transform_input_spec const& spec, bool) const
-    requires(!is_fixed_width<T>() && !std::same_as<T, cudf::string_view> &&
-             !std::same_as<T, cudf::dictionary32>)
   {
     CUDF_FAIL("Unsupported type for JIT compilation: " + type_to_name(data_type{spec.type}));
   }

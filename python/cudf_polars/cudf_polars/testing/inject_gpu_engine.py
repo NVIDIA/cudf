@@ -6,8 +6,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
-from functools import partialmethod
+from functools import partialmethod, wraps
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -20,14 +21,44 @@ from cudf_polars.testing.engine_utils import (
     SMALL_MAX_ROWS_PER_PARTITION,
     SMALL_TARGET_PARTITION_SIZE,
 )
-from cudf_polars.testing.fallback import fallback_used, gpu_attempted, gpu_executed
-from cudf_polars.testing.fallback_report import FallbackReport
+from cudf_polars.testing.fallback import (
+    fallback_used,
+    gpu_attempted,
+    gpu_executed,
+)
+from cudf_polars.testing.fallback_report import COLLECTION, FallbackReport
+from cudf_polars.testing.observation import (
+    Observation,
+    begin_observation,
+    bind_observation,
+    end_observation,
+)
 from cudf_polars.utils.config import StreamingFallbackMode
 
 if TYPE_CHECKING:
-    from collections.abc import Generator, Mapping
+    from collections.abc import Callable, Generator, Mapping
 
     from pluggy import Result
+
+OBSERVATION = pytest.StashKey[Observation]()
+OUTCOMES = pytest.StashKey[list[str]]()
+SELECTION = pytest.StashKey[set[str]]()
+COLLECTION_SKIPS = pytest.StashKey[set[str]]()
+
+
+class CollectionSkips:
+    """Distinguish unavailable optional modules from renamed tests."""
+
+    def __init__(self, config: pytest.Config) -> None:
+        self.config = config
+        config.stash[COLLECTION_SKIPS] = set()
+
+    def pytest_collectreport(self, report: pytest.CollectReport) -> None:
+        """Retain module-level import skips before collection filtering."""
+        if report.skipped and "tests/" in report.nodeid:
+            self.config.stash[COLLECTION_SKIPS].add(
+                report.nodeid[report.nodeid.index("tests/") :]
+            )
 
 
 def nonnegative_int(value: str) -> int:
@@ -36,6 +67,19 @@ def nonnegative_int(value: str) -> int:
     if integer < 0:
         raise ValueError(f"Argument {value} must be non-negative")
     return integer
+
+
+def _read_selection(path: str, key: str) -> set[str]:
+    """Validate a versioned run-list entry before selecting any tests."""
+    manifest = json.loads(Path(path).read_text())
+    if manifest["schema_version"] != 1:
+        raise ValueError("Unsupported run-list schema")
+    nodes = manifest["selections"][key]["nodes"]
+    if not isinstance(nodes, list) or not all(isinstance(node, str) for node in nodes):
+        raise ValueError("Invalid run-list nodes")
+    if len(set(nodes)) != len(nodes) or not nodes:
+        raise ValueError("Empty or duplicate run-list nodes")
+    return set(nodes)
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -57,8 +101,8 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         choices=("default", "small"),
         help=(
             "Blocksize mode for the 'spmd' engine. 'small' forces most tests "
-            "onto the multi-partition path. PR CI uses 'default'; nightly uses "
-            "'small'. Ignored for 'in-memory'."
+            "onto the multi-partition path. PR CI uses 'default'; nightlies "
+            "run both modes. Ignored for 'in-memory'."
         ),
     )
     group.addoption(
@@ -73,6 +117,11 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         "--inject-gpu-engine-report",
         metavar="PATH",
         help="Write per-test GPU execution and fallback diagnostics as JSON on the pytest controller.",
+    )
+    group.addoption(
+        "--inject-gpu-engine-run-list",
+        metavar="PATH",
+        help="Select previously observed GPU-executing nodes and require GPU execution on passing items.",
     )
     group.addoption(
         "--cudf-polars-shard-id",
@@ -141,6 +190,18 @@ def pytest_configure(config: pytest.Config) -> None:
     variant = config.getoption("--inject-gpu-engine")
     blocksize = config.getoption("--inject-gpu-engine-blocksize")
     raise_on_fail = config.getoption("--inject-gpu-engine-raise-on-fail")
+    config.pluginmanager.register(
+        CollectionSkips(config), "cudf-polars-collection-skips"
+    )
+    run_list = config.getoption("--inject-gpu-engine-run-list")
+    if run_list:
+        key = f"{polars.__version__}|{variant}|{blocksize if variant == 'spmd' else 'default'}"
+        try:
+            config.stash[SELECTION] = _read_selection(run_list, key)
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            raise pytest.UsageError(
+                f"Cannot select GPU tests for {key}: {error}"
+            ) from error
     validate_shard_options(
         config.getoption("cudf_polars_shard_id"),
         config.getoption("cudf_polars_num_shards"),
@@ -175,6 +236,20 @@ def pytest_configure(config: pytest.Config) -> None:
     config._inject_gpu_engine = engine  # type: ignore[attr-defined]
     _verify_collect_patch(engine)
 
+    post_opt_callback = polars.GPUEngine._post_opt_callback
+
+    @wraps(post_opt_callback)
+    def attributed_callback(
+        self: polars.GPUEngine, *, background: bool, eager: bool
+    ) -> Callable[..., None] | None:
+        callback = post_opt_callback(self, background=background, eager=eager)
+        # Capture ownership before Rust can invoke translation on another thread,
+        # including after the originating item's observation has been retired.
+        return None if callback is None else bind_observation(callback)
+
+    polars.GPUEngine._post_opt_callback = attributed_callback  # type: ignore[method-assign]
+    config._cudf_polars_post_opt_callback = post_opt_callback  # type: ignore[attr-defined]
+
     config.addinivalue_line(
         "filterwarnings",
         "ignore:.*GPU engine does not support streaming or background collection",
@@ -192,11 +267,26 @@ def pytest_runtest_protocol(
     """Give each injected-engine pytest item isolated execution signals."""
     signals = (fallback_used, gpu_attempted, gpu_executed)
     tokens = [signal.set(False) for signal in signals]
+    observation = begin_observation()
+    item.stash[OBSERVATION] = observation
+    item.stash[OUTCOMES] = []
     try:
         yield
     finally:
+        end_observation(observation)
         for signal, token in zip(signals, tokens, strict=True):
             signal.reset(token)
+
+
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
+def pytest_runtest_call(item: pytest.Item) -> Generator[None, None, None]:
+    """Attribute execution signals only to the test body."""
+    observation = item.stash[OBSERVATION]
+    observation.set_in_call(True)
+    try:
+        yield
+    finally:
+        observation.set_in_call(False)
 
 
 @pytest.hookimpl(hookwrapper=True)
@@ -206,15 +296,79 @@ def pytest_runtest_makereport(
     """Attach per-test execution telemetry to each phase's report."""
     outcome = yield
     report = outcome.get_result()
+    signals = item.stash[OBSERVATION].snapshot()
+    previous = item.stash[OUTCOMES]
+    if (
+        report.when == "teardown"
+        and report.passed
+        and previous == ["passed", "passed"]
+        and item.config.getoption("--inject-gpu-engine-run-list")
+        and signals["gpu_executed"] != "true"
+    ):
+        report.outcome = "failed"
+        report.longrepr = "Selected GPU test passed without observed GPU execution"
+    previous.append(report.outcome)
     if item.config.getoption("--inject-gpu-engine-report"):
         # user_properties travel with TestReport across xdist's worker boundary.
         report.user_properties.extend(
-            (name, str(signal.get()).lower())
-            for name, signal in (
-                ("cudf_polars_fallback", fallback_used),
-                ("cudf_polars_gpu_attempted", gpu_attempted),
-                ("cudf_polars_gpu_executed", gpu_executed),
+            (f"cudf_polars_{name}", value) for name, value in signals.items()
+        )
+
+
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> Generator[None, None, None]:
+    """Validate against unfiltered collection before narrowing the PR run."""
+    inventory = {item.nodeid for item in items}
+    selection = config.stash.get(SELECTION, None)
+    collection_skips = config.stash[COLLECTION_SKIPS]
+    if selection is not None:
+        collected_files = {node.split("::", 1)[0] for node in inventory}
+        full_suite = any(
+            Path(arg.split("::", 1)[0]).name == "tests" for arg in config.args
+        )
+        requested = [
+            arg[arg.index("tests/") :] for arg in config.args if "tests/" in arg
+        ]
+        explicit_node = any("::" in arg for arg in config.args)
+        stale = sorted(
+            node
+            for node in selection - inventory
+            if (full_suite or node.split("::", 1)[0] in collected_files)
+            and not any(node.startswith(module) for module in collection_skips)
+            and (
+                not explicit_node
+                or any(
+                    node == arg
+                    or node.startswith(tuple(arg + sep for sep in ("[", "::", "/")))
+                    for arg in requested
+                )
             )
+        )
+        if stale:
+            raise pytest.UsageError("Stale GPU run-list nodes:\n" + "\n".join(stale))
+        deselected = [item for item in items if item.nodeid not in selection]
+        items[:] = [item for item in items if item.nodeid in selection]
+        if deselected:
+            config.hook.pytest_deselected(items=deselected)
+    yield
+    collection: dict[str, object] = {
+        "selection_mode": "gpu" if selection is not None else "full",
+        "collection_nodeids": sorted(inventory),
+        "collection_skips": sorted(collection_skips),
+        "collected_nodeids": sorted(item.nodeid for item in items),
+        "consistent": True,
+    }
+    config.stash[COLLECTION] = collection
+
+
+@pytest.hookimpl
+def pytest_sessionfinish(session: pytest.Session) -> None:
+    """Transport collection metadata alongside worker reports."""
+    if hasattr(session.config, "workeroutput"):
+        session.config.workeroutput["cudf_polars_collection"] = (
+            session.config.stash.get(COLLECTION, {})
         )
 
 
@@ -249,6 +403,9 @@ def _verify_collect_patch(engine: object) -> None:
 
 def pytest_unconfigure(config: pytest.Config) -> None:
     """Tear down the injected engine."""
+    post_opt_callback = getattr(config, "_cudf_polars_post_opt_callback", None)
+    if post_opt_callback is not None:
+        polars.GPUEngine._post_opt_callback = post_opt_callback  # type: ignore[method-assign]
     engine = getattr(config, "_inject_gpu_engine", None)
     if engine is None:
         return
@@ -286,6 +443,8 @@ EXPECTED_FAILURES: dict[str, str] = {
     "tests/unit/io/test_parquet.py::test_binary_offset_roundtrip": "binary offset type unsupported",
     "tests/unit/io/test_lazy_csv.py::test_scan_csv_schema_new_columns_dtypes[foods1.csv]": "CSV reader's use_cols_names picks the wrong columns when combined with a column_names_overwrite rename",
     "tests/unit/io/test_lazy_csv.py::test_scan_csv_schema_new_columns_dtypes[foods*.csv]": "CSV reader's use_cols_names picks the wrong columns when combined with a column_names_overwrite rename",
+    "tests/unit/sql/test_table_functions.py::test_read_csv_override_that_does_not_fit": "libcudf CSV/JSON readers turn values that do not parse as the requested dtype into nulls instead of raising (https://github.com/NVIDIA/cudf/issues/24836)",
+    "tests/unit/sql/test_table_functions.py::test_read_ndjson_option_errors[schema_overrides => {'a': 'INT'}-ComputeError-cannot parse 'oops' \\\\(string\\\\) as Int32]": "libcudf CSV/JSON readers turn values that do not parse as the requested dtype into nulls instead of raising (https://github.com/NVIDIA/cudf/issues/24836)",
     "tests/unit/lazyframe/test_engine_selection.py::test_engine_import_error_raises[gpu]": "Expect this to pass because cudf-polars is installed",
     "tests/unit/lazyframe/test_engine_selection.py::test_engine_import_error_raises[engine1]": "Expect this to pass because cudf-polars is installed",
     "tests/unit/lazyframe/test_engine_selection.py::test_default_engine_and_affinity[streaming]": "This plugin forces engine=<injected GPU engine> on LazyFrame.collect via partialmethod, so the default engine and POLARS_ENGINE_AFFINITY are never consulted",
@@ -301,7 +460,6 @@ EXPECTED_FAILURES: dict[str, str] = {
     "tests/unit/lazyframe/test_lazyframe.py::test_round[dtype2-123.55-1-123.6]": "libcudf HALF_EVEN rounding bug for Float64 with decimal_places > 0. See https://github.com/NVIDIA/cudf/issues/21319",
     "tests/unit/lazyframe/test_lazyframe.py::test_cast_frame": "Casting that raises not supported on GPU",
     "tests/unit/lazyframe/test_lazyframe.py::test_lazy_cache_hit": "Debug output on stderr doesn't match",
-    "tests/unit/operations/aggregation/test_aggregations.py::test_binary_op_agg_context_no_simplify_expr_12423": "groupby-agg of just literals should not produce collect_list",
     "tests/unit/operations/test_abs.py::test_abs_duration": "Need to raise for unsupported uops on timelike values",
     "tests/unit/operations/test_comparison.py::test_comparison_with_lower_precision_literal_matches_column[Datetime-ns-us]": "polars passes Datetime(ns) literals to the visitor as Python datetimes, which drops sub-microsecond precision",
     "tests/unit/operations/test_comparison.py::test_comparison_with_lower_precision_literal_matches_column[Datetime-ns-ms]": "polars passes Datetime(ns) literals to the visitor as Python datetimes, which drops sub-microsecond precision",
@@ -317,15 +475,11 @@ EXPECTED_FAILURES: dict[str, str] = {
     # TODO: As of polars 1.34, the column names for left and right came in unaligned, which causes the dtypes to mismatch when calling plc.replace.replace_nulls
     # Need to investigate what changed in polars
     "tests/unit/operations/test_join.py::test_join_coalesce_column_order_23177": "Misaligned left/right column names left and right tables in join op",
-    "tests/unit/operations/test_inequality_join.py::test_join_where_how_left": "join_where(how='left'/'right') is translated through the equi-join path using the predicate's columns as literal equality keys, ignoring the actual inequality condition",
-    "tests/unit/operations/test_inequality_join.py::test_join_where_how_right": "join_where(how='left'/'right') is translated through the equi-join path using the predicate's columns as literal equality keys, ignoring the actual inequality condition",
     "tests/unit/sql/test_cast.py::test_cast_errors[values0-values::uint8-InvalidOperationError-conversion from `f64` to `u64` failed]": "Strict cast of out-of-range floats to integers does not raise",
     "tests/unit/sql/test_cast.py::test_cast_errors[values1-values::uint4-InvalidOperationError-conversion from `i64` to `u32` failed]": "Strict cast of out-of-range integers does not raise",
     "tests/unit/sql/test_cast.py::test_cast_errors[values2-values::int1-InvalidOperationError-conversion from `i64` to `i8` failed]": "Strict cast of out-of-range integers does not raise",
     "tests/unit/sql/test_cast.py::test_cast_errors[values4-values::int4-InvalidOperationError-conversion from `str` to `i32` failed]": "Strict cast failure message differs from polars",
     "tests/unit/sql/test_joins.py::test_constant_key_join_keeps_validation": "Join validation is not supported",
-    "tests/unit/sql/test_joins.py::test_non_equi_left_join_null_keys": "SQL LEFT/RIGHT JOIN with an inequality condition is translated through the equi-join path, ignoring the inequality condition",
-    "tests/unit/sql/test_joins.py::test_non_equi_right_join_pure": "SQL LEFT/RIGHT JOIN with an inequality condition is translated through the equi-join path, ignoring the inequality condition",
     "tests/unit/operations/namespaces/string/test_pad.py::test_str_zfill_unicode_not_respected": "polars doesn't add zeros for unicode characters.",
     "tests/unit/lazyframe/test_predicates.py::test_predicate_pushdown_split_pushable": "Casting that raises not supported on GPU",
     "tests/unit/lazyframe/test_predicates.py::test_filter_contradiction_fallible_error_handling": "Casting that raises not supported on GPU",
@@ -340,10 +494,29 @@ EXPECTED_FAILURES: dict[str, str] = {
     "tests/unit/io/test_scan.py::test_scan_sink_metrics_multiple_phases": "sink metrics are not reported by the GPU engine",
     "tests/unit/io/test_parquet.py::test_read_parquet_concatenated_gzip_members_28787": "Non-deterministic garbage in the last row; likely a libcudf GZIP multi-member decompression bug",
     "tests/unit/datatypes/test_struct.py::test_struct_equal_missing_null_25360": "struct equality with a null raises libcudf 'Index out of bounds' (get_element)",
+    "tests/unit/io/test_order_keeping_pushdown.py::test_expression_that_gives_null_keeps_null_filter[values0-expr0]": "Overflowing non-strict casts and temporal arithmetic wrap around in libcudf instead of producing null (or raising) as polars does: https://github.com/NVIDIA/cudf/issues/24839",
+    "tests/unit/io/test_order_keeping_pushdown.py::test_expression_that_gives_null_keeps_null_filter[values1-expr1]": "Overflowing non-strict casts and temporal arithmetic wrap around in libcudf instead of producing null (or raising) as polars does: https://github.com/NVIDIA/cudf/issues/24839",
+    "tests/unit/io/test_order_keeping_pushdown.py::test_expression_that_gives_null_keeps_null_filter[values2-expr2]": "Overflowing non-strict casts and temporal arithmetic wrap around in libcudf instead of producing null (or raising) as polars does: https://github.com/NVIDIA/cudf/issues/24839",
+    "tests/unit/io/test_order_keeping_pushdown.py::test_expression_that_gives_null_keeps_null_filter[values3-expr3]": "Overflowing non-strict casts and temporal arithmetic wrap around in libcudf instead of producing null (or raising) as polars does: https://github.com/NVIDIA/cudf/issues/24839",
+    "tests/unit/io/test_order_keeping_pushdown.py::test_expression_that_gives_null_keeps_null_filter[values5-expr5]": "Overflowing non-strict casts and temporal arithmetic wrap around in libcudf instead of producing null (or raising) as polars does: https://github.com/NVIDIA/cudf/issues/24839",
+    "tests/unit/io/test_order_keeping_pushdown.py::test_expression_that_gives_null_keeps_null_filter[values6-expr6]": "Overflowing non-strict casts and temporal arithmetic wrap around in libcudf instead of producing null (or raising) as polars does: https://github.com/NVIDIA/cudf/issues/24839",
+    "tests/unit/io/test_order_keeping_pushdown.py::test_expression_that_raises_is_evaluated[UInt32-expr0]": "Overflowing arithmetic on the GPU does not raise as polars does: https://github.com/NVIDIA/cudf/issues/24839",
+    "tests/unit/io/test_order_keeping_pushdown.py::test_expression_that_raises_is_evaluated[Date-expr1]": "Overflowing arithmetic on the GPU does not raise as polars does: https://github.com/NVIDIA/cudf/issues/24839",
+    "tests/unit/io/test_order_keeping_pushdown.py::test_expression_that_raises_is_evaluated[dtype4-expr4]": "Overflowing arithmetic on the GPU does not raise as polars does: https://github.com/NVIDIA/cudf/issues/24839",
+    "tests/unit/operations/test_sort.py::test_sort_by_scalar_key_29583_29760": "The error for a failed cast in a scalar sort_by key reads differently from polars ('conversion'): https://github.com/NVIDIA/cudf/issues/24840",
+    "tests/unit/io/test_parquet_encryption.py::test_write_plaintext_footer_readable_without_keys[column_keys0]": "libcudf does not support Parquet modular encryption: the footer parse fails on plaintext-footer encrypted files, and the GPU engine cannot detect encryption at translation: https://github.com/NVIDIA/cudf/issues/24837",
+    "tests/unit/io/test_parquet_encryption.py::test_write_plaintext_footer_readable_without_keys[column_keys1]": "libcudf does not support Parquet modular encryption: the footer parse fails on plaintext-footer encrypted files, and the GPU engine cannot detect encryption at translation: https://github.com/NVIDIA/cudf/issues/24837",
 }
 
 
 TESTS_TO_SKIP: dict[str, str] = {
+    "tests/unit/io/test_order_keeping_pushdown.py::test_top_k_through_order_keeping_projection[False-expr6]": "Checks verbose logs or metrics specific to the Polars CPU streaming engine",
+    "tests/unit/io/test_order_keeping_pushdown.py::test_top_k_through_order_keeping_projection[False-expr7]": "Checks verbose logs or metrics specific to the Polars CPU streaming engine",
+    "tests/unit/io/test_order_keeping_pushdown.py::test_top_k_through_order_keeping_projection[True-expr6]": "Checks verbose logs or metrics specific to the Polars CPU streaming engine",
+    "tests/unit/io/test_order_keeping_pushdown.py::test_top_k_through_order_keeping_projection[True-expr7]": "Checks verbose logs or metrics specific to the Polars CPU streaming engine",
+    "tests/unit/streaming/test_streaming.py::test_log_metrics_reports_query_io_time": "Checks verbose logs or metrics specific to the Polars CPU streaming engine",
+    "tests/unit/lazyframe/test_query_monitoring.py::test_metrics_handle_snapshot": "Checks verbose logs or metrics specific to the Polars CPU streaming engine",
+    "tests/unit/sql/test_correlated_subqueries.py::test_correlated_aggregate_unknown_outer_size_not_restricted": "Asserts that the polars streaming engine stops reading an IO source early after a LIMIT; the GPU engine reads the whole source",
     "tests/unit/io/test_delta.py::test_scan_delta_loads_aws_profile_endpoint_url": "Does not use the GPU engine; fails whenever AWS_DEFAULT_REGION is set, as in CI",
     # CI has shown two different failure modes across runs (a PanicException on
     # an invalid datetime, and garbage/uninitialized-looking datetime values),
@@ -651,6 +824,14 @@ STREAMING_ENGINE_TESTS_TO_SKIP_SMALL_BLOCKSIZE: Mapping[str, str] = {
 
 STREAMING_ENGINE_EXPECTED_FAILURES: Mapping[str, str] = {
     "tests/unit/sql/test_subqueries.py::test_scalar_subquery_multi_row_errors": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
+    "tests/unit/lazyframe/test_order_observability.py::test_top_k_by_drops_scalar_keys": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
+    "tests/unit/operations/aggregation/test_aggregations.py::test_item_on_groups_null_29780[2.0]": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
+    "tests/unit/operations/aggregation/test_aggregations.py::test_item_on_groups_null_29780[x]": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
+    "tests/unit/operations/aggregation/test_aggregations.py::test_item_on_groups_null_29780[True]": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
+    "tests/unit/sql/test_correlated_subqueries.py::test_correlated_aggregate_fallible_expression_only_over_outer_rows": "Correct polars.exceptions.InvalidOperationError raised but it's in an ExceptionGroup",
+    "tests/unit/sql/test_correlated_subqueries.py::test_correlated_one_input_condition_in_join_on_many_rows[a.v = (SELECT c.id * 10 FROM c WHERE c.b_id = a.id)]": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
+    "tests/unit/sql/test_correlated_subqueries.py::test_correlated_one_input_condition_in_join_on_many_rows[a.id = (SELECT b.id FROM c AS b WHERE b.b_id = a.id)]": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
+    "tests/unit/sql/test_joins.py::test_join_on_subquery_unsupported[a.v = (SELECT x FROM c)-expected no or a single value]": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
     "tests/unit/functions/test_union.py::test_union_lazyframe_horizontal": "Correct polars.exceptions.ShapeError raised but it's in an ExceptionGroup",
     "tests/unit/functions/test_concat.py::test_concat_lazyframe_horizontal": "Correct polars.exceptions.ShapeError raised but it's in an ExceptionGroup",
     "tests/unit/functions/test_concat.py::test_concat_horizontal_zero_width_height_mismatch_26876": "https://github.com/NVIDIA/cudf/issues/21644",
@@ -674,8 +855,8 @@ STREAMING_ENGINE_EXPECTED_FAILURES_SMALL_BLOCKSIZE: Mapping[str, str] = {
 }
 
 
-@pytest.hookimpl(trylast=True)
-def pytest_collection_modifyitems(
+@pytest.hookimpl(trylast=True, specname="pytest_collection_modifyitems")
+def pytest_mark_and_shard_items(
     session: pytest.Session, config: pytest.Config, items: list[pytest.Item]
 ) -> None:
     """Mark known failing tests."""

@@ -14,10 +14,10 @@
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/dictionary/update_keys.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-#include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <rmm/exec_policy.hpp>
@@ -39,11 +39,10 @@ namespace detail {
 namespace {
 
 struct unique_keys_dispatch_fn {
-  template <typename T>
+  template <cudf::concepts::dictionary_key T>
   std::unique_ptr<cudf::column> operator()(cudf::column_view const& all_keys,
                                            cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
-    requires(cudf::is_dictionary_key<T>())
   {
     using probe_t = cuco::linear_probing<
       1,
@@ -88,7 +87,6 @@ struct unique_keys_dispatch_fn {
   std::unique_ptr<cudf::column> operator()(cudf::column_view const&,
                                            cuda::stream_ref,
                                            rmm::device_async_resource_ref)
-    requires(not cudf::is_dictionary_key<T>())
   {
     CUDF_UNREACHABLE("invalid dictionary key type");
   }

@@ -8,6 +8,7 @@
 #include "generate_input_tables.hpp"
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 #include <benchmarks/common/nvbench_utilities.hpp>
 #include <benchmarks/common/table_utilities.hpp>
 #include <benchmarks/join/nvbench_helpers.hpp>
@@ -97,6 +98,12 @@ void BM_join(state_type& state,
   auto const right_size = static_cast<size_t>(state.get_int64("right_size"));
   auto const left_size  = static_cast<size_t>(state.get_int64("left_size"));
 
+  // The generator requires at least one distinct build row.
+  if (static_cast<size_t>(multiplicity) > right_size) {
+    state.skip("multiplicity exceeds right_size");
+    return;
+  }
+
   auto const num_keys             = key_types.size();
   auto const num_payload_cols     = 2;
   auto [build_table, probe_table] = generate_input_tables<Nullable>(
@@ -110,6 +117,7 @@ void BM_join(state_type& state,
   std::vector<cudf::size_type> columns_to_join(num_keys);
   std::iota(columns_to_join.begin(), columns_to_join.end(), 0);
   state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
+  auto const mem_stats_logger = cudf::memory_stats_logger();
 
   if constexpr (join_type == join_t::HASH || join_type == join_t::SORT_MERGE) {
     state.add_element_count(join_input_size, "join_input_size");  // number of bytes
@@ -154,4 +162,7 @@ void BM_join(state_type& state,
     });
     set_throughputs(state);
   }
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }

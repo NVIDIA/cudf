@@ -66,11 +66,14 @@ from cudf_polars.streaming.actor_graph.dispatch import (
     generate_ir_sub_network,
     ir_context_for_node,
 )
+from cudf_polars.streaming.actor_graph.partitioning import (
+    NormalizedPartitioning,
+    maybe_remap_partitioning,
+)
 from cudf_polars.streaming.actor_graph.tracing import send_chunk
 from cudf_polars.streaming.actor_graph.utils import (
     ChannelManager,
     ChunkStore,
-    NormalizedPartitioning,
     _evaluate_chunk_sync,
     _sample_chunks,
     allgather_and_reduce,
@@ -81,7 +84,6 @@ from cudf_polars.streaming.actor_graph.utils import (
     evaluate_batch,
     evaluate_chunk,
     gather_in_task_group,
-    maybe_remap_partitioning,
     process_children,
     recv_metadata,
     replay_buffered_channel,

@@ -41,6 +41,8 @@ _BINOPS = [
     pl.Expr.mod,
 ]
 
+_COMPARISONS = _BINOPS[:8]
+
 # Preserve the complete promotion matrix for both SPMD configurations. Other
 # backends exercise every operator and nullability path with pairs covering
 # each dtype in both operand positions, without duplicating the full matrix.
@@ -106,7 +108,7 @@ def test_numeric_binop(engine: pl.GPUEngine, df, binop, ltype, rtype):
 
     q = df.select(binop(left, right))
 
-    if _promotes_to_int128(ltype, rtype):
+    if _promotes_to_int128(ltype, rtype) and binop not in _COMPARISONS:
         assert_ir_translation_raises(q, engine, NotImplementedError)
     else:
         assert_gpu_result_equal(q, engine=engine)
@@ -302,3 +304,31 @@ def test_fused_arithmetic(engine: pl.GPUEngine, expr: pl.Expr) -> None:
     df = pl.LazyFrame({"a": [1, 2, 3], "b": [10, 20, 30], "c": [5, 5, 5]})
     q = df.select(expr)
     assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "left_dtype,right_dtype,fallback",
+    [
+        # Both fit in Decimal(38, 4) after rescaling.
+        (pl.Decimal(10, 2), pl.Decimal(38, 4), False),
+        # No Decimal(38, s) holds both operands; polars 2.1 compares exactly,
+        # libcudf would wrap when rescaling.
+        (pl.Decimal(38, 2), pl.Decimal(38, 12), True),
+        (pl.Decimal(38, 12), pl.Decimal(38, 2), True),
+    ],
+)
+def test_decimal_comparison_mixed_scale_overflow(
+    engine: pl.GPUEngine, left_dtype, right_dtype, fallback
+):
+    big = "9" * (left_dtype.precision - left_dtype.scale) + "." + "9" * left_dtype.scale
+    left = pl.DataFrame({"a": ["-2.5", "1", big, None]}).cast(left_dtype)
+    right = pl.DataFrame({"b": ["1", "-1.5", "0.5", "3"]}).cast(right_dtype)
+    q = (
+        pl.concat([left, right], how="horizontal")
+        .lazy()
+        .select(gt=pl.col("a") > pl.col("b"), eq=pl.col("a") == pl.col("b"))
+    )
+    if fallback:
+        assert_ir_translation_raises(q, engine, NotImplementedError)
+    else:
+        assert_gpu_result_equal(q, engine=engine)

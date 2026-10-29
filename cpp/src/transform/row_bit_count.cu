@@ -17,6 +17,7 @@
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/transform.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
@@ -159,7 +160,7 @@ void flatten_hierarchy(ColIter begin,
  */
 struct flatten_functor {
   // fixed width
-  template <typename T>
+  template <cudf::concepts::fixed_width T>
   void operator()(column_view const& col,
                   std::vector<cudf::column_view>& out,
                   std::vector<column_info>& info,
@@ -168,7 +169,6 @@ struct flatten_functor {
                   size_type cur_depth,
                   size_type cur_branch_depth,
                   cuda::std::optional<int>)
-    requires(cudf::is_fixed_width<T>())
   {
     out.push_back(col);
     info.push_back({cur_depth, cur_branch_depth, cur_branch_depth});
@@ -177,7 +177,7 @@ struct flatten_functor {
   }
 
   // strings
-  template <typename T>
+  template <cudf::concepts::string_view T>
   void operator()(column_view const& col,
                   std::vector<cudf::column_view>& out,
                   std::vector<column_info>& info,
@@ -186,7 +186,6 @@ struct flatten_functor {
                   size_type cur_depth,
                   size_type cur_branch_depth,
                   cuda::std::optional<int>)
-    requires(std::is_same_v<T, string_view>)
   {
     out.push_back(col);
     info.push_back({cur_depth, cur_branch_depth, cur_branch_depth});
@@ -194,7 +193,7 @@ struct flatten_functor {
   }
 
   // lists
-  template <typename T>
+  template <cudf::concepts::list_view T>
   void operator()(column_view const& col,
                   std::vector<cudf::column_view>& out,
                   std::vector<column_info>& info,
@@ -203,7 +202,6 @@ struct flatten_functor {
                   size_type cur_depth,
                   size_type cur_branch_depth,
                   cuda::std::optional<int> parent_index)
-    requires(std::is_same_v<T, list_view>)
   {
     // track branch depth as we reach this list and after we pass it
     auto const branch_depth_start = cur_branch_depth;
@@ -233,7 +231,7 @@ struct flatten_functor {
   }
 
   // structs
-  template <typename T>
+  template <cudf::concepts::struct_view T>
   void operator()(column_view const& col,
                   std::vector<cudf::column_view>& out,
                   std::vector<column_info>& info,
@@ -242,7 +240,6 @@ struct flatten_functor {
                   size_type cur_depth,
                   size_type cur_branch_depth,
                   cuda::std::optional<int>)
-    requires(std::is_same_v<T, struct_view>)
   {
     out.push_back(col);
     info.push_back({cur_depth, cur_branch_depth, cur_branch_depth});
@@ -266,8 +263,8 @@ struct flatten_functor {
   // everything else
   template <typename T, typename... Args>
   void operator()(Args&&...)
-    requires(!cudf::is_fixed_width<T>() && !std::is_same_v<T, string_view> &&
-             !std::is_same_v<T, list_view> && !std::is_same_v<T, struct_view>)
+    requires(!cudf::concepts::fixed_width<T> && !cudf::concepts::string_view<T> &&
+             !cudf::concepts::nested<T>)
   {
     CUDF_FAIL("Unsupported column type in row_bit_count");
   }

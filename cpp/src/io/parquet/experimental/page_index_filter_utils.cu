@@ -363,7 +363,7 @@ constexpr auto min_segments_for_device_offsets = 1024;
 compute_segment_row_offsets_host(std::span<page_statistics_input const> inputs,
                                  std::size_t total_page_row_offsets,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cudf::memory_resources mr)
 {
   auto all_page_row_offsets =
     cudf::detail::make_empty_pinned_vector<size_type>(total_page_row_offsets, stream);
@@ -403,9 +403,9 @@ compute_segment_row_offsets_host(std::span<page_statistics_input const> inputs,
 compute_segment_row_offsets_device(cudf::device_span<size_type const> all_page_row_offsets,
                                    size_type total_rows,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cudf::memory_resources mr)
 {
-  auto const temp_mr   = cudf::get_current_device_resource_ref();
+  auto const temp_mr   = mr.get_temporary_mr();
   auto const num_items = static_cast<cuda::std::int64_t>(all_page_row_offsets.size());
   auto const mr_prop   = cuda::std::execution::prop{cuda::mr::get_memory_resource, temp_mr};
   auto const env       = cuda::std::execution::env{cuda::stream_ref{stream.get()}, mr_prop};
@@ -416,8 +416,9 @@ compute_segment_row_offsets_device(cudf::device_span<size_type const> all_page_r
   CUDF_CUDA_TRY(cub::DeviceRadixSort::SortKeys(
     all_page_row_offsets.data(), sorted_offsets.data(), num_items, 0, end_bit, env));
 
-  auto segment_row_offsets = cuda::device_buffer<size_type>(stream, mr, num_items, cuda::no_init);
-  auto num_unique          = cudf::detail::device_scalar<cuda::std::int64_t>(stream, temp_mr);
+  auto segment_row_offsets =
+    cuda::device_buffer<size_type>(stream, mr.get_output_mr(), num_items, cuda::no_init);
+  auto num_unique = cudf::detail::device_scalar<cuda::std::int64_t>(stream, temp_mr);
   CUDF_CUDA_TRY(cub::DeviceSelect::Unique(
     sorted_offsets.data(), segment_row_offsets.data(), num_unique.data(), num_items, env));
   auto const num_offsets = static_cast<std::size_t>(num_unique.value(stream));
@@ -666,14 +667,14 @@ std::unique_ptr<column> compute_row_mask_from_page_stats(
   size_type total_rows,
   std::reference_wrapper<ast::expression const> stats_expression,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
   CUDF_EXPECTS(
     total_rows > 0, "Parquet row groups must contain at least one row", cudf::logic_error);
 
-  auto const temp_mr = cudf::get_current_device_resource_ref();
+  auto const temp_mr = mr.get_temporary_mr();
 
   // Return an all true row mask if no compacted page statistics are provided
   if (inputs.empty()) {
@@ -681,7 +682,7 @@ std::unique_ptr<column> compute_row_mask_from_page_stats(
       "At least one set of compacted page statistics is required. Falling back to an all true row "
       "mask.");
     auto const true_scalar = cudf::numeric_scalar<bool>{true, true, stream, temp_mr};
-    return cudf::make_column_from_scalar(true_scalar, total_rows, stream, mr);
+    return cudf::make_column_from_scalar(true_scalar, total_rows, stream, mr.get_output_mr());
   }
 
   // Ensure all compacted page statistics refer to a valid input column, are internally consistent,
@@ -728,8 +729,9 @@ std::unique_ptr<column> compute_row_mask_from_page_stats(
   // sort+unique for larger.
   auto const [segment_row_offsets_storage, num_offsets] =
     total_page_row_offsets >= min_segments_for_device_offsets
-      ? compute_segment_row_offsets_device(all_page_row_offsets, total_rows, stream, temp_mr)
-      : compute_segment_row_offsets_host(inputs, total_page_row_offsets, stream, temp_mr);
+      ? compute_segment_row_offsets_device(
+          all_page_row_offsets, total_rows, stream, mr.as_temporary())
+      : compute_segment_row_offsets_host(inputs, total_page_row_offsets, stream, mr.as_temporary());
 
   auto const segment_row_offsets =
     cudf::device_span<size_type const>{segment_row_offsets_storage.data(), num_offsets};
@@ -769,7 +771,7 @@ std::unique_ptr<column> compute_row_mask_from_page_stats(
                                                        out_of_bounds_policy::DONT_CHECK,
                                                        negative_index_policy::NOT_ALLOWED,
                                                        stream,
-                                                       temp_mr);
+                                                       mr.as_temporary());
                   auto gathered_columns = gathered->release();
                   for (size_type stat_index = 0; stat_index < stats_cols_per_column; ++stat_index) {
                     segment_views[(stats_cols_per_column * input.column_index) + stat_index] =

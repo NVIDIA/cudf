@@ -177,7 +177,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
   [[nodiscard]] std::unique_ptr<cudf::column> build_all_true_row_mask(
     std::span<std::vector<size_type> const> row_group_indices,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr);
+    cudf::memory_resources mr);
 
   /**
    * @copydoc
@@ -187,7 +187,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
     std::span<std::vector<size_type> const> row_group_indices,
     parquet_reader_options const& options,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr);
+    cudf::memory_resources mr);
 
   /**
    * @brief Fetches byte ranges of column chunks of the columns to read
@@ -223,7 +223,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
    *        Ignored for `ALL_COLUMNS`
    * @param options Parquet reader options
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resource used to allocate the device memory of the returned table
+   * @param mr Memory resources used to allocate temporary and returned table device memory
    * @return Table of materialized columns and metadata
    */
   template <read_columns_mode mode>
@@ -234,7 +234,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
     use_data_page_mask mask_data_pages,
     parquet_reader_options const& options,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr);
+    cudf::memory_resources mr);
 
   /**
    * @brief Sets up chunked reading of the specified columns
@@ -249,7 +249,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
    *        Ignored for `ALL_COLUMNS`
    * @param options Parquet reader options
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resource used to allocate the device memory of the returned tables
+   * @param mr Memory resources used to allocate temporary and returned table device memory
    */
   template <read_columns_mode mode>
   void setup_chunked_table_materialization(
@@ -261,7 +261,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
     use_data_page_mask mask_data_pages,
     parquet_reader_options const& options,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr);
+    cudf::memory_resources mr);
 
   /**
    * @copydoc
@@ -275,7 +275,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
     cudf::column_view const& row_mask,
     parquet_reader_options const& options,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr);
+    cudf::memory_resources mr);
 
   /**
    * @brief Partition per-source row groups into read passes for the specified column selection
@@ -324,12 +324,12 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
    * @param options Reader options
    * @param num_sources Number of input sources
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resource used to allocate the returned column's device memory
+   * @param mr Memory resources used to allocate temporary and returned column device memory
    */
   void initialize_options(parquet_reader_options const& options,
                           std::size_t num_sources,
                           cuda::stream_ref stream,
-                          rmm::device_async_resource_ref mr);
+                          cudf::memory_resources mr);
 
   /**
    * @brief Normalize input filter such that all column names are converted to index references and
@@ -417,7 +417,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
    * @param sparse_page_io Boolean indicating if page-level (sparse) I/O is enabled
    * @param options Parquet reader options
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resource used to allocate the device memory for the output columns
+   * @param mr Memory resources used to allocate temporary and output column device memory
    */
   void prepare_materialization(read_mode mode,
                                read_columns_mode columns_mode,
@@ -430,7 +430,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
                                bool sparse_page_io,
                                parquet_reader_options const& options,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr);
+                               cudf::memory_resources mr);
 
   /**
    * @brief Perform the necessary data preprocessing for parsing file later on

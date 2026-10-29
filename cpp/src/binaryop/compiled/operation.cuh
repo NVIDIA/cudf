@@ -6,8 +6,10 @@
 #pragma once
 
 #include <cudf/detail/integral_math.cuh>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/traits.hpp>
 
+#include <cuda/std/concepts>
 #include <cuda/std/type_traits>
 
 #include <cmath>
@@ -88,21 +90,21 @@ struct TrueDiv {
 struct FloorDiv {
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x / y)
-    requires(cuda::std::is_integral_v<cuda::std::common_type_t<TypeLhs, TypeRhs>>)
+    requires(cuda::std::integral<cuda::std::common_type_t<TypeLhs, TypeRhs>>)
   {
     return cudf::detail::integral_floor_div(x, y);
   }
 
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> float
-    requires(cuda::std::is_same_v<cuda::std::common_type_t<TypeLhs, TypeRhs>, float>)
+    requires(cuda::std::same_as<cuda::std::common_type_t<TypeLhs, TypeRhs>, float>)
   {
     return floorf(x / y);
   }
 
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> double
-    requires(cuda::std::is_same_v<cuda::std::common_type_t<TypeLhs, TypeRhs>, double>)
+    requires(cuda::std::same_as<cuda::std::common_type_t<TypeLhs, TypeRhs>, double>)
   {
     return floor(x / y);
   }
@@ -127,13 +129,13 @@ struct Mod {
   }
   template <typename T1, typename T2>
   __device__ inline auto operator()(T1 const& lhs, T2 const& rhs) -> float
-    requires(std::is_same_v<float, std::common_type_t<T1, T2>>)
+    requires(cuda::std::same_as<float, std::common_type_t<T1, T2>>)
   {
     return fmodf(static_cast<float>(lhs), static_cast<float>(rhs));
   }
   template <typename T1, typename T2>
   __device__ inline auto operator()(T1 const& lhs, T2 const& rhs) -> double
-    requires(std::is_same_v<double, std::common_type_t<T1, T2>>)
+    requires(cuda::std::same_as<double, std::common_type_t<T1, T2>>)
   {
     return fmod(static_cast<double>(lhs), static_cast<double>(rhs));
   }
@@ -146,7 +148,7 @@ struct PMod {
   // code does not work - it is having trouble deciding between float/double overloads
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y)
-    requires(cuda::std::is_integral_v<std::common_type_t<TypeLhs, TypeRhs>>)
+    requires(cuda::std::integral<std::common_type_t<TypeLhs, TypeRhs>>)
   {
     using common_t = std::common_type_t<TypeLhs, TypeRhs>;
     auto xconv     = static_cast<common_t>(x);
@@ -159,7 +161,7 @@ struct PMod {
 
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y)
-    requires(std::is_floating_point_v<std::common_type_t<TypeLhs, TypeRhs>>)
+    requires(cuda::std::floating_point<std::common_type_t<TypeLhs, TypeRhs>>)
   {
     using common_t = std::common_type_t<TypeLhs, TypeRhs>;
     auto xconv     = static_cast<common_t>(x);
@@ -169,9 +171,8 @@ struct PMod {
     return rem;
   }
 
-  template <typename TypeLhs, typename TypeRhs>
+  template <cudf::concepts::fixed_point TypeLhs, cuda::std::same_as<TypeLhs> TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y)
-    requires(cudf::is_fixed_point<TypeLhs>() and std::is_same_v<TypeLhs, TypeRhs>)
   {
     auto const remainder = x % y;
     return remainder.value() < 0 ? (remainder + y) % y : remainder;
@@ -181,24 +182,23 @@ struct PMod {
 struct PyMod {
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(((x % y) + y) % y)
-    requires(cuda::std::is_integral_v<std::common_type_t<TypeLhs, TypeRhs>> or
-             (cudf::is_fixed_point<TypeLhs>() and std::is_same_v<TypeLhs, TypeRhs>))
+    requires(cuda::std::integral<std::common_type_t<TypeLhs, TypeRhs>> or
+             (cudf::concepts::fixed_point<TypeLhs> and cuda::std::same_as<TypeLhs, TypeRhs>))
   {
     return ((x % y) + y) % y;
   }
 
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> double
-    requires(std::is_floating_point_v<std::common_type_t<TypeLhs, TypeRhs>>)
+    requires(cuda::std::floating_point<std::common_type_t<TypeLhs, TypeRhs>>)
   {
     auto x1 = static_cast<double>(x);
     auto y1 = static_cast<double>(y);
     return fmod(fmod(x1, y1) + y1, y1);
   }
 
-  template <typename TypeLhs, typename TypeRhs>
+  template <cudf::concepts::duration TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(((x % y) + y) % y)
-    requires(is_duration<TypeLhs>())
   {
     return ((x % y) + y) % y;
   }
@@ -214,9 +214,8 @@ struct Pow {
 };
 
 struct IntPow {
-  template <typename TypeLhs, typename TypeRhs>
+  template <cuda::std::integral TypeLhs, cuda::std::integral TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> TypeLhs
-    requires(cuda::std::is_integral_v<TypeLhs> and cuda::std::is_integral_v<TypeRhs>)
   {
     return cudf::detail::integral_pow(x, y);
   }
@@ -257,10 +256,9 @@ struct ShiftRight {
 };
 
 struct ShiftRightUnsigned {
-  template <typename TypeLhs, typename TypeRhs>
+  template <cudf::concepts::integral_not_bool TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y)
     -> decltype(static_cast<cuda::std::make_unsigned_t<TypeLhs>>(x) >> y)
-    requires(cuda::std::is_integral_v<TypeLhs> and not is_boolean<TypeLhs>())
   {
     return (static_cast<cuda::std::make_unsigned_t<TypeLhs>>(x) >> y);
   }

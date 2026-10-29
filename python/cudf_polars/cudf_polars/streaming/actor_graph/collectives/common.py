@@ -17,6 +17,7 @@ from cudf_polars.dsl.ir import (
     GroupBy,
     Rolling,
     Sort,
+    Union,
 )
 from cudf_polars.dsl.traversal import traversal
 from cudf_polars.streaming.filter_hint import PushdownFilterHint
@@ -149,6 +150,7 @@ class ReserveOpIDs:
             Sort,
             Rolling,
             FixedSizeRolling,
+            Union,
         )
         if self.dynamic_planning_enabled:
             collective_types = (
@@ -162,6 +164,7 @@ class ReserveOpIDs:
                 Sort,
                 Rolling,
                 FixedSizeRolling,
+                Union,
                 GroupBy,
                 Distinct,
                 Over,
@@ -219,6 +222,15 @@ class ReserveOpIDs:
                             pool.acquire_unsafe(),
                             pool.acquire_unsafe(),
                         ]
+                elif isinstance(node, Union):
+                    # Union needs one ID per child. Only an order-preserving
+                    # multi-rank union uses them: ID 0 for the chunk-count
+                    # AllGather and then child 0's exchange (the AllGather
+                    # completes before the exchange starts, so they can
+                    # share), and ID i for child i's exchange.
+                    self.collective_id_map[node] = [
+                        pool.acquire_unsafe() for _ in node.children
+                    ]
                 elif isinstance(node, Over) and not node.is_scalar:
                     # Non-scalar Over needs 2 IDs: one for the size AllGather +
                     # forward shuffle (the AllGather completes before the forward

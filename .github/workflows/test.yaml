@@ -347,12 +347,23 @@ jobs:
       matrix:
         include:
           - engine: in-memory
+            blocksize: default
             shard_id: 0
             num_shards: 1
           - engine: spmd
+            blocksize: small
             shard_id: 0
             num_shards: 2
           - engine: spmd
+            blocksize: small
+            shard_id: 1
+            num_shards: 2
+          - engine: spmd
+            blocksize: default
+            shard_id: 0
+            num_shards: 2
+          - engine: spmd
+            blocksize: default
             shard_id: 1
             num_shards: 2
     permissions:
@@ -371,7 +382,7 @@ jobs:
       sha: ${{ inputs.sha }}
       script: >-
         ci/test_cudf_polars_polars_tests.sh --engine ${{ matrix.engine }}
-        --inject-gpu-engine-blocksize small
+        --inject-gpu-engine-blocksize ${{ matrix.blocksize }}
         --run-slow
         --cudf-polars-shard-id ${{ matrix.shard_id }}
         --cudf-polars-num-shards ${{ matrix.num_shards }}
@@ -413,11 +424,26 @@ jobs:
       sha: ${{ inputs.sha }}
       node_type: cpu8
       container_image: rapidsai/citestwheel:26.12-latest
-      # Partial or failed test runs should still have an informational report.
-      continue-on-error: true
-      script: ci/run_cudf_polars_fallback_diagnostics.sh
+      script: >-
+        ci/run_cudf_polars_fallback_diagnostics.sh
+        ${{ inputs.build_type == 'nightly' && '--publish-audit' || '' }}
       file_to_upload: cudf-polars-fallback-diagnostics
-      artifact-name: cudf-polars-fallback-diagnostics
+      artifact-name: cudf-polars-fallback-diagnostics-${{ github.run_attempt }}
+  cudf-polars-test-audit:
+    needs: cudf-polars-test-summary
+    if: ${{ inputs.build_type == 'nightly' && !cancelled() && needs.cudf-polars-test-summary.result != 'skipped' }}
+    permissions:
+      actions: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require current GPU test selections
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AUDIT_ARTIFACT: cudf-polars-fallback-diagnostics-${{ github.run_attempt }}
+        run: |
+          gh run download "${GITHUB_RUN_ID}" --repo "${GITHUB_REPOSITORY}" \
+            --name "${AUDIT_ARTIFACT}" --dir audit
+          jq -e '.status == "current"' audit/run-list-drift.json
   narwhals-tests:
     permissions:
       actions: read

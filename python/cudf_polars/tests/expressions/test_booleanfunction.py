@@ -440,3 +440,9 @@ def test_boolean_is_sorted(
     )
 
     assert_gpu_result_equal(q, engine=engine)
+
+
+def test_boolean_is_in_per_row_list_literal_raises(engine: pl.GPUEngine):
+    ldf = pl.LazyFrame({"x": [1, 2, 3, 4]})
+    q = ldf.select(pl.col("x").is_in(pl.Series([[1], [2], [3], [4]])))
+    assert_ir_translation_raises(q, engine, NotImplementedError)

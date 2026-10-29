@@ -199,6 +199,190 @@ def lower_concat(
     return build_mlir_string(mi, data, total)
 
 
+def _gep_byte_offset(base: ir.Value, offset: ir.Value) -> ir.Value:
+    """Pointer to ``base + offset`` bytes (GEP on an ``i8*`` buffer)."""
+    return llvm.getelementptr(
+        llvm.PointerType.get(),
+        base,
+        [offset],
+        [GEP_DYNAMIC_INDEX],
+        T.i8(),
+        None,
+    )
+
+
+def _empty_view() -> ir.Value:
+    """View with a null data pointer and ``nbytes == 0`` (whitespace mode)."""
+    i32 = ir.IntegerType.get_signless(32)
+    ptr = llvm.PointerType.get()
+    zero = arith.constant(i32, 0)
+    null = llvm.inttoptr(ptr, arith.constant(T.i64(), 0))
+    view_ty = llvm.StructType.get_literal([ptr, i32, i32])
+    val = llvm.UndefOp(view_ty)
+    val = llvm.insertvalue(
+        container=val, value=null, position=ir.DenseI64ArrayAttr.get([0])
+    )
+    val = llvm.insertvalue(
+        container=val, value=zero, position=ir.DenseI64ArrayAttr.get([1])
+    )
+    return llvm.insertvalue(
+        container=val, value=zero, position=ir.DenseI64ArrayAttr.get([2])
+    )
+
+
+def _is_strip_char(
+    byte_val: ir.Value, strip_data: ir.Value, strip_nb: ir.Value
+) -> ir.Value:
+    """i1: whether ``byte_val`` should be stripped.
+
+    Mirrors libcudf ``detail::strip``: with an empty strip set, strip bytes with
+    code ``<= 0x20`` (ASCII whitespace); otherwise strip any byte present in the
+    strip set.
+    """
+    i1 = ir.IntegerType.get_signless(1)
+    zero = arith.constant(T.i64(), 0)
+    one = arith.constant(T.i64(), 1)
+    strip_empty = arith.cmpi(arith.CmpIPredicate.eq, strip_nb, zero)
+    is_ws = arith.cmpi(
+        arith.CmpIPredicate.ule, byte_val, arith.constant(T.i8(), 0x20)
+    )
+    loop = scf.ForOp(zero, strip_nb, one, [arith.constant(i1, 0)])
+    si = loop.body.arguments[0]
+    found = loop.body.arguments[1]
+    with ir.InsertionPoint(loop.body):
+        sb = _byte_at(strip_data, si)
+        eq = arith.cmpi(arith.CmpIPredicate.eq, byte_val, sb)
+        scf.YieldOp([arith.ori(found, eq)])
+    return arith.select(strip_empty, is_ws, loop.results[0])
+
+
+def _strip_core(
+    gpu_module: ir.Module,
+    str_view: ir.Value,
+    strip_view: ir.Value,
+    do_left: bool,
+    do_right: bool,
+) -> ir.Value:
+    """Shared strip/lstrip/rstrip: trim the matching run from each requested end.
+
+    Scans from the left (and/or right) while the current byte is a strip char
+    and no non-strip byte has yet been seen on that side, then allocates and
+    copies the surviving ``[left_idx, right_idx)`` byte range.
+    """
+    data = _view_data(str_view)
+    nb = llvm.zext(T.i64(), _view_nbytes(str_view))
+    strip_data = _view_data(strip_view)
+    strip_nb = llvm.zext(T.i64(), _view_nbytes(strip_view))
+    zero = arith.constant(T.i64(), 0)
+    one = arith.constant(T.i64(), 1)
+
+    if do_left:
+        loop_l = scf.ForOp(zero, nb, one, [zero])
+        i = loop_l.body.arguments[0]
+        left = loop_l.body.arguments[1]
+        with ir.InsertionPoint(loop_l.body):
+            should_strip = _is_strip_char(
+                _byte_at(data, i), strip_data, strip_nb
+            )
+            still = arith.cmpi(arith.CmpIPredicate.eq, left, i)
+            advance = arith.andi(should_strip, still)
+            scf.YieldOp([arith.select(advance, arith.addi(left, one), left)])
+        left_idx = loop_l.results[0]
+    else:
+        left_idx = zero
+
+    if do_right:
+        loop_r = scf.ForOp(zero, nb, one, [nb])
+        j = loop_r.body.arguments[0]
+        right = loop_r.body.arguments[1]
+        with ir.InsertionPoint(loop_r.body):
+            ridx = arith.subi(arith.subi(nb, j), one)
+            should_strip = _is_strip_char(
+                _byte_at(data, ridx), strip_data, strip_nb
+            )
+            expected = arith.subi(nb, j)
+            still = arith.cmpi(arith.CmpIPredicate.eq, right, expected)
+            advance = arith.andi(should_strip, still)
+            scf.YieldOp([arith.select(advance, ridx, right)])
+        right_idx = loop_r.results[0]
+    else:
+        right_idx = nb
+
+    nonempty = arith.cmpi(arith.CmpIPredicate.ult, left_idx, right_idx)
+    result_len = arith.select(nonempty, arith.subi(right_idx, left_idx), zero)
+    mi, out_data = allocate_mlir_string(gpu_module, result_len)
+    llvm.intr_memcpy(
+        out_data, _gep_byte_offset(data, left_idx), result_len, False
+    )
+    return build_mlir_string(mi, out_data, result_len)
+
+
+def lower_strip(
+    gpu_module: ir.Module, str_view: ir.Value, strip_view: ir.Value
+) -> ir.Value:
+    """``s.strip(chars)`` -> trimmed ``mlir_string`` (both ends).
+
+    Parameters
+    ----------
+    gpu_module : ir.Module
+        The GPU module the NRT functions are declared in.
+    str_view : ir.Value
+        View of the source string's bytes.
+    strip_view : ir.Value
+        View of the strip-character set (empty for whitespace mode).
+
+    Returns
+    -------
+    ir.Value
+        The trimmed owned ``mlir_string``.
+    """
+    return _strip_core(gpu_module, str_view, strip_view, True, True)
+
+
+def lower_lstrip(
+    gpu_module: ir.Module, str_view: ir.Value, strip_view: ir.Value
+) -> ir.Value:
+    """``s.lstrip(chars)`` -> left-trimmed ``mlir_string``.
+
+    Parameters
+    ----------
+    gpu_module : ir.Module
+        The GPU module the NRT functions are declared in.
+    str_view : ir.Value
+        View of the source string's bytes.
+    strip_view : ir.Value
+        View of the strip-character set (empty for whitespace mode).
+
+    Returns
+    -------
+    ir.Value
+        The left-trimmed owned ``mlir_string``.
+    """
+    return _strip_core(gpu_module, str_view, strip_view, True, False)
+
+
+def lower_rstrip(
+    gpu_module: ir.Module, str_view: ir.Value, strip_view: ir.Value
+) -> ir.Value:
+    """``s.rstrip(chars)`` -> right-trimmed ``mlir_string``.
+
+    Parameters
+    ----------
+    gpu_module : ir.Module
+        The GPU module the NRT functions are declared in.
+    str_view : ir.Value
+        View of the source string's bytes.
+    strip_view : ir.Value
+        View of the strip-character set (empty for whitespace mode).
+
+    Returns
+    -------
+    ir.Value
+        The right-trimmed owned ``mlir_string``.
+    """
+    return _strip_core(gpu_module, str_view, strip_view, False, True)
+
+
 def _is_begin_utf8_char(byte_val: ir.Value) -> ir.Value:
     """i1: whether ``byte_val`` is a UTF-8 start byte (top 2 bits != ``10``)."""
     i32 = ir.IntegerType.get_signless(32)

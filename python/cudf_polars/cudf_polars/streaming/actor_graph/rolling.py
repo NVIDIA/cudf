@@ -26,11 +26,11 @@ from cudf_polars.streaming.actor_graph.dispatch import (
     generate_ir_sub_network,
     ir_context_for_node,
 )
+from cudf_polars.streaming.actor_graph.partitioning import maybe_remap_partitioning
 from cudf_polars.streaming.actor_graph.tracing import send_chunk
 from cudf_polars.streaming.actor_graph.utils import (
     ChannelManager,
     evaluate_chunk,
-    maybe_remap_partitioning,
     process_children,
     recv_metadata,
     send_metadata,
@@ -286,7 +286,6 @@ async def rolling_actor(
                 partitioning=maybe_remap_partitioning(
                     ir,
                     metadata_in.partitioning,
-                    child_ir=ir.children[0],
                     context=context,
                 ),
                 duplicated=metadata_in.duplicated,

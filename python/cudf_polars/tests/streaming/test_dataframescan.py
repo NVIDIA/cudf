@@ -99,20 +99,10 @@ def test_nullable_array_dataframescan(streaming_engine_factory):
     assert_gpu_result_equal(q, engine=streaming_engine)
 
 
-def test_dataframescan_concat(request, df, streaming_engine_factory):
+def test_dataframescan_concat(df, streaming_engine_factory):
     streaming_engine = streaming_engine_factory(
         StreamingOptions(max_rows_per_partition=1_000),
     )
-    if streaming_engine.nranks > 1:
-        # Multi-rank Union interleaves child outputs across ranks: client
-        # receives [rank0_A, rank0_B, rank1_A, rank1_B] instead of the
-        # polars-CPU [A, B].
-        request.applymarker(
-            pytest.mark.xfail(
-                reason="https://github.com/NVIDIA/cudf/issues/22376",
-                strict=False,
-            )
-        )
     df2 = pl.concat([df, df])
     assert_gpu_result_equal(df2, engine=streaming_engine)
 

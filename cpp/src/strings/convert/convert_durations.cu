@@ -13,6 +13,7 @@
 #include <cudf/strings/detail/convert/int_to_string.cuh>
 #include <cudf/strings/detail/strings_children.cuh>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
@@ -388,12 +389,11 @@ struct from_durations_fn {
  * The template function declaration ensures only duration types are used.
  */
 struct dispatch_from_durations_fn {
-  template <typename T>
+  template <cudf::concepts::duration T>
   std::unique_ptr<column> operator()(column_view const& durations,
                                      std::string_view format,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr) const
-    requires(cudf::is_duration<T>())
   {
     CUDF_EXPECTS(!format.empty(), "Format parameter must not be empty.");
 
@@ -424,7 +424,7 @@ struct dispatch_from_durations_fn {
   // non-duration types throw an exception
   template <typename T, typename... Args>
   std::unique_ptr<column> operator()(Args&&...) const
-    requires(not cudf::is_duration<T>())
+    requires(not cudf::concepts::duration<T>)
   {
     CUDF_FAIL("Values for from_durations function must be a duration type.");
   }
@@ -643,12 +643,11 @@ struct parse_duration {
  * The template function declaration ensures only duration types are used.
  */
 struct dispatch_to_durations_fn {
-  template <typename T>
+  template <cudf::concepts::duration T>
   void operator()(column_device_view const& d_strings,
                   std::string_view format,
                   mutable_column_view& results_view,
                   cuda::stream_ref stream) const
-    requires(cudf::is_duration<T>())
   {
     format_compiler compiler(format, stream);
     auto d_items   = compiler.compiled_format_items();
@@ -665,7 +664,6 @@ struct dispatch_to_durations_fn {
                   std::string_view,
                   mutable_column_view&,
                   cuda::stream_ref) const
-    requires(not cudf::is_duration<T>())
   {
     CUDF_FAIL("Only durations type are expected for to_durations function");
   }

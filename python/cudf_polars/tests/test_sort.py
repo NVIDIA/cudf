@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
+from datetime import datetime
+
 import pytest
 
 import polars as pl
@@ -37,6 +39,31 @@ def test_sort(engine: pl.GPUEngine, sort_keys, nulls_last, maintain_order):
         maintain_order=maintain_order,
     )
     assert_gpu_result_equal(query, engine=engine, check_row_order=maintain_order)
+
+
+@pytest.mark.parametrize("sort_kind", ["column", "expression"])
+def test_sort_time(engine: pl.GPUEngine, sort_kind: str) -> None:
+    ldf = pl.LazyFrame(
+        {
+            "datetime": [
+                datetime(2026, 1, 2, 12),
+                datetime(2026, 1, 3, 9),
+                datetime(2026, 1, 1, 12),
+                None,
+            ],
+            "ex": ["B", "C", "A", "D"],
+        }
+    )
+    if sort_kind == "expression":
+        query = ldf.sort(pl.col("datetime").dt.time(), "ex")
+    else:
+        query = (
+            ldf.with_columns(pl.col("datetime").dt.time().alias("time"))
+            .sort(["time", "ex"])
+            .select("time", "ex")
+        )
+
+    assert_gpu_result_equal(query, engine=engine)
 
 
 def test_duplicate_sort_keys_projection(engine):

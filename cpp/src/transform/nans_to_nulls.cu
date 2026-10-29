@@ -17,16 +17,16 @@
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <cuda/iterator>
+#include <cuda/std/concepts>
 #include <cuda/std/limits>
 #include <cuda/stream>
 
 namespace cudf {
 namespace detail {
 struct dispatch_nan_to_null {
-  template <typename T>
+  template <cuda::std::floating_point T>
   std::pair<std::unique_ptr<cuda::device_buffer<cudf::bitmask_type>>, cudf::size_type> operator()(
     column_view const& input, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
-    requires(std::is_floating_point_v<T>)
   {
     auto input_device_view_ptr = column_device_view::create(input, stream);
     auto input_device_view     = *input_device_view_ptr;
@@ -50,7 +50,7 @@ struct dispatch_nan_to_null {
   template <typename T>
   std::pair<std::unique_ptr<cuda::device_buffer<cudf::bitmask_type>>, cudf::size_type> operator()(
     column_view const& input, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
-    requires(!std::is_floating_point_v<T>)
+    requires(not cuda::std::floating_point<T>)
   {
     CUDF_FAIL("Input column can't be a non-floating type");
   }
@@ -61,8 +61,7 @@ struct copy_float_data_fn {
   cuda::stream_ref stream;
   rmm::device_async_resource_ref mr;
 
-  template <typename T>
-    requires(std::is_floating_point_v<T>)
+  template <cuda::std::floating_point T>
   std::unique_ptr<rmm::device_buffer> operator()() const
   {
     return std::make_unique<rmm::device_buffer>(
@@ -70,7 +69,6 @@ struct copy_float_data_fn {
   }
 
   template <typename T>
-    requires(not std::is_floating_point_v<T>)
   std::unique_ptr<rmm::device_buffer> operator()() const
   {
     CUDF_FAIL("Input must be a floating point type");

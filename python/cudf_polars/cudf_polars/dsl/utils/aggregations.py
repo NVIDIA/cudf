@@ -342,7 +342,9 @@ def decompose_single_agg(
                     is_top=False,
                     context=context,
                 )
-                if any(nested_agg for _, nested_agg in child_aggs):
+                if any(
+                    nested_agg for _, nested_agg in child_aggs
+                ):  # pragma: no cover; polars 2.1 drops scalar sort keys
                     raise NotImplementedError(
                         "Nested aggs in sorted groupby aggregation not supported"
                     )
@@ -356,6 +358,30 @@ def decompose_single_agg(
                     True,
                 )
             ], named_expr.reconstruct(expr.Col(agg.dtype, name))
+        # These reductions ignore nulls, so mask_nans gives the same result.
+        if (
+            context == ExecutionContext.GROUPBY
+            and (
+                agg.name
+                in {
+                    "max",
+                    "mean",
+                    "median",
+                    "min",
+                    "product",
+                    "quantile",
+                    "std",
+                    "sum",
+                    "var",
+                }
+                or (agg.name == "count" and not agg.options)
+            )
+            and isinstance(child, expr.UnaryFunction)
+            and child.name == "drop_nans"
+            and plc.traits.is_floating_point(child.children[0].dtype.plc_type)
+        ):
+            (child,) = child.children
+            child = expr.UnaryFunction(child.dtype, "mask_nans", (), child)
         # Fuse drop_nulls().n_unique() into nunique(null_handling=EXCLUDE)
         # rather than materializing a filtered intermediate column.
         if (
@@ -613,6 +639,14 @@ def decompose_single_agg(
                 aggs,
                 named_expr.reconstruct(agg.reconstruct([p.value for p in posts])),
             )
+        elif is_top and all(
+            isinstance(node, expr.Literal)
+            for node in traversal([agg])
+            if not node.children
+        ):
+            # An expression built only from scalar literals is itself a
+            # scalar: it yields one value per group rather than a list.
+            return [], named_expr
         else:
             # Or pre-evaluation if inside an aggregation.
             return (

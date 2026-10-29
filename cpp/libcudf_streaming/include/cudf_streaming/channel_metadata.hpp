@@ -116,13 +116,16 @@ struct row_ordering {
  * @brief A valid ordering description for order-partitioned data.
  *
  * Data is partitioned by value ranges based on predetermined boundaries.
+ * This type describes partition boundaries only. Row-order guarantees are
+ * stored separately in `partitioning::row_orderings`.
  * For N partitions, there are N-1 boundary rows:
  * - Partition 0: values < boundaries[0]
  * - Partition i (0 < i < N-1): boundaries[i-1] <= values < boundaries[i]
  * - Partition N-1: values >= boundaries[N-2]
  *
- * `keys[i]` is the i-th sort column; ordering is lexicographic by `keys[0]`,
- * then `keys[1]`, and so on.
+ * `keys[i]` is the i-th sort column; partition boundaries are compared
+ * lexicographically by `keys[0]`, then `keys[1]`, and so on. This does not
+ * imply that rows within the partitions are ordered.
  *
  * When `boundaries` is set, its columns must align with `keys`
  * (same count and compatible dtypes). Mismatched dtypes are a usage error.
@@ -130,19 +133,12 @@ struct row_ordering {
  * `strict_boundaries`: when true, every row in a chunk belongs to a single partition's
  * half-open key range (partition keys do not straddle chunk interiors). When false,
  * a chunk may contain keys spanning multiple partitions.
- *
- * `locally_ordered`: when true, rows within each partition at this level are ordered by
- * `keys`. When false, partitions are still ordered across partition boundaries, but row
- * order within a partition is not guaranteed.
  */
 struct ordering {
   std::vector<order_key> keys;              ///< Sort keys (column, order, null_order per entry).
   std::shared_ptr<table_chunk> boundaries;  ///< N-1 boundary rows for N partitions.
   /// See struct-level note on `strict_boundaries` semantics.
   bool strict_boundaries{false};
-  /// See struct-level note on `locally_ordered` semantics.
-  // TODO: Remove after cudf-polars migrates local row-order metadata to `row_ordering`.
-  bool locally_ordered{true};
 
   /// @brief Default constructor. Produces an invalid (empty) ordering.
   ordering() = default;
@@ -154,14 +150,12 @@ struct ordering {
    * @param boundaries Non-null, device-resident boundary table (N-1 rows for N
    * partitions). Accepts a `unique_ptr<table_chunk>` via implicit conversion.
    * @param strict_boundaries See struct-level doc. Defaults to false.
-   * @param locally_ordered See struct-level doc. Defaults to true.
    * @throws std::invalid_argument if `keys` is empty, `boundaries` is null or not
    * device-resident, or `keys.size() != boundaries->shape().second`.
    */
   ordering(std::vector<order_key> keys,
            std::shared_ptr<table_chunk> boundaries,
-           bool strict_boundaries = false,
-           bool locally_ordered   = true);
+           bool strict_boundaries = false);
 
   /**
    * @brief Return a new ordering with updated key column indices, sharing
@@ -170,19 +164,11 @@ struct ordering {
    * @param new_keys Replacement sort keys; size must equal
    * `boundaries->shape().second`.
    * @return A new ordering with `new_keys` and the same boundaries and
-   * ordering flags.
+   * strictness.
    * @throws std::invalid_argument if `new_keys` is empty or size mismatches
    * boundaries.
    */
   [[nodiscard]] ordering with_keys(std::vector<order_key> new_keys) const;
-
-  /**
-   * @brief Return a new ordering with updated local row-order metadata.
-   *
-   * @param locally_ordered Whether rows within each partition are ordered by `keys`.
-   * @return A new ordering with the same keys, boundaries, and strictness.
-   */
-  [[nodiscard]] ordering with_locally_ordered(bool locally_ordered) const;
 
   /**
    * @brief Return an equivalent ordering with strict boundaries.
@@ -201,7 +187,7 @@ struct ordering {
    * @param br Buffer resource used for temporary allocations during comparison.
    * @return True when both orderings have matching boundary values and
    * strict_boundaries attributes, and are otherwise compatible (same order and
-   * null_order). This comparison intentionally ignores `locally_ordered`.
+   * null_order).
    */
   [[nodiscard]] bool boundaries_aligned_with(ordering const& other,
                                              rapidsmpf::BufferResource& br) const;
@@ -227,8 +213,7 @@ struct order_scheme {
    */
   order_scheme(std::vector<order_key> keys,
                std::shared_ptr<table_chunk> boundaries,
-               bool strict_boundaries = false,
-               bool locally_ordered   = true);
+               bool strict_boundaries = false);
 
   /**
    * @brief Construct a validated multi-ordering order_scheme.

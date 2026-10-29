@@ -153,7 +153,7 @@ ConfigureNVBench(
   join/direct_join.cu
   join/distinct_join.cpp
   join/filter_join_indices.cpp
-  join/filter_join_indices_jit.cu
+  join/filter_join_indices_jit.cpp
   join/generate_input_tables.cu
   join/join.cpp
   join/join_dictionary.cpp

@@ -348,14 +348,9 @@ TEST_P(StreamingTableChunk, RoundTripCopy)
     }
   }
 
-  // Disk-to-disk copies are unsupported (see DiskToDiskCopyUnsupported); keep the disk
-  // chunk for the round trip.
   auto const host_cost = host_copy.make_available_cost();
-  auto host_copy2      = [&] {
-    if (spill_mem_type == rapidsmpf::MemoryType::DISK) { return std::move(host_copy); }
-    auto host_res2 = br->reserve_or_fail(host_copy.data_alloc_size(spill_mem_type), spill_mem_type);
-    return host_copy.copy(host_res2);
-  }();
+  auto host_res2  = br->reserve_or_fail(host_copy.data_alloc_size(spill_mem_type), spill_mem_type);
+  auto host_copy2 = host_copy.copy(host_res2);
   EXPECT_FALSE(host_copy2.is_available());
   EXPECT_EQ(host_copy2.shape(), expected_shape);
   EXPECT_TRUE(host_copy2.is_spillable());
@@ -404,7 +399,7 @@ TEST_P(StreamingTableChunk, RoundTripCopy)
   }
 }
 
-TEST_F(StreamingTableChunk, DiskToDiskCopyUnsupported)
+TEST_F(StreamingTableChunk, DiskToDiskCopy)
 {
   auto expect = random_table(2025, 100, 2, 0, 5);
   table_chunk dev_chunk{std::make_unique<cudf::table>(expect), stream};
@@ -414,10 +409,16 @@ TEST_F(StreamingTableChunk, DiskToDiskCopyUnsupported)
   auto disk_chunk = dev_chunk.copy(disk_res);
   ASSERT_GT(disk_chunk.data_alloc_size(rapidsmpf::MemoryType::DISK), 0);
 
-  // A disk chunk can't be copied into another disk reservation, a documented restriction.
   auto disk_res2 = br->reserve_or_fail(disk_chunk.data_alloc_size(rapidsmpf::MemoryType::DISK),
                                        rapidsmpf::MemoryType::DISK);
-  EXPECT_THROW(std::ignore = disk_chunk.copy(disk_res2), std::invalid_argument);
+  auto disk_copy = disk_chunk.copy(disk_res2);
+  EXPECT_FALSE(disk_copy.is_available());
+  EXPECT_EQ(disk_copy.data_alloc_size(rapidsmpf::MemoryType::DISK),
+            disk_chunk.data_alloc_size(rapidsmpf::MemoryType::DISK));
+
+  auto dev_back = disk_copy.make_available(
+    br->reserve_or_fail(disk_copy.make_available_cost(), rapidsmpf::MemoryType::DEVICE));
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(dev_back.table_view(), expect);
 }
 
 TEST_F(StreamingTableChunk, DiskMoveToHost)

@@ -21,6 +21,7 @@ from cudf_polars.testing.asserts import (
     assert_ir_translation_raises,
 )
 from cudf_polars.testing.engine_utils import is_streaming_engine
+from cudf_polars.utils.versions import POLARS_VERSION_LT_21
 
 
 @pytest.fixture
@@ -412,6 +413,10 @@ def test_groupby_null_keys(engine: pl.GPUEngine, maintain_order):
     assert_gpu_result_equal(q, engine=engine)
 
 
+# NB: polars >= 2.1 rewrites ``x.sort_by(y).first()/last()`` into ``min_by`` /
+# ``max_by`` with a total order unless ``maintain_order=True``; the visitor cannot
+# express that order, so those queries fall back to CPU. The tests below use
+# ``maintain_order=True`` to keep exercising the GPU ``SortedAgg`` path.
 def test_groupby_sort_by_first_last_in_memory(in_memory_engine: pl.GPUEngine) -> None:
     df = pl.LazyFrame(
         {
@@ -423,8 +428,8 @@ def test_groupby_sort_by_first_last_in_memory(in_memory_engine: pl.GPUEngine) ->
 
     q = df.group_by("g", maintain_order=True).agg(
         pl.col("val").sum().alias("volume"),
-        pl.col("val").sort_by("idx").first().alias("open"),
-        pl.col("val").sort_by("idx").last().alias("close"),
+        pl.col("val").sort_by("idx", maintain_order=True).first().alias("open"),
+        pl.col("val").sort_by("idx", maintain_order=True).last().alias("close"),
     )
     assert_gpu_result_equal(q, engine=in_memory_engine, check_row_order=True)
 
@@ -442,8 +447,11 @@ def test_groupby_sort_by_multiple_order_keys_in_memory(
     )
 
     q = df.group_by("g", maintain_order=True).agg(
-        pl.col("val").sort_by("idx").first().alias("first_by_idx"),
-        pl.col("val").sort_by("seq", descending=True).first().alias("first_by_seq"),
+        pl.col("val").sort_by("idx", maintain_order=True).first().alias("first_by_idx"),
+        pl.col("val")
+        .sort_by("seq", descending=True, maintain_order=True)
+        .first()
+        .alias("first_by_seq"),
     )
     assert_gpu_result_equal(q, engine=in_memory_engine, check_row_order=True)
 
@@ -469,6 +477,7 @@ def test_groupby_sort_by_first_pointwise_in_memory(
                 pl.col("seq"),
                 descending=[False, True],
                 nulls_last=[False, False],
+                maintain_order=True,
             )
             .first()
             .alias("picked")
@@ -511,8 +520,8 @@ def test_groupby_sort_by_preserves_sorted_key_order_in_memory(
         df.sort("g", descending=True)
         .group_by("g", maintain_order=True)
         .agg(
-            pl.col("val").sort_by("idx").first().alias("open"),
-            pl.col("val").sort_by("idx").last().alias("close"),
+            pl.col("val").sort_by("idx", maintain_order=True).first().alias("open"),
+            pl.col("val").sort_by("idx", maintain_order=True).last().alias("close"),
         )
     )
     assert_gpu_result_equal(q, engine=in_memory_engine, check_row_order=True)
@@ -529,7 +538,9 @@ def test_groupby_sort_by_drop_nulls_first_raises(
         }
     )
 
-    q = df.group_by("g").agg(pl.col("val").sort_by("idx").drop_nulls().first())
+    q = df.group_by("g").agg(
+        pl.col("val").sort_by("idx", maintain_order=True).drop_nulls().first()
+    )
     assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 
 
@@ -544,7 +555,26 @@ def test_groupby_sort_by_nested_agg_order_by_raises(
         }
     )
 
-    q = df.group_by("g").agg(pl.col("val").sort_by(pl.col("idx").max()).first())
+    q = df.group_by("g").agg(
+        pl.col("val")
+        .sort_by(pl.col("idx") - pl.col("idx").max(), maintain_order=True)
+        .first()
+    )
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
+
+
+@pytest.mark.skipif(
+    POLARS_VERSION_LT_21,
+    reason="Polars 2.0 does not rewrite sort_by(...).first() to min_by",
+)
+def test_groupby_sort_by_first_total_order_min_by_unsupported(
+    in_memory_engine: pl.GPUEngine,
+) -> None:
+    # polars >= 2.1 lowers this to a total-order ``min_by``, which the Python
+    # visitor does not expose ("total order min_by/max_by").
+    # Flip this test once https://github.com/NVIDIA/cudf/issues/24842 is done.
+    df = pl.LazyFrame({"g": ["A", "A", "B"], "idx": [2, 1, 1], "val": [30, 10, 20]})
+    q = df.group_by("g").agg(pl.col("val").sort_by("idx").first())
     assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 
 
@@ -772,6 +802,62 @@ def test_groupby_mean_type_promotion(engine: pl.GPUEngine, df: pl.LazyFrame) -> 
     assert_gpu_result_equal(q, engine=engine, check_row_order=False)
 
 
+def test_groupby_drop_nans_aggs(engine: pl.GPUEngine) -> None:
+    df = pl.LazyFrame(
+        {
+            "key": ["mixed"] * 16
+            + ["all_nan"] * 16
+            + ["all_null"] * 16
+            + ["clean"] * 16,
+            "value": [1.0, float("nan"), None, 3.0] * 4
+            + [float("nan")] * 16
+            + [None] * 16
+            + [2.0, 4.0] * 8,
+        }
+    )
+
+    value = pl.col("value").drop_nans()
+    q = df.group_by("key").agg(
+        *(
+            getattr(value, agg)().alias(agg)
+            for agg in ("count", "max", "mean", "min", "std", "sum", "var")
+        )
+    )
+
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
+def test_groupby_drop_nans_product_median_quantile(
+    in_memory_engine: pl.GPUEngine,
+) -> None:
+    df = pl.LazyFrame(
+        {
+            "key": [1, 1, 1, 2, 2],
+            "value": [1.0, float("nan"), None, float("nan"), None],
+        }
+    )
+    value = pl.col("value").drop_nans()
+    q = df.group_by("key").agg(
+        value.product().alias("product"),
+        value.median().alias("median"),
+        value.quantile(0.5).alias("quantile"),
+    )
+
+    assert_gpu_result_equal(q, engine=in_memory_engine, check_row_order=False)
+
+
+def test_groupby_drop_nans_include_null_count_unsupported(
+    engine: pl.GPUEngine,
+) -> None:
+    q = (
+        pl.LazyFrame({"key": [1, 1, 1], "value": [1.0, float("nan"), None]})
+        .group_by("key")
+        .agg(pl.col("value").drop_nans().len())
+    )
+
+    assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
 def test_groupby_sum_all_null_group_returns_null(engine: pl.GPUEngine):
     df = pl.LazyFrame(
         {
@@ -799,7 +885,12 @@ def test_groupby_aggs_keep_unsupported_as_null(
 ) -> None:
     request.applymarker(
         pytest.mark.xfail(
-            condition="sum" in str(agg_expr),
+            # Polars 2.0 only raises for sum; 2.1 also raises for mean and median.
+            condition="sum" in str(agg_expr)
+            or (
+                not POLARS_VERSION_LT_21
+                and any(name in str(agg_expr) for name in ("mean", "median"))
+            ),
             reason="polars raises now",
         )
     )
@@ -888,10 +979,6 @@ def test_groupby_quantile_nearest_even_length(engine: pl.GPUEngine):
     assert_gpu_result_equal(q, engine=engine, check_row_order=False)
 
 
-@pytest.mark.xfail(
-    raises=AssertionError,
-    reason="https://github.com/NVIDIA/cudf/issues/19610",
-)
 def test_groupby_literal_agg(engine: pl.GPUEngine):
     df = pl.LazyFrame({"c0": [True, False]})
     q = df.group_by("c0").agg(pl.lit(1).is_not_null())
@@ -901,4 +988,12 @@ def test_groupby_literal_agg(engine: pl.GPUEngine):
 def test_groupby_empty_keys(engine: pl.GPUEngine):
     df = pl.LazyFrame({"x": [1, 2, 3]})
     q = df.group_by([]).agg(pl.len())
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_groupby_scalar_literal_expression(engine: pl.GPUEngine):
+    # An expression of only literals is a scalar: one value per group.
+    df = pl.LazyFrame({"g": [1, 1, 2], "j": [1, 2, 3]})
+    lit = pl.lit(-1.5).abs()
+    q = df.group_by("g", maintain_order=True).agg(a=lit, b=lit, c=pl.col("j").sum())
     assert_gpu_result_equal(q, engine=engine)

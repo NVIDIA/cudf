@@ -6,6 +6,27 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
+CUDF_POLARS_BASELINE_SHA=$(git -C "${SCRIPT_DIR}/.." rev-parse HEAD)
+export CUDF_POLARS_BASELINE_SHA
+RUN_LIST_ARGS=()
+if [[ -n "${CUDF_POLARS_GPU_RUN_LIST:-}" ]]; then
+    RUN_LIST_ARGS=(--inject-gpu-engine-run-list="$(realpath "${SCRIPT_DIR}/../${CUDF_POLARS_GPU_RUN_LIST}")")
+fi
+if [[ "${CI:-false}" == "true" ]]; then
+    # GitHub exposes the job name but not its numeric ID to steps; the audit
+    # matches each report to that ID to detect missing matrix jobs and shards.
+    producer_json=$(gh api --paginate \
+        "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?filter=latest&per_page=100" \
+        | jq -c --arg runner "${RUNNER_NAME}" \
+            '.jobs[] | select(.runner_name == $runner and .status == "in_progress") | {id, configuration: (.name | split(" / ") | last)}')
+    CUDF_POLARS_REPORT_PRODUCER=$(printf '%s' "${producer_json}" | jq -r .id)
+    CUDF_POLARS_REPORT_CONFIGURATION=$(printf '%s' "${producer_json}" | jq -r .configuration)
+    export CUDF_POLARS_REPORT_PRODUCER CUDF_POLARS_REPORT_CONFIGURATION
+    if [[ ! "${CUDF_POLARS_REPORT_PRODUCER}" =~ ^[0-9]+$ ]]; then
+        echo "Could not identify the unique GitHub test producer job" >&2
+        exit 2
+    fi
+fi
 TIMEOUT_TOOL_PATH="${SCRIPT_DIR}/timeout_with_stack.py"
 test_timeout=5400
 if [[ ${RAPIDS_BUILD_TYPE:-} == pull-request ]]; then
@@ -143,6 +164,7 @@ if [[ "${ENGINE}" == "both" || "${ENGINE}" == "in-memory" ]]; then
            "${DESELECTED_TEST_ARGS[@]}" \
            "${PYTEST_ARGS[@]}" \
            "${FALLBACK_REPORT_ARGS[@]}" \
+           "${RUN_LIST_ARGS[@]}" \
            py-polars/tests \
            --inject-gpu-engine in-memory
 fi
@@ -169,6 +191,7 @@ if [[ "${ENGINE}" == "both" || "${ENGINE}" == "spmd" ]]; then
            "${DESELECTED_TEST_ARGS[@]}" \
            "${PYTEST_ARGS[@]}" \
            "${FALLBACK_REPORT_ARGS[@]}" \
+           "${RUN_LIST_ARGS[@]}" \
            py-polars/tests \
            --inject-gpu-engine spmd \
            --inject-gpu-engine-blocksize "${BLOCKSIZE}"

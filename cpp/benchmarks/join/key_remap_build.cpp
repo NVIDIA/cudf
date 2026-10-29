@@ -4,6 +4,7 @@
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 #include <benchmarks/common/table_utilities.hpp>
 #include <benchmarks/join/join_common.hpp>
 
@@ -96,6 +97,7 @@ void nvbench_key_remap_build(nvbench::state& state,
   state.add_global_memory_reads<nvbench::int8_t>(input_size);
 
   state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
+  auto const mem_stats_logger = cudf::memory_stats_logger();
 
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
     cudf::key_remapping remap(
@@ -104,6 +106,9 @@ void nvbench_key_remap_build(nvbench::state& state,
     [[maybe_unused]] auto dc = remap.get_distinct_count();
     [[maybe_unused]] auto mc = remap.get_max_duplicate_count();
   });
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 // Data types to test

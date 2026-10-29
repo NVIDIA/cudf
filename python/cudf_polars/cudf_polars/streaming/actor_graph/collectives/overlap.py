@@ -25,8 +25,9 @@ from rapidsmpf.streaming.coll.allgather import AllGather
 from rapidsmpf.streaming.coll.sparse_alltoall import SparseAlltoall
 from rapidsmpf.streaming.core.message import Message
 
+from cudf_polars.dsl.utils.naming import names_to_indices
 from cudf_polars.dsl.utils.windows import duration_to_scalar
-from cudf_polars.streaming.actor_graph.utils import ChunkStore, names_to_indices
+from cudf_polars.streaming.actor_graph.utils import ChunkStore
 from cudf_polars.utils.cuda_stream import join_cuda_streams
 
 if TYPE_CHECKING:

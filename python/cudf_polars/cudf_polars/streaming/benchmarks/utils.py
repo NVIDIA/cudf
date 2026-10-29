@@ -163,6 +163,7 @@ class QueryMode(enum.Enum):
 
 _STREAMING_FRONTENDS = frozenset({"dask", "ray", "spmd"})
 _CPU_ENGINES = frozenset({"polars-cpu", "duckdb"})
+InputFormat = Literal["parquet", "iceberg"]
 
 EXIT_SUCCESS = 0
 EXIT_QUERY_FAILURE = 3
@@ -506,7 +507,13 @@ class HardwareInfo:
         return cls(gpus=gpus, cpu=CPUInfo.collect())
 
 
-def get_data(path: str | Path, table_name: str, suffix: str = "") -> pl.LazyFrame:
+def get_data(
+    path: str | Path,
+    table_name: str,
+    suffix: str = "",
+    *,
+    input_format: InputFormat = "parquet",
+) -> pl.LazyFrame:
     """
     Get table from dataset.
 
@@ -515,21 +522,28 @@ def get_data(path: str | Path, table_name: str, suffix: str = "") -> pl.LazyFram
     When the file ``{path}/{table_name}{suffix}`` does not exist on the
     local filesystem, falls back to scanning ``{path}/{table_name}`` as a
     directory of parquet files.
+
+    With ``input_format="iceberg"``, scans the Iceberg table at
+    ``{path}/iceberg/{table_name}`` and ignores ``suffix``.
     """
-    file_path = str(path).removesuffix("/") + f"/{table_name}{suffix}"
-    return pl.scan_parquet(file_path)
+    root = str(path).removesuffix("/")
+    if input_format == "iceberg":
+        return pl.scan_iceberg(f"{root}/iceberg/{table_name}")
+    return pl.scan_parquet(f"{root}/{table_name}{suffix}")
 
 
-def _infer_scale_factor(name: str, path: str | Path, suffix: str) -> int | float:
+def _infer_scale_factor(
+    name: str, path: str | Path, suffix: str, input_format: InputFormat
+) -> int | float:
     if "pdsh" in name:
-        supplier = get_data(path, "supplier", suffix)
+        supplier = get_data(path, "supplier", suffix, input_format=input_format)
         num_rows = supplier.select(pl.len()).collect().item(0, 0)
         return num_rows / 10_000
 
     elif "pdsds" in name:
         # TODO: Keep a map of SF-row_count because of nonlinear scaling
         # See: https://www.tpc.org/TPC_Documents_Current_Versions/pdf/TPC-DS_v4.0.0.pdf pg.46
-        customer = get_data(path, "promotion", suffix)
+        customer = get_data(path, "promotion", suffix, input_format=input_format)
         num_rows = customer.select(pl.len()).collect().item(0, 0)
         return num_rows / 300
 
@@ -588,6 +602,7 @@ class RunConfig:
     dataset_path: str | Path
     scale_factor: int | float
     suffix: str
+    input_format: InputFormat = "parquet"
     qualification: bool = False
     query_mode: QueryMode = QueryMode.DATAFRAME
     sql_directory: Path | None = None
@@ -663,6 +678,22 @@ class RunConfig:
         if args.qualification and "pdsds" not in name:
             raise ValueError("--qualification can only be used with PDS-DS benchmarks.")
 
+        if args.input_format == "iceberg":
+            if "pdsds" in name:
+                raise ValueError(
+                    "--input-format iceberg is only supported for PDS-H benchmarks."
+                )
+            if args.debug:
+                raise ValueError(
+                    "--debug is not supported with --input-format iceberg; "
+                    "translating an Iceberg scan with --debug hangs."
+                )
+            if importlib.util.find_spec("pyiceberg") is None:
+                raise RuntimeError(
+                    "pyiceberg is not installed. "
+                    "Please install it to use --input-format iceberg."
+                )
+
         if scale_factor is None:
             if "pdsds" in name:
                 raise ValueError(
@@ -674,7 +705,9 @@ class RunConfig:
                     "Must specify --root and --scale if --path is not specified."
                 )
             # For PDS-H, infer scale factor based on row count
-            scale_factor = _infer_scale_factor(name, path, args.suffix)
+            scale_factor = _infer_scale_factor(
+                name, path, args.suffix, args.input_format
+            )
         if path is None:
             path = f"{args.root}/scale-{scale_factor}"
 
@@ -697,7 +730,7 @@ class RunConfig:
             and skip_scale_factor_inference is False
         ):
             # Validate the user-supplied scale factor
-            sf_inf = _infer_scale_factor(name, path, args.suffix)
+            sf_inf = _infer_scale_factor(name, path, args.suffix, args.input_format)
             rel_error = abs((scale_factor - sf_inf) / sf_inf)
             if rel_error > 0.01:
                 raise ValueError(
@@ -743,6 +776,7 @@ class RunConfig:
             dataset_path=path,
             scale_factor=scale_factor,
             suffix=args.suffix if args.suffix is not None else ".parquet",
+            input_format=args.input_format,
             qualification=args.qualification,
             query_mode=args.query_mode,
             sql_directory=args.sql_directory,
@@ -795,6 +829,7 @@ class RunConfig:
             "dataset_path": str(self.dataset_path),
             "scale_factor": self.scale_factor,
             "suffix": self.suffix,
+            "input_format": self.input_format,
             "qualification": self.qualification,
             "query_mode": self.query_mode.value,
             "sql_directory": (
@@ -1311,6 +1346,7 @@ def run_polars_query(
                     run_config.dataset_path,
                     query_set=duckdb_queries_cls.name,
                     suffix=run_config.suffix,
+                    input_format=run_config.input_format,
                     run_config=run_config,
                 ).with_columns(*casts)
             case "duckdb-disk":
@@ -1943,6 +1979,7 @@ def _duckdb_register_views(
     dataset_path: str | Path,
     suffix: str,
     query_set: str,
+    input_format: InputFormat = "parquet",
 ) -> None:
     """Register one view per table in the query set over `dataset_path`."""
     if is_remote_path(dataset_path):
@@ -1951,13 +1988,18 @@ def _duckdb_register_views(
         conn.execute("INSTALL httpfs")
         conn.execute("LOAD httpfs")
         conn.execute("CREATE OR REPLACE SECRET (TYPE s3, PROVIDER credential_chain)")
+    if input_format == "iceberg":
+        conn.execute("INSTALL iceberg")
+        conn.execute("LOAD iceberg")
 
+    root = str(dataset_path).removesuffix("/")
     tbl_names = PDSDS_TABLE_NAMES if query_set == "pdsds" else PDSH_TABLE_NAMES
     for name in tbl_names:
-        pattern = str(dataset_path).removesuffix("/") + f"/{name}{suffix}"
-        conn.execute(
-            f"CREATE OR REPLACE VIEW {name} AS SELECT * FROM parquet_scan('{pattern}');"
-        )
+        if input_format == "iceberg":
+            source = f"iceberg_scan('{root}/iceberg/{name}')"
+        else:
+            source = f"parquet_scan('{root}/{name}{suffix}')"
+        conn.execute(f"CREATE OR REPLACE VIEW {name} AS SELECT * FROM {source};")
 
 
 def print_duckdb_plan(
@@ -1968,13 +2010,15 @@ def print_duckdb_plan(
     query_set: str,
     args: argparse.Namespace,
     run_config: RunConfig | None = None,
+    *,
+    input_format: InputFormat = "parquet",
 ) -> None:
     """Print DuckDB query plan using EXPLAIN."""
     if duckdb is None:
         raise ImportError(duckdb_err)
 
     with duckdb.connect(config=_make_duckdb_config(run_config)) as conn:
-        _duckdb_register_views(conn, dataset_path, suffix, query_set)
+        _duckdb_register_views(conn, dataset_path, suffix, query_set, input_format)
 
         if args.explain_logical and args.explain:
             conn.execute("PRAGMA explain_output = 'all';")
@@ -1996,16 +2040,17 @@ def execute_duckdb_query(
     *,
     suffix: str = ".parquet",
     query_set: str = "pdsh",
+    input_format: InputFormat = "parquet",
     run_config: RunConfig | None = None,
 ) -> pl.DataFrame:
     """Execute a query with DuckDB."""
     if duckdb is None:
         raise ImportError(duckdb_err)
     with duckdb.connect(config=_make_duckdb_config(run_config)) as conn:
-        _duckdb_register_views(conn, dataset_path, suffix, query_set)
+        _duckdb_register_views(conn, dataset_path, suffix, query_set, input_format)
         result = conn.sql(query).pl()
-        assert isinstance(result, pl.DataFrame)
-        return result
+    assert isinstance(result, pl.DataFrame)
+    return result
 
 
 def run_duckdb(duckdb_queries_cls: Any, args: argparse.Namespace) -> None:
@@ -2037,6 +2082,7 @@ def run_duckdb(duckdb_queries_cls: Any, args: argparse.Namespace) -> None:
                 query_set=duckdb_queries_cls.name,
                 args=args,
                 run_config=run_config,
+                input_format=run_config.input_format,
             )
 
         print(f"DuckDB Executing: {q_id}")
@@ -2051,6 +2097,7 @@ def run_duckdb(duckdb_queries_cls: Any, args: argparse.Namespace) -> None:
                 run_config.dataset_path,
                 suffix=run_config.suffix,
                 query_set=duckdb_queries_cls.name,
+                input_format=run_config.input_format,
                 run_config=run_config,
             )
             t1 = time.time()
@@ -2094,7 +2141,12 @@ def check_input_data_type(
     else:
         table, col = "customer", "c_acctbal"
     t = (
-        get_data(run_config.dataset_path, table, run_config.suffix)
+        get_data(
+            run_config.dataset_path,
+            table,
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
         .select(pl.col(col))
         .collect_schema()[col]
     )
@@ -2110,7 +2162,12 @@ def check_input_data_type(
         date_type = "date"
     else:
         t = (
-            get_data(run_config.dataset_path, "orders", run_config.suffix)
+            get_data(
+                run_config.dataset_path,
+                "orders",
+                run_config.suffix,
+                input_format=run_config.input_format,
+            )
             .select(pl.col("o_orderdate"))
             .collect_schema()["o_orderdate"]
         )
@@ -2176,6 +2233,18 @@ def _add_dataset_args(parser: argparse.ArgumentParser) -> None:
             Default: .parquet"""),
     )
     parser.add_argument(
+        "--input-format",
+        dest="input_format",
+        type=str,
+        default="parquet",
+        choices=["parquet", "iceberg"],
+        help=textwrap.dedent("""\
+            Format of the input tables:
+                - parquet : Parquet files at {path}/{table}{suffix} (default)
+                - iceberg : Iceberg tables at {path}/iceberg/{table} (PDS-H only).
+                            --suffix is ignored."""),
+    )
+    parser.add_argument(
         "--io-mode",
         dest="io_mode",
         default="lukewarm",
@@ -2184,7 +2253,10 @@ def _add_dataset_args(parser: argparse.ArgumentParser) -> None:
             Cache state control for each timed iteration:
                 - cold     : Drop Linux page cache before each iteration (requires kvikio)
                 - lukewarm : Drop once before the first query, then let cache warm naturally (default)
-                - hot      : One untimed warmup iteration to populate cache before measured runs"""),
+                - hot      : One untimed warmup iteration to populate cache before measured runs
+            Page cache is dropped only for files under --path. With --input-format iceberg,
+            the manifests store absolute data file paths, so a copied dataset still reads
+            the original data files."""),
     )
     parser.add_argument(
         "--validation-abs-tol",

@@ -576,16 +576,20 @@ def test_hybrid_scan_payload_page_mask_without_page_index(
         row_groups, row_mask, simple_parquet_options
     )
     assert any(r.size == 0 for r in page_ranges)
+    # Caller is responsible for keeping the source bytes alive until
+    # synchronize_stream() is called below.
+    # See https://github.com/rapidsai/rmm/issues/2521
+    page_bytes = [
+        simple_parquet_bytes[r.offset : r.offset + r.size] if r.size else None
+        for r in page_ranges
+    ]
     page_data = [
         None
-        if r.size == 0
+        if src is None
         else plc.gpumemoryview(
-            rmm.DeviceBuffer.to_device(
-                memoryview(simple_parquet_bytes)[r.offset : r.offset + r.size],
-                plc.utils._get_stream(),
-            )
+            rmm.DeviceBuffer.to_device(src, plc.utils._get_stream())
         )
-        for r in page_ranges
+        for src in page_bytes
     ]
     synchronize_stream()
 

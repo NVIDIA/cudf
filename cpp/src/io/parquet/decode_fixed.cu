@@ -253,15 +253,22 @@ __device__ inline void decode_fixed_width_split_values(
   Type const dtype    = s->setup.col.physical_type;
   auto const data_len = cuda::std::distance(s->stream.data_start, s->stream.data_end);
 
-  // Check malformed BYTE_STREAM_SPLIT pages
-  if (s->output_cvt.dtype_len_in <= 0 or data_len <= 0) {
-    if (t == 0) { s->set_error_code(decode_error::INVALID_BYTE_STREAM_SPLIT_SIZE); }
+  // Check malformed BYTE_STREAM_SPLIT pages. A page whose values are all null has no data. Every
+  // thread sets the error so that they all see it and leave the decode loop together.
+  if (s->output_cvt.dtype_len_in <= 0 or data_len < 0) {
+    s->set_error_code(decode_error::INVALID_BYTE_STREAM_SPLIT_SIZE);
     return;
   }
 
   auto const num_values = data_len / s->output_cvt.dtype_len_in;
 
   int const skipped_leaf_values = s->setup.page.skipped_leaf_values;
+
+  // The page data must hold every value that the levels mark as valid
+  if (start < end and (has_lists_t ? end + skipped_leaf_values : end) > num_values) {
+    s->set_error_code(decode_error::INVALID_BYTE_STREAM_SPLIT_SIZE);
+    return;
+  }
 
   // decode values
   int thread_pos = start + t;

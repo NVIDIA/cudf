@@ -442,6 +442,168 @@ TEST_F(ParquetReaderTest, RequiredFlatByteStreamSplit)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(result.tbl->view().column(0), sliced.front().column(0));
 }
 
+TEST_F(ParquetReaderTest, ByteStreamSplitAllNullPages)
+{
+  // Regression test for BYTE_STREAM_SPLIT pages whose values are all null. Such pages have no
+  // data, which the decoder used to reject as malformed. The table covers flat, nested and list
+  // columns, a FIXED_LEN_BYTE_ARRAY decimal, and a column without any valid value.
+  constexpr int num_rows  = 256;
+  constexpr int page_rows = 32;
+  constexpr int num_pages = num_rows / page_rows;
+
+  // Pages 0, 3 and the last one are all null, and the others have a null every third row.
+  auto const valids = cudf::detail::make_counting_transform_iterator(0, [](int i) {
+    auto const page = i / page_rows;
+    return page != 0 and page != 3 and page != num_pages - 1 and i % 3 != 0;
+  });
+  auto const float_values =
+    cudf::detail::make_counting_transform_iterator(0, [](int i) { return i * 1.5f; });
+  auto const double_values =
+    cudf::detail::make_counting_transform_iterator(0, [](int i) { return i * 2.5; });
+  auto const int_values =
+    cudf::detail::make_counting_transform_iterator(0, [](int i) { return int64_t{i} << 33; });
+  auto const decimal_values =
+    cudf::detail::make_counting_transform_iterator(0, [](int i) { return __int128_t{i} << 70; });
+
+  column_wrapper<float> floats(float_values, float_values + num_rows, valids);
+  column_wrapper<int64_t> ints(int_values, int_values + num_rows, valids);
+  cudf::test::fixed_point_column_wrapper<__int128_t> decimals(
+    decimal_values, decimal_values + num_rows, valids, numeric::scale_type{-2});
+  column_wrapper<double> all_nulls(
+    double_values, double_values + num_rows, cudf::test::iterators::all_nulls());
+
+  // Each list row has two values, which are null in the rows of the all-null pages.
+  auto const list_valids =
+    cudf::detail::make_counting_transform_iterator(0, [valids](int i) { return valids[i / 2]; });
+  column_wrapper<float> list_values(float_values, float_values + 2 * num_rows, list_valids);
+  auto const list_offsets =
+    cudf::detail::make_counting_transform_iterator(0, [](int i) { return 2 * i; });
+  column_wrapper<cudf::size_type> offsets(list_offsets, list_offsets + num_rows + 1);
+  auto lists = cudf::make_lists_column(num_rows,
+                                       offsets.release(),
+                                       list_values.release(),
+                                       0,
+                                       cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+
+  column_wrapper<int64_t> struct_child(int_values, int_values + num_rows, valids);
+  cudf::test::structs_column_wrapper structs({struct_child});
+
+  table_view const expected({floats, ints, decimals, all_nulls, *lists, structs});
+  cudf::io::table_input_metadata metadata(expected);
+  for (auto i : {0, 1, 2, 3}) {
+    metadata.column_metadata[i].set_encoding(cudf::io::column_encoding::BYTE_STREAM_SPLIT);
+  }
+  metadata.column_metadata[4].child(1).set_encoding(cudf::io::column_encoding::BYTE_STREAM_SPLIT);
+  metadata.column_metadata[5].child(0).set_encoding(cudf::io::column_encoding::BYTE_STREAM_SPLIT);
+
+  for (auto const is_v2 : {false, true}) {
+    auto const filepath = temp_env->get_temp_filepath("ByteStreamSplitAllNullPages.parquet");
+    cudf::io::write_parquet(
+      cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
+        .metadata(metadata)
+        .max_page_size_rows(page_rows)
+        .max_page_fragment_size(page_rows)
+        .write_v2_headers(is_v2));
+
+    // Every leaf column must be BYTE_STREAM_SPLIT encoded, rather than a writer fallback.
+    auto const source = cudf::io::datasource::create(filepath);
+    cudf::io::parquet::FileMetaData fmd;
+    read_footer(source, &fmd);
+    ASSERT_EQ(fmd.row_groups.size(), 1);
+    ASSERT_EQ(fmd.row_groups.front().columns.size(), 6);
+    for (auto const& chunk : fmd.row_groups.front().columns) {
+      auto const& encodings = chunk.meta_data.encodings;
+      EXPECT_NE(
+        std::find(
+          encodings.begin(), encodings.end(), cudf::io::parquet::Encoding::BYTE_STREAM_SPLIT),
+        encodings.end());
+    }
+
+    auto const result = cudf::io::read_parquet(
+      cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath}));
+    CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
+
+    // Reads with row bounds that span the all-null page 3 (rows 96 to 127), or start or end inside
+    // it or inside the first and last pages.
+    for (auto const& [skip_rows, num_rows_to_read] : std::vector<std::pair<int, int>>{
+           {90, 40}, {100, 40}, {60, 50}, {100, 20}, {10, 15}, {230, 26}}) {
+      auto const bounded = cudf::io::read_parquet(
+        cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+          .skip_rows(skip_rows)
+          .num_rows(num_rows_to_read));
+      CUDF_TEST_EXPECT_TABLES_EQUAL(
+        cudf::slice(expected, {skip_rows, skip_rows + num_rows_to_read}).front(),
+        bounded.tbl->view());
+    }
+  }
+}
+
+TEST_F(ParquetReaderTest, ByteStreamSplitTooFewValues)
+{
+  // A BYTE_STREAM_SPLIT page whose definition levels mark more values as valid than its data holds
+  // must fail to decode instead of reading past the data. Write single-page float columns with no
+  // valid values and with 16 of 32, then mark every row as valid.
+  constexpr int num_rows = 32;
+  auto const values =
+    cudf::detail::make_counting_transform_iterator(0, [](int i) { return i * 1.5f; });
+
+  // The page data starts with the length of the definition levels, followed by the levels. The
+  // writer encodes 32 nulls as one RLE run of (count << 1, value) and 16 valid values followed by
+  // 16 nulls as 32 bit-packed levels with the header ((count / 8) << 1 | 1).
+  struct level_patch {
+    int num_valid;
+    std::vector<uint8_t> levels;
+    std::vector<uint8_t> all_valid_levels;
+  };
+  std::vector<level_patch> const patches{
+    {0, {2, 0, 0, 0, num_rows << 1, 0}, {2, 0, 0, 0, num_rows << 1, 1}},
+    {16,
+     {5, 0, 0, 0, (num_rows / 8) << 1 | 1, 0xff, 0xff, 0, 0},
+     {5, 0, 0, 0, (num_rows / 8) << 1 | 1, 0xff, 0xff, 0xff, 0xff}}};
+
+  for (auto const& [num_valid, levels, all_valid_levels] : patches) {
+    auto const valids = cudf::detail::make_counting_transform_iterator(
+      0, [num_valid](int i) { return i < num_valid; });
+    column_wrapper<float> col(values, values + num_rows, valids);
+    table_view const expected({col});
+    cudf::io::table_input_metadata metadata(expected);
+    metadata.column_metadata[0].set_encoding(cudf::io::column_encoding::BYTE_STREAM_SPLIT);
+
+    std::vector<char> buffer;
+    cudf::io::write_parquet(
+      cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, expected)
+        .metadata(metadata)
+        .compression(cudf::io::compression_type::NONE)
+        .stats_level(cudf::io::statistics_freq::STATISTICS_NONE));
+
+    // Find the page data, which follows the page header at the start of the column chunk.
+    auto const source = cudf::io::datasource::create(cudf::host_span<std::byte const>{
+      reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()});
+    cudf::io::parquet::FileMetaData fmd;
+    read_footer(source, &fmd);
+    auto const& chunk_meta = fmd.row_groups.front().columns.front().meta_data;
+    ASSERT_EQ(chunk_meta.dictionary_page_offset, 0);
+    cudf::io::parquet::PageLocation const page_loc{
+      chunk_meta.data_page_offset, static_cast<int32_t>(chunk_meta.total_compressed_size), 0};
+    auto const ph = read_page_header(source, page_loc);
+    ASSERT_EQ(ph.type, cudf::io::parquet::PageType::DATA_PAGE);
+    ASSERT_EQ(ph.data_page_header.num_values, num_rows);
+    auto const data_offset = static_cast<size_t>(
+      chunk_meta.data_page_offset + chunk_meta.total_compressed_size - ph.compressed_page_size);
+
+    ASSERT_EQ(std::vector<uint8_t>(buffer.begin() + data_offset,
+                                   buffer.begin() + data_offset + levels.size()),
+              levels);
+    std::copy(all_valid_levels.begin(), all_valid_levels.end(), buffer.begin() + data_offset);
+
+    auto const read_opts = cudf::io::parquet_reader_options::builder(
+                             cudf::io::source_info{cudf::host_span<std::byte const>{
+                               reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
+                             .build();
+    EXPECT_THROW(cudf::io::read_parquet(read_opts), cudf::logic_error);
+  }
+}
+
 TEST_F(ParquetReaderTest, NullableStructBoolAndStringUserBounds)
 {
   // Exercise nullable nested state for mixed BOOL8 and STRING leaves while slicing across Parquet

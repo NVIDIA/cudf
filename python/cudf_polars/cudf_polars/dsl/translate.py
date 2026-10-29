@@ -1476,7 +1476,13 @@ def _translate_function(
                 raise NotImplementedError(
                     "Correlation is currently only supported in groupby context"
                 )
-            left, right = children
+            intermediate_dtype = DataType(pl.Float64())
+            left, right = (
+                expr.Cast(intermediate_dtype, True, child)  # noqa: FBT003
+                if child.dtype.polars_type == pl.Float32()
+                else child
+                for child in children
+            )
             pair_dtype = DataType(
                 pl.Struct(
                     [
@@ -1485,7 +1491,6 @@ def _translate_function(
                     ]
                 )
             )
-            intermediate_dtype = DataType(pl.Float64())
             correlation = expr.Agg(
                 intermediate_dtype,
                 "corr",

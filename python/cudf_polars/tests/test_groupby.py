@@ -199,6 +199,19 @@ def test_groupby_corr(
     assert_gpu_result_equal(q, engine=engine, check_exact=False)
 
 
+def test_groupby_corr_float32_overflow(in_memory_engine: pl.GPUEngine) -> None:
+    df = pl.LazyFrame(
+        {
+            "key": [1, 1],
+            "left": pl.Series([2e38, 3e38], dtype=pl.Float32),
+            "right": pl.Series([1.0, 2.0], dtype=pl.Float32),
+        }
+    )
+    q = df.group_by("key").agg(pl.corr("left", "right"))
+
+    assert_gpu_result_equal(q, engine=in_memory_engine, check_exact=False)
+
+
 def test_corr_unsupported(in_memory_engine: pl.GPUEngine) -> None:
     df = pl.LazyFrame({"key": [1, 1], "left": [1.0, 2.0], "right": [2.0, 4.0]})
 

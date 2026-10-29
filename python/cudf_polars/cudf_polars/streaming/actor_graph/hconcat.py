@@ -9,21 +9,21 @@ from typing import TYPE_CHECKING
 from cudf_streaming.channel_metadata import (
     HashScheme,
     OrderScheme,
-    Partitioning,
 )
 
-from cudf_polars.streaming.actor_graph.utils import (
+from cudf_polars.streaming.actor_graph.partitioning import (
     maybe_remap_partitioning,
+    partitioning_or_none,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from cudf_streaming.channel_metadata import ChannelMetadata
+    from cudf_streaming.channel_metadata import ChannelMetadata, Partitioning
     from rapidsmpf.streaming.core.context import Context
 
     from cudf_polars.dsl.ir import HConcat
-    from cudf_polars.streaming.actor_graph.utils import PartitioningScheme
+    from cudf_polars.streaming.actor_graph.partitioning import PartitioningScheme
 
 
 def _combine_hconcat_scheme(
@@ -71,8 +71,9 @@ def build_hconcat_partitioning(
         partitioning = maybe_remap_partitioning(
             ir,
             child_metadatas[idx].partitioning,
-            child_ir=ir.children[idx],
+            child_index=idx,
             context=context,
+            preserves_row_order=True,
         )
         if partitioning is not None:
             remapped.append(partitioning)
@@ -83,8 +84,7 @@ def build_hconcat_partitioning(
     local = _combine_hconcat_scheme(
         tuple(partitioning.local for partitioning in remapped)
     )
-    if inter_rank is None and local == "inherit":
-        local = None
-    if inter_rank is None and local is None:
-        return None
-    return Partitioning(inter_rank, local)
+    row_orderings = tuple(
+        ordering for partitioning in remapped for ordering in partitioning.row_orderings
+    )
+    return partitioning_or_none(inter_rank, local, row_orderings)

@@ -210,7 +210,7 @@ void hybrid_scan_reader_impl::setup_compressed_data(
                                              : count_page_headers(chunks, _stream);
   if (total_pages <= 0) { return; }
   auto unsorted_pages = cudf::detail::make_zeroed_device_buffer_async<PageInfo>(
-    total_pages, _stream, cudf::get_current_device_resource_ref());
+    total_pages, _stream, _mr.as_temporary());
 
   // decoding of column/page information
   parquet::detail::decode_page_headers(pass, unsorted_pages, _has_offset_index, _stream);
@@ -248,7 +248,7 @@ void hybrid_scan_reader_impl::setup_sparse_compressed_data(
   // `decode_page_headers` may not write every byte of each PageInfo, and `sort_pages` copies
   // PageInfo as whole objects.
   auto unsorted_pages = cudf::detail::make_zeroed_device_buffer_async<PageInfo>(
-    total_pages, _stream, cudf::get_current_device_resource_ref());
+    total_pages, _stream, _mr.as_temporary());
   parquet::detail::decode_page_headers(pass, unsorted_pages, page_data, _stream);
   CUDF_EXPECTS(pass.page_offsets.size() - 1 == static_cast<size_t>(_input_columns.size()),
                "Encountered page_offsets / num_columns mismatch");
@@ -281,7 +281,7 @@ hybrid_scan_reader_impl::prepare_dictionaries(
 
   // Initialize column chunk descriptors
   auto chunks = cudf::detail::hostdevice_vector<cudf::io::parquet::detail::ColumnChunkDesc>(
-    total_column_chunks, stream);
+    total_column_chunks, stream, cudf::get_current_device_resource_ref());
   auto chunk_idx = 0;
 
   // For all row groups
@@ -345,7 +345,8 @@ hybrid_scan_reader_impl::prepare_dictionaries(
   chunks.host_to_device_async(stream);
 
   // Create page infos for each column chunk's dictionary page
-  cudf::detail::hostdevice_vector<PageInfo> pages(total_column_chunks, stream);
+  cudf::detail::hostdevice_vector<PageInfo> pages(
+    total_column_chunks, stream, cudf::get_current_device_resource_ref());
   CUDF_CUDA_TRY(
     cudaMemsetAsync(pages.device_ptr(), 0, pages.size() * sizeof(PageInfo), stream.get()));
 

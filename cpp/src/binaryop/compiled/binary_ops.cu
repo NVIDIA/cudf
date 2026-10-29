@@ -14,6 +14,7 @@
 #include <cudf/detail/structs/utilities.hpp>
 #include <cudf/scalar/scalar_device_view.cuh>
 #include <cudf/strings/detail/strings_children.cuh>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/device_uvector.hpp>
@@ -21,6 +22,7 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/std/concepts>
 #include <cuda/stream>
 #include <thrust/transform.h>
 
@@ -37,7 +39,7 @@ namespace {
  */
 struct scalar_as_column_view {
   using return_type = typename std::pair<column_view, std::unique_ptr<column>>;
-  template <typename T, CUDF_ENABLE_IF(is_fixed_width<T>())>
+  template <cudf::concepts::fixed_width T>
   return_type operator()(scalar const& s,
                          cuda::stream_ref stream,
                          rmm::device_async_resource_ref mr)
@@ -59,7 +61,7 @@ struct scalar_as_column_view {
     auto col_v = column_view(s.type(), 1, h_scalar_type_view.data(), null_mask_ptr, 1);
     return std::pair{col_v, std::move(aux_col)};
   }
-  template <typename T, CUDF_ENABLE_IF(!is_fixed_width<T>())>
+  template <typename T>
   return_type operator()(scalar const&, cuda::stream_ref, rmm::device_async_resource_ref)
   {
     CUDF_FAIL("Unsupported type");
@@ -147,8 +149,8 @@ struct compare_functor {
   // This is used to compare a scalar and a column value
   template <typename LhsViewT = LhsDeviceViewT, typename RhsViewT = RhsDeviceViewT>
   __device__ inline OutT operator()(cudf::size_type i) const
-    requires(std::is_same_v<LhsViewT, column_device_view> &&
-             !std::is_same_v<RhsViewT, column_device_view>)
+    requires(cuda::std::same_as<LhsViewT, column_device_view> &&
+             !cuda::std::same_as<RhsViewT, column_device_view>)
   {
     return cfunc_(lhs_dev_view_.is_valid(i),
                   rhs_dev_view_.is_valid(),
@@ -160,8 +162,8 @@ struct compare_functor {
   // This is used to compare a scalar and a column value
   template <typename LhsViewT = LhsDeviceViewT, typename RhsViewT = RhsDeviceViewT>
   __device__ inline OutT operator()(cudf::size_type i) const
-    requires(!std::is_same_v<LhsViewT, column_device_view> &&
-             std::is_same_v<RhsViewT, column_device_view>)
+    requires(!cuda::std::same_as<LhsViewT, column_device_view> &&
+             cuda::std::same_as<RhsViewT, column_device_view>)
   {
     return cfunc_(lhs_dev_view_.is_valid(),
                   rhs_dev_view_.is_valid(i),
@@ -171,10 +173,9 @@ struct compare_functor {
   }
 
   // This is used to compare 2 column values
-  template <typename LhsViewT = LhsDeviceViewT, typename RhsViewT = RhsDeviceViewT>
+  template <cuda::std::same_as<column_device_view> LhsViewT = LhsDeviceViewT,
+            cuda::std::same_as<column_device_view> RhsViewT = RhsDeviceViewT>
   __device__ inline OutT operator()(cudf::size_type i) const
-    requires(std::is_same_v<LhsViewT, column_device_view> &&
-             std::is_same_v<RhsViewT, column_device_view>)
   {
     return cfunc_(lhs_dev_view_.is_valid(i),
                   rhs_dev_view_.is_valid(i),

@@ -60,5 +60,42 @@ std::unique_ptr<table> batch_gather(table_view const& source_table,
                                     cuda::stream_ref stream,
                                     memory_resources mr);
 
+/**
+ * @copydoc cudf::detail::batch_gather(table_view const&, column_view const&,
+ * out_of_bounds_policy, negative_index_policy, cuda::stream_ref, memory_resources)
+ *
+ * @param[in] tile_cols Number of consecutive columns per blockIdx.y tile in the fused kernel;
+ * one of {1, 2, 4, 8}. 1 degenerates to one column per y block.
+ * @throws std::invalid_argument if `tile_cols` is not one of {1, 2, 4, 8}
+ */
+std::unique_ptr<table> batch_gather(table_view const& source_table,
+                                    column_view const& gather_map,
+                                    out_of_bounds_policy bounds_policy,
+                                    negative_index_policy neg_indices,
+                                    cuda::stream_ref stream,
+                                    memory_resources mr,
+                                    size_type tile_cols);
+
+/**
+ * @brief Classifies the gather map's locality and returns the fused kernel tile width to use.
+ *
+ * Samples a small number of windows from the map (one batched device-to-host copy plus one
+ * stream synchronization, no kernel launch) and reports `kCoalescedTileCols` (8) only when
+ * every sampled window spans at most one window length of source rows — near-sorted or
+ * contiguous maps, in either direction. Anything else returns `kRandomTileCols` (1), the safe
+ * choice given that misrouting a random map to the wide tile costs far more than the reverse.
+ * Sampling is skipped entirely — returning 1 without touching the map — when the tile width is
+ * measured K-insensitive: fewer than 8 fused columns, fewer than 65536 rows, or a map that is
+ * not an index-type column.
+ *
+ * @param[in] gather_map View of the gather map column to classify
+ * @param[in] num_fused_cols Number of fixed-width columns the fused kernel will process
+ * @param[in] stream CUDA stream used for the sample copy and its synchronization
+ * @return Tile width in {1, 8} for the `batch_gather` tile_cols overload
+ */
+size_type select_gather_map_tile_cols(column_view const& gather_map,
+                                      size_type num_fused_cols,
+                                      cuda::stream_ref stream);
+
 }  // namespace detail
 }  // namespace CUDF_EXPORT cudf

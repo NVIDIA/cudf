@@ -443,9 +443,12 @@ TEST_F(BatchGatherShapeTest, WideTable512Columns)
 
 TEST_F(BatchGatherShapeTest, YCapColumnLoop)
 {
-  // 66'000 columns exceed the 65535 gridDim.y cap; the kernel's y-stride loop must cover the rest.
+  // 66'001 columns span 8'251 tiles per block.y and force a PARTIAL final tile (1 column);
+  // the y-stride wrap past the 65535 gridDim.y cap only engages above 524'280 columns
+  // (65'535 tiles x 8), which is not host-feasible to build here — the wrap shares the
+  // x-stride code shape and its cap math is exercised via the grid-y computation.
   constexpr cudf::size_type num_rows{100};
-  constexpr cudf::size_type num_cols{66'000};
+  constexpr cudf::size_type num_cols{66'001};
 
   std::vector<std::unique_ptr<cudf::column>> source_columns;
   source_columns.reserve(num_cols);
@@ -906,4 +909,105 @@ TEST_F(BatchGatherLaunchCount, GatherLaunchCount)
   ASSERT_EQ(result->num_rows(), launch_count_rows);
   ASSERT_EQ(result->num_columns(), launch_count_cols);
   CUDF_TEST_EXPECT_TABLES_EQUAL(source_table, result->view());
+}
+
+// ============================================================================
+// §5.10 Map-locality routing: classifier decisions + routed-path behavior parity.
+// ============================================================================
+
+class BatchGatherRoutingTest : public cudf::test::BaseFixture {};
+
+std::unique_ptr<cudf::table> run_batch_gather_tile(cudf::table_view const& source,
+                                                   cudf::column_view const& map,
+                                                   cudf::size_type tile_cols)
+{
+  return cudf::detail::batch_gather(source,
+                                    map,
+                                    cudf::out_of_bounds_policy::DONT_CHECK,
+                                    cudf::negative_index_policy::NOT_ALLOWED,
+                                    cudf::get_default_stream(),
+                                    cudf::memory_resources{cudf::get_current_device_resource_ref()},
+                                    tile_cols);
+}
+
+TEST_F(BatchGatherRoutingTest, ClassifierRoutesAscendingMapToWideTile)
+{
+  constexpr cudf::size_type num_rows{65536};
+  auto gather_map = make_fixed_column<cudf::size_type>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+  // >= kMinSampledCols fused columns: the sampler runs and routes ascending maps wide.
+  EXPECT_EQ(
+    cudf::detail::select_gather_map_tile_cols(gather_map->view(), 16, cudf::get_default_stream()),
+    8);
+  // Exactly kMinSampledCols - 1 fused columns: the sync-dominated skip regime (measured
+  // fatal on 30-90us kernels) — safe K=1 without sampling.
+  EXPECT_EQ(
+    cudf::detail::select_gather_map_tile_cols(gather_map->view(), 8, cudf::get_default_stream()),
+    1);
+}
+
+TEST_F(BatchGatherRoutingTest, ClassifierRoutesShuffledMapToSingleColumn)
+{
+  constexpr cudf::size_type num_rows{65536};
+  auto const host_map = shuffled_iota(num_rows);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+  EXPECT_EQ(cudf::detail::select_gather_map_tile_cols(gather_map, 8, cudf::get_default_stream()),
+            1);
+}
+
+TEST_F(BatchGatherRoutingTest, ClassifierSkipsInsensitiveRegimes)
+{
+  // Small table: the sampler is skipped and the safe K=1 returned regardless of map shape.
+  constexpr cudf::size_type small_rows{100};
+  auto small_ascending = make_fixed_column<cudf::size_type>(
+    small_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+  EXPECT_EQ(cudf::detail::select_gather_map_tile_cols(
+              small_ascending->view(), 8, cudf::get_default_stream()),
+            1);
+
+  // Few fused columns: sampler skipped even with enough rows.
+  constexpr cudf::size_type num_rows{65536};
+  auto long_map = make_fixed_column<cudf::size_type>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+  EXPECT_EQ(
+    cudf::detail::select_gather_map_tile_cols(long_map->view(), 4, cudf::get_default_stream()), 1);
+}
+
+TEST_F(BatchGatherRoutingTest, RoutedPathMatchesExplicitTileWidths)
+{
+  // 8 fixed-width columns x 65536 rows: the routed path samples (ascending -> wide tile,
+  // shuffled -> single column) and must agree with BOTH explicit widths, since results are
+  // tile-width independent.
+  constexpr cudf::size_type num_rows{65536};
+  constexpr cudf::size_type num_cols{8};
+  std::vector<std::unique_ptr<cudf::column>> source_columns;
+  source_columns.reserve(num_cols);
+  for (cudf::size_type c = 0; c < num_cols; ++c) {
+    source_columns.push_back(make_fixed_column<int32_t>(
+      num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; }));
+  }
+  std::vector<cudf::column_view> views;
+  views.reserve(num_cols);
+  for (auto const& col : source_columns) {
+    views.push_back(col->view());
+  }
+  cudf::table_view source_table(views);
+
+  auto ascending_map = make_fixed_column<cudf::size_type>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+  auto routed_ascending = run_batch_gather(source_table, ascending_map->view());
+  auto explicit_wide    = run_batch_gather_tile(source_table, ascending_map->view(), 8);
+  auto explicit_single  = run_batch_gather_tile(source_table, ascending_map->view(), 1);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(routed_ascending->view(), explicit_wide->view());
+  CUDF_TEST_EXPECT_TABLES_EQUAL(routed_ascending->view(), explicit_single->view());
+
+  auto const host_map = shuffled_iota(num_rows);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> shuffled_map(host_map.begin(),
+                                                                       host_map.end());
+  auto routed_shuffled    = run_batch_gather(source_table, shuffled_map);
+  auto wide_on_shuffled   = run_batch_gather_tile(source_table, shuffled_map, 8);
+  auto single_on_shuffled = run_batch_gather_tile(source_table, shuffled_map, 1);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(routed_shuffled->view(), wide_on_shuffled->view());
+  CUDF_TEST_EXPECT_TABLES_EQUAL(routed_shuffled->view(), single_on_shuffled->view());
 }

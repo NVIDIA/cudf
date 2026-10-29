@@ -14,6 +14,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/assert.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -34,8 +35,11 @@
 #include <cuda/stream>
 
 #include <algorithm>
+#include <array>
+#include <cstring>
 #include <memory>
 #include <stdexcept>
+#include <type_traits>
 #include <vector>
 
 namespace cudf {
@@ -44,6 +48,24 @@ namespace {
 
 // Block size of the fused kernel; matches the valid_if_n_kernel/concatenate precedent.
 constexpr size_type block_size{256};
+
+// Default consecutive descriptors per blockIdx.y tile: each thread loads a row's gather-map
+// value once and reuses it across the tile's columns (per-column map re-reads dominated wide
+// cells). Measured variable — the driver accepts 1/2/4/8 via the tile_cols overload.
+constexpr size_type kDefaultTileCols{8};
+
+// Map-locality routing. Misrouting a random map to the wide tile costs up to ~51% while the
+// reverse only forfeits the ~17% coalesced win, so the classifier is strict: coalesced is
+// reported only when EVERY sampled window is near-contiguous; anything else (and every regime
+// where tile width measured K-insensitive) takes the safe K=1.
+constexpr size_type kCoalescedTileCols{8};
+constexpr size_type kRandomTileCols{1};
+// 8-column kernels run 30-90us; the sampler's pinned-D2H sync (~10us flat, measured) is a
+// 10-30% tax there, so they take the safe K=1 unsampled (win-or-tie at every 8-col cell).
+constexpr size_type kMinSampledCols{9};
+constexpr size_type kMinSampledRows{65536};
+constexpr size_type kSampleWindows{16};
+constexpr size_type kSampleWindowLen{8};
 
 /**
  * @brief Type-erased per-column parameters consumed by `batch_gather_kernel`.
@@ -104,17 +126,23 @@ struct data_ptr_functor {
 /**
  * @brief Gathers every column described by `descriptors` in one launch.
  *
- * The grid is 2D: x covers row blocks (grid-stride over rows), y covers columns (y-stride past
- * the 65535 gridDim.y cap). Each block works a single column at a time, so the descriptor and the
- * element-size switch are block-uniform.
+ * The grid is 2D: x covers row blocks (grid-stride over rows); each y block owns a tile of
+ * `kTileCols` consecutive descriptors and y-strides over tiles past the 65535 gridDim.y cap. A
+ * row's gather-map value is loaded once and reused across the tile's columns; the tile's
+ * descriptors are staged in shared memory so the row loop pays no per-column global reads.
+ * `kTileCols == 1` degenerates to one column per y block (the pre-tiling geometry) with the
+ * same single-launch contract.
  *
- * INVARIANT: every destination row r in [0, num_rows) is written by exactly one thread.
- * INVARIANT: dst_mask word w is written exactly once, by lane 0 of the warp covering rows
- * [32w, 32w + 32): this requires BLOCK_SIZE to be a multiple of warp_size (the row stride is then
- * a multiple of 32), which the driver guarantees. Trailing bits of the last word are 0.
+ * INVARIANT: every destination row r in [0, num_rows) is written by exactly one thread, per
+ * column.
+ * INVARIANT: each column's dst_mask word w is written exactly once, by lane 0 of the warp
+ * covering rows [32w, 32w + 32): this requires BlockSize to be a multiple of warp_size (the
+ * row stride is then a multiple of 32), which the driver guarantees. Trailing bits of the last
+ * word are 0. Per-column bookkeeping (warp_valid[k], per-column ballots) keeps this true
+ * independently of the tile a column belongs to.
  */
-template <int32_t BLOCK_SIZE>
-CUDF_KERNEL __launch_bounds__(BLOCK_SIZE) void batch_gather_kernel(
+template <size_type BlockSize, size_type kTileCols>
+CUDF_KERNEL __launch_bounds__(BlockSize) void batch_gather_kernel(
   input_indexalator gather_map,
   column_descriptor const* descriptors,
   size_type num_descriptors,
@@ -124,49 +152,181 @@ CUDF_KERNEL __launch_bounds__(BLOCK_SIZE) void batch_gather_kernel(
   bool negative_allowed,
   size_type* valid_counts)
 {
-  for (size_type col = static_cast<size_type>(blockIdx.y); col < num_descriptors;
-       col += static_cast<size_type>(gridDim.y)) {
-    auto const d               = descriptors[col];
-    size_type warp_valid_count = 0;
-    auto const row_stride      = static_cast<int64_t>(blockDim.x) * gridDim.x;
-    auto row                   = static_cast<int64_t>(blockIdx.x) * BLOCK_SIZE + threadIdx.x;
-    auto active                = __ballot_sync(0xFFFF'FFFFu, row < num_rows);
+  __shared__ column_descriptor tile_descs[kTileCols];
+  auto const num_tiles = util::div_rounding_up_safe(num_descriptors, kTileCols);
+  for (size_type tile = static_cast<size_type>(blockIdx.y); tile < num_tiles;
+       tile += static_cast<size_type>(gridDim.y)) {
+    auto const tile_begin = tile * kTileCols;
+    // Stage the tile's descriptors in shared memory; the range is block-uniform and the reads
+    // below are warp broadcasts.
+    if (threadIdx.x < kTileCols &&
+        tile_begin + static_cast<size_type>(threadIdx.x) < num_descriptors) {
+      tile_descs[threadIdx.x] = descriptors[tile_begin + static_cast<size_type>(threadIdx.x)];
+    }
+    __syncthreads();
+    size_type warp_valid[kTileCols]{};
+    auto const row_stride = static_cast<int64_t>(blockDim.x) * gridDim.x;
+    auto row              = static_cast<int64_t>(blockIdx.x) * BlockSize + threadIdx.x;
+    auto active           = __ballot_sync(0xFFFF'FFFFu, row < num_rows);
     while (row < num_rows) {
+      // One map load (wrap + table-level bounds check) serves every column in the tile.
       auto idx = gather_map[static_cast<size_type>(row)];
       if (negative_allowed && idx < 0) { idx += num_source_rows; }
-      bool valid = true;
-      if (check_bounds) { valid = (idx >= 0) & (idx < num_source_rows); }
-      if (valid && d.src_mask != nullptr) {
-        valid = bit_is_set(d.src_mask, static_cast<size_type>(d.mask_offset + idx));
-      }
-      // Data at out-of-bounds/null rows may be left unwritten (fixed-width undefined-value policy).
-      if (valid && !d.skip_data) {
-        copy_element(
-          static_cast<char*>(d.dst_data) + static_cast<std::size_t>(row) * d.element_size,
-          static_cast<char const*>(d.src_data) + static_cast<std::size_t>(idx) * d.element_size,
-          d.element_size);
-      }
-      if (d.dst_mask != nullptr) {
-        auto const word = __ballot_sync(active, valid);
-        if (threadIdx.x % warp_size == 0) {
-          d.dst_mask[word_index(static_cast<size_type>(row))] = word;
-          warp_valid_count += cuda::std::popcount(word);
+      bool const in_bounds = !check_bounds || (idx >= 0 && idx < num_source_rows);
+#pragma unroll
+      for (int32_t k = 0; k < kTileCols; ++k) {
+        if (tile_begin + k < num_descriptors) {
+          auto const d = tile_descs[k];
+          bool valid   = in_bounds;
+          if (valid && d.src_mask != nullptr) {
+            valid = bit_is_set(d.src_mask, static_cast<size_type>(d.mask_offset + idx));
+          }
+          // Data at out-of-bounds/null rows may be left unwritten (fixed-width undefined-value
+          // policy).
+          if (valid && !d.skip_data) {
+            copy_element(
+              static_cast<char*>(d.dst_data) + static_cast<std::size_t>(row) * d.element_size,
+              static_cast<char const*>(d.src_data) + static_cast<std::size_t>(idx) * d.element_size,
+              d.element_size);
+          }
+          if (d.dst_mask != nullptr) {
+            auto const word = __ballot_sync(active, valid);
+            if (threadIdx.x % warp_size == 0) {
+              d.dst_mask[word_index(static_cast<size_type>(row))] = word;
+              warp_valid[k] += cuda::std::popcount(word);
+            }
+          }
         }
       }
       row += row_stride;
       active = __ballot_sync(active, row < num_rows);
     }
-    if (d.dst_mask != nullptr) {
-      auto const block_valid = single_lane_block_sum_reduce<BLOCK_SIZE, 0>(warp_valid_count);
-      if (threadIdx.x == 0 && block_valid > 0) {
-        cuda::atomic_ref<size_type, cuda::thread_scope_device> ref{valid_counts[col]};
-        ref.fetch_add(block_valid, cuda::std::memory_order_relaxed);
+    if (valid_counts != nullptr) {
+#pragma unroll
+      for (int32_t k = 0; k < kTileCols; ++k) {
+        auto const col = tile_begin + k;
+        if (col < num_descriptors && tile_descs[k].dst_mask != nullptr) {
+          auto const block_valid = single_lane_block_sum_reduce<BlockSize, 0>(warp_valid[k]);
+          if (threadIdx.x == 0 && block_valid > 0) {
+            cuda::atomic_ref<size_type, cuda::thread_scope_device> ref{valid_counts[col]};
+            ref.fetch_add(block_valid, cuda::std::memory_order_relaxed);
+          }
+        }
       }
     }
+    // All threads are done reading tile_descs; the next tile iteration rewrites it.
+    __syncthreads();
   }
 }
 
 }  // namespace
+
+size_type select_gather_map_tile_cols(column_view const& gather_map,
+                                      size_type num_fused_cols,
+                                      cuda::stream_ref stream)
+{
+  auto const num_rows = gather_map.size();
+  // Regimes where tile width measured K-insensitive: skip the sampler (its sync would dominate
+  // a small kernel) and take the safe K=1. Also the guard for maps too short to sample.
+  if (num_fused_cols < kMinSampledCols || num_rows < kMinSampledRows) { return kRandomTileCols; }
+  switch (gather_map.type().id()) {
+    case cudf::type_id::INT8:
+    case cudf::type_id::INT16:
+    case cudf::type_id::INT32:
+    case cudf::type_id::INT64:
+    case cudf::type_id::UINT8:
+    case cudf::type_id::UINT16:
+    case cudf::type_id::UINT32:
+    case cudf::type_id::UINT64: break;
+    default: return kRandomTileCols;  // Not an index type: unclassifiable, safe default.
+  }
+
+  // Sample kSampleWindows windows of kSampleWindowLen consecutive map elements, evenly spread
+  // over the map, with one batched D2H into pinned staging (no kernel launch).
+  auto const elem_size   = static_cast<size_t>(cudf::size_of(gather_map.type()));
+  auto const window_size = static_cast<size_t>(kSampleWindowLen) * elem_size;
+  auto staging           = cudf::detail::make_pinned_vector_async<std::byte>(
+    static_cast<size_t>(kSampleWindows) * window_size, stream);
+  std::array<void*, kSampleWindows> dsts{};
+  std::array<void const*, kSampleWindows> srcs{};
+  std::array<size_t, kSampleWindows> sizes{};
+  auto const last_start = static_cast<int64_t>(num_rows) - static_cast<int64_t>(kSampleWindowLen);
+  for (size_t w = 0; w < kSampleWindows; ++w) {
+    auto const start =
+      static_cast<size_type>(w == kSampleWindows - 1 ? last_start
+                                                     : last_start * static_cast<int64_t>(w) /
+                                                         static_cast<int64_t>(kSampleWindows - 1));
+    srcs[w]  = gather_map.data<char>() + static_cast<std::size_t>(start) * elem_size;
+    dsts[w]  = staging.data() + static_cast<size_t>(w) * window_size;
+    sizes[w] = window_size;
+  }
+  CUDF_CUDA_TRY(cudf::detail::memcpy_batch_async(
+    dsts.data(), srcs.data(), sizes.data(), static_cast<size_t>(kSampleWindows), stream));
+  // The decision is needed on host before the kernel launch; this waits only for the sample
+  // copies and for work already enqueued on the stream (never for a kernel of ours).
+  cudf::detail::sync_stream(stream);
+
+  auto const read_element = [&](std::byte const* p) -> int64_t {
+    switch (gather_map.type().id()) {
+      case cudf::type_id::INT8: {
+        int8_t v;
+        std::memcpy(&v, p, sizeof(v));
+        return static_cast<int64_t>(v);
+      }
+      case cudf::type_id::INT16: {
+        int16_t v;
+        std::memcpy(&v, p, sizeof(v));
+        return static_cast<int64_t>(v);
+      }
+      case cudf::type_id::INT32: {
+        int32_t v;
+        std::memcpy(&v, p, sizeof(v));
+        return static_cast<int64_t>(v);
+      }
+      case cudf::type_id::INT64: {
+        int64_t v;
+        std::memcpy(&v, p, sizeof(v));
+        return v;
+      }
+      case cudf::type_id::UINT8: {
+        uint8_t v;
+        std::memcpy(&v, p, sizeof(v));
+        return static_cast<int64_t>(v);
+      }
+      case cudf::type_id::UINT16: {
+        uint16_t v;
+        std::memcpy(&v, p, sizeof(v));
+        return static_cast<int64_t>(v);
+      }
+      case cudf::type_id::UINT32: {
+        uint32_t v;
+        std::memcpy(&v, p, sizeof(v));
+        return static_cast<int64_t>(v);
+      }
+      case cudf::type_id::UINT64: {
+        uint64_t v;
+        std::memcpy(&v, p, sizeof(v));
+        return static_cast<int64_t>(v);
+      }
+      default: CUDF_UNREACHABLE("Map type excluded by the classifier guard");
+    }
+  };
+  // A window is local when its values span at most one window length; classify coalesced only
+  // if EVERY sampled window is local (reversed/ascending maps have spread kSampleWindowLen - 1).
+  for (size_t w = 0; w < kSampleWindows; ++w) {
+    auto const* window = staging.data() + w * window_size;
+    auto const first   = read_element(window);
+    auto min_value     = first;
+    auto max_value     = first;
+    for (size_type i = 1; i < kSampleWindowLen; ++i) {
+      auto const v = read_element(window + static_cast<size_t>(i) * elem_size);
+      min_value    = std::min(min_value, v);
+      max_value    = std::max(max_value, v);
+    }
+    if (max_value - min_value > static_cast<int64_t>(kSampleWindowLen)) { return kRandomTileCols; }
+  }
+  return kCoalescedTileCols;
+}
 
 std::unique_ptr<table> batch_gather(table_view const& source_table,
                                     column_view const& gather_map,
@@ -174,6 +334,27 @@ std::unique_ptr<table> batch_gather(table_view const& source_table,
                                     negative_index_policy neg_indices,
                                     cuda::stream_ref stream,
                                     memory_resources mr)
+{
+  // Routed entry: pick the tile width from sampled map locality. The fused-column count is
+  // recomputed here (one host-side type pass) so K-insensitive regimes skip the sampler; a
+  // null gather map skips it too (the delegate below rejects it).
+  size_type num_fused_cols = 0;
+  for (size_type i = 0; i < source_table.num_columns(); ++i) {
+    num_fused_cols += cudf::is_fixed_width(source_table.column(i).type()) ? 1 : 0;
+  }
+  auto const tile_cols = (num_fused_cols == 0 or gather_map.has_nulls())
+                           ? kDefaultTileCols
+                           : select_gather_map_tile_cols(gather_map, num_fused_cols, stream);
+  return batch_gather(source_table, gather_map, bounds_policy, neg_indices, stream, mr, tile_cols);
+}
+
+std::unique_ptr<table> batch_gather(table_view const& source_table,
+                                    column_view const& gather_map,
+                                    out_of_bounds_policy bounds_policy,
+                                    negative_index_policy neg_indices,
+                                    cuda::stream_ref stream,
+                                    memory_resources mr,
+                                    size_type tile_cols)
 {
   cudf::scoped_range rng{"batch_gather"};
 
@@ -309,19 +490,35 @@ std::unique_ptr<table> batch_gather(table_view const& source_table,
         descriptors.size(), stream, temp_mr);
     }
 
-    dim3 const grid{static_cast<unsigned>(cudf::util::div_rounding_up_safe(num_rows, block_size)),
-                    static_cast<unsigned>(std::min<size_type>(descriptors.size(), 65535)),
-                    1};
-    batch_gather_kernel<block_size>
-      <<<grid, block_size, 0, stream.get()>>>(indexalator_factory::make_input_iterator(gather_map),
-                                              d_descriptors.data(),
-                                              static_cast<size_type>(descriptors.size()),
-                                              num_rows,
-                                              num_src_rows,
-                                              bounds_policy == out_of_bounds_policy::NULLIFY,
-                                              neg_indices == negative_index_policy::ALLOWED,
-                                              any_kernel_masks ? valid_counts.data() : nullptr);
-    CUDF_CUDA_TRY(cudaGetLastError());
+    // One launch per call; the tile width picks the kernel instantiation. y dimension: one
+    // block per column tile (the kernel's y-stride loop covers tiles past the 65535 cap).
+    auto const map_begin   = indexalator_factory::make_input_iterator(gather_map);
+    auto const launch_tile = [&](auto tile_constant) {
+      constexpr size_type kTileCols = decltype(tile_constant)::value;
+      dim3 const grid{
+        static_cast<unsigned>(cudf::util::div_rounding_up_safe(num_rows, block_size)),
+        static_cast<unsigned>(std::min<size_type>(
+          cudf::util::div_rounding_up_safe(static_cast<size_type>(descriptors.size()), kTileCols),
+          65535)),
+        1};
+      batch_gather_kernel<block_size, kTileCols>
+        <<<grid, block_size, 0, stream.get()>>>(map_begin,
+                                                d_descriptors.data(),
+                                                static_cast<size_type>(descriptors.size()),
+                                                num_rows,
+                                                num_src_rows,
+                                                bounds_policy == out_of_bounds_policy::NULLIFY,
+                                                neg_indices == negative_index_policy::ALLOWED,
+                                                any_kernel_masks ? valid_counts.data() : nullptr);
+      CUDF_CUDA_TRY(cudaGetLastError());
+    };
+    switch (tile_cols) {
+      case 1: launch_tile(std::integral_constant<size_type, 1>{}); break;
+      case 2: launch_tile(std::integral_constant<size_type, 2>{}); break;
+      case 4: launch_tile(std::integral_constant<size_type, 4>{}); break;
+      case 8: launch_tile(std::integral_constant<size_type, 8>{}); break;
+      default: CUDF_FAIL("Unsupported batch_gather tile width", std::invalid_argument);
+    }
 
     if (any_kernel_masks) {
       auto const h_valid_counts = cudf::detail::make_host_vector(valid_counts, stream);

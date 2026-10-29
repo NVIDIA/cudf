@@ -946,7 +946,7 @@ void extended_filter_expressions_test()
   }
 }
 
-TEST_F(HybridScanTest, ExtendedFilterExpressions) { extended_filter_expressions_test<false>(); }
+TEST_F(HybridScanTest, ExtendedFilterExpressionsAST) { extended_filter_expressions_test<false>(); }
 
 TEST_F(HybridScanTest, ExtendedFilterExpressionsJIT) { extended_filter_expressions_test<true>(); }
 
@@ -1426,7 +1426,10 @@ void chunked_read_row_mask_per_pass_test()
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected->select({1, 2}), payload_table->view());
 }
 
-TEST_F(HybridScanTest, ChunkedReadRowMaskPerPass) { chunked_read_row_mask_per_pass_test<false>(); }
+TEST_F(HybridScanTest, ChunkedReadRowMaskPerPassAST)
+{
+  chunked_read_row_mask_per_pass_test<false>();
+}
 
 TEST_F(HybridScanTest, ChunkedReadRowMaskPerPassJIT)
 {

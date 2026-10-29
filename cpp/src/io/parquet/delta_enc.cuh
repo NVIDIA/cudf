@@ -14,6 +14,7 @@
 #include <cub/block/block_scan.cuh>
 #include <cub/warp/warp_reduce.cuh>
 #include <cuda/functional>
+#include <cuda/std/concepts>
 #include <cuda/std/limits>
 #include <cuda/std/type_traits>
 
@@ -66,10 +67,10 @@ inline __device__ void bitpack_mini_block(
   uint8_t* dst, uleb128_t val, uint32_t count, uint8_t nbits, void* temp_space)
 {
   using wide_type = cuda::std::
-    conditional_t<cuda::std::is_same_v<scratch_type, max_scratch_type>, __uint128_t, uint64_t>;
+    conditional_t<cuda::std::same_as<scratch_type, max_scratch_type>, __uint128_t, uint64_t>;
   using cudf::detail::warp_size;
-  scratch_type constexpr mask = sizeof(scratch_type) * 8 - 1;
-  auto constexpr div          = sizeof(scratch_type) * 8;
+  auto constexpr div          = cuda::std::numeric_limits<scratch_type>::digits;  // bits per word
+  scratch_type constexpr mask = div - 1;  // bit offset within a word
 
   auto const lane_id = threadIdx.x % warp_size;
   auto const warp_id = threadIdx.x / warp_size;

@@ -1,12 +1,18 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
 
 package ai.rapids.cudf;
 
+/**
+ * The default {@link HostMemoryAllocator}, which uses pinned memory when requested and
+ * available and falls back to off-heap memory.
+ * The process-wide default allocator can be changed with
+ * {@link #set(HostMemoryAllocator)}.
+ */
 public class DefaultHostMemoryAllocator implements HostMemoryAllocator {
   private static volatile HostMemoryAllocator instance = new DefaultHostMemoryAllocator();
 

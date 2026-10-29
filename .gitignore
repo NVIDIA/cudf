@@ -98,6 +98,7 @@ cpp/thirdparty/googletest/
 ## Doxygen
 cpp/doxygen/html
 cpp/doxygen/xml
+java/doxygen/xml
 
 #Java
 target
@@ -171,6 +172,7 @@ dask-worker-space/
 # Sphinx docs & build artifacts
 docs/cudf/source/cudf/api_docs/api/*
 docs/cudf/source/cudf/example_output/*
+docs/cudf/source/java/api
 _html
 _text
 jupyter_execute

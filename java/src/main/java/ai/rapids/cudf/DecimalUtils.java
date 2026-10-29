@@ -1,6 +1,6 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2022-2024, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
@@ -11,6 +11,9 @@ import java.math.BigDecimal;
 import java.util.AbstractMap;
 import java.util.Map;
 
+/**
+ * Utility methods for creating decimal types and comparing decimal columns.
+ */
 public class DecimalUtils {
 
   /**

@@ -7,6 +7,11 @@ package ai.rapids.cudf;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+/**
+ * Java bindings for a subset of the CUDA runtime API.
+ * Includes device management, memory copies and sets, and the {@link Cuda.Stream} and
+ * {@link Cuda.Event} wrappers.
+ */
 public class Cuda {
   // This needs to happen first before calling any native methods.
   static {

@@ -1,12 +1,18 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2020-2022, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
 
 package ai.rapids.cudf;
 
+/**
+ * A callback interface for RMM memory allocation events.
+ * Notified of allocation failures and threshold crossings, and of every allocation and
+ * deallocation when debug mode is enabled. Register a handler with
+ * {@link Rmm#setEventHandler(RmmEventHandler)}.
+ */
 public interface RmmEventHandler {
   /**
    * Invoked on a memory allocation failure.

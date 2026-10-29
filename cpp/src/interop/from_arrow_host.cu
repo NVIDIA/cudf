@@ -21,9 +21,9 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/bit.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-#include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <rmm/cuda_device.hpp>
@@ -152,13 +152,15 @@ struct dispatch_copy_from_arrow_host {
   cuda::stream_ref stream;
   rmm::device_async_resource_ref mr;
 
-  template <typename T, CUDF_ENABLE_IF(not is_rep_layout_compatible<T>() && !is_fixed_point<T>())>
+  template <typename T>
+    requires(not cudf::concepts::rep_layout_compatible<T> and not cudf::concepts::fixed_point<T>)
   std::unique_ptr<column> operator()(ArrowSchemaView const*, ArrowArray const*, data_type, bool)
   {
     CUDF_FAIL("Unsupported type in copy_from_arrow_host.");
   }
 
-  template <typename T, CUDF_ENABLE_IF(is_rep_layout_compatible<T>() || is_fixed_point<T>())>
+  template <typename T>
+    requires(cudf::concepts::rep_layout_compatible<T> or cudf::concepts::fixed_point<T>)
   std::unique_ptr<column> operator()(ArrowSchemaView const*,
                                      ArrowArray const* input,
                                      data_type type,

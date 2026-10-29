@@ -22,9 +22,9 @@
 #include <cudf/structs/structs_column_view.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_device_view.cuh>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-#include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_checks.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
@@ -335,7 +335,8 @@ index_vector generate_merged_indices_nested(table_view const& left_table,
 struct column_merger {
   explicit column_merger(index_vector const& row_order) : row_order_(row_order) {}
 
-  template <typename Element, CUDF_ENABLE_IF(not is_rep_layout_compatible<Element>())>
+  template <typename Element>
+    requires(not cudf::concepts::rep_layout_compatible<Element>)
   std::unique_ptr<column> operator()(column_view const&,
                                      column_view const&,
                                      cuda::stream_ref,
@@ -346,12 +347,11 @@ struct column_merger {
 
   // column merger operator;
   //
-  template <typename Element>
+  template <cudf::concepts::rep_layout_compatible Element>
   std::unique_ptr<column> operator()(column_view const& lcol,
                                      column_view const& rcol,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr) const
-    requires(is_rep_layout_compatible<Element>())
   {
     auto lsz         = lcol.size();
     auto merged_size = lsz + rcol.size();

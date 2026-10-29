@@ -15,6 +15,7 @@
 #include <cudf/scalar/scalar_device_view.cuh>
 #include <cudf/search.hpp>
 #include <cudf/table/table_view.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -48,12 +49,11 @@ __device__ auto inline get_scalar_value(ScalarDView d_scalar)
 }
 
 struct contains_scalar_dispatch {
-  // SFINAE with conditional return type because we need to support device lambda in this function.
-  // This is required due to a limitation of nvcc.
+  // The constraints must be mutually exclusive because we need to support device lambda in this
+  // function. This is required due to a limitation of nvcc.
   template <typename Element>
-  std::enable_if_t<!is_nested<Element>(), bool> operator()(column_view const& haystack,
-                                                           scalar const& needle,
-                                                           cuda::stream_ref stream) const
+    requires(not cudf::concepts::nested<Element>)
+  bool operator()(column_view const& haystack, scalar const& needle, cuda::stream_ref stream) const
   {
     CUDF_EXPECTS(cudf::have_same_types(haystack, needle),
                  "Scalar and column types must match",
@@ -80,10 +80,8 @@ struct contains_scalar_dispatch {
              stream) > 0;
   }
 
-  template <typename Element>
-  std::enable_if_t<is_nested<Element>(), bool> operator()(column_view const& haystack,
-                                                          scalar const& needle,
-                                                          cuda::stream_ref stream) const
+  template <cudf::concepts::nested Element>
+  bool operator()(column_view const& haystack, scalar const& needle, cuda::stream_ref stream) const
   {
     CUDF_EXPECTS(cudf::have_same_types(haystack, needle),
                  "Scalar and column types must match",

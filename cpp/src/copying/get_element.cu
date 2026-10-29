@@ -16,6 +16,7 @@
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/scalar/scalar_device_view.cuh>
 #include <cudf/scalar/scalar_factories.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
@@ -29,7 +30,8 @@ namespace detail {
 namespace {
 
 struct get_element_functor {
-  template <typename T, std::enable_if_t<is_fixed_width<T>() && !is_fixed_point<T>()>* p = nullptr>
+  template <cudf::concepts::fixed_width T>
+    requires(not cudf::concepts::fixed_point<T>)
   std::unique_ptr<scalar> operator()(column_view const& input,
                                      size_type index,
                                      cuda::stream_ref stream,
@@ -52,7 +54,7 @@ struct get_element_functor {
     return s;
   }
 
-  template <typename T, std::enable_if_t<std::is_same_v<T, string_view>>* p = nullptr>
+  template <cudf::concepts::string_view T>
   std::unique_ptr<scalar> operator()(column_view const& input,
                                      size_type index,
                                      cuda::stream_ref stream,
@@ -78,7 +80,7 @@ struct get_element_functor {
       temp_data.value(stream), temp_valid.value(stream), stream, mr);
   }
 
-  template <typename T, std::enable_if_t<std::is_same_v<T, dictionary32>>* p = nullptr>
+  template <cudf::concepts::dictionary T>
   std::unique_ptr<scalar> operator()(column_view const& input,
                                      size_type index,
                                      cuda::stream_ref stream,
@@ -112,7 +114,7 @@ struct get_element_functor {
                            mr);
   }
 
-  template <typename T, std::enable_if_t<std::is_same_v<T, list_view>>* p = nullptr>
+  template <cudf::concepts::list_view T>
   std::unique_ptr<scalar> operator()(column_view const& input,
                                      size_type index,
                                      cuda::stream_ref stream,
@@ -136,7 +138,7 @@ struct get_element_functor {
     }
   }
 
-  template <typename T, std::enable_if_t<cudf::is_fixed_point<T>()>* p = nullptr>
+  template <cudf::concepts::fixed_point T>
   std::unique_ptr<scalar> operator()(column_view const& input,
                                      size_type index,
                                      cuda::stream_ref stream,
@@ -162,7 +164,7 @@ struct get_element_functor {
     return result;
   }
 
-  template <typename T, std::enable_if_t<std::is_same_v<T, struct_view>>* p = nullptr>
+  template <cudf::concepts::struct_view T>
   std::unique_ptr<scalar> operator()(column_view const& input,
                                      size_type index,
                                      cuda::stream_ref stream,

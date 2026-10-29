@@ -12,6 +12,7 @@
 #include <cudf/lists/detail/lists_column_factories.hpp>
 #include <cudf/reshape.hpp>
 #include <cudf/strings/detail/strings_children.cuh>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
@@ -23,8 +24,6 @@
 #include <thrust/copy.h>
 #include <thrust/for_each.h>
 
-#include <type_traits>
-
 namespace cudf {
 namespace detail {
 namespace {
@@ -32,7 +31,7 @@ namespace {
 // Data type of the output data column after conversion.
 constexpr data_type output_type{type_id::UINT8};
 
-template <typename T, typename Enable = void>
+template <typename T>
 struct byte_list_conversion_fn {
   template <typename... Args>
   static std::unique_ptr<column> invoke(Args&&...)
@@ -52,8 +51,8 @@ struct byte_list_conversion_dispatcher {
   }
 };
 
-template <typename T>
-struct byte_list_conversion_fn<T, std::enable_if_t<cudf::is_numeric<T>()>> {
+template <cudf::concepts::arithmetic T>
+struct byte_list_conversion_fn<T> {
   static std::unique_ptr<column> invoke(column_view const& input,
                                         flip_endianness configuration,
                                         cuda::stream_ref stream,
@@ -108,8 +107,8 @@ struct byte_list_conversion_fn<T, std::enable_if_t<cudf::is_numeric<T>()>> {
   }
 };
 
-template <typename T>
-struct byte_list_conversion_fn<T, std::enable_if_t<std::is_same_v<T, cudf::string_view>>> {
+template <cudf::concepts::string_view T>
+struct byte_list_conversion_fn<T> {
   static std::unique_ptr<column> invoke(column_view const& input,
                                         flip_endianness,
                                         cuda::stream_ref stream,

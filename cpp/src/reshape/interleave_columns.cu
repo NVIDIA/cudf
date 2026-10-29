@@ -17,6 +17,7 @@
 #include <cudf/structs/structs_column_view.hpp>
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
@@ -31,7 +32,7 @@ namespace cudf {
 namespace detail {
 namespace {
 // Error case when no other overload or specialization is available
-template <typename T, typename Enable = void>
+template <typename T>
 struct interleave_columns_impl {
   template <typename... Args>
   std::unique_ptr<column> operator()(Args&&...)
@@ -51,8 +52,8 @@ struct interleave_columns_functor {
   }
 };
 
-template <typename T>
-struct interleave_columns_impl<T, std::enable_if_t<std::is_same_v<T, cudf::list_view>>> {
+template <cudf::concepts::list_view T>
+struct interleave_columns_impl<T> {
   std::unique_ptr<column> operator()(table_view const& lists_columns,
                                      bool create_mask,
                                      cuda::stream_ref stream,
@@ -62,8 +63,8 @@ struct interleave_columns_impl<T, std::enable_if_t<std::is_same_v<T, cudf::list_
   }
 };
 
-template <typename T>
-struct interleave_columns_impl<T, std::enable_if_t<std::is_same_v<T, cudf::struct_view>>> {
+template <cudf::concepts::struct_view T>
+struct interleave_columns_impl<T> {
   std::unique_ptr<cudf::column> operator()(table_view const& structs_columns,
                                            bool create_mask,
                                            cuda::stream_ref stream,
@@ -149,8 +150,8 @@ struct interleave_strings_fn {
   }
 };
 
-template <typename T>
-struct interleave_columns_impl<T, std::enable_if_t<std::is_same_v<T, cudf::string_view>>> {
+template <cudf::concepts::string_view T>
+struct interleave_columns_impl<T> {
   std::unique_ptr<cudf::column> operator()(table_view const& strings_columns,
                                            bool,
                                            cuda::stream_ref stream,
@@ -181,8 +182,8 @@ struct interleave_columns_impl<T, std::enable_if_t<std::is_same_v<T, cudf::strin
   }
 };
 
-template <typename T>
-struct interleave_columns_impl<T, std::enable_if_t<cudf::is_fixed_width<T>()>> {
+template <cudf::concepts::fixed_width T>
+struct interleave_columns_impl<T> {
   std::unique_ptr<cudf::column> operator()(table_view const& input,
                                            bool create_mask,
                                            cuda::stream_ref stream,

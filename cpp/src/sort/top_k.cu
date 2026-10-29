@@ -15,6 +15,7 @@
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/sorting.hpp>
 #include <cudf/table/table_view.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
@@ -24,6 +25,7 @@
 #include <cub/device/device_topk.cuh>
 #include <cuda/buffer>
 #include <cuda/iterator>
+#include <cuda/std/concepts>
 #include <cuda/std/execution>
 #include <cuda/stream>
 
@@ -79,15 +81,14 @@ struct dispatch_topk_fn {
       std::move(indices), cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
   }
 
-  template <typename T>
-    requires(cudf::is_fixed_width<T>() and !cudf::is_floating_point<T>() and !cudf::is_chrono<T>())
+  template <cudf::concepts::fixed_width T>
+    requires(not cuda::std::floating_point<T> and not cudf::concepts::chrono<T>)
   std::unique_ptr<column> operator()()
   {
     return top_k<T>();
   }
 
-  template <typename T>
-    requires(cudf::is_chrono<T>())
+  template <cudf::concepts::chrono T>
   std::unique_ptr<column> operator()()
   {
     using rep_type = typename T::rep;
@@ -95,7 +96,6 @@ struct dispatch_topk_fn {
   }
 
   template <typename T>
-    requires(not cudf::is_fixed_width<T>() or cudf::is_floating_point<T>())
   std::unique_ptr<column> operator()()
   {
     CUDF_UNREACHABLE("unexpected type for top_k fast path");

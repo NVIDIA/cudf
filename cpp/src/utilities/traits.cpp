@@ -1,9 +1,10 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <cudf/strings/string_view.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 #include <cudf/wrappers/dictionary.hpp>
@@ -395,16 +396,14 @@ bool is_nested(data_type type) { return cudf::type_dispatcher(type, is_nested_im
 namespace {
 template <typename FromType>
 struct is_bit_castable_to_impl {
-  template <typename ToType>
+  template <cudf::concepts::compound ToType>
   constexpr bool operator()()
-    requires(is_compound<ToType>())
   {
     return false;
   }
 
   template <typename ToType>
   constexpr bool operator()()
-    requires(not is_compound<ToType>())
   {
     if (not cuda::std::is_trivially_copyable_v<FromType> ||
         not cuda::std::is_trivially_copyable_v<ToType>) {
@@ -417,16 +416,14 @@ struct is_bit_castable_to_impl {
 };
 
 struct is_bit_castable_from_impl {
-  template <typename FromType>
+  template <cudf::concepts::compound FromType>
   constexpr bool operator()(data_type)
-    requires(is_compound<FromType>())
   {
     return false;
   }
 
   template <typename FromType>
   constexpr bool operator()(data_type to)
-    requires(not is_compound<FromType>())
   {
     return cudf::type_dispatcher(to, is_bit_castable_to_impl<FromType>{});
   }

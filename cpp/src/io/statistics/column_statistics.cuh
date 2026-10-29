@@ -14,6 +14,8 @@
 #include "temp_storage_wrapper.cuh"
 #include "typed_statistics_chunk.cuh"
 
+#include <cudf/utilities/concepts.hpp>
+
 namespace cudf {
 namespace io {
 
@@ -85,7 +87,7 @@ struct calculate_group_statistics_functor {
   template <typename T>
   __device__ void operator()(stats_state_s& s, uint32_t t)
     requires(detail::statistics_type_category<T, IO>::include_extrema and
-             (IO != detail::io_file_format::PARQUET or !std::is_same_v<T, list_view>))
+             (IO != detail::io_file_format::PARQUET or not cudf::concepts::list_view<T>))
   {
     // Temporarily disable stats writing for int96 timestamps
     // TODO: https://github.com/NVIDIA/cudf/issues/10438
@@ -127,7 +129,7 @@ struct calculate_group_statistics_functor {
   template <typename T>
   __device__ void operator()(stats_state_s& s, uint32_t t)
     requires(detail::statistics_type_category<T, IO>::include_extrema and
-             IO == detail::io_file_format::PARQUET and std::is_same_v<T, list_view>)
+             IO == detail::io_file_format::PARQUET and cudf::concepts::list_view<T>)
   {
     operator()<statistics::byte_array_view>(s, t);
   }
@@ -189,7 +191,7 @@ struct merge_group_statistics_functor {
                              uint32_t const num_chunks,
                              uint32_t t)
     requires(detail::statistics_type_category<T, IO>::include_extrema and
-             (IO == detail::io_file_format::ORC or !std::is_same_v<T, list_view>))
+             (IO == detail::io_file_format::ORC or not cudf::concepts::list_view<T>))
   {
     detail::storage_wrapper<block_size> storage(temp_storage);
 
@@ -217,7 +219,7 @@ struct merge_group_statistics_functor {
                              uint32_t const num_chunks,
                              uint32_t t)
     requires(detail::statistics_type_category<T, IO>::include_extrema and
-             IO == detail::io_file_format::PARQUET and std::is_same_v<T, list_view>)
+             IO == detail::io_file_format::PARQUET and cudf::concepts::list_view<T>)
   {
     operator()<statistics::byte_array_view>(s, chunks, num_chunks, t);
   }

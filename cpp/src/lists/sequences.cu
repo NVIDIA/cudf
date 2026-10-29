@@ -11,6 +11,7 @@
 #include <cudf/lists/detail/lists_column_factories.hpp>
 #include <cudf/lists/filling.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -42,14 +43,12 @@ struct tabulator {
 
   template <typename U>
   static T __device__ multiply(U x, size_type times)
-    requires(!cudf::is_duration<U>())
   {
     return x * static_cast<T>(times);
   }
 
-  template <typename U>
+  template <cudf::concepts::duration U>
   static T __device__ multiply(U x, size_type times)
-    requires(cudf::is_duration<U>())
   {
     return T{x.count() * times};
   }
@@ -64,7 +63,7 @@ struct tabulator {
   }
 };
 
-template <typename T, typename Enable = void>
+template <typename T>
 struct sequences_functor {
   template <typename... Args>
   static std::unique_ptr<column> invoke(Args&&...)
@@ -94,7 +93,8 @@ static constexpr bool is_supported()
 }
 
 template <typename T>
-struct sequences_functor<T, std::enable_if_t<is_supported<T>()>> {
+  requires(is_supported<T>())
+struct sequences_functor<T> {
   static std::unique_ptr<column> invoke(size_type n_lists,
                                         size_type n_elements,
                                         column_view const& starts,

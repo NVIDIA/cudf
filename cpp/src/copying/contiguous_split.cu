@@ -22,6 +22,7 @@
 #include <cudf/structs/structs_column_view.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/bit.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/exec_policy.hpp>
@@ -492,14 +493,13 @@ std::pair<src_buf_info*, size_type> setup_source_buf_info(InputIter begin,
 struct buf_info_functor {
   src_buf_info* head;
 
-  template <typename T>
+  template <cudf::concepts::fixed_width T>
   std::pair<src_buf_info*, size_type> operator()(column_view const& col,
                                                  src_buf_info* current,
                                                  int offset_stack_pos,
                                                  int parent_offset_index,
                                                  int offset_depth,
                                                  cuda::stream_ref)
-    requires(cudf::is_fixed_width<T>())
   {
     if (col.nullable()) {
       std::tie(current, offset_stack_pos) =
@@ -517,7 +517,6 @@ struct buf_info_functor {
   template <typename T>
   std::pair<src_buf_info*, size_type> operator()(
     column_view const&, src_buf_info*, int, int, int, cuda::stream_ref)
-    requires(not cudf::is_fixed_width<T>())
   {
     CUDF_FAIL("Unsupported type");
   }
@@ -992,21 +991,18 @@ struct set_valid_count_fn {
 struct size_of_helper {
   template <typename T>
   constexpr int __device__ operator()() const
-    requires(!is_fixed_width<T>() && !std::is_same_v<T, cudf::string_view>)
   {
     return 0;
   }
 
-  template <typename T>
+  template <cudf::concepts::string_view T>
   constexpr int __device__ operator()() const
-    requires(!is_fixed_width<T>() && std::is_same_v<T, cudf::string_view>)
   {
     return sizeof(cudf::device_storage_type_t<int8_t>);
   }
 
-  template <typename T>
+  template <cudf::concepts::fixed_width T>
   constexpr int __device__ operator()() const noexcept
-    requires(is_fixed_width<T>())
   {
     return sizeof(cudf::device_storage_type_t<T>);
   }

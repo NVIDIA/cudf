@@ -17,6 +17,7 @@
 #include <cudf/hashing/detail/murmurhash3_x86_32.cuh>
 #include <cudf/partitioning.hpp>
 #include <cudf/table/table_device_view.cuh>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
@@ -403,7 +404,8 @@ struct copy_block_partitions_dispatcher {
     return is_fixed_width<DataType>() && (sizeof(DataType) <= sizeof(int64_t));
   }
 
-  template <typename DataType, CUDF_ENABLE_IF(is_copy_block_supported<DataType>())>
+  template <typename DataType>
+    requires(is_copy_block_supported<DataType>())
   std::unique_ptr<column> operator()(column_view const& input,
                                      size_type const num_partitions,
                                      size_type const* row_partition_numbers,
@@ -434,7 +436,7 @@ struct copy_block_partitions_dispatcher {
                                     0);
   }
 
-  template <typename DataType, CUDF_ENABLE_IF(not is_copy_block_supported<DataType>())>
+  template <typename DataType>
   std::unique_ptr<column> operator()(column_view const& input,
                                      size_type const num_partitions,
                                      size_type const* row_partition_numbers,
@@ -774,14 +776,13 @@ struct dispatch_map_type {
    * fit in L2.
    *
    */
-  template <typename MapType>
+  template <cudf::concepts::index_type MapType>
   std::pair<std::unique_ptr<table>, std::vector<size_type>> operator()(
     table_view const& t,
     column_view const& partition_map,
     size_type num_partitions,
     cuda::stream_ref stream,
     rmm::device_async_resource_ref mr) const
-    requires(is_index_type<MapType>())
   {
     // Build a histogram of the number of rows in each partition
     rmm::device_uvector<size_type> histogram(num_partitions + 1, stream);
@@ -844,7 +845,7 @@ struct dispatch_map_type {
 
   template <typename MapType, typename... Args>
   std::pair<std::unique_ptr<table>, std::vector<size_type>> operator()(Args&&...) const
-    requires(not is_index_type<MapType>())
+    requires(not cudf::concepts::index_type<MapType>)
   {
     CUDF_FAIL("Unexpected, non-integral partition map.");
   }
@@ -866,14 +867,13 @@ struct IdentityHash {
 
   template <typename return_type = result_type>
   CUDF_HOST_DEVICE constexpr return_type operator()(Key const& key) const
-    requires(!cuda::std::is_arithmetic_v<Key>)
   {
     CUDF_UNREACHABLE("IdentityHash does not support this data type");
   }
 
   template <typename return_type = result_type>
   CUDF_HOST_DEVICE constexpr return_type operator()(Key const& key) const
-    requires(cuda::std::is_arithmetic_v<Key>)
+    requires(cudf::concepts::arithmetic<Key>)
   {
     return static_cast<result_type>(key);
   }

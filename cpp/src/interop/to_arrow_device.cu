@@ -20,8 +20,8 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-#include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <rmm/exec_policy.hpp>
@@ -96,15 +96,16 @@ int set_contents(column::contents& contents, ArrowArray* out)
 }
 
 struct dispatch_to_arrow_device {
-  template <typename T,
-            CUDF_ENABLE_IF(not is_rep_layout_compatible<T>() and not is_fixed_point<T>())>
+  template <typename T>
+    requires(not cudf::concepts::rep_layout_compatible<T> and not cudf::concepts::fixed_point<T>)
   int operator()(cudf::column&&, cuda::stream_ref, rmm::device_async_resource_ref, ArrowArray*)
   {
     CUDF_FAIL("Unsupported type for to_arrow_device", cudf::data_type_error);
   }
 
   // cover rep layout compatible and decimal types
-  template <typename T, CUDF_ENABLE_IF(is_rep_layout_compatible<T>() or is_fixed_point<T>())>
+  template <typename T>
+    requires(cudf::concepts::rep_layout_compatible<T> or cudf::concepts::fixed_point<T>)
   int operator()(cudf::column&& column,
                  cuda::stream_ref stream,
                  rmm::device_async_resource_ref mr,
@@ -306,14 +307,15 @@ struct dispatch_to_arrow_device_view {
   cuda::stream_ref stream;
   rmm::device_async_resource_ref mr;
 
-  template <typename T,
-            CUDF_ENABLE_IF(not is_rep_layout_compatible<T>() and not is_fixed_point<T>())>
+  template <typename T>
+    requires(not cudf::concepts::rep_layout_compatible<T> and not cudf::concepts::fixed_point<T>)
   int operator()(ArrowArray*) const
   {
     CUDF_FAIL("Unsupported type for to_arrow_device", cudf::data_type_error);
   }
 
-  template <typename T, CUDF_ENABLE_IF(is_rep_layout_compatible<T>() or is_fixed_point<T>())>
+  template <typename T>
+    requires(cudf::concepts::rep_layout_compatible<T> or cudf::concepts::fixed_point<T>)
   int operator()(ArrowArray* out) const
   {
     nanoarrow::UniqueArray tmp;

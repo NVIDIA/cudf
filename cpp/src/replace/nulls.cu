@@ -25,10 +25,10 @@
 #include <cudf/strings/detail/copy_if_else.cuh>
 #include <cudf/strings/detail/replace.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-#include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_checks.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
@@ -97,7 +97,7 @@ CUDF_KERNEL void replace_nulls(cudf::column_device_view input,
  *        `replace_nulls` with the appropriate data types.
  */
 struct replace_nulls_column_kernel_forwarder {
-  template <typename col_type, CUDF_ENABLE_IF(cudf::is_rep_layout_compatible<col_type>())>
+  template <cudf::concepts::rep_layout_compatible col_type>
   std::unique_ptr<cudf::column> operator()(cudf::column_view const& input,
                                            cudf::column_view const& replacement,
                                            cuda::stream_ref stream,
@@ -138,7 +138,7 @@ struct replace_nulls_column_kernel_forwarder {
     return output;
   }
 
-  template <typename col_type, CUDF_ENABLE_IF(not cudf::is_rep_layout_compatible<col_type>())>
+  template <typename col_type>
   std::unique_ptr<cudf::column> operator()(cudf::column_view const&,
                                            cudf::column_view const&,
                                            cuda::stream_ref,
@@ -199,7 +199,7 @@ struct replace_nulls_functor {
  *        `replace_nulls` with the appropriate data types.
  */
 struct replace_nulls_scalar_kernel_forwarder {
-  template <typename col_type, std::enable_if_t<cudf::is_fixed_width<col_type>()>* = nullptr>
+  template <cudf::concepts::fixed_width col_type>
   std::unique_ptr<cudf::column> operator()(cudf::column_view const& input,
                                            cudf::scalar const& replacement,
                                            cuda::stream_ref stream,
@@ -225,7 +225,7 @@ struct replace_nulls_scalar_kernel_forwarder {
     return output;
   }
 
-  template <typename col_type, std::enable_if_t<not cudf::is_fixed_width<col_type>()>* = nullptr>
+  template <typename col_type>
   std::unique_ptr<cudf::column> operator()(cudf::column_view const&,
                                            cudf::scalar const&,
                                            cuda::stream_ref,

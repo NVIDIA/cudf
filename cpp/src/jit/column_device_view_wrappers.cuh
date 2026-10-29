@@ -9,6 +9,7 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/export.hpp>
 
+#include <cuda/std/concepts>
 #include <cuda/std/optional>
 #include <cuda/std/span>
 
@@ -89,9 +90,8 @@ struct mutable_strings_column_device_view : private mutable_column_device_view_c
   using base::size;
   using base::type;
 
-  template <typename T = cuda::std::span<char>>
+  template <cuda::std::same_as<cuda::std::span<char>> T = cuda::std::span<char>>
   [[nodiscard]] __device__ cuda::std::span<char> element(size_type element_index) const noexcept
-    requires(cuda::std::is_same_v<T, cuda::std::span<char>>)
   {
     auto index             = element_index + offset();
     auto chars             = static_cast<char*>(const_cast<void*>(_data));
@@ -103,18 +103,16 @@ struct mutable_strings_column_device_view : private mutable_column_device_view_c
     return cuda::std::span<char>{str, static_cast<size_t>(end - beg)};
   }
 
-  template <typename T = cuda::std::span<char>>
+  template <cuda::std::same_as<cuda::std::span<char>> T = cuda::std::span<char>>
   [[nodiscard]] __device__ cuda::std::optional<cuda::std::span<char>> nullable_element(
     size_type element_index) const noexcept
-    requires(cuda::std::is_same_v<T, cuda::std::span<char>>)
   {
     if (is_null(element_index)) { return cuda::std::nullopt; }
     return element<T>(element_index);
   }
 
-  template <typename T = cuda::std::span<char>>
+  template <cuda::std::same_as<cuda::std::span<char>> T = cuda::std::span<char>>
   __device__ void assign(size_type row, cuda::std::span<char> value) const noexcept
-    requires(cuda::std::is_same_v<T, cuda::std::span<char>>)
   {
     // no-op since we assume the chars have already been pre-allocated and they are mutated
     // in-place

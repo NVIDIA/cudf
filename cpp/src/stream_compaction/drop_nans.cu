@@ -14,6 +14,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
+#include <cuda/std/concepts>
 #include <cuda/stream>
 #include <thrust/count.h>
 #include <thrust/execution_policy.h>
@@ -21,16 +22,14 @@
 namespace {
 
 struct dispatch_is_not_nan {
-  template <typename T>
+  template <cuda::std::floating_point T>
   bool __device__ operator()(cudf::column_device_view col_device_view, cudf::size_type i)
-    requires(std::is_floating_point_v<T>)
   {
     return col_device_view.is_valid(i) ? not std::isnan(col_device_view.element<T>(i)) : true;
   }
 
   template <typename T>
   bool __device__ operator()(cudf::column_device_view, cudf::size_type)
-    requires(not std::is_floating_point_v<T>)
   {
     return true;
   }

@@ -7,9 +7,9 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
-#include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_checks.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
@@ -24,13 +24,13 @@
 namespace cudf {
 namespace {
 struct get_column_data_impl {
-  template <typename T, CUDF_ENABLE_IF(not is_rep_layout_compatible<T>())>
+  template <typename T>
   void const* operator()(column_view const& col)
   {
     CUDF_FAIL("Unsupported type to convert to dlpack.");
   }
 
-  template <typename T, CUDF_ENABLE_IF(is_rep_layout_compatible<T>())>
+  template <cudf::concepts::rep_layout_compatible T>
   void const* operator()(column_view const& col)
   {
     return col.data<T>();
@@ -80,9 +80,8 @@ data_type DLDataType_to_data_type(DLDataType type)
 }
 
 struct data_type_to_DLDataType_impl {
-  template <typename T>
+  template <cudf::concepts::arithmetic T>
   DLDataType operator()()
-    requires(is_numeric<T>())
   {
     uint8_t const bits{sizeof(T) * 8};
     uint16_t const lanes{1};
@@ -97,7 +96,6 @@ struct data_type_to_DLDataType_impl {
 
   template <typename T>
   DLDataType operator()()
-    requires(not is_numeric<T>())
   {
     CUDF_FAIL("Conversion of non-numeric types to DLPack is unsupported");
   }

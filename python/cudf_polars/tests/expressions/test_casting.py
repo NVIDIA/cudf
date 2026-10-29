@@ -126,6 +126,9 @@ def test_cast_integer_to_date(engine: pl.GPUEngine, dtype):
         (pl.Int64, pl.UInt64, [-1, 0, 2**62, None]),
         (pl.UInt64, pl.Int64, [0, 2**63 - 1, 2**63, None]),
         (pl.Int8, pl.Int64, [-128, 127, None]),
+        (pl.Float64, pl.UInt64, [1.0, -1.0, 2.0**64, float("nan"), None]),
+        (pl.Float64, pl.Int32, [2.0**31, -(2.0**31), 1.9, float("inf"), None]),
+        (pl.Float32, pl.Int16, [40000.0, -40000.0, 3.5, None]),
     ],
 )
 def test_non_strict_integer_narrowing_cast_overflow_is_null(
@@ -133,6 +136,62 @@ def test_non_strict_integer_narrowing_cast_overflow_is_null(
 ):
     df = pl.LazyFrame({"a": data}, schema={"a": from_dtype})
     q = df.select(pl.col("a").cast(to_dtype, strict=False))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def _assert_collect_raises(q, engine, exception):
+    with pytest.raises(exception):
+        q.collect()
+    if is_streaming_engine(engine):
+        with pytest.RaisesGroup(exception):
+            q.collect(engine=engine)
+    else:
+        with pytest.raises(exception):
+            q.collect(engine=engine)
+
+
+@pytest.mark.parametrize(
+    "from_dtype,to_dtype,data",
+    [
+        (pl.Int64, pl.UInt32, [1, -1, None]),
+        (pl.Int64, pl.Int32, [2**31, 0]),
+        (pl.Int64, pl.Int8, [0, 128, None]),
+        (pl.Int16, pl.UInt8, [255, 256]),
+        (pl.UInt64, pl.Int64, [0, 2**63]),
+        (pl.Int64, pl.UInt64, [0, -1]),
+        (pl.Float64, pl.UInt64, [1.0, -1.0, None]),
+        (pl.Float64, pl.Int32, [0.5, 2.0**31]),
+        (pl.Float64, pl.Int64, [2.0**63, None]),
+        (pl.Float64, pl.Int8, [float("nan")]),
+        (pl.Float64, pl.Int64, [float("inf")]),
+        (pl.Float32, pl.Int16, [40000.0]),
+    ],
+)
+def test_strict_integer_cast_out_of_range_raises(
+    engine: pl.GPUEngine, from_dtype, to_dtype, data
+):
+    df = pl.LazyFrame({"a": data}, schema={"a": from_dtype})
+    q = df.select(pl.col("a").cast(to_dtype))
+    _assert_collect_raises(q, engine, pl.exceptions.InvalidOperationError)
+
+
+@pytest.mark.parametrize(
+    "from_dtype,to_dtype,data",
+    [
+        (pl.Int64, pl.Int32, [-(2**31), 2**31 - 1, None]),
+        (pl.Int16, pl.UInt8, [0, 255, None]),
+        (pl.UInt64, pl.Int64, [0, 2**63 - 1]),
+        (pl.Int8, pl.Int64, [-128, 127]),
+        (pl.Float64, pl.Int32, [-(2.0**31), 2.0**31 - 1, 1.9, -1.9, None]),
+        (pl.Float64, pl.UInt64, [0.0, 2.0**63, 1.0e19, None]),
+        (pl.Float64, pl.Int64, [-(2.0**63), 9.0e18]),
+        (pl.Float32, pl.Int16, [32767.0, -32768.0, None]),
+        (pl.Int64, pl.UInt8, []),
+    ],
+)
+def test_strict_integer_cast_in_range(engine: pl.GPUEngine, from_dtype, to_dtype, data):
+    df = pl.LazyFrame({"a": data}, schema={"a": from_dtype})
+    q = df.select(pl.col("a").cast(to_dtype))
     assert_gpu_result_equal(q, engine=engine)
 
 

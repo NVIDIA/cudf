@@ -45,6 +45,13 @@
 - Missing cleanup in `__del__` or context managers
 - Circular references preventing garbage collection
 
+### pylibcudf (Cython Bindings)
+- Use of `rmm.DeviceBuffer.to_device` or any asynchronous memory copy API while not keeping a Python reference to the host data alive
+
+### cudf_polars (Polars GPU Executor)
+- Calling pylibcudf API without explicitly passing a `stream` argument; the default `stream` argument in pylibcudf APIs should not be used
+- Converting pylibcudf or Polars objects to pyarrow objects (like using the `to_arrow` method)
+
 ## HIGH Issues (Comment if Substantial)
 
 ### Performance Issues
@@ -62,13 +69,11 @@
 - Cython binding of a C++ function declaring `noexcept` when the C++ function can raise exceptions
 - Incorrect GIL handling for CUDA operations
 - Cython bindings not matching the C++ API
-- Using pylibcudf or Polars APIs that require pyarrow (like `to_arrow`) when cudf_polars containers should be used instead
 
 ### cudf_polars (Polars GPU Executor)
 - Missing coverage of Polars expression types (silent fallback to CPU without warning)
 - Incorrect GPU executor fallback logic
 - IR nodes not properly translated
-- Stream argument not explicitly passed to a pylibcudf API
 - `asyncio.Task`s not explicitly canceled in a finally block upon failure
 - rapidsmpf `Channel`s not eventually entering the `shutdown_on_error` context manager
 

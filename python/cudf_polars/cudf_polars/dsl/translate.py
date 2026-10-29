@@ -1478,6 +1478,8 @@ def _translate_function(
                 translator._expr_context,
                 expr.UnaryFunction(pair_dtype, "as_struct", (), left, right),
             )
+            # Polars returns NaN for undefined correlations, such as groups
+            # with fewer than two valid pairs, while libcudf returns null.
             result: expr.Expr = expr.UnaryFunction(
                 intermediate_dtype,
                 "fill_null",

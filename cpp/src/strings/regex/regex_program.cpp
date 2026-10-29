@@ -4,7 +4,7 @@
  */
 
 #include "glushkov_regcomp.hpp"
-#include "regex_program_impl.h"
+#include "regex_program_impl.hpp"
 
 #include <cudf/strings/regex/flags.hpp>
 #include <cudf/strings/regex/regex_program.hpp>

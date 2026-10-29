@@ -897,8 +897,7 @@ def test_over_in_filter_unsupported(request, streaming_engine_factory) -> None:
     ).filter(pl.len().over("k") == 2)
     if not isinstance(engine, SPMDEngine):
         # On Dask/Ray the fallback warning fires on worker processes and is
-        # invisible to ``pytest.warns``; the multi-rank fallback also
-        # doesn't preserve row order.
+        # invisible to ``pytest.warns``.
         request.applymarker(
             pytest.mark.xfail(
                 reason="https://github.com/NVIDIA/cudf/issues/22405",
@@ -911,3 +910,19 @@ def test_over_in_filter_unsupported(request, streaming_engine_factory) -> None:
         match=r"over\(...\) inside filter is not supported for multiple partitions.*",
     ):
         assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.spmd
+def test_over_in_filter_after_concat_preserves_order(streaming_engine_factory) -> None:
+    # https://github.com/NVIDIA/cudf/issues/22405: row order from an ordered
+    # concat must survive the over(...)-in-filter fallback on multi-rank engines.
+    engine = streaming_engine_factory(
+        StreamingOptions(max_rows_per_partition=1, fallback_mode="silent"),
+    )
+    q = pl.concat(
+        [
+            pl.LazyFrame({"k": ["x", "y"], "v": [3, 2]}),
+            pl.LazyFrame({"k": ["x", "y"], "v": [5, 7]}),
+        ]
+    ).filter(pl.len().over("k") == 2)
+    assert_gpu_result_equal(q, engine=engine)

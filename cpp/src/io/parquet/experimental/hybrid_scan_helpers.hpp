@@ -37,7 +37,7 @@ using parquet::detail::simplified_expression_opt;
  * @brief Class for parsing dataset metadata
  */
 struct metadata : public metadata_base {
-  explicit metadata(cudf::host_span<uint8_t const> footer_bytes);
+  explicit metadata(std::span<uint8_t const> footer_bytes);
   explicit metadata(FileMetaData const& other) { static_cast<FileMetaData&>(*this) = other; }
   metadata(metadata const& other)            = delete;
   metadata(metadata&& other)                 = default;
@@ -89,7 +89,7 @@ class aggregate_reader_metadata : public aggregate_reader_metadata_base {
    * @param use_arrow_schema Whether to use Arrow schema
    * @param has_cols_from_mismatched_srcs Whether to have columns from mismatched sources
    */
-  aggregate_reader_metadata(std::span<cudf::host_span<uint8_t const> const> footer_bytes,
+  aggregate_reader_metadata(std::span<std::span<uint8_t const> const> footer_bytes,
                             bool use_arrow_schema,
                             bool has_cols_from_mismatched_srcs);
 
@@ -158,7 +158,7 @@ class aggregate_reader_metadata : public aggregate_reader_metadata_base {
    *
    * @param page_index_bytes Host span of Parquet page index buffer bytes, one per source
    */
-  void setup_page_indexes(cudf::host_span<cudf::host_span<uint8_t const> const> page_index_bytes);
+  void setup_page_indexes(std::span<std::span<uint8_t const> const> page_index_bytes);
 
   /**
    * @brief Get all available row group indices, one inner vector per source
@@ -323,14 +323,14 @@ class aggregate_reader_metadata : public aggregate_reader_metadata_base {
    *
    * @param row_group_indices Input row groups indices
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resource used to allocate the returned column's device memory
+   * @param mr Memory resources used to allocate temporary and returned column device memory
    *
    * @return A boolean column representing a mask of rows with all rows set to true
    */
   [[nodiscard]] std::unique_ptr<cudf::column> build_all_true_row_mask(
     std::span<std::vector<size_type> const> row_group_indices,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr) const;
+    cudf::memory_resources mr) const;
 
   /**
    * @brief Builds a row mask based on the data pages that survive page-level statistics based on
@@ -341,7 +341,7 @@ class aggregate_reader_metadata : public aggregate_reader_metadata_base {
    * @param output_column_schemas schema indices of output columns
    * @param filter AST expression to filter data pages based on page index statistics
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resource used to allocate the returned column's device memory
+   * @param mr Memory resources used to allocate temporary and returned column device memory
    *
    * @return A boolean column representing a mask of rows surviving the predicate filter at
    *         page-level
@@ -352,7 +352,7 @@ class aggregate_reader_metadata : public aggregate_reader_metadata_base {
     std::span<cudf::size_type const> output_column_schemas,
     std::reference_wrapper<ast::expression const> filter,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr) const;
+    cudf::memory_resources mr) const;
 
   /**
    * @brief Computes which data pages need decoding to construct input columns based on the row mask

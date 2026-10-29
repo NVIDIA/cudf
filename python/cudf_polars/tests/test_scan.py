@@ -1143,3 +1143,127 @@ def test_scan_parquet_hive_partitioned_decimal_predicate(
         pl.col("price") > Decimal("2.00")
     )
     assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    [
+        pl.List(pl.Decimal(10, 2)),
+        pl.Struct({"a": pl.Decimal(5, 1)}),
+        pl.List(pl.Struct({"a": pl.Decimal(18, 1)})),
+    ],
+)
+def test_scan_parquet_nested_narrow_decimal_raises(
+    engine: pl.GPUEngine, tmp_path, dtype
+):
+    # libcudf does not widen nested DECIMAL32/64 children to DECIMAL128.
+    path = tmp_path / "nested_decimal.parquet"
+    pl.DataFrame({"a": [None]}, schema={"a": dtype}).write_parquet(path)
+    q = pl.scan_parquet(path)
+    assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    [pl.Decimal(10, 2), pl.List(pl.Decimal(19, 2)), pl.List(pl.Int64), pl.Int8],
+)
+def test_scan_parquet_wide_or_top_level_decimal(engine: pl.GPUEngine, tmp_path, dtype):
+    path = tmp_path / "decimal.parquet"
+    pl.DataFrame({"a": [None]}, schema={"a": dtype}).write_parquet(path)
+    assert_gpu_result_equal(pl.scan_parquet(path), engine=engine)
+
+
+def test_has_nested_narrow_decimal_dtype_class():
+    from cudf_polars.dsl.ir import _has_nested_narrow_decimal
+
+    assert not _has_nested_narrow_decimal(pl.Decimal)
+    assert not _has_nested_narrow_decimal(pl.List(pl.Decimal))
+    assert _has_nested_narrow_decimal(pl.Array(pl.Decimal(5, 1), 2))
+
+
+def test_scan_csv_quote_char_none(engine: pl.GPUEngine, tmp_path):
+    (tmp_path / "test.csv").write_text('a,b\n1,"x"\n')
+    q = pl.scan_csv(tmp_path / "test.csv", quote_char=None)
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("blank_before_header", [False, True])
+def test_scan_csv_skip_lines(engine: pl.GPUEngine, tmp_path, blank_before_header):
+    # skip_lines skips raw lines, so an unbalanced quote in them is harmless
+    blank = "\n" if blank_before_header else ""
+    (tmp_path / "test.csv").write_text(f'title "open\n{blank}a,b\n1,2\n')
+    q = pl.scan_csv(tmp_path / "test.csv", skip_lines=1)
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_scan_csv_lossy_encoding_raises(engine: pl.GPUEngine, tmp_path):
+    (tmp_path / "test.csv").write_bytes(b"a\n\xff\n")
+    q = pl.scan_csv(tmp_path / "test.csv", encoding="utf8-lossy")
+    assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+def test_scan_csv_extra_columns_ignore(engine: pl.GPUEngine, tmp_path):
+    (tmp_path / "part_0.csv").write_text("a,b\n1,x\n")
+    (tmp_path / "part_1.csv").write_text("a,b,c\n2,y,1.5\n")
+    q = pl.scan_csv(
+        tmp_path / "part_*.csv", extra_columns="ignore", infer_schema_files=1
+    )
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_scan_csv_extra_columns_ignore_file_paths(engine: pl.GPUEngine, tmp_path):
+    (tmp_path / "test.csv").write_text("a,b,c\n1,2,3\n4,5,6\n")
+    q = pl.scan_csv(
+        tmp_path / "test.csv",
+        schema={"a": pl.Int64, "b": pl.Int64},
+        extra_columns="ignore",
+        include_file_paths="path",
+    )
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_scan_csv_extra_columns_ignore_row_index(engine: pl.GPUEngine, tmp_path):
+    (tmp_path / "test.csv").write_text("a,b,c\n1,2,3\n4,5,6\n")
+    q = pl.scan_csv(
+        tmp_path / "test.csv",
+        schema={"a": pl.Int64, "b": pl.Int64},
+        extra_columns="ignore",
+        row_index_name="idx",
+        row_index_offset=2,
+    )
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_scan_csv_no_columns_projected(engine: pl.GPUEngine, tmp_path):
+    (tmp_path / "test.csv").write_text("a,b\n1,2\n3,4\n5,6\n")
+    q = pl.scan_csv(tmp_path / "test.csv").select(pl.lit(7).filter(pl.lit(value=True)))
+    assert_gpu_result_equal(q, engine=engine)
+    q = (
+        pl.scan_csv(tmp_path / "test.csv", include_file_paths="path")
+        .select(pl.col("path"))
+        .select(pl.lit(1))
+    )
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_scan_ndjson_nested_columns(engine: pl.GPUEngine, tmp_path):
+    (tmp_path / "test.ndjson").write_text(
+        '{"a": 1, "s": {"x": 1, "y": [1.5]}, "l": [[1, 2], [3]]}\n'
+        '{"a": 2, "s": {"x": 3, "y": []}, "l": [[4]]}\n'
+    )
+    q = pl.scan_ndjson(tmp_path / "test.ndjson")
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "contents", ['{"a": 1, "b": "x"}\n', ""], ids=["data", "empty"]
+)
+@pytest.mark.parametrize(
+    "dtype", [pl.Int32, pl.List(pl.Int64), pl.Struct({"x": pl.Int8})]
+)
+def test_scan_ndjson_schema_column_missing_from_file(
+    engine: pl.GPUEngine, tmp_path, contents, dtype
+):
+    (tmp_path / "test.ndjson").write_text(contents)
+    q = pl.scan_ndjson(tmp_path / "test.ndjson", schema={"b": pl.String, "c": dtype})
+    assert_gpu_result_equal(q, engine=engine)

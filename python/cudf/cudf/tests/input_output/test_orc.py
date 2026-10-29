@@ -268,6 +268,43 @@ def test_orc_read_filtered(datadir, engine, predicate, expected_len):
 
 
 @pytest.mark.filterwarnings("ignore:Using CPU")
+@pytest.mark.parametrize("values_type", [list, tuple, set])
+@pytest.mark.parametrize(
+    "data, excluded, keep",
+    [
+        ([1, 2], [1], True),
+        ([-2, -1], [-2], True),
+        ([-1, 0], [-1], True),
+        ([0, 1, 2], [0, 1], True),
+        ([-(2**63), -(2**63) + 1], [-(2**63)], True),
+        ([2**63 - 2, 2**63 - 1], [2**63 - 2], True),
+        ([1, 2], [1, 2], False),
+        ([-2, -1], [-2, -1], False),
+        ([1, 2], [2], True),
+        ([1, 2], [], True),
+        ([2, 2], [1], True),
+        ([2, 2], [2], False),
+    ],
+)
+def test_orc_read_filtered_not_in_integer_range(
+    engine, values_type, data, excluded, keep
+):
+    expected = pd.DataFrame({"a": data}, dtype="int64")
+    buffer = BytesIO()
+    orc.write_table(
+        pa.Table.from_pandas(expected, preserve_index=False), buffer
+    )
+
+    got = cudf.read_orc(
+        buffer, engine=engine, filters=[("a", "not in", values_type(excluded))]
+    )
+
+    if not keep:
+        expected = expected.iloc[:0]
+    assert_eq(got, expected)
+
+
+@pytest.mark.filterwarnings("ignore:Using CPU")
 def test_orc_read_stripes(datadir, engine):
     path = datadir / "TestOrcFile.testDate1900.orc"
     try:

@@ -180,6 +180,12 @@ ConfigureTest(
   join/key_remapping_tests.cpp
   join/streaming_hash_join_tests.cpp
   GPUS 1
+  PERCENT 50
+)
+
+ConfigureTest(
+  JOIN_LARGE_TEST join/large_join_tests.cpp
+  GPUS 1
   PERCENT 100
 )
 
@@ -348,6 +354,11 @@ ConfigureTest(
   io/parquet_test.cpp
   io/parquet_v2_test.cpp
   io/parquet_writer_test.cpp
+  GPUS 1
+  PERCENT 50
+)
+ConfigureTest(
+  PARQUET_LARGE_TEST io/parquet_large_test.cu io/parquet_common.cpp io/parquet_test.cpp
   GPUS 1
   PERCENT 100
 )

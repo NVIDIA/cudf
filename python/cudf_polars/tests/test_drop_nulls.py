@@ -51,6 +51,15 @@ def test_fill_null_with_string(engine: pl.GPUEngine):
     assert_gpu_result_equal(q, engine=engine)
 
 
+@pytest.mark.parametrize("scalar", [None, 1.5], ids=["null", "valid"])
+@pytest.mark.parametrize("values", [[0.5, None, 2.0], [None, None], []])
+def test_fill_null_scalar_receiver_column_fill(engine: pl.GPUEngine, scalar, values):
+    q = pl.LazyFrame({"a": pl.Series(values, dtype=pl.Float64)}).select(
+        pl.lit(scalar, dtype=pl.Float64).fill_null(pl.col("a")).alias("a")
+    )
+    assert_gpu_result_equal(q, engine=engine)
+
+
 @pytest.mark.parametrize(
     "strategy", ["forward", "backward", "min", "max", "mean", "zero", "one"]
 )

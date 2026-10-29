@@ -1449,20 +1449,25 @@ class UnaryFunction(Expr):
             )
         elif self.name == "fill_null":
             column = self.children[0].evaluate(df, context=context)
-            if column.null_count == 0:
-                return column
             fill_value = self.children[1]
+            if column.null_count == 0 and (
+                column.size != 1 or isinstance(fill_value, Literal)
+            ):
+                return column
             if isinstance(fill_value, Literal):
                 arg = plc.Scalar.from_py(
                     fill_value.value, fill_value.dtype.plc_type, stream=df.stream
                 )
             else:
                 evaluated = fill_value.evaluate(df, context=context)
-                arg = (
-                    evaluated.obj_scalar(stream=df.stream)
-                    if evaluated.is_scalar
-                    else evaluated.obj
-                )
+                if evaluated.is_scalar:
+                    arg = evaluated.obj_scalar(stream=df.stream)
+                else:
+                    arg = evaluated.obj
+                    if column.size == 1 != evaluated.size:
+                        (column,) = broadcast(
+                            column, target_length=evaluated.size, stream=df.stream
+                        )
             if isinstance(arg, plc.Scalar) and dtypes.can_cast(
                 column.dtype.plc_type, arg.type()
             ):  # pragma: no cover

@@ -35,14 +35,14 @@ namespace CUDF_EXPORT nvtext {
  * @param input Strings column to build suffix array for
  * @param min_width Minimum number of bytes that must match to identify a duplicate
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column's device memory
+ * @param mr Memory resources used for temporary allocations and the returned column
  * @return Sorted suffix array and corresponding sizes
  */
 std::unique_ptr<rmm::device_uvector<cudf::size_type>> build_suffix_array(
   cudf::strings_column_view const& input,
   cudf::size_type min_width,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns duplicate strings found in the given input
@@ -61,15 +61,15 @@ std::unique_ptr<rmm::device_uvector<cudf::size_type>> build_suffix_array(
  * @param indices Suffix array from nvtext::build_suffix_array
  * @param min_width Minimum number of bytes that must match to identify a duplicate
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column's device memory
+ * @param mr Memory resources used for temporary allocations and the returned column
  * @return New strings column with updated strings
  */
 std::unique_ptr<cudf::column> resolve_duplicates(
   cudf::strings_column_view const& input,
   cudf::device_span<cudf::size_type const> indices,
   cudf::size_type min_width,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns duplicate strings found from input1 found in the given input2
@@ -90,7 +90,7 @@ std::unique_ptr<cudf::column> resolve_duplicates(
  * @param indices2 Suffix array from nvtext::build_suffix_array for input2
  * @param min_width Minimum number of bytes that must match to identify a duplicate
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column's device memory
+ * @param mr Memory resources used for temporary allocations and the returned column
  * @return New strings column with updated strings
  */
 std::unique_ptr<cudf::column> resolve_duplicates_pair(
@@ -99,8 +99,8 @@ std::unique_ptr<cudf::column> resolve_duplicates_pair(
   cudf::strings_column_view const& input2,
   cudf::device_span<cudf::size_type const> indices2,
   cudf::size_type min_width,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 }  // namespace CUDF_EXPORT nvtext

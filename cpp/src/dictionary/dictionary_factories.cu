@@ -9,6 +9,7 @@
 #include <cudf/detail/unary.hpp>
 #include <cudf/dictionary/detail/encode.hpp>
 #include <cudf/dictionary/dictionary_factories.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
@@ -19,11 +20,10 @@
 namespace cudf {
 namespace {
 struct dispatch_create_indices {
-  template <typename IndexType>
+  template <cudf::concepts::index_type IndexType>
   std::unique_ptr<column> operator()(column_view const& indices,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
-    requires(is_index_type<IndexType>())
   {
     CUDF_EXPECTS(
       cudf::is_signed<IndexType>(), "indices must be a signed type", std::invalid_argument);
@@ -35,7 +35,6 @@ struct dispatch_create_indices {
   std::unique_ptr<column> operator()(column_view const&,
                                      cuda::stream_ref,
                                      rmm::device_async_resource_ref)
-    requires(!is_index_type<IndexType>())
   {
     CUDF_FAIL("indices must be an integer type.");
   }
@@ -101,9 +100,8 @@ namespace {
 struct make_signed_fn {
   size_type num_keys;
 
-  template <typename T>
+  template <cudf::concepts::index_type T>
   constexpr cudf::type_id operator()() const
-    requires(is_index_type<T>())
   {
     using SignedType = cuda::std::make_signed_t<T>;
     if constexpr (cuda::std::is_unsigned_v<T> && sizeof(T) < sizeof(size_type)) {
@@ -115,7 +113,6 @@ struct make_signed_fn {
   }
   template <typename T>
   constexpr cudf::type_id operator()() const
-    requires(not is_index_type<T>())
   {
     return cudf::type_to_id<T>();
   }

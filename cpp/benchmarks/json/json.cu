@@ -4,6 +4,7 @@
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf_test/column_wrapper.hpp>
 
@@ -199,9 +200,12 @@ static void bench_query(nvbench::state& state)
   // going to visit every single incoming character but in spirit it does.
   state.add_global_memory_reads<nvbench::int8_t>(num_chars);
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     [[maybe_unused]] auto result = cudf::get_json_object(scv, json_path);
   });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 NVBENCH_BENCH(bench_query)

@@ -426,7 +426,7 @@ fsms:
         to: [granted, empty, failed, cancelled]
       granted:
         attributes:
-          reservation: { ref: MemoryReservation }
+          reservation: { option: { ref: MemoryReservation } }
           memory_type: string
           size: u64
           overbooked_bytes: u64

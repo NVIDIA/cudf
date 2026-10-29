@@ -11,7 +11,6 @@ import pytest
 from rapidsmpf.memory.buffer import MemoryType
 from rapidsmpf.memory.buffer_resource import (
     ReservationReleaseReason,
-    ReservationRequestOutcome,
     ReservationRequestPolicy,
     ReservationResizeReason,
 )
@@ -55,7 +54,7 @@ def _record_dynamic_handles(observer: MagicMock) -> None:
 def _submitted(sequence: int = 0, identifier: int = 1) -> dict[str, object]:
     return {
         "sequence": sequence,
-        "timestamp_ns": 1_000 + sequence,
+        "steady_time_ns": 1_000 + sequence,
         "kind": "request_submitted",
         "id": identifier,
         "size": 64,
@@ -66,26 +65,30 @@ def _submitted(sequence: int = 0, identifier: int = 1) -> dict[str, object]:
     }
 
 
-def _resolved(
+def _terminal(
     sequence: int,
     identifier: int = 1,
-    outcome: ReservationRequestOutcome = ReservationRequestOutcome.FAILED,
+    kind: str = "request_failed",
 ) -> dict[str, object]:
-    return {
+    event: dict[str, object] = {
         "sequence": sequence,
-        "timestamp_ns": 1_000 + sequence,
-        "kind": "request_resolved",
+        "steady_time_ns": 1_000 + sequence,
+        "kind": kind,
         "id": identifier,
-        "outcome": outcome,
-        "reservation_id": 0,
-        "memory_type": (
-            MemoryType.DEVICE if outcome == ReservationRequestOutcome.GRANTED else None
-        ),
-        "size": 0,
-        "overbooked_bytes": 0,
-        "timed_out": outcome == ReservationRequestOutcome.EMPTY,
-        "error": "failure",
     }
+    if kind == "request_granted":
+        event.update(
+            reservation_id=None,
+            memory_type=MemoryType.DEVICE,
+            size=0,
+            overbooked_bytes=0,
+            timed_out=False,
+        )
+    elif kind == "request_empty":
+        event["timed_out"] = True
+    elif kind == "request_failed":
+        event["error"] = "failure"
+    return event
 
 
 def _created(
@@ -97,21 +100,21 @@ def _created(
 ) -> dict[str, object]:
     return {
         "sequence": sequence,
-        "timestamp_ns": 1_000 + sequence,
+        "steady_time_ns": 1_000 + sequence,
         "kind": "reservation_created",
         "id": identifier,
         "memory_type": MemoryType.DEVICE,
         "size": 64,
         "attributes": {},
-        "request_id": request_id,
-        "parent_id": parent_id,
+        "request_id": request_id or None,
+        "parent_id": parent_id or None,
     }
 
 
 def _released(sequence: int, identifier: int) -> dict[str, object]:
     return {
         "sequence": sequence,
-        "timestamp_ns": 1_000 + sequence,
+        "steady_time_ns": 1_000 + sequence,
         "kind": "reservation_released",
         "id": identifier,
         "reason": ReservationReleaseReason.CLEARED,
@@ -130,7 +133,7 @@ def test_requires_strict_sequence_continuity_across_batches(
                 [
                     {
                         "sequence": invalid,
-                        "timestamp_ns": 2_000,
+                        "steady_time_ns": 2_000,
                         "kind": "request_waiting",
                         "id": 1,
                     }
@@ -139,28 +142,28 @@ def test_requires_strict_sequence_continuity_across_batches(
 
 
 @pytest.mark.parametrize(
-    "outcome",
+    "kind",
     [
-        ReservationRequestOutcome.EMPTY,
-        ReservationRequestOutcome.FAILED,
-        ReservationRequestOutcome.CANCELLED,
+        "request_empty",
+        "request_failed",
+        "request_cancelled",
     ],
 )
 def test_forwards_terminal_request_outcomes_at_source_timestamps(
     bindings: tuple[ReservationEventIngestor, MagicMock, MagicMock, MagicMock],
-    outcome: ReservationRequestOutcome,
+    kind: str,
 ) -> None:
     ingestor, request_observer, _, _ = bindings
     ingestor.ingest([_submitted()])
     handle = request_observer.dynamic_handles[0]
 
-    ingestor.ingest([_resolved(1, outcome=outcome)])
+    ingestor.ingest([_terminal(1, kind=kind)])
 
     method = {
-        ReservationRequestOutcome.EMPTY: handle.empty_at,
-        ReservationRequestOutcome.FAILED: handle.failed_at,
-        ReservationRequestOutcome.CANCELLED: handle.cancelled_at,
-    }[outcome]
+        "request_empty": handle.empty_at,
+        "request_failed": handle.failed_at,
+        "request_cancelled": handle.cancelled_at,
+    }[kind]
     assert method.call_args.args[0] == 1_001
     ingestor.close()
 
@@ -174,7 +177,7 @@ def test_forwards_grant_split_resize_release_and_limit_change(
             _submitted(),
             _created(1, 10, request_id=1),
             {
-                **_resolved(2, outcome=ReservationRequestOutcome.GRANTED),
+                **_terminal(2, kind="request_granted"),
                 "reservation_id": 10,
                 "size": 64,
                 "overbooked_bytes": 4,
@@ -183,7 +186,7 @@ def test_forwards_grant_split_resize_release_and_limit_change(
             _created(4, 11, parent_id=10),
             {
                 "sequence": 5,
-                "timestamp_ns": 1_005,
+                "steady_time_ns": 1_005,
                 "kind": "reservation_resized",
                 "id": 11,
                 "size": 32,
@@ -192,7 +195,7 @@ def test_forwards_grant_split_resize_release_and_limit_change(
             _released(6, 11),
             {
                 "sequence": 7,
-                "timestamp_ns": 1_007,
+                "steady_time_ns": 1_007,
                 "kind": "memory_limit_changed",
                 "memory_type": MemoryType.DEVICE,
                 "configured_limit": -1,
@@ -267,7 +270,7 @@ def test_malformed_batch_is_atomic(
                 _submitted(),
                 {
                     "sequence": 1,
-                    "timestamp_ns": 1_001,
+                    "steady_time_ns": 1_001,
                     "kind": "request_waiting",
                     "id": 99,
                 },
@@ -285,7 +288,7 @@ def test_failed_batch_can_be_skipped(
         _submitted(),
         {
             "sequence": 1,
-            "timestamp_ns": 1_001,
+            "steady_time_ns": 1_001,
             "kind": "request_waiting",
             "id": 99,
         },
@@ -294,7 +297,7 @@ def test_failed_batch_can_be_skipped(
         ingestor.ingest(bad_batch)
 
     ingestor.skip_failed_batch(bad_batch, caught.value)
-    ingestor.ingest([_submitted(sequence=2, identifier=2), _resolved(3, identifier=2)])
+    ingestor.ingest([_submitted(sequence=2, identifier=2), _terminal(3, identifier=2)])
     assert "discarded reservation event batch" in ingestor.diagnostics()[0]
     ingestor.close()
 
@@ -303,11 +306,11 @@ def test_recording_sessions_namespace_reused_ids(
     bindings: tuple[ReservationEventIngestor, MagicMock, MagicMock, MagicMock],
 ) -> None:
     ingestor, request_observer, _, _ = bindings
-    ingestor.ingest([_submitted(), _resolved(1)])
+    ingestor.ingest([_submitted(), _terminal(1)])
     first_id = request_observer.handle.call_args.args[0]
 
     ingestor.begin_recording_session()
-    ingestor.ingest([_submitted(), _resolved(1)])
+    ingestor.ingest([_submitted(), _terminal(1)])
     second_id = request_observer.handle.call_args.args[0]
 
     assert first_id != second_id
@@ -323,7 +326,7 @@ def test_lifecycle_history_is_bounded(
         ingestor.ingest(
             [
                 _submitted(sequence, identifier),
-                _resolved(sequence + 1, identifier),
+                _terminal(sequence + 1, identifier),
             ]
         )
 
@@ -340,7 +343,7 @@ def test_close_rejects_incomplete_and_ingest_after_close(
     ingestor.ingest([_submitted()])
     with pytest.raises(RuntimeError, match="1 live reservation request"):
         ingestor.close()
-    ingestor.ingest([_resolved(1)])
+    ingestor.ingest([_terminal(1)])
     ingestor.close()
     with pytest.raises(ValueError, match="ingestor is closed"):
         ingestor.ingest([])

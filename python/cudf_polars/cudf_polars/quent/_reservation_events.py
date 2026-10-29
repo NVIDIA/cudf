@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING, Any
 from rapidsmpf.memory.buffer import MemoryType
 from rapidsmpf.memory.buffer_resource import (
     ReservationReleaseReason,
-    ReservationRequestOutcome,
     ReservationRequestPolicy,
     ReservationResizeReason,
 )
@@ -45,11 +44,11 @@ _RELEASE_REASONS = {
     ReservationReleaseReason.RELEASED_CONSUMED: "consumed",
     ReservationReleaseReason.RELEASED_SPLIT: "split",
 }
-_OUTCOMES = {
-    ReservationRequestOutcome.GRANTED,
-    ReservationRequestOutcome.EMPTY,
-    ReservationRequestOutcome.FAILED,
-    ReservationRequestOutcome.CANCELLED,
+_REQUEST_TERMINAL_KINDS = {
+    "request_granted",
+    "request_empty",
+    "request_failed",
+    "request_cancelled",
 }
 
 
@@ -202,17 +201,16 @@ class ReservationEventIngestor:
             identifier = data["id"]
             if identifier not in lifecycle.requests:
                 raise ValueError(f"waiting for unknown request {identifier}")
-        elif event.kind == "request_resolved":
+        elif event.kind in _REQUEST_TERMINAL_KINDS:
             identifier = data["id"]
             if identifier not in lifecycle.requests:
                 raise ValueError(f"resolution for unknown request {identifier}")
-            outcome = data["outcome"]
-            if outcome not in _OUTCOMES:
-                raise ValueError(f"invalid request outcome {outcome}")
-            if outcome == ReservationRequestOutcome.GRANTED:
+            if event.kind == "request_granted":
                 _memory_type_name(data["memory_type"])
                 reservation_id = data["reservation_id"]
-                if not 0 < reservation_id <= lifecycle.max_reservation_id:
+                if reservation_id is not None and not (
+                    0 < reservation_id <= lifecycle.max_reservation_id
+                ):
                     raise ValueError(
                         f"request {identifier} granted unknown reservation "
                         f"{reservation_id}"
@@ -269,7 +267,7 @@ class ReservationEventIngestor:
             identifier = data["id"]
             lifecycle.max_request_id = identifier
             lifecycle.requests.add(identifier)
-        elif event.kind == "request_resolved":
+        elif event.kind in _REQUEST_TERMINAL_KINDS:
             lifecycle.requests.remove(data["id"])
         elif event.kind == "reservation_created":
             identifier = data["id"]
@@ -304,24 +302,27 @@ class ReservationEventIngestor:
             self._requests[data["id"]] = request_handle
         elif event.kind == "request_waiting":
             self._requests[data["id"]].waiting_at(timestamp, sequence=sequence)
-        elif event.kind == "request_resolved":
+        elif event.kind in _REQUEST_TERMINAL_KINDS:
             request_handle = self._requests[data["id"]]
-            outcome = data["outcome"]
-            if outcome == ReservationRequestOutcome.GRANTED:
+            if event.kind == "request_granted":
                 request_handle.granted_at(
                     timestamp,
-                    reservation=self._reservation_id(data["reservation_id"]),
+                    reservation=(
+                        self._reservation_id(data["reservation_id"])
+                        if data["reservation_id"] is not None
+                        else None
+                    ),
                     memory_type=_memory_type_name(data["memory_type"]),
                     size=data["size"],
                     overbooked_bytes=data["overbooked_bytes"],
                     timed_out=data["timed_out"],
                     sequence=sequence,
                 )
-            elif outcome == ReservationRequestOutcome.EMPTY:
+            elif event.kind == "request_empty":
                 request_handle.empty_at(
                     timestamp, timed_out=data["timed_out"], sequence=sequence
                 )
-            elif outcome == ReservationRequestOutcome.FAILED:
+            elif event.kind == "request_failed":
                 request_handle.failed_at(
                     timestamp, error=data["error"], sequence=sequence
                 )
@@ -439,7 +440,9 @@ def _parse_event(event: Mapping[str, object], index: int) -> _Event:
         raise ValueError(f"event {index} is not a mapping")  # noqa: TRY004
     try:
         sequence = _integer(event["sequence"], "sequence", 64, signed=False)
-        timestamp = _integer(event["timestamp_ns"], "timestamp_ns", 64, signed=False)
+        timestamp = _integer(
+            event["steady_time_ns"], "steady_time_ns", 64, signed=False
+        )
         kind = _string(event["kind"], "kind")
         data = _parse_data(kind, event)
     except (KeyError, TypeError, ValueError) as error:
@@ -477,34 +480,35 @@ def _parse_data(kind: str, event: Mapping[str, object]) -> dict[str, Any]:
         }
     if kind == "request_waiting":
         return {"id": u64("id")}
-    if kind == "request_resolved":
+    if kind == "request_granted":
         timed_out = event["timed_out"]
         if not isinstance(timed_out, bool):
             raise TypeError("timed_out must be a bool")
-        error = _string(event["error"], "error")
-        memory_type = event["memory_type"]
         return {
             "id": u64("id"),
-            "outcome": u32("outcome"),
-            "reservation_id": u64("reservation_id"),
-            "memory_type": (
-                None
-                if memory_type is None
-                else _integer(memory_type, "memory_type", 32, signed=False)
-            ),
+            "reservation_id": _optional_u64(event["reservation_id"], "reservation_id"),
+            "memory_type": u32("memory_type"),
             "size": u64("size"),
             "overbooked_bytes": u64("overbooked_bytes"),
             "timed_out": timed_out,
-            "error": error,
         }
+    if kind == "request_empty":
+        timed_out = event["timed_out"]
+        if not isinstance(timed_out, bool):
+            raise TypeError("timed_out must be a bool")
+        return {"id": u64("id"), "timed_out": timed_out}
+    if kind == "request_failed":
+        return {"id": u64("id"), "error": _string(event["error"], "error")}
+    if kind == "request_cancelled":
+        return {"id": u64("id")}
     if kind == "reservation_created":
         return {
             "id": u64("id"),
             "memory_type": u32("memory_type"),
             "size": u64("size"),
             "attributes": _attributes(event["attributes"]),
-            "request_id": u64("request_id"),
-            "parent_id": u64("parent_id"),
+            "request_id": _optional_u64(event["request_id"], "request_id"),
+            "parent_id": _optional_u64(event["parent_id"], "parent_id"),
         }
     if kind == "reservation_resized":
         return {"id": u64("id"), "size": u64("size"), "reason": u32("reason")}
@@ -554,6 +558,10 @@ def _string(value: object, field: str) -> str:
 
 def _optional_i64(value: object, field: str) -> int | None:
     return None if value is None else _integer(value, field, 64, signed=True)
+
+
+def _optional_u64(value: object, field: str) -> int | None:
+    return None if value is None else _integer(value, field, 64, signed=False)
 
 
 def _uuid(value: uuid.UUID | str, field: str) -> uuid.UUID:

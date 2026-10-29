@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from functools import partial
-from typing import TYPE_CHECKING, Any, Literal, assert_never, cast
+from typing import TYPE_CHECKING, Any, Literal, assert_never
 
 from cudf_streaming import CardinalityEstimator
 from cudf_streaming.channel_metadata import (

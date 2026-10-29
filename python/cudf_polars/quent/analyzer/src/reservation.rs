@@ -450,7 +450,7 @@ mod tests {
         for (offset, terminal) in [
             MemoryReservationRequestEvent::Granted {
                 seq: 2,
-                reservation: reservation.clone(),
+                reservation: Some(reservation.clone()),
                 memory_type: "device".to_owned(),
                 size: 64,
                 overbooked_bytes: 0,

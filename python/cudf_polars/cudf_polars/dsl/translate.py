@@ -29,6 +29,7 @@ from cudf_polars.dsl.to_ast import insert_colrefs
 from cudf_polars.dsl.traversal import traversal
 from cudf_polars.dsl.utils.aggregations import decompose_single_agg
 from cudf_polars.dsl.utils.groupby import rewrite_groupby
+from cudf_polars.dsl.utils.groupby_dynamic import rewrite_groupby_dynamic
 from cudf_polars.dsl.utils.naming import unique_names
 from cudf_polars.dsl.utils.per_path import PerPathValues
 from cudf_polars.dsl.utils.replace import replace
@@ -759,14 +760,21 @@ def _(node: plrs._ir_nodes.GroupBy, translator: Translator, schema: Schema) -> i
     is_rolling = node.options.rolling is not None
     is_dynamic = node.options.dynamic is not None
     if is_dynamic:
-        raise NotImplementedError("group_by_dynamic")
+        return rewrite_groupby_dynamic(schema, keys, original_aggs, inp, node.options)
     elif is_rolling:
         return rewrite_rolling(
             node.options, schema, keys, original_aggs, translator.config_options, inp
         )
     else:
         # TODO: Investigate whether polars can raise ahead of time
-        return rewrite_groupby(node, schema, keys, original_aggs, inp)
+        return rewrite_groupby(
+            schema,
+            keys,
+            original_aggs,
+            inp,
+            maintain_order=node.maintain_order,
+            zlice=node.options.slice,
+        )
 
 
 @_translate_ir.register
@@ -956,7 +964,14 @@ def _(node: plrs._ir_nodes.Sort, translator: Translator, schema: Schema) -> ir.I
     with set_node(translator.visitor, node.input):
         inp = translator.translate_ir(n=None)
         by = [
-            translate_named_expr(translator, n=e, schema=inp.schema)
+            translate_named_expr(
+                translator,
+                n=e,
+                schema=inp.schema,
+                allow_passthrough=isinstance(
+                    translator.visitor.get_dtype(e.node), pl.Time
+                ),
+            )
             for e in node.by_column
         ]
     if _contains_categorical_key(by):

@@ -6,8 +6,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
-from functools import partialmethod
+from functools import partialmethod, wraps
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -20,14 +21,44 @@ from cudf_polars.testing.engine_utils import (
     SMALL_MAX_ROWS_PER_PARTITION,
     SMALL_TARGET_PARTITION_SIZE,
 )
-from cudf_polars.testing.fallback import fallback_used, gpu_attempted, gpu_executed
-from cudf_polars.testing.fallback_report import FallbackReport
+from cudf_polars.testing.fallback import (
+    fallback_used,
+    gpu_attempted,
+    gpu_executed,
+)
+from cudf_polars.testing.fallback_report import COLLECTION, FallbackReport
+from cudf_polars.testing.observation import (
+    Observation,
+    begin_observation,
+    bind_observation,
+    end_observation,
+)
 from cudf_polars.utils.config import StreamingFallbackMode
 
 if TYPE_CHECKING:
-    from collections.abc import Generator, Mapping
+    from collections.abc import Callable, Generator, Mapping
 
     from pluggy import Result
+
+OBSERVATION = pytest.StashKey[Observation]()
+OUTCOMES = pytest.StashKey[list[str]]()
+SELECTION = pytest.StashKey[set[str]]()
+COLLECTION_SKIPS = pytest.StashKey[set[str]]()
+
+
+class CollectionSkips:
+    """Distinguish unavailable optional modules from renamed tests."""
+
+    def __init__(self, config: pytest.Config) -> None:
+        self.config = config
+        config.stash[COLLECTION_SKIPS] = set()
+
+    def pytest_collectreport(self, report: pytest.CollectReport) -> None:
+        """Retain module-level import skips before collection filtering."""
+        if report.skipped and "tests/" in report.nodeid:
+            self.config.stash[COLLECTION_SKIPS].add(
+                report.nodeid[report.nodeid.index("tests/") :]
+            )
 
 
 def nonnegative_int(value: str) -> int:
@@ -36,6 +67,19 @@ def nonnegative_int(value: str) -> int:
     if integer < 0:
         raise ValueError(f"Argument {value} must be non-negative")
     return integer
+
+
+def _read_selection(path: str, key: str) -> set[str]:
+    """Validate a versioned run-list entry before selecting any tests."""
+    manifest = json.loads(Path(path).read_text())
+    if manifest["schema_version"] != 1:
+        raise ValueError("Unsupported run-list schema")
+    nodes = manifest["selections"][key]["nodes"]
+    if not isinstance(nodes, list) or not all(isinstance(node, str) for node in nodes):
+        raise ValueError("Invalid run-list nodes")
+    if len(set(nodes)) != len(nodes) or not nodes:
+        raise ValueError("Empty or duplicate run-list nodes")
+    return set(nodes)
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -57,8 +101,8 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         choices=("default", "small"),
         help=(
             "Blocksize mode for the 'spmd' engine. 'small' forces most tests "
-            "onto the multi-partition path. PR CI uses 'default'; nightly uses "
-            "'small'. Ignored for 'in-memory'."
+            "onto the multi-partition path. PR CI uses 'default'; nightlies "
+            "run both modes. Ignored for 'in-memory'."
         ),
     )
     group.addoption(
@@ -73,6 +117,11 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         "--inject-gpu-engine-report",
         metavar="PATH",
         help="Write per-test GPU execution and fallback diagnostics as JSON on the pytest controller.",
+    )
+    group.addoption(
+        "--inject-gpu-engine-run-list",
+        metavar="PATH",
+        help="Select previously observed GPU-executing nodes and require GPU execution on passing items.",
     )
     group.addoption(
         "--cudf-polars-shard-id",
@@ -141,6 +190,18 @@ def pytest_configure(config: pytest.Config) -> None:
     variant = config.getoption("--inject-gpu-engine")
     blocksize = config.getoption("--inject-gpu-engine-blocksize")
     raise_on_fail = config.getoption("--inject-gpu-engine-raise-on-fail")
+    config.pluginmanager.register(
+        CollectionSkips(config), "cudf-polars-collection-skips"
+    )
+    run_list = config.getoption("--inject-gpu-engine-run-list")
+    if run_list:
+        key = f"{polars.__version__}|{variant}|{blocksize if variant == 'spmd' else 'default'}"
+        try:
+            config.stash[SELECTION] = _read_selection(run_list, key)
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            raise pytest.UsageError(
+                f"Cannot select GPU tests for {key}: {error}"
+            ) from error
     validate_shard_options(
         config.getoption("cudf_polars_shard_id"),
         config.getoption("cudf_polars_num_shards"),
@@ -175,6 +236,20 @@ def pytest_configure(config: pytest.Config) -> None:
     config._inject_gpu_engine = engine  # type: ignore[attr-defined]
     _verify_collect_patch(engine)
 
+    post_opt_callback = polars.GPUEngine._post_opt_callback
+
+    @wraps(post_opt_callback)
+    def attributed_callback(
+        self: polars.GPUEngine, *, background: bool, eager: bool
+    ) -> Callable[..., None] | None:
+        callback = post_opt_callback(self, background=background, eager=eager)
+        # Capture ownership before Rust can invoke translation on another thread,
+        # including after the originating item's observation has been retired.
+        return None if callback is None else bind_observation(callback)
+
+    polars.GPUEngine._post_opt_callback = attributed_callback  # type: ignore[method-assign]
+    config._cudf_polars_post_opt_callback = post_opt_callback  # type: ignore[attr-defined]
+
     config.addinivalue_line(
         "filterwarnings",
         "ignore:.*GPU engine does not support streaming or background collection",
@@ -192,11 +267,26 @@ def pytest_runtest_protocol(
     """Give each injected-engine pytest item isolated execution signals."""
     signals = (fallback_used, gpu_attempted, gpu_executed)
     tokens = [signal.set(False) for signal in signals]
+    observation = begin_observation()
+    item.stash[OBSERVATION] = observation
+    item.stash[OUTCOMES] = []
     try:
         yield
     finally:
+        end_observation(observation)
         for signal, token in zip(signals, tokens, strict=True):
             signal.reset(token)
+
+
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
+def pytest_runtest_call(item: pytest.Item) -> Generator[None, None, None]:
+    """Attribute execution signals only to the test body."""
+    observation = item.stash[OBSERVATION]
+    observation.set_in_call(True)
+    try:
+        yield
+    finally:
+        observation.set_in_call(False)
 
 
 @pytest.hookimpl(hookwrapper=True)
@@ -206,15 +296,79 @@ def pytest_runtest_makereport(
     """Attach per-test execution telemetry to each phase's report."""
     outcome = yield
     report = outcome.get_result()
+    signals = item.stash[OBSERVATION].snapshot()
+    previous = item.stash[OUTCOMES]
+    if (
+        report.when == "teardown"
+        and report.passed
+        and previous == ["passed", "passed"]
+        and item.config.getoption("--inject-gpu-engine-run-list")
+        and signals["gpu_executed"] != "true"
+    ):
+        report.outcome = "failed"
+        report.longrepr = "Selected GPU test passed without observed GPU execution"
+    previous.append(report.outcome)
     if item.config.getoption("--inject-gpu-engine-report"):
         # user_properties travel with TestReport across xdist's worker boundary.
         report.user_properties.extend(
-            (name, str(signal.get()).lower())
-            for name, signal in (
-                ("cudf_polars_fallback", fallback_used),
-                ("cudf_polars_gpu_attempted", gpu_attempted),
-                ("cudf_polars_gpu_executed", gpu_executed),
+            (f"cudf_polars_{name}", value) for name, value in signals.items()
+        )
+
+
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> Generator[None, None, None]:
+    """Validate against unfiltered collection before narrowing the PR run."""
+    inventory = {item.nodeid for item in items}
+    selection = config.stash.get(SELECTION, None)
+    collection_skips = config.stash[COLLECTION_SKIPS]
+    if selection is not None:
+        collected_files = {node.split("::", 1)[0] for node in inventory}
+        full_suite = any(
+            Path(arg.split("::", 1)[0]).name == "tests" for arg in config.args
+        )
+        requested = [
+            arg[arg.index("tests/") :] for arg in config.args if "tests/" in arg
+        ]
+        explicit_node = any("::" in arg for arg in config.args)
+        stale = sorted(
+            node
+            for node in selection - inventory
+            if (full_suite or node.split("::", 1)[0] in collected_files)
+            and not any(node.startswith(module) for module in collection_skips)
+            and (
+                not explicit_node
+                or any(
+                    node == arg
+                    or node.startswith(tuple(arg + sep for sep in ("[", "::", "/")))
+                    for arg in requested
+                )
             )
+        )
+        if stale:
+            raise pytest.UsageError("Stale GPU run-list nodes:\n" + "\n".join(stale))
+        deselected = [item for item in items if item.nodeid not in selection]
+        items[:] = [item for item in items if item.nodeid in selection]
+        if deselected:
+            config.hook.pytest_deselected(items=deselected)
+    yield
+    collection: dict[str, object] = {
+        "selection_mode": "gpu" if selection is not None else "full",
+        "collection_nodeids": sorted(inventory),
+        "collection_skips": sorted(collection_skips),
+        "collected_nodeids": sorted(item.nodeid for item in items),
+        "consistent": True,
+    }
+    config.stash[COLLECTION] = collection
+
+
+@pytest.hookimpl
+def pytest_sessionfinish(session: pytest.Session) -> None:
+    """Transport collection metadata alongside worker reports."""
+    if hasattr(session.config, "workeroutput"):
+        session.config.workeroutput["cudf_polars_collection"] = (
+            session.config.stash.get(COLLECTION, {})
         )
 
 
@@ -249,6 +403,9 @@ def _verify_collect_patch(engine: object) -> None:
 
 def pytest_unconfigure(config: pytest.Config) -> None:
     """Tear down the injected engine."""
+    post_opt_callback = getattr(config, "_cudf_polars_post_opt_callback", None)
+    if post_opt_callback is not None:
+        polars.GPUEngine._post_opt_callback = post_opt_callback  # type: ignore[method-assign]
     engine = getattr(config, "_inject_gpu_engine", None)
     if engine is None:
         return
@@ -698,8 +855,8 @@ STREAMING_ENGINE_EXPECTED_FAILURES_SMALL_BLOCKSIZE: Mapping[str, str] = {
 }
 
 
-@pytest.hookimpl(trylast=True)
-def pytest_collection_modifyitems(
+@pytest.hookimpl(trylast=True, specname="pytest_collection_modifyitems")
+def pytest_mark_and_shard_items(
     session: pytest.Session, config: pytest.Config, items: list[pytest.Item]
 ) -> None:
     """Mark known failing tests."""

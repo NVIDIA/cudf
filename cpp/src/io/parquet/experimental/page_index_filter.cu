@@ -182,7 +182,7 @@ struct page_stats_caster : public stats_caster_base {
    * @param schema_indices_per_source Input column schema index in each source
    * @param dtype Input column data type
    * @param stream CUDA stream
-   * @param mr Device memory resource used to allocate the returned columns' device memory
+   * @param mr Memory resources used to allocate temporary and returned column device memory
    * @return A `page_statistics_input` storing the compacted page-level stats table and host-side
    * page-row offsets for this column
    */
@@ -192,7 +192,7 @@ struct page_stats_caster : public stats_caster_base {
     std::span<size_type const> schema_indices_per_source,
     data_type dtype,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr) const
+    cudf::memory_resources mr) const
   {
     if constexpr (cudf::is_compound<T>() and not cuda::std::is_same_v<T, string_view>) {
       CUDF_FAIL("Compound types other than strings do not have statistics");
@@ -203,9 +203,10 @@ struct page_stats_caster : public stats_caster_base {
 
       std::vector<std::unique_ptr<column>> columns;
       columns.reserve(parquet::detail::stats_cols_per_column);
-      columns.emplace_back(min.to_device(dtype, stream, mr));
-      columns.emplace_back(max.to_device(dtype, stream, mr));
-      columns.emplace_back(all_null.to_device(data_type{type_id::BOOL8}, stream, mr));
+      columns.emplace_back(min.to_device(dtype, stream, mr.get_output_mr()));
+      columns.emplace_back(max.to_device(dtype, stream, mr.get_output_mr()));
+      columns.emplace_back(
+        all_null.to_device(data_type{type_id::BOOL8}, stream, mr.get_output_mr()));
 
       return page_statistics_input{
         .column_index = column_index,
@@ -225,7 +226,7 @@ std::unique_ptr<cudf::column> aggregate_reader_metadata::build_row_mask_with_pag
   std::span<cudf::size_type const> output_column_schemas,
   std::reference_wrapper<ast::expression const> filter,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr) const
+  cudf::memory_resources mr) const
 {
   CUDF_FUNC_RANGE();
 
@@ -305,7 +306,7 @@ std::unique_ptr<cudf::column> aggregate_reader_metadata::build_row_mask_with_pag
                       map_schema_index_to_sources(output_column_schemas[col_idx]),
                       dtype,
                       stream,
-                      cudf::get_current_device_resource_ref()));
+                      mr.as_temporary()));
                   }
                 });
 

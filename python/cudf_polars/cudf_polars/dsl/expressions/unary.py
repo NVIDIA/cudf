@@ -259,6 +259,7 @@ class UnaryFunction(Expr):
     )
     _pointwise_fns = frozenset(
         {
+            "as_struct",
             "clip",
             "fill_null",
             "fill_null_with_strategy",

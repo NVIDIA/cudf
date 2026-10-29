@@ -183,6 +183,9 @@ class UnicodeNormalizer:
         """
         Normalize a strings Series using Unicode TR15 normalization.
 
+        The temporary device memory required is approximately 5x the
+        input data size.
+
         Parameters
         ----------
         text : cudf.Series

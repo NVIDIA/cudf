@@ -1469,6 +1469,49 @@ def _translate_function(
             return expr.BinOp(dtype, plc.binaryop.BinaryOperator.MUL, *children)
         elif name == "product":
             return expr.Agg(dtype, "product", None, translator._expr_context, *children)
+        elif name == "corr":
+            if options != ("pearson",):
+                raise NotImplementedError("Only Pearson correlation is supported")
+            if translator._expr_context != ExecutionContext.GROUPBY:
+                raise NotImplementedError(
+                    "Correlation is currently only supported in groupby context"
+                )
+            intermediate_dtype = DataType(pl.Float64())
+            left, right = (
+                expr.Cast(intermediate_dtype, True, child)  # noqa: FBT003
+                if child.dtype.polars_type == pl.Float32()
+                else child
+                for child in children
+            )
+            pair_dtype = DataType(
+                pl.Struct(
+                    [
+                        pl.Field("left", left.dtype.polars_type),
+                        pl.Field("right", right.dtype.polars_type),
+                    ]
+                )
+            )
+            correlation = expr.Agg(
+                intermediate_dtype,
+                "corr",
+                None,
+                translator._expr_context,
+                expr.UnaryFunction(pair_dtype, "as_struct", (), left, right),
+            )
+            # Polars returns NaN for undefined correlations, such as groups
+            # with fewer than two valid pairs, while libcudf returns null.
+            result: expr.Expr = expr.UnaryFunction(
+                intermediate_dtype,
+                "fill_null",
+                (),
+                correlation,
+                expr.Literal(intermediate_dtype, float("nan")),
+            )
+            return (
+                result
+                if dtype == intermediate_dtype
+                else expr.Cast(dtype, True, result)  # noqa: FBT003
+            )
         elif name == "quantile":
             # quantile is emitted as a string-named Function expression
             # (function_data=("quantile", interpolation)) with the column

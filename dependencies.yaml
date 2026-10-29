@@ -54,7 +54,7 @@ files:
       - test_python_cudf_common
       - test_python_pylibcudf
       - test_python_cudf_pandas
-      - test_cudf_pandas_pandas_tests
+      - test_python_pandas_tests
       - test_python_cudf_polars
       - test_python_s3
   test_static_build:
@@ -394,7 +394,7 @@ files:
       table: project.optional-dependencies
       key: pandas-tests
     includes:
-      - test_python_pandas_cudf
+      - test_python_pandas_tests
   py_test_cudf_pandas:
     output: pyproject
     matrix:
@@ -1764,22 +1764,56 @@ dependencies:
       - output_types: [conda, requirements, constraints, pyproject]
         packages:
           - rapids-logger==0.3.*
-  test_python_pandas_cudf:
+  test_python_pandas_tests:
     common:
-      - output_types: [requirements, constraints, pyproject]
+      - output_types: [conda, requirements, constraints, pyproject]
         packages:
-          # dependencies to run pandas tests
-          # https://github.com/pandas-dev/pandas/blob/main/environment.yml
-          # pandas[...] includes all of the required dependencies.
-          # Intentionally excluding `postgresql` because of
-          # installation issues with `psycopg2`.
-          - pandas[test, pyarrow, performance, computation, fss, excel, parquet, feather, hdf5, spss, html, xml, plot, output-formatting, clipboard, compression]
-          # Pinned until pandas 3.0.4 releases with matplotlib 3.11 compat fix
-          # (https://github.com/pandas-dev/pandas/pull/65742)
-          - matplotlib<3.11
-          - pytest-reportlog
+          # not in an extra but used in pandas tests
           - ipython
+          # Used in cudf/ci/cudf_pandas_scripts/pandas-tests/run.sh
+          - pytest-reportlog
+      - output_types: [pyproject]
+        packages:
+          - pandas[test, pyarrow, performance, computation, fss, excel, parquet, feather, hdf5, spss, html, xml, plot, output-formatting, clipboard, compression]
+      # Excludes `clipboard` from above because pip builds its PyQt5
+      # dependency from source on arm64, which fails without qmake.
+      - output_types: requirements
+        packages:
+          - pandas[test, pyarrow, performance, computation, fss, excel, parquet, feather, hdf5, spss, html, xml, plot, output-formatting, compression]
+      # constraints do not support extras
+      - output_types: constraints
+        packages:
+          - *pandas
+      # mimics pandas extras for conda
+      - output_types: [conda]
+        packages:
+          - beautifulsoup4
+          - bottleneck
+          - fsspec
+          - html5lib
           - hypothesis>=6.131.7
+          - jinja2
+          - lxml
+          - matplotlib-base
+          - numba
+          - numexpr
+          - odfpy
+          - openpyxl
+          - pyarrow
+          - pyqt
+          - pyreadstat
+          - pytables
+          - pytest<9.1.0
+          - pytest-xdist
+          - python-calamine
+          - pyxlsb
+          - qtpy
+          - scipy
+          - tabulate
+          - xarray
+          - xlrd
+          - xlsxwriter
+          - zstandard
   test_python_cudf_pandas:
     common:
       - output_types: [conda, requirements, constraints, pyproject]
@@ -1792,23 +1826,6 @@ dependencies:
           - openpyxl
           # https://github.com/pytest-dev/pytest-rerunfailures/issues/302
           - pytest-rerunfailures!=16.0.0
-  # Additional dependencies for running the pandas test suite under cudf.pandas.
-  # Unlike test_python_pandas_cudf (which uses pip extras like pandas[excel]),
-  # conda environments need these listed explicitly.
-  test_cudf_pandas_pandas_tests:
-    common:
-      - output_types: [conda]
-        packages:
-          # Pinned until pandas 3.0.4 releases with matplotlib 3.11 compat fix
-          # (https://github.com/pandas-dev/pandas/pull/65742)
-          - matplotlib-base<3.11
-          - numexpr
-          - odfpy
-          - pyxlsb
-          - python-calamine
-          - pytables
-          - xlrd
-          - xlsxwriter
   depends_on_dask_cuda:
     common:
       - output_types: conda

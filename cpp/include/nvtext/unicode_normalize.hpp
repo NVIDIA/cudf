@@ -126,7 +126,7 @@ std::unique_ptr<unicode_normalizer> create_unicode_normalizer(
  * @endcode
  *
  * During each call to nvtext::normalize_unicode, the amount of temporary
- * memory required is approximately 16x the input data size.
+ * memory required is approximately 5x the input data size.
  *
  * @param input Strings column to normalize
  * @param normalizer Normalizer object created by nvtext::create_unicode_normalizer

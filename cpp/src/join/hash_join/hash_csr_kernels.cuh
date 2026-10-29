@@ -327,6 +327,26 @@ CUDF_EXTERN_HASH_CSR_PROBE_COUNT(true, hash_csr_nested_equal, hash_csr_row_hashe
 
 void launch_hash_csr_inner_retrieve_kernel(cuda::std::int64_t output_size,
                                            size_type num_probe_rows,
+                                           size_type const* offsets,
+                                           size_type const* probe_groups,
+                                           csr_ref csr,
+                                           size_type left_index_offset,
+                                           size_type* left_indices,
+                                           size_type* right_indices,
+                                           cuda::stream_ref stream);
+
+void launch_hash_csr_outer_retrieve_kernel(cuda::std::int64_t output_size,
+                                           size_type num_probe_rows,
+                                           size_type const* offsets,
+                                           size_type const* probe_groups,
+                                           csr_ref csr,
+                                           size_type left_index_offset,
+                                           size_type* left_indices,
+                                           size_type* right_indices,
+                                           cuda::stream_ref stream);
+
+void launch_hash_csr_inner_retrieve_kernel(cuda::std::int64_t output_size,
+                                           size_type num_probe_rows,
                                            cuda::std::int64_t const* offsets,
                                            size_type const* probe_groups,
                                            csr_ref csr,

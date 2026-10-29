@@ -14,11 +14,11 @@
 namespace cudf::detail {
 namespace {
 
-template <bool IsOuter>
+template <bool IsOuter, typename Offset>
 CUDF_KERNEL void hash_csr_retrieve_kernel(cuda::std::int64_t output_size,
                                           size_type num_probe_rows,
                                           cuda::std::int64_t outputs_per_warp,
-                                          cuda::std::int64_t const* offsets,
+                                          Offset const* offsets,
                                           size_type const* probe_groups,
                                           csr_ref csr,
                                           size_type left_index_offset,
@@ -69,10 +69,10 @@ CUDF_KERNEL void hash_csr_retrieve_kernel(cuda::std::int64_t output_size,
   }
 }
 
-template <bool IsOuter>
+template <bool IsOuter, typename Offset>
 void launch_hash_csr_retrieve_kernel(cuda::std::int64_t output_size,
                                      size_type num_probe_rows,
-                                     cuda::std::int64_t const* offsets,
+                                     Offset const* offsets,
                                      size_type const* probe_groups,
                                      csr_ref csr,
                                      size_type left_index_offset,
@@ -105,6 +105,48 @@ void launch_hash_csr_retrieve_kernel(cuda::std::int64_t output_size,
 }
 
 }  // namespace
+
+void launch_hash_csr_inner_retrieve_kernel(cuda::std::int64_t output_size,
+                                           size_type num_probe_rows,
+                                           size_type const* offsets,
+                                           size_type const* probe_groups,
+                                           csr_ref csr,
+                                           size_type left_index_offset,
+                                           size_type* left_indices,
+                                           size_type* right_indices,
+                                           cuda::stream_ref stream)
+{
+  launch_hash_csr_retrieve_kernel<false>(output_size,
+                                         num_probe_rows,
+                                         offsets,
+                                         probe_groups,
+                                         csr,
+                                         left_index_offset,
+                                         left_indices,
+                                         right_indices,
+                                         stream);
+}
+
+void launch_hash_csr_outer_retrieve_kernel(cuda::std::int64_t output_size,
+                                           size_type num_probe_rows,
+                                           size_type const* offsets,
+                                           size_type const* probe_groups,
+                                           csr_ref csr,
+                                           size_type left_index_offset,
+                                           size_type* left_indices,
+                                           size_type* right_indices,
+                                           cuda::stream_ref stream)
+{
+  launch_hash_csr_retrieve_kernel<true>(output_size,
+                                        num_probe_rows,
+                                        offsets,
+                                        probe_groups,
+                                        csr,
+                                        left_index_offset,
+                                        left_indices,
+                                        right_indices,
+                                        stream);
+}
 
 void launch_hash_csr_inner_retrieve_kernel(cuda::std::int64_t output_size,
                                            size_type num_probe_rows,

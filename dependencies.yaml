@@ -1777,9 +1777,13 @@ dependencies:
           - pandas[test, pyarrow, performance, computation, fss, excel, parquet, feather, hdf5, spss, html, xml, plot, output-formatting, clipboard, compression]
       # Excludes `clipboard` from above because pip builds its PyQt5
       # dependency from source on arm64, which fails without qmake.
-      - output_types: [requirements, constraints]
+      - output_types: requirements
         packages:
           - pandas[test, pyarrow, performance, computation, fss, excel, parquet, feather, hdf5, spss, html, xml, plot, output-formatting, compression]
+      # constraints do not support extras
+      - output_types: constraints
+        packages:
+          - *pandas
       # mimics pandas extras for conda
       - output_types: [conda]
         packages:

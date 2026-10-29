@@ -18,12 +18,13 @@ use uuid::Uuid;
 use crate::{
     CudfPolarsUiAnalyzer, Viewer,
     generated::{
-        ActorEvent, ColumnSchema, CudfPolars, CudfPolarsEvent, DataFrameSchema, EngineEvent,
-        EvaluateEvent, Implementation, JoinFilterPushdownDetails, OperatorEvent, OperatorSchemas,
-        OperatorStatistics, PlanEvent, ProcessorEvent, QueryEvent, QueryGroupEvent,
-        RuntimePrefilterStatistics, ThreadPoolEvent, WorkerEvent,
+        ActorEvent, ColumnSchema, CudfPolars, CudfPolarsEvent, DataFrameSchema, DeviceMemoryBounds,
+        DeviceMemoryEvent, DeviceMemoryUsage, EngineEvent, EvaluateEvent, Implementation,
+        JoinFilterPushdownDetails, OperatorEvent, OperatorSchemas, OperatorStatistics, PlanEvent,
+        ProcessorEvent, QueryEvent, QueryGroupEvent, RuntimePrefilterStatistics, ThreadPoolEvent,
+        WorkerEvent,
     },
-    resource::{EVALUATE_ENTITY_TYPE, PROCESSOR_RESOURCE_TYPE},
+    resource::{DEVICE_MEMORY_RESOURCE_TYPE, EVALUATE_ENTITY_TYPE, PROCESSOR_RESOURCE_TYPE},
 };
 
 fn entity_list_request(
@@ -70,7 +71,9 @@ fn builds_query_bundle_from_generated_events() {
     let incomplete_actor_id = Uuid::now_v7();
     let thread_pool_id = Uuid::now_v7();
     let processor_id = Uuid::now_v7();
+    let device_memory_id = Uuid::now_v7();
     let evaluate_id = Uuid::now_v7();
+    let overlapping_evaluate_id = Uuid::now_v7();
     let incomplete_evaluate_id = Uuid::now_v7();
     let events = vec![
         Event::new(
@@ -237,6 +240,15 @@ fn builds_query_bundle_from_generated_events() {
             }),
         ),
         Event::new(
+            device_memory_id,
+            8,
+            CudfPolarsEvent::DeviceMemory(DeviceMemoryEvent::Declared {
+                instance_name: "device memory".to_owned(),
+                worker: EntityRef::new(worker_id, ()),
+                limits: DeviceMemoryBounds { bytes: 100 },
+            }),
+        ),
+        Event::new(
             actor_id,
             9,
             CudfPolarsEvent::Actor(ActorEvent::Started {
@@ -274,7 +286,51 @@ fn builds_query_bundle_from_generated_events() {
                     spillable: None,
                 },
                 processor: EntityRef::new(processor_id, crate::generated::ProcessorUsage {}),
+                device_memory: Some(EntityRef::new(
+                    device_memory_id,
+                    DeviceMemoryUsage { bytes: 10 },
+                )),
                 channel: None,
+            }),
+        ),
+        Event::new(
+            overlapping_evaluate_id,
+            11,
+            CudfPolarsEvent::Evaluate(EvaluateEvent::Queued {
+                seq: 0,
+                instance_name: "overlapping-evaluate".to_owned(),
+                actor: EntityRef::new(actor_id, ()),
+                task: None,
+            }),
+        ),
+        Event::new(
+            overlapping_evaluate_id,
+            12,
+            CudfPolarsEvent::Evaluate(EvaluateEvent::Running {
+                seq: 1,
+                io: false,
+                input_bytes: 7,
+                input: crate::generated::EvaluateInput {
+                    dataframes: vec![],
+                    sequence_number: None,
+                    content_sizes: None,
+                    spillable: None,
+                },
+                processor: EntityRef::new(processor_id, crate::generated::ProcessorUsage {}),
+                device_memory: Some(EntityRef::new(
+                    device_memory_id,
+                    DeviceMemoryUsage { bytes: 7 },
+                )),
+                channel: None,
+            }),
+        ),
+        Event::new(
+            overlapping_evaluate_id,
+            18,
+            CudfPolarsEvent::Evaluate(EvaluateEvent::Completed {
+                seq: 2,
+                output_bytes: 9,
+                output_dataframe: crate::generated::DataFrameStatistics { shape: vec![1, 1] },
             }),
         ),
         Event::new(
@@ -474,6 +530,13 @@ fn builds_query_bundle_from_generated_events() {
             .resource_types
             .contains_key(PROCESSOR_RESOURCE_TYPE)
     );
+    assert!(
+        bundle
+            .entities
+            .resource_types
+            .contains_key(DEVICE_MEMORY_RESOURCE_TYPE)
+    );
+    assert!(bundle.entities.resources.contains_key(&device_memory_id));
     assert!(bundle.entities.fsm_types.contains_key(EVALUATE_ENTITY_TYPE));
 
     let response = analyzer
@@ -517,9 +580,87 @@ fn builds_query_bundle_from_generated_events() {
             .iter()
             .any(|&value| value > 0.0)
     );
-    assert_eq!(timeline.long_fsms.len(), 1);
-    assert_eq!(timeline.long_fsms[0].id, evaluate_id);
-    assert_eq!(timeline.long_fsms[0].instance_name, "Scan-evaluate");
+    assert_eq!(timeline.long_fsms.len(), 2);
+    assert!(
+        timeline
+            .long_fsms
+            .iter()
+            .any(|fsm| fsm.id == evaluate_id && fsm.instance_name == "Scan-evaluate")
+    );
+
+    let response = analyzer
+        .bulk_resource_timeline(BulkTimelineRequest {
+            entries: [
+                (
+                    "device-memory:by-state".to_owned(),
+                    TimelineRequest::Resource(
+                        quent_ui::timeline::request::ResourceTimelineRequest {
+                            resource_id: device_memory_id,
+                            long_entities_threshold_s: None,
+                            entity_filter: quent_ui::timeline::request::EntityFilter {
+                                entity_type_name: Some(EVALUATE_ENTITY_TYPE.to_owned()),
+                            },
+                            application: OperatorFilter {
+                                operator_ids: vec![operator_id],
+                            },
+                            config: quent_ui::timeline::request::TimelineConfig {
+                                num_bins: 20,
+                                start: 0.0,
+                                end: 20e-9,
+                            },
+                        },
+                    ),
+                ),
+                (
+                    "device-memory:aggregate".to_owned(),
+                    TimelineRequest::Resource(
+                        quent_ui::timeline::request::ResourceTimelineRequest {
+                            resource_id: device_memory_id,
+                            long_entities_threshold_s: None,
+                            entity_filter: quent_ui::timeline::request::EntityFilter {
+                                entity_type_name: None,
+                            },
+                            application: OperatorFilter {
+                                operator_ids: vec![operator_id],
+                            },
+                            config: quent_ui::timeline::request::TimelineConfig {
+                                num_bins: 20,
+                                start: 0.0,
+                                end: 20e-9,
+                            },
+                        },
+                    ),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            app_params: QueryFilter { query_id },
+        })
+        .unwrap();
+    let BulkTimelinesResponseEntry::Ok { data, .. } = &response.entries["device-memory:by-state"]
+    else {
+        panic!("device-memory by-state timeline entry failed")
+    };
+    let UiResourceTimeline::BinnedByState(timeline) = data else {
+        panic!("expected a state-keyed device-memory timeline")
+    };
+    assert!(
+        timeline.capacities_states_values["bytes"]["running"]
+            .iter()
+            .any(|&value| value == 17.0)
+    );
+    let BulkTimelinesResponseEntry::Ok { data, .. } = &response.entries["device-memory:aggregate"]
+    else {
+        panic!("device-memory aggregate timeline entry failed")
+    };
+    let UiResourceTimeline::Binned(timeline) = data else {
+        panic!("expected an aggregate device-memory timeline")
+    };
+    assert!(
+        timeline.capacities_values["bytes"]
+            .iter()
+            .any(|&value| value == 17.0)
+    );
 
     let entities = analyzer
         .list_entities(entity_list_request(
@@ -531,8 +672,7 @@ fn builds_query_bundle_from_generated_events() {
             Some(1e-9),
         ))
         .unwrap();
-    assert_eq!(entities.total, 1);
-    assert_eq!(entities.items[0].entity.fsm.id, evaluate_id);
+    assert_eq!(entities.total, 2);
     assert_eq!(entities.items[0].entity.operator_id, Some(operator_id));
 
     let entities = analyzer

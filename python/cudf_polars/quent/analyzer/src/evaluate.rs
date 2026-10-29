@@ -27,6 +27,7 @@ pub(crate) struct EvaluateBuilder {
     instance_name: Option<String>,
     actor_id: Option<Uuid>,
     processor_id: Option<Uuid>,
+    device_memory: Option<(Uuid, u64)>,
     channel: Option<(Uuid, u64)>,
     queued_at: Option<TimeUnixNanoSec>,
     queued_attributes: Vec<DynamicAttribute>,
@@ -61,10 +62,14 @@ impl EvaluateBuilder {
                 input_bytes,
                 input,
                 processor,
+                device_memory,
                 channel,
                 ..
             } => {
                 self.processor_id = Some(processor.target);
+                self.device_memory = device_memory
+                    .as_ref()
+                    .map(|memory| (memory.target, memory.data.bytes));
                 self.channel = channel
                     .as_ref()
                     .map(|channel| (channel.target, channel.data.bytes));
@@ -138,11 +143,15 @@ impl EvaluateBuilder {
         let channel_bytes = self
             .channel
             .map(|(_, bytes)| CapacityValue::new("bytes", bytes));
+        let device_memory_bytes = self
+            .device_memory
+            .map(|(_, bytes)| CapacityValue::new("bytes", bytes));
         Ok(EvaluateSpan {
             id,
             instance_name,
             actor_id,
             processor_id,
+            device_memory: self.device_memory,
             channel: self.channel,
             queued_at,
             span: SpanUnixNanoSec::try_new(start, end)?,
@@ -151,6 +160,7 @@ impl EvaluateBuilder {
             finished_state,
             finished_attributes: self.finished_attributes,
             processor_unit: CapacityValue::new("unit", 1),
+            device_memory_bytes,
             channel_bytes,
         })
     }
@@ -161,6 +171,7 @@ pub(crate) struct EvaluateSpan {
     pub(crate) instance_name: String,
     pub(crate) actor_id: Uuid,
     pub(crate) processor_id: Uuid,
+    pub(crate) device_memory: Option<(Uuid, u64)>,
     pub(crate) channel: Option<(Uuid, u64)>,
     pub(crate) queued_at: TimeUnixNanoSec,
     pub(crate) span: SpanUnixNanoSec,
@@ -169,6 +180,7 @@ pub(crate) struct EvaluateSpan {
     finished_state: &'static str,
     finished_attributes: Vec<DynamicAttribute>,
     pub(crate) processor_unit: CapacityValue,
+    pub(crate) device_memory_bytes: Option<CapacityValue>,
     pub(crate) channel_bytes: Option<CapacityValue>,
 }
 
@@ -202,6 +214,12 @@ impl EvaluateSpan {
             resource: self.processor_id,
             capacities: vec![("unit".to_owned(), Some(1))],
         }];
+        if let Some((device_memory_id, bytes)) = self.device_memory {
+            running_usages.push(FsmUsage {
+                resource: device_memory_id,
+                capacities: vec![("bytes".to_owned(), Some(bytes))],
+            });
+        }
         if let Some((channel_id, bytes)) = self.channel {
             running_usages.push(FsmUsage {
                 resource: channel_id,
@@ -274,6 +292,7 @@ mod tests {
                     spillable: Some(true),
                 },
                 processor: EntityRef::new(Uuid::now_v7(), crate::generated::ProcessorUsage {}),
+                device_memory: None,
                 channel: None,
             },
         );

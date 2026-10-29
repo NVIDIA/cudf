@@ -87,15 +87,18 @@ struct DecompressTest
     }
     rmm::device_uvector<uint8_t> dst{decompressed.size(), stream};
 
-    cudf::detail::hostdevice_vector<device_span<uint8_t const>> inf_in(1, stream);
+    cudf::detail::hostdevice_vector<device_span<uint8_t const>> inf_in(
+      1, stream, cudf::get_current_device_resource_ref());
     inf_in[0] = {src.data(), src.size()};
     inf_in.host_to_device_async(stream);
 
-    cudf::detail::hostdevice_vector<device_span<uint8_t>> inf_out(1, stream);
+    cudf::detail::hostdevice_vector<device_span<uint8_t>> inf_out(
+      1, stream, cudf::get_current_device_resource_ref());
     inf_out[0] = dst;
     inf_out.host_to_device_async(stream);
 
-    cudf::detail::hostdevice_vector<codec_exec_result> inf_stat(1, stream);
+    cudf::detail::hostdevice_vector<codec_exec_result> inf_stat(
+      1, stream, cudf::get_current_device_resource_ref());
     inf_stat[0] = {};
     inf_stat.host_to_device_async(stream);
 
@@ -481,16 +484,19 @@ void roundtrip_test(cudf::io::compression_type compression,
       cudf::io::detail::max_compressed_size(compression, test_input.size()), stream, mr);
     {
       auto const d_orig = cudf::detail::make_device_uvector_async(test_input, stream, mr);
-      auto hd_srcs      = cudf::detail::hostdevice_vector<device_span<uint8_t const>>(1, stream);
-      hd_srcs[0]        = d_orig;
+      auto hd_srcs      = cudf::detail::hostdevice_vector<device_span<uint8_t const>>(
+        1, stream, cudf::get_current_device_resource_ref());
+      hd_srcs[0] = d_orig;
       hd_srcs.host_to_device_async(stream);
 
-      auto hd_dsts = cudf::detail::hostdevice_vector<device_span<uint8_t>>(1, stream);
-      hd_dsts[0]   = d_comp;
+      auto hd_dsts = cudf::detail::hostdevice_vector<device_span<uint8_t>>(
+        1, stream, cudf::get_current_device_resource_ref());
+      hd_dsts[0] = d_comp;
       hd_dsts.host_to_device_async(stream);
 
-      auto hd_stats = cudf::detail::hostdevice_vector<codec_exec_result>(1, stream);
-      hd_stats[0]   = codec_exec_result{0, codec_status::FAILURE};
+      auto hd_stats = cudf::detail::hostdevice_vector<codec_exec_result>(
+        1, stream, cudf::get_current_device_resource_ref());
+      hd_stats[0] = codec_exec_result{0, codec_status::FAILURE};
       hd_stats.host_to_device_async(stream);
 
       run_codec([&](cudf::memory_resources codec_mr) {
@@ -503,16 +509,19 @@ void roundtrip_test(cudf::io::compression_type compression,
 
     auto d_got = rmm::device_uvector<uint8_t>(test_input.size(), stream, mr);
     {
-      auto hd_srcs = cudf::detail::hostdevice_vector<device_span<uint8_t const>>(1, stream);
-      hd_srcs[0]   = d_comp;
+      auto hd_srcs = cudf::detail::hostdevice_vector<device_span<uint8_t const>>(
+        1, stream, cudf::get_current_device_resource_ref());
+      hd_srcs[0] = d_comp;
       hd_srcs.host_to_device_async(stream);
 
-      auto hd_dsts = cudf::detail::hostdevice_vector<device_span<uint8_t>>(1, stream);
-      hd_dsts[0]   = d_got;
+      auto hd_dsts = cudf::detail::hostdevice_vector<device_span<uint8_t>>(
+        1, stream, cudf::get_current_device_resource_ref());
+      hd_dsts[0] = d_got;
       hd_dsts.host_to_device_async(stream);
 
-      auto hd_stats = cudf::detail::hostdevice_vector<codec_exec_result>(1, stream);
-      hd_stats[0]   = codec_exec_result{0, codec_status::FAILURE};
+      auto hd_stats = cudf::detail::hostdevice_vector<codec_exec_result>(
+        1, stream, cudf::get_current_device_resource_ref());
+      hd_stats[0] = codec_exec_result{0, codec_status::FAILURE};
       hd_stats.host_to_device_async(stream);
 
       run_codec([&](cudf::memory_resources codec_mr) {

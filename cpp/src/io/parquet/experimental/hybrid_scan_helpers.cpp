@@ -92,7 +92,7 @@ namespace {
 
 }  // namespace
 
-metadata::metadata(cudf::host_span<uint8_t const> footer_bytes)
+metadata::metadata(std::span<uint8_t const> footer_bytes)
 {
   CUDF_FUNC_RANGE();
 
@@ -101,7 +101,7 @@ metadata::metadata(cudf::host_span<uint8_t const> footer_bytes)
 }
 
 aggregate_reader_metadata::aggregate_reader_metadata(
-  std::span<cudf::host_span<uint8_t const> const> footer_bytes,
+  std::span<std::span<uint8_t const> const> footer_bytes,
   bool use_arrow_schema,
   bool has_cols_from_mismatched_srcs)
   : aggregate_reader_metadata(
@@ -187,7 +187,7 @@ std::vector<FileMetaData> aggregate_reader_metadata::parquet_metadatas() const
 }
 
 void aggregate_reader_metadata::setup_page_indexes(
-  cudf::host_span<cudf::host_span<uint8_t const> const> page_index_bytes)
+  std::span<std::span<uint8_t const> const> page_index_bytes)
 {
   CUDF_EXPECTS(page_index_bytes.size() == per_file_metadata.size(),
                "Page index byte span count must equal the number of sources");
@@ -286,7 +286,7 @@ std::size_t aggregate_reader_metadata::total_rows_in_row_groups(
 std::unique_ptr<cudf::column> aggregate_reader_metadata::build_all_true_row_mask(
   std::span<std::vector<size_type> const> row_group_indices,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr) const
+  cudf::memory_resources mr) const
 {
   CUDF_FUNC_RANGE();
   auto const num_rows = total_rows_in_row_groups(row_group_indices);
@@ -294,9 +294,8 @@ std::unique_ptr<cudf::column> aggregate_reader_metadata::build_all_true_row_mask
                "Total rows in row groups exceed the cudf's column size limit. Retry with a smaller "
                "set of row groups",
                std::invalid_argument);
-  auto true_scalar =
-    cudf::numeric_scalar<bool>(true, true, stream, cudf::get_current_device_resource_ref());
-  return cudf::make_column_from_scalar(true_scalar, num_rows, stream, mr);
+  auto true_scalar = cudf::numeric_scalar<bool>(true, true, stream, mr.get_temporary_mr());
+  return cudf::make_column_from_scalar(true_scalar, num_rows, stream, mr.get_output_mr());
 }
 
 std::tuple<std::vector<input_column_info>,
@@ -368,10 +367,7 @@ aggregate_reader_metadata::filter_row_groups_with_byte_range(
   std::size_t bytes_to_skip,
   std::optional<std::size_t> const& bytes_to_read) const
 {
-  return apply_byte_bounds_filter(
-    host_span<std::vector<size_type> const>{row_group_indices.data(), row_group_indices.size()},
-    bytes_to_skip,
-    bytes_to_read);
+  return apply_byte_bounds_filter(row_group_indices, bytes_to_skip, bytes_to_read);
 }
 
 std::vector<std::vector<cudf::size_type>> aggregate_reader_metadata::filter_row_groups_with_stats(
@@ -386,13 +382,7 @@ std::vector<std::vector<cudf::size_type>> aggregate_reader_metadata::filter_row_
 
   // Filter stats table with StatsAST expression and collect filtered row group indices
   auto const stats_filtered_row_group_indices = apply_stats_filters(
-    host_span<std::vector<cudf::size_type> const>{row_group_indices.data(),
-                                                  row_group_indices.size()},
-    total_row_groups,
-    host_span<data_type const>{output_dtypes.data(), output_dtypes.size()},
-    host_span<int const>{output_column_schemas.data(), output_column_schemas.size()},
-    filter,
-    stream);
+    row_group_indices, total_row_groups, output_dtypes, output_column_schemas, filter, stream);
 
   return stats_filtered_row_group_indices.value_or(all_row_group_indices(row_group_indices));
 }

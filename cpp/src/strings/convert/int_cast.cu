@@ -11,6 +11,7 @@
 #include <cudf/strings/detail/strings_children.cuh>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/strings/strings_column_view.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
@@ -35,8 +36,7 @@ namespace detail {
 namespace {
 
 struct dispatch_set_int_fn {
-  template <typename T>
-    requires(cudf::is_integral_not_bool<T>())
+  template <cudf::concepts::integral_not_bool T>
   __device__ void operator()(mutable_column_device_view& d_results,
                              size_type idx,
                              uint64_t value) const
@@ -44,7 +44,6 @@ struct dispatch_set_int_fn {
     d_results.element<T>(idx) = static_cast<T>(value);
   }
   template <typename T>
-    requires(not cudf::is_integral_not_bool<T>())
   __device__ void operator()(mutable_column_device_view&, size_type, uint64_t) const
   {
     CUDF_UNREACHABLE("invalid type");
@@ -122,8 +121,7 @@ std::unique_ptr<column> cast_to_integer(strings_column_view const& input,
 namespace detail {
 
 struct dispatch_get_int_fn {
-  template <typename T>
-    requires(cudf::is_integral_not_bool<T>())
+  template <cudf::concepts::integral_not_bool T>
   __device__ uint64_t operator()(column_device_view const& d_results, size_type idx) const
   {
     // convert through the unsigned type to prevent sign-extension
@@ -131,7 +129,6 @@ struct dispatch_get_int_fn {
       static_cast<cuda::std::make_unsigned_t<T>>(d_results.element<T>(idx)));
   }
   template <typename T>
-    requires(not cudf::is_integral_not_bool<T>())
   __device__ uint64_t operator()(column_device_view const&, size_type) const
   {
     CUDF_UNREACHABLE("invalid type");

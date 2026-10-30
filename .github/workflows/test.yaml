@@ -119,6 +119,24 @@ jobs:
       arch: "amd64"
       container_image: "rapidsai/ci-conda:26.12-latest"
       script: "ci/test_cpp_memcheck.sh"
+  conda-cpp-debug-tests:
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: read
+      pull-requests: read
+    secrets: inherit # zizmor: ignore[secrets-inherit]
+    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
+    with:
+      build_type: ${{ inputs.build_type }}
+      branch: ${{ inputs.branch }}
+      date: ${{ inputs.date }}
+      sha: ${{ inputs.sha }}
+      node_type: "gpu-rtxpro6000-latest-1"
+      arch: "amd64"
+      container_image: "rapidsai/ci-conda:26.12-latest"
+      script: "ci/test_cpp_debug.sh"
   cpp-linters:
     permissions:
       actions: read

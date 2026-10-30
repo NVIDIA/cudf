@@ -189,6 +189,19 @@ files:
       - develop
       - iwyu
       - py_version
+  test_cpp_debug:
+    output: none
+    includes:
+      - build_all
+      - build_base
+      - build_cpp
+      - cuda
+      - cuda_version
+      - depends_on_libkvikio
+      - depends_on_libnvcomp
+      - depends_on_librmm
+      - depends_on_rapids_logger
+      - test_cpp
   docs:
     output: none
     includes:

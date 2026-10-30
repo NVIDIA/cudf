@@ -20,6 +20,7 @@
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
@@ -30,6 +31,7 @@
 
 #include <cuda/functional>
 #include <cuda/std/cmath>
+#include <cuda/std/concepts>
 #include <cuda/std/iterator>
 #include <cuda/std/limits>
 #include <cuda/std/type_traits>
@@ -205,7 +207,7 @@ struct saturating {
   static_assert(cuda::std::is_same_v<Op, cuda::std::plus<>> ||
                   cuda::std::is_same_v<Op, cuda::std::minus<>>,
                 "Only for addition or subtraction");
-  template <typename T, CUDF_ENABLE_IF(cuda::std::is_floating_point_v<T>)>
+  template <cuda::std::floating_point T>
   [[nodiscard]] __host__ __device__ constexpr inline cuda::std::pair<T, bool> operator()(
     T x, T y) const noexcept
   {
@@ -226,7 +228,7 @@ struct saturating {
     return {result, false};
   }
 
-  template <typename T, CUDF_ENABLE_IF(cuda::std::is_integral_v<T>&& cuda::std::is_signed_v<T>)>
+  template <cuda::std::signed_integral T>
   [[nodiscard]] __host__ __device__ constexpr inline cuda::std::pair<T, bool> operator()(
     T x, T y) const noexcept
   {
@@ -247,7 +249,7 @@ struct saturating {
     }
   }
 
-  template <typename T, CUDF_ENABLE_IF(cuda::std::is_integral_v<T>&& cuda::std::is_unsigned_v<T>)>
+  template <cuda::std::unsigned_integral T>
   [[nodiscard]] __host__ __device__ constexpr inline cuda::std::pair<T, bool> operator()(
     T x, T y) const noexcept
   {
@@ -264,7 +266,7 @@ struct saturating {
     }
   }
 
-  template <typename T, CUDF_ENABLE_IF(cudf::is_timestamp<T>())>
+  template <cudf::concepts::timestamp T>
   [[nodiscard]] __host__ __device__ constexpr inline cuda::std::pair<T, bool> operator()(
     T x, typename T::duration y) const noexcept
   {
@@ -273,7 +275,7 @@ struct saturating {
     return {T{Duration{value}}, did_overflow};
   }
 
-  template <typename T, CUDF_ENABLE_IF(cudf::is_fixed_point<T>())>
+  template <cudf::concepts::fixed_point T>
   [[nodiscard]] __host__ __device__ constexpr inline cuda::std::pair<T, bool> operator()(
     T x, typename T::rep y) const noexcept
   {
@@ -761,7 +763,7 @@ struct range_window_clamper {
            cudf::is_fixed_point<OrderbyT>();
   }
 
-  template <typename OrderbyT, CUDF_ENABLE_IF(cudf::is_timestamp<OrderbyT>())>
+  template <cudf::concepts::timestamp OrderbyT>
   [[nodiscard]] std::unique_ptr<column> operator()(
     column_view const& orderby,
     direction direction,
@@ -794,7 +796,7 @@ struct range_window_clamper {
       orderby, direction, order, grouping, nulls_at_start, delta, stream, mr);
   }
 
-  template <typename OrderbyT, CUDF_ENABLE_IF(cudf::is_fixed_point<OrderbyT>())>
+  template <cudf::concepts::fixed_point OrderbyT>
   [[nodiscard]] std::unique_ptr<column> operator()(
     column_view const& orderby,
     direction direction,
@@ -844,7 +846,7 @@ struct range_window_clamper {
     }
   }
 
-  template <typename OrderbyT, CUDF_ENABLE_IF(cudf::is_numeric_not_bool<OrderbyT>())>
+  template <cudf::concepts::arithmetic_not_bool OrderbyT>
   [[nodiscard]] std::unique_ptr<column> operator()(
     column_view const& orderby,
     direction direction,
@@ -870,10 +872,9 @@ struct range_window_clamper {
       orderby, direction, order, grouping, nulls_at_start, delta, stream, mr);
   }
 
-  template <typename OrderbyT,
-            CUDF_ENABLE_IF(cuda::std::is_same_v<OrderbyT, cudf::string_view> &&
-                           (cuda::std::is_same_v<WindowType, current_row> ||
-                            cuda::std::is_same_v<WindowType, unbounded>))>
+  template <cudf::concepts::string_view OrderbyT>
+    requires(cuda::std::same_as<WindowType, current_row> or
+             cuda::std::same_as<WindowType, unbounded>)
   [[nodiscard]] std::unique_ptr<column> operator()(
     column_view const& orderby,
     direction direction,
@@ -893,7 +894,7 @@ struct range_window_clamper {
       orderby, direction, order, grouping, nulls_at_start, delta, stream, mr);
   }
 
-  template <typename OrderbyT, CUDF_ENABLE_IF(!is_supported<OrderbyT>())>
+  template <typename OrderbyT>
   std::unique_ptr<column> operator()(column_view const&,
                                      direction,
                                      order,

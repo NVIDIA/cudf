@@ -18,6 +18,7 @@
 #include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/std/concepts>
 #include <cuda/std/utility>
 #include <cuda/stream>
 #include <thrust/scan.h>
@@ -283,7 +284,7 @@ rmm::device_uvector<T> compute_ewma_noadjust(column_view const& input,
 }
 
 struct ewma_functor {
-  template <typename T, CUDF_ENABLE_IF(!std::is_floating_point<T>::value)>
+  template <typename T>
   std::unique_ptr<column> operator()(scan_aggregation const& agg,
                                      column_view const& input,
                                      cuda::stream_ref stream,
@@ -292,7 +293,7 @@ struct ewma_functor {
     CUDF_FAIL("Unsupported type for EWMA.");
   }
 
-  template <typename T, CUDF_ENABLE_IF(std::is_floating_point<T>::value)>
+  template <cuda::std::floating_point T>
   std::unique_ptr<column> operator()(scan_aggregation const& agg,
                                      column_view const& input,
                                      cuda::stream_ref stream,

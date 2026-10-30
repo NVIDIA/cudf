@@ -22,6 +22,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
+#include <cuda/std/concepts>
 #include <cuda/std/functional>
 #include <cuda/stream>
 #include <thrust/find.h>
@@ -91,7 +92,7 @@ struct scan_functor {
 };
 
 template <typename Op>
-  requires(not std::is_same_v<Op, DeviceCount>)
+  requires(not cuda::std::same_as<Op, DeviceCount>)
 struct scan_functor<Op, cudf::string_view> {
   static std::unique_ptr<column> invoke(column_view const& input_view,
                                         bitmask_type const* mask,
@@ -103,7 +104,7 @@ struct scan_functor<Op, cudf::string_view> {
 };
 
 template <typename Op>
-  requires(not std::is_same_v<Op, DeviceCount>)
+  requires(not cuda::std::same_as<Op, DeviceCount>)
 struct scan_functor<Op, cudf::struct_view> {
   static std::unique_ptr<column> invoke(column_view const& input,
                                         bitmask_type const*,
@@ -114,8 +115,7 @@ struct scan_functor<Op, cudf::struct_view> {
   }
 };
 
-template <typename Op, typename T>
-  requires(std::is_same_v<Op, DeviceCount>)
+template <cuda::std::same_as<DeviceCount> Op, typename T>
 struct scan_functor<Op, T> {
   static std::unique_ptr<column> invoke(column_view const& input_view,
                                         bitmask_type const* mask,

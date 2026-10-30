@@ -11,6 +11,7 @@
 #include <cudf/detail/utilities/device_atomics.cuh>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/utilities/bit.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/traits.cuh>
 
 #include <cooperative_groups.h>
@@ -193,7 +194,6 @@ CUDF_KERNEL void __launch_bounds__(partial_aggregation_block_size)
 
 struct aggregation_dispatch {
   template <typename T>
-    requires(!cudf::is_nested<T>() && !cuda::std::same_as<T, dictionary32>)
   void operator()(column_view const& input,
                   aggregation_columns outputs,
                   device_span<size_type const> targets,
@@ -221,7 +221,7 @@ struct aggregation_dispatch {
   }
 
   template <typename T>
-    requires(cudf::is_nested<T>() || cuda::std::same_as<T, dictionary32>)
+    requires(cudf::concepts::nested<T> or cudf::concepts::dictionary<T>)
   void operator()(column_view const&,
                   aggregation_columns,
                   device_span<size_type const>,

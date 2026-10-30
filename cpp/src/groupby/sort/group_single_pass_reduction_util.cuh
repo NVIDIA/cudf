@@ -17,6 +17,7 @@
 #include <cudf/detail/valid_if.cuh>
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
@@ -62,7 +63,7 @@ struct null_replaced_value_accessor : value_accessor<SourceType> {
 };
 
 // Error case when no other overload or specialization is available
-template <aggregation::Kind K, typename T, typename Enable = void>
+template <aggregation::Kind K, typename T>
 struct group_reduction_functor {
   template <typename... Args>
   static std::unique_ptr<column> invoke(Args&&...)
@@ -103,10 +104,8 @@ static constexpr bool is_group_reduction_supported()
 }
 
 template <aggregation::Kind K, typename T>
-struct group_reduction_functor<
-  K,
-  T,
-  std::enable_if_t<is_group_reduction_supported<K, T>() && !cudf::is_nested<T>()>> {
+  requires(is_group_reduction_supported<K, T>() and not cudf::concepts::nested<T>)
+struct group_reduction_functor<K, T> {
   static std::unique_ptr<column> invoke(column_view const& values,
                                         size_type num_groups,
                                         cudf::device_span<cudf::size_type const> group_labels,
@@ -175,11 +174,9 @@ struct group_reduction_functor<
   }
 };
 
-template <aggregation::Kind K, typename T>
-struct group_reduction_functor<
-  K,
-  T,
-  std::enable_if_t<is_group_reduction_supported<K, T>() && cudf::is_nested<T>()>> {
+template <aggregation::Kind K, cudf::concepts::nested T>
+  requires(is_group_reduction_supported<K, T>())
+struct group_reduction_functor<K, T> {
   static std::unique_ptr<column> invoke(column_view const& values,
                                         size_type num_groups,
                                         cudf::device_span<cudf::size_type const> group_labels,

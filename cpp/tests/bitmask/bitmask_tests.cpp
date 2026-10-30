@@ -11,7 +11,7 @@
 
 #include <cudf/concatenate.hpp>
 #include <cudf/copying.hpp>
-#include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
@@ -19,8 +19,8 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/device_buffer.hpp>
-#include <rmm/device_uvector.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 
 #include <cstdint>
@@ -106,13 +106,14 @@ TEST_F(CountBitmaskTest, NullMask)
 
 // Utility to construct a mask vector. If fill_valid is false (default), it is initialized to all
 // null. Otherwise it is initialized to all valid.
-rmm::device_uvector<cudf::bitmask_type> make_mask(cudf::size_type size, bool fill_valid = false)
+auto make_mask(cudf::size_type size, bool fill_valid = false)
 {
   if (!fill_valid) {
-    return cudf::detail::make_zeroed_device_uvector<cudf::bitmask_type>(
+    return cudf::detail::make_zeroed_device_buffer<cudf::bitmask_type>(
       size, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
   } else {
-    auto ret = rmm::device_uvector<cudf::bitmask_type>(size, cudf::get_default_stream());
+    auto ret = cuda::device_buffer<cudf::bitmask_type>(
+      cudf::get_default_stream(), cudf::get_current_device_resource_ref(), size, cuda::no_init);
     CUDF_CUDA_TRY(cudaMemsetAsync(ret.data(),
                                   ~cudf::bitmask_type{0},
                                   size * sizeof(cudf::bitmask_type),

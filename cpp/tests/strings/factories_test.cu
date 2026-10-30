@@ -10,6 +10,7 @@
 
 #include <cudf/column/column_factories.hpp>
 #include <cudf/copying.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/scalar/scalar.hpp>
@@ -24,6 +25,7 @@
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/std/utility>
 #include <thrust/execution_policy.h>
 #include <thrust/host_vector.h>
@@ -53,7 +55,8 @@ TEST_F(StringsFactoriesTest, CreateColumnFromPair)
     memsize += *itr ? (cudf::size_type)strlen(*itr) : 0;
   cudf::size_type count = (cudf::size_type)h_test_strings.size();
   thrust::host_vector<char> h_buffer(memsize);
-  rmm::device_uvector<char> d_buffer(memsize, cudf::get_default_stream());
+  cuda::device_buffer<char> d_buffer(
+    cudf::get_default_stream(), cudf::get_current_device_resource_ref(), memsize, cuda::no_init);
   thrust::host_vector<string_pair> strings(count);
   thrust::host_vector<cudf::size_type> h_offsets(count + 1);
   cudf::size_type offset = 0;
@@ -72,7 +75,7 @@ TEST_F(StringsFactoriesTest, CreateColumnFromPair)
     }
     h_offsets[idx + 1] = offset;
   }
-  auto d_strings = cudf::detail::make_device_uvector(
+  auto d_strings = cudf::detail::make_device_buffer(
     strings, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
   CUDF_CUDA_TRY(cudaMemcpy(d_buffer.data(), h_buffer.data(), memsize, cudaMemcpyDefault));
   auto column = cudf::make_strings_column(d_strings);
@@ -193,7 +196,8 @@ TEST_F(StringsFactoriesTest, EmptyStringsColumn)
     cudf::make_strings_column(0, std::move(d_offsets), d_chars.release(), 0, std::move(d_nulls));
   cudf::test::expect_column_empty(results->view());
 
-  rmm::device_uvector<string_pair> d_strings{0, cudf::get_default_stream()};
+  cuda::device_buffer<string_pair> d_strings{cudf::get_default_stream(),
+                                             cudf::get_current_device_resource_ref()};
   results = cudf::make_strings_column(d_strings);
   cudf::test::expect_column_empty(results->view());
 }
@@ -215,7 +219,10 @@ TEST_F(StringsFactoriesTest, StringPairWithNullsAndEmpty)
     {0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1});
 
   auto d_column = cudf::column_device_view::create(data);
-  rmm::device_uvector<string_pair> pairs(d_column->size(), cudf::get_default_stream());
+  cuda::device_buffer<string_pair> pairs(cudf::get_default_stream(),
+                                         cudf::get_current_device_resource_ref(),
+                                         d_column->size(),
+                                         cuda::no_init);
   thrust::transform(rmm::exec_policy_nosync(cudf::get_default_stream()),
                     d_column->pair_begin<cudf::string_view, true>(),
                     d_column->pair_end<cudf::string_view, true>(),
@@ -233,8 +240,9 @@ TEST_F(StringsBatchConstructionTest, EmptyColumns)
   auto constexpr num_columns = 10;
   auto const stream          = cudf::get_default_stream();
 
-  auto const d_string_pairs = rmm::device_uvector<string_pair>{0, stream};
-  auto const input          = std::vector<cudf::device_span<string_pair const>>(
+  auto const d_string_pairs =
+    cuda::device_buffer<string_pair>{stream, cudf::get_current_device_resource_ref()};
+  auto const input = std::vector<cudf::device_span<string_pair const>>(
     num_columns, {d_string_pairs.data(), d_string_pairs.size()});
   auto const output = cudf::make_strings_column_batch(input, stream);
 
@@ -250,7 +258,8 @@ TEST_F(StringsBatchConstructionTest, AllNullsColumns)
   auto constexpr num_rows    = 100;
   auto const stream          = cudf::get_default_stream();
 
-  auto d_string_pairs = rmm::device_uvector<string_pair>{num_rows, stream};
+  auto d_string_pairs = cuda::device_buffer<string_pair>{
+    stream, cudf::get_current_device_resource_ref(), num_rows, cuda::no_init};
   thrust::uninitialized_fill_n(rmm::exec_policy_nosync(stream),
                                d_string_pairs.data(),
                                d_string_pairs.size(),
@@ -269,14 +278,14 @@ namespace {
 
 struct index_to_pair {
   int const num_test_strings;
-  char const* d_chars;
-  std::size_t const* d_offsets;
-  int const* is_null;
+  cudf::device_span<char const> d_chars;
+  cudf::device_span<std::size_t const> d_offsets;
+  cudf::device_span<int const> is_null;
 
   __device__ string_pair operator()(cudf::size_type idx)
   {
     auto const data_idx = idx % num_test_strings;
-    return {is_null[data_idx] ? nullptr : d_chars + d_offsets[data_idx],
+    return {is_null[data_idx] ? nullptr : d_chars.data() + d_offsets[data_idx],
             static_cast<cudf::size_type>(d_offsets[data_idx + 1] - d_offsets[data_idx])};
   }
 };
@@ -315,11 +324,11 @@ TEST_F(StringsBatchConstructionTest, CreateColumnsFromPairs)
     }
   }
 
-  auto const d_offsets = cudf::detail::make_device_uvector_async(h_offsets, stream, mr);
-  auto const d_chars   = cudf::detail::make_device_uvector_async(h_chars, stream, mr);
-  auto const d_is_null = cudf::detail::make_device_uvector_async(is_null, stream, mr);
+  auto const d_offsets = cudf::detail::make_device_buffer_async(h_offsets, stream, mr);
+  auto const d_chars   = cudf::detail::make_device_buffer_async(h_chars, stream, mr);
+  auto const d_is_null = cudf::detail::make_device_buffer_async(is_null, stream, mr);
 
-  std::vector<rmm::device_uvector<string_pair>> d_input;
+  std::vector<cuda::device_buffer<string_pair>> d_input;
   std::vector<cudf::device_span<string_pair const>> input;
   d_input.reserve(num_columns);
   input.reserve(num_columns);
@@ -329,12 +338,11 @@ TEST_F(StringsBatchConstructionTest, CreateColumnsFromPairs)
     auto const num_rows =
       static_cast<int>(static_cast<double>(col_idx + 1) / num_columns * max_num_rows);
 
-    auto string_pairs = rmm::device_uvector<string_pair>(num_rows, stream);
-    thrust::tabulate(
-      rmm::exec_policy_nosync(stream),
-      string_pairs.begin(),
-      string_pairs.end(),
-      index_to_pair{num_test_strings, d_chars.begin(), d_offsets.begin(), d_is_null.begin()});
+    auto string_pairs = cuda::device_buffer<string_pair>(stream, mr, num_rows, cuda::no_init);
+    thrust::tabulate(rmm::exec_policy_nosync(stream),
+                     string_pairs.begin(),
+                     string_pairs.end(),
+                     index_to_pair{num_test_strings, d_chars, d_offsets, d_is_null});
 
     d_input.emplace_back(std::move(string_pairs));
     input.emplace_back(d_input.back());
@@ -381,16 +389,16 @@ TEST_F(StringsBatchConstructionTest, DISABLED_CreateLongStringsColumns)
     }
   }
 
-  auto const d_offsets = cudf::detail::make_device_uvector_async(h_offsets, stream, mr);
-  auto const d_chars   = cudf::detail::make_device_uvector_async(h_chars, stream, mr);
-  auto const d_is_null = cudf::detail::make_device_uvector_async(is_null, stream, mr);
+  auto const d_offsets = cudf::detail::make_device_buffer_async(h_offsets, stream, mr);
+  auto const d_chars   = cudf::detail::make_device_buffer_async(h_chars, stream, mr);
+  auto const d_is_null = cudf::detail::make_device_buffer_async(is_null, stream, mr);
 
   // If we create a column by repeating h_test_strings by `max_cycles` times,
   // we will have it size around (1.5*INT_MAX) bytes.
   auto const max_cycles = static_cast<int>(static_cast<int64_t>(std::numeric_limits<int>::max()) *
                                            1.5 / h_offsets.back());
 
-  std::vector<rmm::device_uvector<string_pair>> d_input;
+  std::vector<cuda::device_buffer<string_pair>> d_input;
   std::vector<cudf::device_span<string_pair const>> input;
   d_input.reserve(num_columns);
   input.reserve(num_columns);
@@ -401,12 +409,11 @@ TEST_F(StringsBatchConstructionTest, DISABLED_CreateLongStringsColumns)
     auto const num_rows = static_cast<int>(static_cast<double>(col_idx + 1) / num_columns *
                                            max_cycles * num_test_strings);
 
-    auto string_pairs = rmm::device_uvector<string_pair>(num_rows, stream);
-    thrust::tabulate(
-      rmm::exec_policy_nosync(stream),
-      string_pairs.begin(),
-      string_pairs.end(),
-      index_to_pair{num_test_strings, d_chars.begin(), d_offsets.begin(), d_is_null.begin()});
+    auto string_pairs = cuda::device_buffer<string_pair>(stream, mr, num_rows, cuda::no_init);
+    thrust::tabulate(rmm::exec_policy_nosync(stream),
+                     string_pairs.begin(),
+                     string_pairs.end(),
+                     index_to_pair{num_test_strings, d_chars, d_offsets, d_is_null});
 
     d_input.emplace_back(std::move(string_pairs));
     input.emplace_back(d_input.back());

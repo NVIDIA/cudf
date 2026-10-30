@@ -1319,7 +1319,7 @@ __device__ void read_string_offsets_sequential(string_offset_page const& page,
 }
 
 /**
- * @brief Precompute PLAIN string offsets, with one page per warp and eight warps per CTA.
+ * @brief Precompute PLAIN string offsets, with one page per warp and string_offset_warps(4) warps per CTA.
  *
  * Page setup uses CTA-wide barriers, so every thread sets up the pages collectively
  * before the independent warp scans start. Inactive pages and a partial final group

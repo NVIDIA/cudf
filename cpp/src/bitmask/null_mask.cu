@@ -7,6 +7,7 @@
 #include <cudf/detail/null_mask.cuh>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -25,6 +26,7 @@
 #include <cub/block/block_reduce.cuh>
 #include <cuda/atomic>
 #include <cuda/bit>
+#include <cuda/buffer>
 #include <cuda/memory_resource>
 #include <cuda/numeric>
 #include <cuda/std/execution>
@@ -500,7 +502,7 @@ std::vector<size_type> batch_count_set_bits(host_span<bitmask_type const* const>
   auto const d_bitmasks = cudf::detail::make_device_uvector_async(bitmasks, stream, tmp_mr);
   auto const num_words  = num_bitmask_words(num_bits_to_count);
   auto d_non_zero_count =
-    cudf::detail::make_zeroed_device_uvector_async<size_type>(num_bitmasks, stream, tmp_mr);
+    cudf::detail::make_zeroed_device_buffer_async<size_type>(num_bitmasks, stream, tmp_mr);
 
   constexpr size_type block_size{256};
   // We use a 2D grid to launch the kernel, where the first dimension is to access elements in each

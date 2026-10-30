@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import itertools
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -196,8 +197,28 @@ def _iceberg_positions(
         options = plc.io.parquet.ParquetReaderOptions.builder(
             plc.io.SourceInfo(list(delete_files))
         ).build()
-        options.set_column_names(["pos"])
-        (positions,) = plc.io.parquet.read_parquet(options, stream=stream).tbl.columns()
+        options.set_column_names(["file_path", "pos"])
+        deletes = plc.io.parquet.read_parquet(options, stream=stream)
+        file_paths, positions = deletes.tbl.columns()
+        per_delete_file = plc.copying.split(
+            file_paths,
+            list(itertools.accumulate(deletes.num_rows_per_source[:-1])),
+            stream=stream,
+        )
+        for delete_file, referenced in zip(delete_files, per_delete_file, strict=True):
+            if (
+                plc.reduce.distinct_count(
+                    referenced,
+                    plc.types.NullPolicy.INCLUDE,
+                    plc.types.NanPolicy.NAN_IS_VALID,
+                    stream=stream,
+                )
+                > 1
+            ):
+                raise pl.exceptions.ComputeError(
+                    f"iceberg: position delete file {delete_file} references "
+                    "more than one data file"
+                )
         return positions
     puffin = lake_options.deletion_vectors.get(index)
     if puffin is None:

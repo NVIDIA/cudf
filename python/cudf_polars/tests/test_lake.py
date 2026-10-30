@@ -1047,3 +1047,49 @@ def test_scan_iceberg_deletion_vector_missing_from_puffin(
     else:
         with pytest.raises(pl.exceptions.ComputeError, match=match):
             q.collect(engine=engine)
+
+
+@pytest.mark.parametrize(
+    "single_file_positions", [(), (2,)], ids=["alone", "after_single_file"]
+)
+def test_scan_iceberg_position_delete_file_references_many_data_files(
+    engine: pl.GPUEngine,
+    iceberg_catalog: SqlCatalog,
+    tmp_path: Path,
+    single_file_positions: tuple[int, ...],
+) -> None:
+    tbl = iceberg_catalog.create_table(
+        "ns.deleted",
+        schema=pyiceberg.schema.Schema(NestedField(1, "a", LongType(), required=False)),
+    )
+    for index in range(2):
+        pl.DataFrame({"a": [4 * index + i for i in range(4)]}).write_iceberg(
+            tbl, mode="append"
+        )
+    paths = [task.file.file_path for task in tbl.scan().plan_files()]
+    delete_files = []
+    if single_file_positions:
+        delete_files.append(str(tmp_path / "single.parquet"))
+        pl.DataFrame(
+            {
+                "file_path": [paths[0]] * len(single_file_positions),
+                "pos": pl.Series(single_file_positions, dtype=pl.Int64),
+            }
+        ).write_parquet(delete_files[-1])
+    delete_files.append(str(tmp_path / "many.parquet"))
+    pl.DataFrame(
+        {"file_path": paths, "pos": pl.Series([0, 1], dtype=pl.Int64)}
+    ).write_parquet(delete_files[-1])
+    q = _scan_iceberg_files(
+        tbl, paths, _deletion_files=("iceberg", ({0: delete_files}, {}))
+    )
+    match = "references more than one data file"
+    if is_streaming_engine(engine):
+        with pytest.RaisesGroup(
+            pytest.RaisesExc(pl.exceptions.ComputeError, match=match),
+            flatten_subgroups=True,
+        ):
+            q.collect(engine=engine)
+    else:
+        with pytest.raises(pl.exceptions.ComputeError, match=match):
+            q.collect(engine=engine)

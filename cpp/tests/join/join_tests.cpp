@@ -39,6 +39,7 @@
 #include <limits>
 #include <memory>
 #include <numeric>
+#include <random>
 #include <stdexcept>
 #include <thread>
 #include <utility>
@@ -3863,6 +3864,139 @@ TEST_F(JoinTest, HashJoinPartitionedSlicedMultiBlock)
   auto concat_sort  = cudf::gather(concat->view(), *concat_order);
 
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*expected_sort, *concat_sort);
+}
+
+// sort_merge_join has faster paths for a single non-null integer or chrono key and for build
+// tables whose keys are all unique. These tests compare them with hash_join.
+struct SortMergeJoinKeyShapeTest : public JoinTest {
+  void expect_matches_hash_join(cudf::table_view const& left,
+                                cudf::table_view const& right,
+                                cudf::null_equality compare_nulls = cudf::null_equality::EQUAL,
+                                std::vector<cudf::sorted> const& right_sortedness = {
+                                  cudf::sorted::NO, cudf::sorted::YES})
+  {
+    cudf::hash_join hash_joiner(right, compare_nulls);
+    auto const expected_inner = hash_joiner.inner_join(left);
+    auto const expected_left  = hash_joiner.left_join(left);
+    for (auto const is_right_sorted : right_sortedness) {
+      SCOPED_TRACE(is_right_sorted == cudf::sorted::YES ? "right sorted" : "right unsorted");
+      cudf::sort_merge_join joiner(right, is_right_sorted, compare_nulls);
+      {
+        SCOPED_TRACE("inner join");
+        auto const [gold, result] = gather_maps_as_tables(
+          cudf::column_view{cudf::device_span<cudf::size_type const>{*expected_inner.first}},
+          cudf::column_view{cudf::device_span<cudf::size_type const>{*expected_inner.second}},
+          joiner.inner_join(left));
+        CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*gold, *result);
+      }
+      {
+        SCOPED_TRACE("left join");
+        auto const [gold, result] = gather_maps_as_tables(
+          cudf::column_view{cudf::device_span<cudf::size_type const>{*expected_left.first}},
+          cudf::column_view{cudf::device_span<cudf::size_type const>{*expected_left.second}},
+          joiner.left_join(left));
+        CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*gold, *result);
+      }
+    }
+  }
+};
+
+namespace {
+
+/// Sorted keys `0, step, 2 * step, ...`, each repeated `repeats` times.
+template <typename T>
+std::vector<T> sorted_keys(cudf::size_type num_keys, int step, int repeats)
+{
+  std::vector<T> keys;
+  for (cudf::size_type i = 0; i < num_keys; ++i) {
+    keys.insert(keys.end(), repeats, static_cast<T>(i * step));
+  }
+  return keys;
+}
+
+/// `num_rows` keys drawn from `[lo, hi]`, so some miss a build table built by `sorted_keys`.
+template <typename T>
+std::vector<T> random_keys(cudf::size_type num_rows, int lo, int hi)
+{
+  std::mt19937 engine{12345};
+  std::uniform_int_distribution<int> dist{lo, hi};
+  std::vector<T> keys(num_rows);
+  std::generate(keys.begin(), keys.end(), [&] { return static_cast<T>(dist(engine)); });
+  return keys;
+}
+
+}  // namespace
+
+TEST_F(SortMergeJoinKeyShapeTest, UniqueIntegerBuildKeys)
+{
+  auto const build = sorted_keys<int32_t>(5000, 3, 1);
+  auto const probe = random_keys<int32_t>(20000, -10, 16000);
+  column_wrapper<int32_t> right(build.begin(), build.end());
+  column_wrapper<int32_t> left(probe.begin(), probe.end());
+  expect_matches_hash_join(cudf::table_view{{left}}, cudf::table_view{{right}});
+}
+
+TEST_F(SortMergeJoinKeyShapeTest, DuplicateIntegerBuildKeys)
+{
+  auto const build = sorted_keys<int64_t>(2000, 2, 3);
+  auto const probe = random_keys<int64_t>(20000, -10, 4100);
+  column_wrapper<int64_t> right(build.begin(), build.end());
+  column_wrapper<int64_t> left(probe.begin(), probe.end());
+  expect_matches_hash_join(cudf::table_view{{left}}, cudf::table_view{{right}});
+}
+
+TEST_F(SortMergeJoinKeyShapeTest, SlicedKeys)
+{
+  auto const build = sorted_keys<int32_t>(3000, 2, 1);
+  auto const probe = random_keys<int32_t>(10000, -10, 6100);
+  column_wrapper<int32_t> right(build.begin(), build.end());
+  column_wrapper<int32_t> left(probe.begin(), probe.end());
+  auto const sliced_right = cudf::slice(right, {100, 2900})[0];
+  auto const sliced_left  = cudf::slice(left, {7, 9000})[0];
+  expect_matches_hash_join(cudf::table_view{{sliced_left}}, cudf::table_view{{sliced_right}});
+}
+
+TEST_F(SortMergeJoinKeyShapeTest, TimestampKeys)
+{
+  using T          = cudf::timestamp_s;
+  auto const build = sorted_keys<T::rep>(1000, 5, 1);
+  auto const probe = random_keys<T::rep>(5000, 0, 5100);
+  cudf::test::fixed_width_column_wrapper<T, T::rep> right(build.begin(), build.end());
+  cudf::test::fixed_width_column_wrapper<T, T::rep> left(probe.begin(), probe.end());
+  expect_matches_hash_join(cudf::table_view{{left}}, cudf::table_view{{right}});
+}
+
+TEST_F(SortMergeJoinKeyShapeTest, NullableUniqueBuildKeys)
+{
+  auto const build = sorted_keys<int32_t>(1000, 2, 1);
+  auto const probe = random_keys<int32_t>(5000, -10, 2100);
+  std::vector<bool> valid(probe.size());
+  for (std::size_t i = 0; i < valid.size(); ++i) {
+    valid[i] = i % 7 != 3;
+  }
+  column_wrapper<int32_t> right(build.begin(), build.end(), valid.begin());
+  column_wrapper<int32_t> left(probe.begin(), probe.end(), valid.begin());
+  for (auto const compare_nulls : {cudf::null_equality::EQUAL, cudf::null_equality::UNEQUAL}) {
+    // With nulls interleaved, the build keys are not in sorted order.
+    expect_matches_hash_join(
+      cudf::table_view{{left}}, cudf::table_view{{right}}, compare_nulls, {cudf::sorted::NO});
+  }
+}
+
+TEST_F(SortMergeJoinKeyShapeTest, UniqueMultiColumnBuildKeys)
+{
+  auto const build0 = sorted_keys<int32_t>(500, 1, 2);
+  std::vector<int32_t> build1(build0.size());
+  for (std::size_t i = 0; i < build1.size(); ++i) {
+    build1[i] = static_cast<int32_t>(i % 2);
+  }
+  auto const probe0 = random_keys<int32_t>(3000, -5, 510);
+  auto const probe1 = random_keys<int32_t>(3000, 0, 2);
+  column_wrapper<int32_t> right0(build0.begin(), build0.end());
+  column_wrapper<int32_t> right1(build1.begin(), build1.end());
+  column_wrapper<int32_t> left0(probe0.begin(), probe0.end());
+  column_wrapper<int32_t> left1(probe1.begin(), probe1.end());
+  expect_matches_hash_join(cudf::table_view{{left0, left1}}, cudf::table_view{{right0, right1}});
 }
 
 CUDF_TEST_PROGRAM_MAIN()

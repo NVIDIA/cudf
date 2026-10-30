@@ -81,7 +81,7 @@ def test_cast_strict_false_string_to_numeric(engine: pl.GPUEngine, dtype, strict
             with pytest.RaisesGroup(pl.exceptions.InvalidOperationError):
                 query.collect(engine=engine)
         else:
-            with pytest.raises(pl.exceptions.InvalidOperationError, match=message):
+            with pytest.raises(pl.exceptions.InvalidOperationError, match=f"^{message}$"):
                 query.collect(engine=engine)
     else:
         assert_gpu_result_equal(query, engine=engine)

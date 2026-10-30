@@ -494,7 +494,7 @@ class Column:
         ).to_py(stream=stream):
             if strict:
                 raise InvalidOperationError(
-                    f"conversion from `str` to `{target_name}` failed."
+                    f"conversion from `str` to `{target_name}` failed"
                 )
             else:
                 values = self.obj.with_mask(

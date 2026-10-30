@@ -99,7 +99,8 @@ constexpr size_type kSampleWindowLen{8};
 struct alignas(16) column_descriptor {
   void const* src_data;          // first source element; nullptr never (skip_data covers all-null)
   void* dst_data;                // first destination element; fresh allocation, offset 0
-  bitmask_type const* src_mask;  // source mask BASE pointer; nullptr if source non-nullable or skip
+  bitmask_type const* src_mask;  // source mask BASE pointer; nullptr when no bit can be clear
+                                 // (non-nullable, zero null count, or all-null skip)
   bitmask_type* dst_mask;        // destination mask; nullptr if dst non-nullable or fast-path
   int64_t mask_offset;           // bit offset into src_mask (== src.offset() for sliced sources)
   int32_t element_size;          // cudf::size_of(src.type()); one of {1, 2, 4, 8, 16}
@@ -177,13 +178,19 @@ struct data_ptr_functor {
  *
  * INVARIANT: every destination row r in [0, num_rows) is written by exactly one thread, per
  * column.
- * INVARIANT: each column's dst_mask word w is written exactly once, by lane 0 of the warp
- * covering rows [32w, 32w + 32): this requires BlockSize to be a multiple of warp_size (the
- * row stride is then a multiple of 32), which the driver guarantees. Trailing bits of the last
- * word are 0. Per-column bookkeeping (warp_valid[k], per-column ballots) keeps this true
- * independently of the tile a column belongs to.
+ *
+ * `kMasked` selects the mask machinery: `true` reads `src_mask`, ballots validity into
+ * `dst_mask` words, and accumulates `valid_counts`; `false` is launched only when no descriptor
+ * carries either mask, so it drops the ballots, mask-word stores, source-mask reads, and
+ * valid-bit tallies entirely.
+ *
+ * INVARIANT (kMasked == true): each column's dst_mask word w is written exactly once, by lane 0
+ * of the warp covering rows [32w, 32w + 32): this requires BlockSize to be a multiple of
+ * warp_size (the row stride is then a multiple of 32), which the driver guarantees. Trailing
+ * bits of the last word are 0. Per-column bookkeeping (warp_valid[k], per-column ballots)
+ * keeps this true independently of the tile a column belongs to.
  */
-template <size_type BlockSize, size_type kTileCols, bool kStreaming>
+template <size_type BlockSize, size_type kTileCols, bool kStreaming, bool kMasked>
 CUDF_KERNEL __launch_bounds__(BlockSize) void batch_gather_kernel(
   input_indexalator gather_map,
   column_descriptor const* descriptors,
@@ -206,10 +213,13 @@ CUDF_KERNEL __launch_bounds__(BlockSize) void batch_gather_kernel(
       tile_descs[threadIdx.x] = descriptors[tile_begin + static_cast<size_type>(threadIdx.x)];
     }
     __syncthreads();
-    size_type warp_valid[kTileCols]{};
-    auto const row_stride = static_cast<int64_t>(blockDim.x) * gridDim.x;
-    auto row              = static_cast<int64_t>(blockIdx.x) * BlockSize + threadIdx.x;
-    auto active           = __ballot_sync(0xFFFF'FFFFu, row < num_rows);
+    // The masked instantiation tallies per-column valid bits and carries the row-loop predicate
+    // in one active-lane ballot mask; the unmasked instantiation has neither.
+    [[maybe_unused]] size_type warp_valid[kTileCols]{};
+    auto const row_stride        = static_cast<int64_t>(blockDim.x) * gridDim.x;
+    auto row                     = static_cast<int64_t>(blockIdx.x) * BlockSize + threadIdx.x;
+    [[maybe_unused]] auto active = 0xFFFF'FFFFu;
+    if constexpr (kMasked) { active = __ballot_sync(active, row < num_rows); }
     while (row < num_rows) {
       // One map load (wrap + table-level bounds check) serves every column in the tile.
       // Deliberately default-cached: the map is the reuse-critical stream and the wide-tile
@@ -222,8 +232,10 @@ CUDF_KERNEL __launch_bounds__(BlockSize) void batch_gather_kernel(
         if (tile_begin + k < num_descriptors) {
           auto const d = tile_descs[k];
           bool valid   = in_bounds;
-          if (valid && d.src_mask != nullptr) {
-            valid = bit_is_set(d.src_mask, static_cast<size_type>(d.mask_offset + idx));
+          if constexpr (kMasked) {
+            if (valid && d.src_mask != nullptr) {
+              valid = bit_is_set(d.src_mask, static_cast<size_type>(d.mask_offset + idx));
+            }
           }
           // Data at out-of-bounds/null rows may be left unwritten (fixed-width undefined-value
           // policy).
@@ -233,27 +245,31 @@ CUDF_KERNEL __launch_bounds__(BlockSize) void batch_gather_kernel(
               static_cast<char const*>(d.src_data) + static_cast<std::size_t>(idx) * d.element_size,
               d.element_size);
           }
-          if (d.dst_mask != nullptr) {
-            auto const word = __ballot_sync(active, valid);
-            if (threadIdx.x % warp_size == 0) {
-              d.dst_mask[word_index(static_cast<size_type>(row))] = word;
-              warp_valid[k] += cuda::std::popcount(word);
+          if constexpr (kMasked) {
+            if (d.dst_mask != nullptr) {
+              auto const word = __ballot_sync(active, valid);
+              if (threadIdx.x % warp_size == 0) {
+                d.dst_mask[word_index(static_cast<size_type>(row))] = word;
+                warp_valid[k] += cuda::std::popcount(word);
+              }
             }
           }
         }
       }
       row += row_stride;
-      active = __ballot_sync(active, row < num_rows);
+      if constexpr (kMasked) { active = __ballot_sync(active, row < num_rows); }
     }
-    if (valid_counts != nullptr) {
+    if constexpr (kMasked) {
+      if (valid_counts != nullptr) {
 #pragma unroll
-      for (int32_t k = 0; k < kTileCols; ++k) {
-        auto const col = tile_begin + k;
-        if (col < num_descriptors && tile_descs[k].dst_mask != nullptr) {
-          auto const block_valid = single_lane_block_sum_reduce<BlockSize, 0>(warp_valid[k]);
-          if (threadIdx.x == 0 && block_valid > 0) {
-            cuda::atomic_ref<size_type, cuda::thread_scope_device> ref{valid_counts[col]};
-            ref.fetch_add(block_valid, cuda::std::memory_order_relaxed);
+        for (int32_t k = 0; k < kTileCols; ++k) {
+          auto const col = tile_begin + k;
+          if (col < num_descriptors && tile_descs[k].dst_mask != nullptr) {
+            auto const block_valid = single_lane_block_sum_reduce<BlockSize, 0>(warp_valid[k]);
+            if (threadIdx.x == 0 && block_valid > 0) {
+              cuda::atomic_ref<size_type, cuda::thread_scope_device> ref{valid_counts[col]};
+              ref.fetch_add(block_valid, cuda::std::memory_order_relaxed);
+            }
           }
         }
       }
@@ -633,9 +649,14 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
       }
       auto const src_data =
         cudf::type_dispatcher<dispatch_storage_type>(src.type(), data_ptr_functor{}, src);
+      // A cached zero null count means no source bit is clear, so the mask cannot change any
+      // row's validity: drop it here to keep the call eligible for the mask-free instantiation.
+      // The destination mask policy above keys off `dst_mask` only and is unaffected.
+      bitmask_type const* src_mask = skip_data ? nullptr : src.null_mask();
+      if (src.null_count() == 0) { src_mask = nullptr; }
       descriptors.push_back(column_descriptor{src_data,
                                               dst->mutable_view().data<std::byte>(),
-                                              skip_data ? nullptr : src.null_mask(),
+                                              src_mask,
                                               dst_mask,
                                               static_cast<int64_t>(src.offset()),
                                               static_cast<int32_t>(cudf::size_of(src.type())),
@@ -655,7 +676,14 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
                                     host_span<column_descriptor const>{staging},
                                     stream);
 
-    auto const any_kernel_masks = not kernel_masked_positions.empty();
+    // The mask-free instantiation is valid only when NO descriptor writes a destination mask or
+    // reads a source mask. `kernel_masked_positions` covers the destination side only, so the
+    // source side is checked here as well; both are host descriptor fields, not device state.
+    auto const any_kernel_masks =
+      not kernel_masked_positions.empty() or
+      std::any_of(descriptors.begin(), descriptors.end(), [](column_descriptor const& d) {
+        return d.src_mask != nullptr;
+      });
     rmm::device_uvector<size_type> valid_counts(0, stream, temp_mr);
     if (any_kernel_masks) {
       valid_counts = cudf::detail::make_zeroed_device_uvector_async<size_type>(
@@ -674,16 +702,26 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
           cudf::util::div_rounding_up_safe(static_cast<size_type>(descriptors.size()), kTileCols),
           65535)),
         1};
-      batch_gather_kernel<block_size, kTileCols, kStreaming>
-        <<<grid, block_size, 0, stream.get()>>>(map_begin,
-                                                d_descriptors.data(),
-                                                static_cast<size_type>(descriptors.size()),
-                                                num_rows,
-                                                num_src_rows,
-                                                bounds_policy == out_of_bounds_policy::NULLIFY,
-                                                neg_indices == negative_index_policy::ALLOWED,
-                                                any_kernel_masks ? valid_counts.data() : nullptr);
-      CUDF_CUDA_TRY(cudaGetLastError());
+      // The mask-free choice comes from host descriptor fields, so it selects the instantiation
+      // directly; the unmasked one never receives a `valid_counts` buffer.
+      auto const launch = [&](auto masked_constant) {
+        constexpr bool kMasked = decltype(masked_constant)::value;
+        batch_gather_kernel<block_size, kTileCols, kStreaming, kMasked>
+          <<<grid, block_size, 0, stream.get()>>>(map_begin,
+                                                  d_descriptors.data(),
+                                                  static_cast<size_type>(descriptors.size()),
+                                                  num_rows,
+                                                  num_src_rows,
+                                                  bounds_policy == out_of_bounds_policy::NULLIFY,
+                                                  neg_indices == negative_index_policy::ALLOWED,
+                                                  kMasked ? valid_counts.data() : nullptr);
+        CUDF_CUDA_TRY(cudaGetLastError());
+      };
+      if (any_kernel_masks) {
+        launch(std::true_type{});
+      } else {
+        launch(std::false_type{});
+      }
     };
     // Resolve the routed tile width only now: the sync waits for the enqueued sample copies
     // AND for the allocation/descriptor work above, hiding the sampler latency behind it.

@@ -52,9 +52,11 @@ std::unique_ptr<cudf::table> run_batch_gather(
     cudf::memory_resources{cudf::get_current_device_resource_ref()});
 }
 
-std::unique_ptr<cudf::table> run_batch_gather_tile(cudf::table_view const& source,
-                                                   cudf::column_view const& map,
-                                                   cudf::size_type tile_cols);
+std::unique_ptr<cudf::table> run_batch_gather_tile(
+  cudf::table_view const& source,
+  cudf::column_view const& map,
+  cudf::size_type tile_cols,
+  cudf::out_of_bounds_policy bounds = cudf::out_of_bounds_policy::DONT_CHECK);
 
 std::unique_ptr<cudf::table> run_reference(
   cudf::table_view const& source,
@@ -595,6 +597,28 @@ TEST_F(BatchGatherPolicyTest, ExplicitWideTileMaskedDifferential)
   EXPECT_TRUE(result->view().column(0).nullable());
 }
 
+TEST_F(BatchGatherPolicyTest, ExplicitWideTileMaskedNullifyDifferential)
+{
+  // kMasked = true with kTileCols = 8: the wide tile is reachable only through the explicit
+  // tile_cols overload. NULLIFY plus a null-bearing source keeps both mask sides live, and the
+  // out-of-bounds entry makes destination validity depend on the bounds check as well.
+  constexpr cudf::size_type num_rows{1000};
+  auto source_column = make_fixed_column<int32_t>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type i) { return i % 2 != 0; });
+  auto host_map = shuffled_iota(num_rows);
+  host_map[0]   = num_rows + 1;  // Out of bounds: NULLIFY must clear this row.
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+  cudf::table_view source_table({source_column->view()});
+
+  auto result =
+    run_batch_gather_tile(source_table, gather_map, 8, cudf::out_of_bounds_policy::NULLIFY);
+  auto reference = run_reference(source_table, gather_map, cudf::out_of_bounds_policy::NULLIFY);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+  EXPECT_EQ(result->view().column(0).null_count(), reference->view().column(0).null_count());
+  EXPECT_GT(result->view().column(0).null_count(), 0);
+}
+
 // ============================================================================
 // §5.6 Mixed tables: fused + fallback must agree with the stock gather.
 // ============================================================================
@@ -979,11 +1003,12 @@ class BatchGatherRoutingTest : public cudf::test::BaseFixture {};
 
 std::unique_ptr<cudf::table> run_batch_gather_tile(cudf::table_view const& source,
                                                    cudf::column_view const& map,
-                                                   cudf::size_type tile_cols)
+                                                   cudf::size_type tile_cols,
+                                                   cudf::out_of_bounds_policy bounds)
 {
   return cudf::detail::batch_gather(source,
                                     map,
-                                    cudf::out_of_bounds_policy::DONT_CHECK,
+                                    bounds,
                                     cudf::negative_index_policy::NOT_ALLOWED,
                                     cudf::get_default_stream(),
                                     cudf::memory_resources{cudf::get_current_device_resource_ref()},

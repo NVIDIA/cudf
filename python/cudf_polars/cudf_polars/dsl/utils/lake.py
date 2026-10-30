@@ -219,7 +219,8 @@ class LakehouseScanOptions:
             If polars supplies a variant we do not understand, or the scan
             inserts missing columns but resolves the schema differently from
             an Iceberg or Delta scan. Failing here keeps us from silently
-            ignoring information that changes the result.
+            ignoring information that changes the result. Also raised for
+            Iceberg deletion vectors in remote storage, which cannot be read.
 
         Notes
         -----
@@ -271,7 +272,17 @@ class LakehouseScanOptions:
                     index: tuple(delete_files)
                     for index, delete_files in raw_position_deletes.items()
                 }
-                deletion_vectors = dict(raw_deletion_vectors)
+                deletion_vectors = {
+                    index: puffin.removeprefix("file://")
+                    for index, puffin in raw_deletion_vectors.items()
+                }
+                if any(
+                    plc.io.SourceInfo._is_remote_uri(puffin)
+                    for puffin in deletion_vectors.values()
+                ):
+                    raise NotImplementedError(
+                        "Iceberg deletion vectors in remote storage"
+                    )
             elif deletion_kind == "delta-deletion-vector":
                 frame = deletion_payload(pl.DataFrame({"path": list(paths)}))
                 if (

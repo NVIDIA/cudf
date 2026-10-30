@@ -1049,6 +1049,44 @@ def test_scan_iceberg_deletion_vector_missing_from_puffin(
             q.collect(engine=engine)
 
 
+def test_scan_iceberg_deletion_vector_file_uri(
+    engine: pl.GPUEngine, iceberg_catalog: SqlCatalog, tmp_path: Path
+) -> None:
+    tbl = iceberg_catalog.create_table(
+        "ns.deleted",
+        schema=pyiceberg.schema.Schema(NestedField(1, "a", LongType(), required=False)),
+    )
+    for index in range(2):
+        pl.DataFrame({"a": [4 * index + i for i in range(4)]}).write_iceberg(
+            tbl, mode="append"
+        )
+    paths = [task.file.file_path for task in tbl.scan().plan_files()]
+    puffin = tmp_path / "deletes.puffin"
+    puffin.write_bytes(_puffin({paths[0]: [0, 3], paths[1]: [1]}))
+    q = _scan_iceberg_files(
+        tbl,
+        paths,
+        _deletion_files=("iceberg", ({}, dict.fromkeys((0, 1), f"file://{puffin}"))),
+    )
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
+def test_scan_iceberg_remote_deletion_vector_unsupported(
+    in_memory_engine: pl.GPUEngine, iceberg_catalog: SqlCatalog
+) -> None:
+    tbl = iceberg_catalog.create_table(
+        "ns.deleted",
+        schema=pyiceberg.schema.Schema(NestedField(1, "a", LongType(), required=False)),
+    )
+    pl.DataFrame({"a": [1, 2]}).write_iceberg(tbl, mode="append")
+    q = _scan_iceberg_files(
+        tbl,
+        [task.file.file_path for task in tbl.scan().plan_files()],
+        _deletion_files=("iceberg", ({}, {0: "s3://bucket/deletes.puffin"})),
+    )
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
+
+
 @pytest.mark.parametrize(
     "single_file_positions", [(), (2,)], ids=["alone", "after_single_file"]
 )

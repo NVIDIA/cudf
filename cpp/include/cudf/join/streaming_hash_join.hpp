@@ -80,8 +80,7 @@ class streaming_hash_join {
    * @param right_key_indices Indices into `right_schema` identifying the join-key columns.
    * @param total_right_rows Upper bound on the cumulative number of right-side rows that will be
    *                         inserted; the persistent hash table is sized accordingly.
-   * @param max_num_batches Maximum number of batches. The batch ID uses
-   *                        `ceil(log2(max_num_batches))` high row-hash bits.
+   * @param max_num_batches Maximum number of batches that will be inserted.
    * @param has_nulls Whether the right table (or any later left table) may contain nulls in the
    *                  key columns.
    * @param compare_nulls Controls whether null join-key values should match or not.
@@ -156,7 +155,9 @@ class streaming_hash_join {
    * partition.
    *
    * @param left The left table, from which the tuples are probed.
-   * @param output_size Optional exact output size hint to avoid an extra count pass.
+   * @param output_size Optional value which allows users to specify the exact output size.
+   * Supplying it does not avoid any work: the output size is always computed internally and the
+   * supplied value is only validated against it.
    * @param stream CUDA stream used for device memory operations and kernel launches.
    * @param mr Memory resources used to allocate the returned device memory and any scratch
    *           needed while probing.
@@ -171,6 +172,8 @@ class streaming_hash_join {
    * @throws std::invalid_argument if `left` has nulls but the join was constructed with
    *                               `nullable_join::NO`
    * @throws cudf::data_type_error if the `left` and right-side key column types differ
+   * @throws cudf::logic_error if `output_size` is provided and does not equal the actual output
+   *                           size
    */
   [[nodiscard]] std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
                           std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,

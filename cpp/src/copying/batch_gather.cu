@@ -37,7 +37,6 @@
 #include <cuda/stream>
 
 #include <algorithm>
-#include <array>
 #include <cstring>
 #include <memory>
 #include <optional>
@@ -385,6 +384,9 @@ CUDF_KERNEL __launch_bounds__(BlockSize) void batch_gather_block_kernel(
 
 // Enqueues the map-locality sample copies on the stream (one batched D2H into pinned staging —
 // no kernel launch, no sync). Returns a handle with empty staging for unclassifiable maps.
+// Enqueues the map-locality sample copies on the stream (a pitched D2H into pinned staging,
+// plus one endpoint-window copy when the window grid is not uniform — no kernel launch, no
+// sync). Returns a handle with empty staging for unclassifiable maps.
 sampled_map_locality enqueue_map_locality_sample(column_view const& gather_map,
                                                  cuda::stream_ref stream)
 {
@@ -404,23 +406,35 @@ sampled_map_locality enqueue_map_locality_sample(column_view const& gather_map,
   auto const num_rows    = gather_map.size();
   auto const elem_size   = static_cast<size_t>(cudf::size_of(gather_map.type()));
   auto const window_size = static_cast<size_t>(kSampleWindowLen) * elem_size;
-  auto staging           = cudf::detail::make_pinned_vector_async<std::byte>(
+  auto const last_start  = static_cast<int64_t>(num_rows) - static_cast<int64_t>(kSampleWindowLen);
+  // Old grid: window w starts at floor(last_start * w / (kSampleWindows - 1)) rows, with the
+  // last window at last_start (ending at num_rows - 1). That grid is uniform only when
+  // (kSampleWindows - 1) divides last_start; in the exact case one pitched copy with stride
+  // last_start / (kSampleWindows - 1) reproduces every window INCLUDING the endpoint, and
+  // otherwise the pitched copy carries windows 0..(kSampleWindows - 2) — each per-window
+  // shift from the old grid stays below kSampleWindows - 1 rows, which only feeds a routing
+  // heuristic — and the endpoint window keeps its own submission.
+  auto const pitch_rows = last_start / static_cast<int64_t>(kSampleWindows - 1);
+  bool const exact_grid = pitch_rows * static_cast<int64_t>(kSampleWindows - 1) == last_start;
+  auto staging          = cudf::detail::make_pinned_vector_async<std::byte>(
     static_cast<size_t>(kSampleWindows) * window_size, stream);
-  std::array<void*, kSampleWindows> dsts{};
-  std::array<void const*, kSampleWindows> srcs{};
-  std::array<size_t, kSampleWindows> sizes{};
-  auto const last_start = static_cast<int64_t>(num_rows) - static_cast<int64_t>(kSampleWindowLen);
-  for (size_t w = 0; w < kSampleWindows; ++w) {
-    auto const start =
-      static_cast<size_type>(w == kSampleWindows - 1 ? last_start
-                                                     : last_start * static_cast<int64_t>(w) /
-                                                         static_cast<int64_t>(kSampleWindows - 1));
-    srcs[w]  = gather_map.data<char>() + static_cast<std::size_t>(start) * elem_size;
-    dsts[w]  = staging.data() + static_cast<size_t>(w) * window_size;
-    sizes[w] = window_size;
+  CUDF_CUDA_TRY(
+    cudaMemcpy2DAsync(staging.data(),           // contiguous rows: window-major
+                      window_size,              // dst pitch == one window
+                      gather_map.data<char>(),  // window 0 starts at row 0
+                      static_cast<size_t>(pitch_rows) * elem_size,
+                      window_size,
+                      static_cast<size_t>(exact_grid ? kSampleWindows : kSampleWindows - 1),
+                      cudaMemcpyDefault,
+                      stream.get()));
+  if (not exact_grid) {
+    // The endpoint window (rows last_start..num_rows - 1) is off the uniform grid.
+    CUDF_CUDA_TRY(cudf::detail::memcpy_async(
+      staging.data() + static_cast<size_t>(kSampleWindows - 1) * window_size,
+      gather_map.data<char>() + static_cast<size_t>(last_start) * elem_size,
+      window_size,
+      stream));
   }
-  CUDF_CUDA_TRY(cudf::detail::memcpy_batch_async(
-    dsts.data(), srcs.data(), sizes.data(), static_cast<size_t>(kSampleWindows), stream));
   return sampled_map_locality{std::move(staging), gather_map.type().id(), elem_size};
 }
 

@@ -83,8 +83,9 @@ std::unique_ptr<table> batch_gather(table_view const& source_table,
  * the tile width is measured K-insensitive: fewer than 2 fused columns (K1 always), a
  * source/map shape whose sampled work `num_rows x num_fused_cols` is below 4M or with fewer
  * than 262144 rows (K2 while two fused columns plus the map fit half of the device L2, else
- * K1). When sampling runs, a small number of windows is copied device-to-host in one batched
- * copy plus one stream synchronization (no kernel launch) and 8 is reported only when every
+ * K1). When sampling runs, a small number of windows is copied device-to-host in a pitched
+ * copy (plus an endpoint-window copy when the window grid is not uniform) and one stream
+ * synchronization (no kernel launch); 8 is reported only when every
  * sampled window spans at most one window length of source rows — near-sorted or contiguous
  * maps, in either direction; anything else returns 1, the safe choice given that misrouting a
  * random map to the wide tile costs far more than the reverse.

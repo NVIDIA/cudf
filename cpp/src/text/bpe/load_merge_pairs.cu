@@ -42,10 +42,13 @@ namespace {
  * In the very unlikely event two different pairs produce the same fingerprint,
  * the map is rebuilt using a different salt.
  *
+ * @param input Merge pairs with each pair's halves in adjacent rows
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used for temporary allocations and the returned map
  * @return The map and the salt used to create the fingerprints
  */
 std::pair<std::unique_ptr<detail::merge_pairs_map_type>, uint64_t> initialize_merge_pairs_map(
-  cudf::column_device_view const& input, cuda::stream_ref stream)
+  cudf::column_device_view const& input, cuda::stream_ref stream, cudf::memory_resources mr)
 {
   auto const elements         = input.size() / 2;
   auto constexpr max_attempts = 4;
@@ -56,18 +59,18 @@ std::pair<std::unique_ptr<detail::merge_pairs_map_type>, uint64_t> initialize_me
   std::unique_ptr<detail::merge_pairs_map_type> merge_pairs_map;
   uint64_t salt = 0;
   for (int attempt = 0; attempt < max_attempts; ++attempt) {
-    salt = static_cast<uint64_t>(attempt) * 0x9E37'79B9'7F4A'7C15ul;
-    merge_pairs_map =
-      std::make_unique<merge_pairs_map_type>(static_cast<size_t>(elements),
-                                             merge_pairs_load_factor,
-                                             cuco::empty_key{empty_fingerprint},
-                                             cuco::empty_value{-1},
-                                             cuda::std::equal_to<fingerprint_type>{},
-                                             cuco::linear_probing<1, fingerprint_hasher>{},
-                                             cuco::thread_scope_device,
-                                             cuco_storage{},
-                                             rmm::mr::polymorphic_allocator<char>{},
-                                             stream.get());
+    salt            = static_cast<uint64_t>(attempt) * 0x9E37'79B9'7F4A'7C15ul;
+    merge_pairs_map = std::make_unique<merge_pairs_map_type>(
+      static_cast<size_t>(elements),
+      merge_pairs_load_factor,
+      cuco::empty_key{empty_fingerprint},
+      cuco::empty_value{-1},
+      cuda::std::equal_to<fingerprint_type>{},
+      cuco::linear_probing<1, fingerprint_hasher>{},
+      cuco::thread_scope_device,
+      cuco_storage{},
+      rmm::mr::polymorphic_allocator<char>{mr.get_output_mr()},
+      stream.get());
 
     // the two halves of each pair are adjacent rows and therefore contiguous in memory
     auto iter = cudf::detail::make_counting_transform_iterator(
@@ -115,19 +118,21 @@ std::pair<std::unique_ptr<detail::merge_pairs_map_type>, uint64_t> initialize_me
  * See `cross_key_type` for details.
  */
 std::unique_ptr<detail::cross_set_type> initialize_cross_set(cudf::column_device_view const& input,
-                                                             cuda::stream_ref stream)
+                                                             cuda::stream_ref stream,
+                                                             cudf::memory_resources mr)
 {
   auto const elements = input.size() / 2;
   // keys hold UTF-8 bytes which are never 0xFF so the all-ones key is never a valid key
-  auto cross_set = std::make_unique<cross_set_type>(static_cast<size_t>(elements),
-                                                    cudf::detail::CUCO_DESIRED_LOAD_FACTOR,
-                                                    cuco::empty_key{~cross_key_type{0}},
-                                                    cuda::std::equal_to<cross_key_type>{},
-                                                    cuco::linear_probing<1, cross_hasher>{},
-                                                    cuco::thread_scope_device,
-                                                    cuco_storage{},
-                                                    rmm::mr::polymorphic_allocator<char>{},
-                                                    stream.get());
+  auto cross_set =
+    std::make_unique<cross_set_type>(static_cast<size_t>(elements),
+                                     cudf::detail::CUCO_DESIRED_LOAD_FACTOR,
+                                     cuco::empty_key{~cross_key_type{0}},
+                                     cuda::std::equal_to<cross_key_type>{},
+                                     cuco::linear_probing<1, cross_hasher>{},
+                                     cuco::thread_scope_device,
+                                     cuco_storage{},
+                                     rmm::mr::polymorphic_allocator<char>{mr.get_output_mr()},
+                                     stream.get());
 
   // key is the last character of the left half and the first character of the right half
   auto iter = cudf::detail::make_counting_transform_iterator(
@@ -149,32 +154,34 @@ std::unique_ptr<detail::cross_set_type> initialize_cross_set(cudf::column_device
 }
 
 std::unique_ptr<bpe_merge_pairs::bpe_merge_pairs_impl> create_bpe_merge_pairs_impl(
-  std::unique_ptr<cudf::column>&& input, cuda::stream_ref stream)
+  std::unique_ptr<cudf::column>&& input, cuda::stream_ref stream, cudf::memory_resources mr)
 {
-  auto d_input             = cudf::column_device_view::create(input->view(), stream);
-  auto [merge_pairs, salt] = initialize_merge_pairs_map(*d_input, stream);
-  auto cross_set           = initialize_cross_set(*d_input, stream);
+  auto d_input = cudf::column_device_view::create(input->view(), stream, mr.get_output_mr());
+  auto [merge_pairs, salt] = initialize_merge_pairs_map(*d_input, stream, mr);
+  auto cross_set           = initialize_cross_set(*d_input, stream, mr);
   return std::make_unique<nvtext::bpe_merge_pairs::bpe_merge_pairs_impl>(
     std::move(input), std::move(d_input), std::move(merge_pairs), std::move(cross_set), salt);
 }
 
 std::unique_ptr<bpe_merge_pairs::bpe_merge_pairs_impl> create_bpe_merge_pairs_impl(
-  cudf::strings_column_view const& input,
-  cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::strings_column_view const& input, cuda::stream_ref stream, cudf::memory_resources mr)
 {
   auto const space = std::string(" ");  // workaround to ARM issue
   auto pairs =
-    cudf::strings::split_record(input, cudf::string_scalar(space, true, stream, mr), 1, stream, mr);
+    cudf::strings::split_record(input,
+                                cudf::string_scalar(space, true, stream, mr.get_temporary_mr()),
+                                1,
+                                stream,
+                                mr.get_output_mr());
   auto content = pairs->release();
-  return create_bpe_merge_pairs_impl(std::move(content.children.back()), stream);
+  return create_bpe_merge_pairs_impl(std::move(content.children.back()), stream, mr);
 }
 
 }  // namespace
 
 std::unique_ptr<bpe_merge_pairs> load_merge_pairs(cudf::strings_column_view const& merge_pairs,
                                                   cuda::stream_ref stream,
-                                                  rmm::device_async_resource_ref mr)
+                                                  cudf::memory_resources mr)
 {
   CUDF_EXPECTS(!merge_pairs.is_empty(), "Merge pairs must not be empty");
   CUDF_EXPECTS(!merge_pairs.has_nulls(), "Merge pairs may not contain nulls");
@@ -185,7 +192,7 @@ std::unique_ptr<bpe_merge_pairs> load_merge_pairs(cudf::strings_column_view cons
 
 std::unique_ptr<bpe_merge_pairs> load_merge_pairs(cudf::strings_column_view const& merge_pairs,
                                                   cuda::stream_ref stream,
-                                                  rmm::device_async_resource_ref mr)
+                                                  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::load_merge_pairs(merge_pairs, stream, mr);
@@ -208,14 +215,14 @@ bpe_merge_pairs::bpe_merge_pairs_impl::bpe_merge_pairs_impl(
 
 bpe_merge_pairs::bpe_merge_pairs(std::unique_ptr<cudf::column>&& input,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref)
-  : impl(detail::create_bpe_merge_pairs_impl(std::move(input), stream).release())
+                                 cudf::memory_resources mr)
+  : impl(detail::create_bpe_merge_pairs_impl(std::move(input), stream, mr).release())
 {
 }
 
 bpe_merge_pairs::bpe_merge_pairs(cudf::strings_column_view const& input,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cudf::memory_resources mr)
   : impl(detail::create_bpe_merge_pairs_impl(input, stream, mr).release())
 {
 }

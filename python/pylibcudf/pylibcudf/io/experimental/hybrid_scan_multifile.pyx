@@ -609,7 +609,7 @@ cdef class HybridScanMultiFile:
             list(c_result.second),
         )
 
-    def setup_chunking_for_payload_columns(
+    def setup_chunking_for_payload_pages(
         self,
         size_t chunk_read_limit,
         size_t pass_read_limit,
@@ -662,7 +662,7 @@ cdef class HybridScanMultiFile:
 
         cdef column_view mask_view = row_mask.view()
         with nogil:
-            self.c_obj.get()[0].setup_chunking_for_payload_columns(
+            self.c_obj.get()[0].setup_chunking_for_payload_pages(
                 chunk_read_limit,
                 pass_read_limit,
                 host_span[const_vector_size_type](

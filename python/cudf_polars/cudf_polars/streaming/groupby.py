@@ -507,7 +507,7 @@ def _(
             )
         )
     except NotImplementedError:
-        if shuffled:  # pragma: no cover
+        if shuffled and not dynamic_planning:  # pragma: no cover
             # Don't fallback if we are already shuffled.
             # We can just preserve the child's partitioning
             new_node = ir.reconstruct([child])

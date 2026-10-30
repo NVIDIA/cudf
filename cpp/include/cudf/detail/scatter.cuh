@@ -196,7 +196,7 @@ struct column_scatterer_impl<dictionary32> {
                                      rmm::device_async_resource_ref mr) const
   {
     if (target_in.is_empty())  // empty begets empty
-      return make_empty_column(type_id::DICTIONARY32);
+      return empty_like(target_in);
     if (source_in.is_empty())  // no input, just make a copy
       return std::make_unique<column>(target_in, stream, mr);
 

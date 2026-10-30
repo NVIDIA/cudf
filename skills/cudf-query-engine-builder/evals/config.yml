@@ -1,9 +1,18 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 schema_version: 1
 harbor:
   task_source: evals_json
+  sandbox:
+    templates:
+      codex: harbor-eval-cudf-cpp-codex-0f56b9bd
+      claude-code: harbor-eval-cudf-cpp-claude-code-0f56b9bd
   n_attempts: 1
   n_concurrent: 1
+  stop_on_pass: false
 skill_workspace:
   mode: isolated
 grading:
-  mode: default
+  mode: default_plus_custom
+  custom_metrics:
+    - compiled_fixture_correctness

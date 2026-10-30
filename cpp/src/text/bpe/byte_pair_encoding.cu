@@ -704,20 +704,23 @@ void encode_segments(char const* d_input_chars,
                      int64_t chars_size,
                      bpe_merge_pairs const& merge_pairs,
                      int8_t* d_spaces,
-                     cuda::stream_ref stream)
+                     cuda::stream_ref stream,
+                     cudf::memory_resources mr)
 {
+  auto const temp_mr = mr.get_temporary_mr();
   auto const d_flags = cuda::transform_iterator(
     d_spaces,
     cuda::proclaim_return_type<IndexType>([] __device__(int8_t v) -> IndexType { return v; }));
   auto const num_segments = cudf::detail::reduce(
     d_flags, d_flags + chars_size, IndexType{0}, cuda::std::plus<IndexType>{}, stream);
-  auto d_segments = rmm::device_uvector<IndexType>(num_segments + 1, stream);
+  auto d_segments = rmm::device_uvector<IndexType>(num_segments + 1, stream, temp_mr);
   cudf::detail::copy_if(cuda::counting_iterator<IndexType>{0},
                         cuda::counting_iterator<IndexType>{static_cast<IndexType>(chars_size)},
                         d_spaces,
                         d_segments.begin(),
                         cuda::std::identity{},
-                        stream);
+                        stream,
+                        mr.as_temporary());
   auto const end_offset = static_cast<IndexType>(chars_size);
   d_segments.set_element_async(num_segments, end_offset, stream);
 
@@ -727,7 +730,7 @@ void encode_segments(char const* d_input_chars,
     std::clamp(static_cast<IndexType>(std::bit_ceil(static_cast<uint64_t>(num_segments / 4 + 1))),
                IndexType{1024},
                IndexType{1} << 22);
-  auto d_slots = rmm::device_uvector<IndexType>(num_slots, stream);
+  auto d_slots = rmm::device_uvector<IndexType>(num_slots, stream, temp_mr);
   CUDF_CUDA_TRY(cudaMemsetAsync(d_slots.data(), 0xFF, num_slots * sizeof(IndexType), stream.get()));
   auto const dedup =
     bpe_dedup_fn<IndexType>{d_input_chars, d_segments.data(), d_slots.data(), num_slots - 1};
@@ -755,13 +758,14 @@ void encode_segments(char const* d_input_chars,
                                }));
   auto const num_encode = cudf::detail::reduce(
     d_encode, d_encode + num_segments, IndexType{0}, cuda::std::plus<IndexType>{}, stream);
-  auto d_encode_ids = rmm::device_uvector<IndexType>(num_encode, stream);
+  auto d_encode_ids = rmm::device_uvector<IndexType>(num_encode, stream, temp_mr);
   cudf::detail::copy_if(cuda::counting_iterator<IndexType>{0},
                         cuda::counting_iterator<IndexType>{num_segments},
                         d_encode,
                         d_encode_ids.begin(),
                         cuda::std::identity{},
-                        stream);
+                        stream,
+                        mr.as_temporary());
 
   // encode the distinct short segments with a warp per 32 segments
   auto const finder = get_bpe_merge_pairs_impl(merge_pairs)->get_rank_finder();
@@ -791,30 +795,30 @@ void encode_segments(char const* d_input_chars,
   auto const num_long = cudf::detail::reduce(
     d_is_long, d_is_long + num_segments, IndexType{0}, cuda::std::plus<IndexType>{}, stream);
   if (num_long > 0) {
-    auto d_long_ids = rmm::device_uvector<IndexType>(num_long, stream);
+    auto d_long_ids = rmm::device_uvector<IndexType>(num_long, stream, temp_mr);
     cudf::detail::copy_if(cuda::counting_iterator<IndexType>{0},
                           cuda::counting_iterator<IndexType>{num_segments},
                           d_seg_sizes,
                           d_long_ids.begin(),
                           cuda::std::identity{},
-                          stream);
+                          stream,
+                          mr.as_temporary());
     // working memory is only needed for the long segments
-    auto d_scratch_offsets  = rmm::device_uvector<IndexType>(num_long + 1, stream);
+    auto d_scratch_offsets  = rmm::device_uvector<IndexType>(num_long + 1, stream, temp_mr);
     auto const d_long_sizes = cuda::transform_iterator(
       cuda::counting_iterator<IndexType>{0},
       cuda::proclaim_return_type<IndexType>(
         [d_seg_sizes, d_long_ids = d_long_ids.data(), num_long] __device__(IndexType idx) {
           return idx < num_long ? d_seg_sizes[d_long_ids[idx]] : IndexType{0};
         }));
-    auto const scratch_size =
-      cudf::detail::sizes_to_offsets(d_long_sizes,
-                                     d_long_sizes + num_long + 1,
-                                     d_scratch_offsets.begin(),
-                                     0,
-                                     stream,
-                                     cudf::get_current_device_resource_ref());
-    rmm::device_uvector<int8_t> d_rerank(scratch_size, stream);
-    rmm::device_uvector<cudf::size_type> d_ranks(scratch_size, stream);
+    auto const scratch_size = cudf::detail::sizes_to_offsets(d_long_sizes,
+                                                             d_long_sizes + num_long + 1,
+                                                             d_scratch_offsets.begin(),
+                                                             0,
+                                                             stream,
+                                                             mr.as_temporary());
+    rmm::device_uvector<int8_t> d_rerank(scratch_size, stream, temp_mr);
+    rmm::device_uvector<cudf::size_type> d_ranks(scratch_size, stream, temp_mr);
     auto const long_grid = static_cast<int>(std::min<int64_t>(num_long, int64_t{1} << 20));
     bpe_parallel_fn<decltype(finder), IndexType>
       <<<long_grid, long_block_size, 0, stream.get()>>>(d_input_chars,
@@ -850,12 +854,13 @@ std::unique_ptr<cudf::column> byte_pair_encoding(cudf::strings_column_view const
                                                  bpe_merge_pairs const& merge_pairs,
                                                  cudf::string_scalar const& separator,
                                                  cuda::stream_ref stream,
-                                                 rmm::device_async_resource_ref mr)
+                                                 cudf::memory_resources mr)
 {
   if (input.is_empty()) { return cudf::make_empty_column(cudf::type_id::STRING); }
+  auto const temp_mr = mr.get_temporary_mr();
   if (input.chars_size(stream) == 0) {  // all rows are empty or null
     auto result = cudf::make_column_from_scalar(
-      cudf::string_scalar("", true, stream), input.size(), stream, mr);
+      cudf::string_scalar("", true, stream, temp_mr), input.size(), stream, mr.get_output_mr());
     result->set_null_mask(cudf::detail::copy_bitmask(input.parent(), stream, mr),
                           input.null_count());
     return result;
@@ -867,13 +872,12 @@ std::unique_ptr<cudf::column> byte_pair_encoding(cudf::strings_column_view const
 
   // the chars data for null rows would otherwise be encoded and written to the output
   if (input.has_nulls() && cudf::detail::has_nonempty_nulls(input.parent(), stream)) {
-    auto const sanitized = cudf::detail::purge_nonempty_nulls(
-      input.parent(), stream, cudf::get_current_device_resource_ref());
+    auto const sanitized = cudf::detail::purge_nonempty_nulls(input.parent(), stream, temp_mr);
     return detail::byte_pair_encoding(
       cudf::strings_column_view(sanitized->view()), merge_pairs, separator, stream, mr);
   }
 
-  auto const d_strings = cudf::column_device_view::create(input.parent(), stream);
+  auto const d_strings = cudf::column_device_view::create(input.parent(), stream, temp_mr);
 
   auto const first_offset  = (input.offset() == 0) ? 0L
                                                    : cudf::strings::detail::get_offset_value(
@@ -888,7 +892,7 @@ std::unique_ptr<cudf::column> byte_pair_encoding(cudf::strings_column_view const
   auto const chars_begin = cuda::counting_iterator<int64_t>{0};
 
   // identifies non-merged pairs; also used to identify segment boundaries before encoding
-  rmm::device_uvector<int8_t> d_spaces(chars_size, stream);
+  rmm::device_uvector<int8_t> d_spaces(chars_size, stream, temp_mr);
 
   {
     // locate unpairable boundaries to create artificial segments that can be encoded
@@ -904,7 +908,7 @@ std::unique_ptr<cudf::column> byte_pair_encoding(cudf::strings_column_view const
     auto const input_offsets =
       cudf::detail::offsetalator_factory::make_input_iterator(input.offsets(), input.offset());
     thrust::for_each_n(
-      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      rmm::exec_policy_nosync(stream, temp_mr),
       cuda::counting_iterator<cudf::size_type>{0},
       input.size(),
       [input_offsets, first_offset, d_spaces = d_spaces.data()] __device__(cudf::size_type idx) {
@@ -913,14 +917,17 @@ std::unique_ptr<cudf::column> byte_pair_encoding(cudf::strings_column_view const
       });
 
     if (chars_size <= std::numeric_limits<int32_t>::max()) {
-      encode_segments<int32_t>(d_input_chars, chars_size, merge_pairs, d_spaces.data(), stream);
+      encode_segments<int32_t>(
+        d_input_chars, chars_size, merge_pairs, d_spaces.data(), stream, mr.as_temporary());
     } else {
-      encode_segments<int64_t>(d_input_chars, chars_size, merge_pairs, d_spaces.data(), stream);
+      encode_segments<int64_t>(
+        d_input_chars, chars_size, merge_pairs, d_spaces.data(), stream, mr.as_temporary());
     }
   }
 
   // compute the output sizes
-  auto output_sizes = rmm::device_uvector<cudf::size_type>(input.size(), stream);
+  auto output_sizes =
+    cuda::device_buffer<cudf::size_type>(stream, temp_mr, input.size(), cuda::no_init);
   bpe_finalize<<<input.size(), block_size, 0, stream.get()>>>(
     *d_strings, d_input_chars, d_spaces.data(), output_sizes.data());
   CUDF_CUDA_TRY(cudaGetLastError());
@@ -930,7 +937,7 @@ std::unique_ptr<cudf::column> byte_pair_encoding(cudf::strings_column_view const
     output_sizes.begin(), output_sizes.end(), stream, mr);
 
   // build the output: the inclusive count of separators gives each byte's output position
-  rmm::device_uvector<char> chars(bytes, stream, mr);
+  rmm::device_uvector<char> chars(bytes, stream, mr.get_output_mr());
   auto const sep_char = separator.to_string(stream)[0];
   auto const d_counts = cuda::transform_iterator(
     chars_begin,
@@ -943,7 +950,7 @@ std::unique_ptr<cudf::column> byte_pair_encoding(cudf::strings_column_view const
   std::size_t temp_bytes = 0;
   CUDF_CUDA_TRY(cub::DeviceScan::InclusiveSum(
     nullptr, temp_bytes, d_counts, d_output, chars_size, stream.get()));
-  auto temp_storage = rmm::device_buffer(temp_bytes, stream);
+  auto temp_storage = rmm::device_buffer(temp_bytes, stream, temp_mr);
   CUDF_CUDA_TRY(cub::DeviceScan::InclusiveSum(
     temp_storage.data(), temp_bytes, d_counts, d_output, chars_size, stream.get()));
 
@@ -960,7 +967,7 @@ std::unique_ptr<cudf::column> byte_pair_encoding(cudf::strings_column_view const
                                                  bpe_merge_pairs const& merges_table,
                                                  cudf::string_scalar const& separator,
                                                  cuda::stream_ref stream,
-                                                 rmm::device_async_resource_ref mr)
+                                                 cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::byte_pair_encoding(input, merges_table, separator, stream, mr);

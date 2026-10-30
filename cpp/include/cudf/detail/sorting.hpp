@@ -27,7 +27,7 @@ std::unique_ptr<column> sorted_order(table_view const& input,
                                      std::vector<order> const& column_order,
                                      std::vector<null_order> const& null_precedence,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr);
+                                     cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::stable_sorted_order
@@ -38,7 +38,7 @@ std::unique_ptr<column> stable_sorted_order(table_view const& input,
                                             std::vector<order> const& column_order,
                                             std::vector<null_order> const& null_precedence,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr);
+                                            cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::sort_by_key
@@ -64,7 +64,7 @@ std::unique_ptr<column> rank(column_view const& input,
                              null_order null_precedence,
                              bool percentage,
                              cuda::stream_ref stream,
-                             rmm::device_async_resource_ref mr);
+                             cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::stable_sort_by_key

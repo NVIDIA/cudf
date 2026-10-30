@@ -81,6 +81,9 @@ cpdef Column normalize_unicode(
     Input and output are UTF-8 encoded. Each string is normalized
     independently; null entries produce null output entries.
 
+    The temporary device memory required is approximately 5x the
+    input data size.
+
     For details, see :cpp:func:`nvtext::normalize_unicode`.
 
     Parameters

@@ -9,6 +9,7 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/offsets_iterator_factory.cuh>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
@@ -22,6 +23,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/std/iterator>
 #include <cuda/stream>
 #include <thrust/binary_search.h>
@@ -78,14 +80,16 @@ auto create_strings_device_views(host_span<column_view const> views, cuda::strea
       return static_cast<size_t>(col.size());
     });
   thrust::inclusive_scan(thrust::host, offset_it, input_offsets.end(), offset_it);
-  auto d_input_offsets = cudf::detail::make_device_uvector_async(
+  auto d_input_offsets = cudf::detail::make_device_buffer_async(
     input_offsets, stream, cudf::get_current_device_resource_ref());
   auto const output_size = input_offsets.back();
 
   // Compute the partition offsets and size of chars column
   // Note: Using 64-bit size_t so we can detect overflow of 32-bit size_type
-  auto d_partition_offsets = rmm::device_uvector<size_t>(views.size() + 1, stream);
-  d_partition_offsets.set_element_to_zero_async(0, stream);  // zero first element
+  auto d_partition_offsets = cuda::device_buffer<size_t>(
+    stream, cudf::get_current_device_resource_ref(), views.size() + 1, cuda::no_init);
+  CUDF_CUDA_TRY(cudaMemsetAsync(
+    d_partition_offsets.data(), 0, sizeof(size_t), stream.get()));  // zero first element
 
   thrust::transform_inclusive_scan(
     rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
@@ -94,7 +98,12 @@ auto create_strings_device_views(host_span<column_view const> views, cuda::strea
     std::next(d_partition_offsets.begin()),
     chars_size_transform{},
     cuda::std::plus{});
-  auto const output_chars_size = d_partition_offsets.back_element(stream);
+  size_t output_chars_size;
+  CUDF_CUDA_TRY(
+    cudf::detail::memcpy_async(&output_chars_size,
+                               d_partition_offsets.data() + d_partition_offsets.size() - 1,
+                               sizeof(output_chars_size),
+                               stream));
   stream.sync();  // ensure copy of output_chars_size is complete before returning
 
   return std::make_tuple(std::move(device_view_owners),

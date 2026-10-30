@@ -384,7 +384,7 @@ TEST_F(HybridScanMultifileTest, SparseDictionaryEncodedPages)
   EXPECT_EQ(expected_ranges, actual_ranges);
 
   auto page_data = fetch_multisource_device_data(inputs, page_ranges, stream, mr);
-  reader.setup_chunking_for_payload_columns(
+  reader.setup_chunking_for_payload_pages(
     0, 0, row_groups, row_mask, page_data.flat_spans, reader_options, stream, mr);
 
   ASSERT_TRUE(reader.has_next_table_chunk());
@@ -458,7 +458,7 @@ TEST_F(HybridScanMultifileTest, SparsePayloadEmptyAndAllPrunedPageData)
     auto false_scalar          = cudf::numeric_scalar<bool>{false};
     auto row_mask              = cudf::make_column_from_scalar(false_scalar, 0);
 
-    EXPECT_NO_THROW(reader->setup_chunking_for_payload_columns(
+    EXPECT_NO_THROW(reader->setup_chunking_for_payload_pages(
       0, 0, row_groups, row_mask->view(), empty_page_data, options, stream, mr));
     ASSERT_TRUE(reader->has_next_table_chunk());
     auto const result = reader->materialize_payload_columns_chunk(row_mask->view());
@@ -477,7 +477,7 @@ TEST_F(HybridScanMultifileTest, SparsePayloadEmptyAndAllPrunedPageData)
     auto const row_mask        = reader->build_all_true_row_mask(row_groups, stream, mr);
     auto const empty_page_data = std::vector<cudf::device_span<uint8_t const>>{};
 
-    EXPECT_THROW(reader->setup_chunking_for_payload_columns(
+    EXPECT_THROW(reader->setup_chunking_for_payload_pages(
                    0, 0, row_groups, row_mask->view(), empty_page_data, options, stream, mr),
                  cudf::logic_error);
   }
@@ -501,7 +501,7 @@ TEST_F(HybridScanMultifileTest, SparsePayloadEmptyAndAllPrunedPageData)
                             [](auto const& range) { return range.is_empty(); }));
     auto const all_pruned_page_data =
       std::vector<cudf::device_span<uint8_t const>>(page_ranges.first.size());
-    reader->setup_chunking_for_payload_columns(
+    reader->setup_chunking_for_payload_pages(
       0, 0, row_groups, row_mask->view(), all_pruned_page_data, options, stream, mr);
     ASSERT_TRUE(reader->has_next_table_chunk());
     auto const result = reader->materialize_payload_columns_chunk(row_mask->view());

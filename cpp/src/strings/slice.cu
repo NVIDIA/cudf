@@ -24,6 +24,7 @@
 
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/algorithm>
 #include <cuda/std/limits>
@@ -242,7 +243,8 @@ std::unique_ptr<column> compute_substrings_from_fn(strings_column_view const& in
                                                    cuda::stream_ref stream,
                                                    rmm::device_async_resource_ref mr)
 {
-  auto results = rmm::device_uvector<string_index_pair>(input.size(), stream);
+  auto results = cuda::device_buffer<string_index_pair>(
+    stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
 
   auto const d_column = column_device_view::create(input.parent(), stream);
 

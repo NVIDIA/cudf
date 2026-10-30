@@ -10,6 +10,7 @@
 #include "io/parquet/reader_impl_chunking_utils.cuh"
 #include "io/parquet/synthetic_column_helpers.hpp"
 #include "page_index_filter_utils.hpp"
+#include "runtime/context.hpp"
 
 #include <cudf/copying.hpp>
 #include <cudf/detail/stream_compaction.hpp>
@@ -20,6 +21,7 @@
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/strings/detail/utilities.hpp>
+#include <cudf/transform.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
@@ -1260,8 +1262,13 @@ table_with_metadata hybrid_scan_reader_impl::finalize_output(
     auto const final_filter      = compute_offset_filter();
     auto const final_filter_expr = final_filter.get_converted_expr();
 
-    auto final_row_mask = cudf::detail::compute_column(
-      *read_table, final_filter_expr.value().get(), _stream, _mr.get_temporary_mr());
+    auto const use_jit = cudf::get_context().use_jit() or _options.use_jit_filter;
+    auto final_row_mask =
+      use_jit
+        ? cudf::compute_column_jit(
+            read_table->view(), final_filter_expr.value().get(), _stream, _mr.get_temporary_mr())
+        : cudf::detail::compute_column(
+            *read_table, final_filter_expr.value().get(), _stream, _mr.get_temporary_mr());
     CUDF_EXPECTS(final_row_mask->view().type().id() == type_id::BOOL8,
                  "Predicate filter should return a boolean");
 

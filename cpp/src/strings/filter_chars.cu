@@ -10,6 +10,7 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/strings/detail/strings_children.cuh>
 #include <cudf/strings/detail/utilities.cuh>
@@ -21,6 +22,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/std/utility>
 #include <cuda/stream>
 #include <thrust/execution_policy.h>
@@ -42,8 +44,8 @@ namespace {
 struct filter_fn {
   column_device_view const d_strings;
   filter_type keep_characters;
-  rmm::device_uvector<char_range>::iterator table_begin;
-  rmm::device_uvector<char_range>::iterator table_end;
+  cuda::device_buffer<char_range>::const_iterator table_begin;
+  cuda::device_buffer<char_range>::const_iterator table_end;
   string_view const d_replacement;
   size_type* d_sizes{};
   char* d_chars{};
@@ -122,13 +124,13 @@ std::unique_ptr<column> filter_characters(
     characters_to_filter.begin(), characters_to_filter.end(), htable.begin(), [](auto entry) {
       return char_range{entry.first, entry.second};
     });
-  rmm::device_uvector<char_range> table =
-    cudf::detail::make_device_uvector(htable, stream, cudf::get_current_device_resource_ref());
+  cuda::device_buffer<char_range> table =
+    cudf::detail::make_device_buffer(htable, stream, cudf::get_current_device_resource_ref());
 
   auto d_strings = column_device_view::create(strings.parent(), stream);
 
   // this utility calls the strip_fn to build the offsets and chars columns
-  filter_fn ffn{*d_strings, keep_characters, table.begin(), table.end(), d_replacement};
+  filter_fn ffn{*d_strings, keep_characters, table.cbegin(), table.cend(), d_replacement};
   auto [offsets_column, chars] = make_strings_children(ffn, strings.size(), stream, mr);
 
   return make_strings_column(strings_count,

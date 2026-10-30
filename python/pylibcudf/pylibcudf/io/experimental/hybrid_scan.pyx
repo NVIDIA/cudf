@@ -706,6 +706,48 @@ cdef class HybridScanReader:
             ))
         return [ByteRangeInfo(r.offset(), r.size()) for r in ranges]
 
+    def payload_pages_byte_ranges(
+        self,
+        list row_group_indices: list[int],
+        Column row_mask,
+        ParquetReaderOptions options,
+        object stream: CudaStreamLike | None = None
+    ) -> list[ByteRangeInfo]:
+        """Get byte ranges of pages of payload columns.
+
+        Byte ranges are ordered by row group, column chunk, and page. Dictionary
+        pages precede data pages within each column chunk, and pruned pages are
+        returned as empty byte ranges.
+
+        Parameters
+        ----------
+        row_group_indices : list[int]
+            Input row group indices
+        row_mask : Column
+            Boolean column indicating which rows need to be read
+        options : ParquetReaderOptions
+            Parquet reader options
+        stream : Stream, optional
+            CUDA stream
+
+        Returns
+        -------
+        list[ByteRangeInfo]
+            Byte ranges to pages of payload columns
+        """
+        cdef vector[size_type] indices_vec = row_group_indices
+        cdef Stream _stream = _get_stream(stream)
+        cdef column_view mask_view = row_mask.view()
+        cdef vector[byte_range_info] ranges
+        with nogil:
+            ranges = move(self.c_obj.get()[0].payload_pages_byte_ranges(
+                std_span[const_size_type](indices_vec.data(), indices_vec.size()),
+                mask_view,
+                options.c_obj,
+                _stream.view().get()
+            ))
+        return [ByteRangeInfo(r.offset(), r.size()) for r in ranges]
+
     def materialize_payload_columns(
         self,
         list row_group_indices: list[int],
@@ -986,6 +1028,75 @@ cdef class HybridScanReader:
                 std_span[const_size_type](indices_vec.data(), indices_vec.size()),
                 mask_view,
                 mask_data_pages,
+                std_span[const_device_span_const_uint8_t](
+                    <const_device_span_const_uint8_t*>spans_vec.data(), spans_vec.size()
+                ),
+                options.c_obj,
+                self._stream.view().get(),
+                self.mr.get_mr()
+            )
+
+    def setup_chunking_for_payload_pages(
+        self,
+        size_t chunk_read_limit,
+        size_t pass_read_limit,
+        list row_group_indices: list[int],
+        Column row_mask,
+        object page_data: Sequence,
+        ParquetReaderOptions options,
+        object stream: CudaStreamLike | None = None,
+        DeviceMemoryResource mr=None
+    ) -> None:
+        """Setup chunking information for payload columns read page by page.
+
+        The data page mask is inferred from ``page_data``, which must be in the
+        same order as the byte ranges returned by
+        :meth:`payload_pages_byte_ranges`. Table chunks are read with
+        :meth:`materialize_payload_columns_chunk`.
+
+        Parameters
+        ----------
+        chunk_read_limit : int
+            Limit on bytes returned per chunk (0 for no limit)
+        pass_read_limit : int
+            Limit on memory for reading/decompressing (0 for no limit)
+        row_group_indices : list[int]
+            Input row group indices
+        row_mask : Column
+            Boolean column indicating which rows need to be read
+        page_data : Sequence
+            Span-like objects containing the page data of payload columns, in
+            the same order as the byte ranges returned by
+            :meth:`payload_pages_byte_ranges`. ``None`` indicates a
+            pruned page
+        options : ParquetReaderOptions
+            Parquet reader options
+        stream : Stream, optional
+            CUDA stream
+        mr : DeviceMemoryResource, optional
+            Device memory resource
+        """
+        cdef vector[size_type] indices_vec = row_group_indices
+
+        cdef vector[device_span[const_uint8_t]] spans_vec
+        for page in page_data:
+            if page is None:
+                spans_vec.push_back(device_span[const_uint8_t]())
+            else:
+                spans_vec.push_back(_get_device_span(page))
+
+        self._stream = _get_stream(stream)
+        self.mr = _get_memory_resource(mr)
+        # Released by materialize_payload_columns_chunk after the last chunk
+        self._payload_chunk_data = page_data
+
+        cdef column_view mask_view = row_mask.view()
+        with nogil:
+            self.c_obj.get()[0].setup_chunking_for_payload_pages(
+                chunk_read_limit,
+                pass_read_limit,
+                std_span[const_size_type](indices_vec.data(), indices_vec.size()),
+                mask_view,
                 std_span[const_device_span_const_uint8_t](
                     <const_device_span_const_uint8_t*>spans_vec.data(), spans_vec.size()
                 ),

@@ -129,6 +129,14 @@ class hybrid_scan_metadata {
   hybrid_scan_metadata(FileMetaData const& parquet_metadata, parquet_reader_options const& options);
 
   /**
+   * @brief Take ownership of pre-populated Parquet file metadata
+   *
+   * @param parquet_metadata Pre-populated Parquet file metadata
+   * @param options Parquet reader options
+   */
+  hybrid_scan_metadata(FileMetaData&& parquet_metadata, parquet_reader_options const& options);
+
+  /**
    * @brief Destructor for the shared Parquet metadata
    */
   ~hybrid_scan_metadata();
@@ -425,6 +433,15 @@ class hybrid_scan_reader {
                               parquet_reader_options const& options);
 
   /**
+   * @brief Constructor that takes ownership of pre-populated Parquet file metadata
+   *
+   * @param parquet_metadata Pre-populated Parquet file metadata
+   * @param options Parquet reader options
+   */
+  explicit hybrid_scan_reader(FileMetaData&& parquet_metadata,
+                              parquet_reader_options const& options);
+
+  /**
    * @brief Constructor that takes shared ownership of pre-parsed Parquet file metadata
    *
    * Constructs a reader that shares the pre-parsed metadata object.
@@ -671,6 +688,26 @@ class hybrid_scan_reader {
     std::span<size_type const> row_group_indices, parquet_reader_options const& options);
 
   /**
+   * @brief Get byte ranges of pages of payload columns
+   *
+   * Byte ranges are ordered by row group, column chunk, and page. Dictionary pages precede data
+   * pages within each column chunk. Pruned pages are represented by empty byte ranges.
+   *
+   * @throws cudf::logic_error if any selected column chunk does not have a valid offset index
+   *
+   * @param row_group_indices Input row groups indices
+   * @param row_mask Boolean column indicating which rows need to be read
+   * @param options Parquet reader options
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @return Vector of byte ranges to pages of payload columns
+   */
+  [[nodiscard]] std::vector<byte_range_info> payload_pages_byte_ranges(
+    std::span<size_type const> row_group_indices,
+    cudf::column_view const& row_mask,
+    parquet_reader_options const& options,
+    cuda::stream_ref stream);
+
+  /**
    * @brief Materialize payload columns and applies the row mask to the output table
    *
    * @param row_group_indices Input row groups indices
@@ -780,6 +817,33 @@ class hybrid_scan_reader {
     parquet_reader_options const& options,
     cuda::stream_ref stream,
     cudf::memory_resources mr);
+
+  /**
+   * @brief Setup chunking information for payload columns and preprocess the input data pages
+   *
+   * Input page data spans (including empty ones) must be in the same order as the byte ranges
+   * from `payload_pages_byte_ranges`. The data page mask is inferred from the empty spans.
+   * Table chunks are read with `materialize_payload_columns_chunk`.
+   *
+   * @param chunk_read_limit Limit on total number of bytes to be returned per table chunk. `0` if
+   * there is no limit
+   * @param pass_read_limit Limit on the memory used for reading and decompressing data. `0` if
+   * there is no limit
+   * @param row_group_indices Input row groups indices
+   * @param row_mask Boolean column indicating which rows need to be read
+   * @param page_data Device spans of page data of payload columns
+   * @param options Parquet reader options
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources used for temporary allocations and the output table chunks
+   */
+  void setup_chunking_for_payload_pages(std::size_t chunk_read_limit,
+                                        std::size_t pass_read_limit,
+                                        std::span<size_type const> row_group_indices,
+                                        cudf::column_view const& row_mask,
+                                        std::span<cudf::device_span<uint8_t const> const> page_data,
+                                        parquet_reader_options const& options,
+                                        cuda::stream_ref stream,
+                                        cudf::memory_resources mr);
 
   /**
    * @brief Materializes a chunk of payload columns and applies the corresponding range of input row

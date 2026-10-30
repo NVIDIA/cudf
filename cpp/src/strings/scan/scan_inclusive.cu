@@ -11,9 +11,9 @@
 #include <cudf/detail/utilities/device_operators.cuh>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/stream>
 #include <thrust/scan.h>
@@ -77,7 +77,8 @@ std::unique_ptr<column> scan_inclusive(column_view const& input,
   auto d_input = column_device_view::create(input, stream);
 
   // build indices of the scan operation results
-  rmm::device_uvector<size_type> result_map(input.size(), stream);
+  cuda::device_buffer<size_type> result_map(
+    stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
   thrust::inclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                          cuda::counting_iterator<size_type>{0},
                          cuda::counting_iterator<size_type>{input.size()},

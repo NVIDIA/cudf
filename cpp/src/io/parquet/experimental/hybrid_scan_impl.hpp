@@ -265,7 +265,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
 
   /**
    * @copydoc
-   * cudf::io::parquet::experimental::hybrid_scan_multifile::setup_chunking_for_payload_columns
+   * cudf::io::parquet::experimental::hybrid_scan_multifile::setup_chunking_for_payload_pages
    */
   void setup_chunked_sparse_payload_materialization(
     std::size_t chunk_read_limit,

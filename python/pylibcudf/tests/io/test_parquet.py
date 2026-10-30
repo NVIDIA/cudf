@@ -1751,3 +1751,44 @@ def test_read_parquet_output_dict_columns(tmp_path, use_builder):
         "y",
         "x",
     ]
+
+
+@pytest.mark.parametrize(
+    "decimal_width,pa_decimal",
+    [
+        (plc.TypeId.DECIMAL64, pa.decimal64(18, 2)),
+        (plc.TypeId.DECIMAL128, pa.decimal128(38, 2)),
+    ],
+)
+def test_read_parquet_nested_decimal_width(
+    tmp_path, decimal_width, pa_decimal
+):
+    def make_table(dec):
+        values = [decimal.Decimal("1.00"), None, decimal.Decimal("3.00")]
+        structs = [{"a": v} for v in values]
+        struct_type = pa.struct([("a", dec)])
+        return pa.table(
+            {
+                "list": pa.array([values, [], values], pa.list_(dec)),
+                "struct": pa.array(structs, struct_type),
+                "list_struct": pa.array(
+                    [structs, [], structs], pa.list_(struct_type)
+                ),
+            }
+        )
+
+    # Precision 5 decimals are read as DECIMAL32 unless cast
+    path = tmp_path / "cast_decimals.parquet"
+    write_table(make_table(pa.decimal128(5, 2)), path)
+    options = (
+        plc.io.parquet.ParquetReaderOptions.builder(
+            plc.io.SourceInfo([str(path)])
+        )
+        .decimal_width(decimal_width)
+        .build()
+    )
+    assert_table_and_meta_eq(
+        make_table(pa_decimal),
+        plc.io.parquet.read_parquet(options),
+        check_field_nullability=False,
+    )

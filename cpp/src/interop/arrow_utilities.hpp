@@ -97,6 +97,30 @@ ArrowType id_to_arrow_type(cudf::type_id id);
 ArrowType id_to_arrow_storage_type(cudf::type_id id);
 
 /**
+ * @brief cudf types used to import the indices of an Arrow dictionary array
+ */
+struct dictionary_indices_types {
+  data_type storage;  ///< Type used to read the Arrow indices buffer
+  data_type output;   ///< Signed type of the resulting cudf dictionary indices
+};
+
+/**
+ * @brief Return the cudf types used to import Arrow dictionary indices
+ *
+ * Signed index types are returned unchanged. Unsigned index types are mapped to the
+ * narrowest signed type that can represent every valid index `[0, num_keys - 1]`:
+ * the same-width signed type when it fits, otherwise the next wider signed type.
+ *
+ * @throw cudf::data_type_error if `storage_type` is not an 8, 16, or 32-bit unsigned or
+ * an 8, 16, 32, or 64-bit signed integer type
+ *
+ * @param storage_type Arrow storage type of the dictionary indices
+ * @param num_keys Number of keys in the dictionary, at most `size_type` max
+ * @return Types to read the Arrow buffer with and to output
+ */
+dictionary_indices_types get_dictionary_indices_types(ArrowType storage_type, int64_t num_keys);
+
+/**
  * @brief Helper to initialize ArrowArray struct
  *
  * @param arr Pointer to ArrowArray to initialize

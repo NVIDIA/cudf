@@ -30,6 +30,7 @@
 #include <limits>
 #include <memory>
 #include <numeric>
+#include <optional>
 #include <random>
 #include <string>
 #include <vector>
@@ -57,7 +58,8 @@ std::unique_ptr<cudf::table> run_batch_gather_tile(
   cudf::table_view const& source,
   cudf::column_view const& map,
   cudf::size_type tile_cols,
-  cudf::out_of_bounds_policy bounds = cudf::out_of_bounds_policy::DONT_CHECK);
+  cudf::out_of_bounds_policy bounds              = cudf::out_of_bounds_policy::DONT_CHECK,
+  std::optional<cudf::size_type> rows_per_thread = std::nullopt);
 
 std::unique_ptr<cudf::table> run_reference(
   cudf::table_view const& source,
@@ -514,6 +516,84 @@ TEST_F(BatchGatherShapeTest, TallTable)
 // §5.5 Bounds and policies.
 // ============================================================================
 
+// ============================================================================
+// Randomized datagen helpers (shared by the coarsening and randomized suites).
+// ============================================================================
+
+std::vector<cudf::type_id> const& random_candidate_types()
+{
+  static std::vector<cudf::type_id> const candidates{cudf::type_id::INT8,
+                                                     cudf::type_id::INT16,
+                                                     cudf::type_id::INT32,
+                                                     cudf::type_id::INT64,
+                                                     cudf::type_id::UINT32,
+                                                     cudf::type_id::FLOAT32,
+                                                     cudf::type_id::FLOAT64,
+                                                     cudf::type_id::BOOL8,
+                                                     cudf::type_id::DECIMAL32,
+                                                     cudf::type_id::DECIMAL64,
+                                                     cudf::type_id::DECIMAL128,
+                                                     cudf::type_id::TIMESTAMP_NANOSECONDS,
+                                                     cudf::type_id::DURATION_MICROSECONDS,
+                                                     cudf::type_id::STRING};
+  return candidates;
+}
+
+template <typename T>
+std::unique_ptr<cudf::column> make_random_fixed(cudf::size_type num_rows,
+                                                double null_probability,
+                                                std::mt19937& rng)
+{
+  auto value_of = [&rng](cudf::size_type) {
+    return std::uniform_int_distribution<int64_t>(-1000, 1000)(rng);
+  };
+  auto valid_of = [&rng, null_probability](cudf::size_type) {
+    return std::uniform_real_distribution<double>(0.0, 1.0)(rng) >= null_probability;
+  };
+  return make_fixed_column<T>(num_rows, value_of, valid_of);
+}
+
+std::unique_ptr<cudf::column> make_random_column(cudf::type_id id,
+                                                 cudf::size_type num_rows,
+                                                 double null_probability,
+                                                 std::mt19937& rng)
+{
+  switch (id) {
+    case cudf::type_id::INT8: return make_random_fixed<int8_t>(num_rows, null_probability, rng);
+    case cudf::type_id::INT16: return make_random_fixed<int16_t>(num_rows, null_probability, rng);
+    case cudf::type_id::INT32: return make_random_fixed<int32_t>(num_rows, null_probability, rng);
+    case cudf::type_id::INT64: return make_random_fixed<int64_t>(num_rows, null_probability, rng);
+    case cudf::type_id::UINT32: return make_random_fixed<uint32_t>(num_rows, null_probability, rng);
+    case cudf::type_id::FLOAT32: return make_random_fixed<float>(num_rows, null_probability, rng);
+    case cudf::type_id::FLOAT64: return make_random_fixed<double>(num_rows, null_probability, rng);
+    case cudf::type_id::BOOL8: return make_random_fixed<bool>(num_rows, null_probability, rng);
+    case cudf::type_id::DECIMAL32:
+      return make_random_fixed<numeric::decimal32>(num_rows, null_probability, rng);
+    case cudf::type_id::DECIMAL64:
+      return make_random_fixed<numeric::decimal64>(num_rows, null_probability, rng);
+    case cudf::type_id::DECIMAL128:
+      return make_random_fixed<numeric::decimal128>(num_rows, null_probability, rng);
+    case cudf::type_id::TIMESTAMP_NANOSECONDS:
+      return make_random_fixed<cudf::timestamp_ns>(num_rows, null_probability, rng);
+    case cudf::type_id::DURATION_MICROSECONDS:
+      return make_random_fixed<cudf::duration_us>(num_rows, null_probability, rng);
+    case cudf::type_id::STRING: {
+      std::vector<std::string> strings;
+      std::vector<bool> valid;
+      strings.reserve(num_rows);
+      valid.reserve(num_rows);
+      for (cudf::size_type i = 0; i < num_rows; ++i) {
+        strings.push_back(std::to_string(std::uniform_int_distribution<int>(-1000, 1000)(rng)));
+        valid.push_back(std::uniform_real_distribution<double>(0.0, 1.0)(rng) >= null_probability);
+      }
+      auto validity = cudf::detail::make_counting_transform_iterator(
+        0, [&valid](cudf::size_type i) { return valid[i]; });
+      return cudf::test::strings_column_wrapper(strings.begin(), strings.end(), validity).release();
+    }
+    default: CUDF_FAIL("Unsupported type id in randomized test");
+  }
+}
+
 class BatchGatherPolicyTest : public cudf::test::BaseFixture {};
 
 TEST_F(BatchGatherPolicyTest, DontCheckPolicyAllValid)
@@ -618,6 +698,116 @@ TEST_F(BatchGatherPolicyTest, ExplicitWideTileMaskedNullifyDifferential)
   CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
   EXPECT_EQ(result->view().column(0).null_count(), reference->view().column(0).null_count());
   EXPECT_GT(result->view().column(0).null_count(), 0);
+}
+
+// ============================================================================
+// §5.5a Row coarsening: the rows_per_thread overload must match the un-coarsened kernel and
+// the stock gather bit-for-bit, including the interleaved mask-word ballot path that only the
+// R > 1 instantiations execute.
+// ============================================================================
+
+TEST_F(BatchGatherPolicyTest, CoarsenedRowsMatchUncoarsenedAcrossWidths)
+{
+  // Null-bearing column forces the kMasked instantiation, so the ballot interleaving and the
+  // valid_counts readback run for every (tile, rows) pair.
+  constexpr cudf::size_type num_rows{333};
+  auto source_column = make_fixed_column<int64_t>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type i) { return i % 5 != 0; });
+  auto const host_map = shuffled_iota(num_rows, 7);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+  cudf::table_view source_table({source_column->view()});
+
+  auto reference = run_reference(source_table, gather_map);
+  for (cudf::size_type const tile : {1, 2, 4, 8}) {
+    for (cudf::size_type const rows : {1, 2, 4}) {
+      auto result = run_batch_gather_tile(
+        source_table, gather_map, tile, cudf::out_of_bounds_policy::DONT_CHECK, rows);
+      CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+      EXPECT_EQ(result->view().column(0).null_count(), reference->view().column(0).null_count());
+    }
+  }
+}
+
+TEST_F(BatchGatherPolicyTest, CoarsenedRowsMaskWindowBoundaryRows)
+{
+  // num_rows % 32 leaves trailing bits in the last word: with R > 1 those bits must be 0 even
+  // though their map rows exist and the rows themselves never do.
+  constexpr cudf::size_type num_rows{33};
+  auto source_column = make_fixed_column<int32_t>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type i) { return i % 3 != 0; });
+  auto gather_map = make_fixed_column<cudf::size_type>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+  cudf::table_view source_table({source_column->view()});
+
+  for (cudf::size_type const rows : {2, 4}) {
+    auto result = run_batch_gather_tile(
+      source_table, gather_map->view(), 1, cudf::out_of_bounds_policy::DONT_CHECK, rows);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(source_column->view(), result->view().column(0));
+    EXPECT_EQ(result->view().column(0).null_count(), 11);
+  }
+}
+
+TEST_F(BatchGatherPolicyTest, CoarsenedRowsNullifyOOBDifferential)
+{
+  // The NULLIFY path keeps both mask sides live AND makes validity depend on the bounds check:
+  // the interleaved ballots must carry the nullified rows as invalid.
+  constexpr cudf::size_type num_rows{1000};
+  auto source_column = make_fixed_column<int32_t>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type i) { return i % 2 != 0; });
+  auto host_map = shuffled_iota(num_rows, 3);
+  host_map[0]   = num_rows + 1;  // Out of bounds: NULLIFY must clear this row.
+  host_map[5]   = num_rows + 7;
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+  cudf::table_view source_table({source_column->view()});
+
+  for (cudf::size_type const rows : {2, 4}) {
+    auto result =
+      run_batch_gather_tile(source_table, gather_map, 1, cudf::out_of_bounds_policy::NULLIFY, rows);
+    auto reference = run_reference(source_table, gather_map, cudf::out_of_bounds_policy::NULLIFY);
+    CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+    EXPECT_EQ(result->view().column(0).null_count(), reference->view().column(0).null_count());
+    EXPECT_GT(result->view().column(0).null_count(), 0);
+  }
+}
+
+TEST_F(BatchGatherPolicyTest, CoarsenedRowsRandomizedDifferential)
+{
+  // Same generator contract as the §5.7 stock differential, with rows_per_thread forced to
+  // every supported value (and tile 1) so every shape class — including the row counts that
+  // leave warp windows partially beyond num_rows — runs the interleaved mask path.
+  std::mt19937 rng(4242);
+  for (int iteration = 0; iteration < 4; ++iteration) {
+    SCOPED_TRACE("iteration=" + std::to_string(iteration));
+    auto const num_rows = std::uniform_int_distribution<cudf::size_type>(1, 5000)(rng);
+    std::vector<std::unique_ptr<cudf::column>> source_columns;
+    source_columns.reserve(2);
+    for (int c = 0; c < 2; ++c) {
+      auto const type = random_candidate_types()[std::uniform_int_distribution<std::size_t>(
+        0, random_candidate_types().size() - 1)(rng)];
+      source_columns.push_back(make_random_column(type, num_rows, 0.25, rng));
+    }
+    std::vector<cudf::column_view> views;
+    for (auto const& col : source_columns) {
+      views.push_back(col->view());
+    }
+    cudf::table_view source_table(views);
+
+    std::vector<cudf::size_type> host_map(num_rows);
+    std::uniform_int_distribution<cudf::size_type> uniform_idx(0, num_rows - 1);
+    std::generate(host_map.begin(), host_map.end(), [&]() { return uniform_idx(rng); });
+    cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                       host_map.end());
+
+    auto const bounds = iteration % 2 == 0 ? cudf::out_of_bounds_policy::DONT_CHECK
+                                           : cudf::out_of_bounds_policy::NULLIFY;
+    auto reference    = run_reference(source_table, gather_map, bounds);
+    for (cudf::size_type const rows : {1, 2, 4}) {
+      auto result = run_batch_gather_tile(source_table, gather_map, 1, bounds, rows);
+      CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+    }
+  }
 }
 
 // ============================================================================
@@ -770,80 +960,6 @@ TEST_F(BatchGatherMixedTest, MixedNullableFixedWidthWithNullFreeLists)
 // ============================================================================
 
 class BatchGatherRandomizedTest : public cudf::test::BaseFixture {};
-
-std::vector<cudf::type_id> const& random_candidate_types()
-{
-  static std::vector<cudf::type_id> const candidates{cudf::type_id::INT8,
-                                                     cudf::type_id::INT16,
-                                                     cudf::type_id::INT32,
-                                                     cudf::type_id::INT64,
-                                                     cudf::type_id::UINT32,
-                                                     cudf::type_id::FLOAT32,
-                                                     cudf::type_id::FLOAT64,
-                                                     cudf::type_id::BOOL8,
-                                                     cudf::type_id::DECIMAL32,
-                                                     cudf::type_id::DECIMAL64,
-                                                     cudf::type_id::DECIMAL128,
-                                                     cudf::type_id::TIMESTAMP_NANOSECONDS,
-                                                     cudf::type_id::DURATION_MICROSECONDS,
-                                                     cudf::type_id::STRING};
-  return candidates;
-}
-
-template <typename T>
-std::unique_ptr<cudf::column> make_random_fixed(cudf::size_type num_rows,
-                                                double null_probability,
-                                                std::mt19937& rng)
-{
-  auto value_of = [&rng](cudf::size_type) {
-    return std::uniform_int_distribution<int64_t>(-1000, 1000)(rng);
-  };
-  auto valid_of = [&rng, null_probability](cudf::size_type) {
-    return std::uniform_real_distribution<double>(0.0, 1.0)(rng) >= null_probability;
-  };
-  return make_fixed_column<T>(num_rows, value_of, valid_of);
-}
-
-std::unique_ptr<cudf::column> make_random_column(cudf::type_id id,
-                                                 cudf::size_type num_rows,
-                                                 double null_probability,
-                                                 std::mt19937& rng)
-{
-  switch (id) {
-    case cudf::type_id::INT8: return make_random_fixed<int8_t>(num_rows, null_probability, rng);
-    case cudf::type_id::INT16: return make_random_fixed<int16_t>(num_rows, null_probability, rng);
-    case cudf::type_id::INT32: return make_random_fixed<int32_t>(num_rows, null_probability, rng);
-    case cudf::type_id::INT64: return make_random_fixed<int64_t>(num_rows, null_probability, rng);
-    case cudf::type_id::UINT32: return make_random_fixed<uint32_t>(num_rows, null_probability, rng);
-    case cudf::type_id::FLOAT32: return make_random_fixed<float>(num_rows, null_probability, rng);
-    case cudf::type_id::FLOAT64: return make_random_fixed<double>(num_rows, null_probability, rng);
-    case cudf::type_id::BOOL8: return make_random_fixed<bool>(num_rows, null_probability, rng);
-    case cudf::type_id::DECIMAL32:
-      return make_random_fixed<numeric::decimal32>(num_rows, null_probability, rng);
-    case cudf::type_id::DECIMAL64:
-      return make_random_fixed<numeric::decimal64>(num_rows, null_probability, rng);
-    case cudf::type_id::DECIMAL128:
-      return make_random_fixed<numeric::decimal128>(num_rows, null_probability, rng);
-    case cudf::type_id::TIMESTAMP_NANOSECONDS:
-      return make_random_fixed<cudf::timestamp_ns>(num_rows, null_probability, rng);
-    case cudf::type_id::DURATION_MICROSECONDS:
-      return make_random_fixed<cudf::duration_us>(num_rows, null_probability, rng);
-    case cudf::type_id::STRING: {
-      std::vector<std::string> strings;
-      std::vector<bool> valid;
-      strings.reserve(num_rows);
-      valid.reserve(num_rows);
-      for (cudf::size_type i = 0; i < num_rows; ++i) {
-        strings.push_back(std::to_string(std::uniform_int_distribution<int>(-1000, 1000)(rng)));
-        valid.push_back(std::uniform_real_distribution<double>(0.0, 1.0)(rng) >= null_probability);
-      }
-      auto validity = cudf::detail::make_counting_transform_iterator(
-        0, [&valid](cudf::size_type i) { return valid[i]; });
-      return cudf::test::strings_column_wrapper(strings.begin(), strings.end(), validity).release();
-    }
-    default: CUDF_FAIL("Unsupported type id in randomized test");
-  }
-}
 
 TEST_F(BatchGatherRandomizedTest, RandomizedDifferential)
 {
@@ -1191,15 +1307,27 @@ class BatchGatherRoutingTest : public cudf::test::BaseFixture {};
 std::unique_ptr<cudf::table> run_batch_gather_tile(cudf::table_view const& source,
                                                    cudf::column_view const& map,
                                                    cudf::size_type tile_cols,
-                                                   cudf::out_of_bounds_policy bounds)
+                                                   cudf::out_of_bounds_policy bounds,
+                                                   std::optional<cudf::size_type> rows_per_thread)
 {
-  return cudf::detail::batch_gather(source,
-                                    map,
-                                    bounds,
-                                    cudf::negative_index_policy::NOT_ALLOWED,
-                                    cudf::get_default_stream(),
-                                    cudf::memory_resources{cudf::get_current_device_resource_ref()},
-                                    tile_cols);
+  return rows_per_thread.has_value()
+           ? cudf::detail::batch_gather(
+               source,
+               map,
+               bounds,
+               cudf::negative_index_policy::NOT_ALLOWED,
+               cudf::get_default_stream(),
+               cudf::memory_resources{cudf::get_current_device_resource_ref()},
+               tile_cols,
+               *rows_per_thread)
+           : cudf::detail::batch_gather(
+               source,
+               map,
+               bounds,
+               cudf::negative_index_policy::NOT_ALLOWED,
+               cudf::get_default_stream(),
+               cudf::memory_resources{cudf::get_current_device_resource_ref()},
+               tile_cols);
 }
 
 TEST_F(BatchGatherRoutingTest, ClassifierWorkGateSamplesTallFewColumnTables)

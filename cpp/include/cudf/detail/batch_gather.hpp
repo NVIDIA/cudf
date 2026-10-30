@@ -77,6 +77,31 @@ std::unique_ptr<table> batch_gather(table_view const& source_table,
                                     size_type tile_cols);
 
 /**
+ * @copydoc cudf::detail::batch_gather(table_view const&, column_view const&,
+ * out_of_bounds_policy, negative_index_policy, cuda::stream_ref, memory_resources)
+ *
+ * @param[in] tile_cols Number of consecutive columns per blockIdx.y tile in the fused kernel;
+ * one of {1, 2, 4, 8}. 1 degenerates to one column per y block.
+ * @param[in] rows_per_thread Number of consecutive output rows each kernel thread owns; one of
+ * {1, 2, 4}. 1 is the un-coarsened geometry. A warp then covers `32 * rows_per_thread`
+ * consecutive rows per iteration and ballots once per row slot: lane 0 interleaves those
+ * ballots into the destination mask words, keeping every word written exactly once. R > 1 is
+ * instantiated for the non-streaming narrow tiles (tile_cols 1 and 2) only; on other widths the
+ * value is accepted and routes to the R = 1 geometry, since wider tiles already keep enough
+ * loads in flight and coarsening there only multiplies register pressure.
+ * @throws std::invalid_argument if `tile_cols` is not one of {1, 2, 4, 8} or `rows_per_thread`
+ * is not one of {1, 2, 4}
+ */
+std::unique_ptr<table> batch_gather(table_view const& source_table,
+                                    column_view const& gather_map,
+                                    out_of_bounds_policy bounds_policy,
+                                    negative_index_policy neg_indices,
+                                    cuda::stream_ref stream,
+                                    memory_resources mr,
+                                    size_type tile_cols,
+                                    size_type rows_per_thread);
+
+/**
  * @brief Classifies the gather map's locality and returns the fused kernel tile width to use.
  *
  * Sampling is skipped entirely — returning the unsampled width without touching the map — when

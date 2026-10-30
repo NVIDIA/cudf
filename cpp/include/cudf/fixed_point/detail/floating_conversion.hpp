@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -21,6 +21,10 @@ namespace detail {
  * @brief Determine the number of significant bits in an integer
  *
  * @tparam T Type of input integer value. Must be either uint32_t, uint64_t, or __uint128_t
+ *
+ * @note Do not replace this with `cuda::std::bit_width`: doing so changes inlining in the compiled
+ * ADD kernel and makes float ADD about 5x slower.
+ *
  * @param value The integer whose bits are being counted
  * @return The number of significant bits: the # of bits - # of leading zeroes
  */

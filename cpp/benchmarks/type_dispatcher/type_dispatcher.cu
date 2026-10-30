@@ -12,26 +12,26 @@
 #include <cudf/scalar/scalar_factories.hpp>
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/table/table_view.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/buffer>
+#include <cuda/std/concepts>
 
 #include <nvbench/nvbench.cuh>
-
-#include <type_traits>
 
 enum DispatchingType { HOST_DISPATCHING, DEVICE_DISPATCHING, NO_DISPATCHING };
 
 enum FunctorType { BANDWIDTH_BOUND, COMPUTE_BOUND };
 
-template <class NotFloat, FunctorType ft, class DisableNotFloat = void>
+template <class NotFloat, FunctorType ft>
 struct Functor {
   static __device__ NotFloat f(NotFloat x) { return x; }
 };
 
-template <class Float, FunctorType ft>
-struct Functor<Float, ft, std::enable_if_t<std::is_floating_point_v<Float>>> {
+template <cuda::std::floating_point Float, FunctorType ft>
+struct Functor<Float, ft> {
   static __device__ Float f(Float x)
   {
     if (ft == BANDWIDTH_BOUND) {
@@ -80,7 +80,7 @@ CUDF_KERNEL void host_dispatching_kernel(cudf::mutable_column_device_view source
 
 template <FunctorType functor_type>
 struct ColumnHandle {
-  template <typename ColumnType, CUDF_ENABLE_IF(cudf::is_rep_layout_compatible<ColumnType>())>
+  template <cudf::concepts::rep_layout_compatible ColumnType>
   void operator()(cudf::mutable_column_device_view source_column, int work_per_thread)
   {
     cudf::detail::grid_1d grid_config{source_column.size(), block_size};
@@ -89,7 +89,7 @@ struct ColumnHandle {
     host_dispatching_kernel<functor_type, ColumnType><<<grid_size, block_size>>>(source_column);
   }
 
-  template <typename ColumnType, CUDF_ENABLE_IF(not cudf::is_rep_layout_compatible<ColumnType>())>
+  template <typename ColumnType>
   void operator()(cudf::mutable_column_device_view source_column, int work_per_thread)
   {
     CUDF_FAIL("Invalid type to benchmark.");
@@ -103,14 +103,14 @@ struct ColumnHandle {
 // n_rows * n_cols.
 template <FunctorType functor_type>
 struct RowHandle {
-  template <typename T, CUDF_ENABLE_IF(cudf::is_rep_layout_compatible<T>())>
+  template <cudf::concepts::rep_layout_compatible T>
   __device__ void operator()(cudf::mutable_column_device_view source, cudf::size_type index)
   {
     using F                 = Functor<T, functor_type>;
     source.data<T>()[index] = F::f(source.data<T>()[index]);
   }
 
-  template <typename T, CUDF_ENABLE_IF(not cudf::is_rep_layout_compatible<T>())>
+  template <typename T>
   __device__ void operator()(cudf::mutable_column_device_view source, cudf::size_type index)
   {
     CUDF_UNREACHABLE("Unsupported type.");

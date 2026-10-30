@@ -23,6 +23,7 @@
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/io/types.hpp>
 #include <cudf/unary.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/iterator>
@@ -47,10 +48,9 @@ namespace {
 /**
  * @brief Create a list column with `num_rows` rows of `rows_per_row` values each.
  */
-template <typename T>
+template <cudf::concepts::integral_not_bool T>
 std::unique_ptr<cudf::column> make_wide_list_column(cudf::size_type num_rows,
                                                     cudf::size_type rows_per_row)
-  requires(cudf::is_integral_not_bool<T>())
 {
   // Compute in int64_t and validate before narrowing to cudf::size_type to avoid overflow
   auto const total_values = static_cast<int64_t>(num_rows) * static_cast<int64_t>(rows_per_row);

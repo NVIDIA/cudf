@@ -12,6 +12,7 @@
 #include <cudf/io/parquet.hpp>
 #include <cudf/io/parquet_io_utils.hpp>
 #include <cudf/io/parquet_metadata.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/error.hpp>
 
 #include <cuda/std/type_traits>
@@ -332,10 +333,8 @@ cudf::io::parquet::PageHeader read_page_header(std::unique_ptr<cudf::io::datasou
 namespace testdata {
 // ----- most numerics. scale by 100 so all values fit in a single byte
 
-template <typename T>
-std::enable_if_t<cuda::std::is_arithmetic_v<T> && !std::is_same_v<T, bool>,
-                 cudf::test::fixed_width_column_wrapper<T>>
-ascending()
+template <cudf::concepts::arithmetic_not_bool T>
+cudf::test::fixed_width_column_wrapper<T> ascending()
 {
   int start = cuda::std::is_signed_v<T> ? -num_ordered_rows / 2 : 0;
   auto elements =
@@ -343,10 +342,8 @@ ascending()
   return cudf::test::fixed_width_column_wrapper<T>(elements, elements + num_ordered_rows);
 }
 
-template <typename T>
-std::enable_if_t<cuda::std::is_arithmetic_v<T> && !std::is_same_v<T, bool>,
-                 cudf::test::fixed_width_column_wrapper<T>>
-descending()
+template <cudf::concepts::arithmetic_not_bool T>
+cudf::test::fixed_width_column_wrapper<T> descending()
 {
   if (cuda::std::is_signed_v<T>) {
     auto elements = cudf::detail::make_counting_transform_iterator(-num_ordered_rows / 2,
@@ -359,10 +356,8 @@ descending()
   }
 }
 
-template <typename T>
-std::enable_if_t<cuda::std::is_arithmetic_v<T> && !std::is_same_v<T, bool>,
-                 cudf::test::fixed_width_column_wrapper<T>>
-unordered()
+template <cudf::concepts::arithmetic_not_bool T>
+cudf::test::fixed_width_column_wrapper<T> unordered()
 {
   if (cuda::std::is_signed_v<T>) {
     auto elements = cudf::detail::make_counting_transform_iterator(
@@ -377,24 +372,24 @@ unordered()
 
 // ----- bool
 
-template <typename T>
-std::enable_if_t<std::is_same_v<T, bool>, cudf::test::fixed_width_column_wrapper<bool>> ascending()
+template <cudf::concepts::boolean T>
+cudf::test::fixed_width_column_wrapper<bool> ascending()
 {
   auto elements = cudf::detail::make_counting_transform_iterator(
     0, [](auto i) { return i >= num_ordered_rows / 2; });
   return cudf::test::fixed_width_column_wrapper<bool>(elements, elements + num_ordered_rows);
 }
 
-template <typename T>
-std::enable_if_t<std::is_same_v<T, bool>, cudf::test::fixed_width_column_wrapper<bool>> descending()
+template <cudf::concepts::boolean T>
+cudf::test::fixed_width_column_wrapper<bool> descending()
 {
   auto elements = cudf::detail::make_counting_transform_iterator(
     0, [](auto i) { return i < num_ordered_rows / 2; });
   return cudf::test::fixed_width_column_wrapper<bool>(elements, elements + num_ordered_rows);
 }
 
-template <typename T>
-std::enable_if_t<std::is_same_v<T, bool>, cudf::test::fixed_width_column_wrapper<bool>> unordered()
+template <cudf::concepts::boolean T>
+cudf::test::fixed_width_column_wrapper<bool> unordered()
 {
   auto elements = cudf::detail::make_counting_transform_iterator(0, [](auto i) {
     switch (i / page_size_for_ordered_tests) {
@@ -409,24 +404,24 @@ std::enable_if_t<std::is_same_v<T, bool>, cudf::test::fixed_width_column_wrapper
 
 // ----- fixed point types
 
-template <typename T>
-std::enable_if_t<cudf::is_fixed_point<T>(), cudf::test::fixed_width_column_wrapper<T>> ascending()
+template <cudf::concepts::fixed_point T>
+cudf::test::fixed_width_column_wrapper<T> ascending()
 {
   auto elements = cudf::detail::make_counting_transform_iterator(
     -num_ordered_rows / 2, [](auto i) { return T(i, numeric::scale_type{0}); });
   return cudf::test::fixed_width_column_wrapper<T>(elements, elements + num_ordered_rows);
 }
 
-template <typename T>
-std::enable_if_t<cudf::is_fixed_point<T>(), cudf::test::fixed_width_column_wrapper<T>> descending()
+template <cudf::concepts::fixed_point T>
+cudf::test::fixed_width_column_wrapper<T> descending()
 {
   auto elements = cudf::detail::make_counting_transform_iterator(
     -num_ordered_rows / 2, [](auto i) { return T(-i, numeric::scale_type{0}); });
   return cudf::test::fixed_width_column_wrapper<T>(elements, elements + num_ordered_rows);
 }
 
-template <typename T>
-std::enable_if_t<cudf::is_fixed_point<T>(), cudf::test::fixed_width_column_wrapper<T>> unordered()
+template <cudf::concepts::fixed_point T>
+cudf::test::fixed_width_column_wrapper<T> unordered()
 {
   auto elements = cudf::detail::make_counting_transform_iterator(
     -num_ordered_rows / 2, [](auto i) { return T(i % 2 ? i : -i, numeric::scale_type{0}); });
@@ -436,24 +431,24 @@ std::enable_if_t<cudf::is_fixed_point<T>(), cudf::test::fixed_width_column_wrapp
 // ----- chrono types
 // ----- timstamp
 
-template <typename T>
-std::enable_if_t<cudf::is_timestamp<T>(), cudf::test::fixed_width_column_wrapper<T>> ascending()
+template <cudf::concepts::timestamp T>
+cudf::test::fixed_width_column_wrapper<T> ascending()
 {
   auto elements = cudf::detail::make_counting_transform_iterator(
     0, [](auto i) { return T(typename T::duration(i)); });
   return cudf::test::fixed_width_column_wrapper<T>(elements, elements + num_ordered_rows);
 }
 
-template <typename T>
-std::enable_if_t<cudf::is_timestamp<T>(), cudf::test::fixed_width_column_wrapper<T>> descending()
+template <cudf::concepts::timestamp T>
+cudf::test::fixed_width_column_wrapper<T> descending()
 {
   auto elements = cudf::detail::make_counting_transform_iterator(
     0, [](auto i) { return T(typename T::duration(num_ordered_rows - i)); });
   return cudf::test::fixed_width_column_wrapper<T>(elements, elements + num_ordered_rows);
 }
 
-template <typename T>
-std::enable_if_t<cudf::is_timestamp<T>(), cudf::test::fixed_width_column_wrapper<T>> unordered()
+template <cudf::concepts::timestamp T>
+cudf::test::fixed_width_column_wrapper<T> unordered()
 {
   auto elements = cudf::detail::make_counting_transform_iterator(
     0, [](auto i) { return T(typename T::duration(i % 2 ? i : num_ordered_rows - i)); });
@@ -462,23 +457,23 @@ std::enable_if_t<cudf::is_timestamp<T>(), cudf::test::fixed_width_column_wrapper
 
 // ----- duration
 
-template <typename T>
-std::enable_if_t<cudf::is_duration<T>(), cudf::test::fixed_width_column_wrapper<T>> ascending()
+template <cudf::concepts::duration T>
+cudf::test::fixed_width_column_wrapper<T> ascending()
 {
   auto elements = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return T(i); });
   return cudf::test::fixed_width_column_wrapper<T>(elements, elements + num_ordered_rows);
 }
 
-template <typename T>
-std::enable_if_t<cudf::is_duration<T>(), cudf::test::fixed_width_column_wrapper<T>> descending()
+template <cudf::concepts::duration T>
+cudf::test::fixed_width_column_wrapper<T> descending()
 {
   auto elements = cudf::detail::make_counting_transform_iterator(
     0, [](auto i) { return T(num_ordered_rows - i); });
   return cudf::test::fixed_width_column_wrapper<T>(elements, elements + num_ordered_rows);
 }
 
-template <typename T>
-std::enable_if_t<cudf::is_duration<T>(), cudf::test::fixed_width_column_wrapper<T>> unordered()
+template <cudf::concepts::duration T>
+cudf::test::fixed_width_column_wrapper<T> unordered()
 {
   auto elements = cudf::detail::make_counting_transform_iterator(
     0, [](auto i) { return T(i % 2 ? i : num_ordered_rows - i); });
@@ -487,27 +482,24 @@ std::enable_if_t<cudf::is_duration<T>(), cudf::test::fixed_width_column_wrapper<
 
 // ----- string_view
 
-template <typename T>
-std::enable_if_t<std::is_same_v<T, cudf::string_view>, cudf::test::strings_column_wrapper>
-ascending()
+template <cudf::concepts::string_view T>
+cudf::test::strings_column_wrapper ascending()
 {
   auto elements = cudf::detail::make_counting_transform_iterator(
     0, [](auto i) { return std::format("{:09d}", i); });
   return cudf::test::strings_column_wrapper(elements, elements + num_ordered_rows);
 }
 
-template <typename T>
-std::enable_if_t<std::is_same_v<T, cudf::string_view>, cudf::test::strings_column_wrapper>
-descending()
+template <cudf::concepts::string_view T>
+cudf::test::strings_column_wrapper descending()
 {
   auto elements = cudf::detail::make_counting_transform_iterator(
     0, [](auto i) { return std::format("{:09d}", static_cast<short>(num_ordered_rows - i)); });
   return cudf::test::strings_column_wrapper(elements, elements + num_ordered_rows);
 }
 
-template <typename T>
-std::enable_if_t<std::is_same_v<T, cudf::string_view>, cudf::test::strings_column_wrapper>
-unordered()
+template <cudf::concepts::string_view T>
+cudf::test::strings_column_wrapper unordered()
 {
   auto elements = cudf::detail::make_counting_transform_iterator(
     0, [](auto i) { return std::format("{:09d}", (i % 2 == 0) ? i : (num_ordered_rows - i)); });

@@ -15,6 +15,7 @@
 #include <cuda/buffer>
 #include <cuda/std/algorithm>
 #include <cuda/std/cmath>
+#include <cuda/std/concepts>
 #include <cuda/std/random>
 #include <thrust/execution_policy.h>
 #include <thrust/tabulate.h>
@@ -58,13 +59,13 @@ auto make_normal_dist(T lower_bound, T upper_bound)
   return cuda::std::normal_distribution<realT>(mean, stddev);
 }
 
-template <typename T, std::enable_if_t<cuda::std::is_integral_v<T>, T>* = nullptr>
+template <cuda::std::integral T>
 auto make_uniform_dist(T range_start, T range_end)
 {
   return cuda::std::uniform_int_distribution<T>(range_start, range_end);
 }
 
-template <typename T, std::enable_if_t<cudf::is_floating_point<T>()>* = nullptr>
+template <cuda::std::floating_point T>
 auto make_uniform_dist(T range_start, T range_end)
 {
   return cuda::std::uniform_real_distribution<T>(range_start, range_end);
@@ -157,10 +158,8 @@ Buffer make_distribution_buffer(size_t size)
 template <typename T, typename Buffer = rmm::device_uvector<T>>
 using distribution_fn = std::function<Buffer(cuda::std::philox4x32&, size_t)>;
 
-template <
-  typename T,
-  typename Buffer = rmm::device_uvector<T>,
-  std::enable_if_t<cuda::std::is_integral_v<T> or cuda::std::is_floating_point_v<T>, T>* = nullptr>
+template <typename T, typename Buffer = rmm::device_uvector<T>>
+  requires(cuda::std::integral<T> or cuda::std::floating_point<T>)
 distribution_fn<T, Buffer> make_distribution(distribution_id dist_id, T lower_bound, T upper_bound)
 {
   switch (dist_id) {

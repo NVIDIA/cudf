@@ -36,6 +36,12 @@ namespace nvcomp = cudf::io::detail::nvcomp;
 
 enum class hw { CPU, GPU };
 
+template <typename T>
+concept has_gpu_impl = requires { &T::device_dispatch; };
+
+template <typename T>
+concept has_cpu_impl = requires { &T::host_dispatch; };
+
 /**
  * @brief Base test fixture for decompression
  *
@@ -59,13 +65,13 @@ struct DecompressTest
     auto hw_type   = std::get<0>(GetParam());
     auto comp_type = std::get<1>(GetParam());
     if (hw_type == hw::GPU) {
-      if constexpr (has_gpu_impl<Decompressor>::value) {
+      if constexpr (has_gpu_impl<Decompressor>) {
         return DeviceDecompress(compressed, uncompressed_size);
       } else {
         CUDF_FAIL("Device decompression has not been implemented");
       }
     } else {
-      if constexpr (has_cpu_impl<Decompressor>::value) {
+      if constexpr (has_cpu_impl<Decompressor>) {
         return HostDecompress(comp_type, compressed, uncompressed_size);
       } else {
         CUDF_FAIL("Host decompression has not been implemented");
@@ -118,18 +124,6 @@ struct DecompressTest
     return static_cast<Decompressor*>(this)->host_dispatch(
       comp_type, compressed, uncompressed_size);
   }
-
-  template <typename T, typename = void>
-  struct has_gpu_impl : std::false_type {};
-
-  template <typename T>
-  struct has_gpu_impl<T, std::void_t<decltype(&T::device_dispatch)>> : std::true_type {};
-
-  template <typename T, typename = void>
-  struct has_cpu_impl : std::false_type {};
-
-  template <typename T>
-  struct has_cpu_impl<T, std::void_t<decltype(&T::host_dispatch)>> : std::true_type {};
 };
 
 struct HostCompressTest : public cudf::test::BaseFixture,

@@ -16,6 +16,7 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/io/parquet_io_utils.hpp>
 #include <cudf/table/table_view.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/traits.hpp>
 
@@ -52,7 +53,6 @@ cudf::test::strings_column_wrapper constant_strings(cudf::size_type value)
  */
 template <typename T>
 cudf::test::fixed_width_column_wrapper<T> descending_low_cardinality()
-  requires(not cudf::is_chrono<T>() and not cudf::is_fixed_point<T>())
 {
   static_assert(
     cudf::is_chrono<T>() or cudf::is_fixed_point<T>(),
@@ -66,9 +66,8 @@ cudf::test::fixed_width_column_wrapper<T> descending_low_cardinality()
  * @tparam T Fixed-point type
  * @return Column wrapper
  */
-template <typename T>
+template <cudf::concepts::fixed_point T>
 cudf::test::fixed_width_column_wrapper<T> descending_low_cardinality()
-  requires(cudf::is_fixed_point<T>())
 {
   auto elements = cudf::detail::make_counting_transform_iterator(
     0, [](auto i) { return T((num_ordered_rows / 2 - i) / 100, numeric::scale_type{0}); });
@@ -81,9 +80,8 @@ cudf::test::fixed_width_column_wrapper<T> descending_low_cardinality()
  * @tparam T Duration type
  * @return Column wrapper
  */
-template <typename T>
+template <cudf::concepts::duration T>
 cudf::test::fixed_width_column_wrapper<T> descending_low_cardinality()
-  requires(cudf::is_duration<T>())
 {
   auto elements = cudf::detail::make_counting_transform_iterator(
     0, [](auto i) { return T((num_ordered_rows - i) / 100); });
@@ -96,9 +94,8 @@ cudf::test::fixed_width_column_wrapper<T> descending_low_cardinality()
  * @tparam T Timestamp type
  * @return Column wrapper
  */
-template <typename T>
+template <cudf::concepts::timestamp T>
 cudf::test::fixed_width_column_wrapper<T> descending_low_cardinality()
-  requires(cudf::is_timestamp<T>())
 {
   auto elements = cudf::detail::make_counting_transform_iterator(
     0, [](auto i) { return T(typename T::duration((num_ordered_rows - i) / 100)); });

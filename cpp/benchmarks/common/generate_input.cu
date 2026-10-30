@@ -24,6 +24,7 @@
 #include <cudf/table/table.hpp>
 #include <cudf/transform.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -36,6 +37,7 @@
 #include <cuda/cmath>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/std/concepts>
 #include <cuda/std/functional>
 #include <cuda/std/random>
 #include <cuda/std/tuple>
@@ -135,13 +137,13 @@ int num_direct_parents(int num_lvls, int num_leaf_columns)
 double avg_element_size(data_profile const& profile, cudf::data_type dtype);
 
 // Utilities to determine the mean size of an element, given the data profile
-template <typename T, CUDF_ENABLE_IF(cudf::is_fixed_width<T>())>
+template <cudf::concepts::fixed_width T>
 double non_fixed_width_size(data_profile const& profile)
 {
   CUDF_FAIL("Should not be called, use `size_of` for this type instead");
 }
 
-template <typename T, CUDF_ENABLE_IF(!cudf::is_fixed_width<T>())>
+template <typename T>
 double non_fixed_width_size(data_profile const& profile)
 {
   CUDF_FAIL("not implemented!");
@@ -255,19 +257,17 @@ struct bool_generator {
 /**
  * @brief Functor that computes a random column element with the given data profile.
  *
- * The implementation is SFINAEd for different type groups. Currently only used for fixed-width
+ * The implementation is specialized for different type groups. Currently only used for fixed-width
  * types.
  */
-template <typename T,
-          typename Enable = void,
-          typename Buffer = rmm::device_uvector<cudf::device_storage_type_t<T>>>
+template <typename T, typename Buffer = rmm::device_uvector<cudf::device_storage_type_t<T>>>
 struct random_value_fn;
 
 /**
  * @brief Creates an random timestamp/duration value
  */
-template <typename T, typename Buffer>
-struct random_value_fn<T, std::enable_if_t<cudf::is_chrono<T>()>, Buffer> {
+template <cudf::concepts::chrono T, typename Buffer>
+struct random_value_fn<T, Buffer> {
   distribution_fn<int64_t, cuda::device_buffer<int64_t>> seconds_gen;
   distribution_fn<int64_t, cuda::device_buffer<int64_t>> nanoseconds_gen;
 
@@ -327,8 +327,8 @@ struct random_value_fn<T, std::enable_if_t<cudf::is_chrono<T>()>, Buffer> {
 /**
  * @brief Creates an random fixed_point value.
  */
-template <typename T, typename Buffer>
-struct random_value_fn<T, std::enable_if_t<cudf::is_fixed_point<T>()>, Buffer> {
+template <cudf::concepts::fixed_point T, typename Buffer>
+struct random_value_fn<T, Buffer> {
   using DeviceType = cudf::device_storage_type_t<T>;
   DeviceType const lower_bound;
   DeviceType const upper_bound;
@@ -360,10 +360,8 @@ struct random_value_fn<T, std::enable_if_t<cudf::is_fixed_point<T>()>, Buffer> {
 /**
  * @brief Creates an random numeric value with the given distribution.
  */
-template <typename T, typename Buffer>
-struct random_value_fn<T,
-                       std::enable_if_t<!std::is_same_v<T, bool> && cudf::is_numeric<T>()>,
-                       Buffer> {
+template <cudf::concepts::arithmetic_not_bool T, typename Buffer>
+struct random_value_fn<T, Buffer> {
   T const lower_bound;
   T const upper_bound;
   distribution_fn<T, Buffer> dist;
@@ -381,8 +379,8 @@ struct random_value_fn<T,
 /**
  * @brief Creates an boolean value with given probability of returning `true`.
  */
-template <typename T, typename Buffer>
-struct random_value_fn<T, typename std::enable_if_t<std::is_same_v<T, bool>>, Buffer> {
+template <cudf::concepts::boolean T, typename Buffer>
+struct random_value_fn<T, Buffer> {
   // Bernoulli distribution
   distribution_fn<bool, Buffer> dist;
 
@@ -414,10 +412,10 @@ cuda::device_buffer<cudf::size_type> sample_indices_with_run_length(cudf::size_t
                                                                     cudf::size_type num_rows,
                                                                     cuda::std::philox4x32& engine)
 {
-  auto sample_dist = random_value_fn<cudf::size_type, void, cuda::device_buffer<cudf::size_type>>{
+  auto sample_dist = random_value_fn<cudf::size_type, cuda::device_buffer<cudf::size_type>>{
     distribution_params<cudf::size_type>{distribution_id::UNIFORM, 0, cardinality - 1}};
   if (avg_run_len > 1) {
-    auto avglen_dist = random_value_fn<int, void, cuda::device_buffer<int>>{
+    auto avglen_dist = random_value_fn<int, cuda::device_buffer<int>>{
       distribution_params<int>{distribution_id::UNIFORM, 1, 2 * avg_run_len}};
     auto const approx_run_len = num_rows / avg_run_len + 1;
     auto run_lens             = avglen_dist(engine, approx_run_len);
@@ -492,8 +490,8 @@ std::unique_ptr<cudf::column> create_random_utf8_string_column(data_profile cons
   auto const char_upper    = string_params.char_upper;
 
   auto len_dist =
-    random_value_fn<uint32_t, void, cuda::device_buffer<uint32_t>>{string_params.length_params};
-  auto valid_dist = random_value_fn<bool, void, cuda::device_buffer<bool>>(
+    random_value_fn<uint32_t, cuda::device_buffer<uint32_t>>{string_params.length_params};
+  auto valid_dist = random_value_fn<bool, cuda::device_buffer<bool>>(
     distribution_params<bool>{1. - profile.get_null_probability().value_or(0)});
   auto lengths   = len_dist(engine, num_rows + 1);
   auto null_mask = valid_dist(engine, num_rows + 1);
@@ -539,14 +537,12 @@ std::unique_ptr<cudf::column> create_random_column(data_profile const& profile,
                                                    cuda::std::philox4x32& engine,
                                                    cudf::size_type num_rows);
 
-template <typename T>
-  requires(cudf::is_numeric_not_bool<T>())
+template <cudf::concepts::arithmetic_not_bool T>
 std::unique_ptr<cudf::column> create_distinct_rows_column(data_profile const& profile,
                                                           cuda::std::philox4x32& engine,
                                                           cudf::size_type num_rows);
 
 template <typename T>
-  requires(!cudf::is_numeric_not_bool<T>())
 std::unique_ptr<cudf::column> create_distinct_rows_column(data_profile const& profile,
                                                           cuda::std::philox4x32& engine,
                                                           cudf::size_type num_rows);
@@ -584,7 +580,7 @@ std::unique_ptr<cudf::column> create_random_column(data_profile const& profile,
                                                    cudf::size_type num_rows)
 {
   // Bernoulli distribution
-  auto valid_dist = random_value_fn<bool, void, cuda::device_buffer<bool>>(
+  auto valid_dist = random_value_fn<bool, cuda::device_buffer<bool>>(
     distribution_params<bool>{1. - profile.get_null_probability().value_or(0)});
   auto value_dist = random_value_fn<T>{profile.get_distribution_params<T>()};
 
@@ -611,8 +607,8 @@ std::unique_ptr<cudf::column> create_random_column(data_profile const& profile,
                                                                           : profile_cardinality;
     }();
     cuda::device_buffer<bool> samples_null_mask = valid_dist(engine, cardinality);
-    auto sample_dist = random_value_fn<T, void, cuda::device_buffer<DeviceType>>{
-      profile.get_distribution_params<T>()};
+    auto sample_dist =
+      random_value_fn<T, cuda::device_buffer<DeviceType>>{profile.get_distribution_params<T>()};
     auto samples = sample_dist(engine, cardinality);
 
     // generate n samples and gather.
@@ -695,7 +691,7 @@ std::unique_ptr<cudf::column> create_random_column<cudf::struct_view>(data_profi
                      cudf::data_type(type_id), create_rand_col_fn{}, profile, engine, num_rows);
                  });
 
-  auto valid_dist = random_value_fn<bool, void, cuda::device_buffer<bool>>(
+  auto valid_dist = random_value_fn<bool, cuda::device_buffer<bool>>(
     distribution_params<bool>{1. - profile.get_null_probability().value_or(0)});
 
   // Generate the column bottom-up
@@ -776,7 +772,7 @@ std::unique_ptr<cudf::column> create_random_column<cudf::list_view>(data_profile
     cudf::data_type(dist_params.element_type), create_rand_col_fn{}, profile, engine, num_elements);
   auto len_dist =
     random_value_fn<uint32_t>{profile.get_distribution_params<cudf::list_view>().length_params};
-  auto valid_dist = random_value_fn<bool, void, cuda::device_buffer<bool>>(
+  auto valid_dist = random_value_fn<bool, cuda::device_buffer<bool>>(
     distribution_params<bool>{1. - profile.get_null_probability().value_or(0)});
 
   // Generate the list column bottom-up
@@ -829,8 +825,7 @@ std::unique_ptr<cudf::column> create_random_column<cudf::list_view>(data_profile
 }
 
 // Numeric types: create a sequence of unique values, then shuffle
-template <typename T>
-  requires(cudf::is_numeric_not_bool<T>())
+template <cudf::concepts::arithmetic_not_bool T>
 std::unique_ptr<cudf::column> create_distinct_rows_column(data_profile const& profile,
                                                           cuda::std::philox4x32& engine,
                                                           cudf::size_type num_rows)
@@ -845,7 +840,7 @@ std::unique_ptr<cudf::column> create_distinct_rows_column(data_profile const& pr
                   cuda::std::philox4x32(engine()));
 
   if (profile.get_null_probability().has_value()) {
-    auto valid_dist = random_value_fn<bool, void, cuda::device_buffer<bool>>(
+    auto valid_dist = random_value_fn<bool, cuda::device_buffer<bool>>(
       distribution_params<bool>{1. - profile.get_null_probability().value()});
     auto null_mask = valid_dist(engine, num_rows);
     auto [result_bitmask, null_count] =
@@ -858,7 +853,6 @@ std::unique_ptr<cudf::column> create_distinct_rows_column(data_profile const& pr
 
 // catch-all for all types not handled specifically above
 template <typename T>
-  requires(!cudf::is_numeric_not_bool<T>())
 std::unique_ptr<cudf::column> create_distinct_rows_column(data_profile const& profile,
                                                           cuda::std::philox4x32& engine,
                                                           cudf::size_type num_rows)
@@ -1215,7 +1209,7 @@ void data_profile::set_string_char_range(unsigned char lower, unsigned char uppe
   string_dist_desc.char_upper = upper;
 }
 
-template <typename T, std::enable_if_t<!std::is_same_v<T, bool> && cuda::std::is_integral_v<T>, T>*>
+template <cudf::concepts::integral_not_bool T>
 distribution_params<T> data_profile::get_distribution_params() const
 {
   auto it = int_params.find(cudf::type_to_id<T>());
@@ -1228,7 +1222,7 @@ distribution_params<T> data_profile::get_distribution_params() const
   }
 }
 
-template <typename T, std::enable_if_t<std::is_floating_point_v<T>, T>*>
+template <cuda::std::floating_point T>
 distribution_params<T> data_profile::get_distribution_params() const
 {
   auto it = float_params.find(cudf::type_to_id<T>());
@@ -1241,13 +1235,13 @@ distribution_params<T> data_profile::get_distribution_params() const
   }
 }
 
-template <typename T, std::enable_if_t<std::is_same_v<T, bool>>*>
+template <cudf::concepts::boolean T>
 distribution_params<T> data_profile::get_distribution_params() const
 {
   return distribution_params<T>{bool_probability_true};
 }
 
-template <typename T, std::enable_if_t<cudf::is_chrono<T>()>*>
+template <cudf::concepts::chrono T>
 distribution_params<T> data_profile::get_distribution_params() const
 {
   auto it = int_params.find(cudf::type_to_id<T>());
@@ -1261,25 +1255,25 @@ distribution_params<T> data_profile::get_distribution_params() const
   }
 }
 
-template <typename T, std::enable_if_t<std::is_same_v<T, cudf::string_view>>*>
+template <cudf::concepts::string_view T>
 distribution_params<T> data_profile::get_distribution_params() const
 {
   return string_dist_desc;
 }
 
-template <typename T, std::enable_if_t<std::is_same_v<T, cudf::list_view>>*>
+template <cudf::concepts::list_view T>
 distribution_params<T> data_profile::get_distribution_params() const
 {
   return list_dist_desc;
 }
 
-template <typename T, std::enable_if_t<std::is_same_v<T, cudf::struct_view>>*>
+template <cudf::concepts::struct_view T>
 distribution_params<T> data_profile::get_distribution_params() const
 {
   return struct_dist_desc;
 }
 
-template <typename T, std::enable_if_t<cudf::is_fixed_point<T>()>*>
+template <cudf::concepts::fixed_point T>
 distribution_params<T> data_profile::get_distribution_params() const
 {
   using rep = typename T::rep;

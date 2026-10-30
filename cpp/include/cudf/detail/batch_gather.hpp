@@ -102,5 +102,30 @@ size_type select_gather_map_tile_cols(table_view const& source_table,
                                       size_type max_fused_element_size,
                                       cuda::stream_ref stream);
 
+/**
+ * @brief Largest number of fused descriptors the fused kernel can take by value
+ *
+ * A table with at most this many fixed-width columns passes its descriptors as one by-value
+ * kernel parameter instead of a device array, which removes the staging allocation, the device
+ * allocation, and the host-to-device copy from every call. 128 descriptors occupy
+ * `16 + 48 * 128 = 6'160` bytes of the 32'764-byte kernel-parameter budget, so the driver-side
+ * copy of the parameter block stays small; a block filling the whole budget would cost that
+ * copy on every launch, which is the fixed cost this tier removes.
+ */
+constexpr size_type batch_gather_max_by_value_descriptors{128};
+
+/**
+ * @brief Whether `num_descriptors` fused columns travel by value instead of through device memory.
+ *
+ * This is the tier dispatch used by the fused kernel launch; the capacity is inclusive.
+ *
+ * @param[in] num_descriptors Number of fixed-width columns the fused kernel will process
+ * @return true if the by-value parameter tier handles that descriptor count
+ */
+constexpr bool batch_gather_descriptors_by_value(size_type num_descriptors)
+{
+  return num_descriptors <= batch_gather_max_by_value_descriptors;
+}
+
 }  // namespace detail
 }  // namespace CUDF_EXPORT cudf

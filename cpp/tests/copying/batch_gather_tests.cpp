@@ -1139,3 +1139,106 @@ TEST_F(BatchGatherRoutingTest, RoutedPathMatchesExplicitTileWidths)
   CUDF_TEST_EXPECT_TABLES_EQUAL(routed_shuffled->view(), wide_on_shuffled->view());
   CUDF_TEST_EXPECT_TABLES_EQUAL(routed_shuffled->view(), single_on_shuffled->view());
 }
+
+// ============================================================================
+// §5.11 By-value descriptor tier: small tables carry their descriptors as a kernel parameter.
+// ============================================================================
+
+class BatchGatherByValueTest : public cudf::test::BaseFixture {};
+
+namespace {
+// Fixed-width columns covering every copy_element width (1/2/4/8/16 bytes), nullable and
+// non-nullable: the by-value tier must carry the whole descriptor layout, not just pointers.
+std::vector<std::unique_ptr<cudf::column>> by_value_columns(cudf::size_type num_rows)
+{
+  auto columns = std::vector<std::unique_ptr<cudf::column>>{};
+  columns.push_back(make_fixed_column<int8_t>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type i) { return i % 7 != 0; }));
+  columns.push_back(
+    make_fixed_column_without_validity<int16_t>(num_rows, [](cudf::size_type i) { return i * 3; }));
+  columns.push_back(make_fixed_column<int32_t>(
+    num_rows,
+    [](cudf::size_type i) { return i + 1; },
+    [](cudf::size_type i) { return i % 3 != 0; }));
+  columns.push_back(make_fixed_column_without_validity<int64_t>(
+    num_rows, [](cudf::size_type i) { return static_cast<int64_t>(i) * 5; }));
+  columns.push_back(make_fixed_column_without_validity<numeric::decimal128>(
+    num_rows, [](cudf::size_type i) { return i + 2; }));
+  columns.push_back(make_fixed_column<float>(
+    num_rows,
+    [](cudf::size_type i) { return static_cast<float>(i) * 0.5f; },
+    [](cudf::size_type i) { return i % 5 != 0; }));
+  return columns;
+}
+}  // namespace
+
+TEST_F(BatchGatherByValueTest, SmallTableMatchesGatherAcrossTileWidths)
+{
+  // Far inside the tier, so all three router-reachable tile widths run the by-value kernel; each
+  // must match the stock per-column gather.
+  constexpr cudf::size_type num_rows{1'000};
+  auto columns = by_value_columns(num_rows);
+  auto views   = std::vector<cudf::column_view>{};
+  views.reserve(columns.size());
+  for (auto const& column : columns) {
+    views.push_back(column->view());
+  }
+  cudf::table_view const source(views);
+  ASSERT_LE(source.num_columns(), cudf::detail::batch_gather_max_by_value_descriptors);
+
+  auto const host_map = shuffled_iota(num_rows, 7);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+  auto const expected = run_reference(source, gather_map);
+  for (auto const tile_cols : {1, 2, 8}) {
+    auto const result = run_batch_gather_tile(source, gather_map, tile_cols);
+    CUDF_TEST_EXPECT_TABLES_EQUAL(expected->view(), result->view());
+  }
+  // Routed entry: same tier, geometry from the classifier instead of the explicit overload.
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected->view(), run_batch_gather(source, gather_map)->view());
+}
+
+TEST_F(BatchGatherByValueTest, DescriptorCountBoundary)
+{
+  // `capacity` descriptors must fit the by-value block and `capacity + 1` must leave it. The
+  // predicate assertions pin the inclusive boundary that the launch dispatch calls: an
+  // off-by-one there either drops the tier at exactly `capacity` (caught here) or, one
+  // descriptor higher, overruns the parameter block (caught by the capacity leg corrupting the
+  // launch).
+  constexpr cudf::size_type capacity = cudf::detail::batch_gather_max_by_value_descriptors;
+  EXPECT_TRUE(cudf::detail::batch_gather_descriptors_by_value(capacity));
+  EXPECT_FALSE(cudf::detail::batch_gather_descriptors_by_value(capacity + 1));
+
+  constexpr cudf::size_type num_rows{40};
+  auto const host_map = shuffled_iota(num_rows, 3);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  for (auto const num_cols : {capacity, capacity + 1}) {
+    auto columns = std::vector<std::unique_ptr<cudf::column>>{};
+    columns.reserve(num_cols);
+    for (cudf::size_type c = 0; c < num_cols; ++c) {
+      // Alternating widths on both sides of the boundary: the descriptors must survive either
+      // tier with the same element sizes.
+      if (c % 2 == 0) {
+        columns.push_back(make_fixed_column<int32_t>(
+          num_rows,
+          [c](cudf::size_type i) { return i + c; },
+          [](cudf::size_type i) { return i % 5 != 0; }));
+      } else {
+        columns.push_back(make_fixed_column_without_validity<int64_t>(
+          num_rows, [c](cudf::size_type i) { return static_cast<int64_t>(i) * (c + 1); }));
+      }
+    }
+    auto views = std::vector<cudf::column_view>{};
+    views.reserve(num_cols);
+    for (auto const& column : columns) {
+      views.push_back(column->view());
+    }
+    cudf::table_view const source(views);
+
+    auto const expected = run_reference(source, gather_map);
+    auto const routed   = run_batch_gather(source, gather_map);
+    CUDF_TEST_EXPECT_TABLES_EQUAL(expected->view(), routed->view());
+  }
+}

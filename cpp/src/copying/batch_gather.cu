@@ -107,6 +107,37 @@ struct alignas(16) column_descriptor {
   bool skip_data;                // all-null fast path: dst mask pre-set ALL_NULL, data undefined
 };
 
+/**
+ * @brief Descriptors of a small table, handed to the kernel as one by-value parameter.
+ *
+ * `__grid_constant__` on the kernel parameter keeps this object in the kernel-parameter space,
+ * so no thread gets a private copy and no device allocation or host-to-device copy is needed.
+ * `count` mirrors the device path's `num_descriptors`; entries at or past `count` are unused.
+ *
+ * The size is what bounds the tier: `sizeof(column_descriptor)` is 48 bytes (16-byte aligned),
+ * so a block costs `16 + 48 * kCap` bytes — `descs` starts at offset 16 because `count` is
+ * padded up to the array's alignment.
+ */
+template <size_type kCap>
+struct descriptor_block {
+  size_type count;
+  column_descriptor descs[kCap];
+};
+
+// The by-value tier's byte arithmetic rests on this layout: 4 pointers, one int64, one int32,
+// and one bool total 45 bytes, which the 16-byte alignment rounds to 48. `count` is padded up to
+// that alignment, so a capped block is 16 + 48 * 128 = 6'160 bytes.
+static_assert(sizeof(column_descriptor) == 48,
+              "Descriptor size changed: revisit the by-value tier capacity arithmetic");
+static_assert(sizeof(descriptor_block<batch_gather_max_by_value_descriptors>) == 6'160,
+              "By-value block size changed: update the tier's byte arithmetic");
+
+// The block shares the 32'764-byte kernel-parameter limit with the rest of the launch:
+// input_indexalator 32 B, two size_type 8 B, two bool 2 B, and one pointer 8 B total 50 B, which
+// the block's 16-byte alignment rounds up to 64 B.
+static_assert(sizeof(descriptor_block<batch_gather_max_by_value_descriptors>) + 64 <= 32'764,
+              "By-value descriptor block exceeds the kernel-parameter size limit");
+
 // Evict-first cache policy (PTX ISA 74, SM_70+ via the generated cuda::ptx builtins), active
 // only in the streaming regime: the sampled coalesced verdict marks the dst/src traffic
 // don't-cache so L2 keeps the reuse-critical gather map. Random/unsampled verdicts, test-forced
@@ -167,7 +198,103 @@ struct data_ptr_functor {
 };
 
 /**
- * @brief Gathers every column described by `descriptors` in one launch.
+ * @brief Runs one descriptor tile's row loop, reading the tile's descriptors from `tile_descs`.
+ *
+ * Shared by both launch variants so the row and mask machinery exists once: `tile_descs`
+ * addresses the shared-memory stage on the device path and the kernel-parameter block on the
+ * by-value path. `__forceinline__` keeps the by-value variant's descriptor reads hoistable out of
+ * the row loop: only a pointer crosses this boundary, never a descriptor block by value, so
+ * inlining carries the `__grid_constant__` no-copy guarantee through and the tile base stays
+ * provably loop-invariant.
+ *
+ * `tile_begin` is the absolute descriptor position of `tile_descs[0]`; positions at or past
+ * `num_descriptors` are absent from the tile and skipped.
+ *
+ * INVARIANT: every destination row r in [0, num_rows) is written by exactly one thread, per
+ * column.
+ *
+ * INVARIANT (kMasked == true): each column's dst_mask word w is written exactly once, by lane 0
+ * of the warp covering rows [32w, 32w + 32): this requires BlockSize to be a multiple of
+ * warp_size (the row stride is then a multiple of 32), which the driver guarantees. Trailing
+ * bits of the last word are 0. Per-column bookkeeping (warp_valid[k], per-column ballots)
+ * keeps this true independently of the tile a column belongs to.
+ */
+template <size_type BlockSize, size_type kTileCols, bool kStreaming, bool kMasked>
+__device__ __forceinline__ void gather_tile_rows(input_indexalator gather_map,
+                                                 column_descriptor const* tile_descs,
+                                                 size_type tile_begin,
+                                                 size_type num_descriptors,
+                                                 size_type num_rows,
+                                                 size_type num_source_rows,
+                                                 bool check_bounds,
+                                                 bool negative_allowed,
+                                                 size_type* valid_counts)
+{
+  // The masked instantiation tallies per-column valid bits and carries the row-loop predicate
+  // in one active-lane ballot mask; the unmasked instantiation has neither.
+  [[maybe_unused]] size_type warp_valid[kTileCols]{};
+  auto const row_stride        = static_cast<int64_t>(blockDim.x) * gridDim.x;
+  auto row                     = static_cast<int64_t>(blockIdx.x) * BlockSize + threadIdx.x;
+  [[maybe_unused]] auto active = 0xFFFF'FFFFu;
+  if constexpr (kMasked) { active = __ballot_sync(active, row < num_rows); }
+  while (row < num_rows) {
+    // One map load (wrap + table-level bounds check) serves every column in the tile.
+    // Deliberately default-cached: the map is the reuse-critical stream and the wide-tile
+    // win depends on its L2 residency (no eviction hint here).
+    auto idx = gather_map[static_cast<size_type>(row)];
+    if (negative_allowed && idx < 0) { idx += num_source_rows; }
+    bool const in_bounds = !check_bounds || (idx >= 0 && idx < num_source_rows);
+#pragma unroll
+    for (int32_t k = 0; k < kTileCols; ++k) {
+      if (tile_begin + k < num_descriptors) {
+        auto const d = tile_descs[k];
+        bool valid   = in_bounds;
+        if constexpr (kMasked) {
+          if (valid && d.src_mask != nullptr) {
+            valid = bit_is_set(d.src_mask, static_cast<size_type>(d.mask_offset + idx));
+          }
+        }
+        // Data at out-of-bounds/null rows may be left unwritten (fixed-width undefined-value
+        // policy).
+        if (valid && !d.skip_data) {
+          copy_element<kStreaming>(
+            static_cast<char*>(d.dst_data) + static_cast<std::size_t>(row) * d.element_size,
+            static_cast<char const*>(d.src_data) + static_cast<std::size_t>(idx) * d.element_size,
+            d.element_size);
+        }
+        if constexpr (kMasked) {
+          if (d.dst_mask != nullptr) {
+            auto const word = __ballot_sync(active, valid);
+            if (threadIdx.x % warp_size == 0) {
+              d.dst_mask[word_index(static_cast<size_type>(row))] = word;
+              warp_valid[k] += cuda::std::popcount(word);
+            }
+          }
+        }
+      }
+    }
+    row += row_stride;
+    if constexpr (kMasked) { active = __ballot_sync(active, row < num_rows); }
+  }
+  if constexpr (kMasked) {
+    if (valid_counts != nullptr) {
+#pragma unroll
+      for (int32_t k = 0; k < kTileCols; ++k) {
+        auto const col = tile_begin + k;
+        if (col < num_descriptors && tile_descs[k].dst_mask != nullptr) {
+          auto const block_valid = single_lane_block_sum_reduce<BlockSize, 0>(warp_valid[k]);
+          if (threadIdx.x == 0 && block_valid > 0) {
+            cuda::atomic_ref<size_type, cuda::thread_scope_device> ref{valid_counts[col]};
+            ref.fetch_add(block_valid, cuda::std::memory_order_relaxed);
+          }
+        }
+      }
+    }
+  }
+}
+
+/**
+ * @brief Gathers every column described by `descriptors` in one launch (device path).
  *
  * The grid is 2D: x covers row blocks (grid-stride over rows); each y block owns a tile of
  * `kTileCols` consecutive descriptors and y-strides over tiles past the 65535 gridDim.y cap. A
@@ -176,19 +303,10 @@ struct data_ptr_functor {
  * `kTileCols == 1` degenerates to one column per y block (the pre-tiling geometry) with the
  * same single-launch contract.
  *
- * INVARIANT: every destination row r in [0, num_rows) is written by exactly one thread, per
- * column.
- *
  * `kMasked` selects the mask machinery: `true` reads `src_mask`, ballots validity into
  * `dst_mask` words, and accumulates `valid_counts`; `false` is launched only when no descriptor
  * carries either mask, so it drops the ballots, mask-word stores, source-mask reads, and
- * valid-bit tallies entirely.
- *
- * INVARIANT (kMasked == true): each column's dst_mask word w is written exactly once, by lane 0
- * of the warp covering rows [32w, 32w + 32): this requires BlockSize to be a multiple of
- * warp_size (the row stride is then a multiple of 32), which the driver guarantees. Trailing
- * bits of the last word are 0. Per-column bookkeeping (warp_valid[k], per-column ballots)
- * keeps this true independently of the tile a column belongs to.
+ * valid-bit tallies entirely. The row and mask invariants are stated on `gather_tile_rows`.
  */
 template <size_type BlockSize, size_type kTileCols, bool kStreaming, bool kMasked>
 CUDF_KERNEL __launch_bounds__(BlockSize) void batch_gather_kernel(
@@ -213,70 +331,56 @@ CUDF_KERNEL __launch_bounds__(BlockSize) void batch_gather_kernel(
       tile_descs[threadIdx.x] = descriptors[tile_begin + static_cast<size_type>(threadIdx.x)];
     }
     __syncthreads();
-    // The masked instantiation tallies per-column valid bits and carries the row-loop predicate
-    // in one active-lane ballot mask; the unmasked instantiation has neither.
-    [[maybe_unused]] size_type warp_valid[kTileCols]{};
-    auto const row_stride        = static_cast<int64_t>(blockDim.x) * gridDim.x;
-    auto row                     = static_cast<int64_t>(blockIdx.x) * BlockSize + threadIdx.x;
-    [[maybe_unused]] auto active = 0xFFFF'FFFFu;
-    if constexpr (kMasked) { active = __ballot_sync(active, row < num_rows); }
-    while (row < num_rows) {
-      // One map load (wrap + table-level bounds check) serves every column in the tile.
-      // Deliberately default-cached: the map is the reuse-critical stream and the wide-tile
-      // win depends on its L2 residency (no eviction hint here).
-      auto idx = gather_map[static_cast<size_type>(row)];
-      if (negative_allowed && idx < 0) { idx += num_source_rows; }
-      bool const in_bounds = !check_bounds || (idx >= 0 && idx < num_source_rows);
-#pragma unroll
-      for (int32_t k = 0; k < kTileCols; ++k) {
-        if (tile_begin + k < num_descriptors) {
-          auto const d = tile_descs[k];
-          bool valid   = in_bounds;
-          if constexpr (kMasked) {
-            if (valid && d.src_mask != nullptr) {
-              valid = bit_is_set(d.src_mask, static_cast<size_type>(d.mask_offset + idx));
-            }
-          }
-          // Data at out-of-bounds/null rows may be left unwritten (fixed-width undefined-value
-          // policy).
-          if (valid && !d.skip_data) {
-            copy_element<kStreaming>(
-              static_cast<char*>(d.dst_data) + static_cast<std::size_t>(row) * d.element_size,
-              static_cast<char const*>(d.src_data) + static_cast<std::size_t>(idx) * d.element_size,
-              d.element_size);
-          }
-          if constexpr (kMasked) {
-            if (d.dst_mask != nullptr) {
-              auto const word = __ballot_sync(active, valid);
-              if (threadIdx.x % warp_size == 0) {
-                d.dst_mask[word_index(static_cast<size_type>(row))] = word;
-                warp_valid[k] += cuda::std::popcount(word);
-              }
-            }
-          }
-        }
-      }
-      row += row_stride;
-      if constexpr (kMasked) { active = __ballot_sync(active, row < num_rows); }
-    }
-    if constexpr (kMasked) {
-      if (valid_counts != nullptr) {
-#pragma unroll
-        for (int32_t k = 0; k < kTileCols; ++k) {
-          auto const col = tile_begin + k;
-          if (col < num_descriptors && tile_descs[k].dst_mask != nullptr) {
-            auto const block_valid = single_lane_block_sum_reduce<BlockSize, 0>(warp_valid[k]);
-            if (threadIdx.x == 0 && block_valid > 0) {
-              cuda::atomic_ref<size_type, cuda::thread_scope_device> ref{valid_counts[col]};
-              ref.fetch_add(block_valid, cuda::std::memory_order_relaxed);
-            }
-          }
-        }
-      }
-    }
-    // All threads are done reading tile_descs; the next tile iteration rewrites it.
+    gather_tile_rows<BlockSize, kTileCols, kStreaming, kMasked>(gather_map,
+                                                                tile_descs,
+                                                                tile_begin,
+                                                                num_descriptors,
+                                                                num_rows,
+                                                                num_source_rows,
+                                                                check_bounds,
+                                                                negative_allowed,
+                                                                valid_counts);
+    // All threads are finished reading tile_descs; the next tile iteration rewrites it.
     __syncthreads();
   }
+}
+
+/**
+ * @brief Gathers every column of a by-value `block` in one launch (parameter-space path).
+ *
+ * Same grid geometry, row loop, and mask machinery as `batch_gather_kernel`; the difference is
+ * the descriptor source. The tile is read straight out of the kernel-parameter block, so there
+ * is no shared-memory stage and no barrier around the row loop, and the launch needs neither a
+ * descriptor device allocation nor a host-to-device copy.
+ *
+ * `__grid_constant__` is required, not cosmetic: without it the compiler gives every thread a
+ * private copy of the whole block in local memory.
+ *
+ * One y pass suffices — `kCap` spans at most `kCap / kTileCols` tiles, far below the 65535
+ * gridDim.y cap — so `blockIdx.y` names its tile directly and the y-stride loop is omitted.
+ */
+template <size_type BlockSize, size_type kTileCols, bool kStreaming, bool kMasked, size_type kCap>
+CUDF_KERNEL __launch_bounds__(BlockSize) void batch_gather_block_kernel(
+  input_indexalator gather_map,
+  __grid_constant__ descriptor_block<kCap> const block,
+  size_type num_rows,
+  size_type num_source_rows,
+  bool check_bounds,
+  bool negative_allowed,
+  size_type* valid_counts)
+{
+  // `gather_tile_rows` indexes tile-local positions, so it receives the block's descriptor array
+  // offset to this block's tile; the y grid is exactly the tile count, hence no stride loop.
+  auto const tile_begin = static_cast<size_type>(blockIdx.y) * kTileCols;
+  gather_tile_rows<BlockSize, kTileCols, kStreaming, kMasked>(gather_map,
+                                                              block.descs + tile_begin,
+                                                              tile_begin,
+                                                              block.count,
+                                                              num_rows,
+                                                              num_source_rows,
+                                                              check_bounds,
+                                                              negative_allowed,
+                                                              valid_counts);
 }
 
 // Enqueues the map-locality sample copies on the stream (one batched D2H into pinned staging —
@@ -666,15 +770,27 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
   }
 
   if (not descriptors.empty() and num_rows > 0) {
-    // Pinned staging: stream-ordered deallocation, so the H2D needs no host sync.
-    auto staging =
-      cudf::detail::make_pinned_vector_async<column_descriptor>(descriptors.size(), stream);
-    std::copy(descriptors.begin(), descriptors.end(), staging.begin());
-    auto d_descriptors =
-      rmm::device_uvector<column_descriptor>(descriptors.size(), stream, temp_mr);
-    cudf::detail::cuda_memcpy_async(device_span<column_descriptor>{d_descriptors},
-                                    host_span<column_descriptor const>{staging},
-                                    stream);
+    auto const num_descs = static_cast<size_type>(descriptors.size());
+    // Small tables ride in the kernel parameters instead of the device array. The by-value tier
+    // instantiates the tile widths the router can return (1, 2, 8) only, so the explicit-only
+    // geometry 4 keeps the device array — the same rule the launch switch below applies.
+    auto const by_value =
+      batch_gather_descriptors_by_value(num_descs) and explicit_tile_cols != size_type{4};
+
+    // Device path staging: pinned host staging (stream-ordered free, so the H2D needs no host
+    // sync and the copy's source stays valid past this scope) plus the device buffer the kernel
+    // reads. Built only for the device path.
+    std::optional<cudf::detail::host_vector<column_descriptor>> staging;
+    std::optional<rmm::device_uvector<column_descriptor>> d_descriptors;
+    if (not by_value) {
+      staging.emplace(
+        cudf::detail::make_pinned_vector_async<column_descriptor>(descriptors.size(), stream));
+      std::copy(descriptors.begin(), descriptors.end(), staging->begin());
+      d_descriptors.emplace(descriptors.size(), stream, temp_mr);
+      cudf::detail::cuda_memcpy_async(device_span<column_descriptor>{*d_descriptors},
+                                      host_span<column_descriptor const>{*staging},
+                                      stream);
+    }
 
     // The mask-free instantiation is valid only when NO descriptor writes a destination mask or
     // reads a source mask. `kernel_masked_positions` covers the destination side only, so the
@@ -690,31 +806,54 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
         descriptors.size(), stream, temp_mr);
     }
 
-    // One launch per call; the tile width picks the kernel instantiation. y dimension: one
-    // block per column tile (the kernel's y-stride loop covers tiles past the 65535 cap).
+    // One launch per call; the tile width and the descriptor tier pick the kernel instantiation.
+    // y dimension: one block per column tile (the device kernel's y-stride loop covers tiles past
+    // the 65535 cap; the by-value block always fits below it).
     auto const map_begin   = indexalator_factory::make_input_iterator(gather_map);
-    auto const launch_tile = [&](auto tile_constant, auto streaming_constant) {
+    auto const launch_tile = [&](auto tile_constant,
+                                 auto streaming_constant,
+                                 auto by_value_constant) {
       constexpr size_type kTileCols = decltype(tile_constant)::value;
       constexpr bool kStreaming     = decltype(streaming_constant)::value;
-      dim3 const grid{
-        static_cast<unsigned>(cudf::util::div_rounding_up_safe(num_rows, block_size)),
-        static_cast<unsigned>(std::min<size_type>(
-          cudf::util::div_rounding_up_safe(static_cast<size_type>(descriptors.size()), kTileCols),
-          65535)),
-        1};
-      // The mask-free choice comes from host descriptor fields, so it selects the instantiation
-      // directly; the unmasked one never receives a `valid_counts` buffer.
+      constexpr bool kByValue       = decltype(by_value_constant)::value;
+      dim3 const grid{static_cast<unsigned>(cudf::util::div_rounding_up_safe(num_rows, block_size)),
+                      static_cast<unsigned>(std::min<size_type>(
+                        cudf::util::div_rounding_up_safe(num_descs, kTileCols), 65535)),
+                      1};
+      // The mask-free choice comes from host descriptor fields, so it selects the
+      // instantiation directly; the unmasked one never receives a `valid_counts` buffer.
       auto const launch = [&](auto masked_constant) {
         constexpr bool kMasked = decltype(masked_constant)::value;
-        batch_gather_kernel<block_size, kTileCols, kStreaming, kMasked>
-          <<<grid, block_size, 0, stream.get()>>>(map_begin,
-                                                  d_descriptors.data(),
-                                                  static_cast<size_type>(descriptors.size()),
-                                                  num_rows,
-                                                  num_src_rows,
-                                                  bounds_policy == out_of_bounds_policy::NULLIFY,
-                                                  neg_indices == negative_index_policy::ALLOWED,
-                                                  kMasked ? valid_counts.data() : nullptr);
+        auto const counts_ptr  = kMasked ? valid_counts.data() : nullptr;
+        if constexpr (kByValue) {
+          // Zero-initialized so every byte the launch copies is defined; the device reads only
+          // the first `count` entries.
+          auto block  = descriptor_block<batch_gather_max_by_value_descriptors>{};
+          block.count = num_descs;
+          std::copy(descriptors.begin(), descriptors.end(), block.descs);
+          batch_gather_block_kernel<block_size,
+                                    kTileCols,
+                                    kStreaming,
+                                    kMasked,
+                                    batch_gather_max_by_value_descriptors>
+            <<<grid, block_size, 0, stream.get()>>>(map_begin,
+                                                    block,
+                                                    num_rows,
+                                                    num_src_rows,
+                                                    bounds_policy == out_of_bounds_policy::NULLIFY,
+                                                    neg_indices == negative_index_policy::ALLOWED,
+                                                    counts_ptr);
+        } else {
+          batch_gather_kernel<block_size, kTileCols, kStreaming, kMasked>
+            <<<grid, block_size, 0, stream.get()>>>(map_begin,
+                                                    d_descriptors->data(),
+                                                    num_descs,
+                                                    num_rows,
+                                                    num_src_rows,
+                                                    bounds_policy == out_of_bounds_policy::NULLIFY,
+                                                    neg_indices == negative_index_policy::ALLOWED,
+                                                    counts_ptr);
+        }
         CUDF_CUDA_TRY(cudaGetLastError());
       };
       if (any_kernel_masks) {
@@ -733,16 +872,36 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
     // random verdicts, and test-forced geometries keep the default-cached accesses.
     auto const streaming =
       not explicit_tile_cols.has_value() and effective_tile_cols == kCoalescedTileCols;
-    if (streaming) {
-      launch_tile(std::integral_constant<size_type, kCoalescedTileCols>{}, std::true_type{});
-    } else {
+    // Tile 4 is explicit-only and has no by-value instantiation, so it always takes the device
+    // array. `by_value` already excludes the explicit 4 (see the tier comment above), which
+    // makes this arm unreachable from the by-value dispatch.
+    auto const dispatch = [&](auto by_value_constant) {
+      if (streaming) {
+        launch_tile(std::integral_constant<size_type, kCoalescedTileCols>{},
+                    std::true_type{},
+                    by_value_constant);
+        return;
+      }
       switch (effective_tile_cols) {
-        case 1: launch_tile(std::integral_constant<size_type, 1>{}, std::false_type{}); break;
-        case 2: launch_tile(std::integral_constant<size_type, 2>{}, std::false_type{}); break;
-        case 4: launch_tile(std::integral_constant<size_type, 4>{}, std::false_type{}); break;
-        case 8: launch_tile(std::integral_constant<size_type, 8>{}, std::false_type{}); break;
+        case 1:
+          launch_tile(std::integral_constant<size_type, 1>{}, std::false_type{}, by_value_constant);
+          break;
+        case 2:
+          launch_tile(std::integral_constant<size_type, 2>{}, std::false_type{}, by_value_constant);
+          break;
+        case 4:
+          launch_tile(std::integral_constant<size_type, 4>{}, std::false_type{}, std::false_type{});
+          break;
+        case 8:
+          launch_tile(std::integral_constant<size_type, 8>{}, std::false_type{}, by_value_constant);
+          break;
         default: CUDF_FAIL("Unsupported batch_gather tile width", std::invalid_argument);
       }
+    };
+    if (by_value) {
+      dispatch(std::true_type{});
+    } else {
+      dispatch(std::false_type{});
     }
 
     if (any_kernel_masks) {

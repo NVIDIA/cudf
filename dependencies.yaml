@@ -1303,13 +1303,14 @@ dependencies:
           - pyarrow>=19.0.0
       - output_types: [requirements, constraints, pyproject]
         packages:
-          - polars_iceberg>=0.1.0
+          - polars[iceberg]
       - output_types: conda
         packages:
           # Used by timeout_with_stack.py utility
           - gdb
+          # TODO: Use the conda-forge package once polars-iceberg is available there
           - pip:
-              - polars_iceberg>=0.1.0
+              - polars-iceberg>=0.1.0
   test_cudf_polars_tpch:
     common:
       - output_types: [conda, requirements, pyproject]

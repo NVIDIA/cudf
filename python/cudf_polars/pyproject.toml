@@ -46,7 +46,7 @@ test = [
     "dask-cuda==26.12.*,>=0.0.0a0",
     "deltalake>=1.6.0",
     "pandas>=3.0.0,<3.1.0",
-    "polars_iceberg>=0.1.0",
+    "polars[iceberg]",
     "psutil",
     "pyarrow>=19.0.0",
     "pyiceberg>=0.12.0",

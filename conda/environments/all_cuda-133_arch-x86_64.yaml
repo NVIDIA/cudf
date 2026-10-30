@@ -118,5 +118,5 @@ dependencies:
 - zstandard
 - pip:
   - nvidia-sphinx-theme
-  - polars_iceberg>=0.1.0
+  - polars-iceberg>=0.1.0
 name: all_cuda-133_arch-x86_64

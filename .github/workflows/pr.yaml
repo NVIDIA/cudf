@@ -536,7 +536,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/conda-python-tests.yaml@main
+    uses: ./.github/workflows/conda-python-tests.yaml
     if: >
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_common ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_libcudf ||
@@ -551,6 +551,7 @@ jobs:
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda_cudf_tests
     with:
       build_type: pull-request
+      test-results-artifact-name: pytest-junit-conda-python-cudf
       script: >-
         env
         RUN_PYLIBCUDF_TESTS=${{
@@ -585,7 +586,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/conda-python-tests.yaml@main
+    uses: ./.github/workflows/conda-python-tests.yaml
     if: >
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_common ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_libcudf ||
@@ -598,6 +599,7 @@ jobs:
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf_polars_runner
     with:
       build_type: pull-request
+      test-results-artifact-name: pytest-junit-conda-python-cudf-polars
       # https://github.com/NVIDIA/cudf/pull/22381/changes#r3196736965
       container-options: "--cap-add CAP_SYS_PTRACE --shm-size=8g --ulimit=nofile=1000000:1000000"
       script: "env POLARS_VERSIONS=latest ci/test_python_cudf_polars.sh"
@@ -612,7 +614,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/conda-python-tests.yaml@main
+    uses: ./.github/workflows/conda-python-tests.yaml
     if: >
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_common ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_libcudf ||
@@ -625,6 +627,7 @@ jobs:
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf_polars_runner
     with:
       build_type: pull-request
+      test-results-artifact-name: pytest-junit-conda-python-cudf-polars-integrations
       # https://github.com/NVIDIA/cudf/pull/22381/changes#r3196736965
       container-options: "--cap-add CAP_SYS_PTRACE --shm-size=8g --ulimit=nofile=1000000:1000000"
       script: "ci/test_python_cudf_polars_integrations.sh"
@@ -638,7 +641,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/conda-python-tests.yaml@main
+    uses: ./.github/workflows/conda-python-tests.yaml
     if: >
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_common ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_libcudf ||
@@ -655,6 +658,7 @@ jobs:
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf_streaming_runner
     with:
       build_type: pull-request
+      test-results-artifact-name: pytest-junit-conda-python-other
       # https://github.com/NVIDIA/cudf/pull/22381/changes#r3196736965
       container-options: "--cap-add CAP_SYS_PTRACE --shm-size=8g --ulimit=nofile=1000000:1000000"
       script: >-
@@ -864,7 +868,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/wheels-test.yaml@main
+    uses: ./.github/workflows/wheels-test.yaml
     if: >
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_common ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_libcudf ||
@@ -877,6 +881,7 @@ jobs:
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheel_cudf
     with:
       build_type: pull-request
+      test-results-artifact-name: pytest-junit-wheel-cudf
       script: >-
         env
         RUN_PYLIBCUDF_TESTS=${{
@@ -915,7 +920,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/wheels-test.yaml@main
+    uses: ./.github/workflows/wheels-test.yaml
     if: >
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_common ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_libcudf ||
@@ -927,6 +932,7 @@ jobs:
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheel_cudf_polars ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf_polars_runner
     with:
+      test-results-artifact-name: pytest-junit-wheel-cudf-polars
       # This selects "ARCH=amd64 + the latest supported Python + CUDA".
       matrix_filter: map(select(.ARCH == "amd64")) | group_by(.CUDA_VER|split(".")|map(tonumber)|.[0]) | map(max_by([(.PY_VER|split(".")|map(tonumber)), (.CUDA_VER|split(".")|map(tonumber))]))
       build_type: pull-request
@@ -941,7 +947,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
+    uses: ./.github/workflows/custom-test-job.yaml
     if: >
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_common ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_libcudf ||
@@ -954,6 +960,7 @@ jobs:
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf_polars_polars
     with:
       build_type: pull-request
+      test-results-artifact-name: pytest-junit-cudf-polars-polars
       branch: ${{ inputs.branch }}
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
@@ -997,13 +1004,14 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/wheels-test.yaml@main
+    uses: ./.github/workflows/wheels-test.yaml
     if: >
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_wheel_dask_cudf ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheels ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheel_cudf ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheel_dask_cudf
     with:
+      test-results-artifact-name: pytest-junit-wheel-dask-cudf
       # This selects "ARCH=amd64 + the latest supported Python + CUDA".
       matrix_filter: map(select(.ARCH == "amd64")) | group_by(.CUDA_VER|split(".")|map(tonumber)|.[0]) | map(max_by([(.PY_VER|split(".")|map(tonumber)), (.CUDA_VER|split(".")|map(tonumber))]))
       build_type: pull-request
@@ -1042,9 +1050,10 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/wheels-test.yaml@main
+    uses: ./.github/workflows/wheels-test.yaml
     if: fromJSON(needs.changed-files.outputs.changed_file_groups).unit_tests_cudf_pandas
     with:
+      test-results-artifact-name: pytest-junit-wheel-cudf-pandas
       # This selects the latest supported Python + CUDA minor versions for each ARCH/CUDA major version combo
       # Filter out GB300 due to https://github.com/NVIDIA/cudf/issues/23498
       matrix_filter: >-
@@ -1062,7 +1071,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
+    uses: ./.github/workflows/custom-test-job.yaml
     if: >
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_all ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf ||
@@ -1070,6 +1079,7 @@ jobs:
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_cudf_pandas_third_party_integration
     with:
       build_type: pull-request
+      test-results-artifact-name: pytest-junit-cudf-pandas-third-party
       branch: ${{ inputs.branch }}
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
@@ -1087,7 +1097,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
+    uses: ./.github/workflows/custom-test-job.yaml
     if: >
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_all ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf ||
@@ -1096,6 +1106,7 @@ jobs:
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cuml
     with:
       build_type: pull-request
+      test-results-artifact-name: pytest-junit-cuml-compat
       branch: ${{ inputs.branch }}
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
@@ -1134,7 +1145,7 @@ jobs:
       id-token: write
       packages: read
       pull-requests: read
-    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
+    uses: ./.github/workflows/custom-test-job.yaml
     if: >
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_all ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf ||
@@ -1142,6 +1153,7 @@ jobs:
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_cudf_pandas_pandas_tests
     with:
       build_type: pull-request
+      test-results-artifact-name: pytest-junit-cudf-pandas-${{ matrix.shard_id }}
       branch: ${{ inputs.branch }}
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
@@ -1183,7 +1195,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
+    uses: ./.github/workflows/custom-test-job.yaml
     if: >
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_all ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf ||
@@ -1193,6 +1205,7 @@ jobs:
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_narwhals
     with:
       build_type: pull-request
+      test-results-artifact-name: pytest-junit-narwhals
       branch: ${{ inputs.branch }}
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}

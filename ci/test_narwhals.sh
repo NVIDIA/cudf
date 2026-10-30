@@ -35,6 +35,7 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
     timeout 15m \
     python -m pytest \
     --cache-clear \
+    --junitxml="${RAPIDS_TESTS_DIR}/junit-cudf-narwhals.xml" \
     -p xdist \
     -p env \
     -p narwhals_cudf_test_plugin \

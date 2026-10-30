@@ -32,6 +32,7 @@
 #include <cuda/atomic>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/ptx>
 #include <cuda/std/bit>
 #include <cuda/stream>
 
@@ -105,21 +106,42 @@ struct alignas(16) column_descriptor {
   bool skip_data;                // all-null fast path: dst mask pre-set ALL_NULL, data undefined
 };
 
+// Evict-first cache policy (PTX ISA 74, SM_70+ via the generated cuda::ptx builtins), active
+// only in the streaming regime: the sampled coalesced verdict marks the dst/src traffic
+// don't-cache so L2 keeps the reuse-critical gather map. Random/unsampled verdicts, test-forced
+// geometries, host compilation, and pre-sm_70 all take plain default-cached accesses.
+template <bool kStreaming, typename T>
+__device__ inline void streaming_copy(char* dst, char const* src)
+{
+  if constexpr (kStreaming) {
+#if defined(__CUDA_ARCH__)
+    if constexpr (__CUDA_ARCH__ >= 700) {
+      auto const value =
+        cuda::ptx::ld_L1_evict_first(cuda::ptx::space_global_t{}, reinterpret_cast<T const*>(src));
+      cuda::ptx::st_L1_evict_first(cuda::ptx::space_global_t{}, reinterpret_cast<T*>(dst), value);
+      return;
+    }
+#endif
+  }
+  *reinterpret_cast<T*>(dst) = *reinterpret_cast<T const*>(src);
+}
+
 // INVARIANT: element_size * row is computed in 64-bit below; it can exceed 2^31 for DECIMAL128.
 // 16-byte copies stay aligned because device allocations are >=256B aligned and offsets are
-// whole elements.
+// whole elements. The dst stores and src loads are evict-first only when kStreaming (the map
+// load stays default-cached in every regime: it is the reuse-critical stream and the wide-tile
+// win depends on its L2 residency).
+template <bool kStreaming>
 __device__ void copy_element(char* dst, char const* src, int32_t element_size)
 {
   switch (element_size) {
-    case 1: *dst = *src; break;
-    case 2: *reinterpret_cast<int16_t*>(dst) = *reinterpret_cast<int16_t const*>(src); break;
-    case 4: *reinterpret_cast<int32_t*>(dst) = *reinterpret_cast<int32_t const*>(src); break;
-    case 8: *reinterpret_cast<int64_t*>(dst) = *reinterpret_cast<int64_t const*>(src); break;
+    case 1: streaming_copy<kStreaming, int8_t>(dst, src); break;
+    case 2: streaming_copy<kStreaming, int16_t>(dst, src); break;
+    case 4: streaming_copy<kStreaming, int32_t>(dst, src); break;
+    case 8: streaming_copy<kStreaming, int64_t>(dst, src); break;
     case 16: {
-      auto* d8       = reinterpret_cast<int64_t*>(dst);
-      auto const* s8 = reinterpret_cast<int64_t const*>(src);
-      d8[0]          = s8[0];
-      d8[1]          = s8[1];
+      streaming_copy<kStreaming, int64_t>(dst, src);
+      streaming_copy<kStreaming, int64_t>(dst + 8, src + 8);
       break;
     }
     default: CUDF_UNREACHABLE("Unexpected element size");
@@ -161,7 +183,7 @@ struct data_ptr_functor {
  * word are 0. Per-column bookkeeping (warp_valid[k], per-column ballots) keeps this true
  * independently of the tile a column belongs to.
  */
-template <size_type BlockSize, size_type kTileCols>
+template <size_type BlockSize, size_type kTileCols, bool kStreaming>
 CUDF_KERNEL __launch_bounds__(BlockSize) void batch_gather_kernel(
   input_indexalator gather_map,
   column_descriptor const* descriptors,
@@ -190,6 +212,8 @@ CUDF_KERNEL __launch_bounds__(BlockSize) void batch_gather_kernel(
     auto active           = __ballot_sync(0xFFFF'FFFFu, row < num_rows);
     while (row < num_rows) {
       // One map load (wrap + table-level bounds check) serves every column in the tile.
+      // Deliberately default-cached: the map is the reuse-critical stream and the wide-tile
+      // win depends on its L2 residency (no eviction hint here).
       auto idx = gather_map[static_cast<size_type>(row)];
       if (negative_allowed && idx < 0) { idx += num_source_rows; }
       bool const in_bounds = !check_bounds || (idx >= 0 && idx < num_source_rows);
@@ -204,7 +228,7 @@ CUDF_KERNEL __launch_bounds__(BlockSize) void batch_gather_kernel(
           // Data at out-of-bounds/null rows may be left unwritten (fixed-width undefined-value
           // policy).
           if (valid && !d.skip_data) {
-            copy_element(
+            copy_element<kStreaming>(
               static_cast<char*>(d.dst_data) + static_cast<std::size_t>(row) * d.element_size,
               static_cast<char const*>(d.src_data) + static_cast<std::size_t>(idx) * d.element_size,
               d.element_size);
@@ -333,8 +357,18 @@ size_type resolve_map_locality_tile_cols(sampled_map_locality const& sampled,
       default: CUDF_UNREACHABLE("Map type excluded at enqueue time");
     }
   };
-  // A window is local when its values span at most one window length; classify coalesced only
-  // if EVERY sampled window is local (ascending/reversed maps have spread kSampleWindowLen - 1).
+  // Streaming needs genuine sequential locality, not merely local contiguity. Two checks per
+  // sampled window, both on the staged data:
+  // 1. The window's kSampleWindowLen values are a permutation of consecutive integers: a
+  //    fanout map (map[i] = i/2, spread kSampleWindowLen/2) or any map with duplicates fails
+  //    even though its spread stays small, and those rows are reuse-heavy.
+  // 2. The window minima are strictly monotonic in one direction (ascending maps rise,
+  //    descending maps fall): a periodic map such as map[i] = i % K repeats its per-window
+  //    minimum and is reuse-heavy even when a window happens to be a permutation.
+  // A map failing either keeps its routing decision and takes default-cached accesses; this
+  // gates only the eviction hint, never the geometry.
+  int minima_direction = 0;  // +1 rising, -1 falling; fixed by the first window pair.
+  int64_t prev_min     = 0;
   for (size_t w = 0; w < kSampleWindows; ++w) {
     auto const* window = sampled.staging.data() + w * kSampleWindowLen * elem_size;
     auto const first   = read_element(window);
@@ -345,7 +379,25 @@ size_type resolve_map_locality_tile_cols(sampled_map_locality const& sampled,
       min_value    = std::min(min_value, v);
       max_value    = std::max(max_value, v);
     }
-    if (max_value - min_value > static_cast<int64_t>(kSampleWindowLen)) { return kRandomTileCols; }
+    if (max_value - min_value != static_cast<int64_t>(kSampleWindowLen - 1)) {
+      return kRandomTileCols;
+    }
+    uint32_t seen = 0;
+    for (size_type i = 0; i < kSampleWindowLen; ++i) {
+      seen |=
+        uint32_t{1} << (read_element(window + static_cast<size_t>(i) * elem_size) - min_value);
+    }
+    if (seen != (uint32_t{1} << kSampleWindowLen) - 1) { return kRandomTileCols; }
+    if (w > 0) {
+      if (min_value == prev_min) { return kRandomTileCols; }  // flat run: periodic/broadcast
+      auto const step = (min_value > prev_min) ? 1 : -1;
+      if (minima_direction == 0) {
+        minima_direction = step;
+      } else if (step != minima_direction) {
+        return kRandomTileCols;
+      }
+    }
+    prev_min = min_value;
   }
   return kCoalescedTileCols;
 }
@@ -613,15 +665,16 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
     // One launch per call; the tile width picks the kernel instantiation. y dimension: one
     // block per column tile (the kernel's y-stride loop covers tiles past the 65535 cap).
     auto const map_begin   = indexalator_factory::make_input_iterator(gather_map);
-    auto const launch_tile = [&](auto tile_constant) {
+    auto const launch_tile = [&](auto tile_constant, auto streaming_constant) {
       constexpr size_type kTileCols = decltype(tile_constant)::value;
+      constexpr bool kStreaming     = decltype(streaming_constant)::value;
       dim3 const grid{
         static_cast<unsigned>(cudf::util::div_rounding_up_safe(num_rows, block_size)),
         static_cast<unsigned>(std::min<size_type>(
           cudf::util::div_rounding_up_safe(static_cast<size_type>(descriptors.size()), kTileCols),
           65535)),
         1};
-      batch_gather_kernel<block_size, kTileCols>
+      batch_gather_kernel<block_size, kTileCols, kStreaming>
         <<<grid, block_size, 0, stream.get()>>>(map_begin,
                                                 d_descriptors.data(),
                                                 static_cast<size_type>(descriptors.size()),
@@ -637,12 +690,21 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
     auto const effective_tile_cols = explicit_tile_cols.has_value()
                                        ? *explicit_tile_cols
                                        : resolve_map_locality_tile_cols(sampled, stream);
-    switch (effective_tile_cols) {
-      case 1: launch_tile(std::integral_constant<size_type, 1>{}); break;
-      case 2: launch_tile(std::integral_constant<size_type, 2>{}); break;
-      case 4: launch_tile(std::integral_constant<size_type, 4>{}); break;
-      case 8: launch_tile(std::integral_constant<size_type, 8>{}); break;
-      default: CUDF_FAIL("Unsupported batch_gather tile width", std::invalid_argument);
+    // Evict-first streaming hints ride the classifier verdict only: the sampled coalesced
+    // route (which resolves to kCoalescedTileCols and nothing else). Unsampled regimes,
+    // random verdicts, and test-forced geometries keep the default-cached accesses.
+    auto const streaming =
+      not explicit_tile_cols.has_value() and effective_tile_cols == kCoalescedTileCols;
+    if (streaming) {
+      launch_tile(std::integral_constant<size_type, kCoalescedTileCols>{}, std::true_type{});
+    } else {
+      switch (effective_tile_cols) {
+        case 1: launch_tile(std::integral_constant<size_type, 1>{}, std::false_type{}); break;
+        case 2: launch_tile(std::integral_constant<size_type, 2>{}, std::false_type{}); break;
+        case 4: launch_tile(std::integral_constant<size_type, 4>{}, std::false_type{}); break;
+        case 8: launch_tile(std::integral_constant<size_type, 8>{}, std::false_type{}); break;
+        default: CUDF_FAIL("Unsupported batch_gather tile width", std::invalid_argument);
+      }
     }
 
     if (any_kernel_masks) {

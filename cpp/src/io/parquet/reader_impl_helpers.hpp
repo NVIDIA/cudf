@@ -193,6 +193,59 @@ struct row_group_size_info {
   std::optional<size_type> cached_offset = std::nullopt);
 
 /**
+ * @brief Bytes read speculatively from the end of a Parquet source, with the footer located in them
+ *
+ * `tail` holds the last `max(metadata_size_hint, sizeof(file_ender_s))` bytes of the source, or the
+ * whole source when it is smaller. The page index is usually stored right before the footer, so
+ * `tail` often holds it as well; `tail_bytes()` serves such ranges without another read.
+ */
+struct speculative_footer {
+  /// The speculatively read bytes, ending at the end of the source
+  std::unique_ptr<datasource::buffer> tail;
+  /// Offset of `tail` in the source
+  size_t tail_offset{};
+  /// Offset of the footer in the source
+  size_t footer_offset{};
+  /// Size of the footer in bytes
+  size_t footer_size{};
+  /// The footer, stitched from a second read when it starts before `tail`; empty otherwise
+  std::vector<uint8_t> stitched_footer;
+
+  /**
+   * @brief Returns the footer bytes
+   *
+   * @return The footer, inside `tail` or stitched
+   */
+  [[nodiscard]] std::span<uint8_t const> footer() const;
+
+  /**
+   * @brief Returns the source bytes at `[offset, offset + size)` when `tail` holds all of them
+   *
+   * @param offset Offset of the range in the source
+   * @param size Size of the range in bytes
+   * @return The bytes, or `std::nullopt` when the range is not fully inside `tail`
+   */
+  [[nodiscard]] std::optional<std::span<uint8_t const>> tail_bytes(size_t offset,
+                                                                   size_t size) const;
+};
+
+/**
+ * @brief Reads the footer of a Parquet source with one speculative read of its tail
+ *
+ * Reads `max(metadata_size_hint, sizeof(file_ender_s))` bytes from the end of the source, capped at
+ * the source size, and reads the footer prefix the tail does not cover, if any, in a second read.
+ *
+ * @throws cudf::logic_error if the source is too small or its magic numbers or footer length are
+ * invalid
+ *
+ * @param source Input data source
+ * @param metadata_size_hint Number of bytes to read speculatively from the end of the source
+ * @return The tail bytes with the footer located in them
+ */
+[[nodiscard]] speculative_footer fetch_speculative_footer(datasource& source,
+                                                          size_t metadata_size_hint);
+
+/**
  * @brief Class for parsing dataset metadata
  */
 struct metadata : public FileMetaData {

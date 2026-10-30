@@ -37,6 +37,7 @@
 #include <memory>
 #include <mutex>
 #include <numeric>
+#include <optional>
 #include <ranges>
 #include <span>
 #include <stdexcept>
@@ -130,54 +131,14 @@ std::vector<std::unique_ptr<cudf::io::datasource::buffer>> fetch_footers_to_host
   auto const metadata_size_hint = cudf::io::parquet::metadata_size_hint();
   // Helper to fetch footer from a datasource
   auto const fetch_footer = [metadata_size_hint](cudf::io::datasource& datasource) {
-    constexpr auto header_len = sizeof(file_header_s);
-    constexpr auto ender_len  = sizeof(file_ender_s);
-    size_t const len          = datasource.size();
-    CUDF_EXPECTS(len > header_len + ender_len, "Incorrect data source");
-
-    auto const speculative_read_size =
-      std::min(len, std::max(metadata_size_hint, static_cast<size_t>(ender_len)));
-    auto const speculative_read_offset = len - speculative_read_size;
-
-    auto speculative_buffer = datasource.host_read(speculative_read_offset, speculative_read_size);
-    CUDF_EXPECTS(speculative_buffer->size() == speculative_read_size,
-                 "Failed to read Parquet speculative metadata bytes");
-
-    auto const ender = reinterpret_cast<file_ender_s const*>(
-      speculative_buffer->data() + speculative_buffer->size() - ender_len);
-
-    if (speculative_read_offset == 0) {
-      auto const header = reinterpret_cast<file_header_s const*>(speculative_buffer->data());
-      CUDF_EXPECTS(header->magic == detail::parquet_magic, "Corrupted header");
+    auto speculative = detail::fetch_speculative_footer(datasource, metadata_size_hint);
+    // The footer was stitched from two reads: hand its bytes over.
+    if (not speculative.stitched_footer.empty()) {
+      return cudf::io::datasource::buffer::create(std::move(speculative.stitched_footer));
     }
-
-    CUDF_EXPECTS(ender->magic == detail::parquet_magic, "Corrupted footer");
-    CUDF_EXPECTS(ender->footer_len != 0 && ender->footer_len <= (len - header_len - ender_len),
-                 "Incorrect footer length");
-
-    auto const footer_offset = len - ender->footer_len - ender_len;
-    if (footer_offset >= speculative_read_offset) {
-      // fastpath: the speculative read includes the full footer.
-      auto const footer_start_offset = footer_offset - speculative_read_offset;
-      CUDF_EXPECTS(footer_start_offset + ender->footer_len <= speculative_buffer->size(),
-                   "Speculative metadata read did not include full footer bytes");
-      std::vector<uint8_t> footer_bytes(ender->footer_len);
-      std::memcpy(
-        footer_bytes.data(), speculative_buffer->data() + footer_start_offset, ender->footer_len);
-      return cudf::io::datasource::buffer::create(std::move(footer_bytes));
-    }
-
-    // The speculative read only got part of the footer. Read the missing prefix, then stitch.
-    auto const missing_prefix_size = speculative_read_offset - footer_offset;
-    auto missing_prefix            = datasource.host_read(footer_offset, missing_prefix_size);
-    CUDF_EXPECTS(missing_prefix->size() == missing_prefix_size,
-                 "Failed to read the missing footer prefix bytes");
-    std::vector<uint8_t> footer_bytes(ender->footer_len);
-    std::memcpy(footer_bytes.data(), missing_prefix->data(), missing_prefix_size);
-    auto const footer_suffix_size = ender->footer_len - missing_prefix_size;
-    std::memcpy(
-      footer_bytes.data() + missing_prefix_size, speculative_buffer->data(), footer_suffix_size);
-    return cudf::io::datasource::buffer::create(std::move(footer_bytes));
+    // The footer lies inside the speculative read: copy it out of the tail.
+    auto const footer = speculative.footer();
+    return cudf::io::datasource::buffer::create(std::vector<uint8_t>(footer.begin(), footer.end()));
   };
 
   return dispatch_tasks(datasources.size(), [&](std::size_t source_idx) {
@@ -671,6 +632,80 @@ fetch_bloom_filters_to_device_impl(
   return cudf::detail::getenv_or<std::size_t>("LIBCUDF_PARQUET_METADATA_SIZE_HINT",
                                               default_metadata_size_hint);
 }
+
+namespace detail {
+
+std::span<uint8_t const> speculative_footer::footer() const
+{
+  if (not stitched_footer.empty()) { return stitched_footer; }
+  return {tail->data() + (footer_offset - tail_offset), footer_size};
+}
+
+std::optional<std::span<uint8_t const>> speculative_footer::tail_bytes(size_t offset,
+                                                                       size_t size) const
+{
+  if (offset < tail_offset or size > tail->size() or offset - tail_offset > tail->size() - size) {
+    return std::nullopt;
+  }
+  return std::span<uint8_t const>{tail->data() + (offset - tail_offset), size};
+}
+
+speculative_footer fetch_speculative_footer(cudf::io::datasource& source, size_t metadata_size_hint)
+{
+  CUDF_FUNC_RANGE();
+  constexpr auto header_len = sizeof(file_header_s);
+  constexpr auto ender_len  = sizeof(file_ender_s);
+  size_t const len          = source.size();
+  CUDF_EXPECTS(len > header_len + ender_len, "Incorrect data source");
+
+  auto const speculative_read_size =
+    std::min(len, std::max(metadata_size_hint, static_cast<size_t>(ender_len)));
+  auto const speculative_read_offset = len - speculative_read_size;
+
+  auto speculative_buffer = source.host_read(speculative_read_offset, speculative_read_size);
+  CUDF_EXPECTS(speculative_buffer->size() == speculative_read_size,
+               "Failed to read Parquet speculative metadata bytes");
+
+  auto const ender = reinterpret_cast<file_ender_s const*>(speculative_buffer->data() +
+                                                           speculative_buffer->size() - ender_len);
+
+  if (speculative_read_offset == 0) {
+    auto const header = reinterpret_cast<file_header_s const*>(speculative_buffer->data());
+    CUDF_EXPECTS(header->magic == parquet_magic, "Corrupted header");
+  }
+
+  CUDF_EXPECTS(ender->magic == parquet_magic, "Corrupted footer");
+  CUDF_EXPECTS(ender->footer_len != 0 and ender->footer_len <= (len - header_len - ender_len),
+               "Incorrect footer length");
+
+  size_t const footer_size = ender->footer_len;
+  auto const footer_offset = len - footer_size - ender_len;
+  speculative_footer result{.tail          = std::move(speculative_buffer),
+                            .tail_offset   = speculative_read_offset,
+                            .footer_offset = footer_offset,
+                            .footer_size   = footer_size};
+
+  if (footer_offset >= speculative_read_offset) {
+    // fastpath: the speculative read includes the full footer.
+    CUDF_EXPECTS(footer_offset - speculative_read_offset + footer_size <= result.tail->size(),
+                 "Speculative metadata read did not include full footer bytes");
+    return result;
+  }
+
+  // The speculative read only got part of the footer. Read the missing prefix, then stitch.
+  auto const missing_prefix_size = speculative_read_offset - footer_offset;
+  auto missing_prefix            = source.host_read(footer_offset, missing_prefix_size);
+  CUDF_EXPECTS(missing_prefix->size() == missing_prefix_size,
+               "Failed to read the missing footer prefix bytes");
+  result.stitched_footer.resize(footer_size);
+  std::memcpy(result.stitched_footer.data(), missing_prefix->data(), missing_prefix_size);
+  auto const footer_suffix_size = footer_size - missing_prefix_size;
+  std::memcpy(
+    result.stitched_footer.data() + missing_prefix_size, result.tail->data(), footer_suffix_size);
+  return result;
+}
+
+}  // namespace detail
 
 std::unique_ptr<cudf::io::datasource::buffer> fetch_footer_to_host(cudf::io::datasource& datasource)
 {

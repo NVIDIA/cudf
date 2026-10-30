@@ -35,6 +35,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstring>
 #include <limits>
 #include <locale>
@@ -4580,6 +4581,142 @@ TEST_F(ParquetMetadataSizeHintTest, ReadParquet)
     auto const read_opts = cudf::io::parquet_reader_options::builder(source_info).build();
     auto const result    = cudf::io::read_parquet(read_opts);
     CUDF_TEST_EXPECT_TABLES_EQUAL(result.tbl->view(), expected->view());
+  }
+}
+
+namespace {
+
+// Datasource that counts the host reads made through it
+class counting_datasource : public cudf::io::datasource {
+ public:
+  explicit counting_datasource(std::unique_ptr<cudf::io::datasource> source)
+    : source_(std::move(source))
+  {
+  }
+
+  std::unique_ptr<cudf::io::datasource::buffer> host_read(size_t offset, size_t size) override
+  {
+    ++num_host_reads_;
+    return source_->host_read(offset, size);
+  }
+
+  size_t host_read(size_t offset, size_t size, uint8_t* dst) override
+  {
+    ++num_host_reads_;
+    return source_->host_read(offset, size, dst);
+  }
+
+  [[nodiscard]] size_t size() const override { return source_->size(); }
+
+  [[nodiscard]] size_t num_host_reads() const { return num_host_reads_; }
+
+ private:
+  std::unique_ptr<cudf::io::datasource> source_;
+  std::atomic<size_t> num_host_reads_{0};
+};
+
+}  // namespace
+
+TEST_F(ParquetMetadataSizeHintTest, PageIndexFromSpeculativeRead)
+{
+  // A string column makes the footer read load the page index, which the writer stores right
+  // before the footer.
+  constexpr auto num_rows = 1000;
+  auto const ints         = random_values<int>(num_rows);
+  std::vector<std::string> strings(num_rows);
+  std::generate(
+    strings.begin(), strings.end(), [i = 0]() mutable { return "string_" + std::to_string(i++); });
+  column_wrapper<int> const int_col(ints.begin(), ints.end());
+  cudf::test::strings_column_wrapper const str_col(strings.begin(), strings.end());
+  auto const expected = table_view{{int_col, str_col}};
+
+  auto const filepath = temp_env->get_temp_filepath("PageIndexFromSpeculativeRead.parquet");
+  cudf::io::parquet_writer_options const out_opts =
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
+      .row_group_size_rows(250)
+      .max_page_fragment_size(100)
+      .max_page_size_rows(100)
+      .stats_level(cudf::io::statistics_freq::STATISTICS_COLUMN);
+  cudf::io::write_parquet(out_opts);
+
+  // Locate the footer and the page index in the file
+  auto const source        = cudf::io::datasource::create(filepath);
+  auto const file_size     = source->size();
+  auto constexpr ender_len = sizeof(cudf::io::parquet::file_ender_s);
+  auto const ender_buffer  = source->host_read(file_size - ender_len, ender_len);
+  auto const ender = reinterpret_cast<cudf::io::parquet::file_ender_s const*>(ender_buffer->data());
+  auto const footer_len    = static_cast<size_t>(ender->footer_len);
+  auto const footer_offset = file_size - footer_len - ender_len;
+
+  auto const sources   = cudf::io::make_datasources(cudf::io::source_info{filepath});
+  auto const metadatas = cudf::io::read_parquet_footers(sources);
+  ASSERT_EQ(metadatas.size(), 1);
+  auto page_index_offset = static_cast<size_t>(file_size);
+  auto page_index_end    = size_t{0};
+  for (auto const& row_group : metadatas.front().row_groups) {
+    for (auto const& column : row_group.columns) {
+      ASSERT_GT(column.column_index_length, 0);
+      ASSERT_GT(column.offset_index_length, 0);
+      page_index_offset = std::min({page_index_offset,
+                                    static_cast<size_t>(column.column_index_offset),
+                                    static_cast<size_t>(column.offset_index_offset)});
+      page_index_end =
+        std::max({page_index_end,
+                  static_cast<size_t>(column.column_index_offset + column.column_index_length),
+                  static_cast<size_t>(column.offset_index_offset + column.offset_index_length)});
+    }
+  }
+  ASSERT_LE(page_index_end, footer_offset);
+  // The page index of the string column holds the pages of each row group
+  auto const& reference_chunk = metadatas.front().row_groups.front().columns.back();
+  ASSERT_TRUE(reference_chunk.offset_index.has_value());
+  auto const expected_page_locations = reference_chunk.offset_index->page_locations.size();
+  ASSERT_GT(expected_page_locations, 1);
+
+  // Reads the footers through a counting datasource with the given speculative read size and
+  // returns the number of host reads it took
+  auto const count_footer_reads = [&](size_t hint) {
+    tmp_env_var const env(parquet_metadata_size_hint_env_var, std::to_string(hint));
+    std::vector<std::unique_ptr<cudf::io::datasource>> counting_sources;
+    counting_sources.push_back(
+      std::make_unique<counting_datasource>(cudf::io::datasource::create(filepath)));
+    auto const* counting = static_cast<counting_datasource const*>(counting_sources.front().get());
+
+    auto footers              = cudf::io::read_parquet_footers(counting_sources);
+    auto const num_host_reads = counting->num_host_reads();
+
+    // The page index is set up from whichever bytes it came from
+    auto const& string_chunk = footers.front().row_groups.front().columns.back();
+    EXPECT_TRUE(string_chunk.column_index.has_value());
+    EXPECT_TRUE(string_chunk.offset_index.has_value());
+    EXPECT_EQ(string_chunk.offset_index.value().page_locations.size(), expected_page_locations);
+
+    // and the footers read the table back
+    auto const options = cudf::io::parquet_reader_options::builder().build();
+    auto const result =
+      cudf::io::read_parquet(std::move(counting_sources), std::move(footers), options);
+    CUDF_TEST_EXPECT_TABLES_EQUAL(result.tbl->view(), expected);
+    return num_host_reads;
+  };
+
+  // The footer and page index together, from the start of the page index to the end of the file
+  auto const page_index_and_footer = file_size - page_index_offset;
+  struct hint_case {
+    size_t hint;
+    size_t expected_reads;
+    char const* covers;
+  };
+  std::vector<hint_case> const cases{
+    {file_size, 1, "the whole file"},
+    {page_index_and_footer, 1, "the page index and the footer"},
+    {page_index_and_footer - 1, 2, "the footer and all but the first byte of the page index"},
+    {footer_len + ender_len, 2, "the footer only"},
+    {9, 3, "one byte of the footer"},
+    {0, 3, "nothing: speculative reads are disabled"},
+  };
+  for (auto const& [hint, expected_reads, covers] : cases) {
+    SCOPED_TRACE("speculative read size " + std::to_string(hint) + " covers " + covers);
+    EXPECT_EQ(count_footer_reads(hint), expected_reads);
   }
 }
 

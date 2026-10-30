@@ -259,8 +259,9 @@ template <typename ReplacerFn>
 std::unique_ptr<cudf::column> replace_helper(ReplacerFn replacer,
                                              cudf::strings_column_view const& input,
                                              cuda::stream_ref stream,
-                                             rmm::device_async_resource_ref mr)
+                                             cudf::memory_resources mr)
 {
+  auto const temp_mr      = mr.get_temporary_mr();
   auto const first_offset = (input.offset() == 0) ? 0L
                                                   : cudf::strings::detail::get_offset_value(
                                                       input.offsets(), input.offset(), stream);
@@ -271,8 +272,8 @@ std::unique_ptr<cudf::column> replace_helper(ReplacerFn replacer,
 
   if ((non_null_count == 0) || ((chars_size / non_null_count) < AVG_CHAR_BYTES_THRESHOLD)) {
     // this utility calls replacer to build the offsets and chars columns
-    auto [offsets_column, chars] =
-      cudf::strings::detail::make_strings_children(replacer, input.size(), stream, mr);
+    auto [offsets_column, chars] = cudf::strings::detail::make_strings_children(
+      replacer, input.size(), stream, mr.get_output_mr());
     // return new strings column
     return cudf::make_strings_column(input.size(),
                                      std::move(offsets_column),
@@ -290,28 +291,24 @@ std::unique_ptr<cudf::column> replace_helper(ReplacerFn replacer,
     cudf::detail::offsetalator_factory::make_input_iterator(input.offsets(), input.offset());
 
   // divide up long strings into shorter strings by finding new sub-offsets at delimiters
-  auto sub_count   = chars_size / LS_SUB_BLOCK_SIZE;
-  auto tmp_offsets = cuda::device_buffer<int64_t>(
-    stream, cudf::get_current_device_resource_ref(), sub_count + input.size() + 1, cuda::no_init);
+  auto sub_count = chars_size / LS_SUB_BLOCK_SIZE;
+  auto tmp_offsets =
+    cuda::device_buffer<int64_t>(stream, temp_mr, sub_count + input.size() + 1, cuda::no_init);
   {
-    cuda::device_buffer<int64_t> sub_offsets(
-      stream, cudf::get_current_device_resource_ref(), sub_count, cuda::no_init);
+    cuda::device_buffer<int64_t> sub_offsets(stream, temp_mr, sub_count, cuda::no_init);
     auto const count_itr = cuda::counting_iterator<int64_t>{0};
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
                       count_itr,
                       count_itr + sub_count,
                       sub_offsets.data(),
                       sub_offset_fn{input_chars, first_offset, last_offset});
     // remove 0s -- where sub-offset could not be computed
-    auto const remove_end =
-      thrust::remove(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                     sub_offsets.begin(),
-                     sub_offsets.end(),
-                     0L);
+    auto const remove_end = thrust::remove(
+      rmm::exec_policy_nosync(stream, temp_mr), sub_offsets.begin(), sub_offsets.end(), 0L);
     sub_count = cuda::std::distance(sub_offsets.begin(), remove_end);
 
     // merge them with input offsets
-    thrust::merge(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::merge(rmm::exec_policy_nosync(stream, temp_mr),
                   input_offsets,
                   input_offsets + input.size() + 1,
                   sub_offsets.begin(),
@@ -329,12 +326,12 @@ std::unique_ptr<cudf::column> replace_helper(ReplacerFn replacer,
     cudf::data_type{cudf::type_id::INT64}, tmp_size + 1, tmp_offsets.data(), nullptr, 0)});
   auto const tmp_strings = cudf::column_view(
     cudf::data_type{cudf::type_id::STRING}, tmp_size, input_chars, nullptr, 0, 0, children);
-  auto const d_tmp_strings = cudf::column_device_view::create(tmp_strings, stream);
+  auto const d_tmp_strings = cudf::column_device_view::create(tmp_strings, stream, temp_mr);
 
   // compute indices to the actual output rows
-  auto indices = cuda::device_buffer<cudf::size_type>(
-    stream, cudf::get_current_device_resource_ref(), tmp_offsets_size, cuda::no_init);
-  thrust::upper_bound(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  auto indices =
+    cuda::device_buffer<cudf::size_type>(stream, temp_mr, tmp_offsets_size, cuda::no_init);
+  thrust::upper_bound(rmm::exec_policy_nosync(stream, temp_mr),
                       input_offsets,
                       input_offsets + input.size() + 1,
                       tmp_offsets.begin(),
@@ -342,21 +339,17 @@ std::unique_ptr<cudf::column> replace_helper(ReplacerFn replacer,
                       indices.begin());
 
   // initialize the output row sizes
-  auto d_sizes = cuda::device_buffer<cudf::size_type>(
-    stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
-  thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-               d_sizes.begin(),
-               d_sizes.end(),
-               0);
+  auto d_sizes = cuda::device_buffer<cudf::size_type>(stream, temp_mr, input.size(), cuda::no_init);
+  thrust::fill(rmm::exec_policy_nosync(stream, temp_mr), d_sizes.begin(), d_sizes.end(), 0);
 
   replacer.d_strings      = *d_tmp_strings;
   replacer.d_indices      = indices.data();
   replacer.d_output_sizes = d_sizes.data();
 
-  auto chars = std::get<1>(
-    cudf::strings::detail::make_strings_children(replacer, tmp_strings.size(), stream, mr));
-  auto offsets_column =
-    std::get<0>(cudf::strings::detail::make_offsets_child_column(d_sizes, stream, mr));
+  auto chars          = std::get<1>(cudf::strings::detail::make_strings_children(
+    replacer, tmp_strings.size(), stream, mr.get_output_mr()));
+  auto offsets_column = std::get<0>(
+    cudf::strings::detail::make_offsets_child_column(d_sizes, stream, mr.get_output_mr()));
   return cudf::make_strings_column(input.size(),
                                    std::move(offsets_column),
                                    chars.release(),
@@ -372,7 +365,7 @@ std::unique_ptr<cudf::column> replace_tokens(cudf::strings_column_view const& in
                                              cudf::strings_column_view const& replacements,
                                              cudf::string_scalar const& delimiter,
                                              cuda::stream_ref stream,
-                                             rmm::device_async_resource_ref mr)
+                                             cudf::memory_resources mr)
 {
   CUDF_EXPECTS(!targets.has_nulls(), "Parameter targets must not have nulls");
   CUDF_EXPECTS(!replacements.has_nulls(), "Parameter replacements must not have nulls");
@@ -383,10 +376,12 @@ std::unique_ptr<cudf::column> replace_tokens(cudf::strings_column_view const& in
 
   if (input.is_empty()) { return cudf::make_empty_column(cudf::type_id::STRING); }
 
-  auto const d_strings      = cudf::column_device_view::create(input.parent(), stream);
-  auto const d_targets      = cudf::column_device_view::create(targets.parent(), stream);
-  auto const d_replacements = cudf::column_device_view::create(replacements.parent(), stream);
-  auto const d_delimiter    = cudf::string_view(delimiter.data(), delimiter.size());
+  auto const temp_mr   = mr.get_temporary_mr();
+  auto const d_strings = cudf::column_device_view::create(input.parent(), stream, temp_mr);
+  auto const d_targets = cudf::column_device_view::create(targets.parent(), stream, temp_mr);
+  auto const d_replacements =
+    cudf::column_device_view::create(replacements.parent(), stream, temp_mr);
+  auto const d_delimiter = cudf::string_view(delimiter.data(), delimiter.size());
 
   replace_tokens_fn replacer{*d_strings,
                              d_delimiter,
@@ -402,14 +397,15 @@ std::unique_ptr<cudf::column> filter_tokens(cudf::strings_column_view const& inp
                                             cudf::string_scalar const& replacement,
                                             cudf::string_scalar const& delimiter,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cudf::memory_resources mr)
 {
   CUDF_EXPECTS(replacement.is_valid(stream), "Parameter replacement must be valid");
   CUDF_EXPECTS(delimiter.is_valid(stream), "Parameter delimiter must be valid");
 
   if (input.is_empty()) { return cudf::make_empty_column(cudf::type_id::STRING); }
 
-  auto const d_strings     = cudf::column_device_view::create(input.parent(), stream);
+  auto const d_strings =
+    cudf::column_device_view::create(input.parent(), stream, mr.get_temporary_mr());
   auto const d_replacement = cudf::string_view(replacement.data(), replacement.size());
   auto const d_delimiter   = cudf::string_view(delimiter.data(), delimiter.size());
 
@@ -427,7 +423,7 @@ std::unique_ptr<cudf::column> replace_tokens(cudf::strings_column_view const& in
                                              cudf::strings_column_view const& replacements,
                                              cudf::string_scalar const& delimiter,
                                              cuda::stream_ref stream,
-                                             rmm::device_async_resource_ref mr)
+                                             cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::replace_tokens(input, targets, replacements, delimiter, stream, mr);
@@ -438,7 +434,7 @@ std::unique_ptr<cudf::column> filter_tokens(cudf::strings_column_view const& inp
                                             cudf::string_scalar const& replacement,
                                             cudf::string_scalar const& delimiter,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::filter_tokens(input, min_token_length, replacement, delimiter, stream, mr);

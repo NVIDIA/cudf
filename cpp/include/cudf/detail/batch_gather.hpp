@@ -66,7 +66,13 @@ std::unique_ptr<table> batch_gather(table_view const& source_table,
  *
  * @param[in] tile_cols Number of consecutive columns per blockIdx.y tile in the fused kernel;
  * one of {1, 2, 4, 8}. 1 degenerates to one column per y block.
- * @throws std::invalid_argument if `tile_cols` is not one of {1, 2, 4, 8}
+ * @param[in] block_size Threads per blockIdx.x row block in the fused kernel; one of
+ * {128, 256, 512}. 256 matches the routed entry. This is a measurement axis, not a routing
+ * decision: every supported size is a multiple of the warp size, so the destination mask-word
+ * exactly-once invariant holds and correctness is identical across the set. Row coarsening
+ * stays at the default 1 row per thread; the 9-argument overload selects both axes together.
+ * @throws std::invalid_argument if `tile_cols` is not one of {1, 2, 4, 8} or `block_size` is
+ * not one of {128, 256, 512}
  */
 std::unique_ptr<table> batch_gather(table_view const& source_table,
                                     column_view const& gather_map,
@@ -74,7 +80,8 @@ std::unique_ptr<table> batch_gather(table_view const& source_table,
                                     negative_index_policy neg_indices,
                                     cuda::stream_ref stream,
                                     memory_resources mr,
-                                    size_type tile_cols);
+                                    size_type tile_cols,
+                                    size_type block_size);
 
 /**
  * @copydoc cudf::detail::batch_gather(table_view const&, column_view const&,
@@ -89,8 +96,14 @@ std::unique_ptr<table> batch_gather(table_view const& source_table,
  * instantiated for the non-streaming narrow tiles (tile_cols 1 and 2) only; on other widths the
  * value is accepted and routes to the R = 1 geometry, since wider tiles already keep enough
  * loads in flight and coarsening there only multiplies register pressure.
- * @throws std::invalid_argument if `tile_cols` is not one of {1, 2, 4, 8} or `rows_per_thread`
- * is not one of {1, 2, 4}
+ * @param[in] block_size Threads per blockIdx.x row block in the fused kernel; one of
+ * {128, 256, 512}. 256 matches the routed entry. This is a measurement axis, not a routing
+ * decision: every supported size is a multiple of the warp size, so the destination mask-word
+ * exactly-once invariant holds and correctness is identical across the set. Independent of
+ * `rows_per_thread`: the two axes compose, and the grid's row extent is
+ * `ceil(rows / (block_size * rows_per_thread))` blocks.
+ * @throws std::invalid_argument if `tile_cols` is not one of {1, 2, 4, 8}, `rows_per_thread` is
+ * not one of {1, 2, 4}, or `block_size` is not one of {128, 256, 512}
  */
 std::unique_ptr<table> batch_gather(table_view const& source_table,
                                     column_view const& gather_map,
@@ -99,7 +112,8 @@ std::unique_ptr<table> batch_gather(table_view const& source_table,
                                     cuda::stream_ref stream,
                                     memory_resources mr,
                                     size_type tile_cols,
-                                    size_type rows_per_thread);
+                                    size_type rows_per_thread,
+                                    size_type block_size);
 
 /**
  * @brief Classifies the gather map's locality and returns the fused kernel tile width to use.
@@ -120,7 +134,7 @@ std::unique_ptr<table> batch_gather(table_view const& source_table,
  * @param[in] num_fused_cols Number of fixed-width columns the fused kernel will process
  * @param[in] max_fused_element_size Largest element size in bytes among the fused columns
  * @param[in] stream CUDA stream used for the sample copy and its synchronization
- * @return Tile width in {1, 2, 8} for the `batch_gather` tile_cols overload
+ * @return Tile width in {1, 2, 8} for the `batch_gather` tile_cols parameter
  */
 size_type select_gather_map_tile_cols(table_view const& source_table,
                                       column_view const& gather_map,

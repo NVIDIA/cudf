@@ -1003,13 +1003,11 @@ def _evaluate_on_rank(
         py_executor, get_cuda_stream=ctx.br().stream_pool.get_stream, query_id=query_id
     )
 
-    prefetch_file_metadata = config_options.parquet_options.prefetch_file_metadata
-    if prefetch_file_metadata is not False:
+    if config_options.parquet_options.should_prefetch_file_metadata:
         cached_parquet_info_map = prefetch_parquet_file_metadata_for_ir(
             ir,
             ir_context.py_executor,
             stats=stats,
-            parse_hybrid_metadata=config_options.parquet_options.use_hybrid_scan,
         )
         attach_cached_parquet_metadata(ir, cached_parquet_info_map)
 

@@ -88,6 +88,7 @@ Most users interact with them through `StreamingOptions` fields rather than dire
 .. automodule:: cudf_polars.utils.config
    :members:
       DynamicPlanningOptions,
+      HybridScanPassMode,
       JoinFilterPushdownOptions,
       MemoryResourceConfig,
       ParquetOptions,

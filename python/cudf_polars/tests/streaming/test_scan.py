@@ -6,9 +6,13 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, cast
 
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
 import polars as pl
+
+from pylibcudf.io.parquet_io_utils import IOSubmissionPolicy
 
 from cudf_polars import Translator
 from cudf_polars.containers import DataType
@@ -36,6 +40,7 @@ from cudf_polars.streaming.io import (
     ParquetScanTask,
     ScanTask,
     StreamingScan,
+    _hybrid_scan_io_submission_policy,
     expand_scan_for_rank,
     scan_partition_plan,
 )
@@ -46,6 +51,7 @@ from cudf_polars.testing.engine_utils import SMALL_MAX_ROWS_PER_PARTITION
 from cudf_polars.testing.io import make_partitioned_source
 from cudf_polars.utils.config import (
     ConfigOptions,
+    HybridScanPassMode,
     MaxConcurrentIOTasks,
     ParquetOptions,
 )
@@ -239,6 +245,48 @@ def test_prefetch_parquet_file_metadata_remote_only(tmp_path, df) -> None:
     assert set(result) == {local_path}
 
 
+@pytest.mark.parametrize(
+    "predicate,paths_per_task,expect_parsed",
+    [
+        (pl.col("x") > 1, 1, True),
+        (pl.col("x") > 1, 2, False),
+        (None, 1, False),
+    ],
+)
+def test_prefetch_parses_hybrid_scan_metadata_for_hybrid_scan_tasks(
+    tmp_path,
+    df,
+    predicate: pl.Expr | None,
+    paths_per_task: int,
+    *,
+    expect_parsed: bool,
+) -> None:
+    make_partitioned_source(df, tmp_path, "parquet", n_files=2)
+    engine = pl.GPUEngine(
+        raise_on_fail=True,
+        executor="streaming",
+        parquet_options={"use_hybrid_scan": True},
+    )
+    q = pl.scan_parquet(tmp_path)
+    if predicate is not None:
+        q = q.filter(predicate)
+    scan = cast("Scan", Translator(q._ldf.visit(), engine).translate_ir())
+    streaming_scan = expand_scan_for_rank(
+        scan,
+        IOPartitionPlan(paths_per_task, IOPartitionFlavor.FUSED_FILES),
+        2 // paths_per_task,
+        rank=0,
+        nranks=1,
+        parquet_options=ConfigOptions.from_polars_engine(engine).parquet_options,
+    )
+
+    cached = prefetch_parquet_file_metadata_for_ir(streaming_scan, py_executor=None)
+
+    assert len(cached) == 2
+    for info in cached.values():
+        assert (info._hybrid_scan_metadata is not None) is expect_parsed
+
+
 def test_cached_parquet_info_hybrid_scan_reader_lazy(tmp_path, df) -> None:
     make_partitioned_source(df, tmp_path, "parquet", n_files=1)
     local_path = str(next(tmp_path.glob("*.parquet")))
@@ -248,6 +296,33 @@ def test_cached_parquet_info_hybrid_scan_reader_lazy(tmp_path, df) -> None:
 
     info.hybrid_scan_reader(info.default_reader_options())
     assert info._hybrid_scan_metadata is not None
+
+
+@pytest.mark.parametrize(
+    "paths,interleave_remote_io,expected",
+    [
+        (["file.parquet"], True, IOSubmissionPolicy.SERIALIZE),
+        (["s3://bucket/file.parquet"], True, IOSubmissionPolicy.INTERLEAVE),
+        (["s3://bucket/file.parquet"], False, IOSubmissionPolicy.SERIALIZE),
+        (
+            ["file.parquet", "s3://bucket/file.parquet"],
+            True,
+            IOSubmissionPolicy.INTERLEAVE,
+        ),
+    ],
+)
+def test_hybrid_scan_io_submission_policy(
+    paths: list[str],
+    expected: IOSubmissionPolicy,
+    *,
+    interleave_remote_io: bool,
+) -> None:
+    assert (
+        _hybrid_scan_io_submission_policy(
+            paths, interleave_remote_io=interleave_remote_io
+        )
+        == expected
+    )
 
 
 @pytest.mark.parametrize(
@@ -725,11 +800,13 @@ def test_streaming_scan_raises() -> None:
         (None, None),
     ],
 )
+@pytest.mark.parametrize("pass_mode", list(HybridScanPassMode))
 def test_split_scan_hybrid(
     tmp_path: Path,
     df: pl.DataFrame,
     predicate: pl.Expr | None,
     use_columns: list[str] | None,
+    pass_mode: HybridScanPassMode,
     streaming_engine_factory: Callable[..., StreamingEngine],
 ) -> None:
     streaming_engine = streaming_engine_factory(
@@ -738,6 +815,7 @@ def test_split_scan_hybrid(
             parquet_options={
                 "use_hybrid_scan": True,
                 "prefetch_file_metadata": True,
+                "pass_mode": pass_mode,
             },
         ),
     )
@@ -747,6 +825,109 @@ def test_split_scan_hybrid(
         q = q.filter(predicate)
     if use_columns is not None:
         q = q.select(use_columns)
+    assert_gpu_result_equal(q, engine=streaming_engine)
+
+
+@pytest.mark.parametrize("n_files", [1, 4])
+@pytest.mark.parametrize("pass_mode", list(HybridScanPassMode))
+def test_hybrid_scan_jit_filter(
+    tmp_path: Path,
+    df: pl.DataFrame,
+    n_files: int,
+    pass_mode: HybridScanPassMode,
+    streaming_engine_factory: Callable[..., StreamingEngine],
+) -> None:
+    streaming_engine = streaming_engine_factory(
+        StreamingOptions(
+            target_partition_size=1_000_000,
+            parquet_options={
+                "use_hybrid_scan": True,
+                "pass_mode": pass_mode,
+                "use_jit_filter": True,
+            },
+        ),
+    )
+    make_partitioned_source(
+        df, tmp_path, "parquet", n_files=n_files, row_group_size=100
+    )
+    q = pl.scan_parquet(tmp_path).filter(pl.col("x") < 1_000).select(["x", "z"])
+    assert_gpu_result_equal(q, engine=streaming_engine)
+
+
+@pytest.mark.parametrize(
+    "predicate,use_columns",
+    [
+        # uses hybrid scan reader
+        (pl.col("x") < 1_000, None),
+        (pl.col("x") < 1_000, ["x", "z"]),
+        (pl.col("x") < 1_000, ["z"]),
+        (pl.col("x") < 1_000, ["x"]),
+        (pl.col("x") > 1_000, ["z"]),
+        (pl.col("x") > 10_000, None),
+        # falls back to default parquet reader
+        (pl.col("y").str.contains("cat"), None),
+        (None, None),
+    ],
+)
+@pytest.mark.parametrize("pass_mode", list(HybridScanPassMode))
+def test_fused_scan_hybrid(
+    tmp_path: Path,
+    df: pl.DataFrame,
+    predicate: pl.Expr | None,
+    use_columns: list[str] | None,
+    pass_mode: HybridScanPassMode,
+    streaming_engine_factory: Callable[..., StreamingEngine],
+) -> None:
+    streaming_engine = streaming_engine_factory(
+        StreamingOptions(
+            target_partition_size=1_000_000,
+            parquet_options={
+                "use_hybrid_scan": True,
+                "prefetch_file_metadata": True,
+                "pass_mode": pass_mode,
+            },
+        ),
+    )
+    make_partitioned_source(df, tmp_path, "parquet", n_files=4, row_group_size=100)
+    q = pl.scan_parquet(tmp_path)
+    if predicate is not None:
+        q = q.filter(predicate)
+    if use_columns is not None:
+        q = q.select(use_columns)
+    assert_gpu_result_equal(q, engine=streaming_engine)
+
+
+@pytest.mark.skipif(
+    int(pa.__version__.split(".", 1)[0]) < 24,
+    reason="pyarrow writes Parquet bloom filters from 24.0",
+)
+@pytest.mark.parametrize("n_files", [1, 3])
+@pytest.mark.parametrize("pass_mode", list(HybridScanPassMode))
+def test_hybrid_scan_bloom_filter(
+    tmp_path: Path,
+    n_files: int,
+    pass_mode: HybridScanPassMode,
+    streaming_engine_factory: Callable[..., StreamingEngine],
+) -> None:
+    streaming_engine = streaming_engine_factory(
+        StreamingOptions(
+            target_partition_size=1_000_000,
+            parquet_options={"use_hybrid_scan": True, "pass_mode": pass_mode},
+        ),
+    )
+    for i in range(n_files):
+        pq.write_table(
+            pa.table(
+                {
+                    "x": range(i * 1_000, (i + 1) * 1_000),
+                    "y": [f"v{j}" for j in range(i * 1_000, (i + 1) * 1_000)],
+                }
+            ),
+            tmp_path / f"part{i}.parquet",
+            row_group_size=250,
+            bloom_filter_options={"y": {"ndv": 1_000, "fpp": 0.0001}},
+        )
+    q = pl.scan_parquet(tmp_path).filter(pl.col("y") == f"v{n_files * 1_000 - 10}")
     assert_gpu_result_equal(q, engine=streaming_engine)
 
 
@@ -1075,7 +1256,14 @@ def hive_root(tmp_path: Path) -> Path:
 
 
 @pytest.mark.parametrize("target_partition_size", [1_000, 1_000_000])
-@pytest.mark.parametrize("use_hybrid_scan", [True, False])
+@pytest.mark.parametrize(
+    "use_hybrid_scan,pass_mode",
+    [
+        (False, HybridScanPassMode.TWO_PASS),
+        (True, HybridScanPassMode.TWO_PASS),
+        (True, HybridScanPassMode.SINGLE_PASS),
+    ],
+)
 @pytest.mark.parametrize(
     "query",
     [
@@ -1092,13 +1280,17 @@ def test_hive_partitioned_streaming_scan(
     streaming_engine_factory: Callable[..., StreamingEngine],
     target_partition_size: int,
     query,
+    pass_mode: HybridScanPassMode,
     *,
     use_hybrid_scan: bool,
 ) -> None:
     streaming_engine = streaming_engine_factory(
         StreamingOptions(
             target_partition_size=target_partition_size,
-            parquet_options={"use_hybrid_scan": use_hybrid_scan},
+            parquet_options={
+                "use_hybrid_scan": use_hybrid_scan,
+                "pass_mode": pass_mode,
+            },
         ),
     )
     q = query(pl.scan_parquet(hive_root, hive_partitioning=True))

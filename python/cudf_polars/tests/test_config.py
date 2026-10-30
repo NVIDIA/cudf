@@ -36,12 +36,14 @@ from cudf_polars.utils.config import (
     Cluster,
     ConfigOptions,
     DynamicPlanningOptions,
+    HybridScanPassMode,
     InMemoryExecutor,
     JoinFilterPushdownOptions,
     MaxConcurrentIOTasks,
     MemoryResourceConfig,
     ParquetOptions,
     StreamingExecutor,
+    Unspecified,
     configure_kvikio,
     resolve_kvikio_bounce_buffer_bytes,
     resolve_kvikio_nthreads,
@@ -450,6 +452,8 @@ def test_parquet_options_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
         m.setenv("CUDF_POLARS__PARQUET_OPTIONS__HYBRID_SCAN_STATS_PRUNING", "0")
         m.setenv("CUDF_POLARS__PARQUET_OPTIONS__PREFETCH_FILE_METADATA", "1")
         m.setenv("CUDF_POLARS__PARQUET_OPTIONS__USE_JIT_FILTER", "1")
+        m.setenv("CUDF_POLARS__PARQUET_OPTIONS__PASS_MODE", "single_pass")
+        m.setenv("CUDF_POLARS__PARQUET_OPTIONS__HYBRID_SCAN_INTERLEAVE_REMOTE_IO", "0")
 
         # Test default
         engine = pl.GPUEngine()
@@ -464,6 +468,8 @@ def test_parquet_options_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
         assert config.parquet_options._hybrid_scan_stats_pruning is False
         assert config.parquet_options.prefetch_file_metadata is True
         assert config.parquet_options.use_jit_filter is True
+        assert config.parquet_options.pass_mode is HybridScanPassMode.SINGLE_PASS
+        assert config.parquet_options.hybrid_scan_interleave_remote_io is False
 
     with monkeypatch.context() as m:
         # Env must win over the executor-derived default (streaming => True).
@@ -707,6 +713,7 @@ def test_fallback_mode_default(monkeypatch: pytest.MonkeyPatch) -> None:
         "max_row_group_samples",
         "prefetch_file_metadata",
         "use_hybrid_scan",
+        "hybrid_scan_interleave_remote_io",
         "use_jit_filter",
     ],
 )
@@ -720,23 +727,22 @@ def test_validate_parquet_options(option: str) -> None:
         )
 
 
-def test_use_hybrid_scan_requires_prefetch_file_metadata() -> None:
-    with pytest.raises(
-        ValueError, match="use_hybrid_scan requires prefetch_file_metadata"
-    ):
-        ConfigOptions.from_polars_engine(
-            pl.GPUEngine(
-                executor="streaming",
-                parquet_options={
-                    "use_hybrid_scan": True,
-                    "prefetch_file_metadata": False,
-                },
-            )
+def test_use_hybrid_scan_without_prefetch_file_metadata() -> None:
+    config = ConfigOptions.from_polars_engine(
+        pl.GPUEngine(
+            executor="streaming",
+            parquet_options={
+                "use_hybrid_scan": True,
+                "prefetch_file_metadata": False,
+            },
         )
+    )
+    assert config.parquet_options.use_hybrid_scan is True
+    assert config.parquet_options.should_prefetch_file_metadata is False
 
 
 def test_use_hybrid_scan_enables_prefetch_file_metadata_by_default() -> None:
-    assert ParquetOptions(use_hybrid_scan=True).prefetch_file_metadata is True
+    assert ParquetOptions(use_hybrid_scan=True).should_prefetch_file_metadata is True
 
     config = ConfigOptions.from_polars_engine(
         pl.GPUEngine(
@@ -744,15 +750,24 @@ def test_use_hybrid_scan_enables_prefetch_file_metadata_by_default() -> None:
             parquet_options={"use_hybrid_scan": True},
         )
     )
-    assert config.parquet_options.prefetch_file_metadata is True
+    assert config.parquet_options.should_prefetch_file_metadata is True
+
+
+def test_use_hybrid_scan_in_memory_executor() -> None:
+    config = ConfigOptions.from_polars_engine(
+        pl.GPUEngine(executor="in-memory", parquet_options={"use_hybrid_scan": True})
+    )
+    assert config.parquet_options.use_hybrid_scan is True
 
 
 def test_prefetch_file_metadata_default() -> None:
     config = ConfigOptions.from_polars_engine(pl.GPUEngine(executor="streaming"))
-    assert config.parquet_options.prefetch_file_metadata is False
+    assert isinstance(config.parquet_options.prefetch_file_metadata, Unspecified)
+    assert config.parquet_options.should_prefetch_file_metadata is False
 
     config = ConfigOptions.from_polars_engine(pl.GPUEngine(executor="in-memory"))
-    assert config.parquet_options.prefetch_file_metadata is False
+    assert isinstance(config.parquet_options.prefetch_file_metadata, Unspecified)
+    assert config.parquet_options.should_prefetch_file_metadata is False
 
     config = ConfigOptions.from_polars_engine(
         pl.GPUEngine(
@@ -760,6 +775,28 @@ def test_prefetch_file_metadata_default() -> None:
         )
     )
     assert config.parquet_options.prefetch_file_metadata is True
+    assert config.parquet_options.should_prefetch_file_metadata is True
+
+
+def test_pass_mode_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("CUDF_POLARS__PARQUET_OPTIONS__PASS_MODE", raising=False)
+    config = ConfigOptions.from_polars_engine(pl.GPUEngine(executor="streaming"))
+    assert config.parquet_options.pass_mode is HybridScanPassMode.TWO_PASS
+
+    config = ConfigOptions.from_polars_engine(
+        pl.GPUEngine(executor="streaming", parquet_options={"pass_mode": "single_pass"})
+    )
+    assert config.parquet_options.pass_mode is HybridScanPassMode.SINGLE_PASS
+
+    with monkeypatch.context() as m:
+        m.setenv("CUDF_POLARS__PARQUET_OPTIONS__PASS_MODE", "foo")
+        with pytest.raises(ValueError, match="'foo' is not a valid HybridScanPassMode"):
+            ConfigOptions.from_polars_engine(pl.GPUEngine(executor="streaming"))
+
+    with pytest.raises(ValueError, match="'foo' is not a valid HybridScanPassMode"):
+        ConfigOptions.from_polars_engine(
+            pl.GPUEngine(executor="streaming", parquet_options={"pass_mode": "foo"})
+        )
 
 
 def test_parquet_options_object_passthrough() -> None:
@@ -772,17 +809,17 @@ def test_parquet_options_object_passthrough() -> None:
 
 def test_parquet_options_object_default() -> None:
     parquet_options = ParquetOptions()
-    assert parquet_options.prefetch_file_metadata is False
+    assert parquet_options.should_prefetch_file_metadata is False
 
     config = ConfigOptions.from_polars_engine(
         pl.GPUEngine(executor="in-memory", parquet_options=parquet_options)
     )
-    assert config.parquet_options.prefetch_file_metadata is False
+    assert config.parquet_options.should_prefetch_file_metadata is False
 
     config = ConfigOptions.from_polars_engine(
         pl.GPUEngine(executor="streaming", parquet_options=parquet_options)
     )
-    assert config.parquet_options.prefetch_file_metadata is False
+    assert config.parquet_options.should_prefetch_file_metadata is False
 
 
 def test_parquet_options_default_dict_factory() -> None:
@@ -790,9 +827,9 @@ def test_parquet_options_default_dict_factory() -> None:
     config = ConfigOptions.from_polars_engine(
         pl.GPUEngine(executor="streaming", parquet_options=parquet_options)
     )
-    assert config.parquet_options.prefetch_file_metadata is False
+    assert isinstance(config.parquet_options.prefetch_file_metadata, Unspecified)
     result = dataclasses.asdict(config, dict_factory=ConfigOptions.dict_factory)
-    assert result["parquet_options"]["prefetch_file_metadata"] is False
+    assert result["parquet_options"]["prefetch_file_metadata"] is None
     assert result["executor"]["max_concurrent_io_tasks"] == {"local": 2, "remote": 8}
 
 

@@ -6,6 +6,7 @@ set -euo pipefail
 
 cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")"/../
 source ./ci/test_python_common.sh test_python_cudf test_cuml
+trap preserve_junit_reports EXIT
 
 # Clone cuml at the matching RAPIDS branch to get test files
 # (the conda package doesn't ship cuml/tests/)

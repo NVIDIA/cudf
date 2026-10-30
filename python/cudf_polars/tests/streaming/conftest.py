@@ -84,7 +84,7 @@ def tpc_streaming_options(request: pytest.FixtureRequest) -> StreamingOptions:
     _add_dataset_args(ref)
     ns: dict[str, Any] = {"raise_on_fail": True}
     for action in ref._actions:
-        if not action.option_strings or action.dest == "help":
+        if not action.option_strings or action.dest in {"help", "raise_on_fail"}:
             continue
         ns[action.dest] = request.config.getoption(action.dest)
     return StreamingOptions._from_argparse(argparse.Namespace(**ns))

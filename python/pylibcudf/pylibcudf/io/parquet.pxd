@@ -61,6 +61,8 @@ cdef class ParquetReaderOptions:
     cpdef void enable_prepend_source_index_column(self, bool val)
     cpdef bool is_enabled_output_dict_columns(self)
     cpdef void enable_output_dict_columns(self, bool val)
+    cpdef list get_dictionary32_columns(self)
+    cpdef void set_dictionary32_columns(self, list col_names)
 
 
 cdef class ParquetReaderOptionsBuilder:
@@ -82,6 +84,7 @@ cdef class ParquetReaderOptionsBuilder:
     cpdef ParquetReaderOptionsBuilder case_sensitive_names(self, bool val)
     cpdef ParquetReaderOptionsBuilder prepend_source_index_column(self, bool val)
     cpdef ParquetReaderOptionsBuilder output_dict_columns(self, bool val)
+    cpdef ParquetReaderOptionsBuilder dictionary32_columns(self, list col_names)
     cpdef ParquetReaderOptionsBuilder decimal_width(self, type_id width)
     cpdef ParquetReaderOptions build(self)
 

@@ -9,17 +9,22 @@
 #include "tests/io/parquet_common.hpp"
 
 #include <cudf_test/base_fixture.hpp>
+#include <cudf_test/column_utilities.hpp>
+#include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/io_metadata_utilities.hpp>
 #include <cudf_test/table_utilities.hpp>
 
 #include <cudf/column/column.hpp>
 #include <cudf/concatenate.hpp>
 #include <cudf/copying.hpp>
+#include <cudf/dictionary/dictionary_column_view.hpp>
+#include <cudf/dictionary/encode.hpp>
 #include <cudf/io/experimental/hybrid_scan.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/io/parquet_io_utils.hpp>
 #include <cudf/io/text/byte_range_info.hpp>
 #include <cudf/lists/lists_column_view.hpp>
+#include <cudf/scalar/scalar.hpp>
 #include <cudf/stream_compaction.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/table/table_view.hpp>
@@ -39,6 +44,8 @@
 #include <iterator>
 #include <limits>
 #include <stdexcept>
+#include <string>
+#include <vector>
 
 namespace {
 
@@ -245,6 +252,99 @@ std::unique_ptr<cudf::table> test_hybrid_scan_column_selection(
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected_tbl->view(), read_chunked_single_step->view());
 
   return read_single_step;
+}
+
+auto constexpr dictionary32_num_rows = cudf::size_type{4000};
+
+template <typename Predicate>
+std::unique_ptr<cudf::table> make_dictionary32_table(Predicate row_pred)
+{
+  std::vector<int32_t> keys;
+  std::vector<std::string> a;
+  std::vector<std::string> b;
+  std::vector<bool> b_valid;
+  for (cudf::size_type i = 0; i < dictionary32_num_rows; ++i) {
+    if (not row_pred(i)) { continue; }
+    keys.push_back(i);
+    a.push_back("a_" + std::to_string(i % 5));
+    b.push_back("b_" + std::to_string(i % 11));
+    b_valid.push_back(i % 13 != 0);
+  }
+  std::vector<std::unique_ptr<cudf::column>> columns;
+  columns.push_back(
+    cudf::test::fixed_width_column_wrapper<int32_t>(keys.begin(), keys.end()).release());
+  columns.push_back(cudf::test::strings_column_wrapper(a.begin(), a.end()).release());
+  columns.push_back(
+    cudf::test::strings_column_wrapper(b.begin(), b.end(), b_valid.begin()).release());
+  return std::make_unique<cudf::table>(std::move(columns));
+}
+
+void write_dictionary32_parquet(cudf::table_view const& input, std::string const& filepath)
+{
+  auto metadata = cudf::io::table_input_metadata{input};
+  metadata.column_metadata[0].set_name("key");
+  metadata.column_metadata[1].set_name("a");
+  metadata.column_metadata[2].set_name("b");
+  auto const options =
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, input)
+      .metadata(std::move(metadata))
+      .dictionary_policy(cudf::io::dictionary_policy::ALWAYS)
+      .row_group_size_rows(1000)
+      .max_page_fragment_size(1000)
+      .build();
+  cudf::io::write_parquet(options);
+}
+
+void expect_dictionary32_column(cudf::column_view const& read_col,
+                                cudf::column_view const& expected)
+{
+  ASSERT_EQ(read_col.type().id(), cudf::type_id::DICTIONARY32);
+  auto const decoded = cudf::dictionary::decode(cudf::dictionary_column_view(read_col));
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, decoded->view());
+}
+
+std::pair<cudf::io::table_with_metadata, cudf::io::table_with_metadata>
+materialize_dictionary32_filter_and_payload(cudf::io::datasource& datasource,
+                                            cudf::io::parquet_reader_options const& options)
+{
+  auto const stream        = cudf::get_default_stream();
+  auto const mr            = cudf::get_current_device_resource_ref();
+  auto const footer_buffer = cudf::io::parquet::fetch_footer_to_host(datasource);
+  auto reader =
+    std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(*footer_buffer, options);
+  auto const row_groups = reader->all_row_groups(options);
+  auto row_mask         = reader->build_all_true_row_mask(row_groups, stream, mr);
+  auto row_mask_view    = row_mask->mutable_view();
+
+  auto const filter_ranges = reader->filter_column_chunks_byte_ranges(row_groups, options);
+  auto [filter_buffers, filter_data, filter_tasks] =
+    cudf::io::parquet::fetch_byte_ranges_to_device_async(
+      datasource, filter_ranges, cudf::io::parquet::io_submission_policy::SERIALIZE, stream, mr);
+  filter_tasks.get();
+  auto filter_result =
+    reader->materialize_filter_columns(row_groups,
+                                       filter_data,
+                                       row_mask_view,
+                                       cudf::io::parquet::experimental::use_data_page_mask::NO,
+                                       options,
+                                       stream,
+                                       mr);
+
+  auto const payload_ranges = reader->payload_column_chunks_byte_ranges(row_groups, options);
+  auto [payload_buffers, payload_data, payload_tasks] =
+    cudf::io::parquet::fetch_byte_ranges_to_device_async(
+      datasource, payload_ranges, cudf::io::parquet::io_submission_policy::SERIALIZE, stream, mr);
+  payload_tasks.get();
+  auto payload_result =
+    reader->materialize_payload_columns(row_groups,
+                                        payload_data,
+                                        row_mask_view,
+                                        cudf::io::parquet::experimental::use_data_page_mask::NO,
+                                        options,
+                                        stream,
+                                        mr);
+
+  return {std::move(filter_result), std::move(payload_result)};
 }
 
 }  // namespace
@@ -1690,4 +1790,140 @@ TEST_F(HybridScanTest, MisusePassesThrows)
 
   // All column materialization now throws as the column selection is now stale
   EXPECT_THROW(std::ignore = reader->materialize_all_columns_chunk(), cudf::logic_error);
+}
+
+TEST_F(HybridScanTest, Dictionary32ColumnsMaterializeAllColumns)
+{
+  auto const input    = make_dictionary32_table([](auto) { return true; });
+  auto const filepath = temp_env->get_temp_filepath("HybridScanDictionary32AllColumns.parquet");
+  write_dictionary32_parquet(input->view(), filepath);
+
+  auto const stream = cudf::get_default_stream();
+  auto const mr     = cudf::get_current_device_resource_ref();
+  auto datasource   = cudf::io::datasource::create(filepath);
+
+  auto const read_all_columns = [&](cudf::io::parquet_reader_options const& options) {
+    auto const footer_buffer = cudf::io::parquet::fetch_footer_to_host(*datasource);
+    auto reader = std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(
+      *footer_buffer, options);
+    auto const row_groups           = reader->all_row_groups(options);
+    auto const chunk_ranges         = reader->all_column_chunks_byte_ranges(row_groups, options);
+    auto [buffers, col_data, tasks] = cudf::io::parquet::fetch_byte_ranges_to_device_async(
+      *datasource, chunk_ranges, cudf::io::parquet::io_submission_policy::SERIALIZE, stream, mr);
+    tasks.get();
+    return reader->materialize_all_columns(row_groups, col_data, options, stream, mr).tbl;
+  };
+
+  auto const selected = read_all_columns(
+    cudf::io::parquet_reader_options::builder().dictionary32_columns({"b"}).build());
+  ASSERT_EQ(selected->num_columns(), 3);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(input->view().column(0), selected->view().column(0));
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(input->view().column(1), selected->view().column(1));
+  expect_dictionary32_column(selected->view().column(2), input->view().column(2));
+
+  auto const all =
+    read_all_columns(cudf::io::parquet_reader_options::builder().output_dict_columns(true).build());
+  ASSERT_EQ(all->num_columns(), 3);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(input->view().column(0), all->view().column(0));
+  expect_dictionary32_column(all->view().column(1), input->view().column(1));
+  expect_dictionary32_column(all->view().column(2), input->view().column(2));
+}
+
+TEST_F(HybridScanTest, Dictionary32ColumnsMaterializePayloadColumns)
+{
+  auto const input    = make_dictionary32_table([](auto) { return true; });
+  auto const filepath = temp_env->get_temp_filepath("HybridScanDictionary32Payload.parquet");
+  write_dictionary32_parquet(input->view(), filepath);
+  auto datasource = cudf::io::datasource::create(filepath);
+
+  auto literal_value = cudf::numeric_scalar<int32_t>(1000);
+  auto const literal = cudf::ast::literal(literal_value);
+  auto const col_ref = cudf::ast::column_name_reference("key");
+  auto const filter_expr =
+    cudf::ast::operation(cudf::ast::ast_operator::GREATER_EQUAL, col_ref, literal);
+  auto const options = cudf::io::parquet_reader_options::builder()
+                         .filter(filter_expr)
+                         .dictionary32_columns({"b"})
+                         .build();
+
+  auto const [filter_result, payload_result] =
+    materialize_dictionary32_filter_and_payload(*datasource, options);
+  auto const expected = make_dictionary32_table([](auto i) { return i >= 1000; });
+
+  ASSERT_EQ(filter_result.tbl->num_columns(), 1);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected->view().column(0),
+                                      filter_result.tbl->view().column(0));
+
+  ASSERT_EQ(payload_result.tbl->num_columns(), 2);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected->view().column(1),
+                                      payload_result.tbl->view().column(0));
+  expect_dictionary32_column(payload_result.tbl->view().column(1), expected->view().column(2));
+}
+
+TEST_F(HybridScanTest, Dictionary32ColumnsMaterializeFilterColumns)
+{
+  auto const input    = make_dictionary32_table([](auto) { return true; });
+  auto const filepath = temp_env->get_temp_filepath("HybridScanDictionary32Filter.parquet");
+  write_dictionary32_parquet(input->view(), filepath);
+  auto datasource = cudf::io::datasource::create(filepath);
+
+  auto literal_value     = cudf::string_scalar("a_3");
+  auto const literal     = cudf::ast::literal(literal_value);
+  auto const col_ref     = cudf::ast::column_name_reference("a");
+  auto const filter_expr = cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col_ref, literal);
+  auto const options     = cudf::io::parquet_reader_options::builder()
+                         .filter(filter_expr)
+                         .dictionary32_columns({"a"})
+                         .prepend_source_index_column(true)
+                         .build();
+
+  auto const [filter_result, payload_result] =
+    materialize_dictionary32_filter_and_payload(*datasource, options);
+  auto const expected = make_dictionary32_table([](auto i) { return i % 5 == 3; });
+
+  ASSERT_EQ(filter_result.tbl->num_columns(), 2);
+  ASSERT_EQ(filter_result.tbl->num_rows(), expected->num_rows());
+  EXPECT_EQ(filter_result.tbl->view().column(0).type().id(), cudf::type_id::INT32);
+  expect_dictionary32_column(filter_result.tbl->view().column(1), expected->view().column(1));
+
+  ASSERT_EQ(payload_result.tbl->num_columns(), 2);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected->view().column(0),
+                                      payload_result.tbl->view().column(0));
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected->view().column(2),
+                                      payload_result.tbl->view().column(1));
+}
+
+TEST_F(HybridScanTest, Dictionary32ColumnsMissingNamesThrowWithoutIgnoreMissingColumns)
+{
+  auto const input    = make_dictionary32_table([](auto) { return true; });
+  auto const filepath = temp_env->get_temp_filepath("HybridScanDictionary32MissingNames.parquet");
+  write_dictionary32_parquet(input->view(), filepath);
+  auto datasource = cudf::io::datasource::create(filepath);
+
+  auto literal_value = cudf::numeric_scalar<int32_t>(1000);
+  auto const literal = cudf::ast::literal(literal_value);
+  auto const col_ref = cudf::ast::column_name_reference("key");
+  auto const filter_expr =
+    cudf::ast::operation(cudf::ast::ast_operator::GREATER_EQUAL, col_ref, literal);
+
+  auto const missing_options = cudf::io::parquet_reader_options::builder()
+                                 .filter(filter_expr)
+                                 .dictionary32_columns({"b", "missing"})
+                                 .ignore_missing_columns(false)
+                                 .build();
+  EXPECT_THROW(
+    std::ignore = materialize_dictionary32_filter_and_payload(*datasource, missing_options),
+    std::invalid_argument);
+
+  auto const options = cudf::io::parquet_reader_options::builder()
+                         .filter(filter_expr)
+                         .dictionary32_columns({"b"})
+                         .ignore_missing_columns(false)
+                         .build();
+  auto const [filter_result, payload_result] =
+    materialize_dictionary32_filter_and_payload(*datasource, options);
+  auto const expected = make_dictionary32_table([](auto i) { return i >= 1000; });
+
+  ASSERT_EQ(payload_result.tbl->num_columns(), 2);
+  expect_dictionary32_column(payload_result.tbl->view().column(1), expected->view().column(2));
 }

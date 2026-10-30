@@ -31,7 +31,9 @@
 #include <memory>
 #include <numeric>
 #include <random>
+#include <stdexcept>
 #include <string>
+#include <tuple>
 #include <vector>
 
 namespace {
@@ -112,6 +114,26 @@ void write_parquet(cudf::table_view const& input, std::string const& filepath)
   // instead of the requested size.
   auto const options =
     cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, input)
+      .dictionary_policy(cudf::io::dictionary_policy::ALWAYS)
+      .compression(cudf::io::compression_type::NONE)
+      .stats_level(cudf::io::statistics_freq::STATISTICS_COLUMN)
+      .row_group_size_rows(row_group_size)
+      .max_page_fragment_size(row_group_size)
+      .build();
+  cudf::io::write_parquet(options);
+}
+
+void write_parquet(cudf::table_view const& input,
+                   std::vector<std::string> const& column_names,
+                   std::string const& filepath)
+{
+  auto metadata = cudf::io::table_input_metadata{input};
+  for (std::size_t i = 0; i < column_names.size(); ++i) {
+    metadata.column_metadata[i].set_name(column_names[i]);
+  }
+  auto const options =
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, input)
+      .metadata(std::move(metadata))
       .dictionary_policy(cudf::io::dictionary_policy::ALWAYS)
       .compression(cudf::io::compression_type::NONE)
       .stats_level(cudf::io::statistics_freq::STATISTICS_COLUMN)
@@ -608,4 +630,217 @@ TEST_F(ParquetReaderDictTest, NullRowGroupDictTranscode)
 
   auto const decoded = cudf::dictionary::decode(dict_view);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(input_col, decoded->view());
+}
+
+TEST_F(ParquetReaderDictTest, Dictionary32ColumnsSelectsSubset)
+{
+  auto key_col = make_int_key_column();
+  auto col_a   = make_low_cardinality_strings();
+  auto col_b   = make_low_cardinality_strings(seed ^ 0xBE'EF01u);
+
+  auto const input_tbl = cudf::table_view{{key_col, col_a, col_b}};
+  auto const filepath  = temp_env->get_temp_filepath("Dictionary32ColumnsSelectsSubset.parquet");
+  write_parquet(input_tbl, {"key", "a", "b"}, filepath);
+
+  auto const read_opts = cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+                           .dictionary32_columns({"b"})
+                           .build();
+  auto const read_table = cudf::io::read_parquet(read_opts).tbl;
+  ASSERT_EQ(read_table->num_columns(), 3);
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(key_col, read_table->view().column(0));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(col_a, read_table->view().column(1));
+
+  auto const read_b = read_table->view().column(2);
+  ASSERT_EQ(read_b.type().id(), cudf::type_id::DICTIONARY32);
+  auto const keys = cudf::dictionary_column_view(read_b).keys();
+  EXPECT_EQ(cudf::distinct_count(keys, cudf::null_policy::INCLUDE, cudf::nan_policy::NAN_IS_VALID),
+            keys.size());
+  auto const decoded_b = cudf::dictionary::decode(cudf::dictionary_column_view(read_b));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(col_b, decoded_b->view());
+}
+
+TEST_F(ParquetReaderDictTest, Dictionary32ColumnsIgnoresUnmatchedNames)
+{
+  auto key_col  = make_int_key_column();
+  auto list_col = make_low_cardinality_lists_of_strings();
+  auto str_col  = make_low_cardinality_strings();
+
+  auto const input_tbl = cudf::table_view{{key_col, list_col->view(), str_col}};
+  auto const filepath =
+    temp_env->get_temp_filepath("Dictionary32ColumnsIgnoresUnmatchedNames.parquet");
+  write_parquet(input_tbl, {"key", "list", "str"}, filepath);
+
+  auto const read_opts = cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+                           .dictionary32_columns({"missing", "key", "list", "list.element"})
+                           .build();
+  auto const read_table = cudf::io::read_parquet(read_opts).tbl;
+  ASSERT_EQ(read_table->num_columns(), 3);
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(key_col, read_table->view().column(0));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(list_col->view(), read_table->view().column(1));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(str_col, read_table->view().column(2));
+}
+
+TEST_F(ParquetReaderDictTest, Dictionary32ColumnsMissingNamesThrowWithoutIgnoreMissingColumns)
+{
+  auto key_col  = make_int_key_column();
+  auto list_col = make_low_cardinality_lists_of_strings();
+  auto str_col  = make_low_cardinality_strings();
+
+  auto const input_tbl = cudf::table_view{{key_col, list_col->view(), str_col}};
+  auto const filepath = temp_env->get_temp_filepath("Dictionary32ColumnsMissingNamesThrow.parquet");
+  write_parquet(input_tbl, {"key", "list", "str"}, filepath);
+
+  for (auto const& missing_name : {"missing", "list.element"}) {
+    auto const read_opts =
+      cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+        .dictionary32_columns({missing_name})
+        .ignore_missing_columns(false)
+        .build();
+    EXPECT_THROW(std::ignore = cudf::io::read_parquet(read_opts), std::invalid_argument);
+  }
+
+  auto const read_opts = cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+                           .column_names({"str"})
+                           .dictionary32_columns({"key", "list", "str"})
+                           .ignore_missing_columns(false)
+                           .build();
+  auto const read_table = cudf::io::read_parquet(read_opts).tbl;
+  ASSERT_EQ(read_table->num_columns(), 1);
+  auto const read_col = read_table->view().column(0);
+  ASSERT_EQ(read_col.type().id(), cudf::type_id::DICTIONARY32);
+  auto const decoded = cudf::dictionary::decode(cudf::dictionary_column_view(read_col));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(str_col, decoded->view());
+}
+
+TEST_F(ParquetReaderDictTest, Dictionary32ColumnsCaseSensitivity)
+{
+  auto str_col = make_low_cardinality_strings();
+
+  auto const input_tbl = cudf::table_view{{str_col}};
+  auto const filepath  = temp_env->get_temp_filepath("Dictionary32ColumnsCaseSensitivity.parquet");
+  write_parquet(input_tbl, {"Fruit"}, filepath);
+
+  auto const case_sensitive_opts =
+    cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+      .dictionary32_columns({"fruit"})
+      .build();
+  auto const case_sensitive_table = cudf::io::read_parquet(case_sensitive_opts).tbl;
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(str_col, case_sensitive_table->view().column(0));
+
+  auto const case_insensitive_opts =
+    cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+      .dictionary32_columns({"fruit"})
+      .case_sensitive_names(false)
+      .build();
+  auto const case_insensitive_table = cudf::io::read_parquet(case_insensitive_opts).tbl;
+  auto const read_col               = case_insensitive_table->view().column(0);
+  ASSERT_EQ(read_col.type().id(), cudf::type_id::DICTIONARY32);
+  auto const decoded = cudf::dictionary::decode(cudf::dictionary_column_view(read_col));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(str_col, decoded->view());
+}
+
+TEST_F(ParquetReaderDictTest, Dictionary32ColumnsWithFilterAndIndexColumns)
+{
+  auto key_col = make_int_key_column();
+  auto col_a   = make_low_cardinality_strings();
+  auto col_b   = make_low_cardinality_strings(seed ^ 0xBE'EF01u);
+
+  auto const input_tbl = cudf::table_view{{key_col, col_a, col_b}};
+  auto const filepath =
+    temp_env->get_temp_filepath("Dictionary32ColumnsWithFilterAndIndexColumns.parquet");
+  write_parquet(input_tbl, {"key", "a", "b"}, filepath);
+
+  auto literal_value = cudf::numeric_scalar<int32_t>(num_rows / 2);
+  auto literal       = cudf::ast::literal(literal_value);
+  auto col_ref       = cudf::ast::column_reference(0);
+  auto filter_expr = cudf::ast::operation(cudf::ast::ast_operator::GREATER_EQUAL, col_ref, literal);
+
+  auto const predicate = cudf::compute_column(input_tbl, filter_expr);
+  auto const expected  = cudf::apply_retention_mask(input_tbl, predicate->view());
+
+  auto const read_opts = cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+                           .dictionary32_columns({"b"})
+                           .filter(filter_expr)
+                           .prepend_source_index_column(true)
+                           .prepend_row_index_column(true)
+                           .build();
+  auto const read_table = cudf::io::read_parquet(read_opts).tbl;
+  ASSERT_EQ(read_table->num_columns(), 5);
+  ASSERT_EQ(read_table->num_rows(), expected->num_rows());
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view().column(0), read_table->view().column(2));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view().column(1), read_table->view().column(3));
+
+  auto const read_b = read_table->view().column(4);
+  ASSERT_EQ(read_b.type().id(), cudf::type_id::DICTIONARY32);
+  auto const decoded_b = cudf::dictionary::decode(cudf::dictionary_column_view(read_b));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view().column(2), decoded_b->view());
+}
+
+TEST_F(ParquetReaderDictTest, Dictionary32ColumnsChunkedRead)
+{
+  auto col_a = make_low_cardinality_strings();
+  auto col_b = make_low_cardinality_strings(seed ^ 0xBE'EF01u);
+
+  auto const input_tbl = cudf::table_view{{col_a, col_b}};
+  auto const filepath  = temp_env->get_temp_filepath("Dictionary32ColumnsChunkedRead.parquet");
+  write_parquet(input_tbl, {"a", "b"}, filepath);
+
+  auto const read_opts = cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+                           .dictionary32_columns({"a"})
+                           .build();
+  auto reader = cudf::io::chunked_parquet_reader(/*chunk_read_limit=*/16 * 1024, read_opts);
+
+  std::vector<std::unique_ptr<cudf::column>> decoded_a_chunks;
+  std::vector<cudf::io::table_with_metadata> chunks;
+  while (reader.has_next()) {
+    auto chunk = reader.read_chunk();
+    ASSERT_EQ(chunk.tbl->num_columns(), 2);
+    if (chunk.tbl->num_rows() == 0) { continue; }
+    auto const read_a = chunk.tbl->view().column(0);
+    ASSERT_EQ(read_a.type().id(), cudf::type_id::DICTIONARY32);
+    ASSERT_EQ(chunk.tbl->view().column(1).type().id(), cudf::type_id::STRING);
+    decoded_a_chunks.push_back(cudf::dictionary::decode(cudf::dictionary_column_view(read_a)));
+    chunks.push_back(std::move(chunk));
+  }
+  EXPECT_GT(chunks.size(), 1);
+
+  std::vector<cudf::column_view> a_views;
+  std::vector<cudf::column_view> b_views;
+  for (std::size_t i = 0; i < chunks.size(); ++i) {
+    a_views.push_back(decoded_a_chunks[i]->view());
+    b_views.push_back(chunks[i].tbl->view().column(1));
+  }
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(col_a, cudf::concatenate(a_views)->view());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(col_b, cudf::concatenate(b_views)->view());
+}
+
+TEST_F(ParquetReaderDictTest, Dictionary32ColumnsAndOutputDictColumnsAreExclusive)
+{
+  auto options = cudf::io::parquet_reader_options::builder().build();
+
+  options.enable_output_dict_columns(true);
+  EXPECT_THROW(options.set_dictionary32_columns({"a"}), cudf::logic_error);
+  options.set_dictionary32_columns({});
+
+  options.enable_output_dict_columns(false);
+  options.set_dictionary32_columns({"a"});
+  EXPECT_THROW(options.enable_output_dict_columns(true), cudf::logic_error);
+  options.enable_output_dict_columns(false);
+  EXPECT_EQ(options.get_dictionary32_columns(), std::vector<std::string>{"a"});
+
+  options.set_dictionary32_columns({});
+  options.enable_output_dict_columns(true);
+  EXPECT_TRUE(options.is_enabled_output_dict_columns());
+
+  EXPECT_THROW(
+    cudf::io::parquet_reader_options::builder().output_dict_columns(true).dictionary32_columns(
+      {"a"}),
+    cudf::logic_error);
+  EXPECT_THROW(
+    cudf::io::parquet_reader_options::builder().dictionary32_columns({"a"}).output_dict_columns(
+      true),
+    cudf::logic_error);
 }

@@ -726,6 +726,7 @@ void hybrid_scan_reader_impl::prepare_materialization(
   reset_internal_state();
   initialize_options(options, row_group_indices.size(), stream, mr);
   select_columns(columns_mode, options);
+  initialize_output_dict_column_mask(options);
   reset_output_buffers();
 
   _input_pass_read_limit   = pass_read_limit;
@@ -970,6 +971,7 @@ void hybrid_scan_reader_impl::reset_internal_state()
   _options.case_sensitive_names        = true;
   _options.prepend_source_index_column = false;
   _options.prepend_row_index_column    = false;
+  _output_dict_column_mask.clear();
 
   _num_sources             = 0;
   _input_pass_read_limit   = 0;
@@ -1234,13 +1236,20 @@ table_with_metadata hybrid_scan_reader_impl::finalize_output(
     }
   }
 
+  auto const num_prepended_columns =
+    columns_mode == read_columns_mode::FILTER_COLUMNS
+      ? static_cast<std::size_t>(_options.prepend_source_index_column) +
+          static_cast<std::size_t>(_options.prepend_row_index_column)
+      : std::size_t{0};
+
   // Create a table from the output columns.
   auto read_table = std::make_unique<table>(std::move(out_columns));
 
   // If the input row mask is empty, all rows are pruned anyway.
   if (row_mask.is_empty()) {
     _output_chunk_produced = true;
-    return {std::move(read_table), std::move(out_metadata)};
+    return {encode_output_dict_columns(std::move(read_table), num_prepended_columns),
+            std::move(out_metadata)};
   }
 
   CUDF_EXPECTS(row_mask.type().id() == type_id::BOOL8, "Input row mask must be a boolean column");
@@ -1280,7 +1289,8 @@ table_with_metadata hybrid_scan_reader_impl::finalize_output(
     update_row_mask(final_row_mask->view(), row_mask, mask_offset, _stream);
 
     // Return the final output table and metadata
-    return {std::move(output_table), std::move(out_metadata)};
+    return {encode_output_dict_columns(std::move(output_table), num_prepended_columns),
+            std::move(out_metadata)};
   }
   // For payload columns, simply apply the input row mask to the table.
   else {
@@ -1294,7 +1304,8 @@ table_with_metadata hybrid_scan_reader_impl::finalize_output(
         : cudf::split(row_mask, {mask_offset, mask_offset + read_table->num_rows()}, _stream)[1];
     auto output_table = cudf::detail::apply_mask(
       read_table->view(), effective_row_mask, cudf::detail::mask_type::RETENTION, _stream, _mr);
-    return {std::move(output_table), std::move(out_metadata)};
+    return {encode_output_dict_columns(std::move(output_table), num_prepended_columns),
+            std::move(out_metadata)};
   }
 }
 

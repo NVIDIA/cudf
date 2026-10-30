@@ -120,28 +120,6 @@ fi
 RAPIDS_TESTS_DIR=${RAPIDS_TESTS_DIR:-"${PWD}/test-results"}
 mkdir -p "${RAPIDS_TESTS_DIR}"
 
-function preserve_junit_reports()
-{
-    # Copy generated JUnit reports into $RAPIDS_ARTIFACTS_DIR so the "Upload
-    # additional artifacts" step uploads it. This needs to run even when the
-    # test suite fails. A trailing report_id keeps names unique across matrix
-    # shards that share a $RAPIDS_ARTIFACTS_DIR upload prefix (for example
-    # several engine/blocksize/shard combinations on the same CUDA/Python/arch).
-    if [[ "${CI:-false}" != "true" || -z "${RAPIDS_ARTIFACTS_DIR:-}" ]]; then
-        return
-    fi
-    local xml_file
-    for xml_file in "${RAPIDS_TESTS_DIR}"/*.xml; do
-        [[ -f "${xml_file}" ]] || continue
-        mkdir -p "${RAPIDS_ARTIFACTS_DIR}"
-        local report_id
-        report_id=$(python -c 'import uuid; print(uuid.uuid4().hex)')
-        cp "${xml_file}" \
-            "${RAPIDS_ARTIFACTS_DIR}/$(basename "${xml_file}" .xml)-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${report_id}.xml"
-    done
-}
-trap preserve_junit_reports EXIT
-
 cd "${POLARS_DIR:-${SCRIPT_DIR}/../polars}"
 
 DESELECTED_TESTS=()

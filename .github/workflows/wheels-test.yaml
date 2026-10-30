@@ -1,0 +1,358 @@
+# Local variant of rapidsai/shared-workflows' wheels-test workflow.
+# It keeps JUnit XML files in GitHub Artifacts instead of the S3-backed
+# RAPIDS_ARTIFACTS_DIR path.
+name: Test RAPIDS wheels
+
+on:
+  workflow_call:
+    inputs:
+      branch:
+        description: |
+          Git branch the workflow run targets.
+          This is required even when 'sha' is provided because it is also used for organizing artifacts.
+        type: string
+      date:
+        description: "Date (YYYY-MM-DD) this run is for. Used to organize artifacts produced by nightly builds"
+        type: string
+      sha:
+        description: "Full git commit SHA to check out"
+        type: string
+      repo:
+        description: "Git repo to check out, in '{org}/{repo}' form, e.g. 'rapidsai/cudf'"
+        type: string
+      build_type:
+        description: "One of: [branch, nightly, pull-request]"
+        required: true
+        type: string
+      matrix_type:
+        description: "One or more comma-separated matrix types defined for this workflow's matrix in .github/actions/prepare-matrix/matrix.yaml, e.g. 'pull-request' or 'nightly'. Defaults to 'auto', which must be used alone and means 'choose a value based on what's provided via build_type'."
+        required: false
+        type: string
+        default: "auto"
+      script:
+        type: string
+        required: true
+        description: "Shell code to be executed in a step. Ideally this should just invoke a script managed in the repo the workflow runs from, like 'ci/test_wheel.sh'."
+      test-results-artifact-name:
+        description: "Base name for the GitHub Artifact containing this job's JUnit XML reports."
+        type: string
+        required: true
+      matrix_filter:
+        description: |
+          jq expression which modifies the matrix.
+          For example, 'map(select(.ARCH == "amd64"))' to achieve "only run amd64 jobs".
+        type: string
+        default: "."
+      container-options:
+        description: |
+          Command-line arguments passed to 'docker run' when starting the container this workflow runs in.
+          This should be provided as a single string to be inlined into 'docker run', not an array.
+          For example, '--quiet --ulimit nofile=2048'.
+        required: false
+        type: string
+        default: "-e _NOOP"
+      test_summary_show:
+        description: |
+          Sets the 'show:' input to the test-summary/action third-party action.
+          The default, 'fail', means "only show failing tests in the summary in the GitHub UI".
+          See https://github.com/test-summary/action?tab=readme-ov-file#options for a list of
+          available options.
+        required: false
+        type: string
+        default: "fail"
+      rapids-aux-secret-1:
+        required: false
+        type: string
+        default: ''
+        description: |
+          The NAME (not value) of a GitHub secret in the calling repo.
+          This allows callers of the workflow to make a single secret available in the job's
+          environment, via environment variable `RAPIDS_AUX_SECRET_1`.
+      build_workflow_name:
+        description: |
+          Name of a workflow file that produced artifacts to be downloaded in this run.
+          If not set (the default), artifact-handling scripts use RAPIDS-conventional defaults (like "build.yaml" when "build_type == nightly").
+        required: false
+        type: string
+      sccache-dist-request-timeout:
+        type: string
+        default: 7140
+        description: |
+          The maximum time (in seconds) the sccache client should wait for a distributed compilation to complete.
+      sccache-dist-token-secret-name:
+        type: string
+        required: false
+        description: |
+          The name of the secret that contains the token used to authenticate with the RAPIDS Build Engineering sccache-dist build cluster.
+      alternative-gh-token-secret-name:
+        type: string
+        required: false
+        description: |
+          If provided, should contain the name of a secret in the repo which holds a GitHub API token.
+          When this is non-empty, that secret's value is used in place of the default repo-level token
+          anywhere that environment variable GH_TOKEN is set. This is especially useful for downloading
+          artifacts from other private repos, which repo tokens do not have access to.
+      continue-on-error:
+        description: |
+          If false (the default), treat job failures as workflow failures.
+          If true, job failures do not result in workflow failures (useful for implementing optional CI workflows).
+          See https://docs.github.com/en/actions/reference/workflow-syntax-for-github-actions#jobsjob_idcontinue-on-error
+        type: boolean
+        required: false
+        default: false
+      cache-paths:
+        type: string
+        required: false
+        default: ""
+        description: |
+          Newline-separated workspace-relative files or directories to persist with actions/cache.
+          Workspace-relative paths are required for cache saves from job containers. Must be provided
+          together with cache-key-prefix.
+      cache-key-prefix:
+        type: string
+        required: false
+        default: ""
+        description: |
+          Prefix for the actions/cache key for cache-paths. The workflow appends its matrix identity
+          so caches are not shared across incompatible runners or environments.
+      cache-key-files:
+        type: string
+        required: false
+        default: ""
+        description: |
+          Newline-separated tracked files or glob patterns to hash into the cache key. Use this for caches
+          that must be saved again when relevant source or dependency files change.
+      cache-key-matrix-fields:
+        type: string
+        required: false
+        default: |
+          CUDA_VER
+          PY_VER
+          ARCH
+          LINUX_VER
+          GPU
+          DRIVER
+          DEPENDENCIES
+        description: |
+          Newline-separated matrix fields that scope the caller cache key. Override only when the
+          cache is known to be independent of one of this workflow's default compatibility fields.
+      cache-environment:
+        type: string
+        required: false
+        default: ""
+        description: |
+          Newline-separated literal NAME=VALUE pairs exported before the caller script runs. Use
+          workspace-relative paths for directories managed by cache-paths.
+      cache-read-only:
+        type: boolean
+        required: false
+        default: false
+        description: |
+          Restore caller cache paths without saving them at job completion. Use this for
+          short-lived refs that should consume a cache maintained by a trusted ref.
+    secrets:
+      script-env-secret-1-key:
+        description: |
+          Name of an environment variable in the environment where 'inputs.script' is run.
+          Variable's value will be set to the value passed as 'secrets.script-env-secret-1-value'.
+        required: false
+      script-env-secret-1-value:
+        description: |
+          Secret value.
+          Will be available via an environment variable named by 'secrets.script-env-secret-1-key'.
+        required: false
+      script-env-secret-2-key:
+        description: |
+          Name of an environment variable in the environment where 'inputs.script' is run.
+          Variable's value will be set to the value passed as 'secrets.script-env-secret-2-value'.
+        required: false
+      script-env-secret-2-value:
+        description: |
+          Secret value.
+          Will be available via an environment variable named by 'secrets.script-env-secret-2-key'.
+        required: false
+      script-env-secret-3-key:
+        description: |
+          Name of an environment variable in the environment where 'inputs.script' is run.
+          Variable's value will be set to the value passed as 'secrets.script-env-secret-3-value'.
+        required: false
+      script-env-secret-3-value:
+        description: |
+          Secret value.
+          Will be available via an environment variable named by 'secrets.script-env-secret-3-key'.
+        required: false
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  actions: read
+  checks: none
+  contents: read
+  deployments: none
+  discussions: none
+  id-token: write
+  issues: none
+  packages: read
+  pages: none
+  pull-requests: read
+  repository-projects: none
+  security-events: none
+  statuses: none
+
+jobs:
+  compute-matrix:
+    uses: rapidsai/shared-workflows/.github/workflows/compute-matrix.yaml@9a28077e8e60448f9f62b33e72a3eb97e882f207 # main
+    with:
+      build_type: ${{ inputs.build_type }}
+      matrix_name: wheels-test
+      matrix_type: ${{ inputs.matrix_type }}
+      matrix_filter: ${{ inputs.matrix_filter }}
+  test:
+    name: ${{ matrix.CUDA_VER }}, ${{ matrix.PY_VER }}, ${{ matrix.ARCH }}, ${{ matrix.LINUX_VER }}, ${{ matrix.GPU }}, ${{ matrix.DRIVER }}-driver, ${{ matrix.DEPENDENCIES }}-deps
+    needs: compute-matrix
+    timeout-minutes: 120
+    env:
+      RAPIDS_ARTIFACTS_DIR: ${{ github.workspace }}/artifacts
+      RAPIDS_DEPENDENCIES: ${{ matrix.DEPENDENCIES }}
+      RAPIDS_TESTS_DIR: ${{ github.workspace }}/test-results
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.compute-matrix.outputs.matrix) }}
+    runs-on: "linux-${{ matrix.ARCH }}-gpu-${{ matrix.GPU }}-${{ matrix.DRIVER }}-1"
+    continue-on-error: ${{ inputs.continue-on-error }}
+    container:
+      image: "rapidsai/citestwheel:26.12-cuda${{ matrix.CUDA_VER }}-${{ matrix.LINUX_VER }}-py${{ matrix.PY_VER }}"
+      options: ${{ inputs.container-options }}
+      env:
+        NVIDIA_VISIBLE_DEVICES: ${{ env.NVIDIA_VISIBLE_DEVICES }} # GPU jobs must set this container env variable
+        RAPIDS_BUILD_TYPE: ${{ inputs.build_type }}
+    steps:
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-duration-seconds: 43200 # 12h
+      - name: Run nvidia-smi to make sure GPU is working
+        run: nvidia-smi
+
+      - name: checkout code repo
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.repo }}
+          ref: ${{ inputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup caller cache
+        if: inputs.cache-paths != '' || inputs.cache-key-prefix != '' || inputs.cache-key-files != '' || inputs.cache-environment != ''
+        uses: rapidsai/shared-actions/setup-caller-cache@35374eb5eebee7de1efd2f84ad2136137d05e28c # main
+        with:
+          cache-paths: ${{ inputs.cache-paths }}
+          cache-key-prefix: ${{ inputs.cache-key-prefix }}
+          cache-key-files: ${{ inputs.cache-key-files }}
+          cache-key-matrix-fields: ${{ inputs.cache-key-matrix-fields }}
+          cache-environment: ${{ inputs.cache-environment }}
+          cache-read-only: ${{ inputs.cache-read-only }}
+          matrix: ${{ toJSON(matrix) }}
+
+      - name: Standardize repository information
+        uses: rapidsai/shared-actions/rapids-github-info@35374eb5eebee7de1efd2f84ad2136137d05e28c # main
+        with:
+          repo: ${{ inputs.repo }}
+          branch: ${{ inputs.branch }}
+          date: ${{ inputs.date }}
+          sha: ${{ inputs.sha }}
+          build_workflow_name: ${{ inputs.build_workflow_name }}
+
+      - name: Setup proxy cache
+        uses: nv-gha-runners/setup-proxy-cache@eadc57871cde0c92a223d0f486ab669a2360f978 # main
+        continue-on-error: true
+        with:
+          enable-apt: true
+          enable-pip: true
+          enable-pypi-anaconda: true
+
+      # Install latest rapidsai/sccache client and configure sccache-dist
+      - name: Setup sccache-dist
+        uses: rapidsai/shared-actions/setup-sccache-dist@35374eb5eebee7de1efd2f84ad2136137d05e28c # main
+        env:
+          AWS_REGION: "${{env.AWS_REGION}}"
+          AWS_ACCESS_KEY_ID: "${{env.AWS_ACCESS_KEY_ID}}"
+          AWS_SECRET_ACCESS_KEY: "${{env.AWS_SECRET_ACCESS_KEY}}"
+        with:
+          log-file: "${{ env.RAPIDS_ARTIFACTS_DIR }}/sccache.log"
+          request-timeout: ${{ inputs.sccache-dist-request-timeout }}
+      # Per the docs at https://docs.github.com/en/rest/rate-limit/rate-limit?apiVersion=2022-11-28#get-rate-limit-status-for-the-authenticated-user,
+      # checking '/rate_limit | jq .' should not itself count against any rate limits.
+      #
+      # gh CLI is pre-installed on Github-hosted runners, but may not be on self-hosted runners.
+      - name: Check GitHub API rate limits
+        run: |
+          if ! type gh >/dev/null; then
+              echo "'gh' CLI is not installed... skipping rate-limits check"
+          else
+              gh api /rate_limit | jq .
+          fi
+        env:
+          # NEEDS alternative-gh-token-secret_name - API limits need to be for whatever token is used for upload/download. Repo token may be a different pool for rate limits.
+          GH_TOKEN: ${{ inputs.alternative-gh-token-secret-name && secrets[inputs.alternative-gh-token-secret-name] || github.token }} # zizmor: ignore[overprovisioned-secrets]
+      # cannot put possibly-null things as keys in the 'env:' mapping, so need to process these in a script
+      - name: Set secrets in script env
+        run: |
+          set_env_var() {
+            local input_prefix="script-env-secret-$1"
+            local key_str=$2
+            local val_str=$3
+            if test -n "${val_str}"; then
+              if ! test -n "${key_str}"; then
+                echo "ERROR: '${input_prefix}-value' non-empty but '${input_prefix}-key' is empty. Set '${input_prefix}-key'."
+                exit 1
+              fi
+              echo "${key_str}=${val_str}" >> "${GITHUB_ENV}"
+            fi
+          }
+          set_env_var '1' '${{ secrets.script-env-secret-1-key }}' '${{ secrets.script-env-secret-1-value }}'
+          set_env_var '2' '${{ secrets.script-env-secret-2-key }}' '${{ secrets.script-env-secret-2-value }}'
+          set_env_var '3' '${{ secrets.script-env-secret-3-key }}' '${{ secrets.script-env-secret-3-value }}'
+      - name: Run tests
+        run: |
+          ulimit -n "$(ulimit -Hn)"
+          $INPUTS_SCRIPT
+        env:
+          INPUTS_SCRIPT: "${{ inputs.script }}"
+          # NEEDS alternative-gh-token-secret-name - may require a token with more permissions
+          GH_TOKEN: ${{ inputs.alternative-gh-token-secret-name && secrets[inputs.alternative-gh-token-secret-name] || github.token }} # zizmor: ignore[overprovisioned-secrets]
+          RAPIDS_AUX_SECRET_1: ${{ inputs.rapids-aux-secret-1 != '' && secrets[inputs.rapids-aux-secret-1] || '' }} # zizmor: ignore[overprovisioned-secrets]
+
+      - name: Generate test report
+        uses: test-summary/action@37b508cfee6d4d080eedd00b5bb240a6a784a6a5 # v2.6
+        with:
+          paths: "${{ env.RAPIDS_TESTS_DIR }}/*.xml"
+          show: ${{ inputs.test_summary_show }}
+        if: always()
+
+      - name: Upload JUnit test results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: >-
+            ${{ format(
+              '{0}-attempt-{1}-{2}-{3}-{4}-{5}-{6}-{7}-{8}',
+              inputs.test-results-artifact-name,
+              github.run_attempt,
+              matrix.CUDA_VER,
+              matrix.PY_VER,
+              matrix.ARCH,
+              matrix.LINUX_VER,
+              matrix.GPU,
+              matrix.DRIVER,
+              matrix.DEPENDENCIES
+            ) }}
+          path: "${{ env.RAPIDS_TESTS_DIR }}/*.xml"
+          if-no-files-found: error
+
+      - name: Upload additional artifacts
+        if: "!cancelled()"
+        run: rapids-upload-artifacts-dir "cuda${RAPIDS_CUDA_VERSION%%.*}_$(arch)_py${RAPIDS_PY_VERSION//.}"

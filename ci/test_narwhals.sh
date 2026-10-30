@@ -12,7 +12,6 @@ source rapids-init-pip
 
 # Common setup steps shared by Python test jobs
 source ./ci/test_python_common.sh test_python_narwhals
-trap preserve_junit_reports EXIT
 
 rapids-logger "Check GPU usage"
 nvidia-smi

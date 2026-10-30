@@ -52,24 +52,4 @@ RAPIDS_TESTS_DIR=${RAPIDS_TESTS_DIR:-"${RESULTS_DIR}/test-results"}/
 RAPIDS_COVERAGE_DIR=${RAPIDS_COVERAGE_DIR:-"${RESULTS_DIR}/coverage-results"}
 mkdir -p "${RAPIDS_TESTS_DIR}" "${RAPIDS_COVERAGE_DIR}"
 
-
-function preserve_junit_reports()
-{
-    # Copy generated JUnit reports into $RAPIDS_ARTIFACTS_DIR so the "Upload
-    # additional artifacts" step uploads it. This needs to run even when the
-    # test suite fails.
-    if [[ "${CI:-false}" != "true" || -z "${RAPIDS_ARTIFACTS_DIR:-}" ]]; then
-        return
-    fi
-    local xml_file
-    for xml_file in "${RAPIDS_TESTS_DIR}"/*.xml; do
-        [[ -f "${xml_file}" ]] || continue
-        mkdir -p "${RAPIDS_ARTIFACTS_DIR}"
-        local report_id
-        report_id=$(python -c 'import uuid; print(uuid.uuid4().hex)')
-        cp "${xml_file}" \
-            "${RAPIDS_ARTIFACTS_DIR}/$(basename "${xml_file}" .xml)-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${report_id}.xml"
-    done
-}
-
 rapids-print-env

@@ -17,6 +17,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/std/concepts>
 #include <cuda/std/limits>
 #include <cuda/std/tuple>
 #include <thrust/transform.h>
@@ -67,13 +68,14 @@ struct host_udf_groupby_example : cudf::groupby_host_udf {
     using InputType  = double;
     using OutputType = double;
 
-    template <typename T, typename... Args, CUDF_ENABLE_IF(!std::is_same_v<InputType, T>)>
+    template <typename T, typename... Args>
+      requires(not cuda::std::same_as<InputType, T>)
     std::unique_ptr<cudf::column> operator()(Args...) const
     {
       CUDF_FAIL("Unsupported input type.");
     }
 
-    template <typename T, CUDF_ENABLE_IF(std::is_same_v<InputType, T>)>
+    template <cuda::std::same_as<InputType> T>
     std::unique_ptr<cudf::column> operator()(cuda::stream_ref stream,
                                              rmm::device_async_resource_ref mr) const
     {

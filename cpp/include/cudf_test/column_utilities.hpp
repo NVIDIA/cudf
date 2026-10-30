@@ -13,6 +13,7 @@
 #include <cudf/null_mask.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/export.hpp>
@@ -196,7 +197,7 @@ bool validate_host_masks(std::vector<bitmask_type> const& expected_mask,
  * @return std::pair<thrust::host_vector<T>, std::vector<bitmask_type>> first is the
  *  `column_view`'s data, and second is the column's bitmask.
  */
-template <typename T, std::enable_if_t<not cudf::is_fixed_point<T>()>* = nullptr>
+template <typename T>
 std::pair<thrust::host_vector<T>, std::vector<bitmask_type>> to_host(
   column_view c,
   cuda::stream_ref stream   = cudf::test::get_default_stream(),
@@ -207,7 +208,7 @@ std::pair<thrust::host_vector<T>, std::vector<bitmask_type>> to_host(
   return {std::move(host_data), bitmask_to_host(c, stream, mr)};
 }
 
-// This signature is identical to the above overload apart from SFINAE so
+// This signature is identical to the above overload apart from constraints so
 // doxygen sees it as a duplicate.
 //! @cond Doxygen_Suppress
 /**
@@ -223,7 +224,7 @@ std::pair<thrust::host_vector<T>, std::vector<bitmask_type>> to_host(
  * @return std::pair<thrust::host_vector<T>, std::vector<bitmask_type>> first is the
  *  `column_view`'s data, and second is the column's bitmask.
  */
-template <typename T, std::enable_if_t<cudf::is_fixed_point<T>()>* = nullptr>
+template <cudf::concepts::fixed_point T>
 CUDF_EXPORT std::pair<thrust::host_vector<T>, std::vector<bitmask_type>> to_host(
   column_view c,
   cuda::stream_ref stream   = cudf::test::get_default_stream(),

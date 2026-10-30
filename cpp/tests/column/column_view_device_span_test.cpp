@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,15 +11,16 @@
 #include <cudf/column/column_view.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/span.hpp>
-#include <cudf/utilities/traits.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/span>
 
 #include <memory>
 
-template <typename T, CUDF_ENABLE_IF(cudf::is_numeric<T>() or cudf::is_chrono<T>())>
+template <typename T>
+  requires(cudf::concepts::arithmetic<T> or cudf::concepts::chrono<T>)
 std::unique_ptr<cudf::column> example_column()
 {
   auto begin = cuda::counting_iterator<int32_t>{1};

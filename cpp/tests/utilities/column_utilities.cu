@@ -19,6 +19,7 @@
 #include <cudf/lists/list_view.hpp>
 #include <cudf/structs/struct_view.hpp>
 #include <cudf/table/table_device_view.cuh>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/type_checks.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
@@ -28,6 +29,7 @@
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/cmath>
+#include <cuda/std/concepts>
 #include <cuda/std/iterator>
 #include <cuda/std/limits>
 #include <cuda/stream>
@@ -278,12 +280,11 @@ struct column_property_comparator {
                   debug_output_level verbosity,
                   cuda::stream_ref stream,
                   cudf::memory_resources mr)
-    requires(!std::is_same_v<T, cudf::list_view> && !std::is_same_v<T, cudf::struct_view>)
   {
     return compare_common(lhs, rhs, lhs_row_indices, rhs_row_indices, verbosity, stream, mr);
   }
 
-  template <typename T>
+  template <cudf::concepts::list_view T>
   bool operator()(cudf::column_view const& lhs,
                   cudf::column_view const& rhs,
                   cudf::column_view const& lhs_row_indices,
@@ -291,7 +292,6 @@ struct column_property_comparator {
                   debug_output_level verbosity,
                   cuda::stream_ref stream,
                   cudf::memory_resources mr)
-    requires(std::is_same_v<T, cudf::list_view>)
   {
     if (!compare_common(lhs, rhs, lhs_row_indices, rhs_row_indices, verbosity, stream, mr)) {
       return false;
@@ -324,7 +324,7 @@ struct column_property_comparator {
     return true;
   }
 
-  template <typename T>
+  template <cudf::concepts::struct_view T>
   bool operator()(cudf::column_view const& lhs,
                   cudf::column_view const& rhs,
                   cudf::column_view const& lhs_row_indices,
@@ -332,7 +332,6 @@ struct column_property_comparator {
                   debug_output_level verbosity,
                   cuda::stream_ref stream,
                   cudf::memory_resources mr)
-    requires(std::is_same_v<T, cudf::struct_view>)
   {
     if (!compare_common(lhs, rhs, lhs_row_indices, rhs_row_indices, verbosity, stream, mr)) {
       return false;
@@ -414,13 +413,12 @@ class corresponding_rows_not_equivalent {
   }
 
   struct typed_element_not_equivalent {
-    template <typename T>
+    template <cuda::std::floating_point T>
     __device__ bool operator()(column_device_view const& lhs,
                                column_device_view const& rhs,
                                size_type lhs_index,
                                size_type rhs_index,
                                size_type fp_ulps)
-      requires(std::is_floating_point_v<T>)
     {
       if (lhs.is_valid(lhs_index) and rhs.is_valid(rhs_index)) {
         T const x = lhs.element<T>(lhs_index);
@@ -446,7 +444,7 @@ class corresponding_rows_not_equivalent {
 
     template <typename T, typename... Args>
     __device__ bool operator()(Args...)
-      requires(not std::is_floating_point_v<T>)
+      requires(not cuda::std::floating_point<T>)
     {
       // Non-floating point inequality is checked already
       return true;
@@ -999,7 +997,7 @@ bool validate_host_masks(std::vector<bitmask_type> const& expected_mask,
                      });
 }
 
-template <typename T, std::enable_if_t<cudf::is_fixed_point<T>()>*>
+template <cudf::concepts::fixed_point T>
 std::pair<thrust::host_vector<T>, std::vector<bitmask_type>> to_host(column_view c,
                                                                      cuda::stream_ref stream,
                                                                      cudf::memory_resources mr)
@@ -1033,7 +1031,7 @@ struct strings_to_host_fn {
                   char const* chars,
                   cudf::column_view const& offsets,
                   cuda::stream_ref stream)
-    requires(std::is_same_v<OffsetType, int32_t> || std::is_same_v<OffsetType, int64_t>)
+    requires(cuda::std::same_as<OffsetType, int32_t> or cuda::std::same_as<OffsetType, int64_t>)
   {
     auto const h_offsets = cudf::detail::make_std_vector(
       cudf::device_span<OffsetType const>(offsets.data<OffsetType>(), offsets.size()), stream);
@@ -1050,7 +1048,6 @@ struct strings_to_host_fn {
                   char const*,
                   cudf::column_view const&,
                   cuda::stream_ref)
-    requires(!std::is_same_v<OffsetType, int32_t> && !std::is_same_v<OffsetType, int64_t>)
   {
     CUDF_FAIL("invalid offsets type");
   }

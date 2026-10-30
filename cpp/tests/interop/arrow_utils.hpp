@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -20,6 +20,9 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/transform.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
+
+#include <cuda/std/concepts>
 
 #include <arrow/api.h>
 #include <arrow/util/bitmap_builders.h>
@@ -81,10 +84,10 @@ std::shared_ptr<arrow::Array> to_arrow_array(cudf::type_id id, Ts&&... args)
   }
 }
 
-template <typename T>
+template <cudf::concepts::fixed_width T>
 std::shared_ptr<arrow::Array> get_arrow_array(std::vector<T> const& data,
                                               std::vector<uint8_t> const& mask = {})
-  requires(cudf::is_fixed_width<T>() and !std::is_same_v<T, bool>)
+  requires(not cudf::concepts::boolean<T>)
 {
   std::shared_ptr<arrow::Buffer> data_buffer;
   arrow::BufferBuilder buff_builder;
@@ -99,10 +102,10 @@ std::shared_ptr<arrow::Array> get_arrow_array(std::vector<T> const& data,
   return to_arrow_array(cudf::type_to_id<T>(), data.size(), data_buffer, mask_buffer);
 }
 
-template <typename T>
+template <cudf::concepts::fixed_width T>
 std::shared_ptr<arrow::Array> get_arrow_array(std::initializer_list<T> elements,
                                               std::initializer_list<uint8_t> validity = {})
-  requires(cudf::is_fixed_width<T>() and !std::is_same_v<T, bool>)
+  requires(not cudf::concepts::boolean<T>)
 {
   std::vector<T> data(elements);
   std::vector<uint8_t> mask(validity);
@@ -110,10 +113,9 @@ std::shared_ptr<arrow::Array> get_arrow_array(std::initializer_list<T> elements,
   return get_arrow_array<T>(data, mask);
 }
 
-template <typename T>
+template <cudf::concepts::boolean T>
 std::shared_ptr<arrow::Array> get_arrow_array(std::vector<bool> const& data,
                                               std::vector<bool> const& mask = {})
-  requires(std::is_same_v<T, bool>)
 {
   std::shared_ptr<arrow::BooleanArray> boolean_array;
   arrow::BooleanBuilder boolean_builder;
@@ -131,10 +133,9 @@ std::shared_ptr<arrow::Array> get_arrow_array(std::vector<bool> const& data,
   return boolean_array;
 }
 
-template <typename T>
+template <cudf::concepts::boolean T>
 std::shared_ptr<arrow::Array> get_arrow_array(std::initializer_list<bool> elements,
                                               std::initializer_list<bool> validity = {})
-  requires(std::is_same_v<T, bool>)
 {
   std::vector<bool> mask(validity);
   std::vector<bool> data(elements);
@@ -142,10 +143,9 @@ std::shared_ptr<arrow::Array> get_arrow_array(std::initializer_list<bool> elemen
   return get_arrow_array<T>(data, mask);
 }
 
-template <typename T>
+template <cudf::concepts::string_view T>
 std::shared_ptr<arrow::Array> get_arrow_array(std::vector<std::string> const& data,
                                               std::vector<uint8_t> const& mask = {})
-  requires(std::is_same_v<T, cudf::string_view>)
 {
   std::shared_ptr<arrow::StringArray> string_array;
   arrow::StringBuilder string_builder;
@@ -158,10 +158,9 @@ std::shared_ptr<arrow::Array> get_arrow_array(std::vector<std::string> const& da
   return string_array;
 }
 
-template <typename T>
+template <cudf::concepts::string_view T>
 std::shared_ptr<arrow::Array> get_arrow_array(std::initializer_list<std::string> elements,
                                               std::initializer_list<uint8_t> validity = {})
-  requires(std::is_same_v<T, cudf::string_view>)
 {
   std::vector<uint8_t> mask(validity);
   std::vector<std::string> data(elements);
@@ -239,9 +238,8 @@ std::shared_ptr<arrow::Array> get_decimal_arrow_array(
   std::optional<std::vector<uint8_t>> const& validity,
   int32_t precision,
   int32_t scale)
-  requires(std::disjunction_v<std::is_same<T, int32_t>,
-                              std::is_same<T, int64_t>,
-                              std::is_same<T, __int128_t>>)
+  requires(cuda::std::same_as<T, int32_t> or cuda::std::same_as<T, int64_t> or
+           cuda::std::same_as<T, __int128_t>)
 {
   std::shared_ptr<arrow::Buffer> data_buffer;
   arrow::BufferBuilder buff_builder;

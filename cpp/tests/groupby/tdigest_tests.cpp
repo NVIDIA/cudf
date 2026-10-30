@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,6 +13,7 @@
 #include <cudf/detail/tdigest/tdigest.hpp>
 #include <cudf/filling.hpp>
 #include <cudf/tdigest/tdigest_column_view.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
@@ -26,9 +27,8 @@ namespace {
  *
  */
 struct tdigest_gen_grouped {
-  template <
-    typename T,
-    typename std::enable_if_t<cudf::is_numeric<T>() || cudf::is_fixed_point<T>()>* = nullptr>
+  template <typename T>
+    requires(cudf::concepts::arithmetic<T> or cudf::concepts::fixed_point<T>)
   std::unique_ptr<cudf::column> operator()(cudf::column_view const& keys,
                                            cudf::column_view const& values,
                                            int delta)
@@ -43,9 +43,7 @@ struct tdigest_gen_grouped {
     return std::move(result.second[0].results[0]);
   }
 
-  template <
-    typename T,
-    typename std::enable_if_t<!cudf::is_numeric<T>() && !cudf::is_fixed_point<T>()>* = nullptr>
+  template <typename T>
   std::unique_ptr<cudf::column> operator()(cudf::column_view const& keys,
                                            cudf::column_view const& values,
                                            int delta)

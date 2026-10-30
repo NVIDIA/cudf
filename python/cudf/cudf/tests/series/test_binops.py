@@ -3338,3 +3338,30 @@ def test_arrow_backed_unsigned_subtract_overflow():
     gother = cudf.from_pandas(other)
     with pytest.raises(pa.ArrowInvalid):
         gs - gother
+
+
+@pytest.mark.parametrize("divisor", [float("inf"), float("-inf"), -1e18, 1e18])
+@pytest.mark.parametrize("val", [1.0, -1.0, 2.5, 0.0, -0.0])
+def test_float_pymod_edge_cases(divisor, val):
+    psr = pd.Series([val])
+    gsr = cudf.Series([val])
+    res_p = psr % divisor
+    res_g = gsr % divisor
+    assert_eq(res_p, res_g)
+    assert_eq(psr.mod(divisor), gsr.mod(divisor))
+    np.testing.assert_equal(
+        np.signbit(res_g.to_numpy()), np.signbit(res_p.to_numpy())
+    )
+
+
+def test_float_pymod_series():
+    psr1 = pd.Series([1.0, -1.0, 1.0, -1.0])
+    psr2 = pd.Series([float("inf"), float("inf"), -1e18, -1e18])
+    gsr1 = cudf.from_pandas(psr1)
+    gsr2 = cudf.from_pandas(psr2)
+    res_p = psr1 % psr2
+    res_g = gsr1 % gsr2
+    assert_eq(res_p, res_g)
+    np.testing.assert_equal(
+        np.signbit(res_g.to_numpy()), np.signbit(res_p.to_numpy())
+    )

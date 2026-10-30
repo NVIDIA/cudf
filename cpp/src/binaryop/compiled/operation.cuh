@@ -192,9 +192,15 @@ struct PyMod {
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> double
     requires(cuda::std::floating_point<std::common_type_t<TypeLhs, TypeRhs>>)
   {
-    auto x1 = static_cast<double>(x);
-    auto y1 = static_cast<double>(y);
-    return fmod(fmod(x1, y1) + y1, y1);
+    auto const x1 = static_cast<double>(x);
+    auto const y1 = static_cast<double>(y);
+    auto mod      = std::fmod(x1, y1);
+    if (mod != 0.0) {
+      if ((y1 < 0.0) != (mod < 0.0)) { mod += y1; }
+    } else {
+      mod = std::copysign(0.0, y1);
+    }
+    return mod;
   }
 
   template <cudf::concepts::duration TypeLhs, typename TypeRhs>

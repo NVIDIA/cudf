@@ -11,15 +11,19 @@
 
 #include <cudf/column/column_factories.hpp>
 #include <cudf/copying.hpp>
+#include <cudf/fixed_point/fixed_point.hpp>
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/sorting.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/traits.hpp>
 
 #include <cuda/iterator>
 
+#include <algorithm>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 using TestTypes = cudf::test::
@@ -474,4 +478,126 @@ TEST_F(TopK, TopKSegmentedEmptyMultiBlock)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
   result = cudf::segmented_top_k_order(input, offsets, 2);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_order, result->view());
+}
+
+template <typename T>
+struct TopKSegmentedLarge : public cudf::test::BaseFixture {};
+
+using LargeSegmentTypes = cudf::test::Concat<cudf::test::Types<int32_t, int64_t, uint32_t>,
+                                             cudf::test::ChronoTypes,
+                                             cudf::test::FixedPointTypes>;
+
+TYPED_TEST_SUITE(TopKSegmentedLarge, LargeSegmentTypes);
+
+TYPED_TEST(TopKSegmentedLarge, TopKSegmented)
+{
+  // Many small segments select with cub::DeviceBatchedTopK and few large segments with one
+  // cub::DeviceTopK call per segment
+  using T    = TypeParam;
+  using fwcw = cudf::test::fixed_width_column_wrapper<int32_t>;
+
+  constexpr cudf::size_type k            = 3;
+  constexpr cudf::size_type uncovered    = 5;  // rows outside the segments at each end
+  constexpr cudf::size_type slice_offset = 2;
+
+  // {number of segments, segment size}
+  for (auto const& shape : {std::pair<cudf::size_type, cudf::size_type>{1 << 12, 1 << 10},
+                            std::pair<cudf::size_type, cudf::size_type>{4, 1 << 21}}) {
+    auto const [num_segments, segment_size] = shape;
+    auto const num_rows                     = 2 * uncovered + num_segments * segment_size + (k - 1);
+
+    auto const input = [&] {
+      if constexpr (cudf::is_fixed_point<T>()) {
+        using RepType = cudf::device_storage_type_t<T>;
+        auto itr      = cuda::counting_iterator<RepType>{0};
+        return cudf::test::fixed_point_column_wrapper<RepType>(
+          itr, itr + slice_offset + num_rows, numeric::scale_type{-2});
+      } else {
+        auto itr = cuda::counting_iterator<int32_t>{0};
+        return cudf::test::fixed_width_column_wrapper<T, int32_t>(itr,
+                                                                  itr + slice_offset + num_rows);
+      }
+    }();
+    // Ascending values in a sliced column; the offsets leave rows uncovered at both ends and
+    // include an empty segment and a segment smaller than k
+    auto const sliced = cudf::slice(input, {slice_offset, slice_offset + num_rows}).front();
+    auto h_offsets    = std::vector<int32_t>(num_segments + 1);
+    std::generate(h_offsets.begin(), h_offsets.end(), [&, i = 0]() mutable {
+      return uncovered + segment_size * i++;
+    });
+    h_offsets.push_back(h_offsets.back());
+    h_offsets.push_back(h_offsets.back() + k - 1);
+    auto const offsets = fwcw(h_offsets.begin(), h_offsets.end());
+
+    // Ascending values, so the top k rows of each segment are at one end of it
+    auto const expect_order = [&](cudf::column_view const& result, cudf::order topk_order) {
+      auto out_offsets = std::vector<int32_t>{0};
+      auto indices     = std::vector<int32_t>{};
+      for (std::size_t i = 0; i + 1 < h_offsets.size(); ++i) {
+        for (int32_t j = 0; j < std::min(h_offsets[i + 1] - h_offsets[i], k); ++j) {
+          indices.push_back(topk_order == cudf::order::DESCENDING ? h_offsets[i + 1] - 1 - j
+                                                                  : h_offsets[i] + j);
+        }
+        out_offsets.push_back(static_cast<int32_t>(indices.size()));
+      }
+      auto const lists = cudf::lists_column_view(result);
+      CUDF_TEST_EXPECT_COLUMNS_EQUAL(fwcw(out_offsets.begin(), out_offsets.end()), lists.offsets());
+      CUDF_TEST_EXPECT_COLUMNS_EQUAL(fwcw(indices.begin(), indices.end()), lists.child());
+    };
+
+    auto result = cudf::segmented_top_k_order(sliced, offsets, k);
+    expect_order(result->view(), cudf::order::DESCENDING);
+    auto const expected_values =
+      cudf::gather(cudf::table_view({sliced}), cudf::lists_column_view(result->view()).child());
+
+    result = cudf::segmented_top_k_order(sliced, offsets, k, cudf::order::ASCENDING);
+    expect_order(result->view(), cudf::order::ASCENDING);
+
+    result = cudf::segmented_top_k(sliced, offsets, k);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_values->get_column(0),
+                                   cudf::lists_column_view(result->view()).child());
+  }
+}
+
+TEST_F(TopK, TopKSegmentedLargeTies)
+{
+  // Rows tied at the k boundary may be selected in any order but give the same values
+  using fwcw = cudf::test::fixed_width_column_wrapper<int32_t>;
+
+  constexpr int32_t num_values = 128;  // values repeat every `num_values` rows
+
+  // {number of segments, segment size}: cub::DeviceBatchedTopK and per-segment cub::DeviceTopK
+  for (auto const& shape : {std::pair<cudf::size_type, cudf::size_type>{1024, 512},
+                            std::pair<cudf::size_type, cudf::size_type>{2, 131'072}}) {
+    auto const [num_segments, segment_size] = shape;
+    auto const copies                       = segment_size / num_values;
+    auto const k                            = copies + 2;
+
+    // Each segment holds `copies` copies of every value in [0, num_values)
+    auto itr       = cuda::make_transform_iterator(cuda::counting_iterator<int32_t>{0},
+                                             [](int32_t i) { return i % num_values; });
+    auto input     = fwcw(itr, itr + num_segments * segment_size);
+    auto h_offsets = std::vector<int32_t>(num_segments + 1);
+    std::generate(
+      h_offsets.begin(), h_offsets.end(), [&, i = 0]() mutable { return segment_size * i++; });
+    auto offsets = fwcw(h_offsets.begin(), h_offsets.end());
+
+    // k takes all copies of the extreme value and the rest from the next one
+    auto expect_top_k = [&](cudf::column_view const& result, int32_t extreme, int32_t next) {
+      auto out_offsets = std::vector<int32_t>{0};
+      auto values      = std::vector<int32_t>{};
+      for (auto i = 0; i < num_segments; ++i) {
+        values.insert(values.end(), copies, extreme);
+        values.insert(values.end(), k - copies, next);
+        out_offsets.push_back(static_cast<int32_t>(values.size()));
+      }
+      auto const lists = cudf::lists_column_view(result);
+      CUDF_TEST_EXPECT_COLUMNS_EQUAL(fwcw(out_offsets.begin(), out_offsets.end()), lists.offsets());
+      CUDF_TEST_EXPECT_COLUMNS_EQUAL(fwcw(values.begin(), values.end()), lists.child());
+    };
+    auto result = cudf::segmented_top_k(input, offsets, k);
+    expect_top_k(result->view(), num_values - 1, num_values - 2);
+    result = cudf::segmented_top_k(input, offsets, k, cudf::order::ASCENDING);
+    expect_top_k(result->view(), 0, 1);
+  }
 }

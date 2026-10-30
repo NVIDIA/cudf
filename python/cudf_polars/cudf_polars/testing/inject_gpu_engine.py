@@ -510,6 +510,7 @@ EXPECTED_FAILURES: dict[str, str] = {
 
 
 TESTS_TO_SKIP: dict[str, str] = {
+    "tests/unit/io/cloud/test_cloud.py::test_scan_http_same_host": "Checks Polars CPU object-store HTTP connection caching, which the GPU engine does not use",
     "tests/unit/io/test_order_keeping_pushdown.py::test_top_k_through_order_keeping_projection[False-expr6]": "Checks verbose logs or metrics specific to the Polars CPU streaming engine",
     "tests/unit/io/test_order_keeping_pushdown.py::test_top_k_through_order_keeping_projection[False-expr7]": "Checks verbose logs or metrics specific to the Polars CPU streaming engine",
     "tests/unit/io/test_order_keeping_pushdown.py::test_top_k_through_order_keeping_projection[True-expr6]": "Checks verbose logs or metrics specific to the Polars CPU streaming engine",

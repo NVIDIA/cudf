@@ -24,8 +24,6 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/exec_policy.hpp>
-
 #include <cuda/stream>
 
 #include <nanoarrow/nanoarrow.h>

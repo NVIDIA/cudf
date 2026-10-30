@@ -21,7 +21,6 @@
 #include <cudf/utilities/prefetch.hpp>
 
 #include <rmm/device_uvector.hpp>
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/std/cstdint>

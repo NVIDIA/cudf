@@ -14,8 +14,6 @@
 #include <cudf/tdigest/tdigest_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/exec_policy.hpp>
-
 #include <cuda/std/tuple>
 
 // for use with groupby and reduction aggregation tests.

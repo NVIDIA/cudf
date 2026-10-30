@@ -24,8 +24,6 @@
 
 #include <nvtext/generate_ngrams.hpp>
 
-#include <rmm/exec_policy.hpp>
-
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
 #include <cuda/buffer>

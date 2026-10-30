@@ -12,8 +12,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/exec_policy.hpp>
-
 namespace cudf {
 namespace groupby {
 namespace detail {

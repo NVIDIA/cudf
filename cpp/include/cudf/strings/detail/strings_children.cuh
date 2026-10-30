@@ -19,8 +19,6 @@
 #include <cudf/utilities/prefetch.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/exec_policy.hpp>
-
 #include <cub/device/device_memcpy.cuh>
 #include <cuda/functional>
 #include <cuda/iterator>

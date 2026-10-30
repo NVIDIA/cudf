@@ -7,6 +7,8 @@
 
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <rmm/exec_policy.hpp>
+
 #include <cuda/devices>
 #include <cuda/memory_resource>
 #include <cuda/std/execution>
@@ -14,6 +16,19 @@
 
 namespace cudf {
 namespace detail {
+/**
+ * @brief Make a Thrust execution policy that allocates working space from the temporary resource.
+ *
+ * @param stream CUDA stream used for device memory operations and kernel launches.
+ * @param mr Memory resources; only the temporary resource is used.
+ *
+ * @returns A new non-synchronizing Thrust execution policy.
+ */
+inline auto exec_policy_nosync(cuda::stream_ref stream, cudf::memory_resources mr)
+{
+  return rmm::exec_policy_nosync(stream, mr.get_temporary_mr());
+}
+
 /**
  * @brief Make an execution environment to pass to CUB calls.
  * @tparam Envs... Variadic parameter pack of additional environment parameter types.

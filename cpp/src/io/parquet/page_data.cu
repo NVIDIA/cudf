@@ -11,8 +11,6 @@
 #include <cudf/detail/utilities/batched_memcpy.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
 
-#include <rmm/exec_policy.hpp>
-
 #include <cuda/functional>
 #include <cuda/iterator>
 

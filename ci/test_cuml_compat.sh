@@ -27,6 +27,7 @@ rapids-logger "pytest cuml cuDF-compat subset"
 
 timeout 15m python -m pytest \
   --cache-clear \
+  --junitxml="${RAPIDS_TESTS_DIR}/junit-cuml-compat.xml" \
   "${CUML_TESTS_DIR}/test_compose.py" \
   "${CUML_TESTS_DIR}/test_kneighbors_classifier.py" \
   "${CUML_TESTS_DIR}/test_kneighbors_regressor.py" \

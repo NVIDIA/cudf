@@ -66,6 +66,7 @@ fi
 if [[ "${RUN_CUDF_BENCHMARK_TESTS}" == "true" ]]; then
   rapids-logger "pytest for cudf benchmarks"
   timeout 40m ./ci/run_cudf_pytest_benchmarks.sh \
+    --junitxml="${RAPIDS_TESTS_DIR}/junit-cudf-benchmarks.xml" \
     --benchmark-disable \
     --numprocesses=8 \
     --dist=worksteal \
@@ -77,6 +78,7 @@ if [[ "${RUN_CUDF_BENCHMARK_TESTS}" == "true" ]]; then
 
   rapids-logger "pytest for cudf benchmarks using pandas"
   timeout 40m ./ci/run_cudf_pandas_pytest_benchmarks.sh \
+    --junitxml="${RAPIDS_TESTS_DIR}/junit-cudf-benchmarks-pandas.xml" \
     --benchmark-disable \
     --numprocesses=8 \
     --dist=worksteal \

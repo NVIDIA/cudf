@@ -878,6 +878,7 @@ add_library(
   src/io/parquet/experimental/page_index_filter_utils.cu
   src/io/parquet/experimental/parquet_footer.cpp
   src/io/parquet/experimental/variant_extract.cu
+  src/io/parquet/experimental/variant_from_json.cu
   src/io/parquet/experimental/variant_path.cpp
   src/io/parquet/expression_transform_helpers.cpp
   src/io/parquet/io_utils/parquet_io_utils.cpp

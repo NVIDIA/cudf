@@ -312,7 +312,12 @@ class Column:
             or self.obj.type().id() == plc.TypeId.STRING
         ):
             return Column(
-                self._handle_string_cast(plc_dtype, stream=stream, strict=strict),
+                self._handle_string_cast(
+                    plc_dtype,
+                    stream=stream,
+                    strict=strict,
+                    target_name=dtype.polars_type._string_repr(),
+                ),
                 dtype=dtype,
                 name=self.name,
             )
@@ -445,7 +450,7 @@ class Column:
             return result
 
     def _handle_string_cast(
-        self, dtype: plc.DataType, stream: Stream, *, strict: bool
+        self, dtype: plc.DataType, stream: Stream, *, strict: bool, target_name: str
     ) -> plc.Column:
         if dtype.id() == plc.TypeId.STRING:
             if plc.traits.is_floating_point(self.obj.type()):
@@ -489,7 +494,7 @@ class Column:
         ).to_py(stream=stream):
             if strict:
                 raise InvalidOperationError(
-                    f"Conversion from {self.dtype.id()} to {dtype.id()} failed."
+                    f"conversion from `str` to `{target_name}` failed."
                 )
             else:
                 values = self.obj.with_mask(

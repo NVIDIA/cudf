@@ -474,7 +474,8 @@ orc_metadata read_orc_metadata(source_info const& src_info, cuda::stream_ref str
 
   return {{make_orc_column_schema(footer.types, 0, "")},
           footer.numberOfRows,
-          static_cast<size_type>(footer.stripes.size())};
+          static_cast<size_type>(footer.stripes.size()),
+          footer.calendar};
 }
 
 /**

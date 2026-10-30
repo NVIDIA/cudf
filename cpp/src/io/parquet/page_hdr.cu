@@ -4,8 +4,8 @@
  */
 
 #include "cuda/std/__utility/cmp.h"
-#include "error.hpp"
 #include "io/utilities/block_utils.cuh"
+#include "io/utilities/kernel_error.hpp"
 #include "parquet_gpu.hpp"
 
 #include <cudf/detail/utilities/cuda.cuh>

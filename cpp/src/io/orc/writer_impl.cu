@@ -8,11 +8,14 @@
  * @brief cuDF-IO ORC writer class implementation
  */
 
+#include "calendar.cuh"
+#include "decode_error.cuh"
 #include "io/comp/compression.hpp"
 #include "io/orc/orc_gpu.hpp"
 #include "io/statistics/column_statistics.cuh"
 #include "writer_impl.hpp"
 
+#include <cudf/column/column.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/null_mask.cuh>
 #include <cudf/detail/null_mask.hpp>
@@ -56,6 +59,7 @@
 #include <thrust/sort.h>
 #include <thrust/tabulate.h>
 #include <thrust/transform.h>
+#include <thrust/transform_reduce.h>
 
 #include <algorithm>
 #include <cstring>
@@ -218,6 +222,7 @@ class orc_column_view {
 
   void add_child(uint32_t child_idx) { children.emplace_back(child_idx); }
 
+  [[nodiscard]] auto const& view() const noexcept { return cudf_column; }
   auto type() const noexcept { return cudf_column.type(); }
   auto is_string() const noexcept { return cudf_column.type().id() == type_id::STRING; }
 
@@ -325,6 +330,9 @@ struct orc_table_view {
   cuda::device_buffer<orc_column_device_view> d_columns;
   std::vector<uint32_t> string_column_indices;
   cuda::device_buffer<uint32_t> d_string_column_indices;
+  std::vector<rmm::device_uvector<int32_t>> rebased_dates;
+  // Keep selectively compacted input alive through statistics persistence and sink writes.
+  std::vector<std::unique_ptr<column>> compacted_columns;
 
   [[nodiscard]] auto num_columns() const noexcept { return columns.size(); }
   [[nodiscard]] size_type num_rows() const noexcept
@@ -1366,7 +1374,7 @@ cudf::detail::hostdevice_vector<uint8_t> allocate_and_encode_blobs(
     case TypeKind::FLOAT: return dtype_float32;
     case TypeKind::DOUBLE: return dtype_float64;
     case TypeKind::STRING: return dtype_string;
-    case TypeKind::DATE: return dtype_int32;
+    case TypeKind::DATE: return dtype_date32;
     case TypeKind::TIMESTAMP: return dtype_timestamp64;
     case TypeKind::DECIMAL: return dtype_decimal64;
     default: return dtype_none;
@@ -2151,6 +2159,97 @@ hostdevice_2dvector<rowgroup_rows> calculate_rowgroup_bounds(orc_table_view cons
   return rowgroup_bounds;
 }
 
+/**
+ * @brief Compact sliced DATE inputs before allocating rebased data.
+ *
+ * Return both the owning columns and their table view so ownership remains explicit.
+ */
+[[nodiscard]] auto compact_legacy_date_inputs(table_view const& input,
+                                              orc_table_view const& orc_table,
+                                              host_2dspan<rowgroup_rows const> bounds,
+                                              cuda::stream_ref stream)
+{
+  std::vector<bool> compact(input.num_columns(), false);
+  size_type root_index = -1;
+  for (auto const& col : orc_table.columns) {
+    if (not col.is_child()) { ++root_index; }
+    if (col.orc_kind() != DATE) { continue; }
+    auto const begin = bounds[0][col.index()].begin;
+    auto const end   = bounds[bounds.size().first - 1][col.index()].end;
+    if (begin != end and (col.view().offset() != 0 or begin != 0 or end != col.size())) {
+      compact[root_index] = true;
+    }
+  }
+  std::vector<std::unique_ptr<column>> owned_columns;
+  std::vector<column_view> views(input.begin(), input.end());
+  for (size_type index = 0; index < input.num_columns(); ++index) {
+    if (not compact[index]) { continue; }
+    auto& compacted = owned_columns.emplace_back(std::make_unique<column>(
+      input.column(index), stream, cudf::get_current_device_resource_ref()));
+    views[index]    = compacted->view();
+  }
+  return std::pair{std::move(owned_columns), table_view{views}};
+}
+
+/**
+ * @brief Rebase DATE leaves before encoding and statistics, preserving their null masks.
+ *
+ * Rowgroup bounds restrict validation to rows actually written from sliced nested columns.
+ * Invalid dates share one device error flag, checked after processing all DATE leaves.
+ */
+void rebase_date_columns(orc_table_view& orc_table,
+                         host_2dspan<rowgroup_rows const> bounds,
+                         cuda::stream_ref stream)
+{
+  for (auto const& col : orc_table.columns) {
+    CUDF_EXPECTS(col.orc_kind() != TIMESTAMP,
+                 "Legacy ORC calendar does not support TIMESTAMP columns");
+  }
+  if (orc_table.num_rows() == 0) { return; }
+  kernel_error error_code(stream);
+  for (auto const& col : orc_table.columns) {
+    if (col.orc_kind() != DATE) { continue; }
+    auto const& view = col.view();
+    auto const begin = bounds[0][col.index()].begin;
+    auto const end   = bounds[bounds.size().first - 1][col.index()].end;
+    if (begin == end) { continue; }
+    auto& data = orc_table.rebased_dates.emplace_back(
+      static_cast<size_t>(view.offset()) + view.size(), stream);
+    auto const columns = device_span<orc_column_device_view>{orc_table.d_columns};
+    auto const mask    = view.null_mask();
+    thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                       cuda::counting_iterator<size_type>{begin},
+                       end - begin,
+                       [columns,
+                        idx = col.index(),
+                        mask,
+                        out          = data.data(),
+                        error_status = error_code.data()] __device__(auto row) {
+                         auto const& column = columns[idx];
+                         if (not bit_value_or(mask, row + column.offset(), true)) {
+                           out[row + column.offset()] = 0;
+                           return;
+                         }
+                         auto const original        = column.element<int32_t>(row);
+                         auto const rebased         = rebase_days<true>(original);
+                         out[row + column.offset()] = static_cast<int32_t>(rebased);
+                         if (not is_representable_date<true>(original, rebased)) {
+                           set_decode_error(error_status, decode_error::UNREPRESENTABLE_DATE);
+                         }
+                       });
+    auto const rebased_view = column_device_view::create(
+      column_view{view.type(), view.size(), data.data(), mask, view.null_count(), view.offset()},
+      stream);
+    cudf::detail::device_single_thread(
+      [columns, idx = col.index(), rebased = *rebased_view] __device__() {
+        static_cast<column_device_view&>(columns[idx]) = rebased;
+      },
+      stream);
+  }
+  CUDF_EXPECTS(error_code.value_sync(stream) == 0,
+               "DATE cannot be represented losslessly in the legacy ORC calendar");
+}
+
 // returns host vector of per-rowgroup sizes
 encoder_decimal_info decimal_chunk_sizes(orc_table_view& orc_table,
                                          file_segmentation const& segmentation,
@@ -2530,6 +2629,7 @@ struct stripe_stream_size_less {
  * @param max_stripe_size Maximum size of stripes in the output file
  * @param row_index_stride The row index stride
  * @param timezone Timezone that the written timestamps are relative to
+ * @param calendar Calendar used for DATE encoding and statistics
  * @param enable_dictionary Whether dictionary is enabled
  * @param sort_dictionaries Whether to sort the dictionaries
  * @param compression The compression format
@@ -2546,6 +2646,7 @@ auto convert_table_to_orc_data(table_view const& input,
                                stripe_size_limits max_stripe_size,
                                size_type row_index_stride,
                                writer_timezone const& timezone,
+                               CalendarKind calendar,
                                bool enable_dictionary,
                                bool sort_dictionaries,
                                compression_type compression,
@@ -2556,14 +2657,26 @@ auto convert_table_to_orc_data(table_view const& input,
                                data_sink const& out_sink,
                                cuda::stream_ref stream)
 {
-  auto const input_tview = table_device_view::create(input, stream);
-
-  auto orc_table = make_orc_table_view(input, *input_tview, table_meta, stream);
+  auto input_tview     = table_device_view::create(input, stream);
+  auto orc_table       = make_orc_table_view(input, *input_tview, table_meta, stream);
+  auto rowgroup_bounds = calculate_rowgroup_bounds(orc_table, row_index_stride, stream);
+  if (calendar == CalendarKind::JULIAN_GREGORIAN and orc_table.num_rows() != 0) {
+    auto [compacted_columns, compacted_input] =
+      compact_legacy_date_inputs(input, orc_table, rowgroup_bounds.host_view(), stream);
+    if (not compacted_columns.empty()) {
+      input_tview     = table_device_view::create(compacted_input, stream);
+      orc_table       = make_orc_table_view(compacted_input, *input_tview, table_meta, stream);
+      rowgroup_bounds = calculate_rowgroup_bounds(orc_table, row_index_stride, stream);
+    }
+    orc_table.compacted_columns = std::move(compacted_columns);
+  }
 
   // This is unused but it holds memory buffers for later access thus needs to be kept alive.
   [[maybe_unused]] auto const pd_masks = init_pushdown_null_masks(orc_table, stream);
 
-  auto rowgroup_bounds = calculate_rowgroup_bounds(orc_table, row_index_stride, stream);
+  if (calendar == CalendarKind::JULIAN_GREGORIAN) {
+    rebase_date_columns(orc_table, rowgroup_bounds.host_view(), stream);
+  }
 
   [[maybe_unused]] auto const rg_char_counts_data =
     set_rowgroup_char_counts(orc_table, rowgroup_bounds, stream);
@@ -2748,6 +2861,7 @@ writer::impl::impl(std::unique_ptr<data_sink> sink,
     _timezone(options.get_writer_timezone()),
     _out_sink(std::move(sink))
 {
+  _footer.calendar = options.get_calendar_kind();
   if (options.get_metadata()) {
     _table_meta = std::make_unique<table_input_metadata>(*options.get_metadata());
   }
@@ -2772,6 +2886,7 @@ writer::impl::impl(std::unique_ptr<data_sink> sink,
     _timezone(options.get_writer_timezone()),
     _out_sink(std::move(sink))
 {
+  _footer.calendar = options.get_calendar_kind();
   if (options.get_metadata()) {
     _table_meta = std::make_unique<table_input_metadata>(*options.get_metadata());
   }
@@ -2820,6 +2935,7 @@ void writer::impl::write(table_view const& input)
                               _max_stripe_size,
                               _row_index_stride,
                               _timezone,
+                              *_footer.calendar,
                               _enable_dictionary,
                               _sort_dictionaries,
                               _compression,

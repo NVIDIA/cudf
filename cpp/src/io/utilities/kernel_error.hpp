@@ -12,7 +12,7 @@
 #include <cstdint>
 #include <sstream>
 
-namespace cudf::io::parquet {
+namespace cudf::io {
 
 /**
  * @brief Specialized device scalar for use in reporting errors that occur in
@@ -78,4 +78,4 @@ class kernel_error {
   }
 };
 
-}  // namespace cudf::io::parquet
+}  // namespace cudf::io

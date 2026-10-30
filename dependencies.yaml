@@ -136,11 +136,6 @@ files:
     output: none
     includes:
       - depends_on_pytorch
-  build_cudf_polars_quent:
-    output: none
-    includes:
-      - py_version
-      - build_cudf_polars_quent
   build_java:
     # Toolchain for building static libcudf from source and packaging the cuDF
     # Java JAR. `depends_on_libcudf` is excluded because the Java build links
@@ -1306,12 +1301,6 @@ dependencies:
           # added lower bound pinning to get pytest-subtests for free
           - pytest>=9
           - tpchgen-cli>=3.0.0
-  build_cudf_polars_quent:
-    common:
-      - output_types: conda
-        packages:
-          - maturin>=1.14,<2
-          - rust=1.97
   test_python_narwhals:
     common:
       - output_types: [conda, requirements, constraints, pyproject]

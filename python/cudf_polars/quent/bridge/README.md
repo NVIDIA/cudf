@@ -55,8 +55,13 @@ the `bridge` and `analyzer`. To update Quent:
    packages that stub alongside the extension so editors and static type
    checkers can use the generated API from the installed distribution.
 
+4. Install Rust, Cargo, Clippy, and rustfmt if needed, then run the portable
+   build, lint, and test script:
 
-4. Run the checks at `ci/run_cudf_polars_quent_tests.sh`.
+   ```sh
+   ./ci/run_cudf_polars_quent_tests.sh
+   ```
+
 5. Commit and push the analyzer changes to the Git remote recorded in the
    bridge's build provenance. Rebuild the bridge after committing, then
    regenerate traces. `quent-open` checks out the analyzer package at the exact

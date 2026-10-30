@@ -174,6 +174,48 @@ jobs:
     with:
       docs-projects: cudf,dask-cudf,libcudf
       dry-run: false
+  cudf-polars-quent:
+    needs: [build-details]
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: read
+      pull-requests: read
+    secrets: inherit # zizmor: ignore[secrets-inherit]
+    uses: rapidsai/shared-workflows/.github/workflows/wheels-build.yaml@main
+    with:
+      build_type: ${{ inputs.build_type || 'branch' }}
+      branch: ${{ inputs.branch }}
+      build-datetime: ${{ needs.build-details.outputs.build-datetime }}
+      date: ${{ inputs.date }}
+      sha: ${{ inputs.sha }}
+      node_type: cpu8
+      script: ci/build_wheel_cudf_polars_quent.sh
+      package-name: cudf_polars_quent
+      package-type: python
+      append-cuda-suffix: false
+      # The wheel is abi3 and has no CUDA dependency, so build one per architecture:
+      # pick the entry with the oldest Python, then the oldest CUDA.
+      matrix_filter: group_by(.ARCH) | map(min_by([(.PY_VER | split(".") | map(tonumber)), (.CUDA_VER | split(".") | map(tonumber))]))
+  wheel-publish-cudf-polars-quent:
+    needs: cudf-polars-quent
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: read
+      pull-requests: read
+    secrets: inherit # zizmor: ignore[secrets-inherit]
+    uses: rapidsai/shared-workflows/.github/workflows/wheels-publish.yaml@main
+    with:
+      build_type: ${{ inputs.build_type || 'branch' }}
+      branch: ${{ inputs.branch }}
+      sha: ${{ inputs.sha }}
+      date: ${{ inputs.date }}
+      package-name: cudf_polars_quent
+      package-type: python
+      publish-wheel-search-key: cudf_wheel_python_cudf-polars-quent
   wheel-build:
     needs: ["build-details"]
     permissions:
@@ -346,7 +388,8 @@ jobs:
       date: ${{ inputs.date }}
       package-name: cudf_polars
       package-type: python
-      publish-wheel-search-key: cudf_wheel_python_cudf-polars
+      # trailing underscore to avoid collision with `cudf-polars-quent`
+      publish-wheel-search-key: cudf_wheel_python_cudf-polars_
   trigger-pandas-tests:
     if: inputs.build_type == 'nightly'
     needs: wheel-build

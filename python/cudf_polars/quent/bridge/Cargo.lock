@@ -210,7 +210,7 @@ checksum = "7f8f80099a98041a3d1622845c271458a2d73e688351bf3cb999266764b81d48"
 
 [[package]]
 name = "cudf-polars-quent"
-version = "0.1.0"
+version = "26.12.0"
 dependencies = [
  "pyo3",
  "quent-build-info",

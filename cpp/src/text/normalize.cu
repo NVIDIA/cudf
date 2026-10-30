@@ -5,10 +5,8 @@
 
 #include "text/detail/codepoint_metadata.ah"
 #include "text/normalize.cuh"
-#include "text/utilities/tokenize_ops.cuh"
 
 #include <cudf/column/column.hpp>
-#include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/column/column_view.hpp>
 #include <cudf/detail/iterator.cuh>
@@ -54,56 +52,6 @@ namespace nvtext {
 namespace detail {
 namespace {
 /**
- * @brief Normalize spaces in a strings column.
- *
- * Repeated whitespace (code-point <= ' ') is replaced with a single space.
- * Also, whitespace is trimmed from the beginning and end of each string.
- *
- * This functor can be called to compute the output size in bytes
- * of each string and then called again to fill in the allocated buffer.
- */
-struct normalize_spaces_fn {
-  cudf::column_device_view const d_strings;  // strings to normalize
-  cudf::size_type* d_sizes{};                // size of each output row
-  char* d_chars{};                           // output buffer for characters
-  cudf::detail::input_offsetalator d_offsets;
-
-  __device__ void operator()(cudf::size_type idx)
-  {
-    if (d_strings.is_null(idx)) {
-      if (!d_chars) { d_sizes[idx] = 0; }
-      return;
-    }
-    cudf::string_view const single_space(" ", 1);
-    auto const d_str = d_strings.element<cudf::string_view>(idx);
-    char* buffer     = d_chars ? d_chars + d_offsets[idx] : nullptr;
-    char* optr       = buffer;  // running output pointer
-
-    cudf::size_type nbytes = 0;  // holds the number of bytes per output string
-
-    // create a tokenizer for this string with whitespace delimiter (default)
-    characters_tokenizer tokenizer(d_str);
-
-    // this will retrieve tokens automatically skipping runs of whitespace
-    while (tokenizer.next_token()) {
-      auto const token_pos = tokenizer.token_byte_positions();
-      auto const token =
-        cudf::string_view(d_str.data() + token_pos.first, token_pos.second - token_pos.first);
-      if (optr) {
-        // prepend space unless we are at the beginning
-        if (optr != buffer) { optr = cudf::strings::detail::copy_string(optr, single_space); }
-        // write token to output buffer
-        thrust::copy_n(thrust::seq, token.data(), token.size_bytes(), optr);
-        optr += token.size_bytes();
-      }
-      nbytes += token.size_bytes() + 1;  // token size plus a single space
-    }
-    // remove trailing space
-    if (!d_chars) { d_sizes[idx] = (nbytes > 0) ? nbytes - 1 : 0; }
-  }
-};
-
-/**
  * @brief Converts a codepoint to UTF-8 with the bytes in memory order
  *
  * The first UTF-8 byte is in the least significant byte of the result
@@ -117,28 +65,6 @@ __device__ uint32_t cp_to_utf8(uint32_t codepoint)
 }
 
 }  // namespace
-
-// detail API
-std::unique_ptr<cudf::column> normalize_spaces(cudf::strings_column_view const& strings,
-                                               cuda::stream_ref stream,
-                                               cudf::memory_resources mr)
-{
-  if (strings.is_empty()) return cudf::make_empty_column(cudf::data_type{cudf::type_id::STRING});
-
-  // create device column
-  auto d_strings =
-    cudf::column_device_view::create(strings.parent(), stream, mr.get_temporary_mr());
-
-  // build offsets and children using the normalize_space_fn
-  auto [offsets_column, chars] = cudf::strings::detail::make_strings_children(
-    normalize_spaces_fn{*d_strings}, strings.size(), stream, mr.get_output_mr());
-
-  return cudf::make_strings_column(strings.size(),
-                                   std::move(offsets_column),
-                                   chars.release(),
-                                   strings.null_count(),
-                                   cudf::detail::copy_bitmask(strings.parent(), stream, mr));
-}
 
 /**
  * @brief Retrieve the code point metadata table.
@@ -201,14 +127,6 @@ cuda::device_buffer<aux_codepoint_data_type> get_aux_codepoint_data(cuda::stream
 }  // namespace detail
 
 // external APIs
-
-std::unique_ptr<cudf::column> normalize_spaces(cudf::strings_column_view const& input,
-                                               cuda::stream_ref stream,
-                                               cudf::memory_resources mr)
-{
-  CUDF_FUNC_RANGE();
-  return detail::normalize_spaces(input, stream, mr);
-}
 
 struct character_normalizer::character_normalizer_impl {
   cuda::device_buffer<codepoint_metadata_type> cp_metadata;

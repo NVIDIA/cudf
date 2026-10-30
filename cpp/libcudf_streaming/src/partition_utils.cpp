@@ -28,6 +28,7 @@
 
 #include <optional>
 #include <ranges>
+#include <span>
 #include <stdexcept>
 #include <utility>
 
@@ -247,7 +248,8 @@ std::unordered_map<rapidsmpf::shuffler::PartID, rapidsmpf::PackedData> split_and
   auto const split_bytes =
     packed_and_total_size(table, stream, br->device_mr(), packed_bytes).first;
   auto res    = reservation.split(split_bytes);
-  auto packed = cudf::contiguous_split(table, splits, stream, br->device_mr());
+  auto packed = cudf::contiguous_split(
+    table, std::span<cudf::size_type const>{splits}, stream, br->device_mr());
   res.clear();  // The split has landed, hand its bytes back.
   ret.reserve(packed.size());
   for (rapidsmpf::shuffler::PartID i = 0; rapidsmpf::safe_cast<std::size_t>(i) < packed.size();

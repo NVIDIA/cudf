@@ -315,12 +315,35 @@ __device__ __forceinline__ void gather_tile_rows(MapReader gather_map,
   }
   if constexpr (kMasked) {
     if (valid_counts != nullptr) {
+      // Per-warp staging of the per-column valid counts: warps_per_block * kTileCols *
+      // sizeof(size_type) bytes, disjoint from tile_descs (distinct static __shared__ objects
+      // never overlap, and no dynamic shared memory is used).
+      __shared__ size_type warp_valid_smem[BlockSize / warp_size][kTileCols];
+      constexpr auto warps_per_block{BlockSize / warp_size};
+      auto const warp_id = threadIdx.x / warp_size;
+      auto const lane_id = threadIdx.x % warp_size;
 #pragma unroll
       for (int32_t k = 0; k < kTileCols; ++k) {
         auto const col = tile_begin + k;
         if (col < num_descriptors && tile_descs[k].dst_mask != nullptr) {
-          auto const block_valid = single_lane_block_sum_reduce<BlockSize, 0>(warp_valid[k]);
-          if (threadIdx.x == 0 && block_valid > 0) {
+          // warp_valid[k] is accumulated only on lane 0, so only lane 0 stages it.
+          if (lane_id == 0) { warp_valid_smem[warp_id][k] = warp_valid[k]; }
+        }
+      }
+      // ONE barrier serves every column of the tile: the guards above gate only the stores,
+      // so every thread arrives — including threads of columns without an in-kernel mask and
+      // of a partial tile — and slots those guards skipped are never read below.
+      __syncthreads();
+#pragma unroll
+      for (int32_t k = 0; k < kTileCols; ++k) {
+        auto const col = tile_begin + k;
+        if (col < num_descriptors && tile_descs[k].dst_mask != nullptr &&
+            static_cast<size_type>(threadIdx.x) == k) {
+          size_type block_valid{0};
+          for (size_type w = 0; w < warps_per_block; ++w) {
+            block_valid += warp_valid_smem[w][k];
+          }
+          if (block_valid > 0) {
             cuda::atomic_ref<size_type, cuda::thread_scope_device> ref{valid_counts[col]};
             ref.fetch_add(block_valid, cuda::std::memory_order_relaxed);
           }
@@ -345,6 +368,13 @@ __device__ __forceinline__ void gather_tile_rows(MapReader gather_map,
  * carries either mask, so it drops the ballots, mask-word stores, source-mask reads, and
  * valid-bit tallies entirely. The row and mask invariants are stated on `gather_tile_rows`.
  * `MapReader` selects the map source: `input_indexalator` or `direct_map_reader<MapType>`.
+ *
+ * The masked path reduces each tile's per-column valid counts with ONE block barrier: every
+ * warp stages its per-column counts in shared memory, then thread `k` sums column `k` across
+ * warps and updates `valid_counts` — two barriers per column would serialize eight separate
+ * block reductions. The end-of-tile barrier runs only when a later y iteration will restage
+ * `tile_descs`; its predicate is exactly the y-stride loop-continuation condition, which is
+ * block-uniform, so the block never splits across barrier instances.
  */
 template <size_type BlockSize,
           size_type kTileCols,
@@ -382,8 +412,12 @@ CUDF_KERNEL __launch_bounds__(BlockSize) void batch_gather_kernel(
                                                                 check_bounds,
                                                                 negative_allowed,
                                                                 valid_counts);
-    // All threads are finished reading tile_descs; the next tile iteration rewrites it.
-    __syncthreads();
+    // All threads are finished reading tile_descs; the next tile iteration rewrites it. The
+    // predicate is exactly the y-stride loop-continuation condition (tile + gridDim.y <
+    // num_tiles, rewritten to avoid the addition overflowing size_type), and tile, gridDim.y,
+    // and num_tiles are block-uniform, so the whole block either takes this barrier or exits
+    // the loop together — no thread can wait at an instance another thread skipped.
+    if (static_cast<size_type>(gridDim.y) < num_tiles - tile) { __syncthreads(); }
   }
 }
 
@@ -400,6 +434,7 @@ CUDF_KERNEL __launch_bounds__(BlockSize) void batch_gather_kernel(
  *
  * One y pass suffices — `kCap` spans at most `kCap / kTileCols` tiles, far below the 65535
  * gridDim.y cap — so `blockIdx.y` names its tile directly and the y-stride loop is omitted.
+ * The end-of-tile fence is likewise unnecessary: no later iteration restages anything.
  */
 template <size_type BlockSize,
           size_type kTileCols,
@@ -474,8 +509,12 @@ CUDF_KERNEL __launch_bounds__(BlockSize) void batch_gather_direct_map_kernel(
       check_bounds,
       negative_allowed,
       valid_counts);
-    // All threads are finished reading tile_descs; the next tile iteration rewrites it.
-    __syncthreads();
+    // All threads are finished reading tile_descs; the next tile iteration rewrites it. The
+    // predicate is exactly the y-stride loop-continuation condition (tile + gridDim.y <
+    // num_tiles, rewritten to avoid the addition overflowing size_type), and tile, gridDim.y,
+    // and num_tiles are block-uniform, so the whole block either takes this barrier or exits
+    // the loop together — no thread can wait at an instance another thread skipped.
+    if (static_cast<size_type>(gridDim.y) < num_tiles - tile) { __syncthreads(); }
   }
 }
 

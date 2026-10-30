@@ -73,6 +73,7 @@ def broadcast(
         column
         if column.size == nrows
         else Column(
+            # Can be removed if https://github.com/NVIDIA/cudf/issues/24763 is addressed
             plc.filling.repeat(plc.Table([column.obj]), nrows, stream=stream).columns()[
                 0
             ]

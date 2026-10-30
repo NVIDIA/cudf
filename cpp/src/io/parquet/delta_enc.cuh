@@ -54,8 +54,19 @@ static_assert(values_per_mini_block % 32 == 0);
 
 __device__ constexpr int rolling_idx(int index) { return rolling_index<buffer_size>(index); }
 
-// Largest scratch type of the bit packer (not uint64_t because of atomicOr's typing)
-using max_scratch_type = unsigned long long;
+// Largest scratch type of the bit packer
+using max_scratch_type = uint64_t;
+
+// atomicOr has no uint64_t overload, so pass 64-bit words as the same-size unsigned long long
+template <cuda::std::unsigned_integral T>
+inline __device__ void atomic_or(T* address, T val)
+{
+  if constexpr (sizeof(T) == sizeof(unsigned long long)) {
+    atomicOr(reinterpret_cast<unsigned long long*>(address), val);
+  } else {
+    atomicOr(address, val);
+  }
+}
 
 // Version of bit packer that can handle up to 64 bits values.
 // T is the type to use for processing. if nbits <= 32 use uint32_t, otherwise max_scratch_type.
@@ -106,8 +117,8 @@ inline __device__ void bitpack_mini_block(
     memcpy(&v1, &v2, sizeof(wide_type));
 
     // Atomically write result to scratch.
-    if (v1[0]) { atomicOr(scratch + ((lane_id * nbits) / div), v1[0]); }
-    if (v1[1]) { atomicOr(scratch + ((lane_id * nbits) / div) + 1, v1[1]); }
+    if (v1[0]) { atomic_or(scratch + ((lane_id * nbits) / div), v1[0]); }
+    if (v1[1]) { atomic_or(scratch + ((lane_id * nbits) / div) + 1, v1[1]); }
   }
   __syncwarp();
 

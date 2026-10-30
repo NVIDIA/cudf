@@ -4,6 +4,7 @@
  */
 
 #include <cudf/column/column.hpp>
+#include <cudf/column/column_factories.hpp>
 #include <cudf/column/column_view.hpp>
 #include <cudf/copying.hpp>
 #include <cudf/detail/batch_gather.hpp>
@@ -21,6 +22,8 @@
 #include <cudf/detail/utilities/host_vector.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/dictionary/dictionary_column_view.hpp>
+#include <cudf/dictionary/dictionary_factories.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
@@ -109,21 +112,28 @@ constexpr size_type kSampleWindowLen{8};
 /**
  * @brief Type-erased per-column parameters consumed by `batch_gather_kernel`.
  *
- * One descriptor per NON-all-null fixed-width source column: a column whose every row is null
- * has its destination pre-set ALL_NULL host-side and carries no descriptor at all, so the
- * kernel never sees a column it would only skip. All pointers are element bases, not byte
- * bases: `src_data` comes from `column_view::data<T>()`, which has the slice offset
- * pre-applied in element units, and `dst_data`/`dst_mask` belong to a freshly allocated
+ * One descriptor per fixed-width LEAF, mask-only STRUCT node, or dictionary index payload — one
+ * per NON-all-null fixed-width source column for the flat case: a column whose every row is null
+ * has its destination pre-set ALL_NULL host-side and carries no descriptor at all, so the kernel
+ * never sees a column it would only skip. All pointers are element bases, not byte bases: a
+ * leaf's `src_data` comes from `column_view::data<T>()`, which has that view's own offset
+ * pre-applied in element units, plus the accumulated offsets of the struct ancestors the leaf
+ * sits under (applied exactly once here); `dst_data`/`dst_mask` belong to a freshly allocated
  * destination whose offset is zero. Nothing downstream may re-add an offset to these pointers.
+ *
+ * `src_data`/`dst_data` are nullptr for mask-only STRUCT node descriptors (`skip_data` true,
+ * nothing to copy); they are also effectively unused for the all-null fast path. `src_mask` is
+ * a mask BASE pointer (nullptr if the source is non-nullable or skipped); `mask_offset` is the
+ * bit offset of the first row of the viewed range within that base.
  */
 struct alignas(16) column_descriptor {
-  void const* src_data;  // first source element; nullptr never (all-null columns: no descriptor)
-  void* dst_data;        // first destination element; fresh allocation, offset 0
-  bitmask_type const* src_mask;  // source mask BASE pointer; nullptr when no bit can be clear
-                                 // (non-nullable or zero null count)
+  void const* src_data;          // first source element; nullptr for mask-only struct nodes
+  void* dst_data;                // first destination element; nullptr for mask-only struct nodes
+  bitmask_type const* src_mask;  // source mask BASE pointer; nullptr if source non-nullable or skip
   bitmask_type* dst_mask;        // destination mask; nullptr if dst non-nullable or fast-path
-  int64_t mask_offset;           // bit offset into src_mask (== src.offset() for sliced sources)
-  int32_t element_size;          // cudf::size_of(src.type()); one of {1, 2, 4, 8, 16}
+  int64_t mask_offset;           // bit offset into src_mask (sum of the viewed range's offsets)
+  int32_t element_size;          // cudf::size_of(src.type()); one of {0, 1, 2, 4, 8, 16}
+  bool skip_data;                // all-null fast path or mask-only node: no data copy
 };
 
 /**
@@ -302,10 +312,11 @@ __device__ constexpr bitmask_type assemble_mask_word(uint32_t const (&ballots)[r
 }
 
 // Returns the source column's element base pointer through its storage type (fixed-point
-// dispatches to int32/int64/__int128), so the slice offset is applied exactly once, host-side.
-// The dispatcher instantiates operator() for every type in the dispatch list, including the
-// pass-through types (string_view/list_view/struct_view/dictionary32) that never carry data<T>;
-// they are unreachable here because only fixed-width columns enter the descriptor path.
+// dispatches to int32/int64/__int128), so the view's own offset is applied exactly once,
+// host-side. The dispatcher instantiates operator() for every type in the dispatch list,
+// including the pass-through types (string_view/list_view/struct_view/dictionary32) that never
+// carry data<T>; they are unreachable here because only fixed-width storage enters the
+// descriptor path (plain fixed-width columns, struct leaves, dictionary indices).
 struct data_ptr_functor {
   template <typename T>
   void const* operator()(column_view const& col) const
@@ -502,14 +513,9 @@ __device__ __forceinline__ void gather_tile_rows(MapReader gather_map,
               valid = bit_is_set(d.src_mask, static_cast<size_type>(d.mask_offset + idx[s]));
             }
           }
-          // Data at out-of-bounds/null rows may be left unwritten (fixed-width undefined-value
-          // policy); a dead row of a straddling chunk must neither load nor store.
-          if (row_live[s] && valid) {
-            load_element<kStreaming>(payload[s],
-                                     static_cast<char const*>(d.src_data) +
-                                       static_cast<std::size_t>(idx[s]) * d.element_size,
-                                     d.element_size);
-          }
+          // A mask-only descriptor (struct node, skip_data) carries null data pointers and
+          // element_size 0: its rows contribute validity only, and any load/store through the
+          // null pointers or the zero-size arithmetic would be UB.
           if constexpr (kMasked) {
             // With a null-free source the validity equals the bounds predicate, so this column's
             // ballot would repeat `inb_ballot[s]` bit-for-bit; it is skipped and the shared value
@@ -520,7 +526,17 @@ __device__ __forceinline__ void gather_tile_rows(MapReader gather_map,
               ballots[s] = __ballot_sync(active, row_live[s] && valid);
             }
           }
-          if (row_live[s] && valid) { store_element<kStreaming>(dst, payload[s], d.element_size); }
+          // Data at out-of-bounds/null rows may be left unwritten (fixed-width undefined-value
+          // policy); a dead row of a straddling chunk must neither load nor store.
+          if (row_live[s] && valid && !d.skip_data) {
+            load_element<kStreaming>(payload[s],
+                                     static_cast<char const*>(d.src_data) +
+                                       static_cast<std::size_t>(idx[s]) * d.element_size,
+                                     d.element_size);
+          }
+          if (row_live[s] && valid && !d.skip_data) {
+            store_element<kStreaming>(dst, payload[s], d.element_size);
+          }
         }
         if constexpr (kMasked) {
           if (d.dst_mask != nullptr) {
@@ -1075,20 +1091,13 @@ std::unique_ptr<table> batch_gather(table_view const& source_table,
                                     cuda::stream_ref stream,
                                     memory_resources mr)
 {
-  // Routed entry: one host-side type pass gathers the fused-column count and the widest fused
-  // element for the gate; when sampling is warranted its copies are ENQUEUED here and RESOLVED
-  // inside the body after the destination allocations, so they hide behind that work and the
-  // body's single pre-launch synchronization.
-  size_type num_fused_cols      = 0;
-  size_type max_fused_elem_size = 0;
-  for (size_type i = 0; i < source_table.num_columns(); ++i) {
-    auto const& col = source_table.column(i);
-    if (cudf::is_fixed_width(col.type())) {
-      ++num_fused_cols;
-      max_fused_elem_size =
-        std::max(max_fused_elem_size, static_cast<size_type>(cudf::size_of(col.type())));
-    }
-  }
+  // Routed entry: one host-side type pass gathers the flattened descriptor count (what the
+  // kernel will actually receive — struct leaves and mask-only nodes, dictionary indices) and
+  // the widest fused data element for the gate; when sampling is warranted its copies are
+  // ENQUEUED here and RESOLVED inside the body after the destination allocations, so they hide
+  // behind that work and the body's single pre-launch synchronization.
+  size_type const num_fused_cols      = fused_descriptor_count(source_table);
+  size_type const max_fused_elem_size = max_fused_data_element_size(source_table);
   if (num_fused_cols == 0 or gather_map.has_nulls()) {
     // Nothing to fuse (or the delegate rejects the map): no sampler, no measurable tile width.
     return batch_gather_impl(source_table,
@@ -1182,6 +1191,297 @@ std::unique_ptr<table> batch_gather(table_view const& source_table,
                            block_size);
 }
 
+namespace {
+
+// A struct column joins the descriptor path when every descendant is a fixed-width leaf; any
+// string/list/dictionary child at any depth keeps the WHOLE column in the fallback (partial
+// flattening is a later stage).
+bool is_fully_fixed_width_struct(column_view const& col)
+{
+  for (size_type i = 0; i < col.num_children(); ++i) {
+    auto const& child = col.child(i);
+    if (child.type().id() == type_id::STRUCT) {
+      if (not is_fully_fixed_width_struct(child)) { return false; }
+    } else if (not cudf::is_fixed_width(child.type())) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Host-side count of what the descriptor path produces for one fused column: fixed-width
+// columns contribute one data descriptor, fully-fixed-width structs contribute one descriptor
+// per fixed-width leaf plus one mask-only descriptor per struct node that may need one, and
+// dictionaries contribute one data descriptor over their indices. Mirrors the build walk in
+// descriptor_path_builder; the kernel's num_descriptors is this same count.
+size_type fused_column_descriptor_count(column_view const& col)
+{
+  if (col.type().id() == type_id::STRUCT) {
+    size_type count = 1;  // mask-only descriptor for this node
+    for (size_type i = 0; i < col.num_children(); ++i) {
+      auto const& child = col.child(i);
+      count += (child.type().id() == type_id::STRUCT) ? fused_column_descriptor_count(child)
+                                                      : size_type{1};
+    }
+    return count;
+  }
+  return 1;  // fixed-width leaf or dictionary index payload
+}
+
+size_type fused_descriptor_count(table_view const& source_table)
+{
+  size_type count = 0;
+  for (size_type i = 0; i < source_table.num_columns(); ++i) {
+    if (is_descriptor_path_candidate(source_table.column(i))) {
+      count += fused_column_descriptor_count(source_table.column(i));
+    }
+  }
+  return count;
+}
+
+// Largest element size among the descriptor path's DATA descriptors; mask-only struct nodes
+// carry no payload (element_size 0), so they never raise the working-set footprint.
+size_type max_fused_data_element_size(column_view const& col)
+{
+  size_type max_size = 0;
+  if (not is_descriptor_path_candidate(col)) { return max_size; }
+  if (col.type().id() == type_id::STRUCT) {
+    for (size_type c = 0; c < col.num_children(); ++c) {
+      max_size = std::max(max_size, max_fused_data_element_size(col.child(c)));
+    }
+  } else {
+    // Fixed-width leaf or dictionary: data rides the leaf/indices element size.
+    auto const& data_col = (col.type().id() == type_id::DICTIONARY32)
+                             ? col.child(0)  // annotated indices; signed per the candidate check
+                             : col;
+    max_size             = static_cast<size_type>(cudf::size_of(data_col.type()));
+  }
+  return max_size;
+}
+
+size_type max_fused_data_element_size(table_view const& source_table)
+{
+  size_type max_size = 0;
+  for (size_type i = 0; i < source_table.num_columns(); ++i) {
+    max_size = std::max(max_size, max_fused_data_element_size(source_table.column(i)));
+  }
+  return max_size;
+}
+
+// Descriptor-path eligibility beyond plain fixed-width. Dictionaries qualify when their index
+// child is a signed index type — the adopting factory's contract, which every public factory
+// enforces; the child-count/signedness guard only deflects exotic hand-built columns to the
+// stock path (which casts unsigned indices through the adopting factory).
+bool is_descriptor_path_candidate(column_view const& col)
+{
+  if (cudf::is_fixed_width(col.type())) { return true; }
+  switch (col.type().id()) {
+    case type_id::STRUCT: return is_fully_fixed_width_struct(col);
+    case type_id::DICTIONARY32: {
+      // Unsigned index types defer to the stock gatherer, which recasts them signed. No public
+      // factory can produce an unsigned-index dictionary — `dictionary::encode` and the
+      // adopting factories either require signed indices or recast them signed — so this
+      // deferral has no constructible fixture; do not re-add a test case for it.
+      if (col.num_children() != 2) { return false; }
+      auto const& indices = col.child(0);
+      return cudf::is_index_type(indices.type()) and cudf::is_signed(indices.type());
+    }
+    default: return false;
+  }
+}
+
+// Destination mask plan shared by every node on the descriptor path. A mask is allocated iff
+// the source is all-null (ALL_NULL pre-set), any gathered row can be null (NULLIFY policy or a
+// null-bearing source — the fused kernel then writes it and reports the valid count), or the
+// source is nullable with zero nulls (ALL_VALID pre-set). The policy inputs are host-side view
+// accessors only — the unsliced null counts are cached values, never a device readback.
+struct dst_mask_plan {
+  // Engaged iff a destination mask was allocated; `cuda::device_buffer` has no default
+  // constructor, so "no mask" is the disengaged state.
+  std::optional<cuda::device_buffer<bitmask_type>> buffer;
+  bitmask_type* kernel_mask{};  // non-null iff the fused kernel writes the mask
+  size_type null_count{};       // host-visible count; 0 placeholder when kernel-masked
+  bool skip_data{};             // all-null fast path: payload left undefined
+};
+
+dst_mask_plan plan_destination_mask(column_view const& src,
+                                    bool nullify,
+                                    size_type num_rows,
+                                    cuda::stream_ref stream,
+                                    rmm::device_async_resource_ref mr)
+{
+  dst_mask_plan plan;
+  bool const all_null = src.size() > 0 and src.null_count() == src.size();
+  if (all_null) {
+    // Every row is null regardless of the map: pre-set ALL_NULL.
+    plan.buffer     = cudf::detail::create_null_mask(num_rows, mask_state::ALL_NULL, stream, mr);
+    plan.null_count = num_rows;
+    plan.skip_data  = true;
+  } else if (nullify or src.null_count() > 0) {
+    plan.buffer = cudf::detail::create_null_mask(num_rows, mask_state::UNINITIALIZED, stream, mr);
+    plan.kernel_mask = plan.buffer->data();
+  } else if (src.nullable()) {
+    // Nullable source with zero nulls: ALL_VALID fast path, no kernel mask work.
+    plan.buffer = cudf::detail::create_null_mask(num_rows, mask_state::ALL_VALID, stream, mr);
+  }
+  return plan;
+}
+
+// Plans the descriptor-path columns of one gather call and builds their destination columns.
+//
+// Structs are flattened recursively: every fixed-width leaf under a row-preserving struct chain
+// becomes a data descriptor carrying the leaf's OWN gathered mask, and every struct node
+// becomes a MASK-ONLY descriptor (skip_data, null data pointers) carrying the node's OWN
+// gathered mask — stock never ANDs ancestor validity into descendants, so each node keeps its
+// own mask and the output hierarchy is reconstructed with `create_structs_hierarchy`, which
+// (unlike `make_structs_column`) does not superimpose parent nulls into children. Dictionary
+// columns contribute one data descriptor over their annotated fixed-width indices (source
+// address = indices base + parent offset, source mask = the dictionary parent's own mask) and
+// are assembled with the adopting `make_dictionary_column` over a deep-copied key catalog:
+// full key order, keys unreferenced by the gathered indices retained, no dedup/remap/re-encode.
+//
+// Offset invariant: for a source path of views v1(top)...vk(leaf), each view's `offset()` is
+// applied exactly once — a leaf adds the accumulated ancestor offsets to `data<T>()` (which
+// already carries the leaf view's own offset, zero for raw children) and to its mask bit
+// offset; a node's own mask descriptor uses the accumulated offset of every view down to and
+// including the node. Raw struct children and dictionary index children always view their full
+// underlying extent (offset 0), matching `get_sliced_child`/`get_indices_annotated` without
+// paying their null-count readback.
+struct descriptor_path_builder {
+  std::vector<column_descriptor>& descriptors;
+  std::vector<size_type>& kernel_masked_positions;  // descriptor positions with in-kernel masks
+  std::vector<column*>& kernel_masked_columns;      // parallel targets for the post-launch counts
+  size_type num_rows;
+  bool nullify;
+  cuda::stream_ref stream;
+  rmm::device_async_resource_ref output_mr;
+
+  size_type push_descriptor(column_descriptor const& desc)
+  {
+    auto const position = static_cast<size_type>(descriptors.size());
+    descriptors.push_back(desc);
+    return position;
+  }
+
+  size_t record_kernel_masked(size_type position, column* target)
+  {
+    kernel_masked_positions.push_back(position);
+    kernel_masked_columns.push_back(target);
+    return kernel_masked_columns.size() - 1;
+  }
+
+  // Fixed-width leaf (a top-level column or a struct descendant): payload plus the leaf's own
+  // mask. `ancestor_offset` is the accumulated offset of the struct views above the leaf —
+  // rows for the mask bit offset, elements for the data base.
+  std::unique_ptr<column> emit_fixed_width(column_view const& src, size_type ancestor_offset)
+  {
+    auto dst = cudf::detail::allocate_like(
+      src, num_rows, cudf::mask_allocation_policy::NEVER, stream, output_mr);
+    auto plan = plan_destination_mask(src, nullify, num_rows, stream, output_mr);
+    if (plan.buffer.has_value()) { dst->set_null_mask(std::move(*plan.buffer), plan.null_count); }
+    auto const element_size = static_cast<int32_t>(cudf::size_of(src.type()));
+    auto const src_data =
+      static_cast<char const*>(
+        cudf::type_dispatcher<dispatch_storage_type>(src.type(), data_ptr_functor{}, src)) +
+      static_cast<std::size_t>(ancestor_offset) * static_cast<std::size_t>(element_size);
+    auto const position =
+      push_descriptor(column_descriptor{src_data,
+                                        dst->mutable_view().data<std::byte>(),
+                                        plan.skip_data ? nullptr : src.null_mask(),
+                                        plan.kernel_mask,
+                                        static_cast<int64_t>(src.offset()) + ancestor_offset,
+                                        element_size,
+                                        plan.skip_data});
+    if (plan.kernel_mask != nullptr) { record_kernel_masked(position, dst.get()); }
+    return dst;
+  }
+
+  // Recursively flattens a fully-fixed-width struct node: leaves become data descriptors and
+  // nested struct nodes recurse; the node's own mask rides a MASK-ONLY descriptor when the
+  // kernel must write it. An all-null node needs no descriptor (its mask is pre-set ALL_NULL),
+  // and its children are still gathered with their own masks — parent and child validity are
+  // independent. Returns the assembled destination struct column.
+  std::unique_ptr<column> build_struct(column_view const& node, size_type ancestor_offset)
+  {
+    auto const base_offset = ancestor_offset + node.offset();
+    std::vector<std::unique_ptr<column>> children;
+    children.reserve(node.num_children());
+    for (size_type i = 0; i < node.num_children(); ++i) {
+      auto const& child = node.child(i);
+      if (child.type().id() == type_id::STRUCT) {
+        children.push_back(build_struct(child, base_offset));
+      } else {
+        children.push_back(emit_fixed_width(child, base_offset));
+      }
+    }
+
+    auto plan        = plan_destination_mask(node, nullify, num_rows, stream, output_mr);
+    size_t mask_slot = 0;
+    if (plan.kernel_mask != nullptr) {
+      // MASK-ONLY descriptor: no payload; the kernel gathers the node's own mask.
+      auto const position = push_descriptor(column_descriptor{nullptr,
+                                                              nullptr,
+                                                              node.null_mask(),
+                                                              plan.kernel_mask,
+                                                              static_cast<int64_t>(base_offset),
+                                                              0,
+                                                              true});
+      mask_slot           = record_kernel_masked(position, nullptr);
+    }
+    // The mask buffer (when allocated) moves into the column; its data pointer captured in the
+    // descriptor stays valid across the move. With no mask allocated, pass the same zero-size
+    // mask stock's struct assembly uses.
+    auto dst_mask = plan.buffer.has_value() ? std::move(*plan.buffer)
+                                            : cudf::detail::create_null_mask(
+                                                0, mask_state::UNALLOCATED, stream, output_mr);
+    auto col      = create_structs_hierarchy(
+      num_rows, std::move(children), plan.null_count, std::move(dst_mask), stream, output_mr);
+    if (plan.kernel_mask != nullptr) { kernel_masked_columns[mask_slot] = col.get(); }
+    return col;
+  }
+
+  // Dictionary: the annotated indices are fixed-width, so their payload copies through a data
+  // descriptor addressed as indices base + parent offset, with the PARENT's own mask as the
+  // source mask; the gathered mask lands on the dictionary parent via the adopting factory.
+  // Indices are gathered only at valid rows — the kernel gates on `valid`, like stock's
+  // gather_if, so index values at null source rows stay uninitialized (every in-tree
+  // consumer guards such reads through validity, never raw storage).
+  std::unique_ptr<column> build_dictionary(column_view const& src)
+  {
+    auto const dict     = dictionary_column_view{src};
+    auto const& indices = dict.indices();
+    // Deep copy of the full key catalog (stock parity): keys are independent of the row map.
+    auto keys_copy   = std::make_unique<column>(dict.keys(), stream, output_mr);
+    auto indices_dst = cudf::detail::allocate_like(
+      indices, num_rows, cudf::mask_allocation_policy::NEVER, stream, output_mr);
+    auto plan               = plan_destination_mask(src, nullify, num_rows, stream, output_mr);
+    auto const element_size = static_cast<int32_t>(cudf::size_of(indices.type()));
+    auto const src_data =
+      static_cast<char const*>(
+        cudf::type_dispatcher<dispatch_storage_type>(indices.type(), data_ptr_functor{}, indices)) +
+      static_cast<std::size_t>(src.offset()) * static_cast<std::size_t>(element_size);
+    auto const position =
+      push_descriptor(column_descriptor{src_data,
+                                        indices_dst->mutable_view().data<std::byte>(),
+                                        src.null_mask(),
+                                        plan.kernel_mask,
+                                        static_cast<int64_t>(src.offset()),
+                                        element_size,
+                                        false});
+    size_t mask_slot = 0;
+    if (plan.kernel_mask != nullptr) { mask_slot = record_kernel_masked(position, nullptr); }
+    auto dst_mask = plan.buffer.has_value() ? std::move(*plan.buffer)
+                                            : cudf::detail::create_null_mask(
+                                                0, mask_state::UNALLOCATED, stream, output_mr);
+    auto col      = make_dictionary_column(
+      std::move(keys_copy), std::move(indices_dst), std::move(dst_mask), plan.null_count);
+    if (plan.kernel_mask != nullptr) { kernel_masked_columns[mask_slot] = col.get(); }
+    return col;
+  }
+};
+
+}  // namespace
+
 std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
                                          column_view const& gather_map,
                                          out_of_bounds_policy bounds_policy,
@@ -1211,7 +1511,7 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
   std::vector<size_type> fused_indices;
   std::vector<size_type> fallback_indices;
   for (size_type i = 0; i < source_table.num_columns(); ++i) {
-    (cudf::is_fixed_width(source_table.column(i).type()) ? fused_indices : fallback_indices)
+    (is_descriptor_path_candidate(source_table.column(i)) ? fused_indices : fallback_indices)
       .push_back(i);
   }
 
@@ -1275,9 +1575,8 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
   // shapes stock gather produces for an empty map:
   // - fixed-width: `allocate_like(src, 0, NEVER)` (unallocated mask), matching the stock
   //   per-column gatherer plus its zero-range `thrust::gather`;
-  // - other types: their gatherers early-return the same thing (`empty_like` for list/struct,
-  //   `make_empty_column` for strings/dictionary), so delegating them reproduces stock exactly,
-  //   including the unsupported-type `CUDF_FAIL`.
+  // - struct/dictionary: the stock per-type gatherers early-return `empty_like` /
+  //   `make_empty_column(DICTIONARY32)`, mirrored here so the shapes stay stock-exact.
   // Every destination has zero rows and null count 0. A non-empty map is never routed here
   // even when NULLIFY would nullify every gathered row: proving that needs the map values
   // (device data), so those calls run the full path below. With a zero-size map the mask
@@ -1285,8 +1584,15 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
   // and the 0-word masks it attaches make the columns non-nullable.
   if (num_rows == 0) {
     for (auto const idx : fused_indices) {
-      destination[idx] = cudf::detail::allocate_like(
-        source_table.column(idx), 0, cudf::mask_allocation_policy::NEVER, stream, output_mr);
+      auto const& src = source_table.column(idx);
+      if (src.type().id() == type_id::STRUCT) {
+        destination[idx] = cudf::empty_like(src);
+      } else if (src.type().id() == type_id::DICTIONARY32) {
+        destination[idx] = cudf::make_empty_column(type_id::DICTIONARY32);
+      } else {
+        destination[idx] = cudf::detail::allocate_like(
+          src, 0, cudf::mask_allocation_policy::NEVER, stream, output_mr);
+      }
     }
     // Built unconditionally, like stock's detail::gather does before any per-column work: a
     // non-index map type must throw on a zero-row call the same way it does on a non-empty one.
@@ -1295,113 +1601,38 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
     return std::make_unique<table>(std::move(destination), num_rows);
   }
 
-  // Fused part: destination columns for the fixed-width subset, with per-column mask policy.
-  // Constant masks (ALL_VALID/ALL_NULL) are allocated UNINITIALIZED and filled by the two
-  // batched_memset calls after this loop — one cudaMemsetAsync per FILL VALUE instead of per
-  // column (~3 µs host per submission). The batched_memset API takes ONE value for the whole
-  // span batch, so the two states need two calls.
+  // Fused part: destination columns for the descriptor-path subset, with per-node mask policy.
+  // Plain fixed-width columns emit one data descriptor; fully-fixed-width structs flatten into
+  // leaf descriptors plus mask-only node descriptors (reassembled after the launch); dictionary
+  // columns emit one data descriptor over their annotated indices.
   std::vector<column_descriptor> descriptors;
-  // {descriptor position, fused-column position} pairs with an in-kernel destination mask: the
-  // descriptor position indexes the launch-side counts array, the fused position the
-  // destination column the count belongs to (they diverge once all-null columns are skipped).
-  std::vector<std::pair<size_type, size_type>> kernel_masked_positions;
-  std::vector<cudf::device_span<cudf::bitmask_type>> valid_fills;  // ALL_VALID constant masks
-  std::vector<cudf::device_span<cudf::bitmask_type>> null_fills;   // ALL_NULL constant masks
-  auto const mask_size_words =
-    static_cast<std::size_t>(cudf::bitmask_allocation_size_words(num_rows));
+  std::vector<size_type> kernel_masked_positions;  // descriptor positions with in-kernel masks
+  std::vector<column*> kernel_masked_columns;      // parallel targets for the post-launch counts
   if (not fused_indices.empty()) {
+    descriptor_path_builder builder{descriptors,
+                                    kernel_masked_positions,
+                                    kernel_masked_columns,
+                                    num_rows,
+                                    bounds_policy == out_of_bounds_policy::NULLIFY,
+                                    stream,
+                                    output_mr};
     descriptors.reserve(fused_indices.size());
     for (size_type pos = 0; pos < static_cast<size_type>(fused_indices.size()); ++pos) {
       auto const& src = source_table.column(fused_indices[pos]);
-      auto dst        = cudf::detail::allocate_like(
-        src, num_rows, cudf::mask_allocation_policy::NEVER, stream, output_mr);
-      bitmask_type* dst_mask = nullptr;
-      // Pre-declared so the all-null early-exit branch can move `dst` before the shared
-      // descriptor-path statements run; assigned with the real view below for every branch.
-      cudf::mutable_column_view dst_view{};
-      bool const all_null = src.size() > 0 and src.null_count() == src.size();
-      if (all_null) {
-        // Every row is null regardless of the map: pre-set ALL_NULL (the fill itself is batched
-        // below) and carry NO descriptor — the kernel would only skip this column, so it takes
-        // no tile slot and no per-tile work. The counts are already final here.
-        dst->set_null_mask(
-          cuda::device_buffer<cudf::bitmask_type>(
-            stream,
-            output_mr,
-            static_cast<std::size_t>(cudf::bitmask_allocation_size_words(num_rows)),
-            cuda::no_init),
-          num_rows);
-        dst_view = dst->mutable_view();
-        null_fills.push_back(
-          cudf::device_span<cudf::bitmask_type>{dst_view.null_mask(), mask_size_words});
-        destination[fused_indices[pos]] = std::move(dst);
+      if (num_rows == 0 and not cudf::is_fixed_width(src.type())) {
+        // Empty map: stock's per-type gatherers return exactly these shapes for these types.
+        destination[fused_indices[pos]] = (src.type().id() == type_id::STRUCT)
+                                            ? cudf::empty_like(src)
+                                            : cudf::make_empty_column(type_id::DICTIONARY32);
         continue;
-      } else if (bounds_policy == out_of_bounds_policy::NULLIFY or src.null_count() > 0) {
-        auto mask = cudf::detail::create_null_mask(
-          num_rows, cudf::mask_state::UNINITIALIZED, stream, output_mr);
-        dst_mask = mask.data();
-        dst->set_null_mask(std::move(mask), 0);
-        kernel_masked_positions.push_back(
-          {static_cast<size_type>(descriptors.size()), fused_indices[pos]});
-      } else if (src.nullable()) {
-        // Nullable source with zero nulls: ALL_VALID fast path, no kernel mask work — the
-        // all-ones fill is batched below.
-        dst->set_null_mask(
-          cuda::device_buffer<cudf::bitmask_type>(
-            stream,
-            output_mr,
-            static_cast<std::size_t>(cudf::bitmask_allocation_size_words(num_rows)),
-            cuda::no_init),
-          0);
       }
-      auto const src_data =
-        cudf::type_dispatcher<dispatch_storage_type>(src.type(), data_ptr_functor{}, src);
-      // A cached zero null count means no source bit is clear, so the mask cannot change any
-      // row's validity: drop it here to keep the call eligible for the mask-free instantiation.
-      // The destination mask policy above keys off `dst_mask` only and is unaffected.
-      bitmask_type const* src_mask = src.null_mask();
-      if (src.null_count() == 0) { src_mask = nullptr; }
-      dst_view = dst->mutable_view();
-      if (src.nullable()) {
-        valid_fills.push_back(
-          cudf::device_span<cudf::bitmask_type>{dst_view.null_mask(), mask_size_words});
+      switch (src.type().id()) {
+        case type_id::STRUCT: destination[fused_indices[pos]] = builder.build_struct(src, 0); break;
+        case type_id::DICTIONARY32:
+          destination[fused_indices[pos]] = builder.build_dictionary(src);
+          break;
+        default: destination[fused_indices[pos]] = builder.emit_fixed_width(src, 0); break;
       }
-      descriptors.push_back(column_descriptor{src_data,
-                                              dst_view.data<std::byte>(),
-                                              src_mask,
-                                              dst_mask,
-                                              static_cast<int64_t>(src.offset()),
-                                              static_cast<int32_t>(cudf::size_of(src.type()))});
-      destination[fused_indices[pos]] = std::move(dst);
-    }
-  }
-
-  // The spans alias the destination columns' mask buffers: built AFTER the loop so no slot can
-  // dangle a moved-from unique_ptr, and valid through the memsets (the buffers live in the
-  // returned table). UNINITIALIZED means the padding words are also written by the memset —
-  // the same bytes create_null_mask's per-call cudaMemsetAsync would have initialized. Enqueued
-  // BEFORE the gather kernel: the kernel never writes these dst masks (dst_mask is nullptr for
-  // both fill classes), so the stream order keeps the race out regardless of scheduling.
-  // The span arrays stage in pinned memory (the parquet batched_memset precedent) so the
-  // batched H2D reads device-accessible source bytes: one staging vector, valid fills in the
-  // leading slots and null fills appended after.
-  if (not valid_fills.empty() or not null_fills.empty()) {
-    auto fill_staging =
-      cudf::detail::make_empty_pinned_vector<cudf::device_span<cudf::bitmask_type>>(
-        valid_fills.size() + null_fills.size(), stream);
-    std::copy(valid_fills.begin(), valid_fills.end(), std::back_inserter(fill_staging));
-    std::copy(null_fills.begin(), null_fills.end(), std::back_inserter(fill_staging));
-    auto const fill_spans =
-      cudf::host_span<cudf::device_span<cudf::bitmask_type> const>{fill_staging};
-    if (not valid_fills.empty()) {
-      cudf::detail::batched_memset<cudf::bitmask_type>(
-        fill_spans.first(valid_fills.size()),
-        std::numeric_limits<cudf::bitmask_type>::max(),
-        stream);
-    }
-    if (not null_fills.empty()) {
-      cudf::detail::batched_memset<cudf::bitmask_type>(
-        fill_spans.last(null_fills.size()), cudf::bitmask_type{0}, stream);
     }
   }
 
@@ -1758,9 +1989,9 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
     // counts MUST be set before the function returns — the table contract reports them.
     if (any_kernel_masks) {
       cudf::detail::sync_stream(stream);
-      for (auto const [desc_pos, fused_pos] : kernel_masked_positions) {
-        destination[fused_pos]->set_null_count(
-          num_rows - h_valid_counts_owner->data()[static_cast<std::size_t>(desc_pos)]);
+      for (size_t i = 0; i < kernel_masked_positions.size(); ++i) {
+        kernel_masked_columns[i]->set_null_count(
+          num_rows - h_valid_counts_owner->data()[kernel_masked_positions[i]]);
       }
     }
   }

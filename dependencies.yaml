@@ -54,9 +54,13 @@ files:
       - test_python_cudf_common
       - test_python_pylibcudf
       - test_python_cudf_pandas
-      - test_python_pandas_tests
       - test_python_cudf_polars
       - test_python_s3
+  pandas_tests:
+    output: none
+    includes:
+      - run_common
+      - test_python_pandas_tests
   test_static_build:
     output: none
     includes:
@@ -1805,7 +1809,7 @@ dependencies:
           - jinja2
           - lxml
           - matplotlib-base
-          - numba
+          - *numba
           - numexpr
           - odfpy
           - openpyxl

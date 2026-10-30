@@ -121,6 +121,7 @@ struct token_reader_fn {
  * @param direction Whether tokens are generated forwards or backwards.
  * @param maxsplit The maximum number of tokens for each split.
  * @param stream CUDA stream used for kernel launches.
+ * @param mr Memory resources used to allocate the returned tokens' and offsets' device memory
  */
 template <typename ProgDevice>
 std::pair<cuda::device_buffer<string_index_pair>, std::unique_ptr<column>> generate_tokens(
@@ -128,13 +129,14 @@ std::pair<cuda::device_buffer<string_index_pair>, std::unique_ptr<column>> gener
   ProgDevice& d_prog,
   split_direction direction,
   size_type maxsplit,
-  cuda::stream_ref stream)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   auto const strings_count = d_strings.size();
   auto const max_tokens    = maxsplit > 0 ? maxsplit : std::numeric_limits<size_type>::max();
 
-  auto const counts = count_matches(
-    d_strings, d_prog, strings_count, stream, cudf::get_current_device_resource_ref());
+  auto const counts =
+    count_matches(d_strings, d_prog, strings_count, stream, mr.get_temporary_mr());
   auto const d_counts = counts->view().template data<size_type>();
 
   // convert match counts to token offsets
@@ -146,16 +148,15 @@ std::pair<cuda::device_buffer<string_index_pair>, std::unique_ptr<column>> gener
   auto const begin = cudf::detail::make_counting_transform_iterator(0, map_fn);
   auto const end   = begin + strings_count;
 
-  auto [offsets, total_tokens] = cudf::detail::make_offsets_child_column(
-    begin, end, stream, cudf::get_current_device_resource_ref());
+  auto [offsets, total_tokens] = cudf::detail::make_offsets_child_column(begin, end, stream, mr);
   auto const d_offsets = cudf::detail::offsetalator_factory::make_input_iterator(offsets->view());
 
   // build a vector of tokens
   cuda::device_buffer<string_index_pair> tokens(
-    stream, cudf::get_current_device_resource_ref(), total_tokens, cuda::no_init);
+    stream, mr.get_output_mr(), total_tokens, cuda::no_init);
   if (total_tokens > 0) {
     auto tr_fn = token_reader_fn{d_strings, direction, d_offsets, tokens.data()};
-    launch_for_each_kernel(tr_fn, d_prog, d_strings.size(), stream);
+    launch_for_each_kernel(tr_fn, d_prog, d_strings.size(), stream, mr.as_temporary());
   }
   return std::pair(std::move(tokens), std::move(offsets));
 }
@@ -172,10 +173,12 @@ std::pair<cuda::device_buffer<string_index_pair>, std::unique_ptr<column>> gener
 {
   if (regex_device_builder::glushkov_fast_path_supported(prog)) {
     auto d_prog = regex_device_builder::create_gkprog_device(prog, stream);
-    return generate_tokens(d_strings, *d_prog, direction, maxsplit, stream);
+    return generate_tokens(
+      d_strings, *d_prog, direction, maxsplit, stream, cudf::get_current_device_resource_ref());
   }
   auto d_prog = regex_device_builder::create_prog_device(prog, stream);
-  return generate_tokens(d_strings, *d_prog, direction, maxsplit, stream);
+  return generate_tokens(
+    d_strings, *d_prog, direction, maxsplit, stream, cudf::get_current_device_resource_ref());
 }
 
 /**

@@ -653,7 +653,12 @@ decompress_page_data(host_span<ColumnChunkDesc const> chunks,
         [inputs = d_copy_in.data(), outputs = d_copy_out.data()] __device__(size_type i) {
           return inputs[i].size() < outputs[i].size() ? inputs[i].size() : outputs[i].size();
         }));
-    cudf::detail::batched_memcpy_async(src_iter, dst_iter, size_iter, curr_copy_page, stream);
+    cudf::detail::batched_memcpy_async(src_iter,
+                                       dst_iter,
+                                       size_iter,
+                                       curr_copy_page,
+                                       stream,
+                                       cudf::get_current_device_resource_ref());
   }
 
   CUDF_EXPECTS(

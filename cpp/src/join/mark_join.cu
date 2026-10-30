@@ -401,10 +401,10 @@ cudf::size_type mark_join::mark_probe_without_prefilter(storage_ref_type storage
                                                         right_key_type const* right_rows,
                                                         cudf::size_type num_right_rows,
                                                         bitmask_type const* right_row_bitmask,
-                                                        cuda::stream_ref stream)
+                                                        cuda::stream_ref stream,
+                                                        cudf::memory_resources mr)
 {
-  cudf::detail::device_scalar<cudf::size_type> d_mark_counter(
-    0, stream, cudf::get_current_device_resource_ref());
+  cudf::detail::device_scalar<cudf::size_type> d_mark_counter(0, stream, mr.get_temporary_mr());
 
   if (num_right_rows > 0) {
     int grid_size = 0;
@@ -466,8 +466,13 @@ cudf::size_type mark_join::mark_probe_with_prefilter(storage_ref_type storage_re
   CUDF_CUDA_TRY(cudaGetLastError());
 
   auto const filtered_count = d_filtered_count.value(stream);
-  return mark_probe_without_prefilter(
-    storage_ref, comparator, filtered_right_rows.data(), filtered_count, nullptr, stream);
+  return mark_probe_without_prefilter(storage_ref,
+                                      comparator,
+                                      filtered_right_rows.data(),
+                                      filtered_count,
+                                      nullptr,
+                                      stream,
+                                      cudf::get_current_device_resource_ref());
 }
 
 template <typename Comparator>
@@ -526,8 +531,13 @@ std::unique_ptr<rmm::device_uvector<cudf::size_type>> mark_join::mark_probe_and_
                                   right_bitmask_ptr,
                                   stream,
                                   mr)
-      : mark_probe_without_prefilter(
-          storage_ref, comparator, right_rows.data(), right.num_rows(), right_bitmask_ptr, stream);
+      : mark_probe_without_prefilter(storage_ref,
+                                     comparator,
+                                     right_rows.data(),
+                                     right.num_rows(),
+                                     right_bitmask_ptr,
+                                     stream,
+                                     cudf::get_current_device_resource_ref());
 
   auto const null_left_rows  = static_cast<size_type>(_left.num_rows()) - num_left_inserted();
   auto const is_anti         = (kind == join_kind::LEFT_ANTI_JOIN);

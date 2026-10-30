@@ -53,10 +53,9 @@ namespace cudf {
 
 namespace {
 
-auto make_cub_env(cuda::stream_ref stream)
+auto make_cub_env(cuda::stream_ref stream, cudf::memory_resources mr)
 {
-  auto mr_prop = cuda::std::execution::prop{cuda::mr::get_memory_resource,
-                                            cudf::get_current_device_resource_ref()};
+  auto mr_prop = cuda::std::execution::prop{cuda::mr::get_memory_resource, mr.get_temporary_mr()};
   auto env     = cuda::std::execution::env{cuda::stream_ref{stream.get()}, mr_prop};
   return env;
 }
@@ -156,7 +155,7 @@ right_run_index build_right_run_index(SortedOrderIterator sorted_order,
                                       cuda::stream_ref stream)
 {
   auto temp_mr = cudf::get_current_device_resource_ref();
-  auto env     = make_cub_env(stream);
+  auto env     = make_cub_env(stream, cudf::get_current_device_resource_ref());
   auto rows =
     std::make_unique<cuda::device_buffer<size_type>>(stream, temp_mr, num_rows, cuda::no_init);
   auto offsets = std::make_unique<cuda::device_buffer<size_type>>(
@@ -320,8 +319,12 @@ void batched_copy(InputIts input_iterators,
                   size_type num_ranges,
                   cuda::stream_ref stream)
 {
-  CUDF_CUDA_TRY(cub::DeviceCopy::Batched(
-    input_iterators, output_iterators, sizes, num_ranges, make_cub_env(stream)));
+  CUDF_CUDA_TRY(
+    cub::DeviceCopy::Batched(input_iterators,
+                             output_iterators,
+                             sizes,
+                             num_ranges,
+                             make_cub_env(stream, cudf::get_current_device_resource_ref())));
 }
 
 /// Whether to materialize per-row match start offsets.
@@ -739,7 +742,7 @@ void sort_merge_join::postprocess_indices(preprocessed_table const& preprocessed
                                           cuda::stream_ref stream) const
 {
   if (compare_nulls == null_equality::UNEQUAL) {
-    auto env = make_cub_env(stream);
+    auto env = make_cub_env(stream, cudf::get_current_device_resource_ref());
     // if a table has no nullable column, then there's no postprocessing to be done
     if (has_nested_nulls(preprocessed_left._table_view)) {
       auto left_mapping = preprocessed_left.map_table_to_unprocessed(stream);
@@ -879,17 +882,17 @@ sort_merge_join::left_join(table_view const& left,
 
       rmm::device_uvector<size_type> left_result_indices(total_output_size, stream, mr);
       rmm::device_uvector<size_type> right_result_indices(total_output_size, stream, mr);
-      CUDF_CUDA_TRY(
-        cub::DeviceMerge::MergePairs(preprocessed_left_indices->begin(),
-                                     preprocessed_right_indices->begin(),
-                                     static_cast<int64_t>(preprocessed_left_indices->size()),
-                                     null_left_indices.begin(),
-                                     cuda::constant_iterator<size_type>{JoinNoMatch},
-                                     static_cast<int64_t>(null_left_indices.size()),
-                                     left_result_indices.begin(),
-                                     right_result_indices.begin(),
-                                     cuda::std::less<>{},
-                                     make_cub_env(stream)));
+      CUDF_CUDA_TRY(cub::DeviceMerge::MergePairs(
+        preprocessed_left_indices->begin(),
+        preprocessed_right_indices->begin(),
+        static_cast<int64_t>(preprocessed_left_indices->size()),
+        null_left_indices.begin(),
+        cuda::constant_iterator<size_type>{JoinNoMatch},
+        static_cast<int64_t>(null_left_indices.size()),
+        left_result_indices.begin(),
+        right_result_indices.begin(),
+        cuda::std::less<>{},
+        make_cub_env(stream, cudf::get_current_device_resource_ref())));
 
       return std::pair{
         std::make_unique<rmm::device_uvector<size_type>>(std::move(left_result_indices)),
@@ -996,7 +999,7 @@ sort_merge_join::partitioned_inner_join(cudf::join_partition_context const& cont
     [null_processed_table_start_idx] __device__(auto idx) -> size_type {
       return null_processed_table_start_idx + idx;
     },
-    make_cub_env(stream)));
+    make_cub_env(stream, cudf::get_current_device_resource_ref())));
   // Map from total null processed table to unprocessed table
   postprocess_indices(
     preprocessed_left, *preprocessed_right_indices, *preprocessed_left_indices, stream);

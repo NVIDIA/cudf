@@ -132,7 +132,11 @@ std::unique_ptr<column> findall(strings_column_view const& input,
 
     cuda::device_buffer<string_index_pair> indices(
       stream, cudf::get_current_device_resource_ref(), total_matches, cuda::no_init);
-    launch_for_each_kernel(make_functor(d_offsets, indices.data()), d_prog, input.size(), stream);
+    launch_for_each_kernel(make_functor(d_offsets, indices.data()),
+                           d_prog,
+                           input.size(),
+                           stream,
+                           cudf::get_current_device_resource_ref());
     return std::pair(std::move(offsets), std::move(indices));
   };
 
@@ -202,10 +206,20 @@ std::unique_ptr<column> find_re(strings_column_view const& input,
 
   if (regex_device_builder::glushkov_fast_path_supported(prog)) {
     auto d_prog = regex_device_builder::create_gkprog_device(prog, stream);
-    launch_transform_kernel(find_re_fn{*d_strings}, *d_prog, d_results, input.size(), stream);
+    launch_transform_kernel(find_re_fn{*d_strings},
+                            *d_prog,
+                            d_results,
+                            input.size(),
+                            stream,
+                            cudf::get_current_device_resource_ref());
   } else {
     auto d_prog = regex_device_builder::create_prog_device(prog, stream);
-    launch_transform_kernel(find_re_fn{*d_strings}, *d_prog, d_results, input.size(), stream);
+    launch_transform_kernel(find_re_fn{*d_strings},
+                            *d_prog,
+                            d_results,
+                            input.size(),
+                            stream,
+                            cudf::get_current_device_resource_ref());
   }
 
   return results;

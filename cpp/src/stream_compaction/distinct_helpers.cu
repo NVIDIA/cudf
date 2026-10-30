@@ -24,13 +24,13 @@ namespace cudf::detail {
 void initialize_reduction_results(size_type* results,
                                   size_type num_rows,
                                   duplicate_keep_option keep,
-                                  cuda::stream_ref stream)
+                                  cuda::stream_ref stream,
+                                  cudf::memory_resources mr)
 {
-  thrust::uninitialized_fill(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-    results,
-    results + num_rows,
-    reduction_init_value(keep));
+  thrust::uninitialized_fill(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+                             results,
+                             results + num_rows,
+                             reduction_init_value(keep));
 }
 
 size_type copy_reduction_results(size_type const* results,

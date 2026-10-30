@@ -27,7 +27,8 @@ struct argminmax_dispatcher {
       launch_argminmax_reduction(group_labels,
                                  cudf::detail::element_argminmax_fn<T>{values, has_nulls, arg_min},
                                  output,
-                                 stream);
+                                 stream,
+                                 cudf::get_current_device_resource_ref());
     } else {
       CUDF_FAIL("Unsupported groupby reduction type-agg combination.");
     }

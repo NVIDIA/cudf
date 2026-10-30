@@ -28,7 +28,8 @@ namespace detail {
  * @see cudf::detail::get_list_child_to_list_row_mapping
  */
 std::unique_ptr<column> get_list_child_to_list_row_mapping(cudf::column_view const& offsets,
-                                                           cuda::stream_ref stream)
+                                                           cuda::stream_ref stream,
+                                                           cudf::memory_resources mr)
 {
   // First, scatter the count for each repeated offset (except the first and last),
   // into a column of N `0`s, where N == number of child rows.
@@ -46,15 +47,15 @@ std::unique_ptr<column> get_list_child_to_list_row_mapping(cudf::column_view con
                                                  num_child_rows,
                                                  mask_state::UNALLOCATED,
                                                  stream,
-                                                 cudf::get_current_device_resource_ref());
+                                                 mr.get_output_mr());
   auto per_row_mapping_begin = per_row_mapping->mutable_view().template begin<size_type>();
-  thrust::fill_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::fill_n(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                  per_row_mapping_begin,
                  num_child_rows,
                  0);
 
   auto const begin = cuda::counting_iterator<size_type>{0};
-  thrust::scatter_if(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::scatter_if(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                      begin,
                      begin + offsets.size() - 1,
                      offsets.begin<int32_t>(),
@@ -72,7 +73,7 @@ std::unique_ptr<column> get_list_child_to_list_row_mapping(cudf::column_view con
   // For the case with an empty list at index 2:
   //   scatter result == [0, 0, 1, 0, 0, 3, 0, 0, 4, 0, 0, 5, 0]
   //   inclusive_scan == [0, 0, 1, 1, 1, 3, 3, 3, 4, 4, 4, 5, 5]
-  thrust::inclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::inclusive_scan(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                          per_row_mapping_begin,
                          per_row_mapping_begin + num_child_rows,
                          per_row_mapping_begin,

@@ -1447,7 +1447,12 @@ std::unique_ptr<column> get_variant_field(column_view const& variant_column,
         [out_base, d_off = d_offsets.data()] __device__(size_type row) -> uint8_t* {
           return out_base + d_off[row];
         }));
-    cudf::detail::batched_memcpy_async(src_iter, dst_iter, d_sizes.begin(), num_rows, stream);
+    cudf::detail::batched_memcpy_async(src_iter,
+                                       dst_iter,
+                                       d_sizes.begin(),
+                                       num_rows,
+                                       stream,
+                                       cudf::get_current_device_resource_ref());
   }
 
   auto const null_count = num_rows - cudf::detail::count_set_bits(d_null_mask, 0, num_rows, stream);

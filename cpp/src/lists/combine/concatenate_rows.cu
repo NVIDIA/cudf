@@ -154,10 +154,11 @@ generate_regrouped_offsets_and_null_mask(table_device_view const& input,
 }
 
 cuda::device_buffer<size_type> generate_null_counts(table_device_view const& input,
-                                                    cuda::stream_ref stream)
+                                                    cuda::stream_ref stream,
+                                                    cudf::memory_resources mr)
 {
   cuda::device_buffer<size_type> null_counts(
-    stream, cudf::get_current_device_resource_ref(), input.num_rows(), cuda::no_init);
+    stream, mr.get_output_mr(), input.num_rows(), cuda::no_init);
 
   auto keys =
     cuda::transform_iterator(cuda::counting_iterator<std::size_t>{0},
@@ -227,10 +228,11 @@ std::unique_ptr<column> concatenate_rows(table_view const& input,
 
   // if the output needs a null mask, generate a vector of null counts per row of input, where the
   // count is the number of columns that contain a null for a given row.
-  auto row_null_counts = build_null_mask
-                           ? generate_null_counts(*input_dv, stream)
-                           : cuda::device_buffer<size_type>{
-                               stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init};
+  auto row_null_counts =
+    build_null_mask
+      ? generate_null_counts(*input_dv, stream, cudf::get_current_device_resource_ref())
+      : cuda::device_buffer<size_type>{
+          stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init};
 
   // if we have nulls, overlay an appropriate null mask onto the
   // concatenated column so that gather() sanitizes out the child data of rows that will ultimately

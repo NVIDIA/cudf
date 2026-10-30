@@ -42,12 +42,13 @@ namespace {
  */
 std::unique_ptr<cudf::column> make_index_child(column_view const& indices,
                                                size_type,
-                                               cuda::stream_ref stream)
+                                               cuda::stream_ref stream,
+                                               cudf::memory_resources mr)
 {
   // New column, near identical to `indices`, except with null values replaced.
   // `segmented_gather()` on a null index should produce a null row.
   if (not indices.nullable()) {
-    return std::make_unique<column>(indices, stream, cudf::get_current_device_resource_ref());
+    return std::make_unique<column>(indices, stream, mr.get_output_mr());
   }
 
   auto const d_indices = column_device_view::create(indices, stream);
@@ -58,8 +59,8 @@ std::unique_ptr<cudf::column> make_index_child(column_view const& indices,
                                          indices.size(),
                                          mask_state::UNALLOCATED,
                                          stream,
-                                         cudf::get_current_device_resource_ref());
-  thrust::copy_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                                         mr.get_output_mr());
+  thrust::copy_n(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                  null_replaced_iter_begin,
                  indices.size(),
                  index_child->mutable_view().begin<size_type>());
@@ -77,15 +78,16 @@ std::unique_ptr<cudf::column> make_index_child(column_view const& indices,
  */
 std::unique_ptr<cudf::column> make_index_child(size_type index,
                                                size_type num_rows,
-                                               cuda::stream_ref stream)
+                                               cuda::stream_ref stream,
+                                               cudf::memory_resources mr)
 {
   auto index_child =  // [index, index, index, ..., index]
     make_numeric_column(data_type{type_to_id<size_type>()},
                         num_rows,
                         mask_state::UNALLOCATED,
                         stream,
-                        cudf::get_current_device_resource_ref());
-  thrust::fill_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                        mr.get_output_mr());
+  thrust::fill_n(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                  index_child->mutable_view().begin<size_type>(),
                  num_rows,
                  index);
@@ -99,13 +101,15 @@ std::unique_ptr<cudf::column> make_index_child(size_type index,
  * This may be used to construct an "index-list" column, where each list row
  * has a single element.
  */
-std::unique_ptr<cudf::column> make_index_offsets(size_type num_lists, cuda::stream_ref stream)
+std::unique_ptr<cudf::column> make_index_offsets(size_type num_lists,
+                                                 cuda::stream_ref stream,
+                                                 cudf::memory_resources mr)
 {
   return cudf::detail::sequence(
     num_lists + 1,
-    cudf::scalar_type_t<int32_t>(0, true, stream, cudf::get_current_device_resource_ref()),
+    cudf::scalar_type_t<int32_t>(0, true, stream, mr.get_temporary_mr()),
     stream,
-    cudf::get_current_device_resource_ref());
+    mr.get_output_mr());
 }
 
 }  // namespace
@@ -131,12 +135,12 @@ std::unique_ptr<column> extract_list_element_impl(lists_column_view lists_column
   // 2. If indices = {4, 3, 2, 1, null},
   //    index_lists_column = { {4}, {3}, {2}, {1}, {MAX_SIZE_TYPE} }.
 
-  auto const index_lists_column =
-    make_lists_column(num_lists,
-                      make_index_offsets(num_lists, stream),
-                      make_index_child(index, num_lists, stream),
-                      0,
-                      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+  auto const index_lists_column = make_lists_column(
+    num_lists,
+    make_index_offsets(num_lists, stream, cudf::get_current_device_resource_ref()),
+    make_index_child(index, num_lists, stream, cudf::get_current_device_resource_ref()),
+    0,
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   // We want the output of `segmented_gather` to be a lists column in which each list has exactly
   // one element, even for the null lists.

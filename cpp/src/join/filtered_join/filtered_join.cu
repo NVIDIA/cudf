@@ -146,7 +146,8 @@ std::unique_ptr<rmm::device_uvector<cudf::size_type>> filtered_join::semi_anti_j
   if (_right_mode == row_operator_mode::PRIMITIVE) {
     query_right_table_primitive(left, preprocessed_left, contains_map_span, stream);
   } else if (_right_mode == row_operator_mode::NESTED) {
-    query_right_table_nested(left, preprocessed_left, contains_map_span, stream);
+    query_right_table_nested(
+      left, preprocessed_left, contains_map_span, stream, cudf::get_current_device_resource_ref());
   } else {
     query_right_table_flat(left, preprocessed_left, contains_map_span, stream);
   }

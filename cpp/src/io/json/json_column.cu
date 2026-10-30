@@ -88,6 +88,7 @@ void print_tree(host_span<SymbolT const> input,
  * @param is_array_of_arrays Whether the tree is an array of arrays
  * @param row_array_parent_col_id Column id of row array, if is_array_of_arrays is true
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used to allocate the returned column tree's device memory
  * @return A tuple of column tree representation of JSON string, column ids of columns, and
  * max row offsets of columns
  */
@@ -99,24 +100,25 @@ reduce_to_column_tree(tree_meta_t const& tree,
                       device_span<size_type const> row_offsets,
                       bool is_array_of_arrays,
                       NodeIndexT const row_array_parent_col_id,
-                      cuda::stream_ref stream)
+                      cuda::stream_ref stream,
+                      cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
   // 1. column count for allocation
   auto const num_columns =
-    thrust::unique_count(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::unique_count(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                          sorted_col_ids.begin(),
                          sorted_col_ids.end());
 
   // 2. reduce_by_key {col_id}, {row_offset}, max.
   cuda::device_buffer<NodeIndexT> unique_col_ids(
-    stream, cudf::get_current_device_resource_ref(), num_columns, cuda::no_init);
+    stream, mr.get_output_mr(), num_columns, cuda::no_init);
   cuda::device_buffer<size_type> max_row_offsets(
-    stream, cudf::get_current_device_resource_ref(), num_columns, cuda::no_init);
+    stream, mr.get_output_mr(), num_columns, cuda::no_init);
   auto ordered_row_offsets =
     cuda::make_permutation_iterator(row_offsets.begin(), ordered_node_ids.begin());
-  thrust::reduce_by_key(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::reduce_by_key(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                         sorted_col_ids.begin(),
                         sorted_col_ids.end(),
                         ordered_row_offsets,
@@ -127,9 +129,9 @@ reduce_to_column_tree(tree_meta_t const& tree,
 
   // 3. reduce_by_key {col_id}, {node_categories} - custom opp (*+v=*, v+v=v, *+#=E)
   cuda::device_buffer<NodeT> column_categories(
-    stream, cudf::get_current_device_resource_ref(), num_columns, cuda::no_init);
+    stream, mr.get_output_mr(), num_columns, cuda::no_init);
   thrust::reduce_by_key(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
     sorted_col_ids.begin(),
     sorted_col_ids.end(),
     cuda::make_permutation_iterator(tree.node_categories.begin(), ordered_node_ids.begin()),
@@ -156,25 +158,24 @@ reduce_to_column_tree(tree_meta_t const& tree,
 
   // 4. unique_copy parent_node_ids, ranges
   cuda::device_buffer<TreeDepthT> column_levels(
-    stream, cudf::get_current_device_resource_ref(), num_columns, cuda::no_init);  // not required
+    stream, mr.get_output_mr(), num_columns, cuda::no_init);  // not required
   cuda::device_buffer<NodeIndexT> parent_col_ids(
-    stream, cudf::get_current_device_resource_ref(), num_columns, cuda::no_init);
+    stream, mr.get_output_mr(), num_columns, cuda::no_init);
   cuda::device_buffer<SymbolOffsetT> col_range_begin(
-    stream, cudf::get_current_device_resource_ref(), num_columns, cuda::no_init);  // Field names
+    stream, mr.get_output_mr(), num_columns, cuda::no_init);  // Field names
   cuda::device_buffer<SymbolOffsetT> col_range_end(
-    stream, cudf::get_current_device_resource_ref(), num_columns, cuda::no_init);
+    stream, mr.get_output_mr(), num_columns, cuda::no_init);
   cuda::device_buffer<size_type> unique_node_ids(
-    stream, cudf::get_current_device_resource_ref(), num_columns, cuda::no_init);
-  thrust::unique_by_key_copy(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-    sorted_col_ids.begin(),
-    sorted_col_ids.end(),
-    ordered_node_ids.begin(),
-    cuda::make_discard_iterator(),
-    unique_node_ids.begin());
+    stream, mr.get_temporary_mr(), num_columns, cuda::no_init);
+  thrust::unique_by_key_copy(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+                             sorted_col_ids.begin(),
+                             sorted_col_ids.end(),
+                             ordered_node_ids.begin(),
+                             cuda::make_discard_iterator(),
+                             unique_node_ids.begin());
 
   thrust::copy_n(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
     cuda::make_zip_iterator(
       cuda::make_permutation_iterator(tree.node_levels.begin(), unique_node_ids.begin()),
       cuda::make_permutation_iterator(tree.parent_node_ids.begin(), unique_node_ids.begin()),
@@ -188,7 +189,7 @@ reduce_to_column_tree(tree_meta_t const& tree,
 
   // convert parent_node_ids to parent_col_ids
   thrust::transform(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
     parent_col_ids.begin(),
     parent_col_ids.end(),
     parent_col_ids.begin(),
@@ -215,8 +216,8 @@ reduce_to_column_tree(tree_meta_t const& tree,
   {
     auto list_parents_children_max_row_offsets =
       cudf::detail::make_zeroed_device_buffer_async<NodeIndexT>(
-        static_cast<std::size_t>(num_columns), stream, cudf::get_current_device_resource_ref());
-    thrust::for_each(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+        static_cast<std::size_t>(num_columns), stream, mr.get_temporary_mr());
+    thrust::for_each(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                      unique_col_ids.begin(),
                      unique_col_ids.end(),
                      [column_categories = column_categories.begin(),
@@ -234,7 +235,7 @@ reduce_to_column_tree(tree_meta_t const& tree,
                      });
 
     thrust::gather_if(
-      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
       parent_col_ids.begin(),
       parent_col_ids.end(),
       parent_col_ids.begin(),
@@ -249,7 +250,7 @@ reduce_to_column_tree(tree_meta_t const& tree,
   // copy lists' max_row_offsets to children.
   // all structs should have same size.
   thrust::transform_if(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
     unique_col_ids.begin(),
     unique_col_ids.end(),
     max_row_offsets.begin(),
@@ -275,7 +276,7 @@ reduce_to_column_tree(tree_meta_t const& tree,
 
   // For Struct and List (to avoid copying entire strings when mixed type as string is enabled)
   thrust::transform_if(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
     col_range_begin.begin(),
     col_range_begin.end(),
     column_categories.begin(),

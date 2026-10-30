@@ -54,10 +54,12 @@ struct string_delimiter_fn {
 // instead of emitting duplicate instantiations in each caller TU.
 cuda::device_buffer<int64_t> find_string_delimiter_positions(strings_column_view const& input,
                                                              cudf::string_view delimiter,
-                                                             cuda::stream_ref stream);
+                                                             cuda::stream_ref stream,
+                                                             cudf::memory_resources mr);
 
 cuda::device_buffer<int64_t> find_whitespace_delimiter_positions(strings_column_view const& input,
-                                                                 cuda::stream_ref stream);
+                                                                 cuda::stream_ref stream,
+                                                                 cudf::memory_resources mr);
 
 /**
  * @brief Returns `true` if the byte at `idx` is a whitespace character
@@ -577,10 +579,12 @@ std::pair<std::unique_ptr<column>, cuda::device_buffer<string_index_pair>> split
 {
   auto delimiter_positions = [&] {
     if constexpr (std::is_same_v<DelimiterFn, string_delimiter_fn>) {
-      return find_string_delimiter_positions(input, delimiter_fn.d_delimiter, stream);
+      return find_string_delimiter_positions(
+        input, delimiter_fn.d_delimiter, stream, cudf::get_current_device_resource_ref());
     } else if constexpr (std::is_same_v<std::remove_cvref_t<DelimiterFn>,
                                         whitespace_delimiter_fn>) {
-      return find_whitespace_delimiter_positions(input, stream);
+      return find_whitespace_delimiter_positions(
+        input, stream, cudf::get_current_device_resource_ref());
     } else {
       auto [first_offset, last_offset] = get_first_and_last_offset(input, stream);
       auto const chars_bytes           = last_offset - first_offset;

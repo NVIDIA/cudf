@@ -21,9 +21,10 @@ template <typename BinOp>
 void launch_argminmax_reduction(cudf::device_span<cudf::size_type const> group_labels,
                                 BinOp const& binop,
                                 cudf::size_type* output,
-                                cuda::stream_ref stream)
+                                cuda::stream_ref stream,
+                                cudf::memory_resources mr)
 {
-  thrust::reduce_by_key(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::reduce_by_key(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                         group_labels.data(),
                         group_labels.data() + group_labels.size(),
                         cuda::counting_iterator<cudf::size_type>{0},

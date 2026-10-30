@@ -158,11 +158,12 @@ void index_of(InputIterator input_it,
               column_view const& search_keys,
               duplicate_find_option find_option,
               DeviceComp d_comp,
-              cuda::stream_ref stream)
+              cuda::stream_ref stream,
+              cudf::memory_resources mr)
 {
   auto const keys_dv_ptr       = column_device_view::create(search_keys, stream);
   auto const key_validity_iter = cudf::detail::make_validity_iterator<true>(*keys_dv_ptr);
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                     input_it,
                     input_it + num_rows,
                     output_it,
@@ -214,10 +215,26 @@ std::unique_ptr<column> dispatch_index_of(lists_column_view const& lists,
     child_tview, keys_tview, stream, cudf::get_current_device_resource_ref());
   if (cudf::is_nested(search_keys.type())) {
     auto const d_comp = comparator.equal_to<true>(nullate::DYNAMIC{has_nulls});
-    index_of(input_it, num_rows, output_it, child, search_keys, find_option, d_comp, stream);
+    index_of(input_it,
+             num_rows,
+             output_it,
+             child,
+             search_keys,
+             find_option,
+             d_comp,
+             stream,
+             cudf::get_current_device_resource_ref());
   } else {
     auto const d_comp = comparator.equal_to<false>(nullate::DYNAMIC{has_nulls});
-    index_of(input_it, num_rows, output_it, child, search_keys, find_option, d_comp, stream);
+    index_of(input_it,
+             num_rows,
+             output_it,
+             child,
+             search_keys,
+             find_option,
+             d_comp,
+             stream,
+             cudf::get_current_device_resource_ref());
   }
 
   if (search_keys_have_nulls || lists.has_nulls()) {

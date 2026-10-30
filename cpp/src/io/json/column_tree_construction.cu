@@ -130,7 +130,8 @@ std::tuple<compressed_sparse_row, column_tree_properties> reduce_to_column_tree(
                                                   row_offsets,
                                                   is_array_of_arrays,
                                                   row_array_parent_col_id,
-                                                  stream);
+                                                  stream,
+                                                  cudf::get_current_device_resource_ref());
 
   NodeIndexT num_columns = unpermuted_col_ids.size();
 

@@ -209,6 +209,7 @@ struct side_index_generator {
  * @param[in] nullable Flag indicating if at least one of the table_view arguments has nulls
  * (defaults to true)
  * @param[in] stream CUDA stream used for device memory operations and kernel launches.
+ * @param[in] mr Memory resources whose temporary resource is used for scratch allocations
  *
  * @return A device_uvector of merged indices
  */
@@ -217,7 +218,8 @@ index_vector generate_merged_indices(table_view const& left_table,
                                      std::vector<order> const& column_order,
                                      std::vector<null_order> const& null_precedence,
                                      bool nullable,
-                                     cuda::stream_ref stream)
+                                     cuda::stream_ref stream,
+                                     cudf::memory_resources mr)
 {
   size_type const left_size  = left_table.num_rows();
   size_type const right_size = right_table.num_rows();
@@ -236,8 +238,8 @@ index_vector generate_merged_indices(table_view const& left_table,
   auto lhs_device_view = table_device_view::create(left_table, stream);
   auto rhs_device_view = table_device_view::create(right_table, stream);
 
-  auto d_column_order = cudf::detail::make_device_uvector_async(
-    column_order, stream, cudf::get_current_device_resource_ref());
+  auto d_column_order =
+    cudf::detail::make_device_uvector_async(column_order, stream, mr.get_temporary_mr());
 
   if (has_nulls) {
     auto const new_null_precedence = [&]() {
@@ -250,12 +252,12 @@ index_vector generate_merged_indices(table_view const& left_table,
       }
     }();
 
-    auto d_null_precedence = cudf::detail::make_device_uvector_async(
-      new_null_precedence, stream, cudf::get_current_device_resource_ref());
+    auto d_null_precedence =
+      cudf::detail::make_device_uvector_async(new_null_precedence, stream, mr.get_temporary_mr());
 
     auto ineq_op = detail::row_lexicographic_tagged_comparator<true>(
       *lhs_device_view, *rhs_device_view, d_column_order, d_null_precedence);
-    thrust::merge(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::merge(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                   left_begin,
                   left_begin + left_size,
                   right_begin,
@@ -265,7 +267,7 @@ index_vector generate_merged_indices(table_view const& left_table,
   } else {
     auto ineq_op = detail::row_lexicographic_tagged_comparator<false>(
       *lhs_device_view, *rhs_device_view, d_column_order, {});
-    thrust::merge(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::merge(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                   left_begin,
                   left_begin + left_size,
                   right_begin,
@@ -283,7 +285,8 @@ index_vector generate_merged_indices_nested(table_view const& left_table,
                                             std::vector<order> const& column_order,
                                             std::vector<null_order> const& null_precedence,
                                             bool nullable,
-                                            cuda::stream_ref stream)
+                                            cuda::stream_ref stream,
+                                            cudf::memory_resources mr)
 {
   size_type const left_size  = left_table.num_rows();
   size_type const right_size = right_table.num_rows();
@@ -291,12 +294,8 @@ index_vector generate_merged_indices_nested(table_view const& left_table,
 
   index_vector merged_indices(total_size, stream);
 
-  auto const left_indices_col     = cudf::detail::lower_bound(right_table,
-                                                          left_table,
-                                                          column_order,
-                                                          null_precedence,
-                                                          stream,
-                                                          cudf::get_current_device_resource_ref());
+  auto const left_indices_col = cudf::detail::lower_bound(
+    right_table, left_table, column_order, null_precedence, stream, mr.get_temporary_mr());
   auto const left_indices         = left_indices_col->view();
   auto left_indices_mutable       = left_indices_col->mutable_view();
   auto const left_indices_begin   = left_indices.begin<cudf::size_type>();
@@ -305,7 +304,7 @@ index_vector generate_merged_indices_nested(table_view const& left_table,
 
   auto const total_counter = cuda::counting_iterator<cudf::size_type>{0};
   thrust::for_each(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
     total_counter,
     total_counter + total_size,
     [merged = merged_indices.data(), left = left_indices_begin, left_size, right_size] __device__(
@@ -540,11 +539,21 @@ table_ptr_type merge(cudf::table_view const& left_table,
   auto const merged_indices = [&]() {
     if (cudf::detail::has_nested_columns(left_table) or
         cudf::detail::has_nested_columns(right_table)) {
-      return generate_merged_indices_nested(
-        index_left_view, index_right_view, column_order, null_precedence, nullable, stream);
+      return generate_merged_indices_nested(index_left_view,
+                                            index_right_view,
+                                            column_order,
+                                            null_precedence,
+                                            nullable,
+                                            stream,
+                                            cudf::get_current_device_resource_ref());
     } else {
-      return generate_merged_indices(
-        index_left_view, index_right_view, column_order, null_precedence, nullable, stream);
+      return generate_merged_indices(index_left_view,
+                                     index_right_view,
+                                     column_order,
+                                     null_precedence,
+                                     nullable,
+                                     stream,
+                                     cudf::get_current_device_resource_ref());
     }
   }();
   // create merged table:

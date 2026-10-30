@@ -49,7 +49,8 @@ auto constexpr reduction_init_value(duplicate_keep_option keep)
 CUDF_HIDDEN void initialize_reduction_results(size_type* results,
                                               size_type num_rows,
                                               duplicate_keep_option keep,
-                                              cuda::stream_ref stream);
+                                              cuda::stream_ref stream,
+                                              cudf::memory_resources mr);
 
 CUDF_HIDDEN size_type copy_reduction_results(size_type const* results,
                                              size_type num_rows,

@@ -199,7 +199,8 @@ void run_test(std::string const& input, bool enable_lines = true)
                                                   gpu_row_offsets,
                                                   is_array_of_arrays,
                                                   row_array_parent_col_id,
-                                                  stream);
+                                                  stream,
+                                                  cudf::get_current_device_resource_ref());
 
   auto [d_column_tree_csr, d_column_tree_properties] =
     cudf::io::json::experimental::detail::reduce_to_column_tree(gpu_tree,

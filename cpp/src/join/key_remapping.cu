@@ -411,8 +411,12 @@ class key_remap_table : public key_remap_table_interface {
       auto const iter = cudf::detail::make_counting_transform_iterator(
         0, make_key_pair<lhs_index_type, decltype(d_hasher)>{d_hasher});
 
-      find_matches(
-        iter, probe_comparator<decltype(d_equal), true>{d_equal}, left_keys, output_begin, stream);
+      find_matches(iter,
+                   probe_comparator<decltype(d_equal), true>{d_equal},
+                   left_keys,
+                   output_begin,
+                   stream,
+                   cudf::get_current_device_resource_ref());
     } else {
       auto const two_table_equal =
         cudf::detail::row::equality::two_table_comparator(preprocessed_left, _preprocessed_right);
@@ -425,11 +429,21 @@ class key_remap_table : public key_remap_table_interface {
       if (_right_has_nested_columns) {
         auto const device_comparator =
           two_table_equal.equal_to<true>(cudf::nullate::DYNAMIC{HAS_NULLS}, _compare_nulls);
-        find_matches(iter, probe_comparator{device_comparator}, left_keys, output_begin, stream);
+        find_matches(iter,
+                     probe_comparator{device_comparator},
+                     left_keys,
+                     output_begin,
+                     stream,
+                     cudf::get_current_device_resource_ref());
       } else {
         auto const device_comparator =
           two_table_equal.equal_to<false>(cudf::nullate::DYNAMIC{HAS_NULLS}, _compare_nulls);
-        find_matches(iter, probe_comparator{device_comparator}, left_keys, output_begin, stream);
+        find_matches(iter,
+                     probe_comparator{device_comparator},
+                     left_keys,
+                     output_begin,
+                     stream,
+                     cudf::get_current_device_resource_ref());
       }
     }
     return result;
@@ -455,7 +469,8 @@ class key_remap_table : public key_remap_table_interface {
                     EqualType const& d_equal,
                     cudf::table_view const& left_keys,
                     FoundIterator found_begin,
-                    cuda::stream_ref stream) const
+                    cuda::stream_ref stream,
+                    cudf::memory_resources mr) const
   {
     CUDF_FUNC_RANGE();
     auto const left_num_rows = left_keys.num_rows();
@@ -466,7 +481,7 @@ class key_remap_table : public key_remap_table_interface {
     } else {
       auto stencil = cuda::counting_iterator<cudf::size_type>{0};
       auto const row_bitmask =
-        cudf::detail::bitmask_and(left_keys, stream, cudf::get_current_device_resource_ref()).first;
+        cudf::detail::bitmask_and(left_keys, stream, mr.get_temporary_mr()).first;
       auto const pred = row_is_valid{row_bitmask.data()};
 
       _hash_table.find_if_async(iter,

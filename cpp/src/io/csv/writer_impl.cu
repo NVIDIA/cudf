@@ -107,7 +107,8 @@ void write_compressed_to_sink(data_sink* out_sink,
                               device_span<char const> tail,
                               compression_type compression,
                               size_t requested_block_size,
-                              cuda::stream_ref stream)
+                              cuda::stream_ref stream,
+                              cudf::memory_resources mr)
 {
   if (data.empty() and tail.empty()) { return; }
 
@@ -141,7 +142,7 @@ void write_compressed_to_sink(data_sink* out_sink,
       return cudf::util::round_up_safe(io::detail::max_compressed_size(compression, input.size()),
                                        alignment);
     });
-  auto const temp_mr = cudf::get_current_device_resource_ref();
+  auto const temp_mr = mr.get_temporary_mr();
   cuda::device_buffer<uint8_t> comp_buffer(stream, temp_mr, out_offsets.back(), cuda::no_init);
 
   for (size_t block = 0; block < num_blocks; ++block) {
@@ -176,7 +177,7 @@ void write_compressed_to_sink(data_sink* out_sink,
   size_t total_comp_size{0};
   cuda::device_buffer<uint8_t> packed_buffer(
     stream,
-    cudf::get_current_device_resource_ref(),
+    mr.get_temporary_mr(),
     std::accumulate(results.begin(),
                     results.end(),
                     size_t{0},
@@ -192,7 +193,7 @@ void write_compressed_to_sink(data_sink* out_sink,
   auto const d_dests   = cudf::detail::make_device_buffer_async(h_dests, stream, temp_mr);
   auto const d_sizes   = cudf::detail::make_device_buffer_async(h_sizes, stream, temp_mr);
   cudf::detail::batched_memcpy_async(
-    d_sources.begin(), d_dests.begin(), d_sizes.begin(), num_blocks, stream);
+    d_sources.begin(), d_dests.begin(), d_sizes.begin(), num_blocks, stream, mr.as_temporary());
 
   write_to_sink(
     out_sink, {reinterpret_cast<char const*>(packed_buffer.data()), total_comp_size}, stream);
@@ -464,8 +465,13 @@ void write_chunked_begin(data_sink* out_sink,
       // the compressor operates on device memory, so the header needs to be copied to the device
       auto const d_header = cudf::detail::make_device_buffer_async(
         host_span<char const>{header}, stream, cudf::get_current_device_resource_ref());
-      write_compressed_to_sink(
-        out_sink, d_header, {}, compression, options.get_compression_block_size(), stream);
+      write_compressed_to_sink(out_sink,
+                               d_header,
+                               {},
+                               compression,
+                               options.get_compression_block_size(),
+                               stream,
+                               cudf::get_current_device_resource_ref());
     } else {
       out_sink->host_write(header.data(), header.size());
     }
@@ -535,7 +541,8 @@ void write_chunked(data_sink* out_sink,
       device_span{newline.data(), static_cast<size_t>(newline.size())},
       compression,
       block_size,
-      stream);
+      stream,
+      cudf::get_current_device_resource_ref());
   }
 
   write_to_sink(out_sink, data, stream);

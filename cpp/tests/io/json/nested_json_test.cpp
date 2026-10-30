@@ -157,8 +157,12 @@ TEST_F(JsonTest, StackContext)
 
   // Run algorithm
   constexpr auto stack_behavior = cuio_json::stack_behavior_t::PushPopWithoutReset;
-  cuio_json::detail::get_stack_context(
-    d_input, stack_context.device_ptr(), stack_behavior, delimiter, stream);
+  cuio_json::detail::get_stack_context(d_input,
+                                       stack_context.device_ptr(),
+                                       stack_behavior,
+                                       delimiter,
+                                       stream,
+                                       cudf::get_current_device_resource_ref());
 
   // Copy back the results
   stack_context.device_to_host_async(stream);
@@ -209,8 +213,12 @@ TEST_F(JsonTest, StackContextUtf8)
 
   // Run algorithm
   constexpr auto stack_behavior = cuio_json::stack_behavior_t::PushPopWithoutReset;
-  cuio_json::detail::get_stack_context(
-    d_input, stack_context.device_ptr(), stack_behavior, delimiter, stream);
+  cuio_json::detail::get_stack_context(d_input,
+                                       stack_context.device_ptr(),
+                                       stack_behavior,
+                                       delimiter,
+                                       stream,
+                                       cudf::get_current_device_resource_ref());
 
   // Copy back the results
   stack_context.device_to_host_async(stream);
@@ -278,8 +286,12 @@ TEST_P(JsonDelimiterParamTest, StackContextRecovering)
 
   // Run algorithm
   constexpr auto stack_behavior = cuio_json::stack_behavior_t::ResetOnDelimiter;
-  cuio_json::detail::get_stack_context(
-    d_input, stack_context.device_ptr(), stack_behavior, delimiter, stream);
+  cuio_json::detail::get_stack_context(d_input,
+                                       stack_context.device_ptr(),
+                                       stack_behavior,
+                                       delimiter,
+                                       stream,
+                                       cudf::get_current_device_resource_ref());
 
   // Copy back the results
   stack_context.device_to_host_async(stream);
@@ -387,8 +399,12 @@ TEST_P(JsonDelimiterParamTest, StackContextRecoveringFuzz)
 
   // Run algorithm
   constexpr auto stack_behavior = cuio_json::stack_behavior_t::ResetOnDelimiter;
-  cuio_json::detail::get_stack_context(
-    d_input, stack_context.device_ptr(), stack_behavior, delimiter, stream);
+  cuio_json::detail::get_stack_context(d_input,
+                                       stack_context.device_ptr(),
+                                       stack_behavior,
+                                       delimiter,
+                                       stream,
+                                       cudf::get_current_device_resource_ref());
 
   // Copy back the results
   stack_context.device_to_host_async(stream);
@@ -851,8 +867,8 @@ TEST_F(JsonTest, PostProcessTokenStream)
     tokens, stream, cudf::get_current_device_resource_ref());
 
   // Run system-under-test
-  auto [d_filtered_tokens, d_filtered_indices] =
-    cuio_json::detail::process_token_stream(d_tokens, d_offsets, stream);
+  auto [d_filtered_tokens, d_filtered_indices] = cuio_json::detail::process_token_stream(
+    d_tokens, d_offsets, stream, cudf::get_current_device_resource_ref());
 
   auto const filtered_tokens  = cudf::detail::make_std_vector_async(d_filtered_tokens, stream);
   auto const filtered_indices = cudf::detail::make_std_vector_async(d_filtered_indices, stream);
@@ -1415,7 +1431,8 @@ TEST_F(JsonTest, RejectsUnquotedValuesWithInvalidLeadingChar)
     auto d_token_indices = cudf::detail::make_device_uvector_async(
       token_indices, stream, cudf::get_current_device_resource_ref());
 
-    cuio_json::detail::validate_token_stream(d_input, d_tokens, d_token_indices, opts, stream);
+    cuio_json::detail::validate_token_stream(
+      d_input, d_tokens, d_token_indices, opts, stream, cudf::get_current_device_resource_ref());
     auto const validated_tokens = cudf::detail::make_std_vector_async(d_tokens, stream);
     stream.sync();
     EXPECT_NE(std::find(validated_tokens.begin(), validated_tokens.end(), token_t::ErrorBegin),

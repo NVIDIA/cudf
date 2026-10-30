@@ -230,8 +230,12 @@ cuda::device_buffer<std::uint8_t> decompress_stripe_data(
       cuda::proclaim_return_type<size_t>([inputs, outputs] __device__(std::size_t i) {
         return inputs[i].size() < outputs[i].size() ? inputs[i].size() : outputs[i].size();
       }));
-    cudf::detail::batched_memcpy_async(
-      src_iter, dst_iter, size_iter, num_uncompressed_blocks, stream);
+    cudf::detail::batched_memcpy_async(src_iter,
+                                       dst_iter,
+                                       size_iter,
+                                       num_uncompressed_blocks,
+                                       stream,
+                                       cudf::get_current_device_resource_ref());
   }
 
   // Copy without stream sync, thus need to wait for stream sync below to access.

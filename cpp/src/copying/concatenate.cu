@@ -55,7 +55,9 @@ constexpr bool use_fused_kernel_heuristic(bool const has_nulls, size_t const num
   return has_nulls || num_columns > 4;
 }
 
-auto create_device_views(host_span<column_view const> views, cuda::stream_ref stream)
+auto create_device_views(host_span<column_view const> views,
+                         cuda::stream_ref stream,
+                         cudf::memory_resources mr)
 {
   // Create device views for each input view
   using CDViewPtr         = decltype(column_device_view::create(std::declval<column_view>(),
@@ -73,8 +75,7 @@ auto create_device_views(host_span<column_view const> views, cuda::stream_ref st
                  std::back_inserter(device_views),
                  [](auto const& col) { return *col; });
 
-  auto d_views =
-    make_device_uvector_async(device_views, stream, cudf::get_current_device_resource_ref());
+  auto d_views = make_device_uvector_async(device_views, stream, mr.get_output_mr());
 
   // Compute the partition offsets
   auto offsets = cudf::detail::make_pinned_vector_async<size_t>(views.size() + 1, stream);
@@ -85,8 +86,7 @@ auto create_device_views(host_span<column_view const> views, cuda::stream_ref st
     std::next(offsets.begin()),
     [](auto const& col) { return col.size(); },
     cuda::std::plus{});
-  auto d_offsets =
-    make_device_uvector_async(offsets, stream, cudf::get_current_device_resource_ref());
+  auto d_offsets         = make_device_uvector_async(offsets, stream, mr.get_output_mr());
   auto const output_size = offsets.back();
   cudf::detail::sync_stream(stream);
 
@@ -176,10 +176,11 @@ size_type concatenate_masks(host_span<column_view const> views,
                             cuda::stream_ref stream)
 {
   // Preprocess and upload inputs to device memory
-  auto const device_views = create_device_views(views, stream);
-  auto const& d_views     = std::get<1>(device_views);
-  auto const& d_offsets   = std::get<2>(device_views);
-  auto const output_size  = std::get<3>(device_views);
+  auto const device_views =
+    create_device_views(views, stream, cudf::get_current_device_resource_ref());
+  auto const& d_views    = std::get<1>(device_views);
+  auto const& d_offsets  = std::get<2>(device_views);
+  auto const output_size = std::get<3>(device_views);
 
   return concatenate_masks(d_views, d_offsets, dest_mask, output_size, stream);
 }
@@ -245,10 +246,11 @@ std::unique_ptr<column> fused_concatenate(host_span<column_view const> views,
   using mask_policy = cudf::mask_allocation_policy;
 
   // Preprocess and upload inputs to device memory
-  auto const device_views = create_device_views(views, stream);
-  auto const& d_views     = std::get<1>(device_views);
-  auto const& d_offsets   = std::get<2>(device_views);
-  auto const output_size  = std::get<3>(device_views);
+  auto const device_views =
+    create_device_views(views, stream, cudf::get_current_device_resource_ref());
+  auto const& d_views    = std::get<1>(device_views);
+  auto const& d_offsets  = std::get<2>(device_views);
+  auto const output_size = std::get<3>(device_views);
 
   CUDF_EXPECTS(output_size <= static_cast<std::size_t>(std::numeric_limits<size_type>::max()),
                "Total number of concatenated rows exceeds the column size limit",

@@ -201,10 +201,12 @@ std::unique_ptr<column> fast_segmented_sorted_order(column_view const& input,
  * @param num_rows Total number of rows in the input keys to sort
  * @param offsets The offsets identifying the segments
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used to allocate the returned segment indices' device memory
  */
 cuda::device_buffer<size_type> get_segment_indices(size_type num_rows,
                                                    column_view const& offsets,
-                                                   cuda::stream_ref stream);
+                                                   cuda::stream_ref stream,
+                                                   cudf::memory_resources mr);
 
 /**
  * @brief Segmented sorted-order utility
@@ -267,7 +269,8 @@ std::unique_ptr<column> segmented_sorted_order_common(
   }
 
   // Get segment id of each element in all segments.
-  auto segment_ids = get_segment_indices(keys.num_rows(), segment_offsets, stream);
+  auto segment_ids = get_segment_indices(
+    keys.num_rows(), segment_offsets, stream, cudf::get_current_device_resource_ref());
 
   // insert segment id before all columns.
   std::vector<column_view> keys_with_segid;

@@ -87,13 +87,25 @@ std::unique_ptr<column> simple_segmented_reduction(
   if (col.has_nulls()) {
     auto f  = simple_op.template get_null_replacing_element_transformer<ResultType>();
     auto it = cuda::transform_iterator(dcol->pair_begin<InputType, true>(), f);
-    cudf::reduction::detail::segmented_reduce(
-      it, offsets.begin(), offsets.end(), outit, binary_op, initial_value, stream);
+    cudf::reduction::detail::segmented_reduce(it,
+                                              offsets.begin(),
+                                              offsets.end(),
+                                              outit,
+                                              binary_op,
+                                              initial_value,
+                                              stream,
+                                              cudf::get_current_device_resource_ref());
   } else {
     auto f  = simple_op.template get_element_transformer<ResultType>();
     auto it = cuda::transform_iterator(dcol->begin<InputType>(), f);
-    cudf::reduction::detail::segmented_reduce(
-      it, offsets.begin(), offsets.end(), outit, binary_op, initial_value, stream);
+    cudf::reduction::detail::segmented_reduce(it,
+                                              offsets.begin(),
+                                              offsets.end(),
+                                              outit,
+                                              binary_op,
+                                              initial_value,
+                                              stream,
+                                              cudf::get_current_device_resource_ref());
   }
 
   // Compute the output null mask

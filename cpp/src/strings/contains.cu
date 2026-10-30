@@ -67,12 +67,20 @@ std::unique_ptr<column> contains_impl(strings_column_view const& input,
 
   if (regex_device_builder::glushkov_fast_path_supported(prog)) {
     auto d_prog = regex_device_builder::create_gkprog_device(prog, stream);
-    launch_transform_kernel(
-      contains_fn{*d_strings, beginning_only}, *d_prog, d_results, input.size(), stream);
+    launch_transform_kernel(contains_fn{*d_strings, beginning_only},
+                            *d_prog,
+                            d_results,
+                            input.size(),
+                            stream,
+                            cudf::get_current_device_resource_ref());
   } else {
     auto d_prog = regex_device_builder::create_prog_device(prog, stream);
-    launch_transform_kernel(
-      contains_fn{*d_strings, beginning_only}, *d_prog, d_results, input.size(), stream);
+    launch_transform_kernel(contains_fn{*d_strings, beginning_only},
+                            *d_prog,
+                            d_results,
+                            input.size(),
+                            stream,
+                            cudf::get_current_device_resource_ref());
   }
 
   return results;

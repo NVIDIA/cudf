@@ -210,7 +210,11 @@ struct group_reduction_functor<
     auto const result_begin = result->mutable_view().template begin<ResultType>();
     auto const binop_generator =
       cudf::reduction::detail::arg_minmax_binop_generator::create<K>(values, stream);
-    launch_argminmax_reduction(group_labels, binop_generator.binop(), result_begin, stream);
+    launch_argminmax_reduction(group_labels,
+                               binop_generator.binop(),
+                               result_begin,
+                               stream,
+                               cudf::get_current_device_resource_ref());
 
     if (values.has_nulls()) {
       // Generate bitmask for the output by segmented reduction of the input bitmask.

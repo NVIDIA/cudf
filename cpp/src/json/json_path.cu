@@ -644,10 +644,11 @@ class path_state : private parser {
  *
  * @param json_path The incoming json path
  * @param stream Cuda stream to perform any gpu actions on
+ * @param mr Memory resources used to allocate the returned command buffer's device memory
  * @returns A pair containing the command buffer, and maximum stack depth required.
  */
 std::pair<cuda::std::optional<cuda::device_buffer<path_operator>>, int> build_command_buffer(
-  cudf::string_scalar const& json_path, cuda::stream_ref stream)
+  cudf::string_scalar const& json_path, cuda::stream_ref stream, cudf::memory_resources mr)
 {
   std::string h_json_path = json_path.to_string(stream);
   path_state p_state(h_json_path.data(), static_cast<size_type>(h_json_path.size()));
@@ -682,7 +683,7 @@ std::pair<cuda::std::optional<cuda::device_buffer<path_operator>>, int> build_co
   auto const is_empty = h_operators.size() == 1 && h_operators[0].type == path_operator_type::END;
   return is_empty ? std::pair(cuda::std::nullopt, 0)
                   : std::pair(cuda::std::make_optional(cudf::detail::make_device_buffer(
-                                h_operators, stream, cudf::get_current_device_resource_ref())),
+                                h_operators, stream, mr.get_output_mr())),
                               max_stack_depth);
 }
 
@@ -971,7 +972,8 @@ std::unique_ptr<cudf::column> get_json_object(cudf::strings_column_view const& c
                                               rmm::device_async_resource_ref mr)
 {
   // preprocess the json_path into a command buffer
-  auto preprocess = build_command_buffer(json_path, stream);
+  auto preprocess =
+    build_command_buffer(json_path, stream, cudf::get_current_device_resource_ref());
   CUDF_EXPECTS(std::get<1>(preprocess) <= max_command_stack_depth,
                "Encountered JSONPath string that is too complex");
 

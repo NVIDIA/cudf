@@ -96,14 +96,15 @@ void select_and_write_offsets(range_window_type const& preceding,
                               mutable_column_view preceding_view,
                               mutable_column_view following_view,
                               size_type num_rows,
-                              cuda::stream_ref stream)
+                              cuda::stream_ref stream,
+                              cudf::memory_resources mr)
 {
   // Write the offsets to the output columns
   auto const write_offsets = [&](auto offset_fn) {
     auto const src_iter = cudf::detail::make_counting_transform_iterator(
       size_type{0}, cuda::proclaim_return_type<cuda::std::tuple<size_type, size_type>>(offset_fn));
     thrust::copy_n(
-      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
       src_iter,
       num_rows,
       cuda::zip_iterator(preceding_view.begin<size_type>(), following_view.begin<size_type>()));
@@ -221,7 +222,8 @@ std::pair<std::unique_ptr<column>, std::unique_ptr<column>> make_range_windows(
                            preceding_result->mutable_view(),
                            following_result->mutable_view(),
                            num_rows,
-                           stream);
+                           stream,
+                           cudf::get_current_device_resource_ref());
 
   return std::pair{std::move(preceding_result), std::move(following_result)};
 }

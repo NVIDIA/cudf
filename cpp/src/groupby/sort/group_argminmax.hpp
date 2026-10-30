@@ -27,6 +27,7 @@ template <typename BinOp>
 void launch_argminmax_reduction(cudf::device_span<cudf::size_type const> group_labels,
                                 BinOp const& binop,
                                 cudf::size_type* output,
-                                cuda::stream_ref stream);
+                                cuda::stream_ref stream,
+                                cudf::memory_resources mr);
 
 }  // namespace cudf::groupby::detail

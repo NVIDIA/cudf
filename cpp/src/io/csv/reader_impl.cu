@@ -670,16 +670,17 @@ void infer_column_types(parse_options const& parse_opts,
  *
  * @param size Number of entries
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used to allocate the returned staging entries' device memory
  * @return Typed buffer of `size` null string staging entries
  */
 template <typename OffsetT>
 rmm::device_uvector<string_offset_pair<OffsetT>> make_null_string_indices(size_type size,
-                                                                          cuda::stream_ref stream)
+                                                                          cuda::stream_ref stream,
+                                                                          cudf::memory_resources mr)
 {
-  rmm::device_uvector<string_offset_pair<OffsetT>> indices(
-    size, stream, cudf::get_current_device_resource_ref());
+  rmm::device_uvector<string_offset_pair<OffsetT>> indices(size, stream, mr.get_output_mr());
   // Short rows leave missing fields untouched; zero is a valid offset, not a null.
-  thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::fill(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                indices.begin(),
                indices.end(),
                string_offset_pair<OffsetT>{});
@@ -768,7 +769,8 @@ decode_result decode_data(parse_options const& parse_opts,
                                ? column_buffer(column_types[active_col], true)
                                : column_buffer(column_types[active_col], num_records, true, stream, mr);
       if (is_string) {
-        staging[active_col].emplace(make_null_string_indices<OffsetT>(num_records, stream));
+        staging[active_col].emplace(make_null_string_indices<OffsetT>(
+          num_records, stream, cudf::get_current_device_resource_ref()));
       }
 
       out_buffer.name = column_names[col];

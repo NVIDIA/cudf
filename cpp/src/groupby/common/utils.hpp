@@ -65,7 +65,7 @@ inline std::vector<aggregation_result> extract_results(std::span<RequestType con
  * @return Pair of {buffer, raw_pointer} where pointer is null if no nulls exist.
  */
 std::pair<cuda::device_buffer<cudf::bitmask_type>, bitmask_type const*> compute_row_bitmask(
-  table_view const& keys, cuda::stream_ref stream);
+  table_view const& keys, cuda::stream_ref stream, cudf::memory_resources mr);
 
 /// Whether the given aggregation kind is supported by hash-based groupby.
 constexpr bool is_hash_aggregation(aggregation::Kind k)

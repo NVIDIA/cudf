@@ -286,6 +286,7 @@ size_type find_first_delimiter(device_span<char const> d_data,
  * @param sources Data sources to read from
  * @param reader_opts JSON reader options with range offset and range size
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources whose temporary resource is used for scratch allocations
  * @returns A pair of data source owning buffers together enclosing the bytes read. The second
  * buffer may or may not be empty depending on the condition described above.
  */
@@ -293,7 +294,8 @@ std::pair<datasource::owning_buffer<rmm::device_buffer>,
           std::optional<datasource::owning_buffer<rmm::device_buffer>>>
 get_record_range_raw_input(host_span<std::unique_ptr<datasource>> sources,
                            json_reader_options const& reader_opts,
-                           cuda::stream_ref stream)
+                           cuda::stream_ref stream,
+                           cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -414,13 +416,10 @@ get_record_range_raw_input(host_span<std::unique_ptr<datasource>> sources,
     device_span<char const> bufsubspan =
       bufspan.subspan(first_delim_pos + shift_for_nonzero_offset,
                       requested_size - first_delim_pos - shift_for_nonzero_offset);
-    auto rev_it_begin = cuda::std::make_reverse_iterator(bufsubspan.end());
-    auto rev_it_end   = cuda::std::make_reverse_iterator(bufsubspan.begin());
-    auto const second_last_delimiter_it =
-      thrust::find(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                   rev_it_begin,
-                   rev_it_end,
-                   delimiter);
+    auto rev_it_begin                   = cuda::std::make_reverse_iterator(bufsubspan.end());
+    auto rev_it_end                     = cuda::std::make_reverse_iterator(bufsubspan.begin());
+    auto const second_last_delimiter_it = thrust::find(
+      rmm::exec_policy_nosync(stream, mr.get_temporary_mr()), rev_it_begin, rev_it_end, delimiter);
     CUDF_EXPECTS(second_last_delimiter_it != rev_it_end,
                  "A single JSON line cannot be larger than the batch size limit");
     auto const last_line_size =
@@ -482,7 +481,8 @@ std::pair<table_with_metadata, std::optional<table_with_metadata>> read_batch(
   // The second owning buffer in the pair returned by get_record_range_raw_input may not be
   // populated depending on the size of the actual byte range read. The first owning buffer will
   // always be non-empty.
-  auto owning_buffers = get_record_range_raw_input(sources, reader_opts, stream);
+  auto owning_buffers = get_record_range_raw_input(
+    sources, reader_opts, stream, cudf::get_current_device_resource_ref());
 
   // If input JSON buffer has single quotes and option to normalize single quotes is enabled,
   // invoke pre-processing FST

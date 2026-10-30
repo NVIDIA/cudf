@@ -17,6 +17,7 @@ using nested_binop =
 template void launch_argminmax_reduction(cudf::device_span<cudf::size_type const>,
                                          nested_binop const&,
                                          cudf::size_type*,
-                                         cuda::stream_ref);
+                                         cuda::stream_ref,
+                                         cudf::memory_resources);
 
 }  // namespace cudf::groupby::detail

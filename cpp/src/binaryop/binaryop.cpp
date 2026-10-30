@@ -259,7 +259,8 @@ std::unique_ptr<column> binary_operation(LhsType const& lhs,
     if (rhs.is_empty()) return out;
 
   auto out_view = out->mutable_view();
-  cudf::binops::compiled::binary_operation(out_view, lhs, rhs, op, stream);
+  cudf::binops::compiled::binary_operation(
+    out_view, lhs, rhs, op, stream, cudf::get_current_device_resource_ref());
   // TODO: consider having the binary_operation count nulls instead
   out->set_null_count(cudf::detail::null_count(out_view.null_mask(), 0, out->size(), stream));
   return out;

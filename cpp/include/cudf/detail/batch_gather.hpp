@@ -27,11 +27,15 @@ namespace detail {
  * The number of rows in the result table equals `gather_map.size()`.
  *
  * The columns of `source_table` are partitioned host-side: every fixed-width column (including
- * fixed-point, which is gathered through its storage type) is gathered by one fused kernel that
- * processes all such columns in a single launch, while non-fixed-width columns (strings, lists,
- * structs, dictionaries) fall back to the stock per-column gather path. The fallback keeps
- * mixed-type tables correct by construction; a pure fixed-width table pays exactly one kernel
- * launch.
+ * fixed-point, which is gathered through its storage type), every struct whose descendants are
+ * all fixed-width, and every dictionary with a signed index type is gathered by one fused
+ * kernel that processes all of them in a single launch — fully-fixed-width structs flatten into
+ * per-leaf data descriptors plus mask-only descriptors for the struct nodes themselves, and
+ * dictionaries contribute a data descriptor over their annotated indices with the gathered mask
+ * landing on the dictionary parent. Remaining columns (strings, lists, structs with any
+ * non-fixed-width descendant, dictionaries with unsigned indices) fall back to the stock
+ * per-column gather path. The fallback keeps mixed-type tables correct by construction; a pure
+ * fixed-width table pays exactly one kernel launch.
  *
  * A negative value `i` in the gather map is interpreted as `i + n`, where `n` is the number of
  * rows in `source_table`, when `neg_indices` is `negative_index_policy::ALLOWED`. When
@@ -91,7 +95,8 @@ std::unique_ptr<table> batch_gather(table_view const& source_table,
  *
  * @param[in] source_table View of the table being gathered (row count feeds the L2 check)
  * @param[in] gather_map View of the gather map column to classify
- * @param[in] num_fused_cols Number of fixed-width columns the fused kernel will process
+ * @param[in] num_fused_cols Number of top-level fixed-width columns in `source_table` (the
+ * kernel's descriptor count may be higher once struct leaves and dictionary indices flatten in)
  * @param[in] max_fused_element_size Largest element size in bytes among the fused columns
  * @param[in] stream CUDA stream used for the sample copy and its synchronization
  * @return Tile width in {1, 2, 8} for the `batch_gather` tile_cols overload

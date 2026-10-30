@@ -13,6 +13,7 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/assert.cuh>
+#include <cudf/detail/utilities/batched_memset.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/cuda.hpp>
@@ -20,6 +21,7 @@
 #include <cudf/detail/utilities/host_vector.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/null_mask.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
@@ -42,6 +44,8 @@
 
 #include <algorithm>
 #include <cstring>
+#include <iterator>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -378,8 +382,11 @@ struct direct_map_reader {
  * 32R-aligned (a multiple of 32 * kRowsPerThread), so the kRowsPerThread ballot rounds tile the
  * word space exactly once. Trailing bits stay 0 because each row's map read, copy, and ballot
  * gate on `row < num_rows`, which also keeps a tail chunk straddling num_rows from reading the
- * map or storing past the destination column. Per-column bookkeeping (warp_valid[k], per-column
- * ballots) keeps this true independently of the tile a column belongs to.
+ * map or storing past the destination column. Per-column bookkeeping keeps this true
+ * independently of the tile a column belongs to: a column with its own kernel-written mask takes
+ * its own ballots (a reused `inb_ballot` is bit-identical to the per-column ballot whenever
+ * `src_mask == nullptr`, because then `valid == in_bounds`), and its count accumulates into its
+ * own shared-memory slot.
  */
 template <size_type BlockSize,
           size_type kTileCols,
@@ -399,13 +406,47 @@ __device__ __forceinline__ void gather_tile_rows(MapReader gather_map,
 {
   // The masked instantiation tallies per-column valid bits and carries the row-loop predicate
   // in one active-lane ballot mask; the unmasked instantiation has neither.
-  [[maybe_unused]] size_type warp_valid[kTileCols]{};
-  auto const thread_stride = static_cast<int64_t>(blockDim.x) * gridDim.x;
+  // Lane 0 stages each mask-bearing column's count DIRECTLY into the warp's own shared-memory
+  // slot, at the word-store site inside the column loop where the per-column ballots are in
+  // scope. The zeroing below is load-bearing, not cosmetic: a warp whose lane-0 chunk base
+  // already sits at or past num_rows never enters the row loop and never stages, so without
+  // it its slots hold garbage that the readback sums (observed as negative null counts).
+  // This replaces the per-thread kTileCols-entry register array that used to be staged at
+  // the end.
+  [[maybe_unused]] uint32_t inb_ballot[kRowsPerThread]{};
+  [[maybe_unused]] auto active = 0xFFFF'FFFFu;
+  [[maybe_unused]] size_type* warp_valid_smem{nullptr};
+  [[maybe_unused]] auto warp_id = static_cast<size_type>(-1);
+  [[maybe_unused]] auto lane_id = static_cast<size_type>(-1);
+  auto const thread_stride      = static_cast<int64_t>(blockDim.x) * gridDim.x;
   auto chunk = (static_cast<int64_t>(blockIdx.x) * BlockSize + static_cast<int64_t>(threadIdx.x)) *
                kRowsPerThread;
-  auto const chunk_stride      = thread_stride * kRowsPerThread;
-  [[maybe_unused]] auto active = 0xFFFF'FFFFu;
-  if constexpr (kMasked) { active = __ballot_sync(active, chunk < num_rows); }
+  auto const chunk_stride = thread_stride * kRowsPerThread;
+  // The covering warp's window base for the current pass, also read by the tile-exit count
+  // accumulation: declared outside the loop so both share it.
+  auto window_base = chunk - static_cast<int64_t>(threadIdx.x % warp_size) * kRowsPerThread;
+  if constexpr (kMasked) {
+    // Per-warp staging of the per-column valid counts: warps_per_block * kTileCols *
+    // sizeof(size_type) bytes, disjoint from tile_descs (distinct static __shared__ objects
+    // never overlap, and no dynamic shared memory is used).
+    __shared__ size_type warp_valid_smem_storage[BlockSize / warp_size][kTileCols];
+    warp_valid_smem = &warp_valid_smem_storage[0][0];
+    warp_id         = threadIdx.x / warp_size;
+    lane_id         = threadIdx.x % warp_size;
+    // Zero this warp's own slots BEFORE the row loop: a warp whose chunk never runs (or a
+    // dst_mask-free column in a partial tile) never stages its slot, and the readback sums
+    // every warp's slot for each mask-bearing column — an unstaged slot must read 0.
+    // Lane 0 alone zeroes: the same lane performs the in-loop staging, so program order
+    // orders the zero before the stage within this lane; an all-lanes zero loop would race
+    // the staged value (no intra-warp same-address ordering post-Volta — racecheck hazard).
+    // The staging site is lane-0-only, so the other lanes' zero-writes are unordered with it.
+    if (lane_id == 0) {
+      for (int32_t k = 0; k < kTileCols; ++k) {
+        warp_valid_smem[warp_id * kTileCols + k] = 0;
+      }
+    }
+    active = __ballot_sync(active, chunk < num_rows);
+  }
   while (chunk < num_rows) {
     // One map load per row (wrap + table-level bounds check) serves every column in the tile.
     // Deliberately default-cached: the map is the reuse-critical stream and the wide-tile win
@@ -413,7 +454,7 @@ __device__ __forceinline__ void gather_tile_rows(MapReader gather_map,
     // reads stay fully coalesced for every kRowsPerThread. A row at or past num_rows is
     // unconditionally skipped: with R > 1 the last chunk can straddle num_rows, and reading
     // that row's map entry (or storing it) would run past the column's allocation.
-    auto const window_base = chunk - static_cast<int64_t>(threadIdx.x % warp_size) * kRowsPerThread;
+    window_base = chunk - static_cast<int64_t>(threadIdx.x % warp_size) * kRowsPerThread;
     size_type idx[kRowsPerThread];
     bool row_live[kRowsPerThread];
     bool in_bounds[kRowsPerThread];
@@ -426,6 +467,16 @@ __device__ __forceinline__ void gather_tile_rows(MapReader gather_map,
       idx[s] = row_live[s] ? gather_map(static_cast<size_type>(row)) : size_type{0};
       if (negative_allowed && idx[s] < 0) { idx[s] += num_source_rows; }
       in_bounds[s] = row_live[s] && (!check_bounds || (idx[s] >= 0 && idx[s] < num_source_rows));
+    }
+    if constexpr (kMasked) {
+      // One ballot per row slot for the whole tile: every lane participates unconditionally
+      // (the mask `active` carries the warp's live rows), so the collective-participation
+      // contract is unchanged; when a column's `src_mask == nullptr` its per-row validity is
+      // exactly `in_bounds[s]`, so the per-column ballots would all repeat this value.
+#pragma unroll
+      for (int32_t s = 0; s < static_cast<int32_t>(kRowsPerThread); ++s) {
+        inb_ballot[s] = __ballot_sync(active, in_bounds[s]);
+      }
     }
 #pragma unroll
     for (int32_t k = 0; k < kTileCols; ++k) {
@@ -453,22 +504,54 @@ __device__ __forceinline__ void gather_tile_rows(MapReader gather_map,
                                        static_cast<std::size_t>(idx[s]) * d.element_size,
                                      d.element_size);
           }
-          if constexpr (kMasked) { ballots[s] = __ballot_sync(active, row_live[s] && valid); }
+          if constexpr (kMasked) {
+            // With a null-free source the validity equals the bounds predicate, so this column's
+            // ballot would repeat `inb_ballot[s]` bit-for-bit; it is skipped and the shared value
+            // reused by the word assembly below. With a source mask the real ballot is taken
+            // (same mask, so participation is unchanged). A block-uniform nullptr dst_mask skips
+            // both.
+            if (d.dst_mask != nullptr && d.src_mask != nullptr) {
+              ballots[s] = __ballot_sync(active, row_live[s] && valid);
+            }
+          }
           if (row_live[s] && valid && !d.skip_data) {
             store_element<kStreaming>(dst, payload[s], d.element_size);
           }
         }
         if constexpr (kMasked) {
           if (d.dst_mask != nullptr) {
-            if (threadIdx.x % warp_size == 0) {
+            if (lane_id == 0) {
+              // The warp's count for THIS column, accumulated here where the correct ballot
+              // array is in scope: a source-masked column counts its own `ballots` (validity
+              // includes the src_mask check); a null-free-source column's ballot is
+              // bit-identical to the shared `inb_ballot`, so its count comes from there.
+              // Ballot s bit l = validity of row warp_chunk_base + l * kRowsPerThread + s,
+              // so summing popcount over the R SLOTS counts exactly this warp's valid rows
+              // in the windows the word stores below cover. The gate is slot existence
+              // (window_base + s < num_rows), NOT the word-window index: slot s's rows span
+              // all the windows (assemble_mask_word splits its bits across the words), so a
+              // window-based gate would skip whole slots. A fully dead slot contributes 0
+              // anyway (its rows are row_live/in_bounds false, so its ballot bits are 0),
+              // which also makes the gate safe to keep or drop.
+              uint32_t column_valid{0};
 #pragma unroll
-              for (int32_t j = 0; j < static_cast<int32_t>(kRowsPerThread); ++j) {
-                auto const wrow = window_base + 32 * j;
-                if (wrow < num_rows) {
-                  auto const word = assemble_mask_word<kRowsPerThread>(ballots, j);
-                  d.dst_mask[word_index(static_cast<size_type>(wrow))] = word;
-                  warp_valid[k] += cuda::std::popcount(static_cast<uint32_t>(word));
+              for (int32_t s = 0; s < static_cast<int32_t>(kRowsPerThread); ++s) {
+                if (window_base + s < num_rows) {
+                  column_valid += cuda::std::popcount(
+                    static_cast<uint32_t>(d.src_mask != nullptr ? ballots[s] : inb_ballot[s]));
                 }
+              }
+              // Staged straight into this warp's own smem slot (each warp owns its k slots),
+              // replacing the per-column block reduction the register-array form needed.
+              warp_valid_smem[warp_id * kTileCols + k] = column_valid;
+            }
+#pragma unroll
+            for (int32_t j = 0; j < static_cast<int32_t>(kRowsPerThread); ++j) {
+              auto const wrow = window_base + 32 * j;
+              if (wrow < num_rows) {
+                auto const word = assemble_mask_word<kRowsPerThread>(
+                  d.src_mask != nullptr ? ballots : inb_ballot, j);
+                d.dst_mask[word_index(static_cast<size_type>(wrow))] = word;
               }
             }
           }
@@ -480,24 +563,13 @@ __device__ __forceinline__ void gather_tile_rows(MapReader gather_map,
   }
   if constexpr (kMasked) {
     if (valid_counts != nullptr) {
-      // Per-warp staging of the per-column valid counts: warps_per_block * kTileCols *
-      // sizeof(size_type) bytes, disjoint from tile_descs (distinct static __shared__ objects
-      // never overlap, and no dynamic shared memory is used).
-      __shared__ size_type warp_valid_smem[BlockSize / warp_size][kTileCols];
       constexpr auto warps_per_block{BlockSize / warp_size};
-      auto const warp_id = threadIdx.x / warp_size;
-      auto const lane_id = threadIdx.x % warp_size;
-#pragma unroll
-      for (int32_t k = 0; k < kTileCols; ++k) {
-        auto const col = tile_begin + k;
-        if (col < num_descriptors && tile_descs[k].dst_mask != nullptr) {
-          // warp_valid[k] is accumulated only on lane 0, so only lane 0 stages it.
-          if (lane_id == 0) { warp_valid_smem[warp_id][k] = warp_valid[k]; }
-        }
-      }
-      // ONE barrier serves every column of the tile: the guards above gate only the stores,
-      // so every thread arrives — including threads of columns without an in-kernel mask and
-      // of a partial tile — and slots those guards skipped are never read below.
+      // ONE barrier makes every warp's in-loop staged count visible to all warps (the staging
+      // happened inside the column loop above, where the correct ballot array is in scope;
+      // the entry zeroing covered the slots the stage never reaches — dead warps' rows and
+      // dst_mask-free columns). A null-free-source column's count comes from the shared
+      // `inb_ballot`; a source-masked column counts its own `ballots`; both are bit-exact
+      // tallies of the same valid rows the word stores wrote.
       __syncthreads();
 #pragma unroll
       for (int32_t k = 0; k < kTileCols; ++k) {
@@ -506,7 +578,7 @@ __device__ __forceinline__ void gather_tile_rows(MapReader gather_map,
             static_cast<size_type>(threadIdx.x) == k) {
           size_type block_valid{0};
           for (size_type w = 0; w < warps_per_block; ++w) {
-            block_valid += warp_valid_smem[w][k];
+            block_valid += warp_valid_smem[w * kTileCols + k];
           }
           if (block_valid > 0) {
             cuda::atomic_ref<size_type, cuda::thread_scope_device> ref{valid_counts[col]};
@@ -514,6 +586,12 @@ __device__ __forceinline__ void gather_tile_rows(MapReader gather_map,
           }
         }
       }
+      // The readback above consumes this tile's staged slots; the NEXT tile iteration's
+      // staging overwrites the same slots with no other barrier between, so a fast warp could
+      // restage while a slow thread is still reading here (a racecheck-visible WAR). This
+      // second barrier orders every thread's readback before any next-tile staging. Masked
+      // tiles now pay two barriers — still far below the per-column reductions this replaced.
+      __syncthreads();
     }
   }
 }
@@ -534,9 +612,14 @@ __device__ __forceinline__ void gather_tile_rows(MapReader gather_map,
  * valid-bit tallies entirely. The row and mask invariants are stated on `gather_tile_rows`.
  * `MapReader` selects the map source: `input_indexalator` or `direct_map_reader<MapType>`.
  *
- * The masked path reduces each tile's per-column valid counts with ONE block barrier: every
- * warp stages its per-column counts in shared memory, then thread `k` sums column `k` across
- * warps and updates `valid_counts` — two barriers per column would serialize eight separate
+ * The masked path reduces each tile's per-column valid counts with TWO block barriers: lane 0
+ * of every warp stages its counts directly in the warp's shared-memory slots at the word
+ * store (the slots are zeroed at the tile's entry — a warp whose chunk base sits past
+ * num_rows never stages, so an unzeroed slot would leak garbage into the readback), one
+ * barrier publishes them, and thread `k` sums column `k` across warps and updates
+ * `valid_counts`; a second barrier after the readback orders it before the next tile's
+ * staging (the slots are reused across tiles, so the readback-to-restage edge is a WAR the
+ * first barrier does not cover) — two barriers per column would serialize eight separate
  * block reductions. The end-of-tile barrier runs only when a later y iteration will restage
  * `tile_descs`; its predicate is exactly the y-stride loop-continuation condition, which is
  * block-uniform, so the block never splits across barrier instances.
@@ -562,8 +645,10 @@ __device__ __forceinline__ void gather_tile_rows(MapReader gather_map,
  * 32 * kRowsPerThread), so the kRowsPerThread ballot rounds tile the word space exactly once.
  * Trailing bits stay 0 because each row's map read, copy, and ballot gate on `row < num_rows`,
  * which also keeps a tail chunk straddling num_rows from reading the map or storing past the
- * destination column. Per-column bookkeeping (warp_valid[k], per-column ballots) keeps this true
- * independently of the tile a column belongs to.
+ * destination column. Per-column bookkeeping keeps this true independently of the tile a
+ * column belongs to: a column with its own kernel-written mask takes its own ballots (a reused
+ * `inb_ballot` is bit-identical to the per-column ballot whenever `src_mask == nullptr`, because
+ * then `valid == in_bounds`), and its count accumulates into its own shared-memory slot.
  */
 template <size_type BlockSize,
           size_type kTileCols,
@@ -1166,8 +1251,14 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
   };
 
   // Fused part: destination columns for the fixed-width subset, with per-column mask policy.
+  // Constant masks (ALL_VALID/ALL_NULL) are allocated UNINITIALIZED and filled by the two
+  // batched_memset calls after this loop — one cudaMemsetAsync per FILL VALUE instead of per
+  // column (~3 µs host per submission). The batched_memset API takes ONE value for the whole
+  // span batch, so the two states need two calls.
   std::vector<column_descriptor> descriptors;
   std::vector<size_type> kernel_masked_positions;  // descriptor positions with in-kernel masks
+  std::vector<cudf::device_span<cudf::bitmask_type>> valid_fills;  // ALL_VALID constant masks
+  std::vector<cudf::device_span<cudf::bitmask_type>> null_fills;   // ALL_NULL constant masks
   if (not fused_indices.empty()) {
     descriptors.reserve(fused_indices.size());
     for (size_type pos = 0; pos < static_cast<size_type>(fused_indices.size()); ++pos) {
@@ -1179,8 +1270,13 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
       bool const all_null    = src.size() > 0 and src.null_count() == src.size();
       if (all_null) {
         // Every row is null regardless of the map: pre-set ALL_NULL and skip the data copy.
+        // The fill itself is batched below; the count is set here.
         dst->set_null_mask(
-          cudf::detail::create_null_mask(num_rows, cudf::mask_state::ALL_NULL, stream, output_mr),
+          cuda::device_buffer<cudf::bitmask_type>(
+            stream,
+            output_mr,
+            static_cast<std::size_t>(cudf::bitmask_allocation_size_words(num_rows)),
+            cuda::no_init),
           num_rows);
         skip_data = true;
       } else if (bounds_policy == out_of_bounds_policy::NULLIFY or src.null_count() > 0) {
@@ -1190,9 +1286,14 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
         dst->set_null_mask(std::move(mask), 0);
         kernel_masked_positions.push_back(pos);
       } else if (src.nullable()) {
-        // Nullable source with zero nulls: ALL_VALID fast path, no kernel mask work.
+        // Nullable source with zero nulls: ALL_VALID fast path, no kernel mask work — the
+        // all-ones fill is batched below.
         dst->set_null_mask(
-          cudf::detail::create_null_mask(num_rows, cudf::mask_state::ALL_VALID, stream, output_mr),
+          cuda::device_buffer<cudf::bitmask_type>(
+            stream,
+            output_mr,
+            static_cast<std::size_t>(cudf::bitmask_allocation_size_words(num_rows)),
+            cuda::no_init),
           0);
       }
       auto const src_data =
@@ -1202,14 +1303,53 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
       // The destination mask policy above keys off `dst_mask` only and is unaffected.
       bitmask_type const* src_mask = skip_data ? nullptr : src.null_mask();
       if (src.null_count() == 0) { src_mask = nullptr; }
+      auto const dst_view = dst->mutable_view();
+      auto const mask_size =
+        static_cast<std::size_t>(cudf::bitmask_allocation_size_words(num_rows));
+      if (all_null) {
+        null_fills.push_back(
+          cudf::device_span<cudf::bitmask_type>{dst_view.null_mask(), mask_size});
+      } else if (src.nullable()) {
+        valid_fills.push_back(
+          cudf::device_span<cudf::bitmask_type>{dst_view.null_mask(), mask_size});
+      }
       descriptors.push_back(column_descriptor{src_data,
-                                              dst->mutable_view().data<std::byte>(),
+                                              dst_view.data<std::byte>(),
                                               src_mask,
                                               dst_mask,
                                               static_cast<int64_t>(src.offset()),
                                               static_cast<int32_t>(cudf::size_of(src.type())),
                                               skip_data});
       destination[fused_indices[pos]] = std::move(dst);
+    }
+  }
+
+  // The spans alias the destination columns' mask buffers: built AFTER the loop so no slot can
+  // dangle a moved-from unique_ptr, and valid through the memsets (the buffers live in the
+  // returned table). UNINITIALIZED means the padding words are also written by the memset —
+  // the same bytes create_null_mask's per-call cudaMemsetAsync would have initialized. Enqueued
+  // BEFORE the gather kernel: the kernel never writes these dst masks (dst_mask is nullptr for
+  // both fill classes), so the stream order keeps the race out regardless of scheduling.
+  // The span arrays stage in pinned memory (the parquet batched_memset precedent) so the
+  // batched H2D reads device-accessible source bytes: one staging vector, valid fills in the
+  // leading slots and null fills appended after.
+  if (not valid_fills.empty() or not null_fills.empty()) {
+    auto fill_staging =
+      cudf::detail::make_empty_pinned_vector<cudf::device_span<cudf::bitmask_type>>(
+        valid_fills.size() + null_fills.size(), stream);
+    std::copy(valid_fills.begin(), valid_fills.end(), std::back_inserter(fill_staging));
+    std::copy(null_fills.begin(), null_fills.end(), std::back_inserter(fill_staging));
+    auto const fill_spans =
+      cudf::host_span<cudf::device_span<cudf::bitmask_type> const>{fill_staging};
+    if (not valid_fills.empty()) {
+      cudf::detail::batched_memset<cudf::bitmask_type>(
+        fill_spans.first(valid_fills.size()),
+        std::numeric_limits<cudf::bitmask_type>::max(),
+        stream);
+    }
+    if (not null_fills.empty()) {
+      cudf::detail::batched_memset<cudf::bitmask_type>(
+        fill_spans.last(null_fills.size()), cudf::bitmask_type{0}, stream);
     }
   }
 

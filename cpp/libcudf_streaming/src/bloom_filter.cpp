@@ -43,7 +43,8 @@ bloom_filter::bloom_filter(std::shared_ptr<rapidsmpf::streaming::Context> ctx,
 rapidsmpf::streaming::Actor bloom_filter::build(
   std::shared_ptr<rapidsmpf::streaming::Channel> ch_in,
   std::shared_ptr<rapidsmpf::streaming::Channel> ch_out,
-  rapidsmpf::OpID tag)
+  rapidsmpf::OpID tag,
+  rapidsmpf::ReservationAttributes attributes)
 {
   rapidsmpf::streaming::ShutdownAtExit c{ch_in, ch_out};
   co_await ctx_->executor()->schedule();
@@ -65,7 +66,8 @@ rapidsmpf::streaming::Actor bloom_filter::build(
     auto chunk = msg.release<table_chunk>();
     chunk      = co_await chunk.make_available(
       ctx_,
-      -rapidsmpf::safe_cast<std::int64_t>(chunk.data_alloc_size(rapidsmpf::MemoryType::DEVICE)));
+      -rapidsmpf::safe_cast<std::int64_t>(chunk.data_alloc_size(rapidsmpf::MemoryType::DEVICE)),
+      attributes);
 
     // Reservation for the hash values in add.
     auto res = co_await ctx_->memory(rapidsmpf::MemoryType::DEVICE)
@@ -73,7 +75,8 @@ rapidsmpf::streaming::Actor bloom_filter::build(
                                      // TODO: no magic numbers: the hashing algorithm in
                                      // `add` below returns an int64 column.
                                      * sizeof(std::int64_t),
-                                   0);
+                                   0,
+                                   attributes);
     // Filter is allocated on `filter_stream`, but we run the additions on the chunk's
     // stream. The addition modifies global memory but we can safely launch two
     // kernels doing that concurrently because the updates are atomic.
@@ -99,9 +102,10 @@ rapidsmpf::streaming::Actor bloom_filter::build(
             .merge(in, stream);
         });
       });
-    auto result   = co_await reducer.extract();
-    auto [res, _] = br->reserve(rapidsmpf::MemoryType::DEVICE, 0, rapidsmpf::AllowOverbooking::YES);
-    storage       = br->move_to_device_buffer(std::move(result.second), res);
+    auto result = co_await reducer.extract();
+    auto [res, _] =
+      br->reserve(rapidsmpf::MemoryType::DEVICE, 0, rapidsmpf::AllowOverbooking::YES, attributes);
+    storage = br->move_to_device_buffer(std::move(result.second), res);
   }
   co_await ch_out->send(rapidsmpf::streaming::Message{0,
                                                       std::move(storage),
@@ -114,7 +118,8 @@ rapidsmpf::streaming::Actor bloom_filter::apply(
   std::shared_ptr<rapidsmpf::streaming::Channel> bloom_filter,
   std::shared_ptr<rapidsmpf::streaming::Channel> ch_in,
   std::shared_ptr<rapidsmpf::streaming::Channel> ch_out,
-  std::vector<cudf::size_type> keys)
+  std::vector<cudf::size_type> keys,
+  rapidsmpf::ReservationAttributes attributes)
 {
   rapidsmpf::streaming::ShutdownAtExit c{bloom_filter, ch_in, ch_out};
   co_await ctx_->executor()->schedule();
@@ -132,7 +137,8 @@ rapidsmpf::streaming::Actor bloom_filter::apply(
     auto chunk = msg.release<table_chunk>();
     chunk      = co_await chunk.make_available(
       ctx_,
-      -rapidsmpf::safe_cast<std::int64_t>(chunk.data_alloc_size(rapidsmpf::MemoryType::DEVICE)));
+      -rapidsmpf::safe_cast<std::int64_t>(chunk.data_alloc_size(rapidsmpf::MemoryType::DEVICE)),
+      attributes);
     auto chunk_stream = chunk.stream();
     rapidsmpf::cuda_stream_join(chunk_stream, stream, &event);
     // Reservation for the mask construction and guess at output size.
@@ -143,7 +149,8 @@ rapidsmpf::streaming::Actor bloom_filter::apply(
                                        * (1 + sizeof(std::int64_t))
                                      // Guess at how selective the filter is.
                                      + chunk.data_alloc_size(rapidsmpf::MemoryType::DEVICE) / 2,
-                                   0);
+                                   0,
+                                   attributes);
     auto mask =
       filter.contains(chunk.table_view().select(keys), chunk_stream, ctx_->br()->device_mr());
     rapidsmpf::cuda_stream_join(stream, chunk_stream, &event);

@@ -7,6 +7,7 @@
 #include <cudf/types.hpp>
 
 #include <rapidsmpf/communicator/communicator.hpp>
+#include <rapidsmpf/memory/reservation_attributes.hpp>
 #include <rapidsmpf/streaming/core/actor.hpp>
 #include <rapidsmpf/streaming/core/channel.hpp>
 #include <rapidsmpf/streaming/core/context.hpp>
@@ -80,12 +81,14 @@ struct bloom_filter {
    * @param ch_out Output channel receiving a single message containing the bloom
    * filter.
    * @param tag Disambiguating tag to combine filters across ranks.
+   * @param attributes Attributes attached to memory reservation requests.
    * @return Coroutine representing the construction of the bloom filter.
    */
   [[nodiscard]] rapidsmpf::streaming::Actor build(
     std::shared_ptr<rapidsmpf::streaming::Channel> ch_in,
     std::shared_ptr<rapidsmpf::streaming::Channel> ch_out,
-    rapidsmpf::OpID tag);
+    rapidsmpf::OpID tag,
+    rapidsmpf::ReservationAttributes attributes = {});
 
   /**
    * @brief Apply a bloom filter to an input channel.
@@ -94,6 +97,7 @@ struct bloom_filter {
    * @param ch_in Input channel of `table_chunk`s to apply bloom filter to.
    * @param ch_out Output channel receiving filtered `table_chunk`s.
    * @param keys Indices selecting the key columns for the hash fingerprint
+   * @param attributes Attributes attached to memory reservation requests.
    *
    * @note The application of the bloom filter expects _exactly one_ message to come
    * through the `bloom_filter` channel, which must be drained after that message is
@@ -105,7 +109,8 @@ struct bloom_filter {
     std::shared_ptr<rapidsmpf::streaming::Channel> bloom_filter,
     std::shared_ptr<rapidsmpf::streaming::Channel> ch_in,
     std::shared_ptr<rapidsmpf::streaming::Channel> ch_out,
-    std::vector<cudf::size_type> keys);
+    std::vector<cudf::size_type> keys,
+    rapidsmpf::ReservationAttributes attributes = {});
 
  private:
   std::shared_ptr<rapidsmpf::streaming::Context> ctx_{};

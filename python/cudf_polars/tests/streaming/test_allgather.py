@@ -37,7 +37,7 @@ async def _test_allgather(engine) -> None:
     ]
 
     # Insert tables into AllGatherManager
-    allgather = AllGatherManager(context, comm, 0)
+    allgather = AllGatherManager(context, comm, 0, attributes=None)
     with allgather.inserting() as inserter:
         for i, table in enumerate(tables):
             await inserter.insert(
@@ -74,11 +74,11 @@ async def _test_allgather_reduce(engine) -> None:
     comm = engine.comm
 
     # Test with a single value
-    (result,) = await allgather_reduce(context, comm, 0, 42)
+    (result,) = await allgather_reduce(context, comm, 0, 42, attributes=None)
     assert result == 42  # Single rank, so sum is just the local value
 
     # Test with multiple values
-    results = await allgather_reduce(context, comm, 1, 10, 20, 30)
+    results = await allgather_reduce(context, comm, 1, 10, 20, 30, attributes=None)
     assert results == (10, 20, 30)  # Single rank, so sums are just the local values
 
 

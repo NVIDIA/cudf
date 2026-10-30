@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import Self
 
 from cudf_streaming.table_chunk import TableChunk
@@ -38,6 +38,8 @@ class BloomFilter:
         ch_in: Channel[TableChunk],
         ch_out: Channel[BloomFilterChunk],
         tag: int,
+        *,
+        attributes: Mapping[str, str | int | bool | float] | None = None,
     ) -> None: ...
     async def apply(
         self,
@@ -46,4 +48,6 @@ class BloomFilter:
         ch_in: Channel[TableChunk],
         ch_out: Channel[TableChunk],
         keys: Iterable[int],
+        *,
+        attributes: Mapping[str, str | int | bool | float] | None = None,
     ) -> None: ...

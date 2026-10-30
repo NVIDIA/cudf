@@ -51,11 +51,18 @@ def test_partition_and_pack_unpack(
         num_partitions=num_partitions,
         br=br,
         stream=DEFAULT_STREAM,
+        attributes={
+            "site": "partition",
+            "attempt": 1,
+            "cached": False,
+            "ratio": 0.5,
+        },
     )
     got = unpack_and_concat(
         tuple(partitions.values()),
         br=br,
         stream=DEFAULT_STREAM,
+        attributes={"site": "concatenate"},
     )
     # Since the row order isn't preserved, we sort the rows by the first column.
     assert_eq(expect, got, sort_rows=0)

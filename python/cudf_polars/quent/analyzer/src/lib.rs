@@ -5,6 +5,8 @@ mod actor;
 mod analyzer;
 mod evaluate;
 mod model;
+mod reservation;
+mod reservation_metrics;
 mod resource;
 mod viewer;
 

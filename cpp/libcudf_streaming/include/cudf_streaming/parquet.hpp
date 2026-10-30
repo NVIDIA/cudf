@@ -11,6 +11,7 @@
 #include <cuda/stream>
 
 #include <rapidsmpf/communicator/communicator.hpp>
+#include <rapidsmpf/memory/reservation_attributes.hpp>
 #include <rapidsmpf/owning_wrapper.hpp>
 #include <rapidsmpf/streaming/core/actor.hpp>
 #include <rapidsmpf/streaming/core/channel.hpp>
@@ -50,6 +51,7 @@ namespace actor {
  * @param num_rows_per_chunk Target (maximum) number of rows any sent `table_chunk` should
  * have.
  * @param filter Optional filter expression to apply to the read.
+ * @param attributes Attributes attached to file-cache memory reservation requests.
  *
  * @return Streaming actor representing the asynchronous read.
  */
@@ -60,6 +62,7 @@ rapidsmpf::streaming::Actor read_parquet(std::shared_ptr<rapidsmpf::streaming::C
                                          cudf::io::parquet_reader_options options,
                                          // TODO: use byte count, not row count?
                                          cudf::size_type num_rows_per_chunk,
-                                         std::unique_ptr<filter> filter = nullptr);
+                                         std::unique_ptr<filter> filter              = nullptr,
+                                         rapidsmpf::ReservationAttributes attributes = {});
 }  // namespace actor
 }  // namespace cudf_streaming

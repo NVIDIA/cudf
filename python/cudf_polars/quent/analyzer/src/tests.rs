@@ -19,9 +19,10 @@ use crate::{
     CudfPolarsUiAnalyzer, Viewer,
     generated::{
         ActorEvent, ColumnSchema, CudfPolars, CudfPolarsEvent, DataFrameSchema, EngineEvent,
-        EvaluateEvent, Implementation, JoinFilterPushdownDetails, OperatorEvent, OperatorSchemas,
-        OperatorStatistics, PlanEvent, ProcessorEvent, QueryEvent, QueryGroupEvent,
-        RuntimePrefilterStatistics, ThreadPoolEvent, WorkerEvent,
+        EvaluateEvent, Implementation, JoinFilterPushdownDetails, MemoryReservationEvent,
+        OperatorEvent, OperatorSchemas, OperatorStatistics, PlanEvent, ProcessorEvent, QueryEvent,
+        QueryGroupEvent, ReservableMemory, ReservableMemoryUsage, RuntimePrefilterStatistics,
+        ThreadPoolEvent, WorkerEvent,
     },
     resource::{EVALUATE_ENTITY_TYPE, PROCESSOR_RESOURCE_TYPE},
 };
@@ -67,6 +68,8 @@ fn builds_query_bundle_from_generated_events() {
     let idle_plan_id = Uuid::now_v7();
     let operator_id = Uuid::now_v7();
     let actor_id = Uuid::now_v7();
+    let reservation_id = Uuid::now_v7();
+    let reservable_memory_id = Uuid::now_v7();
     let incomplete_actor_id = Uuid::now_v7();
     let thread_pool_id = Uuid::now_v7();
     let processor_id = Uuid::now_v7();
@@ -249,6 +252,55 @@ fn builds_query_bundle_from_generated_events() {
             actor_id,
             10,
             CudfPolarsEvent::Actor(ActorEvent::Running { seq: 1 }),
+        ),
+        Event::new(
+            reservation_id,
+            10,
+            CudfPolarsEvent::MemoryReservation(MemoryReservationEvent::Created {
+                seq: 0,
+                worker: EntityRef::new(worker_id, ()),
+                actor: Some(EntityRef::new(actor_id, ())),
+                site: "test.reserve".to_owned(),
+                request: None,
+                parent: None,
+                attributes: DynamicAttributes::new(),
+                sequence: 0,
+            }),
+        ),
+        Event::new(
+            reservation_id,
+            11,
+            CudfPolarsEvent::MemoryReservation(MemoryReservationEvent::Held {
+                seq: 1,
+                memory: EntityRef::<ReservableMemory, _>::new(
+                    reservable_memory_id,
+                    ReservableMemoryUsage { bytes: 8 },
+                ),
+                change: "granted".to_owned(),
+                sequence: 1,
+            }),
+        ),
+        Event::new(
+            reservation_id,
+            15,
+            CudfPolarsEvent::MemoryReservation(MemoryReservationEvent::Held {
+                seq: 2,
+                memory: EntityRef::<ReservableMemory, _>::new(
+                    reservable_memory_id,
+                    ReservableMemoryUsage { bytes: 4 },
+                ),
+                change: "consumed".to_owned(),
+                sequence: 2,
+            }),
+        ),
+        Event::new(
+            reservation_id,
+            17,
+            CudfPolarsEvent::MemoryReservation(MemoryReservationEvent::Released {
+                seq: 3,
+                reason: "consumed".to_owned(),
+                sequence: 3,
+            }),
         ),
         Event::new(
             evaluate_id,
@@ -461,6 +513,34 @@ fn builds_query_bundle_from_generated_events() {
             .quantity
             .is_none()
     );
+    let reservation_peak = statistics
+        .custom_statistics
+        .iter()
+        .find(|statistic| statistic.value.key == "reservation_peak_unconsumed_bytes")
+        .unwrap();
+    assert_eq!(reservation_peak.value.value, Some(DynamicValue::U64(8)));
+    assert_eq!(reservation_peak.quantity.as_deref(), Some("bytes"));
+    let reservation_byte_seconds = statistics
+        .custom_statistics
+        .iter()
+        .find(|statistic| statistic.value.key == "reservation_unconsumed_byte_seconds")
+        .unwrap();
+    assert_eq!(
+        reservation_byte_seconds.value.value,
+        Some(DynamicValue::F64(40.0 / 1_000_000_000.0))
+    );
+    assert_eq!(
+        reservation_byte_seconds.quantity.as_deref(),
+        Some("byte-seconds")
+    );
+    let reservation_count = statistics
+        .custom_statistics
+        .iter()
+        .find(|statistic| statistic.value.key == "reservation_handle_count")
+        .unwrap();
+    assert_eq!(reservation_count.value.value, Some(DynamicValue::U64(1)));
+    assert!(reservation_count.quantity.is_none());
+    assert!(bundle.quantity_specs.contains_key("byte-seconds"));
     assert!(bundle.entities.resources.contains_key(&processor_id));
     assert!(
         bundle

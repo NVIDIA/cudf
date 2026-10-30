@@ -14,13 +14,15 @@ use crate::{
     evaluate::{EvaluateBuilder, EvaluateSpan},
     generated::{
         ActorEvent, CudfPolarsEvent, DataChannelEvent, DeviceMemoryEvent, EngineEvent,
-        EvaluateEvent, OperatorEvent, PlanEvent, PortEvent, ProcessorEvent, QueryEvent,
-        QueryGroupEvent, StorageEvent, ThreadPoolEvent, WorkerEvent,
+        EvaluateEvent, MemoryReservationEvent, MemoryReservationRequestEvent, OperatorEvent,
+        PlanEvent, PortEvent, ProcessorEvent, QueryEvent, QueryGroupEvent, ReservableMemoryEvent,
+        StorageEvent, ThreadPoolEvent, WorkerEvent,
     },
     model::CudfPolarsModelBuilder,
+    reservation::{build_requests, build_reservations},
     resource::{
         DATA_CHANNEL_RESOURCE_TYPE, DEVICE_MEMORY_RESOURCE_TYPE, DeclaredResource,
-        DeclaredResourceGroup, PROCESSOR_RESOURCE_TYPE,
+        DeclaredResourceGroup, PROCESSOR_RESOURCE_TYPE, RESERVABLE_MEMORY_RESOURCE_TYPE,
     },
 };
 
@@ -35,7 +37,27 @@ impl CudfPolarsUiAnalyzer {
         let mut evaluate_builders = HashMap::<Uuid, EvaluateBuilder>::new();
         let mut resources = HashMap::new();
         let mut resource_groups = HashMap::new();
+        let mut reservation_events = Vec::new();
+        let mut request_events = Vec::new();
+        let mut trace_end = 0;
         for event in events {
+            let Event {
+                id,
+                timestamp,
+                data,
+            } = event;
+            trace_end = trace_end.max(timestamp);
+            let event = match data {
+                CudfPolarsEvent::MemoryReservation(data) => {
+                    reservation_events.push(Event::new(id, timestamp, data));
+                    continue;
+                }
+                CudfPolarsEvent::MemoryReservationRequest(data) => {
+                    request_events.push(Event::new(id, timestamp, data));
+                    continue;
+                }
+                data => Event::new(id, timestamp, data),
+            };
             match &event.data {
                 CudfPolarsEvent::Actor(actor_event) => {
                     actor_builders
@@ -107,6 +129,21 @@ impl CudfPolarsUiAnalyzer {
                         },
                     );
                 }
+                CudfPolarsEvent::ReservableMemory(ReservableMemoryEvent::Declared {
+                    instance_name,
+                    worker,
+                    ..
+                }) => {
+                    resources.insert(
+                        event.id,
+                        DeclaredResource {
+                            id: event.id,
+                            instance_name: instance_name.clone(),
+                            type_name: RESERVABLE_MEMORY_RESOURCE_TYPE,
+                            parent_group_id: worker.target,
+                        },
+                    );
+                }
                 _ => {}
             }
             builder.try_push(event)?;
@@ -139,11 +176,21 @@ impl CudfPolarsUiAnalyzer {
             .enumerate()
             .map(|(index, evaluate)| (evaluate.id, index))
             .collect();
+        let reservations = build_reservations(reservation_events, trace_end)?;
+        let reservation_indices = reservations
+            .iter()
+            .enumerate()
+            .map(|(index, reservation)| (reservation.id, index))
+            .collect();
+        let requests = build_requests(request_events, trace_end)?;
         Ok(Self {
             model,
             actors,
             evaluates,
             evaluate_indices,
+            reservations,
+            reservation_indices,
+            requests,
             resources,
             resource_groups,
         })
@@ -205,6 +252,10 @@ fn events_for_engine(
                 }
                 CudfPolarsEvent::ThreadPool(ThreadPoolEvent::Declared { worker, .. })
                 | CudfPolarsEvent::DeviceMemory(DeviceMemoryEvent::Declared { worker, .. })
+                | CudfPolarsEvent::ReservableMemory(ReservableMemoryEvent::Declared {
+                    worker,
+                    ..
+                })
                 | CudfPolarsEvent::Storage(StorageEvent::Declared { worker, .. })
                 | CudfPolarsEvent::DataChannel(DataChannelEvent::Declared { worker, .. }) => {
                     Some(worker.target)
@@ -215,6 +266,13 @@ fn events_for_engine(
                 CudfPolarsEvent::Evaluate(EvaluateEvent::Queued { actor, .. }) => {
                     Some(actor.target)
                 }
+                CudfPolarsEvent::MemoryReservationRequest(
+                    MemoryReservationRequestEvent::Submitted { worker, .. },
+                )
+                | CudfPolarsEvent::MemoryReservation(MemoryReservationEvent::Created {
+                    worker,
+                    ..
+                }) => Some(worker.target),
                 _ => None,
             };
             parent_id.map(|parent_id| (event.id, parent_id))

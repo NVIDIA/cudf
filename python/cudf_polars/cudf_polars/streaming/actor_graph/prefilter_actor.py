@@ -27,6 +27,7 @@ from cudf_polars.streaming.actor_graph.utils import (
     process_children,
     recv_metadata,
     replay_buffered_channel,
+    reservation_attributes,
     sample_inputs,
     shutdown_on_error,
 )
@@ -104,6 +105,10 @@ async def pushdown_filter_actor(
                     ),
                 ),
                 collective_id,
+                attributes=reservation_attributes(
+                    ir_context.actor_bound_quent_ir_execution_state,
+                    "prefilter.sample.inputs",
+                ),
             )
             if len(collected_samples) != 2:
                 raise ValueError("Standalone prefilters require two input samples")

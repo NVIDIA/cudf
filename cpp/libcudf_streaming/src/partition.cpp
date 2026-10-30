@@ -24,7 +24,8 @@ rapidsmpf::streaming::Actor partition_and_pack(
   std::vector<cudf::size_type> columns_to_hash,
   int num_partitions,
   cudf::hash_id hash_function,
-  std::uint32_t seed)
+  std::uint32_t seed,
+  rapidsmpf::ReservationAttributes attributes)
 {
   rapidsmpf::streaming::ShutdownAtExit c{ch_in, ch_out};
 
@@ -33,9 +34,9 @@ rapidsmpf::streaming::Actor partition_and_pack(
     auto msg = co_await ch_in->receive();
     if (msg.empty()) { break; }
     auto table       = msg.release<table_chunk>();
-    auto reservation = ctx->br()->reserve_device_memory_and_spill(table.make_available_cost(),
-                                                                  rapidsmpf::AllowOverbooking::NO);
-    auto tbl         = table.make_available(reservation);
+    auto reservation = ctx->br()->reserve_device_memory_and_spill(
+      table.make_available_cost(), rapidsmpf::AllowOverbooking::NO, attributes);
+    auto tbl = table.make_available(reservation);
 
     rapidsmpf::streaming::PartitionMapChunk partition_map{
       .data = cudf_streaming::partition_and_pack(tbl.table_view(),
@@ -44,7 +45,9 @@ rapidsmpf::streaming::Actor partition_and_pack(
                                                  hash_function,
                                                  seed,
                                                  tbl.stream(),
-                                                 ctx->br().get())};
+                                                 ctx->br().get(),
+                                                 rapidsmpf::AllowOverbooking::YES,
+                                                 attributes)};
 
     co_await ch_out->send(to_message(
       msg.sequence_number(),
@@ -55,7 +58,8 @@ rapidsmpf::streaming::Actor partition_and_pack(
 
 rapidsmpf::streaming::Actor unpack_and_concat(std::shared_ptr<rapidsmpf::streaming::Context> ctx,
                                               std::shared_ptr<rapidsmpf::streaming::Channel> ch_in,
-                                              std::shared_ptr<rapidsmpf::streaming::Channel> ch_out)
+                                              std::shared_ptr<rapidsmpf::streaming::Channel> ch_out,
+                                              rapidsmpf::ReservationAttributes attributes)
 {
   rapidsmpf::streaming::ShutdownAtExit c{ch_in, ch_out};
   co_await ctx->executor()->schedule();
@@ -79,9 +83,11 @@ rapidsmpf::streaming::Actor unpack_and_concat(std::shared_ptr<rapidsmpf::streami
 
     std::unique_ptr<cudf::table> ret = cudf_streaming::unpack_and_concat(
       rapidsmpf::unspill_partitions(
-        std::move(data), ctx->br().get(), rapidsmpf::AllowOverbooking::NO),
+        std::move(data), ctx->br().get(), rapidsmpf::AllowOverbooking::NO, attributes),
       stream,
-      ctx->br().get());
+      ctx->br().get(),
+      rapidsmpf::AllowOverbooking::YES,
+      attributes);
     co_await ch_out->send(to_message(seq, std::make_unique<table_chunk>(std::move(ret), stream)));
   }
   co_await ch_out->drain(ctx->executor());

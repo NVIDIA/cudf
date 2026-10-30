@@ -14,6 +14,7 @@
 #include <rapidsmpf/memory/buffer.hpp>
 #include <rapidsmpf/memory/buffer_resource.hpp>
 #include <rapidsmpf/memory/packed_data.hpp>
+#include <rapidsmpf/memory/reservation_attributes.hpp>
 #include <rapidsmpf/shuffler/shuffler.hpp>
 
 #include <memory>
@@ -34,6 +35,7 @@ namespace cudf_streaming {
  * @param stream CUDA stream used for device memory operations and kernel launches.
  * @param br Buffer resource for memory allocations.
  * @param allow_overbooking If true, allow overbooking (true by default)
+ * @param attributes Attributes attached to the memory reservation request.
  * @return A vector of each partition and a table that owns the device memory.
  *
  * @throws std::out_of_range if index is `columns_to_hash` is invalid
@@ -50,7 +52,8 @@ partition_and_split(
   std::uint32_t seed,
   cuda::stream_ref stream,
   rapidsmpf::BufferResource* br,
-  rapidsmpf::AllowOverbooking allow_overbooking = rapidsmpf::AllowOverbooking::YES);
+  rapidsmpf::AllowOverbooking allow_overbooking = rapidsmpf::AllowOverbooking::YES,
+  rapidsmpf::ReservationAttributes attributes   = {});
 
 /**
  * @brief Peak device memory (in bytes) required by `partition_and_pack()`.
@@ -86,6 +89,7 @@ partition_and_split(
  * @param br Buffer resource for memory allocations.
  * @param allow_overbooking If true, allow overbooking (true by default). TODO: disable this by
  * default https://github.com/rapidsmpf/rapidsmpf/issues/449
+ * @param attributes Attributes attached to the memory reservation request.
  * @return A map of partition IDs and their packed tables.
  *
  * @throws std::out_of_range if index is `columns_to_hash` is invalid
@@ -95,15 +99,15 @@ partition_and_split(
  * @see cudf::pack
  */
 [[nodiscard]] std::unordered_map<rapidsmpf::shuffler::PartID, rapidsmpf::PackedData>
-partition_and_pack(
-  cudf::table_view const& table,
-  std::vector<cudf::size_type> const& columns_to_hash,
-  int num_partitions,
-  cudf::hash_id hash_function,
-  std::uint32_t seed,
-  cuda::stream_ref stream,
-  rapidsmpf::BufferResource* br,
-  rapidsmpf::AllowOverbooking allow_overbooking = rapidsmpf::AllowOverbooking::YES);
+partition_and_pack(cudf::table_view const& table,
+                   std::vector<cudf::size_type> const& columns_to_hash,
+                   int num_partitions,
+                   cudf::hash_id hash_function,
+                   std::uint32_t seed,
+                   cuda::stream_ref stream,
+                   rapidsmpf::BufferResource* br,
+                   rapidsmpf::AllowOverbooking allow_overbooking = rapidsmpf::AllowOverbooking::YES,
+                   rapidsmpf::ReservationAttributes attributes   = {});
 
 /**
  * @brief Partitions rows from the input table into multiple packed (serialized) tables,
@@ -177,6 +181,7 @@ partition_and_pack(cudf::table_view const& table,
  * @param br Buffer resource for memory allocations.
  * @param allow_overbooking If true, allow overbooking (true by default). TODO: disable this by
  * default https://github.com/rapidsmpf/rapidsmpf/issues/449
+ * @param attributes Attributes attached to the memory reservation request.
  * @return A map of partition IDs and their packed tables.
  *
  * @throws std::out_of_range if the splits are invalid.
@@ -190,7 +195,8 @@ partition_and_pack(cudf::table_view const& table,
   std::vector<cudf::size_type> const& splits,
   cuda::stream_ref stream,
   rapidsmpf::BufferResource* br,
-  rapidsmpf::AllowOverbooking allow_overbooking = rapidsmpf::AllowOverbooking::YES);
+  rapidsmpf::AllowOverbooking allow_overbooking = rapidsmpf::AllowOverbooking::YES,
+  rapidsmpf::ReservationAttributes attributes   = {});
 
 /**
  * @brief Splits rows from the input table into multiple packed (serialized) tables,
@@ -275,6 +281,7 @@ partition_and_pack(cudf::table_view const& table,
  * table is ordered.
  * @param br Buffer resource used for memory allocations.
  * @param allow_overbooking If true, allow overbooking (true by default).
+ * @param attributes Attributes attached to the memory reservation request.
  * @return The concatenated table resulting from unpacking the input partitions.
  *
  * @throws rapidsmpf::reservation_error If the buffer resource cannot reserve enough
@@ -289,7 +296,8 @@ partition_and_pack(cudf::table_view const& table,
   std::vector<rapidsmpf::PackedData>&& partitions,
   cuda::stream_ref stream,
   rapidsmpf::BufferResource* br,
-  rapidsmpf::AllowOverbooking allow_overbooking = rapidsmpf::AllowOverbooking::YES);
+  rapidsmpf::AllowOverbooking allow_overbooking = rapidsmpf::AllowOverbooking::YES,
+  rapidsmpf::ReservationAttributes attributes   = {});
 
 /**
  * @brief Unpack (deserialize) input partitions and concatenate them into a single table,

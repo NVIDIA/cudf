@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import Self, overload
 
 from pylibcudf.table import Table
@@ -40,10 +40,18 @@ class TableChunk:
     def make_available_cost(self) -> int: ...
     def make_available(self, reservation: MemoryReservation) -> TableChunk: ...
     async def make_available_or_wait(
-        self, ctx: Context, *, net_memory_delta: int
+        self,
+        ctx: Context,
+        *,
+        net_memory_delta: int,
+        attributes: Mapping[str, str | int | bool | float] | None = None,
     ) -> TableChunk: ...
     def make_available_and_spill(
-        self, br: BufferResource, *, allow_overbooking: bool
+        self,
+        br: BufferResource,
+        *,
+        allow_overbooking: bool,
+        attributes: Mapping[str, str | int | bool | float] | None = None,
     ) -> TableChunk: ...
     def table_view(self) -> Table: ...
     def is_spillable(self) -> bool: ...
@@ -63,6 +71,7 @@ async def make_table_chunks_available_or_wait(
     reserve_extra: int,
     net_memory_delta: int,
     allow_overbooking: bool | None = None,
+    attributes: Mapping[str, str | int | bool | float] | None = None,
 ) -> tuple[TableChunk, MemoryReservation]: ...
 @overload
 async def make_table_chunks_available_or_wait(
@@ -72,4 +81,5 @@ async def make_table_chunks_available_or_wait(
     reserve_extra: int,
     net_memory_delta: int,
     allow_overbooking: bool | None = None,
+    attributes: Mapping[str, str | int | bool | float] | None = None,
 ) -> tuple[list[TableChunk], MemoryReservation]: ...

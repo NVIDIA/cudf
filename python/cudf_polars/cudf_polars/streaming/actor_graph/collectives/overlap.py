@@ -145,6 +145,8 @@ class RangeBufferedChunk(BufferedChunk):
 class _OverlapPolicy[BufferedChunkT: BufferedChunk]:
     """Base policy for finding the rows needed to evaluate a cursor."""
 
+    reservation_attributes: dict[str, str] | None = None
+
     def observe(self, chunk: BufferedChunkT) -> None:
         """Record resources that must remain valid while using a chunk."""
 
@@ -338,13 +340,16 @@ class RangeOverlapPolicy(_OverlapPolicy[RangeBufferedChunk]):
         find: _BoundSearch,
         dtype: plc.DataType,
         stream: Stream,
+        attributes: dict[str, str] | None,
     ) -> int:
         """Find a needle's insertion point in one available index column."""
         needs_cast = index_column.type() != dtype
         memory_scope = nullcontext()
         if needs_cast:
             reservation = await context.memory(MemoryType.DEVICE).reserve_or_wait(
-                index_column.size() * 8, net_memory_delta=0
+                index_column.size() * 8,
+                net_memory_delta=0,
+                attributes=attributes,
             )
             memory_scope = opaque_memory_usage(reservation)
         with memory_scope:
@@ -396,6 +401,7 @@ class RangeOverlapPolicy(_OverlapPolicy[RangeBufferedChunk]):
             find,
             self.index_dtype,
             stream,
+            self.reservation_attributes,
         )
 
     @staticmethod
@@ -409,6 +415,7 @@ class RangeOverlapPolicy(_OverlapPolicy[RangeBufferedChunk]):
         dtype: plc.DataType,
         context: Context,
         needle_stream: Stream,
+        attributes: dict[str, str] | None,
     ) -> int:
         """Return a needle's insertion row in prepared-stream coordinates."""
         assert len(chunks) > 0
@@ -431,6 +438,7 @@ class RangeOverlapPolicy(_OverlapPolicy[RangeBufferedChunk]):
                 find,
                 dtype,
                 stream,
+                attributes,
             )
             if insertion_point < chunk.num_rows:
                 return chunk.row_start + insertion_point
@@ -495,6 +503,7 @@ class RangeOverlapPolicy(_OverlapPolicy[RangeBufferedChunk]):
             chunk,
             reserve_extra=32,
             net_memory_delta=0,
+            attributes=self.reservation_attributes,
         )
         with opaque_memory_usage(extra):
             index_column = chunk.table_view().columns()[self.index_position]
@@ -602,6 +611,7 @@ class RangeOverlapPolicy(_OverlapPolicy[RangeBufferedChunk]):
             dtype=self.index_dtype,
             context=context,
             needle_stream=cursor.chunk.stream,
+            attributes=self.reservation_attributes,
         )
         overlap_stop = await self._insertion_row(
             chunks,
@@ -612,6 +622,7 @@ class RangeOverlapPolicy(_OverlapPolicy[RangeBufferedChunk]):
             dtype=self.index_dtype,
             context=context,
             needle_stream=cursor.chunk.stream,
+            attributes=self.reservation_attributes,
         )
         # We must extract at least the whole of the current cursor chunk.
         overlap_start = min(cursor.row_start, overlap_start)
@@ -638,7 +649,11 @@ class RowCountOverlapPolicy(_OverlapPolicy[BufferedChunk]):
         del host_values
         nrows, _ = chunk.shape
         chunk, _ = await make_table_chunks_available_or_wait(
-            context, chunk, reserve_extra=0, net_memory_delta=0
+            context,
+            chunk,
+            reserve_extra=0,
+            net_memory_delta=0,
+            attributes=self.reservation_attributes,
         )
         return BufferedChunk(chunk, row_offset, nrows)
 
@@ -678,7 +693,9 @@ class RowCountOverlapPolicy(_OverlapPolicy[BufferedChunk]):
             stream=stream,
         )
         reservation = await context.memory(MemoryType.DEVICE).reserve_or_wait(
-            cursor.chunk.data_alloc_size(), net_memory_delta=0
+            cursor.chunk.data_alloc_size(),
+            net_memory_delta=0,
+            attributes=self.reservation_attributes,
         )
         with opaque_memory_usage(reservation):
             table = table.copy(stream=stream, mr=context.br().device_mr)
@@ -955,7 +972,12 @@ class OverlapInput[BufferedChunkT: BufferedChunk]:
     ) -> tuple[tuple[int, ...], ...]:
         """All-gather fixed-width signed integer metadata in rank order."""
         fmt = f"<{len(payload)}q"
-        gather = AllGather(self.context, self.comm, self.collective_id)
+        gather = AllGather(
+            self.context,
+            self.comm,
+            self.collective_id,
+            attributes=self.policy.reservation_attributes,
+        )
         try:
             gather.insert(
                 0,
@@ -1197,6 +1219,7 @@ class OverlapInput[BufferedChunkT: BufferedChunk]:
                     chunk,
                     reserve_extra=0,
                     net_memory_delta=0,
+                    attributes=self.policy.reservation_attributes,
                 )
                 with opaque_memory_usage(extra):
                     if (
@@ -1305,5 +1328,6 @@ class OverlapInput[BufferedChunkT: BufferedChunk]:
             piece,
             reserve_extra=piece.into_packed_data_cost(),
             net_memory_delta=0,
+            attributes=self.policy.reservation_attributes,
         )
         exchange.insert(destination, piece.into_packed_data(extra))

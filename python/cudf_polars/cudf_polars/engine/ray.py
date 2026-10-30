@@ -389,6 +389,7 @@ class RankActor:
                 self._quent_worker_runtime = None
         if quent_context is not None and collector_address is not None:
             assert self._comm is not None
+            assert self._ctx is not None
             self._quent_worker_runtime = QuentWorkerRuntime.create(
                 quent_context,
                 collector_address,
@@ -396,6 +397,7 @@ class RankActor:
                 rank=self._comm.rank,
                 nranks=self._nranks,
                 instance_name=f"RankActor-{self._worker_id.hex[:8]}",
+                buffer_resource=self._ctx.br(),
             )
 
     def reset(
@@ -452,6 +454,8 @@ class RankActor:
             barrier(self._comm)
         # Drop persisted partitions before tearing down the Context.
         rank_local_store.close_all()
+        if self._quent_worker_runtime is not None:
+            self._quent_worker_runtime.detach_buffer_resource()
         self._ctx.shutdown()
         self._ctx = None
         self._rapidsmpf_options = Options.deserialize(rapidsmpf_options_as_bytes)
@@ -474,6 +478,8 @@ class RankActor:
         # to the now-shutdown Context.
         self._mr = self._ctx.br().device_mr_adaptor()
         rmm.mr.set_current_device_resource(self._mr)
+        if self._quent_worker_runtime is not None:
+            self._quent_worker_runtime.retarget_buffer_resource(self._ctx.br())
 
     def shutdown(self) -> None:
         """
@@ -485,16 +491,23 @@ class RankActor:
         if self._kvikio_monitor is not None:
             self._kvikio_monitor.stop()
             self._kvikio_monitor = None
-        self._py_executor.shutdown(wait=True, cancel_futures=True)
         # Release resources in dependency order before exit_actor() terminates
         # the process. Shut down the Context explicitly on the same thread
         # that constructed it.
         try:
-            # Drop persisted partitions before tearing down the Context.
-            rank_local_store.close_all()
+            # Stop Python producers before the Quent runtime disables BufferResource
+            # recording, then tear down the Context.
+            steps: list[Callable[[], object]] = [
+                lambda: self._py_executor.shutdown(wait=True, cancel_futures=True),
+                rank_local_store.close_all,
+            ]
+            if self._quent_worker_runtime is not None:
+                steps.append(self._quent_worker_runtime.close)
             if self._ctx is not None:
-                self._ctx.shutdown()
+                steps.append(self._ctx.shutdown)
+            run_cleanup_steps("Ray worker teardown failed", *steps)
         finally:
+            self._quent_worker_runtime = None
             self._ctx = None
             self._comm = None
             self._mr = None

@@ -29,7 +29,7 @@ from cudf_polars.streaming.filter_hint import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Coroutine, Iterable, Sequence
+    from collections.abc import Coroutine, Iterable, Mapping, Sequence
 
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.streaming.core.channel import Channel
@@ -147,12 +147,16 @@ async def project_key_chunk(
     context: Context,
     chunk: TableChunk,
     indices: Iterable[int],
+    *,
+    attributes: Mapping[str, str | int | bool | float] | None,
 ) -> TableChunk:
     """Copy selected columns into an owning key chunk."""
     columns = tuple(chunk.table_view().columns()[index] for index in indices)
     bytes = sum(column.device_buffer_size() for column in columns)
     with opaque_memory_usage(
-        await reserve_memory(context, size=bytes, net_memory_delta=0)
+        await reserve_memory(
+            context, size=bytes, net_memory_delta=0, attributes=attributes
+        )
     ):
         table = plc.Table(columns).copy(stream=chunk.stream, mr=context.br().device_mr)
     return TableChunk.from_pylibcudf_table(
@@ -169,6 +173,8 @@ async def buffer_and_project_keys(
     ch_keys: Channel[TableChunk],
     ch_replay: Channel[TableChunk],
     indices: Iterable[int],
+    *,
+    attributes: Mapping[str, str | int | bool | float] | None,
 ) -> None:
     """
     Project owning key chunks while spill-buffering an input for replay.
@@ -192,8 +198,12 @@ async def buffer_and_project_keys(
                 sequence_number = msg.sequence_number
                 chunk = await TableChunk.from_message(
                     msg, br=context.br()
-                ).make_available_or_wait(context, net_memory_delta=0)
-                key_chunk = await project_key_chunk(context, chunk, indices)
+                ).make_available_or_wait(
+                    context, net_memory_delta=0, attributes=attributes
+                )
+                key_chunk = await project_key_chunk(
+                    context, chunk, indices, attributes=attributes
+                )
                 chunks.insert(Message(sequence_number, chunk))
                 await ch_keys.send(context, Message(sequence_number, key_chunk))
 
@@ -253,10 +263,13 @@ class JoinPrefilterExecution(PrefilterExecution):
         context: Context,
         ch_left: Channel[TableChunk],
         ch_right: Channel[TableChunk],
+        *,
+        attributes: Mapping[str, str | int | bool | float] | None,
     ) -> None:
         super().__init__(context)
         self.source_inputs = {"left": ch_left, "right": ch_right}
         self.join_inputs = dict(self.source_inputs)
+        self.attributes = attributes
         self.buffered_domains: set[JoinSide] = set()
 
     def buffer_domain(
@@ -277,6 +290,7 @@ class JoinPrefilterExecution(PrefilterExecution):
                 ch_keys,
                 ch_replay,
                 indices,
+                attributes=self.attributes,
             )
         )
         self.channels.extend((ch_keys, ch_replay))
@@ -315,6 +329,8 @@ def add_bloom_prefilter(
     ch_filtered: Channel[TableChunk],
     collective_id: int,
     prefilter_statistics: RuntimePrefilterStatistics | None,
+    *,
+    attributes: Mapping[str, str | int | bool | float] | None,
 ) -> None:
     """Add the channels and actors for an approximate Bloom prefilter."""
     bloom = BloomFilter(
@@ -331,6 +347,7 @@ def add_bloom_prefilter(
             ch_domain_keys,
             ch_filter,
             collective_id,
+            attributes=attributes,
         )
     )
     ch_apply_input = ch_target
@@ -367,6 +384,7 @@ def add_bloom_prefilter(
             ch_apply_input,
             ch_apply_output,
             target_indices,
+            attributes=attributes,
         )
     )
 

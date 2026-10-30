@@ -137,6 +137,8 @@ def test_quent_worker_cleanup_continues_after_handle_failure() -> None:
         session=session,
         worker_resources=MagicMock(),
         _worker_handle=worker_handle,
+        _buffer_resource=None,
+        _reservation_ingestor=None,
     )
 
     with pytest.raises(ExceptionGroup, match="Quent worker shutdown failed"):
@@ -295,7 +297,57 @@ def test_quent_lifecycle(
         for terminal in terminal_actor_events
     )
     assert _of_type(events, "DeviceMemory")
+    reservable_memory_events = _of_type(events, "ReservableMemory")
+    assert reservable_memory_events
+    assert all(
+        event["data"]["ReservableMemory"]["Declared"]["limits"]["bytes"] >= 0
+        for event in reservable_memory_events
+        if "Declared" in event["data"]["ReservableMemory"]
+    )
     assert _of_type(events, "Storage")
+    request_events = _of_type(events, "MemoryReservationRequest")
+    reservation_events = _of_type(events, "MemoryReservation")
+    assert request_events
+    assert reservation_events
+    request_states: dict[str, list[str]] = {}
+    for event in request_events:
+        request_states.setdefault(event["id"], []).append(
+            next(iter(event["data"]["MemoryReservationRequest"]))
+        )
+    assert all(
+        states[0] == "Submitted"
+        and states[-1] in {"Granted", "Empty", "Failed", "Cancelled"}
+        and sum(
+            state in {"Granted", "Empty", "Failed", "Cancelled"} for state in states
+        )
+        == 1
+        for states in request_states.values()
+    )
+    reservation_states: dict[str, list[str]] = {}
+    attributed_bytes = 0
+    unattributed_sites = set()
+    reservation_actors: dict[str, str | None] = {}
+    for event in reservation_events:
+        state, values = next(iter(event["data"]["MemoryReservation"].items()))
+        reservation_states.setdefault(event["id"], []).append(state)
+        if state == "Created":
+            reservation_actors[event["id"]] = values["actor"]
+            if values["actor"] is None:
+                unattributed_sites.add(values["site"])
+        if state == "Held" and reservation_actors[event["id"]] is not None:
+            assert values["memory"]["data"]["bytes"] > 0
+            attributed_bytes += values["memory"]["data"]["bytes"]
+    assert all(
+        states[0] == "Created" and states[1] == "Held" and states[-1] == "Released"
+        for states in reservation_states.values()
+    )
+    assert attributed_bytes > 0
+    # Internal reservations without actor context may also lack a call site.
+    assert unattributed_sites <= {
+        "engine.statistics.allgather",
+        "spill",
+        "unknown",
+    }
     evaluate_events = _of_type(events, "Evaluate")
     assert evaluate_events
     evaluate_states: dict[str, list[str]] = {}

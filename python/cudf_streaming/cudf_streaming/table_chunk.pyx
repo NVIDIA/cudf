@@ -386,7 +386,7 @@ cdef class TableChunk:
         return TableChunk.from_handle(move(ret), self._br)
 
     async def make_available_or_wait(
-        self, Context ctx not None, *, int64_t net_memory_delta
+        self, Context ctx not None, *, int64_t net_memory_delta, attributes=None
     ):
         """
         Move this table chunk into a new one with its data made available.
@@ -403,6 +403,8 @@ cdef class TableChunk:
         net_memory_delta
             Estimated change in memory usage after the reservation is granted and
             all work using the returned table chunk has completed.
+        attributes
+            Optional attributes attached to the memory reservation request.
 
         Returns
         -------
@@ -422,12 +424,15 @@ cdef class TableChunk:
         """
         return self.make_available(
             await reserve_memory(
-                ctx, self.make_available_cost(), net_memory_delta=net_memory_delta
+                ctx,
+                self.make_available_cost(),
+                net_memory_delta=net_memory_delta,
+                attributes=attributes,
             )
         )
 
     def make_available_and_spill(
-        self, BufferResource br not None, *, allow_overbooking
+        self, BufferResource br not None, *, allow_overbooking, attributes=None
     ):
         """
         Make this table chunk available on device, spilling other data if necessary.
@@ -443,6 +448,8 @@ cdef class TableChunk:
         allow_overbooking
             Whether the memory reservation may temporarily exceed the current
             allocation limit.
+        attributes
+            Optional attributes attached to the memory reservation request.
 
         Returns
         -------
@@ -466,7 +473,8 @@ cdef class TableChunk:
 
         cdef MemoryReservation res = br.reserve_device_memory_and_spill(
             self.make_available_cost(),
-            allow_overbooking=allow_overbooking
+            allow_overbooking=allow_overbooking,
+            attributes=attributes,
         )
         return self.make_available(res)
 
@@ -606,6 +614,7 @@ async def make_table_chunks_available_or_wait(
     size_t reserve_extra,
     int64_t net_memory_delta,
     allow_overbooking=None,
+    attributes=None,
 ):
     """
     Make one or more table chunks available, waiting on a memory reservation if needed.
@@ -640,6 +649,8 @@ async def make_table_chunks_available_or_wait(
             is possible.
           - If ``None``, the behavior is determined by the configuration option
             ``"allow_overbooking_by_default"``, which is read via ``ctx.options()``.
+    attributes
+        Optional attributes attached to the memory reservation request.
 
     Returns
     -------
@@ -672,6 +683,7 @@ async def make_table_chunks_available_or_wait(
         net_memory_delta=net_memory_delta,
         mem_type=MemoryType.DEVICE,
         allow_overbooking=allow_overbooking,
+        attributes=attributes,
     )
     available_chunks = [chunk.make_available(res) for chunk in chunks]
     if isinstance(input_chunks, TableChunk):

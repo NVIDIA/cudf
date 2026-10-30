@@ -20,9 +20,14 @@ from rmm.pylibrmm.stream cimport Stream
 
 from rapidsmpf._detail.exception_handling cimport ex_handler
 from rapidsmpf.memory.buffer_resource cimport (
+    AllowOverbooking,
     BufferResource,
     cpp_BufferResource,
     device_async_resource_ref,
+)
+from rapidsmpf.memory.reservation_attributes cimport (
+    cpp_ReservationAttributes,
+    reservation_attributes_from_mapping,
 )
 from rapidsmpf.memory.memory_reservation cimport (
     MemoryReservation,
@@ -47,6 +52,8 @@ cdef extern from "<cudf_streaming/partition_utils.hpp>" nogil:
             uint32_t seed,
             stream_ref stream,
             cpp_BufferResource* br,
+            AllowOverbooking allow_overbooking,
+            cpp_ReservationAttributes attributes,
         ) except +ex_handler
 
     cdef size_t cpp_partition_and_pack_cost \
@@ -73,6 +80,8 @@ cdef extern from "<cudf_streaming/partition_utils.hpp>" nogil:
             const vector[size_type] &splits,
             stream_ref stream,
             cpp_BufferResource* br,
+            AllowOverbooking allow_overbooking,
+            cpp_ReservationAttributes attributes,
         ) except +ex_handler
 
     cdef size_t cpp_split_and_pack_cost \
@@ -136,6 +145,7 @@ cpdef object partition_and_pack(
     BufferResource br,
     uint32_t seed = cpp_DEFAULT_HASH_SEED,
     MemoryReservation reservation=None,
+    object attributes=None,
 ):
     """
     Partition rows from the input table into multiple packed tables.
@@ -158,6 +168,8 @@ cpdef object partition_and_pack(
         Device memory reservation covering :func:`partition_and_pack_cost`. It is
         consumed as the allocations land, leaving it empty on return. If not given,
         the memory is reserved internally instead.
+    attributes
+        Optional attributes attached to the internal memory reservation request.
 
     Returns
     -------
@@ -186,6 +198,8 @@ cpdef object partition_and_pack(
     cdef unordered_map[uint32_t, cpp_PackedData] _ret
     cdef table_view tbl = table.view()
     cdef cpp_MemoryReservation* _reservation = NULL
+    cdef cpp_ReservationAttributes cpp_attributes = \
+        reservation_attributes_from_mapping(attributes)
     if reservation is not None:
         _reservation = reservation._handle.get()
     with nogil:
@@ -198,6 +212,8 @@ cpdef object partition_and_pack(
                 seed,
                 _stream,
                 _br,
+                AllowOverbooking.YES,
+                move(cpp_attributes),
             )
         else:
             _ret = cpp_partition_and_pack_reserved(
@@ -262,6 +278,7 @@ cpdef object split_and_pack(
     Stream stream,
     BufferResource br,
     MemoryReservation reservation=None,
+    object attributes=None,
 ):
     """
     Split rows from the input table into multiple packed tables.
@@ -281,6 +298,8 @@ cpdef object split_and_pack(
         Device memory reservation covering :func:`split_and_pack_cost`. It is
         consumed as the allocation lands. If not given, the memory is reserved
         internally instead.
+    attributes
+        Optional attributes attached to the internal memory reservation request.
 
     Returns
     -------
@@ -308,6 +327,8 @@ cpdef object split_and_pack(
     cdef unordered_map[uint32_t, cpp_PackedData] _ret
     cdef table_view tbl = table.view()
     cdef cpp_MemoryReservation* _reservation = NULL
+    cdef cpp_ReservationAttributes cpp_attributes = \
+        reservation_attributes_from_mapping(attributes)
     if reservation is not None:
         _reservation = reservation._handle.get()
     with nogil:
@@ -317,6 +338,8 @@ cpdef object split_and_pack(
                 _splits,
                 _stream,
                 _br,
+                AllowOverbooking.YES,
+                move(cpp_attributes),
             )
         else:
             _ret = cpp_split_and_pack_reserved(
@@ -342,7 +365,13 @@ cdef object pack(
     BufferResource br,
 ):
     """Pack a table into a single ``PackedData`` instance."""
-    packed = split_and_pack(table, (), stream, br)
+    packed = split_and_pack(
+        table,
+        (),
+        stream,
+        br,
+        attributes={"rapidsmpf.site": "partition.pack"},
+    )
     return packed[0]
 
 
@@ -352,6 +381,8 @@ cdef extern from "<cudf_streaming/partition_utils.hpp>" nogil:
             vector[cpp_PackedData] partition,
             stream_ref stream,
             cpp_BufferResource* br,
+            AllowOverbooking allow_overbooking,
+            cpp_ReservationAttributes attributes,
         ) except +ex_handler
 
     cdef size_t cpp_unpack_and_concat_cost \
@@ -419,6 +450,7 @@ cpdef object unpack_and_concat(
     Stream stream,
     BufferResource br,
     MemoryReservation reservation=None,
+    object attributes=None,
 ):
     """
     Unpack input partitions and concatenate them into a single table.
@@ -447,6 +479,8 @@ cpdef object unpack_and_concat(
         Device memory reservation covering :func:`unpack_and_concat_cost`. It is
         consumed as the allocations land, leaving it empty on return. If not given,
         the memory is reserved internally instead.
+    attributes
+        Optional attributes attached to the internal memory reservation request.
 
     Returns
     -------
@@ -471,6 +505,8 @@ cpdef object unpack_and_concat(
     cdef vector[cpp_PackedData] _partitions = _partitions_py_to_cpp(partitions)
     cdef unique_ptr[cpp_table] _ret
     cdef cpp_MemoryReservation* _reservation = NULL
+    cdef cpp_ReservationAttributes cpp_attributes = \
+        reservation_attributes_from_mapping(attributes)
     if reservation is not None:
         _reservation = reservation._handle.get()
     with nogil:
@@ -479,6 +515,8 @@ cpdef object unpack_and_concat(
                 move(_partitions),
                 _stream,
                 _br,
+                AllowOverbooking.YES,
+                move(cpp_attributes),
             )
         else:
             _ret = cpp_unpack_and_concat_reserved(

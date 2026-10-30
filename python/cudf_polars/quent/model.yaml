@@ -275,6 +275,25 @@ entities:
         attributes:
           limits: { sets-resource-bounds: true }
 
+  ReservableMemory:
+    doc: Reservable bytes of one memory type on a worker's rapidsmpf BufferResource.
+    resource:
+      bytes: { kind: occupancy, known-bounds: true }
+    events:
+      declared:
+        attributes:
+          instance_name: string
+          worker: { scope-ref: Worker }
+          memory_type: string
+          limits: { sets-resource-bounds: true }
+          configured_limit: i64
+      resized:
+        multi: true
+        attributes:
+          limits: { sets-resource-bounds: true }
+          configured_limit: i64
+          sequence: u64
+
   Storage:
     doc: A worker-local storage resource whose capacity may be unknown.
     resource:
@@ -384,3 +403,68 @@ fsms:
         attributes:
           error: string
           values: OperatorStatistics
+
+  MemoryReservationRequest:
+    doc: One outermost public rapidsmpf memory reservation operation.
+    states:
+      submitted:
+        initial: true
+        attributes:
+          worker: { scope-ref: Worker }
+          actor: { option: { ref: Actor } }
+          site: string
+          size: u64
+          memory_types: { list: string }
+          policy: string
+          net_memory_delta: { option: i64 }
+          attributes: dynamic
+          sequence: u64
+        to: [waiting, granted, empty, failed, cancelled]
+      waiting:
+        attributes:
+          sequence: u64
+        to: [granted, empty, failed, cancelled]
+      granted:
+        attributes:
+          reservation: { option: { ref: MemoryReservation } }
+          memory_type: string
+          size: u64
+          overbooked_bytes: u64
+          timed_out: bool
+          sequence: u64
+      empty:
+        attributes:
+          timed_out: bool
+          sequence: u64
+      failed:
+        attributes:
+          error: string
+          sequence: u64
+      cancelled:
+        attributes:
+          sequence: u64
+
+  MemoryReservation:
+    doc: A promise of bytes on a worker's rapidsmpf BufferResource.
+    states:
+      created:
+        initial: true
+        attributes:
+          worker: { scope-ref: Worker }
+          actor: { option: { ref: Actor } }
+          site: string
+          request: { option: { ref: MemoryReservationRequest } }
+          parent: { option: { ref: MemoryReservation } }
+          attributes: dynamic
+          sequence: u64
+        to: [held]
+      held:
+        attributes:
+          memory: { uses: ReservableMemory }
+          change: string
+          sequence: u64
+        to: [held, released]
+      released:
+        attributes:
+          reason: string
+          sequence: u64

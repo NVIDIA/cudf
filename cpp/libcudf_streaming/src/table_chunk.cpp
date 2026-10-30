@@ -193,9 +193,16 @@ table_chunk table_chunk::make_available(rapidsmpf::MemoryReservation&& reservati
 }
 
 coro::task<table_chunk> table_chunk::make_available(
-  std::shared_ptr<rapidsmpf::streaming::Context> ctx, std::int64_t net_memory_delta)
+  std::shared_ptr<rapidsmpf::streaming::Context> ctx,
+  std::int64_t net_memory_delta,
+  rapidsmpf::ReservationAttributes attributes)
 {
-  co_return make_available(co_await reserve_memory(ctx, make_available_cost(), net_memory_delta));
+  co_return make_available(co_await reserve_memory(ctx,
+                                                   make_available_cost(),
+                                                   net_memory_delta,
+                                                   rapidsmpf::MemoryType::DEVICE,
+                                                   std::nullopt,
+                                                   std::move(attributes)));
 }
 
 cudf::table_view table_chunk::table_view() const

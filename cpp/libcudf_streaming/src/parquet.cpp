@@ -91,9 +91,10 @@ class FileCache {
    */
   bool insert(std::shared_ptr<rapidsmpf::streaming::Context> ctx,
               Key key,
-              rapidsmpf::streaming::Message const& msg)
+              rapidsmpf::streaming::Message const& msg,
+              rapidsmpf::ReservationAttributes const& attributes)
   {
-    auto reservation = ctx->br()->reserve_or_fail(msg.copy_cost(), mem_type_);
+    auto reservation = ctx->br()->reserve_or_fail(msg.copy_cost(), mem_type_, attributes);
     auto msg_copy    = msg.copy(reservation);
 
     std::lock_guard lock(mutex_);
@@ -114,7 +115,9 @@ class FileCache {
    * @return The cached message, or std::nullopt if the key is not present.
    */
   std::optional<rapidsmpf::streaming::Message> get(
-    std::shared_ptr<rapidsmpf::streaming::Context> ctx, Key const& key) const
+    std::shared_ptr<rapidsmpf::streaming::Context> ctx,
+    Key const& key,
+    rapidsmpf::ReservationAttributes const& attributes) const
   {
     auto& stats = *ctx->statistics();
 
@@ -136,7 +139,7 @@ class FileCache {
 
     stats.add_stat("unbounded_file_read_cache hits", 1);
     stats.add_bytes_stat("unbounded_file_read_cache saved", size);
-    auto reservation = ctx->br()->reserve_or_fail(size, rapidsmpf::MEMORY_TYPES);
+    auto reservation = ctx->br()->reserve_or_fail(size, rapidsmpf::MEMORY_TYPES, attributes);
     return ctx->spillable_messages()->copy(mid, reservation);
   }
 
@@ -198,7 +201,8 @@ class FileCache {
 rapidsmpf::streaming::Message read_parquet_chunk(std::shared_ptr<rapidsmpf::streaming::Context> ctx,
                                                  cuda::stream_ref stream,
                                                  cudf::io::parquet_reader_options options,
-                                                 std::uint64_t sequence_number)
+                                                 std::uint64_t sequence_number,
+                                                 rapidsmpf::ReservationAttributes const& attributes)
 {
   auto do_read_parquet = [&]() -> rapidsmpf::streaming::Message {
     return to_message(
@@ -219,11 +223,11 @@ rapidsmpf::streaming::Message read_parquet_chunk(std::shared_ptr<rapidsmpf::stre
                      .column_indices = options.get_column_indices(),
                      .row_groups     = options.get_row_groups()};
 
-  auto msg = file_cache->get(ctx, key);
+  auto msg = file_cache->get(ctx, key, attributes);
   if (msg.has_value()) { return std::move(*msg); }
 
   auto ret = do_read_parquet();
-  file_cache->insert(ctx, key, ret);
+  file_cache->insert(ctx, key, ret, attributes);
   return ret;
 }
 
@@ -249,7 +253,8 @@ rapidsmpf::streaming::Actor produce_chunks(
   std::shared_ptr<rapidsmpf::streaming::Context> ctx,
   std::shared_ptr<rapidsmpf::streaming::BoundedQueue> ch_out,
   std::vector<ChunkDesc>& chunks,
-  cudf::io::parquet_reader_options options)
+  cudf::io::parquet_reader_options options,
+  rapidsmpf::ReservationAttributes attributes)
 {
   // ShutdownAtExit c{ch_out};
   co_await ctx->executor()->schedule();
@@ -270,7 +275,8 @@ rapidsmpf::streaming::Actor produce_chunks(
     // See https://github.com/NVIDIA/cudf/issues/20311
     auto [msg, exception] = [&]() -> std::pair<rapidsmpf::streaming::Message, std::exception_ptr> {
       try {
-        return {read_parquet_chunk(ctx, stream, chunk_options, chunk.sequence_number), nullptr};
+        return {read_parquet_chunk(ctx, stream, chunk_options, chunk.sequence_number, attributes),
+                nullptr};
       } catch (...) {
         return {rapidsmpf::streaming::Message{}, std::current_exception()};
       }
@@ -295,7 +301,8 @@ rapidsmpf::streaming::Actor read_parquet(std::shared_ptr<rapidsmpf::streaming::C
                                          std::size_t num_producers,
                                          cudf::io::parquet_reader_options options,
                                          cudf::size_type num_rows_per_chunk,
-                                         std::unique_ptr<filter> filter)
+                                         std::unique_ptr<filter> filter,
+                                         rapidsmpf::ReservationAttributes attributes)
 {
   rapidsmpf::streaming::ShutdownAtExit c{ch_out};
   co_await ctx->executor()->schedule();
@@ -381,8 +388,8 @@ rapidsmpf::streaming::Actor read_parquet(std::shared_ptr<rapidsmpf::streaming::C
       empty_opts.set_source(cudf::io::source_info(local_files[0]));
       empty_opts.set_skip_rows(0);
       empty_opts.set_num_rows(0);
-      co_await ctx->executor()->schedule(ch_out->send(
-        read_parquet_chunk(ctx, ctx->br()->stream_pool()->get_stream(), std::move(empty_opts), 0)));
+      co_await ctx->executor()->schedule(ch_out->send(read_parquet_chunk(
+        ctx, ctx->br()->stream_pool()->get_stream(), std::move(empty_opts), 0, attributes)));
     }
   } else {
     std::vector<rapidsmpf::streaming::Actor> read_tasks;
@@ -390,7 +397,8 @@ rapidsmpf::streaming::Actor read_parquet(std::shared_ptr<rapidsmpf::streaming::C
     auto lineariser = rapidsmpf::streaming::Lineariser(ctx, ch_out, num_producers);
     auto queues     = lineariser.get_queues();
     for (std::size_t i = 0; i < num_producers; i++) {
-      read_tasks.push_back(produce_chunks(ctx, queues[i], chunks_per_producer[i], options));
+      read_tasks.push_back(
+        produce_chunks(ctx, queues[i], chunks_per_producer[i], options, attributes));
     }
     read_tasks.push_back(lineariser.drain());
     rapidsmpf::streaming::coro_results(co_await coro::when_all(std::move(read_tasks)));

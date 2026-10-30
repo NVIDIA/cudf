@@ -138,6 +138,25 @@ TEST_F(DictionaryFactoriesTest, InvalidIndices)
     std::invalid_argument);
 }
 
+TEST_F(DictionaryFactoriesTest, EmptyKeys)
+{
+  cudf::test::strings_column_wrapper keys{};
+
+  cudf::test::fixed_width_column_wrapper<int32_t> null_indices({0, 0, 0}, {0, 0, 0});
+  auto dictionary = cudf::make_dictionary_column(keys, null_indices);
+  EXPECT_EQ(dictionary->size(), 3);
+  EXPECT_EQ(dictionary->null_count(), 3);
+  ASSERT_EQ(dictionary->num_children(), 2);
+  EXPECT_EQ(cudf::dictionary_column_view(dictionary->view()).keys().type().id(),
+            cudf::type_id::STRING);
+
+  cudf::test::fixed_width_column_wrapper<int32_t> empty_indices{};
+  auto empty = cudf::make_dictionary_column(keys, empty_indices);
+  EXPECT_EQ(empty->size(), 0);
+  ASSERT_EQ(empty->num_children(), 2);
+  EXPECT_EQ(cudf::dictionary_column_view(empty->view()).keys().type().id(), cudf::type_id::STRING);
+}
+
 template <typename T>
 struct DictionaryFactoriesUnsignedIndicesTest : public cudf::test::BaseFixture {};
 

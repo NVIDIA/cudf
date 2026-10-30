@@ -132,7 +132,8 @@ std::unique_ptr<column> empty_like(column_view const& input)
 
   // test_dataframe.py passes an EMPTY column type here;
   // this causes is_nested to throw an error since it uses the type-dispatcher
-  if ((input.type().id() == type_id::EMPTY) || !cudf::is_nested(input.type())) {
+  if ((input.type().id() == type_id::EMPTY) ||
+      (!cudf::is_nested(input.type()) && input.type().id() != type_id::DICTIONARY32)) {
     return make_empty_column(input.type());
   }
 

@@ -1753,9 +1753,22 @@ TEST_F(DictionaryConcatTest, AllEmptyViews)
   auto empty1      = cudf::slice(dictionary1->view(), {0, 0}).front();
   auto empty2      = cudf::slice(dictionary2->view(), {1, 1}).front();
   auto result      = cudf::concatenate(std::vector<cudf::column_view>{empty1, empty2});
-  // all-empty inputs short-circuit to an empty (childless) dictionary column
   EXPECT_EQ(result->size(), 0);
   EXPECT_EQ(result->type().id(), cudf::type_id::DICTIONARY32);
+  ASSERT_EQ(result->num_children(), 2);
+  EXPECT_EQ(cudf::dictionary_column_view(result->view()).keys().type().id(), cudf::type_id::INT32);
+}
+
+TEST_F(DictionaryConcatTest, EmptyGatherResult)
+{
+  cudf::test::strings_column_wrapper strings({"aaa", "ddd", "bbb"});
+  auto dictionary = cudf::dictionary::encode(strings);
+  cudf::test::fixed_width_column_wrapper<int32_t> empty_map{};
+  auto empty = cudf::gather(cudf::table_view{{dictionary->view()}}, empty_map)->release();
+  auto result =
+    cudf::concatenate(std::vector<cudf::column_view>{empty.front()->view(), dictionary->view()});
+  auto decoded = cudf::dictionary::decode(result->view());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*decoded, strings);
 }
 
 TEST_F(DictionaryConcatTest, ErrorsTest)

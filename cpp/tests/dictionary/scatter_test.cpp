@@ -55,6 +55,22 @@ TEST_F(DictionaryScatterTest, Scatter)
   EXPECT_EQ(0, decoded->size());
 }
 
+TEST_F(DictionaryScatterTest, EmptyTarget)
+{
+  cudf::test::strings_column_wrapper strings{"xxx", "bbb", "aaa"};
+  auto dictionary = cudf::dictionary::encode(strings);
+  auto empty      = cudf::slice(dictionary->view(), {0, 0}).front();
+
+  cudf::test::fixed_width_column_wrapper<int32_t> empty_map{};
+  auto table_result =
+    cudf::scatter(cudf::table_view{{empty}}, empty_map, cudf::table_view{{empty}})->release();
+  auto result = cudf::dictionary_column_view(table_result.front()->view());
+
+  EXPECT_EQ(result.size(), 0);
+  ASSERT_EQ(result.parent().num_children(), 2);
+  EXPECT_EQ(result.keys().type().id(), cudf::type_id::STRING);
+}
+
 TEST_F(DictionaryScatterTest, ScatterScalar)
 {
   cudf::test::strings_column_wrapper strings_target{

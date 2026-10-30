@@ -11,6 +11,7 @@
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/copying.hpp>
+#include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
@@ -387,6 +388,16 @@ TEST_F(ColumnFactoryTest, DictionaryFromStringScalar)
   EXPECT_EQ(2, column->num_children());
   EXPECT_FALSE(column->nullable());
   EXPECT_FALSE(column->has_nulls());
+}
+
+TEST_F(ColumnFactoryTest, EmptyDictionaryFromStringScalar)
+{
+  cudf::string_scalar value("hello");
+  auto column = cudf::make_dictionary_from_scalar(value, 0);
+  EXPECT_EQ(0, column->size());
+  EXPECT_EQ(column->type(), cudf::data_type{cudf::type_id::DICTIONARY32});
+  ASSERT_EQ(2, column->num_children());
+  EXPECT_EQ(cudf::dictionary_column_view(column->view()).keys().type(), value.type());
 }
 
 TEST_F(ColumnFactoryTest, DictionaryFromStringScalarError)

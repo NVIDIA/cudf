@@ -185,12 +185,13 @@ int dispatch_to_arrow_type::operator()<cudf::dictionary32>(column_view input,
                                                            ArrowSchema* out)
 {
   cudf::dictionary_column_view const dview{input};
+  auto const has_children = input.num_children() == 2;
 
   NANOARROW_RETURN_NOT_OK(ArrowSchemaSetType(
-    out, dview.is_empty() ? NANOARROW_TYPE_INT32 : id_to_arrow_type(dview.indices().type().id())));
+    out, has_children ? id_to_arrow_type(dview.indices().type().id()) : NANOARROW_TYPE_INT32));
   NANOARROW_RETURN_NOT_OK(ArrowSchemaAllocateDictionary(out));
   ArrowSchemaInit(out->dictionary);
-  if (dview.is_empty()) { return ArrowSchemaSetType(out->dictionary, NANOARROW_TYPE_INT64); }
+  if (not has_children) { return ArrowSchemaSetType(out->dictionary, NANOARROW_TYPE_INT64); }
 
   auto dict_keys = dview.keys();
   return cudf::type_dispatcher(

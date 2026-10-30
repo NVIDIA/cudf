@@ -33,7 +33,7 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Aggregation128Utils_combineInt6
     auto tview = reinterpret_cast<cudf::table_view const*>(j_table_view);
     std::unique_ptr<cudf::table> result =
       cudf::jni::assemble128_from_sum(*tview, cudf::jni::make_data_type(j_dtype, j_scale));
-    return cudf::jni::convert_table_for_return(env, result);
+    return cudf::jni::convert_table_with_row_count_for_return(env, result);
   }
   JNI_CATCH(env, 0);
 }

@@ -70,7 +70,7 @@ public class TableWithMeta implements AutoCloseable {
     if (ptr == null || ptr.length == 0) {
       return null;
     } else {
-      return new Table(ptr);
+      return Table.fromRowCountAndColumns(ptr);
     }
   }
 

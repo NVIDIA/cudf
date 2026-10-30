@@ -300,6 +300,28 @@ public class TableTest extends CudfTestBase {
   }
 
   @Test
+  void testCreateTableFromColumnPointers() {
+    try (ColumnVector v1 = ColumnVector.fromInts(1, 2, 3);
+         ColumnVector v2 = ColumnVector.fromStrings("a", "b", "c");
+         Table expected = new Table(v1, v2);
+         Table t = new Table(new long[] {
+             ColumnView.copyColumnViewToCV(v1.getNativeView()),
+             ColumnView.copyColumnViewToCV(v2.getNativeView())})) {
+      assertTablesAreEqual(expected, t);
+    }
+  }
+
+  @Test
+  void testCreateTableFromRowCountAndColumnPointers() {
+    try (ColumnVector v1 = ColumnVector.fromInts(1, 2, 3);
+         Table expected = new Table(v1);
+         Table t = Table.fromRowCountAndColumns(new long[] {
+             3, ColumnView.copyColumnViewToCV(v1.getNativeView())})) {
+      assertTablesAreEqual(expected, t);
+    }
+  }
+
+  @Test
   void testGetRows() {
     try (ColumnVector v1 = ColumnVector.build(DType.INT32, 5, Range.appendInts(5));
          ColumnVector v2 = ColumnVector.build(DType.INT32, 5, Range.appendInts(5));
@@ -1053,6 +1075,7 @@ public class TableTest extends CudfTestBase {
          Table table = tablemeta.releaseTable()) {
         assertArrayEquals(new String[] { "A", "B", "C" }, tablemeta.getColumnNames());
         assertTablesAreEqual(expected, table);
+        assertNull(tablemeta.releaseTable(), "the table can only be released once");
       }
     }
   }

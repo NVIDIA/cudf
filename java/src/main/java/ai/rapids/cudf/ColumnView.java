@@ -3023,7 +3023,7 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
     assert type.equals(DType.STRING) : "column type must be a String";
     assert regexProg != null : "regex program is null";
     assert limit != 0 && limit != 1 : "split limit == 0 and limit == 1 are not supported";
-    return new Table(stringSplitRe(this.getNativeView(), regexProg.pattern(), regexProg.combinedFlags(),
+    return Table.fromRowCountAndColumns(stringSplitRe(this.getNativeView(), regexProg.pattern(), regexProg.combinedFlags(),
                                    regexProg.capture().nativeId, limit));
   }
 
@@ -3059,7 +3059,7 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
     assert type.equals(DType.STRING) : "column type must be a String";
     assert delimiter != null : "delimiter is null";
     assert limit != 0 && limit != 1 : "split limit == 0 and limit == 1 are not supported";
-    return new Table(stringSplit(this.getNativeView(), delimiter, limit));
+    return Table.fromRowCountAndColumns(stringSplit(this.getNativeView(), delimiter, limit));
   }
 
   /**
@@ -3989,7 +3989,7 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   public final Table extractRe(RegexProgram regexProg) throws CudfException {
     assert type.equals(DType.STRING) : "column type must be a String";
     assert regexProg != null : "regex program may not be null";
-    return new Table(extractRe(this.getNativeView(), regexProg.pattern(),
+    return Table.fromRowCountAndColumns(extractRe(this.getNativeView(), regexProg.pattern(),
                                regexProg.combinedFlags(), regexProg.capture().nativeId));
   }
 

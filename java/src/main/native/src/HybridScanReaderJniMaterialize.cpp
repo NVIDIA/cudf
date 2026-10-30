@@ -130,7 +130,7 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_HybridScanReader_materializeAll
                                                            wrapper->options,
                                                            cudf::get_default_stream(),
                                                            cudf::get_current_device_resource_ref());
-    return cudf::jni::convert_table_for_return(env, result.tbl);
+    return cudf::jni::convert_table_with_row_count_for_return(env, result.tbl);
   }
   JNI_CATCH(env, nullptr);
 }
@@ -207,7 +207,7 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_HybridScanReader_materializeFil
     }
     auto mut_view = wrapper->chunked_filter_row_mask->mutable_view();
     auto result   = wrapper->reader->materialize_filter_columns_chunk(mut_view);
-    return cudf::jni::convert_table_for_return(env, result.tbl);
+    return cudf::jni::convert_table_with_row_count_for_return(env, result.tbl);
   }
   JNI_CATCH(env, nullptr);
 }
@@ -285,7 +285,7 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_HybridScanReader_materializePay
     auto* wrapper  = reinterpret_cast<hybrid_scan_reader_wrapper*>(handle);
     auto* row_mask = reinterpret_cast<cudf::column_view const*>(row_mask_view_handle);
     auto result    = wrapper->reader->materialize_payload_columns_chunk(*row_mask);
-    return cudf::jni::convert_table_for_return(env, result.tbl);
+    return cudf::jni::convert_table_with_row_count_for_return(env, result.tbl);
   }
   JNI_CATCH(env, nullptr);
 }
@@ -330,7 +330,7 @@ Java_ai_rapids_cudf_HybridScanReader_materializeAllColumnsChunk(JNIEnv* env, jcl
     cudf::jni::auto_set_device(env);
     auto* wrapper = reinterpret_cast<hybrid_scan_reader_wrapper*>(handle);
     auto result   = wrapper->reader->materialize_all_columns_chunk();
-    return cudf::jni::convert_table_for_return(env, result.tbl);
+    return cudf::jni::convert_table_with_row_count_for_return(env, result.tbl);
   }
   JNI_CATCH(env, nullptr);
 }

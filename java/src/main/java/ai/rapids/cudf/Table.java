@@ -93,6 +93,19 @@ public final class Table implements AutoCloseable {
   }
 
   /**
+   * Create a Table from the result of a native method that returns the row count followed by
+   * cudf::column pointers, see convert_table_with_row_count_for_return in TableJni.cpp. Ownership
+   * of the columns is transferred to the ColumnVectors held by the new Table. In the case of an
+   * exception the columns will be deleted.
+   * @param rowCountAndColumns the row count followed by the nativeHandles of the columns
+   */
+  static Table fromRowCountAndColumns(long[] rowCountAndColumns) {
+    assert rowCountAndColumns != null && rowCountAndColumns.length > 0 :
+        "rowCountAndColumns can't be null or empty";
+    return new Table(Arrays.copyOfRange(rowCountAndColumns, 1, rowCountAndColumns.length));
+  }
+
+  /**
    * Provides a faster way to get access to the columns. Only to be used internally, and it should
    * never be modified in anyway.
    */
@@ -786,7 +799,7 @@ public final class Table implements AutoCloseable {
     if (schema.hasNestedChildren()) {
       throw new IllegalArgumentException("CSV does not support nested types");
     }
-    return new Table(
+    return fromRowCountAndColumns(
         readCSV(schema.getFlattenedColumnNames(), schema.getFlattenedTypeIds(), schema.getFlattenedTypeScales(),
             opts.getIncludeColumnNames(), path.getAbsolutePath(),
             0, 0,
@@ -871,7 +884,7 @@ public final class Table implements AutoCloseable {
     if (schema.hasNestedChildren()) {
       throw new IllegalArgumentException("CSV does not support nested types");
     }
-    return new Table(readCSV(schema.getFlattenedColumnNames(), schema.getFlattenedTypeIds(), schema.getFlattenedTypeScales(),
+    return fromRowCountAndColumns(readCSV(schema.getFlattenedColumnNames(), schema.getFlattenedTypeIds(), schema.getFlattenedTypeScales(),
         opts.getIncludeColumnNames(), null,
         buffer.getAddress() + offset, len,
         opts.getHeaderRow(),
@@ -890,7 +903,7 @@ public final class Table implements AutoCloseable {
       if (schema.hasNestedChildren()) {
         throw new IllegalArgumentException("CSV does not support nested types");
       }
-      return new Table(readCSVFromDataSource(schema.getFlattenedColumnNames(),
+      return fromRowCountAndColumns(readCSVFromDataSource(schema.getFlattenedColumnNames(),
               schema.getFlattenedTypeIds(),
               schema.getFlattenedTypeScales(),
               opts.getIncludeColumnNames(),
@@ -1293,7 +1306,7 @@ public final class Table implements AutoCloseable {
    * @return the file parsed as a table on the GPU.
    */
   public static Table readParquet(ParquetOptions opts, File path) {
-    return new Table(readParquet(opts.getIncludeColumnNames(), opts.getReadBinaryAsString(),
+    return fromRowCountAndColumns(readParquet(opts.getIncludeColumnNames(), opts.getReadBinaryAsString(),
         path.getAbsolutePath(), null, opts.timeUnit().typeId.getNativeId()));
   }
 
@@ -1368,7 +1381,7 @@ public final class Table implements AutoCloseable {
     assert len <= buffer.getLength() - offset;
     assert offset >= 0 && offset < buffer.length;
     long[] addrsSizes = new long[]{ buffer.getAddress() + offset, len };
-    return new Table(readParquet(opts.getIncludeColumnNames(), opts.getReadBinaryAsString(),
+    return fromRowCountAndColumns(readParquet(opts.getIncludeColumnNames(), opts.getReadBinaryAsString(),
         null, addrsSizes, opts.timeUnit().typeId.getNativeId()));
   }
 
@@ -1386,7 +1399,7 @@ public final class Table implements AutoCloseable {
       addrsSizes[i * 2] = buffers[i].getAddress();
       addrsSizes[(i * 2) + 1] = buffers[i].getLength();
     }
-    return new Table(readParquet(opts.getIncludeColumnNames(), opts.getReadBinaryAsString(),
+    return fromRowCountAndColumns(readParquet(opts.getIncludeColumnNames(), opts.getReadBinaryAsString(),
         null, addrsSizes, opts.timeUnit().typeId.getNativeId()));
   }
 
@@ -1399,7 +1412,7 @@ public final class Table implements AutoCloseable {
   public static Table readParquet(ParquetOptions opts, DataSource ds) {
     long dataSourceHandle = DataSourceHelper.createWrapperDataSource(ds);
     try {
-      return new Table(readParquetFromDataSource(opts.getIncludeColumnNames(),
+      return fromRowCountAndColumns(readParquetFromDataSource(opts.getIncludeColumnNames(),
               opts.getReadBinaryAsString(), opts.timeUnit().typeId.getNativeId(),
               dataSourceHandle));
     } finally {
@@ -1423,7 +1436,7 @@ public final class Table implements AutoCloseable {
    * @return the file parsed as a table on the GPU.
    */
   public static Table readAvro(AvroOptions opts, File path) {
-    return new Table(readAvro(opts.getIncludeColumnNames(),
+    return fromRowCountAndColumns(readAvro(opts.getIncludeColumnNames(),
         path.getAbsolutePath(), 0, 0));
   }
 
@@ -1486,14 +1499,14 @@ public final class Table implements AutoCloseable {
     assert len <= buffer.length - offset;
     len = len > 0 ? len : buffer.length - offset;
 
-    return new Table(readAvro(opts.getIncludeColumnNames(),
+    return fromRowCountAndColumns(readAvro(opts.getIncludeColumnNames(),
         null, buffer.getAddress() + offset, len));
   }
 
   public static Table readAvro(AvroOptions opts, DataSource ds) {
     long dataSourceHandle = DataSourceHelper.createWrapperDataSource(ds);
     try {
-      return new Table(readAvroFromDataSource(opts.getIncludeColumnNames(),
+      return fromRowCountAndColumns(readAvroFromDataSource(opts.getIncludeColumnNames(),
               dataSourceHandle));
     } finally {
       DataSourceHelper.destroyWrapperDataSource(dataSourceHandle);
@@ -1516,7 +1529,7 @@ public final class Table implements AutoCloseable {
    * @return the file parsed as a table on the GPU.
    */
   public static Table readORC(ORCOptions opts, File path) {
-    return new Table(readORC(opts.getIncludeColumnNames(),
+    return fromRowCountAndColumns(readORC(opts.getIncludeColumnNames(),
         path.getAbsolutePath(), 0, 0,
         opts.usingNumPyTypes(), opts.timeUnit().typeId.getNativeId(),
         opts.getDecimal128Columns(), opts.ignoreTimezoneInStripeFooter()));
@@ -1585,7 +1598,7 @@ public final class Table implements AutoCloseable {
     assert len > 0;
     assert len <= buffer.getLength() - offset;
     assert offset >= 0 && offset < buffer.length;
-    return new Table(readORC(opts.getIncludeColumnNames(),
+    return fromRowCountAndColumns(readORC(opts.getIncludeColumnNames(),
         null, buffer.getAddress() + offset, len,
         opts.usingNumPyTypes(), opts.timeUnit().typeId.getNativeId(),
         opts.getDecimal128Columns(), opts.ignoreTimezoneInStripeFooter()));
@@ -1594,7 +1607,7 @@ public final class Table implements AutoCloseable {
   public static Table readORC(ORCOptions opts, DataSource ds) {
     long dataSourceHandle = DataSourceHelper.createWrapperDataSource(ds);
     try {
-      return new Table(readORCFromDataSource(opts.getIncludeColumnNames(),
+      return fromRowCountAndColumns(readORCFromDataSource(opts.getIncludeColumnNames(),
               opts.usingNumPyTypes(), opts.timeUnit().typeId.getNativeId(),
               opts.getDecimal128Columns(), opts.ignoreTimezoneInStripeFooter(),
               dataSourceHandle));
@@ -1920,7 +1933,7 @@ public final class Table implements AutoCloseable {
           return null;
         }
         callback.needTheGpu();
-        return new Table(convertArrowTableToCudf(arrowTableHandle));
+        return fromRowCountAndColumns(convertArrowTableToCudf(arrowTableHandle));
       } finally {
         closeArrowTable(arrowTableHandle);
       }
@@ -2000,7 +2013,7 @@ public final class Table implements AutoCloseable {
       tableHandles[i] = tables[i].nativeHandle;
       assert tables[i].getNumberOfColumns() == numColumns : "all tables must have the same schema";
     }
-    return new Table(concatenate(tableHandles));
+    return fromRowCountAndColumns(concatenate(tableHandles));
   }
 
   /**
@@ -2025,7 +2038,7 @@ public final class Table implements AutoCloseable {
    * @return the new Table.
    */
   public Table repeat(int count) {
-    return new Table(repeatStaticCount(this.nativeHandle, count));
+    return fromRowCountAndColumns(repeatStaticCount(this.nativeHandle, count));
   }
 
   /**
@@ -2037,7 +2050,7 @@ public final class Table implements AutoCloseable {
    * @throws CudfException on any error.
    */
   public Table repeat(ColumnView counts) {
-    return new Table(repeatColumnCount(this.nativeHandle, counts.getNativeView()));
+    return fromRowCountAndColumns(repeatColumnCount(this.nativeHandle, counts.getNativeView()));
   }
 
   /**
@@ -2051,7 +2064,7 @@ public final class Table implements AutoCloseable {
    */
   public PartitionedTable partition(ColumnView partitionMap, int numberOfPartitions) {
     int[] partitionOffsets = new int[numberOfPartitions + 1];
-    return new PartitionedTable(new Table(partition(
+    return new PartitionedTable(fromRowCountAndColumns(partition(
         getNativeView(),
         partitionMap.getNativeView(),
         numberOfPartitions,
@@ -2194,7 +2207,7 @@ public final class Table implements AutoCloseable {
    * right columns.
    */
   public Table crossJoin(Table right) {
-    return new Table(Table.crossJoin(this.nativeHandle, right.nativeHandle));
+    return fromRowCountAndColumns(Table.crossJoin(this.nativeHandle, right.nativeHandle));
   }
 
   /////////////////////////////////////////////////////////////////////////////
@@ -2246,7 +2259,7 @@ public final class Table implements AutoCloseable {
       sortKeys[i] = columns[index].getNativeView();
     }
 
-    return new Table(orderBy(nativeHandle, sortKeys, isDescending, areNullsSmallest));
+    return fromRowCountAndColumns(orderBy(nativeHandle, sortKeys, isDescending, areNullsSmallest));
   }
 
   /**
@@ -2281,7 +2294,7 @@ public final class Table implements AutoCloseable {
       sortKeyIndexes[i] = index;
     }
 
-    return new Table(merge(tableHandles, sortKeyIndexes, isDescending, areNullsSmallest));
+    return fromRowCountAndColumns(merge(tableHandles, sortKeyIndexes, isDescending, areNullsSmallest));
   }
 
   /**
@@ -2338,7 +2351,7 @@ public final class Table implements AutoCloseable {
    */
   public PartitionedTable roundRobinPartition(int numberOfPartitions, int startPartition) {
     int[] partitionOffsets = new int[numberOfPartitions + 1];
-    return new PartitionedTable(new Table(Table.roundRobinPartition(nativeHandle,
+    return new PartitionedTable(fromRowCountAndColumns(Table.roundRobinPartition(nativeHandle,
         numberOfPartitions, startPartition,
         partitionOffsets)), partitionOffsets);
   }
@@ -2379,7 +2392,7 @@ public final class Table implements AutoCloseable {
   public Table filter(ColumnView mask) {
     assert mask.getType().equals(DType.BOOL8) : "Mask column must be of type BOOL8";
     assert getRowCount() == 0 || getRowCount() == mask.getRowCount() : "Mask column has incorrect size";
-    return new Table(filter(nativeHandle, mask.getNativeView()));
+    return fromRowCountAndColumns(filter(nativeHandle, mask.getNativeView()));
   }
 
   /**
@@ -2414,7 +2427,7 @@ public final class Table implements AutoCloseable {
    */
   public Table dropDuplicates(int[] keyColumns, DuplicateKeepOption keep, boolean nullsEqual) {
     assert keyColumns.length >= 1 : "Input keyColumns must contain indices of at least one column";
-    return new Table(dropDuplicates(nativeHandle, keyColumns, keep.keepValue, nullsEqual));
+    return fromRowCountAndColumns(dropDuplicates(nativeHandle, keyColumns, keep.keepValue, nullsEqual));
   }
 
   /**
@@ -2532,7 +2545,7 @@ public final class Table implements AutoCloseable {
   public Table explode(int index) {
     assert 0 <= index && index < columns.length : "Column index is out of range";
     assert columns[index].getType().equals(DType.LIST) : "Column to explode must be of type LIST";
-    return new Table(explode(nativeHandle, index));
+    return fromRowCountAndColumns(explode(nativeHandle, index));
   }
 
   /**
@@ -2574,7 +2587,7 @@ public final class Table implements AutoCloseable {
   public Table explodePosition(int index) {
     assert 0 <= index && index < columns.length : "Column index is out of range";
     assert columns[index].getType().equals(DType.LIST) : "Column to explode must be of type LIST";
-    return new Table(explodePosition(nativeHandle, index));
+    return fromRowCountAndColumns(explodePosition(nativeHandle, index));
   }
 
   /**
@@ -2617,7 +2630,7 @@ public final class Table implements AutoCloseable {
   public Table explodeOuter(int index) {
     assert 0 <= index && index < columns.length : "Column index is out of range";
     assert columns[index].getType().equals(DType.LIST) : "Column to explode must be of type LIST";
-    return new Table(explodeOuter(nativeHandle, index));
+    return fromRowCountAndColumns(explodeOuter(nativeHandle, index));
   }
 
   /**
@@ -2664,7 +2677,7 @@ public final class Table implements AutoCloseable {
   public Table explodeOuterPosition(int index) {
     assert 0 <= index && index < columns.length : "Column index is out of range";
     assert columns[index].getType().equals(DType.LIST) : "Column to explode must be of type LIST";
-    return new Table(explodeOuterPosition(nativeHandle, index));
+    return fromRowCountAndColumns(explodeOuterPosition(nativeHandle, index));
   }
 
   /**
@@ -2720,7 +2733,7 @@ public final class Table implements AutoCloseable {
    */
   public Table gather(ColumnView gatherMap, OutOfBoundsPolicy outOfBoundsPolicy) {
     boolean checkBounds = outOfBoundsPolicy == OutOfBoundsPolicy.NULLIFY;
-    return new Table(gather(nativeHandle, gatherMap.getNativeView(), checkBounds));
+    return fromRowCountAndColumns(gather(nativeHandle, gatherMap.getNativeView(), checkBounds));
   }
 
   /**
@@ -2743,7 +2756,7 @@ public final class Table implements AutoCloseable {
    *         target table.
    */
   public Table scatter(ColumnView scatterMap, Table target) {
-    return new Table(scatterTable(nativeHandle, scatterMap.getNativeView(), target.getNativeView()));
+    return fromRowCountAndColumns(scatterTable(nativeHandle, scatterMap.getNativeView(), target.getNativeView()));
   }
 
   /**
@@ -2772,7 +2785,7 @@ public final class Table implements AutoCloseable {
       assert source[i] != null : "Scalar vectors passed in should not contain null";
       srcScalarHandles[i] = source[i].getScalarHandle();
     }
-    return new Table(scatterScalars(srcScalarHandles, scatterMap.getNativeView(),
+    return fromRowCountAndColumns(scatterScalars(srcScalarHandles, scatterMap.getNativeView(),
         target.getNativeView()));
   }
 
@@ -3909,7 +3922,7 @@ public final class Table implements AutoCloseable {
    * @return Table containing samples
    */
   public Table sample(long n, boolean replacement, long seed) {
-    return new Table(sample(nativeHandle, n, replacement, seed));
+    return fromRowCountAndColumns(sample(nativeHandle, n, replacement, seed));
   }
 
   /////////////////////////////////////////////////////////////////////////////
@@ -4051,7 +4064,7 @@ public final class Table implements AutoCloseable {
         }
         assert opIndex == totalOps : opIndex + " == " + totalOps;
 
-        try (Table aggregate = new Table(groupByAggregate(
+        try (Table aggregate = fromRowCountAndColumns(groupByAggregate(
             operation.table.nativeHandle,
             operation.indices,
             aggColumnIndexes,
@@ -4193,7 +4206,7 @@ public final class Table implements AutoCloseable {
         }
         assert opIndex == totalOps : opIndex + " == " + totalOps;
 
-        try (Table aggregate = new Table(rollingWindowAggregate(
+        try (Table aggregate = fromRowCountAndColumns(rollingWindowAggregate(
             operation.table.nativeHandle,
             operation.indices,
             defaultOutputs,
@@ -4415,7 +4428,7 @@ public final class Table implements AutoCloseable {
           isOrderByNullsFirst[j] = isOrderByNullsFirstList.get(j);
         }
 
-        try (Table aggregate = new Table(rangeRollingWindowAggregate(
+        try (Table aggregate = fromRowCountAndColumns(rangeRollingWindowAggregate(
             operation.table.nativeHandle,
             operation.indices,
             orderByColumnIndexes,
@@ -4477,7 +4490,7 @@ public final class Table implements AutoCloseable {
         }
         assert opIndex == totalOps : opIndex + " == " + totalOps;
 
-        try (Table aggregate = new Table(groupByScan(
+        try (Table aggregate = fromRowCountAndColumns(groupByScan(
             operation.table.nativeHandle,
             operation.indices,
             aggColumnIndexes,
@@ -4525,7 +4538,7 @@ public final class Table implements AutoCloseable {
         columnIndexes[index] = replacements[index].column;
       }
 
-      return new Table(groupByReplaceNulls(
+      return fromRowCountAndColumns(groupByReplaceNulls(
           operation.table.nativeHandle,
           operation.indices,
           columnIndexes,
@@ -4691,7 +4704,7 @@ public final class Table implements AutoCloseable {
      */
     public PartitionedTable hashPartition(HashType type, int numberOfPartitions, int seed) {
       int[] partitionOffsets = new int[numberOfPartitions + 1];
-      return new PartitionedTable(new Table(Table.hashPartition(
+      return new PartitionedTable(fromRowCountAndColumns(Table.hashPartition(
           operation.table.nativeHandle,
           operation.indices,
           type.nativeId,

@@ -211,7 +211,7 @@ Java_ai_rapids_cudf_DeletionVector_readParquet(JNIEnv* env,
                                              are_retention_vectors);
 
     auto tbl = cudf::io::parquet::experimental::read_parquet(opts, *dv_info).tbl;
-    return cudf::jni::convert_table_for_return(env, tbl);
+    return cudf::jni::convert_table_with_row_count_for_return(env, tbl);
   }
   JNI_CATCH(env, nullptr);
 }
@@ -364,7 +364,7 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_DeletionVector_parquetChunkedRe
       reinterpret_cast<cudf::io::parquet::experimental::chunked_parquet_reader* const>(
         j_reader_handle);
     auto chunk = reader->read_chunk();
-    return chunk.tbl ? cudf::jni::convert_table_for_return(env, chunk.tbl) : nullptr;
+    return chunk.tbl ? cudf::jni::convert_table_with_row_count_for_return(env, chunk.tbl) : nullptr;
   }
   JNI_CATCH(env, nullptr);
 }

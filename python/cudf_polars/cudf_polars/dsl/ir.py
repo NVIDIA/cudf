@@ -50,6 +50,7 @@ from cudf_polars.dsl.expressions.base import ExecutionContext
 from cudf_polars.dsl.nodebase import Node
 from cudf_polars.dsl.to_ast import _DECIMAL_IDS, to_ast, to_parquet_filter
 from cudf_polars.dsl.tracing import log_do_evaluate, nvtx_annotate_cudf_polars
+from cudf_polars.dsl.traversal import traversal
 from cudf_polars.dsl.utils.deletions import apply_deletions
 from cudf_polars.dsl.utils.lake import read_lake_files
 from cudf_polars.dsl.utils.naming import unique_names
@@ -82,6 +83,7 @@ if TYPE_CHECKING:
     from rmm.pylibrmm.stream import Stream
 
     from cudf_polars.containers.dataframe import NamedColumn
+    from cudf_polars.dsl.to_ast import JoinPredicate
     from cudf_polars.dsl.utils.io import CachedParquetInfo
     from cudf_polars.dsl.utils.lake import LakehouseScanOptions
     from cudf_polars.quent._context import (
@@ -3146,6 +3148,37 @@ def _collect_decimal_binop_casts(
     return left_casts, right_casts
 
 
+def _check_ast_operand_types(predicate: expr.Expr) -> None:
+    """
+    Check that libcudf's AST can evaluate a predicate.
+
+    The AST requires both operands of a binary operation to share a type id,
+    and it only fails once the join runs, so reject a predicate whose operands
+    differ in type (after the decimal and float casts) when translating.
+    """
+    left_casts, right_casts = _collect_decimal_binop_casts(predicate)
+
+    def type_id(node: expr.Expr) -> plc.TypeId:
+        if isinstance(node, expr.ColRef):
+            (col,) = node.children
+            assert isinstance(col, expr.Col)
+            casts = (
+                left_casts
+                if node.table_ref == plc_expr.TableReference.LEFT
+                else right_casts
+            )
+            if col.name in casts:
+                return casts[col.name].plc_type.id()
+        return node.dtype.plc_type.id()
+
+    for node in traversal([predicate]):
+        if (
+            isinstance(node, expr.BinOp)
+            and len({type_id(c) for c in node.children}) > 1
+        ):
+            raise NotImplementedError("Join predicate with operands of different types")
+
+
 def _apply_casts(df: DataFrame, casts: dict[str, DataType]) -> DataFrame:
     if not casts:
         return df
@@ -3294,18 +3327,24 @@ class ConditionalJoin(IR):
 class Join(IR):
     """A join of two dataframes."""
 
-    __slots__ = ("left_on", "options", "right_on")
+    __slots__ = ("left_on", "options", "predicate", "right_on")
     _non_child: ClassVar[tuple[str, ...]] = (
         "schema",
         "left_on",
         "right_on",
         "options",
+        "predicate",
     )
-    _n_non_child_args = 3
+    _n_non_child_args = 4
     left_on: tuple[expr.NamedExpr, ...]
     """List of expressions used as keys in the left frame."""
     right_on: tuple[expr.NamedExpr, ...]
     """List of expressions used as keys in the right frame."""
+    predicate: JoinPredicate | None
+    """
+    Optional extra condition (inner joins only) that a pair of rows must
+    satisfy to match, evaluated while joining.
+    """
     options: tuple[
         Literal["Inner", "Left", "Right", "Full", "Semi", "Anti", "Cross"],
         bool,
@@ -3343,6 +3382,7 @@ class Join(IR):
         left_on: Sequence[expr.NamedExpr],
         right_on: Sequence[expr.NamedExpr],
         options: Any,
+        predicate: JoinPredicate | None,
         left: IR,
         right: IR,
     ):
@@ -3351,7 +3391,24 @@ class Join(IR):
         self.right_on = tuple(right_on)
         self.options = options
         self.children = (left, right)
-        self._non_child_args = (self.left_on, self.right_on, self.options)
+        predicate_args = None
+        if predicate is not None:
+            if options[0] != "Inner":
+                raise NotImplementedError(f"Join predicate with join type {options[0]}")
+            ast_predicate = _strip_predicate_casts(predicate.predicate)
+            _check_ast_operand_types(ast_predicate)
+            predicate_args = (
+                ConditionalJoin.Predicate(ast_predicate),
+                predicate.left_exprs,
+                predicate.right_exprs,
+            )
+        self.predicate = predicate
+        self._non_child_args = (
+            self.left_on,
+            self.right_on,
+            self.options,
+            predicate_args,
+        )
 
     @staticmethod
     @cache
@@ -3537,6 +3594,12 @@ class Join(IR):
             bool,
             Literal["none", "left", "right", "left_right", "right_left"],
         ],
+        predicate_args: tuple[
+            ConditionalJoin.Predicate,
+            tuple[expr.NamedExpr, ...],
+            tuple[expr.NamedExpr, ...],
+        ]
+        | None,
         left: DataFrame,
         right: DataFrame,
         *,
@@ -3609,6 +3672,19 @@ class Join(IR):
                 ),
                 stream=right.stream,
             )
+            if predicate_args is not None:
+                predicate_wrapper, left_exprs, right_exprs = predicate_args
+                left_casts, right_casts = _collect_decimal_binop_casts(
+                    predicate_wrapper.predicate
+                )
+                left_conditional = _apply_casts(
+                    HStack.do_evaluate(left_exprs, True, left, context=context),  # noqa: FBT003
+                    left_casts,
+                )
+                right_conditional = _apply_casts(
+                    HStack.do_evaluate(right_exprs, True, right, context=context),  # noqa: FBT003
+                    right_casts,
+                )
             with context.stream_ordered_after(left, right) as stream:
                 null_equality = (
                     plc.types.NullEquality.EQUAL
@@ -3631,9 +3707,20 @@ class Join(IR):
                         left, right = right, left
                         left_on, right_on = right_on, left_on
                         maintain_order = Join.SWAPPED_ORDER[maintain_order]
-                    lg, rg = join_fn(
-                        left_on.table, right_on.table, null_equality, stream=stream
-                    )
+                    if predicate_args is None:
+                        lg, rg = join_fn(
+                            left_on.table, right_on.table, null_equality, stream=stream
+                        )
+                    else:
+                        lg, rg = plc.join.mixed_inner_join(
+                            left_on.table,
+                            right_on.table,
+                            left_conditional.table,
+                            right_conditional.table,
+                            predicate_wrapper.ast,
+                            null_equality,
+                            stream=stream,
+                        )
                     if (
                         how in ("Inner", "Left", "Right", "Full")
                         and maintain_order != "none"

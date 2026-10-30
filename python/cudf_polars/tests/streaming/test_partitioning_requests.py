@@ -181,6 +181,7 @@ def test_select_remaps_strict_partition_request() -> None:
         (named_col("x"),),
         (named_col("x"),),
         ("Inner", False, None, "_right", True, "none"),
+        None,
         select,
         right,
     )
@@ -199,6 +200,7 @@ def test_cross_join_does_not_create_strict_partition_request() -> None:
         (),
         (),
         ("Cross", False, None, "_right", True, "none"),
+        None,
         left,
         right,
     )
@@ -247,6 +249,7 @@ def test_select_drops_strict_request_on_non_column_output() -> None:
         (named_col("x"),),
         (named_col("x"),),
         ("Inner", False, None, "_right", True, "none"),
+        None,
         select,
         right,
     )
@@ -349,6 +352,7 @@ def test_fanout_marks_compatible_order_request_as_strict() -> None:
         (named_col("a"),),
         (named_col("a"),),
         ("Inner", False, None, "_right", True, "none"),
+        None,
         scan,
         right,
     )

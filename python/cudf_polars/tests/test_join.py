@@ -19,8 +19,9 @@ from cudf_polars.testing.asserts import assert_gpu_result_equal
 from cudf_polars.utils.versions import POLARS_VERSION_LT_21
 
 FUSED_PREDICATE_XFAIL = pytest.mark.xfail(
+    POLARS_VERSION_LT_21,
     reason="Polars 2.0 plans an equi join with a residual predicate as a "
-    "'fused predicate' join, which its visitor does not expose"
+    "'fused predicate' join, which its visitor does not expose",
 )
 
 

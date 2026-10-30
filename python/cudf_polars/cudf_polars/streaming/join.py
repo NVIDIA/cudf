@@ -196,6 +196,7 @@ def lower_join_with_prefilters(
                 ir.left_on,
                 ir.right_on,
                 ir.options,
+                ir.predicate,
                 *lowered_targets,
             ),
             partition_info,
@@ -356,6 +357,7 @@ def _(
             ir.left_on,
             ir.right_on,
             (*ir.options[:2], None, *ir.options[3:]),
+            ir.predicate,
             *ir.children,
         )
         return rec(Slice(ir.schema, offset, length, new_join))
@@ -367,6 +369,7 @@ def _(
         dynamic_planning
         and ir.options[0] != "Cross"
         and ir.options[5] == "none"
+        and ir.predicate is None
         and not has_non_pointwise_keys
         and any(is_direct_join_prefilter(child) for child in ir.children)
     ):

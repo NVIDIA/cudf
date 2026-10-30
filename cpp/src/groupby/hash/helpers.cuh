@@ -12,10 +12,10 @@
 
 namespace cudf::groupby::detail::hash {
 /// Number of threads to handle each input element
-CUDF_HOST_DEVICE auto constexpr GROUPBY_CG_SIZE = 1;
+auto constexpr GROUPBY_CG_SIZE = 1;
 
 /// Number of slots per thread
-CUDF_HOST_DEVICE auto constexpr GROUPBY_BUCKET_SIZE = 1;
+auto constexpr GROUPBY_BUCKET_SIZE = 1;
 
 using row_hash_t = cudf::detail::row::hash::device_row_hasher<cudf::hashing::detail::default_hash,
                                                               cudf::nullate::DYNAMIC>;

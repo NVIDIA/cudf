@@ -12,7 +12,9 @@
 
 #include "byte_array_view.cuh"
 #include "conversion_type_select.cuh"
+#include "statistics.cuh"
 
+#include <cudf/detail/timezone_lookup.hpp>
 #include <cudf/fixed_point/fixed_point.hpp>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/utilities/traits.hpp>
@@ -36,13 +38,24 @@ enum class is_int96_timestamp { YES, NO };
 template <io_file_format IO, is_int96_timestamp INT96>
 struct conversion_map;
 
-// Every timestamp or duration type is converted to nanoseconds in ORC statistics
+/**
+ * @brief A nanosecond count that is wide enough for any ORC timestamp bound.
+ *
+ * ORC stores timestamp statistics as milliseconds plus a sub-millisecond remainder, which reaches
+ * far beyond the nanoseconds an `int64_t` holds. The writer's wall clock can leave that range even
+ * when the input and the encoded bounds stay inside it, so the extrema are reduced 128 bits wide.
+ */
+struct timestamp_ns128 {
+  __int128_t count;
+};
+
+// Every timestamp is converted to nanoseconds in ORC statistics, and every duration type too
 template <is_int96_timestamp INT96>
 struct conversion_map<io_file_format::ORC, INT96> {
-  using types = std::tuple<std::pair<cudf::timestamp_s, cudf::timestamp_ns>,
-                           std::pair<cudf::timestamp_ms, cudf::timestamp_ns>,
-                           std::pair<cudf::timestamp_us, cudf::timestamp_ns>,
-                           std::pair<cudf::timestamp_ns, cudf::timestamp_ns>,
+  using types = std::tuple<std::pair<cudf::timestamp_s, timestamp_ns128>,
+                           std::pair<cudf::timestamp_ms, timestamp_ns128>,
+                           std::pair<cudf::timestamp_us, timestamp_ns128>,
+                           std::pair<cudf::timestamp_ns, timestamp_ns128>,
                            std::pair<cudf::duration_s, cudf::duration_ns>,
                            std::pair<cudf::duration_ms, cudf::duration_ns>,
                            std::pair<cudf::duration_us, cudf::duration_ns>,
@@ -66,6 +79,9 @@ struct conversion_map<io_file_format::PARQUET, is_int96_timestamp::NO> {
                            std::pair<cudf::duration_s, cudf::duration_ms>>;
 };
 
+template <class T>
+struct dependent_false : std::false_type {};
+
 /**
  * @brief Utility class to help conversion of timestamps and durations to their
  * representation type
@@ -86,6 +102,10 @@ class type_conversion {
     using Type = typename type_selector::template type<T>;
     if constexpr (cudf::is_duration<T>()) {
       return cuda::std::chrono::duration_cast<Type>(elem);
+    } else if constexpr (std::is_same_v<Type, timestamp_ns128>) {
+      static_assert(dependent_false<T>::value,
+                    "ORC timestamp statistics are converted by to_wall_clock_ns, which also puts "
+                    "them on the writer's wall clock");
     } else if constexpr (cudf::is_timestamp<T>()) {
       using Duration = typename Type::duration;
       return cuda::std::chrono::time_point_cast<Duration>(elem);
@@ -95,9 +115,6 @@ class type_conversion {
     return Type{};
   }
 };
-
-template <class T>
-struct dependent_false : std::false_type {};
 
 /**
  * @brief Utility class to convert a leaf column element into its extrema type
@@ -160,6 +177,48 @@ class extrema_type {
     return type{};
   }
 };
+
+/**
+ * @brief Specialization for the 128-bit nanosecond count of ORC timestamp statistics
+ */
+template <>
+class extrema_type<timestamp_ns128> {
+ public:
+  static constexpr bool is_supported = true;
+
+  using type = __int128_t;
+
+  __device__ static type convert(timestamp_ns128 const& val) { return val.count; }
+};
+
+/**
+ * @brief Converts an instant into the nanosecond count ORC statistics hold, on the writer's wall
+ * clock.
+ *
+ * Shifted per value, like Apache's `TimestampTreeWriter` does, because daylight saving makes the
+ * offset vary within a column.
+ *
+ * @param elem Instant to convert
+ * @param ut_offsets Offsets of the writer's timezone from UT; empty when writing UTC
+ * @return Nanoseconds since the epoch, on the wall clock of the timezone the offsets describe
+ */
+template <typename T>
+__device__ inline timestamp_ns128 to_wall_clock_ns(T const& elem, ut_offset_table const& ut_offsets)
+{
+  auto constexpr ns_per_s    = __int128_t{1'000'000'000};
+  auto constexpr ticks_to_ns = cuda::std::ratio_divide<typename T::period, cuda::std::nano>::num;
+
+  auto const count = static_cast<__int128_t>(elem.time_since_epoch().count()) * ticks_to_ns;
+  if (ut_offsets.num_entries == 0) { return {count}; }
+
+  // Taken before widening, to keep the division out of 128-bit arithmetic, and floored so that the
+  // offset is the one in effect in the second the value falls in rather than the one after it
+  auto const second = cuda::std::chrono::floor<duration_s>(elem.time_since_epoch());
+  auto const offset = cudf::detail::get_ut_offset(
+    ut_offsets.times, ut_offsets.offsets, ut_offsets.num_entries, timestamp_s{second});
+
+  return {count + offset.count() * ns_per_s};
+}
 
 /**
  * @brief Utility class to convert a leaf column element into its aggregate type

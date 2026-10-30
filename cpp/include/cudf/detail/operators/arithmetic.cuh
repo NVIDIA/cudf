@@ -126,9 +126,18 @@ __device__ auto pymod(A a, B b) -> decltype((a % b + b) % b)
 }
 
 template <cuda::std::floating_point A, cuda::std::floating_point B>
-__device__ auto pymod(A a, B b) -> decltype(cuda::std::fmod(cuda::std::fmod(a, b) + b, b))
+__device__ auto pymod(A a, B b) -> cuda::std::common_type_t<A, B>
 {
-  return cuda::std::fmod(cuda::std::fmod(a, b) + b, b);
+  using common_t = cuda::std::common_type_t<A, B>;
+  auto const x   = static_cast<common_t>(a);
+  auto const y   = static_cast<common_t>(b);
+  auto mod       = cuda::std::fmod(x, y);
+  if (mod != common_t{0.0}) {
+    if ((y < common_t{0.0}) != (mod < common_t{0.0})) { mod += y; }
+  } else {
+    mod = cuda::std::copysign(common_t{0.0}, y);
+  }
+  return mod;
 }
 
 /**

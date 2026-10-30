@@ -1067,9 +1067,9 @@ void compute_page_string_sizes_pass2(cudf::detail::hostdevice_span<PageInfo> pag
 
 namespace {
 
-constexpr int string_offset_warps          = 8;
+constexpr int string_offset_warps          = 4;
 constexpr int string_offset_window_bytes   = 1024;
-constexpr unsigned string_offset_warp_mask = 0xffffffffu;
+constexpr unsigned full_warp_mask = 0xffffffffu;
 
 // Snapshot each page's scan inputs before reusing the CTA-wide setup state.
 struct string_offset_page {

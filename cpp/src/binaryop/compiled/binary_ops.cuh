@@ -100,8 +100,10 @@ struct ops_wrapper {
   column_device_view const& rhs;
   bool const& is_lhs_scalar;
   bool const& is_rhs_scalar;
+  // With bit_width, nvcc 13.3 can outline decimal128 conversions and add local memory setup
+  // before type dispatch, slowing float ADD. Keep this wrapper inline to avoid that setup.
   template <typename TypeCommon>
-  __device__ void operator()(size_type i)
+  __forceinline__ __device__ void operator()(size_type i)
   {
     if constexpr (cuda::std::is_invocable_v<BinaryOperator, TypeCommon, TypeCommon>) {
       TypeCommon x =

@@ -1168,9 +1168,14 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_removeNullMasksIfNeeded(J
 
 JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_Table_createCudfTableView(JNIEnv* env,
                                                                       jclass,
-                                                                      jlongArray j_cudf_columns)
+                                                                      jlongArray j_cudf_columns,
+                                                                      jlong j_row_count)
 {
   JNI_NULL_CHECK(env, j_cudf_columns, "columns are null", 0);
+  JNI_ARG_CHECK(env,
+                j_row_count >= 0 && j_row_count <= std::numeric_limits<cudf::size_type>::max(),
+                "row count out of range",
+                0);
 
   JNI_TRY
   {
@@ -1178,7 +1183,8 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_Table_createCudfTableView(JNIEnv* en
     cudf::jni::native_jpointerArray<cudf::column_view> n_cudf_columns(env, j_cudf_columns);
 
     std::vector<cudf::column_view> column_views = n_cudf_columns.get_dereferenced();
-    return ptr_as_jlong(new cudf::table_view(column_views));
+    return ptr_as_jlong(
+      new cudf::table_view(column_views, static_cast<cudf::size_type>(j_row_count)));
   }
   JNI_CATCH(env, 0);
 }
@@ -1210,7 +1216,9 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_columnViewsFromPacked(JNI
     JNI_NULL_CHECK(env, metadata_address, "metadata buffer address is null", nullptr);
     cudf::table_view table = cudf::unpack(static_cast<uint8_t const*>(metadata_address),
                                           reinterpret_cast<uint8_t const*>(j_data_address));
-    cudf::jni::native_jlongArray views(env, table.num_columns());
+    // The row count goes first so that a table with zero columns keeps it.
+    cudf::jni::native_jlongArray views(env, table.num_columns() + 1);
+    views[0] = table.num_rows();
     for (int i = 0; i < table.num_columns(); i++) {
       // TODO Exception handling is not ideal, if no exceptions are thrown ownership of the new cv
       // is passed to Java. If an exception is thrown we need to free it, but this needs to be
@@ -1221,7 +1229,7 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_columnViewsFromPacked(JNI
       // In the ideal case we would keep the view where it is at, and pass in a pointer to it
       // That pointer would then be copied when Java takes ownership of it, but that adds an
       // extra JNI call that I would like to avoid for performance reasons.
-      views[i] = ptr_as_jlong(new cudf::column_view(table.column(i)));
+      views[i + 1] = ptr_as_jlong(new cudf::column_view(table.column(i)));
     }
     views.commit();
 

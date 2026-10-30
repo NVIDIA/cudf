@@ -43,25 +43,46 @@ public final class Table implements AutoCloseable {
    * @param columns - Array of ColumnVectors
    */
   public Table(ColumnVector... columns) {
-    assert columns != null && columns.length > 0 : "ColumnVectors can't be null or empty";
-    rows = columns[0].getRowCount();
+    this(rowCountOf(columns), columns);
+  }
 
+  /**
+   * Create a table with an explicit row count. Unlike {@link #Table(ColumnVector...)}, this
+   * accepts no columns at all, which makes a table of {@code rowCount} rows and zero columns.
+   * Table class makes a copy of the array of {@link ColumnVector}s passed to it. The class
+   * will decrease the refcount on itself and all its contents when closed and free resources if
+   * refcount is zero
+   * @param rowCount number of rows in the table; must match the row count of every column
+   * @param columns - Array of ColumnVectors, possibly empty
+   */
+  public Table(long rowCount, ColumnVector... columns) {
+    assert columns != null : "ColumnVectors can't be null";
+    long[] viewPointers = new long[columns.length];
+    for (int i = 0; i < columns.length; i++) {
+      assert (null != columns[i]) : "ColumnVectors can't be null";
+      viewPointers[i] = columns[i].getNativeView();
+    }
+    // Create the view first: it validates the row count, and nothing needs releasing if it throws
+    nativeHandle = createCudfTableView(viewPointers, rowCount);
+    rows = rowCount;
+
+    // Since Arrays are mutable objects make a copy
+    this.columns = new ColumnVector[columns.length];
+    for (int i = 0; i < columns.length; i++) {
+      this.columns[i] = columns[i];
+      columns[i].incRefCount();
+    }
+  }
+
+  private static long rowCountOf(ColumnVector[] columns) {
+    assert columns != null && columns.length > 0 : "ColumnVectors can't be null or empty";
+    long rows = columns[0].getRowCount();
     for (ColumnVector columnVector : columns) {
       assert (null != columnVector) : "ColumnVectors can't be null";
       assert (rows == columnVector.getRowCount()) : "All columns should have the same number of " +
           "rows " + columnVector.getType();
     }
-
-    // Since Arrays are mutable objects make a copy
-    this.columns = new ColumnVector[columns.length];
-    long[] viewPointers = new long[columns.length];
-    for (int i = 0; i < columns.length; i++) {
-      this.columns[i] = columns[i];
-      columns[i].incRefCount();
-      viewPointers[i] = columns[i].getNativeView();
-    }
-
-    nativeHandle = createCudfTableView(viewPointers);
+    return rows;
   }
 
   /**
@@ -71,15 +92,20 @@ public final class Table implements AutoCloseable {
    * @param cudfColumns - Array of nativeHandles
    */
   public Table(long[] cudfColumns) {
-    assert cudfColumns != null && cudfColumns.length > 0 : "CudfColumns can't be null or empty";
+    this(cudfColumns, OptionalLong.empty());
+  }
+
+  private Table(long[] cudfColumns, OptionalLong rowCount) {
+    assert cudfColumns != null && (rowCount.isPresent() || cudfColumns.length > 0) :
+        "CudfColumns can't be null or empty";
     this.columns = ColumnVector.getColumnVectorsFromPointers(cudfColumns);
     try {
       long[] views = new long[columns.length];
       for (int i = 0; i < columns.length; i++) {
         views[i] = columns[i].getNativeView();
       }
-      nativeHandle = createCudfTableView(views);
-      this.rows = columns[0].getRowCount();
+      this.rows = rowCount.isPresent() ? rowCount.getAsLong() : columns[0].getRowCount();
+      nativeHandle = createCudfTableView(views, rows);
     } catch (Throwable t) {
       for (ColumnVector column : columns) {
         try {
@@ -102,7 +128,8 @@ public final class Table implements AutoCloseable {
   static Table fromRowCountAndColumns(long[] rowCountAndColumns) {
     assert rowCountAndColumns != null && rowCountAndColumns.length > 0 :
         "rowCountAndColumns can't be null or empty";
-    return new Table(Arrays.copyOfRange(rowCountAndColumns, 1, rowCountAndColumns.length));
+    long[] cudfColumns = Arrays.copyOfRange(rowCountAndColumns, 1, rowCountAndColumns.length);
+    return new Table(cudfColumns, OptionalLong.of(rowCountAndColumns[0]));
   }
 
   /**
@@ -757,7 +784,7 @@ public final class Table implements AutoCloseable {
 
   private static native long[] explodeOuterPosition(long tableHandle, int index);
 
-  private static native long createCudfTableView(long[] nativeColumnViewHandles);
+  private static native long createCudfTableView(long[] nativeColumnViewHandles, long rowCount);
 
   private static native long[] columnViewsFromPacked(ByteBuffer metadata, long dataAddress);
 
@@ -1674,7 +1701,7 @@ public final class Table implements AutoCloseable {
       viewPointers[i] = columnViews[i].getNativeView();
     }
 
-    long nativeHandle = createCudfTableView(viewPointers);
+    long nativeHandle = createCudfTableView(viewPointers, rows);
     try {
       try (
         ParquetTableWriter writer = new ParquetTableWriter(options, consumer, hostMemoryAllocator)
@@ -3867,7 +3894,9 @@ public final class Table implements AutoCloseable {
       directBuffer.flip();
     }
 
-    long[] columnViewAddresses = columnViewsFromPacked(directBuffer, data.getAddress());
+    long[] rowCountAndViews = columnViewsFromPacked(directBuffer, data.getAddress());
+    long rowCount = rowCountAndViews[0];
+    long[] columnViewAddresses = Arrays.copyOfRange(rowCountAndViews, 1, rowCountAndViews.length);
     ColumnVector[] columns = new ColumnVector[columnViewAddresses.length];
     Table result = null;
     try {
@@ -3878,7 +3907,7 @@ public final class Table implements AutoCloseable {
         columnViewAddresses[i] = 0;
         columns[i] = ColumnVector.fromViewWithContiguousAllocation(columnViewAddress, data);
       }
-      result = new Table(columns);
+      result = new Table(rowCount, columns);
     } catch (Throwable t) {
       try {
         ColumnView.cleanupColumnViews(columnViewAddresses, columns, t);

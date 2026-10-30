@@ -881,9 +881,34 @@ def _translate_cross_and_filter(
 
     The join type is ``(<how>, "cross_and_filter")`` and ``node.predicate`` is the
     condition that is applied to the cross product, for example from
-    ``x NOT IN (SELECT ...)`` in SQL. Not supported yet, so it falls back to the CPU.
+    ``x NOT IN (SELECT ...)`` in SQL. A cross join followed by a filter is supported;
+    Left and Right joins need outer join semantics and fall back to the CPU, see
+    https://github.com/NVIDIA/cudf/issues/24693.
     """
-    raise NotImplementedError(f"Unsupported join type {node.options[0]}")
+    how, nulls_equal, zlice, suffix, coalesce, maintain_order = node.options
+    if how[0] != "Cross":
+        raise NotImplementedError(f"Unsupported join type {how}")
+    if zlice is not None:  # pragma: no cover
+        # polars does not push a slice into this join
+        raise NotImplementedError("Slice in a nested loop join")
+    mask = translate_predicate(
+        translator,
+        n=node.predicate.node,
+        output_name=node.predicate.output_name,
+        schema=schema,
+    )
+    if mask is None:  # pragma: no cover
+        # polars does not put dynamic predicate hints in a join predicate
+        raise NotImplementedError("Dynamic predicate hint in a nested loop join")
+    cross = ir.Join(
+        schema,
+        left_on,
+        right_on,
+        ("Cross", nulls_equal, None, suffix, coalesce, maintain_order),
+        inp_left,
+        inp_right,
+    )
+    return ir.Filter(schema, mask, cross)
 
 
 def _translate_fused_predicate(

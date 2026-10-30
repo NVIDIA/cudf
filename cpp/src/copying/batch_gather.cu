@@ -13,6 +13,7 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/assert.cuh>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
@@ -24,12 +25,14 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/bit.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <rmm/device_uvector.hpp>
 
 #include <cuda/atomic>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/ptx>
@@ -49,18 +52,17 @@ namespace cudf {
 namespace detail {
 
 // Handle for an enqueued map-locality sample: the pinned staging plus its decode context. The
-// staging frees stream-ordered, so it may outlive the resolve without a use-after-free.
-// rmm_host_allocator has no default constructor, so empty handles come
-// from empty(stream) — an unallocated pinned vector, not a plain std::vector.
+// staging frees stream-ordered, so it may outlive the resolve without a use-after-free. A zero
+// count allocates nothing, so empty handles stay cheap.
 struct sampled_map_locality {
-  cudf::detail::host_vector<std::byte> staging;
+  cuda::host_buffer<std::byte> staging;
   cudf::type_id map_type{cudf::type_id::EMPTY};
   size_t elem_size{};
 
   static sampled_map_locality empty(cuda::stream_ref stream)
   {
     return sampled_map_locality{
-      cudf::detail::make_pinned_vector_async<std::byte>(0, stream), cudf::type_id::EMPTY, 0};
+      cudf::detail::make_pinned_buffer_async<std::byte>(0, stream), cudf::type_id::EMPTY, 0};
   }
 };
 
@@ -780,7 +782,10 @@ sampled_map_locality enqueue_map_locality_sample(column_view const& gather_map,
   // heuristic — and the endpoint window keeps its own submission.
   auto const pitch_rows = last_start / static_cast<int64_t>(kSampleWindows - 1);
   bool const exact_grid = pitch_rows * static_cast<int64_t>(kSampleWindows - 1) == last_start;
-  auto staging          = cudf::detail::make_pinned_vector_async<std::byte>(
+  // Uninitialized pinned staging: every byte is supplied by the D2H copies below, so the
+  // zero-init + alloc sync of the initializing vector factory buys nothing here. Deallocation
+  // rides the buffer's stored stream (same stream), so it stays stream-ordered with no new sync.
+  auto staging = cudf::detail::make_pinned_buffer_async<std::byte>(
     static_cast<size_t>(kSampleWindows) * window_size, stream);
   CUDF_CUDA_TRY(
     cudaMemcpy2DAsync(staging.data(),           // contiguous rows: window-major
@@ -1218,7 +1223,12 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
 
     // Device path staging: pinned host staging (stream-ordered free, so the H2D needs no host
     // sync and the copy's source stays valid past this scope) plus the device buffer the kernel
-    // reads. Built only for the device path.
+    // reads. Built only for the device path. This staging takes the SYNCING vector factory on
+    // purpose: its bytes are written from the HOST before the launch, and a host write into
+    // pinned-pool memory is only safe once the stream has drained (the pool may hand back a
+    // block whose previous stream-ordered copy is still in flight) — the allocate-time sync is
+    // that drain. The receive-only buffers below and the sampler staging need no such sync:
+    // their writers are stream-ordered copies, and their readers wait on the stream.
     std::optional<cudf::detail::host_vector<column_descriptor>> staging;
     std::optional<rmm::device_uvector<column_descriptor>> d_descriptors;
     if (not by_value) {
@@ -1484,10 +1494,33 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
       dispatch(std::false_type{});
     }
 
+    // Receive owner for the kernel's per-column valid counts: the launch enqueues its D2H right
+    // after the kernel (the D2H reads a buffer the same stream's kernel finished writing), so
+    // the fallback work below runs while the copy is in flight instead of behind a drained
+    // stream. Uninitialized pinned memory: every byte arrives from the D2H, so no zero-init and
+    // no allocation sync; the free is stream-ordered on the same stream.
+    std::optional<cuda::host_buffer<size_type>> h_valid_counts_owner;
     if (any_kernel_masks) {
-      auto const h_valid_counts = cudf::detail::make_host_vector(valid_counts, stream);
+      h_valid_counts_owner.emplace(cudf::detail::make_pinned_buffer_async<size_type>(
+        static_cast<std::size_t>(descriptors.size()), stream));
+      cudf::detail::cuda_memcpy_async(
+        host_span<size_type>{
+          h_valid_counts_owner->data(), static_cast<std::size_t>(descriptors.size()), true},
+        device_span<size_type const>{valid_counts.data(),
+                                     static_cast<std::size_t>(descriptors.size())},
+        stream);
+    }
+
+    // The one sync where the counts are needed: covers the kernel and this D2H (same stream).
+    // The fallback block AFTER this scope enqueues its kernels while the copy is still in
+    // flight — masked mixed calls no longer drain the GPU before submitting fallback kernels —
+    // and it sets its own null counts on its columns, so nothing further is owed here. The
+    // counts MUST be set before the function returns — the table contract reports them.
+    if (any_kernel_masks) {
+      cudf::detail::sync_stream(stream);
       for (auto const pos : kernel_masked_positions) {
-        destination[fused_indices[pos]]->set_null_count(num_rows - h_valid_counts[pos]);
+        destination[fused_indices[pos]]->set_null_count(
+          num_rows - h_valid_counts_owner->data()[static_cast<std::size_t>(pos)]);
       }
     }
   }

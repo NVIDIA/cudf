@@ -942,8 +942,13 @@ std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> groupby::sort
   cudf::detail::result_cache cache(requests.size());
 
   for (auto const& request : requests) {
-    auto store_functor =
-      detail::aggregate_result_functor(request.values, helper(), cache, stream, mr);
+    // Nested values are always gathered: the merge aggregations on them (e.g. MERGE_M2,
+    // MERGE_LISTS, MERGE_TDIGEST, COVARIANCE) read children or offsets without applying the
+    // parent offset of a sliced input.
+    auto const values_are_sorted =
+      helper().is_presorted() && !cudf::is_nested(request.values.type()) ? sorted::YES : sorted::NO;
+    auto store_functor = detail::aggregate_result_functor(
+      request.values, helper(), cache, stream, mr, values_are_sorted);
     for (auto const& agg : request.aggregations) {
       // TODO (dm): single pass compute all supported reductions
       cudf::detail::aggregation_dispatcher(agg->kind, store_functor, *agg);

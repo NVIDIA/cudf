@@ -221,8 +221,9 @@ std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> groupby::sort
   cudf::detail::result_cache cache(requests.size());
 
   for (auto const& request : requests) {
+    auto const values_are_sorted = helper().is_presorted() ? sorted::YES : sorted::NO;
     auto store_functor =
-      detail::scan_result_functor(request.values, helper(), cache, stream, mr, _keys_are_sorted);
+      detail::scan_result_functor(request.values, helper(), cache, stream, mr, values_are_sorted);
     for (auto const& aggregation : request.aggregations) {
       // TODO (dm): single pass compute all supported reductions
       cudf::detail::aggregation_dispatcher(aggregation->kind, store_functor, *aggregation);

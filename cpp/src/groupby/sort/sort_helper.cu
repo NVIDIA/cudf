@@ -268,7 +268,17 @@ std::unique_ptr<table> sort_groupby_helper::unique_keys(cuda::stream_ref stream,
                                                         rmm::device_async_resource_ref mr)
 {
   auto const num_unique_keys = num_groups(stream);
-  auto gather_map            = cuda::device_buffer<size_type>(
+  if (is_presorted()) {
+    return cudf::detail::gather(
+      _keys,
+      device_span<size_type const>{group_offsets(stream).data(),
+                                   static_cast<std::size_t>(num_unique_keys)},
+      out_of_bounds_policy::DONT_CHECK,
+      negative_index_policy::NOT_ALLOWED,
+      stream,
+      mr);
+  }
+  auto gather_map = cuda::device_buffer<size_type>(
     stream, cudf::get_current_device_resource_ref(), num_unique_keys, cuda::no_init);
   auto const idx_data = key_sort_order(stream).data<size_type>();
   thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),

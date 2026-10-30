@@ -7,6 +7,7 @@
 #include <cudf/column/column_view.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
@@ -72,7 +73,8 @@ class column {
    * @param null_mask Column's null value indicator bitmask. May be empty if `null_count` is 0.
    * @param null_count The count of null elements.
    */
-  template <typename T, CUDF_ENABLE_IF(cudf::is_numeric<T>() or cudf::is_chrono<T>())>
+  template <typename T>
+    requires(cudf::concepts::arithmetic<T> or cudf::concepts::chrono<T>)
   column(rmm::device_uvector<T>&& other,
          cuda::device_buffer<cudf::bitmask_type>&& null_mask,
          size_type null_count)

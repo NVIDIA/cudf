@@ -413,31 +413,27 @@ using scalar_device_type_t = typename type_to_scalar_type_impl<T>::ScalarDeviceT
  * void type_printer::operator()<double>() { std::cout << "double\n"; }
  * @endcode
  *
- * A second method is to use SFINAE with `std::enable_if_t`. This is useful for
- * specializing for a set of types that share some property. For example, a
- * functor that prints `integral` or `floating point` for integral or floating
- * point types:
+ * A second method is to constrain the `operator()` templates with concepts.
+ * This is useful for specializing for a set of types that share some property.
+ * For example, a functor that prints `integral` or `floating point` for
+ * integral or floating point types:
  *
  * @code
  * struct integral_or_floating_point {
- *   template <typename ColumnType,
- *             std::enable_if_t<not cuda::std::is_integral_v<ColumnType>  and
- *                              not std::is_floating_point_v<ColumnType> >* = nullptr>
- *   void operator()() {
- *     std::cout << "neither integral nor floating point\n "; }
+ *   template <typename ColumnType>
+ *   void operator()() { std::cout << "neither integral nor floating point\n"; }
  *
- *   template <typename ColumnType,
- *             std::enable_if_t<cuda::std::is_integral_v<ColumnType> >* = nullptr>
+ *   template <cuda::std::integral ColumnType>
  *   void operator()() { std::cout << "integral\n"; }
  *
- *   template <typename ColumnType,
- *             std::enable_if_t<std::is_floating_point_v<ColumnType> >* = nullptr>
+ *   template <cuda::std::floating_point ColumnType>
  *   void operator()() { std::cout << "floating point\n"; }
  * };
  * @endcode
  *
- * For more info on SFINAE and `std::enable_if`, see
- * https://eli.thegreenplace.net/2014/sfinae-and-enable_if/
+ * The most constrained viable overload is chosen, so the fallback needs no
+ * constraint. The libcudf concepts in `cudf/utilities/concepts.hpp` mirror
+ * the type traits in `cudf/utilities/traits.hpp`.
  *
  * The return type for all template instantiations of the functor's "operator()"
  * lambda must be the same, else there will be a compiler error as you would be

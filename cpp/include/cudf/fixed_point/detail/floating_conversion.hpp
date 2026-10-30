@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,6 +10,7 @@
 
 #include <cuda/std/bit>
 #include <cuda/std/cmath>
+#include <cuda/std/concepts>
 #include <cuda/std/limits>
 #include <cuda/std/type_traits>
 #include <cuda/std/utility>
@@ -24,9 +25,9 @@ namespace detail {
  * @param value The integer whose bits are being counted
  * @return The number of significant bits: the # of bits - # of leading zeroes
  */
-template <typename T,
-          CUDF_ENABLE_IF(cuda::std::is_same_v<T, uint32_t> || cuda::std::is_same_v<T, uint64_t> ||
-                         cuda::std::is_same_v<T, __uint128_t>)>
+template <typename T>
+  requires(cuda::std::same_as<T, uint32_t> or cuda::std::same_as<T, uint64_t> or
+           cuda::std::same_as<T, __uint128_t>)
 CUDF_HOST_DEVICE inline constexpr int count_significant_bits(T value)
 {
 #ifdef __CUDA_ARCH__
@@ -62,7 +63,7 @@ CUDF_HOST_DEVICE inline constexpr int count_significant_bits(T value)
  *
  * @tparam FloatingType Type of floating-point value
  */
-template <typename FloatingType, CUDF_ENABLE_IF(cuda::std::is_floating_point_v<FloatingType>)>
+template <cuda::std::floating_point FloatingType>
 struct floating_converter {
   // This struct assumes we're working with IEEE 754 floating-point values.
   // Details on the IEEE-754 floating-point format:
@@ -314,7 +315,8 @@ constexpr __uint128_t large_power_of_10()
  * @param pow10 The power-of-10 of the denominator, from 0 to 9 inclusive.
  * @return Returns value / 10^pow10
  */
-template <typename T, CUDF_ENABLE_IF(cuda::std::is_unsigned_v<T>)>
+template <typename T>
+  requires(cuda::std::is_unsigned_v<T>)
 CUDF_HOST_DEVICE inline T divide_power10_32bit(T value, int pow10)
 {
   // Computing division this way is much faster than the alternatives.
@@ -364,7 +366,8 @@ CUDF_HOST_DEVICE inline T divide_power10_32bit(T value, int pow10)
  * @param pow10 The power-of-10 of the denominator, from 0 to 19 inclusive.
  * @return Returns value / 10^pow10
  */
-template <typename T, CUDF_ENABLE_IF(cuda::std::is_unsigned_v<T>)>
+template <typename T>
+  requires(cuda::std::is_unsigned_v<T>)
 CUDF_HOST_DEVICE inline T divide_power10_64bit(T value, int pow10)
 {
   return value / ipow<uint64_t, Radix::BASE_10>(pow10);
@@ -378,7 +381,8 @@ CUDF_HOST_DEVICE inline T divide_power10_64bit(T value, int pow10)
  * @param pow10 The power-of-10 of the denominator, from 0 to 38 inclusive.
  * @return Returns value / 10^pow10.
  */
-template <typename T, CUDF_ENABLE_IF(cuda::std::is_unsigned_v<T>)>
+template <typename T>
+  requires(cuda::std::is_unsigned_v<T>)
 CUDF_HOST_DEVICE inline constexpr T divide_power10_128bit(T value, int pow10)
 {
   return value / ipow<__uint128_t, Radix::BASE_10>(pow10);
@@ -392,7 +396,8 @@ CUDF_HOST_DEVICE inline constexpr T divide_power10_128bit(T value, int pow10)
  * @param pow10 The power-of-10 of the multiplier, from 0 to 9 inclusive.
  * @return Returns value * 10^pow10
  */
-template <typename T, CUDF_ENABLE_IF(cuda::std::is_unsigned_v<T>)>
+template <typename T>
+  requires(cuda::std::is_unsigned_v<T>)
 CUDF_HOST_DEVICE inline constexpr T multiply_power10_32bit(T value, int pow10)
 {
   // See comments in divide_power10_32bit() for discussion.
@@ -419,7 +424,8 @@ CUDF_HOST_DEVICE inline constexpr T multiply_power10_32bit(T value, int pow10)
  * @param pow10 The power-of-10 of the multiplier, from 0 to 19 inclusive.
  * @return Returns value * 10^pow10
  */
-template <typename T, CUDF_ENABLE_IF(cuda::std::is_unsigned_v<T>)>
+template <typename T>
+  requires(cuda::std::is_unsigned_v<T>)
 CUDF_HOST_DEVICE inline constexpr T multiply_power10_64bit(T value, int pow10)
 {
   return value * ipow<uint64_t, Radix::BASE_10>(pow10);
@@ -433,7 +439,8 @@ CUDF_HOST_DEVICE inline constexpr T multiply_power10_64bit(T value, int pow10)
  * @param pow10 The power-of-10 of the multiplier, from 0 to 38 inclusive.
  * @return Returns value * 10^pow10.
  */
-template <typename T, CUDF_ENABLE_IF(cuda::std::is_unsigned_v<T>)>
+template <typename T>
+  requires(cuda::std::is_unsigned_v<T>)
 CUDF_HOST_DEVICE inline constexpr T multiply_power10_128bit(T value, int pow10)
 {
   return value * ipow<__uint128_t, Radix::BASE_10>(pow10);
@@ -451,7 +458,8 @@ CUDF_HOST_DEVICE inline constexpr T multiply_power10_128bit(T value, int pow10)
  * @param pow10 The power-of-10 of the multiplier.
  * @return Returns value * 10^pow10
  */
-template <typename Rep, typename T, CUDF_ENABLE_IF(cuda::std::is_unsigned_v<T>)>
+template <typename Rep, typename T>
+  requires(cuda::std::is_unsigned_v<T>)
 CUDF_HOST_DEVICE inline constexpr T multiply_power10(T value, int pow10)
 {
   // Use this function if you have no knowledge of what pow10 might be
@@ -477,7 +485,8 @@ CUDF_HOST_DEVICE inline constexpr T multiply_power10(T value, int pow10)
  * @param pow10 The power-of-10 of the denominator.
  * @return Returns value / 10^pow10
  */
-template <typename Rep, typename T, CUDF_ENABLE_IF(cuda::std::is_unsigned_v<T>)>
+template <typename Rep, typename T>
+  requires(cuda::std::is_unsigned_v<T>)
 CUDF_HOST_DEVICE inline constexpr T divide_power10(T value, int pow10)
 {
   // Use this function if you have no knowledge of what pow10 might be
@@ -499,7 +508,8 @@ CUDF_HOST_DEVICE inline constexpr T divide_power10(T value, int pow10)
  * @param bit_shift The number of bits to shift left
  * @return The bit-shifted integer, except max value if UB would occur
  */
-template <typename IntegerType, CUDF_ENABLE_IF(cuda::std::is_unsigned_v<IntegerType>)>
+template <typename IntegerType>
+  requires(cuda::std::is_unsigned_v<IntegerType>)
 CUDF_HOST_DEVICE inline IntegerType guarded_left_shift(IntegerType value, int bit_shift)
 {
   // Bit shifts larger than this are undefined behavior
@@ -516,7 +526,8 @@ CUDF_HOST_DEVICE inline IntegerType guarded_left_shift(IntegerType value, int bi
  * @param bit_shift The number of bits to shift right
  * @return The bit-shifted integer, which is zero on underflow
  */
-template <typename IntegerType, CUDF_ENABLE_IF(cuda::std::is_unsigned_v<IntegerType>)>
+template <typename IntegerType>
+  requires(cuda::std::is_unsigned_v<IntegerType>)
 CUDF_HOST_DEVICE inline IntegerType guarded_right_shift(IntegerType value, int bit_shift)
 {
   // Bit shifts larger than this are undefined behavior
@@ -605,7 +616,7 @@ struct shifting_constants {
  * @param pow10 The power of 10 that needs to be applied to the significand
  * @return integer_rep, shifted 1 and ++'d if the conversion to decimal causes truncation
  */
-template <typename FloatingType, CUDF_ENABLE_IF(cuda::std::is_floating_point_v<FloatingType>)>
+template <cuda::std::floating_point FloatingType>
 CUDF_HOST_DEVICE cuda::std::pair<typename floating_converter<FloatingType>::IntegralType, int>
 add_half_if_truncates(FloatingType floating,
                       typename floating_converter<FloatingType>::IntegralType integer_rep,
@@ -675,9 +686,7 @@ add_half_if_truncates(FloatingType floating,
  * @param pow10 The number of powers of 10 to apply to reach the desired scale factor
  * @return Magnitude of the converted-to decimal integer
  */
-template <typename Rep,
-          typename FloatingType,
-          CUDF_ENABLE_IF(cuda::std::is_floating_point_v<FloatingType>)>
+template <typename Rep, cuda::std::floating_point FloatingType>
 CUDF_HOST_DEVICE inline cuda::std::make_unsigned_t<Rep> shift_to_decimal_pospow(
   typename shifting_constants<FloatingType>::IntegerRep const base2_value, int pow2, int pow10)
 {
@@ -762,9 +771,7 @@ CUDF_HOST_DEVICE inline cuda::std::make_unsigned_t<Rep> shift_to_decimal_pospow(
  * @param pow10 The number of powers of 10 to apply to reach the desired scale factor
  * @return Magnitude of the converted-to decimal integer
  */
-template <typename Rep,
-          typename FloatingType,
-          CUDF_ENABLE_IF(cuda::std::is_floating_point_v<FloatingType>)>
+template <typename Rep, cuda::std::floating_point FloatingType>
 CUDF_HOST_DEVICE inline cuda::std::make_unsigned_t<Rep> shift_to_decimal_negpow(
   typename shifting_constants<FloatingType>::IntegerRep base2_value, int pow2, int pow10)
 {
@@ -848,9 +855,7 @@ CUDF_HOST_DEVICE inline cuda::std::make_unsigned_t<Rep> shift_to_decimal_negpow(
  * @param pow10 The number of powers of 10 to apply to reach the desired scale factor
  * @return Integer representation of the floating-point value, given the desired scale
  */
-template <typename Rep,
-          typename FloatingType,
-          CUDF_ENABLE_IF(cuda::std::is_floating_point_v<FloatingType>)>
+template <typename Rep, cuda::std::floating_point FloatingType>
 CUDF_HOST_DEVICE inline cuda::std::make_unsigned_t<Rep> convert_floating_to_integral_shifting(
   typename floating_converter<FloatingType>::IntegralType base2_value, int pow10, int pow2)
 {
@@ -900,9 +905,7 @@ CUDF_HOST_DEVICE inline cuda::std::make_unsigned_t<Rep> convert_floating_to_inte
  * @param scale The desired base-10 scale factor: decimal value = returned value * 10^scale
  * @return Integer representation of the floating-point value, given the desired scale
  */
-template <typename Rep,
-          typename FloatingType,
-          CUDF_ENABLE_IF(cuda::std::is_floating_point_v<FloatingType>)>
+template <typename Rep, cuda::std::floating_point FloatingType>
 CUDF_HOST_DEVICE inline Rep convert_floating_to_integral(FloatingType const& floating,
                                                          scale_type const& scale)
 {
@@ -939,9 +942,7 @@ CUDF_HOST_DEVICE inline Rep convert_floating_to_integral(FloatingType const& flo
  * @param pow10 The number of powers of 10 to apply to undo the scale factor
  * @return A pair of the base-2 value and the remaining powers of 2 to be applied
  */
-template <typename FloatingType,
-          typename DecimalRep,
-          CUDF_ENABLE_IF(cuda::std::is_floating_point_v<FloatingType>)>
+template <cuda::std::floating_point FloatingType, typename DecimalRep>
 CUDF_HOST_DEVICE inline auto shift_to_binary_pospow(DecimalRep decimal_rep, int pow10)
 {
   // This is the reverse of shift_to_decimal_pospow(), see that for more details.
@@ -1002,9 +1003,7 @@ CUDF_HOST_DEVICE inline auto shift_to_binary_pospow(DecimalRep decimal_rep, int 
  * @param pow10 The number of powers of 10 to apply to undo the scale factor
  * @return A pair of the base-2 value and the remaining powers of 2 to be applied
  */
-template <typename FloatingType,
-          typename DecimalRep,
-          CUDF_ENABLE_IF(cuda::std::is_floating_point_v<FloatingType>)>
+template <cuda::std::floating_point FloatingType, typename DecimalRep>
 CUDF_HOST_DEVICE inline auto shift_to_binary_negpow(DecimalRep decimal_rep, int const pow10)
 {
   // This is the reverse of shift_to_decimal_negpow(), see that for more details.
@@ -1069,9 +1068,7 @@ CUDF_HOST_DEVICE inline auto shift_to_binary_negpow(DecimalRep decimal_rep, int 
  * @param scale The base-10 scale factor for the input integer
  * @return Floating-point representation of the scaled integral value
  */
-template <typename FloatingType,
-          typename Rep,
-          CUDF_ENABLE_IF(cuda::std::is_floating_point_v<FloatingType>)>
+template <cuda::std::floating_point FloatingType, typename Rep>
 CUDF_HOST_DEVICE inline FloatingType convert_integral_to_floating(Rep const& value,
                                                                   scale_type const& scale)
 {

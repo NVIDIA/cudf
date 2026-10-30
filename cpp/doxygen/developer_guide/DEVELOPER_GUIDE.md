@@ -1316,8 +1316,8 @@ is one of the primary challenges a libcudf developer faces. Sometimes we develop
 gradual support for more data types to make this easier. Typically we start with fixed-width data
 types such as numeric types and timestamps/durations, adding support for nested types later.
 
-Enabling an algorithm differently for different types uses either template specialization or SFINAE,
-as discussed in [Specializing Type-Dispatched Code Paths](#specializing-type-dispatched-code-paths).
+Enabling an algorithm differently for different types uses either template specialization or
+concepts, as discussed in [Specializing Type-Dispatched Code Paths](#specializing-type-dispatched-code-paths).
 
 ## Comparing Data Types
 
@@ -1412,33 +1412,44 @@ template <>
 void type_printer::operator()<double>() { std::cout << "double\n"; }
 ```
 
-The second method is to use [SFINAE](https://en.cppreference.com/cpp/language/sfinae) with
-`std::enable_if_t`. This is useful to partially specialize for a set of types with a common trait.
-The following example functor prints `integral` or `floating point` for integral or floating point
-types, respectively.
+The second method is to constrain the `operator()` templates with C++20
+[concepts](https://en.cppreference.com/cpp/language/constraints). This is useful to specialize for a
+set of types with a common property. The following example functor prints `integral` or
+`floating point` for integral or floating point types, respectively.
 
 ```c++
 struct integral_or_floating_point {
-template <typename ColumnType,
-          std::enable_if_t<not cuda::std::is_integral_v<ColumnType> and
-                           not std::is_floating_point<ColumnType>::value>* = nullptr>
-void operator()() { std::cout << "neither integral nor floating point\n"; }
+  template <typename ColumnType>
+  void operator()() { std::cout << "neither integral nor floating point\n"; }
 
-template <typename ColumnType,
-          std::enable_if_t<cuda::std::is_integral_v<ColumnType>>* = nullptr>
-void operator()() { std::cout << "integral\n"; }
+  template <cuda::std::integral ColumnType>
+  void operator()() { std::cout << "integral\n"; }
 
-template < typename ColumnType,
-           std::enable_if_t<std::is_floating_point<ColumnType>::value>* = nullptr>
-void operator()() { std::cout << "floating point\n"; }
+  template <cuda::std::floating_point ColumnType>
+  void operator()() { std::cout << "floating point\n"; }
 };
 ```
 
-For more info on SFINAE with `std::enable_if`, [see this post](https://eli.thegreenplace.net/2014/sfinae-and-enable_if).
+When several overloads are viable, the compiler picks the most constrained one, so the fallback
+overload needs no constraint. A constraint that is more than a single concept goes in a `requires`
+clause:
 
-There are a number of traits defined in `include/cudf/utilities/traits.hpp` that are useful for
-partial specialization of dispatched function objects. For example `is_numeric<T>()` can be used to
-specialize for any numeric type.
+```c++
+template <typename ColumnType>
+  requires(cudf::concepts::fixed_width<ColumnType> and not cudf::concepts::chrono<ColumnType>)
+void operator()() { std::cout << "fixed-width, but not a timestamp or duration\n"; }
+```
+
+Do not use `CUDF_ENABLE_IF` or `std::enable_if_t` in new code.
+
+The concepts in `include/cudf/utilities/concepts.hpp` (namespace `cudf::concepts`) mirror the type
+traits in `include/cudf/utilities/traits.hpp`. For example, `cudf::concepts::arithmetic` matches
+any numeric type, and `cudf::concepts::fixed_width` any fixed-width type. Use the standard concepts,
+such as `cuda::std::integral` and `cuda::std::floating_point`, where libcudf does not define its
+own. Prefer concepts over the `is_*<T>()` trait functions in constraints: the compiler can compare
+constraints written with concepts, so an overload constrained with `cudf::concepts::fixed_point` is
+preferred over one constrained with `cudf::concepts::fixed_width` for decimal types, whereas
+`requires(cudf::is_fixed_point<T>())` and `requires(cudf::is_fixed_width<T>())` are ambiguous.
 
 # Variable-Size and Nested Data Types
 

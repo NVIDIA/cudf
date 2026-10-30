@@ -8,8 +8,11 @@
 #include <cudf/fixed_point/detail/floating_conversion.hpp>
 #include <cudf/fixed_point/fixed_point.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/traits.hpp>
+
+#include <cuda/std/concepts>
 
 /**
  * @file
@@ -36,9 +39,7 @@ namespace CUDF_EXPORT cudf {
  * @param scale The desired scale of the fixed-point value
  * @return The converted fixed-point value
  */
-template <typename Fixed,
-          typename Floating,
-          CUDF_ENABLE_IF(cuda::std::is_floating_point_v<Floating>&& is_fixed_point<Fixed>())>
+template <cudf::concepts::fixed_point Fixed, cuda::std::floating_point Floating>
 CUDF_HOST_DEVICE Fixed convert_floating_to_fixed(Floating floating, numeric::scale_type scale)
 {
   using Rep        = typename Fixed::rep;
@@ -66,9 +67,7 @@ CUDF_HOST_DEVICE Fixed convert_floating_to_fixed(Floating floating, numeric::sca
  * @param fixed The fixed-point value to convert
  * @return The converted floating-point value
  */
-template <typename Floating,
-          typename Fixed,
-          CUDF_ENABLE_IF(cuda::std::is_floating_point_v<Floating>&& is_fixed_point<Fixed>())>
+template <cuda::std::floating_point Floating, cudf::concepts::fixed_point Fixed>
 CUDF_HOST_DEVICE Floating convert_fixed_to_floating(Fixed fixed)
 {
   using Rep = typename Fixed::rep;
@@ -89,9 +88,7 @@ CUDF_HOST_DEVICE Floating convert_fixed_to_floating(Fixed fixed)
  * @param input The input value to convert
  * @return The converted floating-point value
  */
-template <typename Floating,
-          typename Input,
-          CUDF_ENABLE_IF(cuda::std::is_floating_point_v<Floating>)>
+template <cuda::std::floating_point Floating, typename Input>
 CUDF_HOST_DEVICE Floating convert_to_floating(Input input)
 {
   if constexpr (is_fixed_point<Input>()) {

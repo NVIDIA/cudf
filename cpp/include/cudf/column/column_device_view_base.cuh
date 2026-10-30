@@ -10,9 +10,11 @@
 #include <cudf/strings/string_view.cuh>
 #include <cudf/types.hpp>
 #include <cudf/utilities/bit.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/traits.hpp>
 
 #include <cuda/std/algorithm>
+#include <cuda/std/concepts>
 #include <cuda/std/optional>
 #include <cuda/std/type_traits>
 
@@ -68,8 +70,7 @@ struct nullate {
  * @tparam IndexType The type of the dictionary indices
  * @tparam KeyType The type of the dictionary keys
  */
-template <typename IndexType, typename KeyType>
-  requires(is_index_type<IndexType>() && is_relationally_comparable<KeyType, KeyType>())
+template <cudf::concepts::index_type IndexType, cuda::std::totally_ordered KeyType>
 struct dictionary_element {
   using index_type = IndexType;  ///< The type of the dictionary indices
   using key_type   = KeyType;    ///< The type of the dictionary keys
@@ -135,8 +136,8 @@ class alignas(16) column_device_view_base {
    * @tparam T The type to cast to
    * @return Typed pointer to underlying data
    */
-  template <typename T = void,
-            CUDF_ENABLE_IF(cuda::std::is_same_v<T, void> or is_rep_layout_compatible<T>())>
+  template <typename T = void>
+    requires(cuda::std::same_as<T, void> or cudf::concepts::rep_layout_compatible<T>)
   [[nodiscard]] CUDF_HOST_DEVICE T const* head() const noexcept
   {
     return static_cast<T const*>(_data);
@@ -157,7 +158,7 @@ class alignas(16) column_device_view_base {
    * @tparam T The type to cast to
    * @return Typed pointer to underlying data, including the offset
    */
-  template <typename T, CUDF_ENABLE_IF(is_rep_layout_compatible<T>())>
+  template <cudf::concepts::rep_layout_compatible T>
   [[nodiscard]] CUDF_HOST_DEVICE T const* data() const noexcept
   {
     return head<T>() + _offset;
@@ -443,7 +444,7 @@ class alignas(16) column_device_view_core : public detail::column_device_view_ba
    * @param element_index Position of the desired element
    * @return The element at the specified index
    */
-  template <typename T, CUDF_ENABLE_IF(is_rep_layout_compatible<T>())>
+  template <cudf::concepts::rep_layout_compatible T>
   [[nodiscard]] __device__ T element(size_type element_index) const noexcept
   {
     if constexpr (cuda::std::is_same_v<cuda::std::remove_cv_t<T>, bool>) {
@@ -466,7 +467,7 @@ class alignas(16) column_device_view_core : public detail::column_device_view_ba
    * @param element_index Position of the desired string element
    * @return string_view instance representing this element at this index
    */
-  template <typename T, CUDF_ENABLE_IF(cuda::std::is_same_v<T, string_view>)>
+  template <cudf::concepts::string_view T>
   [[nodiscard]] __device__ T element(size_type element_index) const noexcept
   {
     size_type index       = element_index + offset();  // account for this view's _offset
@@ -488,7 +489,7 @@ class alignas(16) column_device_view_core : public detail::column_device_view_ba
    * @param element_index Position of the desired element
    * @return numeric::fixed_point representing the element at this index
    */
-  template <typename T, CUDF_ENABLE_IF(cudf::is_fixed_point<T>())>
+  template <cudf::concepts::fixed_point T>
   [[nodiscard]] __device__ T element(size_type element_index) const noexcept
   {
     using namespace numeric;
@@ -514,7 +515,8 @@ class alignas(16) column_device_view_core : public detail::column_device_view_ba
    * @param element_index Position of the desired element
    * @return The element at the specified index
    */
-  template <typename T, CUDF_ENABLE_IF(is_dictionary_encoded<T>)>
+  template <typename T>
+    requires(is_dictionary_encoded<T>)
   [[nodiscard]] __device__ decltype(auto) element(size_type element_index) const noexcept
   {
     auto const& indices = child(dictionary_indices_column_index);
@@ -643,8 +645,8 @@ class alignas(16) mutable_column_device_view_core : public detail::column_device
    * @tparam T The type to cast to
    * @return Typed pointer to underlying data
    */
-  template <typename T = void,
-            CUDF_ENABLE_IF(cuda::std::is_same_v<T, void> or is_rep_layout_compatible<T>())>
+  template <typename T = void>
+    requires(cuda::std::same_as<T, void> or cudf::concepts::rep_layout_compatible<T>)
   [[nodiscard]] CUDF_HOST_DEVICE T* head() const noexcept
   {
     return const_cast<T*>(detail::column_device_view_base::head<T>());
@@ -662,7 +664,7 @@ class alignas(16) mutable_column_device_view_core : public detail::column_device
    * @tparam T The type to cast to
    * @return Typed pointer to underlying data, including the offset
    */
-  template <typename T, CUDF_ENABLE_IF(is_rep_layout_compatible<T>())>
+  template <cudf::concepts::rep_layout_compatible T>
   [[nodiscard]] CUDF_HOST_DEVICE T* data() const noexcept
   {
     return const_cast<T*>(detail::column_device_view_base::data<T>());
@@ -682,7 +684,7 @@ class alignas(16) mutable_column_device_view_core : public detail::column_device
    * @param element_index Position of the desired element
    * @return Reference to the element at the specified index
    */
-  template <typename T, CUDF_ENABLE_IF(is_rep_layout_compatible<T>())>
+  template <cudf::concepts::rep_layout_compatible T>
   [[nodiscard]] __device__ T& element(size_type element_index) const noexcept
   {
     return data<T>()[element_index];
@@ -699,7 +701,7 @@ class alignas(16) mutable_column_device_view_core : public detail::column_device
    * @param element_index Position of the desired string element
    * @return string_view instance representing this element at this index
    */
-  template <typename T, CUDF_ENABLE_IF(cuda::std::is_same_v<T, string_view>)>
+  template <cudf::concepts::string_view T>
   [[nodiscard]] __device__ T element(size_type element_index) const noexcept
   {
     size_type index       = element_index + offset();  // account for this view's _offset
@@ -720,7 +722,7 @@ class alignas(16) mutable_column_device_view_core : public detail::column_device
    * @param element_index Position of the desired element
    * @return numeric::fixed_point representing the element at this index
    */
-  template <typename T, CUDF_ENABLE_IF(cudf::is_fixed_point<T>())>
+  template <cudf::concepts::fixed_point T>
   [[nodiscard]] __device__ T element(size_type element_index) const noexcept
   {
     using namespace numeric;
@@ -752,7 +754,7 @@ class alignas(16) mutable_column_device_view_core : public detail::column_device
    * @param element_index Position of the desired element
    * @param value The value to assign
    */
-  template <typename T, CUDF_ENABLE_IF(is_rep_layout_compatible<T>())>
+  template <cudf::concepts::rep_layout_compatible T>
   __device__ void assign(size_type element_index, T value) const noexcept
   {
     data<T>()[element_index] = value;
@@ -766,7 +768,7 @@ class alignas(16) mutable_column_device_view_core : public detail::column_device
    * @param element_index Position of the desired element
    * @param value The value to assign
    */
-  template <typename T, CUDF_ENABLE_IF(is_fixed_point<T>())>
+  template <cudf::concepts::fixed_point T>
   __device__ void assign(size_type element_index, T value) const noexcept
   {
     // consider asserting that the scale matches

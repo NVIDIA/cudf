@@ -86,7 +86,8 @@
 - Operations incorrectly ordered on different streams without events or explicit dependencies
 
 ### Type Dispatch Patterns
-- New dispatch functors using `CUDF_ENABLE_IF` instead of C++20 `requires` clauses
+- New code using `CUDF_ENABLE_IF` or `std::enable_if_t` instead of C++20 concepts and `requires` clauses
+- Constraints written with `is_*<T>()` trait functions where a concept from `cudf/utilities/concepts.hpp` or `cuda::std` exists
 - Unsupported type overloads not calling `CUDF_FAIL` or `CUDF_UNREACHABLE`
 - Missing `static constexpr bool is_supported()` helper where useful
 
@@ -243,7 +244,7 @@ Suggested fix:
 - Use `[[nodiscard]]` on side-effect-free functions with non-void return
 
 **C++ Style**:
-- Prefer C++20 `requires` clauses over `CUDF_ENABLE_IF` for type-gating dispatch functors
+- Constrain templates with concepts (`cudf::concepts`, `cuda::std`), as constrained template parameters or `requires` clauses; never `CUDF_ENABLE_IF`
 - Use CUB (most preferred)/Thrust/STL algorithms over raw loops and raw kernels
 - Use modern C++20: `concepts`, `std::ranges`, `std::transform` over manual implementations
 - Use `static_assert` with clear messages to prevent template misuse

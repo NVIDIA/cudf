@@ -6,11 +6,18 @@ from __future__ import annotations
 import pytest
 
 import polars as pl
+from polars.testing import assert_frame_equal
 
 import pylibcudf as plc
 
-from cudf_polars.containers import DataType
-from cudf_polars.utils.dtypes import can_cast, is_order_preserving_cast
+from cudf_polars.containers import Column, DataFrame, DataType
+from cudf_polars.utils.cuda_stream import get_cuda_stream
+from cudf_polars.utils.dtypes import (
+    can_cast,
+    is_order_preserving_cast,
+    make_all_null_column,
+    make_empty_column,
+)
 
 INT8 = plc.DataType(plc.TypeId.INT8)
 INT16 = plc.DataType(plc.TypeId.INT16)
@@ -69,3 +76,62 @@ def test_can_cast_nested():
     assert not can_cast(LIST, LIST)
     assert not can_cast(LIST, STRUCT)
     assert can_cast(INT8, INT16)
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    [pl.Enum(["a", "b"]), pl.Categorical()],
+    ids=["enum", "categorical"],
+)
+def test_make_empty_column_dictionary(dtype):
+    result = make_empty_column(DataType(dtype), get_cuda_stream())
+
+    assert result.type().id() == plc.TypeId.DICTIONARY32
+    assert result.size() == 0
+    assert [child.type().id() for child in result.children()] == [
+        plc.TypeId.INT32,
+        plc.TypeId.STRING,
+    ]
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    [
+        pl.Int8(),
+        pl.String(),
+        pl.List(pl.Int8()),
+        pl.Struct({"a": pl.Int8()}),
+        pl.List(pl.Struct({"a": pl.Int8()})),
+        pl.Struct({"a": pl.List(pl.Int8()), "b": pl.Struct({"c": pl.String()})}),
+    ],
+    ids=repr,
+)
+def test_make_all_null_column(dtype):
+    stream = get_cuda_stream()
+    dt = DataType(dtype)
+
+    result = make_all_null_column(dt, 3, stream)
+
+    assert_frame_equal(
+        DataFrame([Column(result, name="a", dtype=dt)], stream=stream).to_polars(),
+        pl.DataFrame({"a": pl.Series([None] * 3, dtype=dtype)}),
+        check_dtypes=True,
+    )
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    [pl.Enum(["a", "b"]), pl.Categorical()],
+    ids=["enum", "categorical"],
+)
+def test_make_all_null_column_dictionary(dtype):
+    result = make_all_null_column(DataType(dtype), 3, get_cuda_stream())
+
+    assert result.type().id() == plc.TypeId.DICTIONARY32
+    assert result.size() == 3
+    assert result.null_count() == 3
+    assert [child.type().id() for child in result.children()] == [
+        plc.TypeId.INT32,
+        plc.TypeId.STRING,
+    ]
+    assert result.children()[1].size() == 0

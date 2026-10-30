@@ -99,18 +99,6 @@ def _contains_categorical_key(keys: Sequence[expr.NamedExpr]) -> bool:
     )
 
 
-def _supports_categorical(config_options: config.ConfigOptions) -> bool:
-    # TODO: Support multi-rank execution of Categorical columns.
-    executor = config_options.executor
-    if executor.name == "in-memory":
-        return True
-    if executor.ray_context is not None or executor.dask_context is not None:
-        return False
-    if executor.spmd_context is not None:
-        return executor.spmd_context.comm.nranks == 1
-    return executor.cluster == config.Cluster.DEFAULT_SINGLETON
-
-
 def _strip_file_uri(path: str) -> str:
     # file:///foo/path is treated as a local path. Polars
     # rejects file:// URIs with any non-empty host, so
@@ -310,17 +298,6 @@ class Translator:
             ):
                 error = NotImplementedError(
                     f"No GPU support for {result} with Null column dtype."
-                )
-                self.errors.append(error)
-                return ir.ErrorNode(schema, str(error))
-            if not _supports_categorical(self.config_options) and any(
-                isinstance(dtype, pl.Categorical)
-                for dtype in pl.datatypes.unpack_dtypes(*polars_schema.values())
-            ):
-                error = NotImplementedError(
-                    "Categorical columns are only supported on the in-memory "
-                    "executor and single-rank streaming engines; use pl.Enum "
-                    "for multi-rank execution"
                 )
                 self.errors.append(error)
                 return ir.ErrorNode(schema, str(error))

@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 __all__ = [
     "can_cast",
     "is_order_preserving_cast",
+    "make_all_null_column",
     "make_empty_column",
 ]
 
@@ -31,8 +32,9 @@ def make_empty_column(dtype: DataType, stream: Stream) -> plc.Column:
     """
     Create an empty (0-row) column, including for nested types.
 
-    ``plc.column_factories.make_empty_column`` rejects LIST and STRUCT,
-    so we build those by hand with the correct child structure.
+    ``plc.column_factories.make_empty_column`` rejects LIST and STRUCT, and
+    returns DICTIONARY32 without children, so we build those by hand with the
+    correct child structure.
 
     Parameters
     ----------
@@ -56,7 +58,72 @@ def make_empty_column(dtype: DataType, stream: Stream) -> plc.Column:
         ]
         return plc.Column(dtype.plc_type, 0, None, None, 0, 0, children)
 
+    if dtype.id() == plc.TypeId.DICTIONARY32:
+        return plc.Column(
+            dtype.plc_type,
+            0,
+            None,
+            None,
+            0,
+            0,
+            [
+                plc.column_factories.make_empty_column(
+                    plc.DataType(plc.TypeId.INT32), stream=stream
+                ),
+                plc.column_factories.make_empty_column(
+                    plc.DataType(plc.TypeId.STRING), stream=stream
+                ),
+            ],
+        )
+
     return plc.column_factories.make_empty_column(dtype.plc_type, stream=stream)
+
+
+def make_all_null_column(dtype: DataType, size: int, stream: Stream) -> plc.Column:
+    """
+    Create an all-null column, including for nested types and dictionaries.
+
+    Parameters
+    ----------
+    dtype
+        The cudf-polars DataType of the result.
+    size
+        Number of rows of the result.
+    stream
+        CUDA stream for any device allocations.
+
+    Returns
+    -------
+    An all-null column of ``size`` rows.
+    """
+    if dtype.id() == plc.TypeId.STRUCT:
+        children = [
+            make_all_null_column(child_dtype, size, stream)
+            for child_dtype in dtype.children
+        ]
+    elif dtype.id() == plc.TypeId.DICTIONARY32:
+        # Can be removed if https://github.com/NVIDIA/cudf/issues/24763 is addressed
+        children = [
+            plc.Column.from_scalar(
+                plc.Scalar.from_py(0, plc.DataType(plc.TypeId.INT32), stream=stream),
+                size,
+                stream=stream,
+            ),
+            make_empty_column(dtype, stream).children()[1],
+        ]
+    else:
+        return plc.Column.all_null_like(
+            make_empty_column(dtype, stream), size, stream=stream
+        )
+    return plc.Column(
+        dtype.plc_type,
+        size,
+        None,
+        plc.null_mask.create_null_mask(size, plc.MaskState.ALL_NULL, stream=stream),
+        size,
+        0,
+        children,
+    )
 
 
 def can_cast(from_: plc.DataType, to: plc.DataType) -> bool:

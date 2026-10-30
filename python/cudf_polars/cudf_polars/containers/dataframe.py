@@ -25,28 +25,7 @@ if TYPE_CHECKING:
 
     from cudf_polars.typing import ColumnOptions, DataFrameHeader, PolarsDataType, Slice
 
-__all__: list[str] = ["DataFrame", "categoricals_to_physical"]
-
-
-def categoricals_to_physical(df: pl.DataFrame) -> pl.DataFrame:
-    """
-    Replace Categorical and Enum columns with their physical codes.
-
-    Parameters
-    ----------
-    df
-        Polars dataframe
-
-    Returns
-    -------
-    Polars dataframe
-    """
-    names = [
-        name for name, dtype in df.schema.items() if DataType(dtype).is_categorical
-    ]
-    if not names:
-        return df
-    return df.with_columns(pl.col(names).to_physical())
+__all__: list[str] = ["DataFrame"]
 
 
 def _create_polars_column_metadata(
@@ -85,7 +64,7 @@ class _ObjectWithArrowMetadata:
     def __init__(
         self,
         obj: plc.Table | plc.Column,
-        metadata: list[plc.interop.ColumnMetadata],
+        metadata: list[plc.interop.ColumnMetadata] | plc.interop.ColumnMetadata,
         stream: Stream,
     ) -> None:
         self.obj = obj
@@ -162,17 +141,23 @@ class DataFrame:
                     c.obj.offset(),
                     c.obj.children(),
                 )
-            elif c.dtype.is_categorical and c.null_count > 0:
-                # Polars requires non-null codes.
-                filled = plc.replace.replace_nulls(
-                    c.obj,
-                    plc.Scalar.from_py(0, c.obj.type(), stream=self.stream),
-                    stream=self.stream,
-                )
-                table_columns[i] = filled.with_mask(
-                    plc.null_mask.copy_bitmask(c.obj, stream=self.stream),
-                    c.null_count,
-                )
+            elif c.dtype.is_categorical:
+                assert c.obj.type().id() == plc.TypeId.DICTIONARY32
+                if c.obj.num_children() == 0:
+                    table_columns[i] = plc.column_factories.make_empty_column(
+                        plc.DataType(plc.TypeId.INT32), stream=self.stream
+                    )
+                else:
+                    indices = c.obj.children()[0]
+                    table_columns[i] = plc.Column(
+                        indices.type(),
+                        c.obj.size(),
+                        indices.data(),
+                        c.obj.null_mask(),
+                        c.obj.null_count(),
+                        c.obj.offset(),
+                        [],
+                    )
         table = plc.Table(table_columns)
         table_with_metadata = _ObjectWithArrowMetadata(table, metadata, self.stream)
         df = pl.DataFrame(table_with_metadata).rename(name_map)
@@ -189,7 +174,19 @@ class DataFrame:
         categorical_columns = [c for c in self.columns if c.dtype.is_categorical]
         if categorical_columns:
             df = df.with_columns(
-                pl.col(c.name).cat.to(c.dtype.polars_type, strict=True)
+                pl.Series(
+                    _ObjectWithArrowMetadata(
+                        c.obj.children()[1]
+                        if c.obj.num_children() == 2
+                        else plc.column_factories.make_empty_column(
+                            plc.DataType(plc.TypeId.STRING), stream=self.stream
+                        ),
+                        plc.interop.ColumnMetadata(name=c.name),
+                        self.stream,
+                    )
+                )
+                .cast(c.dtype.polars_type, strict=True)
+                .gather(df[c.name])
                 for c in categorical_columns
             )
         return df.with_columns(
@@ -241,7 +238,7 @@ class DataFrame:
         -------
         New dataframe representing the input.
         """
-        plc_table = plc.Table.from_arrow(categoricals_to_physical(df), stream=stream)
+        plc_table = plc.Table.from_arrow(df, stream=stream)
         return cls(
             (
                 Column(d_col, name=name, dtype=DataType(h_col.dtype)).copy_metadata(

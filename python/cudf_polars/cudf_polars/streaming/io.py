@@ -42,6 +42,7 @@ from cudf_polars.streaming.dispatch import lower_ir_node
 from cudf_polars.streaming.utils import partition_range
 from cudf_polars.utils.config import Cluster
 from cudf_polars.utils.cuda_stream import get_cuda_stream
+from cudf_polars.utils.dtypes import make_empty_column
 
 if TYPE_CHECKING:
     from collections.abc import Hashable, Mapping, MutableMapping, Sequence
@@ -325,9 +326,7 @@ def _read_with_hybrid_scan(
             return DataFrame(
                 [
                     Column(
-                        plc.column_factories.make_empty_column(
-                            schema[name].plc_type, stream=stream
-                        ),
+                        make_empty_column(schema[name], stream),
                         dtype=schema[name],
                         name=name,
                     )

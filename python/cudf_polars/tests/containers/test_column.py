@@ -260,7 +260,7 @@ def test_categorical_serialize_roundtrip(pl_dtype, values):
     expected = pl.DataFrame({"a": pl.Series(values, dtype=pl_dtype)})
     dtype = DataType(pl_dtype)
     column = Column(
-        plc.Column.from_arrow(expected["a"].to_physical(), stream=stream),
+        plc.Column.from_arrow(expected["a"], stream=stream),
         name="a",
         dtype=dtype,
     )

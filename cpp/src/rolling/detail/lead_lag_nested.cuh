@@ -20,6 +20,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/iterator>
@@ -158,19 +159,23 @@ std::unique_ptr<column> compute_lead_lag_for_nested(aggregation::Kind op,
   if (default_outputs.is_empty()) { return std::move(output_with_nulls->release()[0]); }
 
   // Must scatter defaults.
-  auto scatter_map = rmm::device_uvector<size_type>(input.size(), stream);
+  // TODO: Use a resizable buffer when available: https://github.com/NVIDIA/cccl/issues/12051
+  auto scatter_map_storage = cuda::device_buffer<size_type>(
+    stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
 
   // Find all indices at which LEAD/LAG computed nulls previously.
   auto scatter_map_end =
     cudf::detail::copy_if(cuda::counting_iterator<size_type>{0},
                           cuda::counting_iterator<size_type>{input.size()},
-                          scatter_map.begin(),
+                          scatter_map_storage.begin(),
                           is_null_index_predicate(input.size(), gather_map.begin<size_type>()),
                           stream);
 
-  scatter_map.resize(cuda::std::distance(scatter_map.begin(), scatter_map_end), stream);
+  auto scatter_map = cudf::device_span<size_type>{
+    scatter_map_storage.data(),
+    static_cast<std::size_t>(cuda::std::distance(scatter_map_storage.begin(), scatter_map_end))};
   // Bail early, if all LEAD/LAG computations succeeded. No defaults need be substituted.
-  if (scatter_map.is_empty()) { return std::move(output_with_nulls->release()[0]); }
+  if (scatter_map.empty()) { return std::move(output_with_nulls->release()[0]); }
 
   // Gather only those default values that are to be substituted.
   auto gathered_defaults =

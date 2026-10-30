@@ -20,10 +20,16 @@
 #include <cudf/scalar/scalar_factories.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
+#include <cudf/types.hpp>
 
 #include <cuda/iterator>
 
 #include <numeric>
+#include <optional>
+#include <stdexcept>
+#include <tuple>
+#include <utility>
+#include <vector>
 
 template <typename T>
 class GatherTest : public cudf::test::BaseFixture {};
@@ -54,6 +60,138 @@ TYPED_TEST(GatherTest, IdentityTest)
   std::unique_ptr<cudf::table> result = cudf::gather(source_table, gather_map);
 
   CUDF_TEST_EXPECT_TABLES_EQUAL(source_table, result->view());
+}
+
+TYPED_TEST(GatherTest, GatherEveryIdentityTest)
+{
+  constexpr cudf::size_type source_size{1000};
+
+  auto data = cuda::counting_iterator{0};
+  cudf::test::fixed_width_column_wrapper<TypeParam> source_column(data, data + source_size);
+
+  cudf::table_view source_table({source_column});
+
+  std::unique_ptr<cudf::table> result = cudf::gather_every(source_table, 1);
+
+  CUDF_TEST_EXPECT_TABLES_EQUAL(source_table, result->view());
+}
+
+TYPED_TEST(GatherTest, GatherEveryFencepostTest)
+{
+  constexpr cudf::size_type source_size{1000};
+
+  // (step, start) pairs chosen to exercise the last selected row: coprime values where the last
+  // row lands on, just before, or just after the end of the table, plus steps near the table size.
+  std::vector<std::pair<cudf::size_type, cudf::size_type>> const cases{
+    {2, 0}, {3, 1}, {7, 5}, {13, 12}, {7, 999}, {999, 0}, {999, 1}, {1000, 0}, {1001, 0}};
+
+  auto data = cuda::counting_iterator{0};
+  cudf::test::fixed_width_column_wrapper<TypeParam> source_column(data, data + source_size);
+  cudf::table_view source_table({source_column});
+
+  for (auto const& test_case : cases) {
+    auto const step        = test_case.first;
+    auto const start       = test_case.second;
+    auto const result_size = (source_size - start + step - 1) / step;
+    auto expected_data     = cudf::detail::make_counting_transform_iterator(
+      0, [step, start](auto i) { return start + i * step; });
+    cudf::test::fixed_width_column_wrapper<TypeParam> expected_column(expected_data,
+                                                                      expected_data + result_size);
+
+    auto const result = cudf::gather_every(source_table, step, start);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_column, result->view().column(0));
+  }
+}
+
+TYPED_TEST(GatherTest, GatherEveryNegativeStepTest)
+{
+  constexpr cudf::size_type source_size{1000};
+
+  auto data = cuda::counting_iterator{0};
+  cudf::test::fixed_width_column_wrapper<TypeParam> source_column(data, data + source_size);
+  cudf::table_view source_table({source_column});
+
+  for (auto const step : {-1, -3, -7, -999, -1000}) {
+    auto const result_size = (source_size + -step - 1) / -step;
+    auto expected_data     = cudf::detail::make_counting_transform_iterator(
+      0, [step](auto i) { return source_size - 1 + i * step; });
+    cudf::test::fixed_width_column_wrapper<TypeParam> expected_column(expected_data,
+                                                                      expected_data + result_size);
+
+    auto const result = cudf::gather_every(source_table, step);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_column, result->view().column(0));
+  }
+}
+
+struct GatherEveryTest : public cudf::test::BaseFixture {};
+
+TEST_F(GatherEveryTest, StartStop)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> source_column{0, 1, 2, 3, 4, 5, 6, 7};
+  cudf::table_view source_table({source_column});
+
+  // Each case matches Python's `list(range(8))[start:stop:step]`.
+  auto const check = [&](cudf::size_type step,
+                         std::optional<cudf::size_type> start,
+                         std::optional<cudf::size_type> stop,
+                         std::vector<int32_t> const& expected) {
+    cudf::test::fixed_width_column_wrapper<int32_t> expected_column(expected.begin(),
+                                                                    expected.end());
+    auto const result = cudf::gather_every(source_table, step, start, stop);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_column, result->view().column(0));
+  };
+
+  check(2, 1, 6, {1, 3, 5});
+  check(2, 1, 7, {1, 3, 5});
+  check(3, std::nullopt, 6, {0, 3});
+  check(1, -3, std::nullopt, {5, 6, 7});
+  check(1, 2, -2, {2, 3, 4, 5});
+  check(2, -100, 100, {0, 2, 4, 6});
+  check(-1, std::nullopt, std::nullopt, {7, 6, 5, 4, 3, 2, 1, 0});
+  check(-2, -2, 1, {6, 4, 2});
+  check(-3, 6, std::nullopt, {6, 3, 0});
+  check(-1, 100, -100, {7, 6, 5, 4, 3, 2, 1, 0});
+  check(-2, 3, -1, {});
+}
+
+TEST_F(GatherEveryTest, EmptyResult)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> int_column{1, 2, 3};
+  cudf::test::strings_column_wrapper string_column{"a", "b", "c"};
+  cudf::table_view source_table({int_column, string_column});
+
+  // start at or past the end, stop at or before start, and a reverse slice from before the start
+  for (auto const& [step, start, stop] :
+       std::vector<std::tuple<cudf::size_type,
+                              std::optional<cudf::size_type>,
+                              std::optional<cudf::size_type>>>{{1, 3, std::nullopt},
+                                                               {1, 100, std::nullopt},
+                                                               {1, 2, 2},
+                                                               {1, 2, 1},
+                                                               {-1, 0, 0},
+                                                               {-1, -100, std::nullopt}}) {
+    auto const result = cudf::gather_every(source_table, step, start, stop);
+    EXPECT_EQ(result->num_rows(), 0);
+    CUDF_TEST_EXPECT_TABLES_EQUAL(cudf::empty_like(source_table)->view(), result->view());
+  }
+
+  cudf::test::fixed_width_column_wrapper<int32_t> empty_column{};
+  cudf::table_view empty_table({empty_column});
+  EXPECT_EQ(cudf::gather_every(empty_table, 2)->num_rows(), 0);
+  EXPECT_EQ(cudf::gather_every(empty_table, -2)->num_rows(), 0);
+}
+
+TEST_F(GatherEveryTest, InvalidArguments)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> source_column{1, 2, 3};
+  cudf::table_view source_table({source_column});
+
+  EXPECT_THROW(cudf::gather_every(source_table, 0), std::invalid_argument);
+  // A zero step is rejected even when the slice would otherwise be empty
+  EXPECT_THROW(cudf::gather_every(source_table, 0, 3), std::invalid_argument);
+
+  cudf::test::fixed_width_column_wrapper<int32_t> empty_column{};
+  EXPECT_THROW(cudf::gather_every(cudf::table_view({empty_column}), 0), std::invalid_argument);
 }
 
 TYPED_TEST(GatherTest, ReverseIdentityTest)

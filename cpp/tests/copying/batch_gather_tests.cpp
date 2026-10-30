@@ -27,6 +27,7 @@
 #include <cudf/utilities/traits.hpp>
 
 #include <algorithm>
+#include <limits>
 #include <memory>
 #include <numeric>
 #include <random>
@@ -933,6 +934,192 @@ TEST_F(BatchGatherMapTypesTest, MapTypesInt8ToInt64)
   CUDF_TEST_EXPECT_TABLES_EQUAL(first->view(), third->view());
   CUDF_TEST_EXPECT_TABLES_EQUAL(first->view(), fourth->view());
   CUDF_TEST_EXPECT_TABLES_EQUAL(first->view(), fifth->view());
+}
+
+// Direct-load widening must agree with the indexalator at the representational extremes.
+// The truncation identity makes the 4-byte path value-identical across INT32/UINT32 at every
+// bit pattern, so the meaningful comparison is the indexalator oracle over the same maps,
+// with in-bounds values for the DONT_CHECK legs (out-of-bounds is UB there) and the
+// NULLIFY/wrap legs over the extremes themselves. INT64 values above INT32 max are reachable
+// in-bounds only when the source has that many rows — impossible here — so the 8-byte leg
+// covers the extremes through the NULLIFY path, where both paths nullify identically, plus
+// in-bounds negative wrap.
+TEST_F(BatchGatherMapTypesTest, DirectMapWideningExtremes)
+{
+  constexpr cudf::size_type source_size{64};
+  auto source_column = make_fixed_column<int32_t>(
+    source_size, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+  cudf::table_view source_table({source_column->view()});
+
+  // In-bounds leg: values in [0, source_size) only — DONT_CHECK + NOT_ALLOWED makes any
+  // other value UB in both paths. Negative wrap has its own NULLIFY legs below.
+  std::vector<int32_t> in_bounds{0, 1, 32, 63, source_size - 1, 7, 33};
+  std::vector<int64_t> wide_in_bounds{in_bounds.begin(), in_bounds.end()};
+  auto i32_map =
+    cudf::test::fixed_width_column_wrapper<int32_t>(in_bounds.begin(), in_bounds.end()).release();
+  auto i64_map =
+    cudf::test::fixed_width_column_wrapper<int64_t>(wide_in_bounds.begin(), wide_in_bounds.end())
+      .release();
+
+  auto direct_32 = run_batch_gather(source_table, i32_map->view());
+  auto direct_64 = run_batch_gather(source_table, i64_map->view());
+  CUDF_TEST_EXPECT_TABLES_EQUAL(run_reference(source_table, i32_map->view())->view(),
+                                direct_32->view());
+  CUDF_TEST_EXPECT_TABLES_EQUAL(run_reference(source_table, i64_map->view())->view(),
+                                direct_64->view());
+
+  // Extremes leg under NULLIFY + wrap: INT32 min/max, UINT32 max bit pattern (== -1 after
+  // truncation, C++20 modular conversion), and INT64 values at/above INT32 max. Both paths
+  // apply the same wrap and the same bounds test, so results must match the stock gather.
+  cudf::test::fixed_width_column_wrapper<int32_t> i32_extremes{
+    std::numeric_limits<int32_t>::min(),
+    std::numeric_limits<int32_t>::max(),
+    static_cast<int32_t>(std::numeric_limits<uint32_t>::max()),  // -1 via C++20 modular conv
+    -1,
+    0};
+  cudf::test::fixed_width_column_wrapper<int64_t> i64_extremes{
+    static_cast<int64_t>(std::numeric_limits<int32_t>::max()),      //  2^31 - 1: OOB, nullified
+    static_cast<int64_t>(std::numeric_limits<int32_t>::max()) + 1,  //  2^31: OOB, nullified
+    std::numeric_limits<int64_t>::max(),                            //  truncates to -1: wraps
+    int64_t{-1},
+    int64_t{0}};
+
+  auto i32_extremes_result = run_batch_gather(source_table,
+                                              i32_extremes,
+                                              cudf::out_of_bounds_policy::NULLIFY,
+                                              cudf::negative_index_policy::ALLOWED);
+  auto i32_extremes_oracle = run_reference(source_table,
+                                           i32_extremes,
+                                           cudf::out_of_bounds_policy::NULLIFY,
+                                           cudf::negative_index_policy::ALLOWED);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(i32_extremes_oracle->view(), i32_extremes_result->view());
+
+  auto i64_extremes_result = run_batch_gather(source_table,
+                                              i64_extremes,
+                                              cudf::out_of_bounds_policy::NULLIFY,
+                                              cudf::negative_index_policy::ALLOWED);
+  auto i64_extremes_oracle = run_reference(source_table,
+                                           i64_extremes,
+                                           cudf::out_of_bounds_policy::NULLIFY,
+                                           cudf::negative_index_policy::ALLOWED);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(i64_extremes_oracle->view(), i64_extremes_result->view());
+}
+
+// The direct-load path must produce identical results for INT32 and UINT32 maps holding the
+// same bit patterns (the truncation to size_type is identical), and for INT64/UINT64 pairs.
+TEST_F(BatchGatherMapTypesTest, DirectMapSignedUnsignedAliasEquivalence)
+{
+  constexpr cudf::size_type source_size{100};
+  auto source_column = make_fixed_column<int32_t>(
+    source_size, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+  cudf::table_view source_table({source_column->view()});
+
+  auto const host_values = shuffled_iota(source_size);
+  std::vector<uint32_t> unsigned_values;
+  unsigned_values.reserve(host_values.size());
+  for (auto const v : host_values) {
+    unsigned_values.push_back(static_cast<uint32_t>(v));
+  }
+  std::vector<int32_t> signed_values;
+  signed_values.reserve(host_values.size());
+  for (auto const v : host_values) {
+    signed_values.push_back(static_cast<int32_t>(v));
+  }
+
+  auto unsigned_map =
+    cudf::test::fixed_width_column_wrapper<uint32_t>(unsigned_values.begin(), unsigned_values.end())
+      .release();
+  auto signed_map =
+    cudf::test::fixed_width_column_wrapper<int32_t>(signed_values.begin(), signed_values.end())
+      .release();
+
+  auto from_unsigned = run_batch_gather(source_table, unsigned_map->view());
+  auto from_signed   = run_batch_gather(source_table, signed_map->view());
+  auto oracle        = run_reference(source_table, signed_map->view());
+
+  CUDF_TEST_EXPECT_TABLES_EQUAL(oracle->view(), from_unsigned->view());
+  CUDF_TEST_EXPECT_TABLES_EQUAL(oracle->view(), from_signed->view());
+
+  // 64-bit pair over a tall-enough map: values in [0, 100) as int64/uint64.
+  std::vector<uint64_t> wide_unsigned;
+  std::vector<int64_t> wide_signed;
+  wide_unsigned.reserve(source_size);
+  wide_signed.reserve(source_size);
+  for (auto const v : host_values) {
+    wide_unsigned.push_back(static_cast<uint64_t>(v));
+    wide_signed.push_back(static_cast<int64_t>(v));
+  }
+  auto wide_unsigned_map =
+    cudf::test::fixed_width_column_wrapper<uint64_t>(wide_unsigned.begin(), wide_unsigned.end())
+      .release();
+  auto wide_signed_map =
+    cudf::test::fixed_width_column_wrapper<int64_t>(wide_signed.begin(), wide_signed.end())
+      .release();
+
+  auto from_wide_unsigned = run_batch_gather(source_table, wide_unsigned_map->view());
+  auto from_wide_signed   = run_batch_gather(source_table, wide_signed_map->view());
+
+  CUDF_TEST_EXPECT_TABLES_EQUAL(oracle->view(), from_wide_unsigned->view());
+  CUDF_TEST_EXPECT_TABLES_EQUAL(oracle->view(), from_wide_signed->view());
+}
+
+// A sliced qualifying map (offset != 0) still reads data<T>() on both paths — the slice
+// offset is pre-applied in element units — so the direct load must match the oracle on the
+// sliced map view.
+TEST_F(BatchGatherMapTypesTest, DirectMapSlicedMapMatchesIndexalator)
+{
+  constexpr cudf::size_type source_size{64};
+  auto source_column = make_fixed_column<int32_t>(
+    source_size, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+  cudf::table_view source_table({source_column->view()});
+
+  constexpr cudf::size_type map_len{48};
+  constexpr cudf::size_type map_offset{8};  // slice [8, 56) of a 64-row map
+  std::vector<int32_t> map_values(map_len + map_offset);
+  std::iota(map_values.begin(), map_values.end(), 0);
+  auto full_map =
+    cudf::test::fixed_width_column_wrapper<int32_t>(map_values.begin(), map_values.end()).release();
+  auto sliced = cudf::slice(full_map->view(), {map_offset, map_offset + map_len});
+  ASSERT_EQ(sliced.size(), 1);
+
+  auto direct_result = run_batch_gather(source_table, sliced[0]);
+  auto oracle        = run_reference(source_table, sliced[0]);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(oracle->view(), direct_result->view());
+}
+
+// Negative-wrap policy parity through the direct-load path: the same `idx += num_source_rows`
+// addition runs for INT32/INT64 maps, and NULLIFY bounds checks apply after the wrap.
+TEST_F(BatchGatherMapTypesTest, DirectMapNegativeWrapParity)
+{
+  constexpr cudf::size_type source_size{1000};
+  auto source_column = make_fixed_column<int32_t>(
+    source_size, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+  cudf::table_view source_table({source_column->view()});
+
+  cudf::test::fixed_width_column_wrapper<int32_t> gather_map{
+    -1, -source_size, 0, source_size - 1, -source_size - 1};
+  auto expected = make_fixed_column<int32_t>(
+    5,
+    [](cudf::size_type i) { return (i == 0 or i == 3) ? source_size - 1 : 0; },
+    [](cudf::size_type i) { return i != 4; });
+
+  auto result = run_batch_gather(source_table,
+                                 gather_map,
+                                 cudf::out_of_bounds_policy::NULLIFY,
+                                 cudf::negative_index_policy::ALLOWED);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view(), result->view().column(0));
+
+  // INT64 variant of the same pattern.
+  cudf::test::fixed_width_column_wrapper<int64_t> wide_map{int64_t{-1},
+                                                           int64_t{-source_size},
+                                                           int64_t{0},
+                                                           int64_t{source_size - 1},
+                                                           int64_t{-source_size} - 1};
+  auto wide_result = run_batch_gather(source_table,
+                                      wide_map,
+                                      cudf::out_of_bounds_policy::NULLIFY,
+                                      cudf::negative_index_policy::ALLOWED);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view(), wide_result->view().column(0));
 }
 
 // ============================================================================

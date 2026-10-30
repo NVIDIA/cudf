@@ -34,6 +34,7 @@
 #include <cuda/iterator>
 #include <cuda/ptx>
 #include <cuda/std/bit>
+#include <cuda/std/type_traits>
 #include <cuda/stream>
 
 #include <algorithm>
@@ -196,15 +197,48 @@ struct data_ptr_functor {
   }
 };
 
+// Adapter giving the indexalator the same call shape as `direct_map_reader`: the kernels read
+// the map uniformly as `reader(row)`, so only the launcher decides which reader a call gets.
+// Device-only, not CUDF_HOST_DEVICE: the callee `input_indexalator::operator[]` is __device__
+// only, and a __host__ __device__ wrapper around it fails the cross-execution-space check
+// (direct_map_reader can carry the dual marker only because a raw-pointer load has none).
+struct indexalator_reader {
+  input_indexalator it;
+  __device__ size_type operator()(size_type row) const { return it[row]; }
+};
+
+// Reader for maps whose stored bytes already are their logical indices: one typed load per
+// row replaces the indexalator's per-access type dispatch. The widening is plain
+// `static_cast<size_type>` — the identical conversion `input_indexalator::normalize_type`
+// performs (INT8/16 sign-extend, UINT8/16 zero-fill), so at every representational extreme
+// (INT32 min/max, UINT32 max, INT64 2^31/INT64_MAX) both readers produce the same value,
+// including the wrap: a negative INT64 value truncates to a negative size_type and wraps by
+// the same `idx += num_source_rows` addition as the indexalator path. `MapType` is
+// instantiated only for int32_t (INT32 and UINT32 maps alias it: reinterpreting the same 4
+// bytes is value-identical because both conversions truncate to the low 32 bits) and int64_t
+// (likewise for INT64/UINT64). The pointer must come from `direct_map_data`, which applies the
+// slice offset exactly like the indexalator's element base.
+template <typename MapType>
+struct direct_map_reader {
+  using value_type = MapType;
+  MapType const* base;
+  CUDF_HOST_DEVICE size_type operator()(size_type row) const
+  {
+    return static_cast<size_type>(base[row]);
+  }
+};
+
 /**
  * @brief Runs one descriptor tile's row loop, reading the tile's descriptors from `tile_descs`.
  *
- * Shared by both launch variants so the row and mask machinery exists once: `tile_descs`
+ * Shared by all three launch variants so the row and mask machinery exists once: `tile_descs`
  * addresses the shared-memory stage on the device path and the kernel-parameter block on the
- * by-value path. `__forceinline__` keeps the by-value variant's descriptor reads hoistable out of
- * the row loop: only a pointer crosses this boundary, never a descriptor block by value, so
- * inlining carries the `__grid_constant__` no-copy guarantee through and the tile base stays
- * provably loop-invariant.
+ * by-value path. The map source is `MapReader`: `input_indexalator` reads any map type through
+ * per-access type dispatch, while `direct_map_reader<MapType>` reads the qualifying wide maps
+ * (INT32/UINT32/INT64/UINT64) through one typed load per row. `__forceinline__` keeps the
+ * by-value variant's descriptor reads hoistable out of the row loop: only pointers cross this
+ * boundary, never a descriptor block by value, so inlining carries the `__grid_constant__`
+ * no-copy guarantee through and the tile base stays provably loop-invariant.
  *
  * `tile_begin` is the absolute descriptor position of `tile_descs[0]`; positions at or past
  * `num_descriptors` are absent from the tile and skipped.
@@ -218,8 +252,12 @@ struct data_ptr_functor {
  * bits of the last word are 0. Per-column bookkeeping (warp_valid[k], per-column ballots)
  * keeps this true independently of the tile a column belongs to.
  */
-template <size_type BlockSize, size_type kTileCols, bool kStreaming, bool kMasked>
-__device__ __forceinline__ void gather_tile_rows(input_indexalator gather_map,
+template <size_type BlockSize,
+          size_type kTileCols,
+          bool kStreaming,
+          bool kMasked,
+          typename MapReader>
+__device__ __forceinline__ void gather_tile_rows(MapReader gather_map,
                                                  column_descriptor const* tile_descs,
                                                  size_type tile_begin,
                                                  size_type num_descriptors,
@@ -240,7 +278,7 @@ __device__ __forceinline__ void gather_tile_rows(input_indexalator gather_map,
     // One map load (wrap + table-level bounds check) serves every column in the tile.
     // Deliberately default-cached: the map is the reuse-critical stream and the wide-tile
     // win depends on its L2 residency (no eviction hint here).
-    auto idx = gather_map[static_cast<size_type>(row)];
+    auto idx = gather_map(static_cast<size_type>(row));
     if (negative_allowed && idx < 0) { idx += num_source_rows; }
     bool const in_bounds = !check_bounds || (idx >= 0 && idx < num_source_rows);
 #pragma unroll
@@ -306,10 +344,15 @@ __device__ __forceinline__ void gather_tile_rows(input_indexalator gather_map,
  * `dst_mask` words, and accumulates `valid_counts`; `false` is launched only when no descriptor
  * carries either mask, so it drops the ballots, mask-word stores, source-mask reads, and
  * valid-bit tallies entirely. The row and mask invariants are stated on `gather_tile_rows`.
+ * `MapReader` selects the map source: `input_indexalator` or `direct_map_reader<MapType>`.
  */
-template <size_type BlockSize, size_type kTileCols, bool kStreaming, bool kMasked>
+template <size_type BlockSize,
+          size_type kTileCols,
+          bool kStreaming,
+          bool kMasked,
+          typename MapReader>
 CUDF_KERNEL __launch_bounds__(BlockSize) void batch_gather_kernel(
-  input_indexalator gather_map,
+  MapReader gather_map,
   column_descriptor const* descriptors,
   size_type num_descriptors,
   size_type num_rows,
@@ -358,10 +401,15 @@ CUDF_KERNEL __launch_bounds__(BlockSize) void batch_gather_kernel(
  * One y pass suffices — `kCap` spans at most `kCap / kTileCols` tiles, far below the 65535
  * gridDim.y cap — so `blockIdx.y` names its tile directly and the y-stride loop is omitted.
  */
-template <size_type BlockSize, size_type kTileCols, bool kStreaming, bool kMasked, size_type kCap>
+template <size_type BlockSize,
+          size_type kTileCols,
+          bool kStreaming,
+          bool kMasked,
+          size_type kCap,
+          typename MapReader>
 CUDF_KERNEL __launch_bounds__(BlockSize) void batch_gather_block_kernel(
-  input_indexalator gather_map,
   __grid_constant__ descriptor_block<kCap> const block,
+  MapReader gather_map,
   size_type num_rows,
   size_type num_source_rows,
   bool check_bounds,
@@ -382,8 +430,90 @@ CUDF_KERNEL __launch_bounds__(BlockSize) void batch_gather_block_kernel(
                                                               valid_counts);
 }
 
-// Enqueues the map-locality sample copies on the stream (one batched D2H into pinned staging —
-// no kernel launch, no sync). Returns a handle with empty staging for unclassifiable maps.
+/**
+ * @brief Gathers every column described by `descriptors` in one launch, reading the map through
+ * `direct_map_reader<MapType>` (the direct-load fast path for wide integer maps).
+ *
+ * Same grid geometry, descriptor staging, row loop, and mask machinery as the indexalator
+ * `batch_gather_kernel` — expressed through the same `gather_tile_rows` helper; only the map
+ * source differs (one typed load per row instead of the indexalator's per-access type
+ * dispatch). Launched only for maps the `map_supports_direct_load` predicate accepts, so the
+ * typed pointer is valid and the widening matches the indexalator's at every representational
+ * extreme (see `direct_map_reader`).
+ */
+template <size_type BlockSize, size_type kTileCols, bool kStreaming, bool kMasked, typename MapType>
+CUDF_KERNEL __launch_bounds__(BlockSize) void batch_gather_direct_map_kernel(
+  MapType const* map_values,
+  column_descriptor const* descriptors,
+  size_type num_descriptors,
+  size_type num_rows,
+  size_type num_source_rows,
+  bool check_bounds,
+  bool negative_allowed,
+  size_type* valid_counts)
+{
+  __shared__ column_descriptor tile_descs[kTileCols];
+  auto const num_tiles = util::div_rounding_up_safe(num_descriptors, kTileCols);
+  for (size_type tile = static_cast<size_type>(blockIdx.y); tile < num_tiles;
+       tile += static_cast<size_type>(gridDim.y)) {
+    auto const tile_begin = tile * kTileCols;
+    // Stage the tile's descriptors in shared memory; the range is block-uniform and the reads
+    // below are warp broadcasts.
+    if (threadIdx.x < kTileCols &&
+        tile_begin + static_cast<size_type>(threadIdx.x) < num_descriptors) {
+      tile_descs[threadIdx.x] = descriptors[tile_begin + static_cast<size_type>(threadIdx.x)];
+    }
+    __syncthreads();
+    gather_tile_rows<BlockSize, kTileCols, kStreaming, kMasked>(
+      direct_map_reader<MapType>{map_values},
+      tile_descs,
+      tile_begin,
+      num_descriptors,
+      num_rows,
+      num_source_rows,
+      check_bounds,
+      negative_allowed,
+      valid_counts);
+    // All threads are finished reading tile_descs; the next tile iteration rewrites it.
+    __syncthreads();
+  }
+}
+
+// Host-side predicate for the direct-map fast path, over host-visible type info only: the map
+// is a plain fixed-width integer whose in-memory representation IS the logical value, with an
+// instantiated element width (4/8 bytes). All eight integer index types pass the
+// representation test — the indexalator performs no null check (the map is null-free by the
+// entry expects) and its normalization is exactly the `static_cast<size_type>` widening — but
+// INT8/INT16/UINT8/UINT16 maps keep the indexalator: their loads are already narrow and the
+// extra variants buy nothing. `data<T>()` carries the slice offset in element units, so
+// sliced maps need no special case.
+bool map_supports_direct_load(column_view const& gather_map)
+{
+  switch (gather_map.type().id()) {
+    case cudf::type_id::INT8:
+    case cudf::type_id::INT16:
+    case cudf::type_id::INT32:
+    case cudf::type_id::INT64:
+    case cudf::type_id::UINT8:
+    case cudf::type_id::UINT16:
+    case cudf::type_id::UINT32:
+    case cudf::type_id::UINT64: break;
+    default: return false;
+  }
+  auto const elem_size = static_cast<size_type>(cudf::size_of(gather_map.type()));
+  return elem_size == 4 || elem_size == 8;
+}
+
+// Element pointer for a qualifying map: dispatches through the map's storage type, which for
+// the qualifying ids is the plain integer type itself; `data<T>()` has the slice offset
+// pre-applied in element units, matching the indexalator's element base exactly.
+template <typename MapType>
+MapType const* direct_map_data(column_view const& gather_map)
+{
+  return static_cast<MapType const*>(cudf::type_dispatcher<dispatch_storage_type>(
+    gather_map.type(), data_ptr_functor{}, gather_map));
+}
+
 // Enqueues the map-locality sample copies on the stream (a pitched D2H into pinned staging,
 // plus one endpoint-window copy when the window grid is not uniform — no kernel launch, no
 // sync). Returns a handle with empty staging for unclassifiable maps.
@@ -820,10 +950,19 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
         descriptors.size(), stream, temp_mr);
     }
 
-    // One launch per call; the tile width and the descriptor tier pick the kernel instantiation.
-    // y dimension: one block per column tile (the device kernel's y-stride loop covers tiles past
-    // the 65535 cap; the by-value block always fits below it).
+    // One launch per call; the tile width, descriptor tier, and map source pick the kernel
+    // instantiation. y dimension: one block per column tile (the device kernel's y-stride loop
+    // covers tiles past the 65535 cap; the by-value block always fits below it).
+    // Plain wide integer maps read the map through one typed load per row (the direct-load
+    // fast path); every other map type keeps the indexalator. The direct selection is
+    // consistent across tiers: by-value, device, and direct all receive the same reader.
+    auto const direct_map = map_supports_direct_load(gather_map);
+    // Always built from the factory: the indexalator reader is ALSO the map source for
+    // non-covered shapes when `direct_map` is true (e.g. explicit K4, K8-non-streaming), and a
+    // default-constructed `input_indexalator` has a null base — launching with it faults. The
+    // direct branch passes a `direct_map_reader` instead; the factory call is host-side and free.
     auto const map_begin   = indexalator_factory::make_input_iterator(gather_map);
+    auto const map_reader  = indexalator_reader{map_begin};
     auto const launch_tile = [&](auto tile_constant,
                                  auto streaming_constant,
                                  auto by_value_constant) {
@@ -839,36 +978,105 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
       auto const launch = [&](auto masked_constant) {
         constexpr bool kMasked = decltype(masked_constant)::value;
         auto const counts_ptr  = kMasked ? valid_counts.data() : nullptr;
-        if constexpr (kByValue) {
-          // Zero-initialized so every byte the launch copies is defined; the device reads only
-          // the first `count` entries.
-          auto block  = descriptor_block<batch_gather_max_by_value_descriptors>{};
-          block.count = num_descs;
-          std::copy(descriptors.begin(), descriptors.end(), block.descs);
-          batch_gather_block_kernel<block_size,
-                                    kTileCols,
-                                    kStreaming,
-                                    kMasked,
-                                    batch_gather_max_by_value_descriptors>
-            <<<grid, block_size, 0, stream.get()>>>(map_begin,
-                                                    block,
-                                                    num_rows,
-                                                    num_src_rows,
-                                                    bounds_policy == out_of_bounds_policy::NULLIFY,
-                                                    neg_indices == negative_index_policy::ALLOWED,
-                                                    counts_ptr);
+        // The map reader rides the kernel template: the direct-load fast path covers the
+        // round-9 subset — tile 1 non-streaming and tile 8 streaming (the hot narrow-table
+        // shape), each masked/mask-free — every other reachable geometry keeps the
+        // indexalator. int32_t and int64_t cover all four qualifying ids through the
+        // truncation alias. The constexpr gates keep call sites (and kernel instantiations)
+        // out of the non-covered shapes; the runtime `direct_map` guard is the routing
+        // counterpart so a covered-but-narrow map still takes the indexalator.
+        auto const launch_indexalator_shape = [&](size_type* counts_ptr) {
+          if constexpr (kByValue) {
+            // Zero-initialized so every byte the launch copies is defined; the device reads
+            // only the first `count` entries.
+            auto block  = descriptor_block<batch_gather_max_by_value_descriptors>{};
+            block.count = num_descs;
+            std::copy(descriptors.begin(), descriptors.end(), block.descs);
+            batch_gather_block_kernel<block_size,
+                                      kTileCols,
+                                      kStreaming,
+                                      kMasked,
+                                      batch_gather_max_by_value_descriptors>
+              <<<grid, block_size, 0, stream.get()>>>(
+                block,
+                map_reader,
+                num_rows,
+                num_src_rows,
+                bounds_policy == out_of_bounds_policy::NULLIFY,
+                neg_indices == negative_index_policy::ALLOWED,
+                counts_ptr);
+          } else {
+            batch_gather_kernel<block_size, kTileCols, kStreaming, kMasked>
+              <<<grid, block_size, 0, stream.get()>>>(
+                map_reader,
+                d_descriptors->data(),
+                num_descs,
+                num_rows,
+                num_src_rows,
+                bounds_policy == out_of_bounds_policy::NULLIFY,
+                neg_indices == negative_index_policy::ALLOWED,
+                counts_ptr);
+          }
+          CUDF_CUDA_TRY(cudaGetLastError());
+        };
+        if constexpr ((kTileCols == 1 and not kStreaming) or
+                      (kTileCols == kCoalescedTileCols and kStreaming)) {
+          if (direct_map) {
+            auto const launch_map = [&](auto map_reader) {
+              if constexpr (kByValue) {
+                // Zero-initialized so every byte the launch copies is defined; the device
+                // reads only the first `count` entries.
+                auto block  = descriptor_block<batch_gather_max_by_value_descriptors>{};
+                block.count = num_descs;
+                std::copy(descriptors.begin(), descriptors.end(), block.descs);
+                batch_gather_block_kernel<block_size,
+                                          kTileCols,
+                                          kStreaming,
+                                          kMasked,
+                                          batch_gather_max_by_value_descriptors>
+                  <<<grid, block_size, 0, stream.get()>>>(
+                    block,
+                    map_reader,
+                    num_rows,
+                    num_src_rows,
+                    bounds_policy == out_of_bounds_policy::NULLIFY,
+                    neg_indices == negative_index_policy::ALLOWED,
+                    counts_ptr);
+              } else {
+                batch_gather_direct_map_kernel<block_size,
+                                               kTileCols,
+                                               kStreaming,
+                                               kMasked,
+                                               typename decltype(map_reader)::value_type>
+                  <<<grid, block_size, 0, stream.get()>>>(
+                    map_reader.base,
+                    d_descriptors->data(),
+                    num_descs,
+                    num_rows,
+                    num_src_rows,
+                    bounds_policy == out_of_bounds_policy::NULLIFY,
+                    neg_indices == negative_index_policy::ALLOWED,
+                    counts_ptr);
+              }
+              CUDF_CUDA_TRY(cudaGetLastError());
+            };
+            switch (gather_map.type().id()) {
+              case cudf::type_id::INT32:  // falls through
+              case cudf::type_id::UINT32:
+                launch_map(direct_map_reader<int32_t>{direct_map_data<int32_t>(gather_map)});
+                break;
+              case cudf::type_id::INT64:  // falls through
+              case cudf::type_id::UINT64:
+                launch_map(direct_map_reader<int64_t>{direct_map_data<int64_t>(gather_map)});
+                break;
+              default: CUDF_UNREACHABLE("Map type excluded by the direct-load predicate");
+            }
+          } else {
+            launch_indexalator_shape(counts_ptr);
+          }
         } else {
-          batch_gather_kernel<block_size, kTileCols, kStreaming, kMasked>
-            <<<grid, block_size, 0, stream.get()>>>(map_begin,
-                                                    d_descriptors->data(),
-                                                    num_descs,
-                                                    num_rows,
-                                                    num_src_rows,
-                                                    bounds_policy == out_of_bounds_policy::NULLIFY,
-                                                    neg_indices == negative_index_policy::ALLOWED,
-                                                    counts_ptr);
+          launch_indexalator_shape(counts_ptr);
         }
-        CUDF_CUDA_TRY(cudaGetLastError());
       };
       if (any_kernel_masks) {
         launch(std::true_type{});

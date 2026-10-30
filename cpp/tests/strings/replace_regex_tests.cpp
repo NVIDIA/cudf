@@ -10,12 +10,14 @@
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/iterator_utilities.hpp>
 
+#include <cudf/copying.hpp>
 #include <cudf/strings/regex/regex_program.hpp>
 #include <cudf/strings/replace_re.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 
 #include <cuda/iterator>
 
+#include <optional>
 #include <ranges>
 #include <span>
 #include <vector>
@@ -561,4 +563,81 @@ TEST_F(StringsReplaceRegexTest, AlternationPriorityFirstWins)
     cudf::test::strings_column_wrapper expected({"X", "Xch", "Xfish", "dog", ""});
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
+}
+
+TEST_F(StringsReplaceRegexTest, SlicedInput)
+{
+  auto validity = cudf::test::iterators::nulls_at({3, 9});
+  auto input    = cudf::test::strings_column_wrapper(
+    {"skip me 12",
+        "a1b22c333",
+        "",
+        "",
+        "1",
+        "no digits here at all",
+        "éé12éé345é",
+        "aaaa",
+        "x9y8z7w6v5u4t3s2r1q0 long row with many matches 1 2 3 4 5 6 7 8 9",
+        "",
+        "Zebra aZ bbZ",
+        "tail 77",
+        "excluded 99"},
+    validity);
+  auto const sliced = cudf::slice(input, {1, 12}).front();
+  auto const sv     = cudf::strings_column_view(sliced);
+  auto const prog   = cudf::strings::regex_program::create("\\d+");
+  auto const repl   = cudf::string_scalar("<R>");
+
+  auto results  = cudf::strings::replace_re(sv, *prog, repl);
+  auto expected = cudf::test::strings_column_wrapper(
+    {"a<R>b<R>c<R>",
+     "",
+     "",
+     "<R>",
+     "no digits here at all",
+     "éé<R>éé<R>é",
+     "aaaa",
+     "x<R>y<R>z<R>w<R>v<R>u<R>t<R>s<R>r<R>q<R> long row with many matches "
+     "<R> <R> <R> <R> <R> <R> <R> <R> <R>",
+     "",
+     "Zebra aZ bbZ",
+     "tail <R>"},
+    cudf::test::iterators::nulls_at({2, 8}));
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
+
+  results  = cudf::strings::replace_re(sv, *prog, repl, 1);
+  expected = cudf::test::strings_column_wrapper(
+    {"a<R>b22c333",
+     "",
+     "",
+     "<R>",
+     "no digits here at all",
+     "éé<R>éé345é",
+     "aaaa",
+     "x<R>y8z7w6v5u4t3s2r1q0 long row with many matches 1 2 3 4 5 6 7 8 9",
+     "",
+     "Zebra aZ bbZ",
+     "tail <R>"},
+    cudf::test::iterators::nulls_at({2, 8}));
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
+}
+
+TEST_F(StringsReplaceRegexTest, DenseMatches)
+{
+  // more matches per row than the per-row match storage holds
+  auto input = cudf::test::strings_column_wrapper(
+    {"1234567890", "12", "a1", "", "123456789012345678901234567890abc", "abc", "9"});
+  auto const sv   = cudf::strings_column_view(input);
+  auto const prog = cudf::strings::regex_program::create("\\d");
+  auto const repl = cudf::string_scalar("_");
+
+  auto results  = cudf::strings::replace_re(sv, *prog, repl);
+  auto expected = cudf::test::strings_column_wrapper(
+    {"__________", "__", "a_", "", "______________________________abc", "abc", "_"});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
+
+  results  = cudf::strings::replace_re(sv, *prog, repl, 5);
+  expected = cudf::test::strings_column_wrapper(
+    {"_____67890", "__", "a_", "", "_____6789012345678901234567890abc", "abc", "_"});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 }

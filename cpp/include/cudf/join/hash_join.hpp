@@ -340,9 +340,9 @@ class hash_join {
    * The returned left_indices are relative to the original complete probe table, not just the
    * partition, so they can be used directly with the original probe table.
    *
-   * @throw std::invalid_argument If `context.left_table_context` is null, if its
-   * `_match_counts` is null, or if `[left_start_idx, left_end_idx)` is outside the bounds
-   * of the left table.
+   * @throw std::invalid_argument If `context.left_table_context` is null, has no match counts,
+   * or was created by another join object or join kind, or if `[left_start_idx, left_end_idx)`
+   * is outside the bounds of the left table.
    *
    * @param context The partition context containing match information and partition bounds
    * @param stream CUDA stream used for device memory operations and kernel launches
@@ -366,9 +366,9 @@ class hash_join {
    *
    * The returned left_indices are relative to the original complete probe table.
    *
-   * @throw std::invalid_argument If `context.left_table_context` is null, if its
-   * `_match_counts` is null, or if `[left_start_idx, left_end_idx)` is outside the bounds
-   * of the left table.
+   * @throw std::invalid_argument If `context.left_table_context` is null, has no match counts,
+   * or was created by another join object or join kind, or if `[left_start_idx, left_end_idx)`
+   * is outside the bounds of the left table.
    *
    * @param context The partition context containing match information and partition bounds
    * @param stream CUDA stream used for device memory operations and kernel launches
@@ -396,9 +396,9 @@ class hash_join {
    *
    * The returned left_indices are relative to the original complete probe table.
    *
-   * @throw std::invalid_argument If `context.left_table_context` is null, if its
-   * `_match_counts` is null, or if `[left_start_idx, left_end_idx)` is outside the bounds
-   * of the left table.
+   * @throw std::invalid_argument If `context.left_table_context` is null, has no match counts,
+   * or was created by another join object or join kind, or if `[left_start_idx, left_end_idx)`
+   * is outside the bounds of the left table.
    *
    * @param context The partition context containing match information and partition bounds
    * @param stream CUDA stream used for device memory operations and kernel launches

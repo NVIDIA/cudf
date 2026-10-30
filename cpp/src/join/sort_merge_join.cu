@@ -44,6 +44,7 @@
 #include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/for_each.h>
+#include <thrust/reduce.h>
 #include <thrust/unique.h>
 
 #include <memory>
@@ -914,10 +915,10 @@ std::unique_ptr<cudf::join_match_context> sort_merge_join::inner_join_match_cont
   auto preprocessed_left =
     preprocessed_table::create(left, compare_nulls, cudf::sorted::YES, stream);
 
-  return invoke_merge(
+  auto match_counts = invoke_merge(
     preprocessed_right._null_processed_table_view,
     preprocessed_left._null_processed_table_view,
-    [this, left, &preprocessed_left, stream, mr](auto& obj) mutable {
+    [this, &preprocessed_left, stream, mr](auto& obj) {
       auto matches_per_row = obj.matches_per_row(stream, mr);
       matches_per_row->resize(matches_per_row->size() - 1, stream);
       if (compare_nulls == null_equality::UNEQUAL &&
@@ -933,15 +934,22 @@ std::unique_ptr<cudf::join_match_context> sort_merge_join::inner_join_match_cont
                         matches_per_row->end(),
                         mapping.begin(),
                         unprocessed_matches_per_row.begin());
-        return std::make_unique<sort_merge_join_match_context>(
-          left,
-          std::make_unique<rmm::device_uvector<size_type>>(std::move(unprocessed_matches_per_row)),
-          std::move(preprocessed_left));
+        return std::make_unique<rmm::device_uvector<size_type>>(
+          std::move(unprocessed_matches_per_row));
       }
-      return std::make_unique<sort_merge_join_match_context>(
-        left, std::move(matches_per_row), std::move(preprocessed_left));
+      return matches_per_row;
     },
     stream);
+  auto const output_size =
+    thrust::reduce(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                   match_counts->begin(),
+                   match_counts->end(),
+                   std::size_t{0});
+  return std::make_unique<cudf::join_match_context>(
+    join_match_state::make_context(left,
+                                   std::move(match_counts),
+                                   std::make_unique<sort_merge_join_match_state>(
+                                     this, output_size, std::move(preprocessed_left))));
 }
 
 // left_partition_end exclusive
@@ -953,10 +961,12 @@ sort_merge_join::partitioned_inner_join(cudf::join_partition_context const& cont
 {
   cudf::scoped_range range{"sort_merge_join::partitioned_inner_join"};
 
-  // Extract preprocessed_left from the context
-  auto const& preprocessed_left =
-    static_cast<sort_merge_join_match_context const*>(context.left_table_context.get())
-      ->preprocessed_left;
+  auto const* state = join_match_state::get<sort_merge_join_match_state>(
+    *context.left_table_context, this, join_kind::INNER_JOIN);
+  CUDF_EXPECTS(state != nullptr,
+               "join_match_context was not created by inner_join_match_context()",
+               std::invalid_argument);
+  auto const& preprocessed_left = state->preprocessed_left;
 
   auto const left_partition_start_idx = context.left_start_idx;
   auto const left_partition_end_idx   = context.left_end_idx;

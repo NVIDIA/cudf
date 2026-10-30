@@ -86,6 +86,17 @@ TEST_F(JoinTest, SortMergeInnerJoin)
   obj.inner_join(table0, cudf::test::get_default_stream());
 }
 
+TEST_F(JoinTest, HashJoinPartitionedJoin)
+{
+  auto const stream = cudf::test::get_default_stream();
+  cudf::hash_join obj(table1, cudf::null_equality::EQUAL, stream);
+  auto context = cudf::join_partition_context{
+    std::make_unique<cudf::join_match_context>(obj.left_join_match_context(table0, stream)),
+    1,
+    table0.num_rows()};
+  std::ignore = obj.partitioned_left_join(context, stream);
+}
+
 TEST_F(JoinTest, LeftJoin)
 {
   cudf::left_join(table0, table1, cudf::null_equality::EQUAL, cudf::test::get_default_stream());

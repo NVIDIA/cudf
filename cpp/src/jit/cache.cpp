@@ -237,6 +237,9 @@ std::tuple<rtcx::library, rtcx::blob> compile_library(
 
   if (sm >= 100) { options.emplace_back("--device-float128"); }
 
+#ifdef CUDF_JIT_USE_LIBNVCXX
+  options.emplace_back("-DNVCXX_AS_STD");
+#endif
   options.emplace_back("-std=c++20");
   options.emplace_back("--device-as-default-execution-space");
   options.emplace_back("--generate-line-info");
@@ -319,6 +322,9 @@ rtcx::blob compile_fragment(char const* name,
 
   if (LTO_ARCHITECTURE >= 100) { options.emplace_back("--device-float128"); }
 
+#ifdef CUDF_JIT_USE_LIBNVCXX
+  options.emplace_back("-DNVCXX_AS_STD");
+#endif
   options.emplace_back("-std=c++20");
   options.emplace_back("--device-as-default-execution-space");
   options.emplace_back("--generate-line-info");

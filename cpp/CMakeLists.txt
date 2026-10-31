@@ -103,6 +103,7 @@ mark_as_advanced(CUDF_BUILD_STREAMS_TEST_UTIL)
 option(CUDF_CLANG_TIDY "Enable clang-tidy during compilation" OFF)
 option(CUDF_IWYU "Enable IWYU during compilation" OFF)
 option(CUDF_CLANG_TIDY_AUTOFIX "Enable clang-tidy autofixes" OFF)
+option(CUDF_JIT_USE_LIBNVCXX "Use librtcx libnvcxx for runtime JIT compilation" ON)
 
 option(
   CUDF_KVIKIO_REMOTE_IO
@@ -452,11 +453,6 @@ endif()
 rtcx_add_embed(cudf_cuda_embed)
 
 rtcx_embed_includes(
-  cudf_cuda_embed SOURCE_DIRECTORY ${rtcx_SOURCE_DIR}/libcxx DEST_DIRECTORY librtcx/libcxx
-  INCLUDE_DIRECTORIES librtcx/libcxx
-)
-
-rtcx_embed_includes(
   cudf_cuda_embed SOURCE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/cudf DEST_DIRECTORY
   cudf/cpp/include/cudf INCLUDE_DIRECTORIES cudf/cpp/include
 )
@@ -481,16 +477,46 @@ rtcx_embed_includes(
   cudf/cpp/src/transform/jit INCLUDE_DIRECTORIES cudf/cpp/src
 )
 
-get_target_property(LIBCUDACXX_RAW_INCLUDE_DIRS CCCL::libcudacxx INTERFACE_INCLUDE_DIRECTORIES)
-
-foreach(INC_DIR IN LISTS LIBCUDACXX_RAW_INCLUDE_DIRS)
-  cmake_path(GET INC_DIR FILENAME INC_DIR_NAME)
-
-  rtcx_embed_includes(
-    cudf_cuda_embed SOURCE_DIRECTORY ${INC_DIR} DEST_DIRECTORY CCCL/libcudacxx/${INC_DIR_NAME}
-    INCLUDE_DIRECTORIES CCCL/libcudacxx/${INC_DIR_NAME}
+if(CUDF_JIT_USE_LIBNVCXX)
+  set(NVCXX_SOURCE_DIR "${rtcx_SOURCE_DIR}/libnvcxx")
+  file(
+    GLOB_RECURSE NVCXX_HEADERS CONFIGURE_DEPENDS
+    RELATIVE "${NVCXX_SOURCE_DIR}"
+    "${NVCXX_SOURCE_DIR}/nvcxx/*"
   )
-endforeach()
+  rtcx_embed_includes(
+    cudf_cuda_embed
+    SOURCE_DIRECTORY
+    "${NVCXX_SOURCE_DIR}"
+    DEST_DIRECTORY
+    librtcx/libnvcxx
+    INCLUDE_DIRECTORIES
+    librtcx/libnvcxx
+    librtcx/libnvcxx/nvcxx
+    librtcx/libnvcxx/nvcxx/cuda
+    librtcx/libnvcxx/nvcxx/cuda/std
+    FILES
+    ${NVCXX_HEADERS}
+  )
+else()
+
+  # Workaround for aliasing fundamental types like `cuda::std::int8_t` as `std::int8_t`
+  rtcx_embed_includes(
+    cudf_cuda_embed SOURCE_DIRECTORY ${rtcx_SOURCE_DIR}/libcxx DEST_DIRECTORY librtcx/libcxx
+    INCLUDE_DIRECTORIES librtcx/libcxx
+  )
+
+  get_target_property(LIBCUDACXX_RAW_INCLUDE_DIRS CCCL::libcudacxx INTERFACE_INCLUDE_DIRECTORIES)
+
+  foreach(INC_DIR IN LISTS LIBCUDACXX_RAW_INCLUDE_DIRS)
+    cmake_path(GET INC_DIR FILENAME INC_DIR_NAME)
+
+    rtcx_embed_includes(
+      cudf_cuda_embed SOURCE_DIRECTORY ${INC_DIR} DEST_DIRECTORY CCCL/libcudacxx/${INC_DIR_NAME}
+      INCLUDE_DIRECTORIES CCCL/libcudacxx/${INC_DIR_NAME}
+    )
+  endforeach()
+endif()
 
 rtcx_embed(cudf_cuda_embed COMPRESSION zstd OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/embed")
 
@@ -1316,6 +1342,8 @@ target_compile_definitions(
          "$<BUILD_INTERFACE:$<$<COMPILE_LANGUAGE:CUDA>:${CUDF_CUDA_DEFINITIONS}>>"
          "CUDF_LTO_ARCHITECTURE=${CUDF_LTO_ARCHITECTURE}"
 )
+
+target_compile_definitions(cudf PRIVATE $<$<BOOL:${CUDF_JIT_USE_LIBNVCXX}>:CUDF_JIT_USE_LIBNVCXX>)
 
 # Per-thread default stream
 if(CUDF_USE_PER_THREAD_DEFAULT_STREAM)

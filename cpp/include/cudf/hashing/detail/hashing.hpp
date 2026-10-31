@@ -43,6 +43,11 @@ std::unique_ptr<column> murmurhash3_x86_32(table_view const& input,
                                            cuda::stream_ref,
                                            rmm::device_async_resource_ref mr);
 
+std::unique_ptr<column> murmurhash3_x86_32_jit(table_view const& input,
+                                               uint32_t seed,
+                                               cuda::stream_ref stream,
+                                               rmm::device_async_resource_ref mr);
+
 std::unique_ptr<column> spark_murmurhash3_x86_32(table_view const& input,
                                                  uint32_t seed,
                                                  cuda::stream_ref,

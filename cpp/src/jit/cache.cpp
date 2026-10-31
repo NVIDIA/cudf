@@ -20,6 +20,9 @@
 #include <format>
 #include <fstream>
 #include <future>
+#include <string>
+#include <string_view>
+#include <vector>
 
 namespace CUDF_EXPORT cudf {
 

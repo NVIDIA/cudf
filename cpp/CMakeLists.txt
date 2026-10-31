@@ -733,6 +733,7 @@ add_library(
   src/filling/fill.cu
   src/filling/repeat.cu
   src/filling/sequence.cu
+  src/fixed_point/math_ops.cu
   src/groupby/common/group_struct_minmax_scan.cu
   src/groupby/common/m2_var_std.cu
   src/groupby/common/null_mask.cu

@@ -1,5 +1,5 @@
 /*
- *  SPDX-FileCopyrightText: Copyright (c) 2022, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
@@ -18,6 +18,7 @@ import java.util.Objects;
 import java.util.Random;
 import java.util.function.Consumer;
 
+import static ai.rapids.cudf.AssertUtils.assertColumnsAreEqual;
 import static org.junit.jupiter.api.Assertions.*;
 
 public class DecimalColumnVectorTest extends CudfTestBase {
@@ -409,6 +410,132 @@ public class DecimalColumnVectorTest extends CudfTestBase {
           }
         }
       }
+    }
+  }
+
+  @Test
+  public void testDivideDecimalColumnColumn() {
+    DType outType = DType.create(DType.DTypeEnum.DECIMAL32, -1);
+    // 2.5/2, 3.5/2, -2.5/2, 1.0/3, null/1, 7.0/0
+    try (ColumnVector lhs = ColumnVector.decimalFromBoxedInts(-1, 25, 35, -25, 10, null, 70);
+         ColumnVector rhs = ColumnVector.decimalFromBoxedInts(0, 2, 2, 2, 3, 1, 0);
+         ColumnVector halfUp = lhs.divideDecimal(rhs, outType, RoundMode.HALF_UP);
+         ColumnVector halfEven = lhs.divideDecimal(rhs, outType, RoundMode.HALF_EVEN);
+         ColumnVector byDefault = lhs.divideDecimal(rhs, outType);
+         ColumnVector expectedHalfUp =
+             ColumnVector.decimalFromBoxedInts(-1, 13, 18, -13, 3, null, null);
+         ColumnVector expectedHalfEven =
+             ColumnVector.decimalFromBoxedInts(-1, 12, 18, -12, 3, null, null)) {
+      assertColumnsAreEqual(expectedHalfUp, halfUp);
+      assertColumnsAreEqual(expectedHalfEven, halfEven);
+      assertColumnsAreEqual(expectedHalfUp, byDefault);
+    }
+  }
+
+  @Test
+  public void testDivideDecimalWiderOutputType() {
+    DType outType = DType.create(DType.DTypeEnum.DECIMAL128, -6);
+    // 1.00/3.00, 2.00/3.00, -1.00/7.00
+    try (ColumnVector lhs = ColumnVector.decimalFromLongs(-2, 100, 200, -100);
+         ColumnVector rhs = ColumnVector.decimalFromLongs(-2, 300, 300, 700);
+         ColumnVector result = lhs.divideDecimal(rhs, outType);
+         ColumnVector expected = ColumnVector.decimalFromBigInt(-6,
+             BigInteger.valueOf(333333), BigInteger.valueOf(666667),
+             BigInteger.valueOf(-142857))) {
+      assertColumnsAreEqual(expected, result);
+    }
+  }
+
+  @Test
+  public void testDivideDecimalColumnScalar() {
+    DType outType = DType.create(DType.DTypeEnum.DECIMAL64, -2);
+    // 10.00/4.0, 10.50/4.0, null/4.0, -3.33/4.0
+    try (ColumnVector lhs = ColumnVector.decimalFromBoxedLongs(-2, 1000L, 1050L, null, -333L);
+         Scalar rhs = Scalar.fromDecimal(-1, 40L);
+         Scalar nullRhs = Scalar.fromNull(DType.create(DType.DTypeEnum.DECIMAL64, -1));
+         ColumnVector halfUp = lhs.divideDecimal(rhs, outType);
+         ColumnVector halfEven = lhs.divideDecimal(rhs, outType, RoundMode.HALF_EVEN);
+         ColumnVector allNull = lhs.divideDecimal(nullRhs, outType);
+         ColumnVector expectedHalfUp =
+             ColumnVector.decimalFromBoxedLongs(-2, 250L, 263L, null, -83L);
+         ColumnVector expectedHalfEven =
+             ColumnVector.decimalFromBoxedLongs(-2, 250L, 262L, null, -83L);
+         ColumnVector expectedAllNull =
+             ColumnVector.decimalFromBoxedLongs(-2, null, null, null, null)) {
+      assertColumnsAreEqual(expectedHalfUp, halfUp);
+      assertColumnsAreEqual(expectedHalfEven, halfEven);
+      assertColumnsAreEqual(expectedAllNull, allNull);
+    }
+  }
+
+  @Test
+  public void testDivideDecimalScalarColumn() {
+    DType outType = DType.create(DType.DTypeEnum.DECIMAL64, -3);
+    // 1/3, 1/6, 1/0, 1/null, 1/-8
+    try (Scalar lhs = Scalar.fromDecimal(0, 1L);
+         Scalar nullLhs = Scalar.fromNull(DType.create(DType.DTypeEnum.DECIMAL64, 0));
+         ColumnVector rhs = ColumnVector.decimalFromBoxedInts(0, 3, 6, 0, null, -8);
+         ColumnVector result = lhs.divideDecimal(rhs, outType, RoundMode.HALF_UP);
+         ColumnVector allNull = nullLhs.divideDecimal(rhs, outType);
+         ColumnVector expected =
+             ColumnVector.decimalFromBoxedLongs(-3, 333L, 167L, null, null, -125L);
+         ColumnVector expectedAllNull =
+             ColumnVector.decimalFromBoxedLongs(-3, null, null, null, null, null)) {
+      assertColumnsAreEqual(expected, result);
+      assertColumnsAreEqual(expectedAllNull, allNull);
+    }
+  }
+
+  @Test
+  public void testDivideDecimalWideIntermediate() {
+    DType outType = DType.create(DType.DTypeEnum.DECIMAL128, -20);
+    BigInteger ten10 = BigInteger.TEN.pow(10);
+    BigInteger ten20 = BigInteger.TEN.pow(20);
+    // 1.0000000000/1.00000000000000000000, -1.0000000000/1.00000000000000000000,
+    // 3.0000000000/-1.00000000000000000000, at scale -20, rescale the dividends to 10^40
+    try (ColumnVector lhs = ColumnVector.decimalFromBigInt(-10, ten10, ten10.negate(),
+             ten10.multiply(BigInteger.valueOf(3)));
+         ColumnVector rhs = ColumnVector.decimalFromBigInt(-20, ten20, ten20, ten20.negate());
+         Scalar lhsScalar = Scalar.fromDecimal(-10, ten10);
+         Scalar rhsScalar = Scalar.fromDecimal(-20, ten20);
+         ColumnVector byDefault = lhs.divideDecimal(rhs, outType);
+         ColumnVector standard = lhs.divideDecimal(rhs, outType, RoundMode.HALF_UP,
+             DecimalIntermediate.STANDARD);
+         ColumnVector standardVS = lhs.divideDecimal(rhsScalar, outType, RoundMode.HALF_UP,
+             DecimalIntermediate.STANDARD);
+         ColumnVector standardSV = lhsScalar.divideDecimal(rhs, outType, RoundMode.HALF_UP,
+             DecimalIntermediate.STANDARD);
+         ColumnVector wide = lhs.divideDecimal(rhs, outType, RoundMode.HALF_UP,
+             DecimalIntermediate.WIDE);
+         ColumnVector wideVS = lhs.divideDecimal(rhsScalar, outType, RoundMode.HALF_EVEN,
+             DecimalIntermediate.WIDE);
+         ColumnVector wideSV = lhsScalar.divideDecimal(rhs, outType, RoundMode.HALF_EVEN,
+             DecimalIntermediate.WIDE);
+         ColumnVector expectedNull = ColumnVector.decimalFromBigInt(-20, null, null, null);
+         ColumnVector expectedWide = ColumnVector.decimalFromBigInt(-20, ten20, ten20.negate(),
+             ten20.multiply(BigInteger.valueOf(-3)));
+         ColumnVector expectedWideVS = ColumnVector.decimalFromBigInt(-20, ten20, ten20.negate(),
+             ten20.multiply(BigInteger.valueOf(3)));
+         ColumnVector expectedWideSV = ColumnVector.decimalFromBigInt(-20, ten20, ten20,
+             ten20.negate())) {
+      assertColumnsAreEqual(expectedNull, byDefault);
+      assertColumnsAreEqual(expectedNull, standard);
+      assertColumnsAreEqual(expectedNull, standardVS);
+      assertColumnsAreEqual(expectedNull, standardSV);
+      assertColumnsAreEqual(expectedWide, wide);
+      assertColumnsAreEqual(expectedWideVS, wideVS);
+      assertColumnsAreEqual(expectedWideSV, wideSV);
+    }
+  }
+
+  @Test
+  public void testDivideDecimalInvalidTypes() {
+    DType decimalType = DType.create(DType.DTypeEnum.DECIMAL32, 0);
+    try (ColumnVector ints = ColumnVector.fromInts(1, 2);
+         ColumnVector decimals = ColumnVector.decimalFromInts(0, 1, 2)) {
+      assertThrows(CudfException.class, () -> ints.divideDecimal(decimals, decimalType));
+      assertThrows(CudfException.class, () -> decimals.divideDecimal(ints, decimalType));
+      assertThrows(CudfException.class, () -> decimals.divideDecimal(decimals, DType.INT32));
     }
   }
 }

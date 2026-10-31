@@ -16,6 +16,7 @@ This page provides API documentation for pylibcudf.
     contiguous_split
     copying
     datetime
+    decimal_division
     expressions
     filling
     gpumemoryview

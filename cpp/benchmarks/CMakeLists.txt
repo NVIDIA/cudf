@@ -520,7 +520,7 @@ target_link_libraries(MULTIBYTE_SPLIT_NVBENCH PRIVATE ZLIB::ZLIB)
 # ##################################################################################################
 # * decimal benchmark
 # ---------------------------------------------------------------------------------
-ConfigureNVBench(DECIMAL_NVBENCH decimal/convert_floating.cpp)
+ConfigureNVBench(DECIMAL_NVBENCH decimal/convert_floating.cpp decimal/divide_decimal.cpp)
 
 # ##################################################################################################
 # * reshape benchmark

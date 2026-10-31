@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -85,6 +85,7 @@
  *   @{
  *     @defgroup transformation_unaryops Unary Operations
  *     @defgroup transformation_binaryops Binary Operations
+ *     @defgroup transformation_fixed_point Fixed-Point Math
  *     @defgroup transformation_transform Transform
  *     @defgroup transformation_replace Replacing
  *     @defgroup transformation_fill Filling

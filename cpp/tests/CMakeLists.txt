@@ -262,7 +262,10 @@ ConfigureTest(CLAMP_TEST replace/clamp_test.cpp)
 
 # ##################################################################################################
 # * fixed_point tests -----------------------------------------------------------------------------
-ConfigureTest(FIXED_POINT_TEST fixed_point/fixed_point_tests.cpp fixed_point/fixed_point_tests.cu)
+ConfigureTest(
+  FIXED_POINT_TEST fixed_point/fixed_point_tests.cpp fixed_point/fixed_point_tests.cu
+  fixed_point/math_ops_tests.cpp
+)
 
 # ##################################################################################################
 # * unary tests -----------------------------------------------------------------------------------
@@ -792,6 +795,7 @@ ConfigureTest(STREAM_COPYING_TEST streams/copying_test.cpp STREAM_MODE testing)
 ConfigureTest(STREAM_DATETIME_TEST streams/datetime_test.cpp STREAM_MODE testing)
 ConfigureTest(STREAM_DICTIONARY_TEST streams/dictionary_test.cpp STREAM_MODE testing)
 ConfigureTest(STREAM_FILLING_TEST streams/filling_test.cpp STREAM_MODE testing)
+ConfigureTest(STREAM_FIXED_POINT_TEST streams/fixed_point_test.cpp STREAM_MODE testing)
 ConfigureTest(STREAM_GROUPBY_TEST streams/groupby_test.cpp STREAM_MODE testing)
 ConfigureTest(STREAM_HASHING_TEST streams/hash_test.cpp STREAM_MODE testing)
 ConfigureTest(STREAM_INTEROP streams/interop_test.cpp STREAM_MODE testing)

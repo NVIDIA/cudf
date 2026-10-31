@@ -123,7 +123,7 @@ std::unique_ptr<table> batch_gather(table_view const& source_table,
  * @brief Classifies the gather map's locality and returns the fused kernel tile width to use.
  *
  * Sampling is skipped entirely — returning the unsampled width without touching the map — when
- * the tile width is measured K-insensitive: fewer than 2 fused columns (K1 always), a
+ * the tile width is measured K-insensitive: fewer than 2 fused descriptors (K1 always), a
  * source/map shape whose sampled work `num_rows x num_fused_cols` is below 4M or with fewer
  * than 262144 rows (K2 while two fused columns plus the map fit half of the device L2, else
  * K1). When sampling runs, a small number of windows is copied device-to-host in a pitched
@@ -135,9 +135,13 @@ std::unique_ptr<table> batch_gather(table_view const& source_table,
  *
  * @param[in] source_table View of the table being gathered (row count feeds the L2 check)
  * @param[in] gather_map View of the gather map column to classify
- * @param[in] num_fused_cols Number of top-level fixed-width columns in `source_table` (the
- * kernel's descriptor count may be higher once struct leaves and dictionary indices flatten in)
- * @param[in] max_fused_element_size Largest element size in bytes among the fused columns
+ * @param[in] num_fused_cols Flattened descriptor count of the fused columns in
+ * `source_table` — struct leaves and mask-only struct nodes each count, every dictionary
+ * counts one for its index payload — an upper bound of the kernel's `num_descriptors` (a
+ * struct node whose mask needs no kernel write emits no mask-only descriptor) once the build
+ * walk flattens the same columns
+ * @param[in] max_fused_element_size Largest element size in bytes among the fused columns'
+ * data payloads (mask-only struct nodes carry none)
  * @param[in] stream CUDA stream used for the sample copy and its synchronization
  * @return Tile width in {1, 2, 8} for the `batch_gather` tile_cols parameter
  */

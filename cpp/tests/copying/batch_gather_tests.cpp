@@ -1655,6 +1655,89 @@ TEST_F(BatchGatherRoutingTest, RoutedPathMatchesExplicitTileWidths)
   CUDF_TEST_EXPECT_TABLES_EQUAL(routed_shuffled->view(), single_on_shuffled->view());
 }
 
+TEST_F(BatchGatherRoutingTest, RoutedNestedTablesMatchExplicitTileWidths)
+{
+  // Nested-heavy tables must route by the flattened descriptor count, not the top-level
+  // column count: a struct with 7 leaves is 8 descriptors, so a 1'048'576-row ascending map
+  // crosses both sampling floors (rows >= 262144, work = 8 x 1048576 >= 4M) and routes to the
+  // wide tile — the top-level count of 1 would have taken the unsampled K1. Tile-width
+  // independence holds for both map shapes regardless of the routed verdict.
+  constexpr cudf::size_type num_rows{1'048'576};
+  std::vector<std::unique_ptr<cudf::column>> children;
+  children.reserve(7);
+  for (int c = 0; c < 7; ++c) {
+    children.push_back(make_fixed_column<int32_t>(
+      num_rows, [c](cudf::size_type i) { return i + c; }, [](cudf::size_type) { return true; }));
+  }
+  cudf::test::structs_column_wrapper col_struct{std::move(children)};
+  cudf::table_view source_table({col_struct});
+
+  auto ascending_map = make_fixed_column<cudf::size_type>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+  auto routed_ascending  = run_batch_gather(source_table, ascending_map->view());
+  auto explicit_wide     = run_batch_gather_tile(source_table, ascending_map->view(), 8);
+  auto explicit_narrow   = run_batch_gather_tile(source_table, ascending_map->view(), 1);
+  auto reference_results = run_reference(source_table, ascending_map->view());
+  CUDF_TEST_EXPECT_TABLES_EQUAL(routed_ascending->view(), reference_results->view());
+  CUDF_TEST_EXPECT_TABLES_EQUAL(routed_ascending->view(), explicit_wide->view());
+  CUDF_TEST_EXPECT_TABLES_EQUAL(routed_ascending->view(), explicit_narrow->view());
+
+  auto const host_map = shuffled_iota(num_rows);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> shuffled_map(host_map.begin(),
+                                                                       host_map.end());
+  auto routed_shuffled  = run_batch_gather(source_table, shuffled_map);
+  auto wide_on_shuffled = run_batch_gather_tile(source_table, shuffled_map, 8);
+  auto ref_shuffled     = run_reference(source_table, shuffled_map);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(routed_shuffled->view(), ref_shuffled->view());
+  CUDF_TEST_EXPECT_TABLES_EQUAL(routed_shuffled->view(), wide_on_shuffled->view());
+}
+
+TEST_F(BatchGatherRoutingTest, RoutedMixedNestedAndFlatTablesMatchExplicitTileWidths)
+{
+  // One plain column + a struct: flattened count 6 (3 struct nodes' mask-only descriptors
+  // + 2 leaves + 1 plain) keeps the fused path off the forced-K1 regime the top-level count
+  // of 2 would have taken, and the map rows stay under the sampling floors so the unsampled
+  // K2 applies.
+  constexpr cudf::size_type num_rows{65'536};
+  auto col_plain = make_fixed_column<int64_t>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+  std::vector<std::unique_ptr<cudf::column>> outer_children;
+  outer_children.reserve(2);
+  for (int c = 0; c < 2; ++c) {
+    std::vector<std::unique_ptr<cudf::column>> leaves;
+    leaves.push_back(make_fixed_column<int32_t>(
+      num_rows, [c](cudf::size_type i) { return i * c; }, [](cudf::size_type) { return true; }));
+    outer_children.push_back(cudf::create_structs_hierarchy(
+      num_rows,
+      std::move(leaves),
+      0,
+      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, cudf::get_default_stream()),
+      cudf::get_default_stream(),
+      cudf::get_current_device_resource_ref()));
+  }
+  cudf::test::structs_column_wrapper col_struct{std::move(outer_children)};
+  cudf::table_view source_table({col_plain->view(), col_struct});
+
+  auto ascending_map = make_fixed_column<cudf::size_type>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+  auto routed_ascending    = run_batch_gather(source_table, ascending_map->view());
+  auto reference_ascending = run_reference(source_table, ascending_map->view());
+  CUDF_TEST_EXPECT_TABLES_EQUAL(routed_ascending->view(), reference_ascending->view());
+  CUDF_TEST_EXPECT_TABLES_EQUAL(
+    routed_ascending->view(),
+    run_batch_gather_tile(source_table, ascending_map->view(), 2)->view());
+  CUDF_TEST_EXPECT_TABLES_EQUAL(
+    routed_ascending->view(),
+    run_batch_gather_tile(source_table, ascending_map->view(), 1)->view());
+
+  auto const host_map = shuffled_iota(num_rows);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> shuffled_map(host_map.begin(),
+                                                                       host_map.end());
+  auto routed_shuffled = run_batch_gather(source_table, shuffled_map);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(routed_shuffled->view(),
+                                run_reference(source_table, shuffled_map)->view());
+}
+
 // ============================================================================
 // §5.11 By-value descriptor tier: small tables carry their descriptors as a kernel parameter.
 // ============================================================================
@@ -2486,6 +2569,111 @@ TEST_F(BatchGatherDictionaryTest, IndexWidthsFuse)
     auto const result_indices = cudf::dictionary_column_view{result->view().column(0)}.indices();
     EXPECT_EQ(result_indices.type().id(), indices_type);
   }
+}
+
+TEST_F(BatchGatherDictionaryTest, StringKeysDifferential)
+{
+  // Dictionary over STRING keys: the catalog deep copy must survive the deferred assembly —
+  // sliced-and-rebased offsets, exact chars byte range, verbatim key catalog (order, values,
+  // no dedup), and the empty-string key (zero-length chars range) round-trip exactly as the
+  // stock copy_slice produces them. The source dictionary is built by encoding a strings
+  // column with duplicate values, including an empty string.
+  constexpr cudf::size_type num_rows{250};
+  std::vector<std::string> values;
+  values.reserve(num_rows);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    values.push_back(i % 19 == 0 ? std::string{} : "key_" + std::to_string(i % 19));
+  }
+  auto values_col = cudf::test::strings_column_wrapper(values.begin(), values.end());
+
+  auto const host_map = shuffled_iota(num_rows);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto col_dict = cudf::dictionary::encode(
+    values_col, cudf::data_type{cudf::type_id::INT32}, cudf::get_default_stream());
+  cudf::table_view source_table({col_dict->view()});
+
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+
+  auto const source_keys = cudf::dictionary_column_view{source_table.column(0)}.keys();
+  auto const result_keys = cudf::dictionary_column_view{result->view().column(0)}.keys();
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(source_keys, result_keys);
+  EXPECT_EQ(result_keys.size(), source_keys.size());
+  EXPECT_FALSE(result->view().column(0).child(0).nullable());  // parent carries the mask
+}
+
+TEST_F(BatchGatherDictionaryTest, TwoStringKeyedCatalogsOneSync)
+{
+  // Two string-keyed dictionary columns in one call: both catalogs come from ONE batched
+  // offsets read plus ONE synchronization (the per-catalog reads of the stock path are gone).
+  // Correctness is asserted differentially; the sync-count property is covered by the
+  // implementation comment and the profiler, not the comparator.
+  constexpr cudf::size_type num_rows{300};
+  auto make_values = [](int modulo, int offset) {
+    std::vector<std::string> values;
+    values.reserve(num_rows);
+    for (cudf::size_type i = 0; i < num_rows; ++i) {
+      values.push_back(i % modulo == 0 ? std::string{}
+                                       : "cat_" + std::to_string(i % modulo + offset));
+    }
+    return values;
+  };
+  auto values_a = make_values(11, 0);
+  auto values_b = make_values(7, 100);
+  auto col_a =
+    cudf::dictionary::encode(cudf::test::strings_column_wrapper(values_a.begin(), values_a.end()),
+                             cudf::data_type{cudf::type_id::INT32},
+                             cudf::get_default_stream());
+  auto col_b =
+    cudf::dictionary::encode(cudf::test::strings_column_wrapper(values_b.begin(), values_b.end()),
+                             cudf::data_type{cudf::type_id::INT32},
+                             cudf::get_default_stream());
+  cudf::table_view source_table({col_a->view(), col_b->view()});
+
+  auto const host_map = shuffled_iota(num_rows);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+
+  for (size_t c : {size_t{0}, size_t{1}}) {
+    auto const source_keys = cudf::dictionary_column_view{source_table.column(c)}.keys();
+    auto const result_keys = cudf::dictionary_column_view{result->view().column(c)}.keys();
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(source_keys, result_keys);
+  }
+}
+
+TEST_F(BatchGatherDictionaryTest, NullableZeroNullsTakesAllValidPath)
+{
+  // A nullable dictionary with ZERO nulls: the mask plan pre-sets the destination mask
+  // ALL_VALID — no kernel mask, no count readback, and the output stays nullable with zero
+  // nulls. The gathered values must still match the stock gather.
+  constexpr cudf::size_type num_rows{150};
+  std::vector<int32_t> values;
+  values.reserve(num_rows);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    values.push_back(static_cast<int32_t>(i % 12));
+  }
+  auto always_valid =
+    cudf::detail::make_counting_transform_iterator(0, [](cudf::size_type) { return true; });
+  cudf::test::dictionary_column_wrapper<int32_t> col_dict(
+    values.begin(), values.end(), always_valid);
+
+  auto const host_map = shuffled_iota(num_rows);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+  cudf::table_view source_table({col_dict});
+
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+  EXPECT_TRUE(result->view().column(0).nullable());  // source was nullable; mask preserved
+  EXPECT_EQ(result->view().column(0).null_count(), 0);
 }
 
 TEST_F(BatchGatherDictionaryTest, AllNullParent)

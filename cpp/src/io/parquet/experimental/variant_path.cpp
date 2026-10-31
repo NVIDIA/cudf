@@ -10,10 +10,14 @@
 
 #include <charconv>
 #include <cstddef>
+#include <map>
+#include <numeric>
+#include <ranges>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 namespace cudf::io::parquet::experimental::detail {
@@ -61,6 +65,18 @@ namespace {
   return std::string{tail.substr(0, n + 1)};  // include the closing ']'
 }
 
+// A prefix-tree node built while merging paths. Children are keyed by step token, which is also how
+// the device walk tells the steps apart, so an index step and a same-spelled name cannot collide.
+// The map keeps the child order deterministic across runs.
+struct trie_builder_node {
+  std::map<std::string, std::size_t> children;
+  bool ends_a_path = false;
+
+  // A prefix is worth caching only if more than one path continues past it, or a path ends there.
+  // Any other prefix is folded into its single descendant's step range.
+  [[nodiscard]] bool needs_slot() const { return ends_a_path || children.size() > 1; }
+};
+
 }  // namespace
 
 std::vector<std::string> parse_variant_path(std::string_view path)
@@ -97,6 +113,89 @@ std::vector<std::string> parse_variant_path(std::string_view path)
   CUDF_EXPECTS(!steps.empty(), "variant path is empty", std::invalid_argument);
 
   return steps;
+}
+
+variant_path_trie build_variant_path_trie(std::span<std::string_view const> paths)
+{
+  // Node 0 is the root: the value blob itself, before any step is applied.
+  std::vector<trie_builder_node> nodes(1);
+  std::vector<std::size_t> path_end_node(paths.size());
+
+  // Merge the paths into the tree, one step at a time, reusing the nodes of any prefix already
+  // inserted. Parsing every path here validates them all before a slot is emitted.
+  for (std::size_t path_idx = 0; path_idx < paths.size(); ++path_idx) {
+    std::size_t node = 0;
+    for (auto const& step : parse_variant_path(paths[path_idx])) {
+      auto const child = nodes[node].children.find(step);
+      if (child != nodes[node].children.end()) {
+        node = child->second;
+      } else {
+        auto const new_node = nodes.size();
+        nodes.emplace_back();
+        nodes[node].children.emplace(step, new_node);
+        node = new_node;
+      }
+    }
+    nodes[node].ends_a_path = true;
+    path_end_node[path_idx] = node;
+  }
+
+  variant_path_trie trie;
+  trie.slot_steps.push_back(0);
+  std::vector<size_type> slot_of_node(nodes.size(), -1);
+
+  // Depth-first descent from the root, emitting slots in pre-order. `pending` carries the steps of
+  // the collapsed single-child chain since the last slot, and becomes that slot's step range.
+  struct descent_state {
+    std::size_t node;
+    size_type depth;
+    std::vector<std::string> pending;
+  };
+  std::vector<descent_state> stack;
+  stack.push_back({0, 0, {}});
+
+  while (!stack.empty()) {
+    auto state = std::move(stack.back());
+    stack.pop_back();
+
+    // The root is the value blob itself and never becomes a slot.
+    auto child_depth = state.depth;
+    std::vector<std::string> child_pending;
+    if (state.node != 0 && nodes[state.node].needs_slot()) {
+      slot_of_node[state.node] = static_cast<size_type>(trie.slot_depth.size());
+      trie.steps.insert(trie.steps.end(), state.pending.begin(), state.pending.end());
+      trie.slot_steps.push_back(static_cast<size_type>(trie.steps.size()));
+      trie.slot_depth.push_back(state.depth);
+      child_depth = state.depth + 1;
+    } else {
+      child_pending = std::move(state.pending);
+    }
+
+    // Pushed in reverse so popping visits children in order, keeping each subtree contiguous.
+    for (auto const& [step, child] : std::ranges::reverse_view(nodes[state.node].children)) {
+      stack.emplace_back(child, child_depth, child_pending);
+      stack.back().pending.push_back(step);
+    }
+  }
+
+  // Invert the path-to-slot mapping into CSR form, counting then filling.
+  auto const num_slots = trie.slot_depth.size();
+  trie.output_offsets.assign(num_slots + 1, 0);
+  for (auto const node : path_end_node) {
+    CUDF_EXPECTS(slot_of_node[node] >= 0, "VARIANT path did not reach a trie slot");
+    ++trie.output_offsets[slot_of_node[node] + 1];
+  }
+  std::inclusive_scan(
+    trie.output_offsets.cbegin(), trie.output_offsets.cend(), trie.output_offsets.begin());
+  // Place each path at its slot's next free position, using a copy of the offsets as cursors
+  trie.output_paths.resize(paths.size());
+  auto fill_position   = trie.output_offsets;
+  size_type path_index = 0;
+  for (auto const node : path_end_node) {
+    trie.output_paths[fill_position[slot_of_node[node]]++] = path_index++;
+  }
+
+  return trie;
 }
 
 }  // namespace cudf::io::parquet::experimental::detail

@@ -8,6 +8,7 @@
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_view.hpp>
 #include <cudf/io/experimental/variant_spec.hpp>
+#include <cudf/table/table.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -16,6 +17,7 @@
 
 #include <memory>
 #include <optional>
+#include <span>
 #include <string_view>
 
 /**
@@ -52,7 +54,7 @@ namespace io::parquet::experimental {
  * @param path JSONPath-like path string identifying the target field
  * @param status Optional. When provided, filled with `variant_operation_status` values, one per
  *               row. Must be non-nullable, `UINT8`, and have the same row count as
- *               `variant_column`
+ *               `variant_column`. Any incoming values are overwritten
  * @param stream CUDA stream
  * @param mr Device memory resource
  * @return `list<uint8>` column with the extracted value's encoded bytes. A row is null when the
@@ -120,7 +122,7 @@ namespace io::parquet::experimental {
  * @param desired_type Target type (see `cast_variant` for the supported types)
  * @param status Optional. When provided, filled with `variant_operation_status` values, one per
  *               row. Must be non-nullable, `UINT8`, and have the same row count as
- *               `variant_column`
+ *               `variant_column`. Any incoming values are overwritten
  * @param stream CUDA stream
  * @param mr Device memory resource
  * @return Column of `desired_type`
@@ -135,6 +137,65 @@ namespace io::parquet::experimental {
   std::optional<mutable_column_view> status = std::nullopt,
   cuda::stream_ref stream                   = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr         = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Extract the raw VARIANT-encoded bytes of several nested fields in one pass.
+ *
+ * Equivalent to calling `get_variant_field` once per path, but paths that share a prefix resolve
+ * that prefix once per row instead of once per path, and all paths are located by a single kernel
+ * and copied by a single pass.
+ *
+ * @param variant_column Struct column (VARIANT materialization)
+ * @param paths JSONPath-like path strings (see `get_variant_field` for syntax); duplicate and
+ *              overlapping paths are allowed
+ * @param statuses Optional. When non-empty, one status column per path, each as `status` in
+ *                 `get_variant_field`
+ * @param stream CUDA stream
+ * @param mr Memory resources used for the returned table and temporary allocations
+ * @return Table of one `list<uint8>` column per path, in the order the paths were given. Row
+ *         nullability matches `get_variant_field`
+ *
+ * @throws std::invalid_argument if any path is empty or malformed; or if `statuses` is neither
+ *         empty nor one column per path, or any of its columns is nullable, not `UINT8`, or has a
+ *         different row count than `variant_column`
+ */
+[[nodiscard]] std::unique_ptr<table> get_variant_fields(
+  column_view const& variant_column,
+  std::span<std::string_view const> paths,
+  std::span<mutable_column_view const> statuses = {},
+  cuda::stream_ref stream                       = cudf::get_default_stream(),
+  cudf::memory_resources mr                     = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Convenience wrapper: extract several nested fields by path and decode each into a typed
+ * column.
+ *
+ * Semantically equivalent to `extract_variant_field` per path, sharing the work of resolving common
+ * path prefixes.
+ *
+ * @param variant_column Struct column (VARIANT materialization)
+ * @param paths JSONPath-like path strings (see `get_variant_fields` for syntax and for which path
+ *              sets are allowed)
+ * @param desired_types Target type of each path's output column; parallels `paths` (see
+ *                      `cast_variant` for the supported types)
+ * @param statuses Optional. When non-empty, one status column per path, each as `status` in
+ *                 `extract_variant_field`
+ * @param stream CUDA stream
+ * @param mr Memory resources used for the returned table and temporary allocations
+ * @return Table of one column per path, in the order the paths were given
+ *
+ * @throws std::invalid_argument if any path is empty or malformed, if `paths` and `desired_types`
+ *         differ in size, if a desired type is unsupported; or if `statuses` is neither empty nor
+ *         one column per path, or any of its columns is nullable, not `UINT8`, or has a different
+ *         row count than `variant_column`
+ */
+[[nodiscard]] std::unique_ptr<table> extract_variant_fields(
+  column_view const& variant_column,
+  std::span<std::string_view const> paths,
+  std::span<data_type const> desired_types,
+  std::span<mutable_column_view const> statuses = {},
+  cuda::stream_ref stream                       = cudf::get_default_stream(),
+  cudf::memory_resources mr                     = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Return the logical type of each VARIANT value blob in a `list<uint8>` column.

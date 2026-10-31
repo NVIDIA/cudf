@@ -21,9 +21,11 @@
 
 #include <algorithm>
 #include <cstring>
+#include <format>
 #include <memory>
 #include <numeric>
 #include <random>
+#include <ranges>
 #include <span>
 #include <string>
 #include <tuple>
@@ -81,12 +83,6 @@ uint8_t make_variant_short_string_header(std::size_t length)
   return make_variant_header(variant_basic_type::SHORT_STRING, static_cast<uint8_t>(length));
 }
 
-// Header byte for an object value with 1-byte field ids and 1-byte offsets (value_header == 0).
-constexpr uint8_t make_variant_object_header()
-{
-  return make_variant_header(variant_basic_type::OBJECT, 0);
-}
-
 // Header byte for an array value with 1-byte count and 1-byte offsets (value_header == 0).
 constexpr uint8_t make_variant_array_header()
 {
@@ -99,6 +95,56 @@ void append_le(std::vector<uint8_t>& out, uint64_t bits, int width)
   for (int i = 0; i < width; ++i) {
     out.push_back(static_cast<uint8_t>((bits >> (8 * i)) & 0xff));
   }
+}
+
+// Dictionary key of the i-th leaf field: "f00", "f01", ... Zero padding makes the numeric order the
+// lexicographic order, which the callers rely on to predict each key's field id.
+std::string field_key(int i)
+{
+  CUDF_EXPECTS(i >= 0 && i < 100, "field key index does not fit the zero-padded key width");
+  return std::format("f{:02}", i);
+}
+
+// A field of an object under construction: its dictionary id and its already-encoded value bytes,
+// which the caller keeps alive.
+using object_field = std::pair<uint8_t, std::span<uint8_t const>>;
+
+// Build a VARIANT object from (field id, value) pairs. Ids must be ascending, which for a
+// name-sorted dictionary is also name order, as the spec requires. Field offsets widen to 2 bytes
+// once the values region outgrows a single byte.
+std::vector<uint8_t> build_object(std::vector<object_field> const& fields)
+{
+  constexpr std::size_t max_single_byte_offset = 255;
+  CUDF_EXPECTS(fields.size() <= max_single_byte_offset + 1,
+               "object field count must fit the 1-byte num_fields this writes");
+  CUDF_EXPECTS(std::ranges::adjacent_find(
+                 fields, [](auto const& lhs, auto const& rhs) { return lhs.first >= rhs.first; }) ==
+                 fields.end(),
+               "object field ids must be unique and ascending");
+
+  auto const values_bytes =
+    std::accumulate(fields.begin(), fields.end(), std::size_t{0}, [](auto acc, auto const& field) {
+      return acc + field.second.size();
+    });
+  int const offset_size = values_bytes > max_single_byte_offset ? 2 : 1;
+
+  // object value_header: | is_large (1) | field_id_size-1 (2) | field_offset_size-1 (2) |
+  std::vector<uint8_t> out{
+    make_variant_header(variant_basic_type::OBJECT, static_cast<uint8_t>(offset_size - 1)),
+    static_cast<uint8_t>(fields.size())};
+  auto const ids = std::views::keys(fields);
+  out.insert(out.end(), ids.begin(), ids.end());
+
+  std::size_t running = 0;
+  for (auto const& value : std::views::values(fields)) {
+    append_le(out, running, offset_size);
+    running += value.size();
+  }
+  append_le(out, running, offset_size);  // sentinel offset after the last field
+  for (auto const& value : std::views::values(fields)) {
+    out.insert(out.end(), value.begin(), value.end());
+  }
+  return out;
 }
 
 // Build a V1 VARIANT metadata blob for a key dictionary. When `sorted` is true, callers must pass
@@ -147,14 +193,9 @@ std::vector<uint8_t> build_metadata(std::vector<std::string> const& keys, bool s
 }
 
 // Wrap `inner` as the sole field (field id `fid`) of a 1-field VARIANT object.
-// Uses 1-byte field_id_size and 1-byte field_offset_size (value_header=0).
 std::vector<uint8_t> wrap_in_object(uint8_t fid, std::span<uint8_t const> inner)
 {
-  // Format: object_header(1) + num_fields(1) + fid(1) + offset[0]=0(1) + offset[1]=size(1) + data
-  std::vector<uint8_t> out{
-    make_variant_object_header(), 0x01, fid, 0x00, static_cast<uint8_t>(inner.size())};
-  out.insert(out.end(), inner.begin(), inner.end());
-  return out;
+  return build_object({{fid, inner}});
 }
 
 // Build the leaf VARIANT value blob for the requested type.
@@ -339,7 +380,7 @@ std::vector<std::string> get_dict_keys_for_fields(int num_fields)
   std::vector<std::string> keys;
   keys.reserve(num_fields + 1);
   for (int i = 0; i < num_fields; ++i) {
-    keys.emplace_back("f" + std::string(i < 10 ? "0" : "") + std::to_string(i));
+    keys.push_back(field_key(i));
   }
   keys.emplace_back("z");
   return keys;
@@ -369,32 +410,23 @@ std::vector<std::string> get_dict_keys_at_rank(int num_fields, int rank)
   return keys;
 }
 
-// Build a flat object with `num_fields` fields using 1-byte field IDs and 1-byte offsets.
+// Build a flat object with `num_fields` fields, field ids 0..num_fields-1.
 // Field `target_fid` holds `inner`; all other fields hold a dummy BOOLEAN_TRUE.
 std::vector<uint8_t> build_flat_object(int num_fields,
                                        int target_fid,
                                        std::span<uint8_t const> inner)
 {
-  // object_header(1) + num_fields(1) + field_ids(num_fields) + offsets(num_fields+1) + data
-  std::vector<uint8_t> out{make_variant_object_header(), static_cast<uint8_t>(num_fields)};
-  out.reserve(out.size() + static_cast<std::size_t>(3 * num_fields) + inner.size());
+  // Pads the object out to num_fields; BOOLEAN_TRUE encodes in its header byte alone.
+  static constexpr uint8_t filler_value =
+    make_variant_primitive_header(variant_primitive_type::BOOLEAN_TRUE);
+
+  std::vector<object_field> fields;
+  fields.reserve(num_fields);
   for (int i = 0; i < num_fields; ++i) {
-    out.push_back(static_cast<uint8_t>(i));
+    fields.emplace_back(static_cast<uint8_t>(i),
+                        i == target_fid ? inner : std::span<uint8_t const>{&filler_value, 1});
   }
-  uint8_t running = 0;
-  for (int i = 0; i < num_fields; ++i) {
-    out.push_back(running);
-    running += static_cast<uint8_t>(i == target_fid ? inner.size() : 1u);
-  }
-  out.push_back(running);  // sentinel offset after last field
-  for (int i = 0; i < num_fields; ++i) {
-    if (i == target_fid) {
-      out.insert(out.end(), inner.begin(), inner.end());
-    } else {
-      out.push_back(make_variant_primitive_header(variant_primitive_type::BOOLEAN_TRUE));  // dummy
-    }
-  }
-  return out;
+  return build_object(fields);
 }
 
 // Build the JSONPath-like extraction path.
@@ -625,7 +657,7 @@ static void bench_variant_extract_fields(nvbench::state& state)
     col            = build_variant_column(meta_spans, val_spans, stream, mr);
     CUDF_CUDA_TRY(cudaStreamSynchronize(stream.get()));
 
-    path      = "f" + std::string(target_fid < 10 ? "0" : "") + std::to_string(target_fid);
+    path      = field_key(target_fid);
     meta_size = meta_blob.size();
     hit_size  = hit_val.size();
   }
@@ -653,3 +685,85 @@ NVBENCH_BENCH(bench_variant_extract_fields)
   .add_string_axis("field_position", {"first", "last", "random"})
   .add_int64_axis("hit_rate", {20, 80})
   .add_string_axis("sorted", {"true", "false"});
+
+// Compares extracting many fields in one batched call against looping the single-field API, with
+// and without a prefix shared by all the requested paths. Type is fixed to int32_t; both APIs
+// decode, so the two sides of the comparison are end-to-end equivalent.
+// Every field holds a real leaf, so no path hits a filler value and skips its cast and copy.
+static void bench_variant_extract_multi_field(nvbench::state& state)
+{
+  auto stream = cudf::get_default_stream();
+  auto mr     = cudf::get_current_device_resource_ref();
+
+  auto const num_rows      = static_cast<cudf::size_type>(state.get_int64("num_rows"));
+  auto const num_fields    = static_cast<int>(state.get_int64("num_fields"));
+  auto const hit_rate      = static_cast<int>(state.get_int64("hit_rate"));
+  bool const shared_prefix = state.get_string("prefix") == "shared";
+  bool const batched       = state.get_string("api") == "batched";
+
+  // Dictionary: the shared parent key "a", the leaf keys f00..f{N-1}, and "z" for miss rows, in
+  // sorted order. Field ids are dictionary indices, so "a" is 0 and leaf `i` is `i + 1`.
+  std::vector<std::string> keys{"a"};
+  for (int i = 0; i < num_fields; ++i) {
+    keys.push_back(field_key(i));
+  }
+  keys.emplace_back("z");
+  auto const meta_blob = build_metadata(keys);
+
+  auto const leaf = build_leaf_value(bench_variant_type::INT32);
+  std::vector<object_field> leaf_fields;
+  for (int i = 0; i < num_fields; ++i) {
+    leaf_fields.emplace_back(static_cast<uint8_t>(i + 1), leaf);
+  }
+  // Shared-prefix layout nests every leaf under "a"; the disjoint layout puts them at the top
+  // level.
+  auto const leaf_object = build_object(leaf_fields);
+  auto hit_val           = shared_prefix ? build_object({{uint8_t{0}, leaf_object}}) : leaf_object;
+  // Miss rows hold an object keyed on "z" alone, so every path fails at its first step.
+  auto miss_val = build_object({{static_cast<uint8_t>(num_fields + 1), leaf}});
+  pad_to_equal_size(hit_val, miss_val);
+
+  std::vector<std::span<uint8_t const>> meta_spans(num_rows, std::span<uint8_t const>{meta_blob});
+  auto val_spans = fill_val_rows(num_rows, hit_val, miss_val, hit_rate);
+  auto col       = build_variant_column(meta_spans, val_spans, stream, mr);
+  CUDF_CUDA_TRY(cudaStreamSynchronize(stream.get()));
+
+  std::vector<std::string> path_strings;
+  path_strings.reserve(num_fields);
+  for (int i = 0; i < num_fields; ++i) {
+    path_strings.push_back((shared_prefix ? "$.a." : "$.") + field_key(i));
+  }
+  std::vector<std::string_view> const paths(path_strings.begin(), path_strings.end());
+  auto const target_type = cudf::data_type{cudf::type_id::INT32};
+  std::vector<cudf::data_type> const target_types(num_fields, target_type);
+
+  auto const data_size = static_cast<std::size_t>(num_rows) * (meta_blob.size() + hit_val.size());
+
+  auto mem_stats_logger = cudf::memory_stats_logger();
+  mr                    = cudf::get_current_device_resource_ref();
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
+  state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
+    if (batched) {
+      std::ignore = cudf::io::parquet::experimental::extract_variant_fields(
+        col->view(), paths, target_types, {}, stream, mr);
+    } else {
+      for (auto const& path : path_strings) {
+        std::ignore = cudf::io::parquet::experimental::extract_variant_field(
+          col->view(), path, target_type, std::nullopt, stream, mr);
+      }
+    }
+  });
+
+  auto const time = state.get_summary("nv/cold/time/gpu/mean").get_float64("value");
+  state.add_element_count(static_cast<double>(data_size) / time, "bytes_per_second");
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
+}
+
+NVBENCH_BENCH(bench_variant_extract_multi_field)
+  .set_name("bench_variant_extract_multi_field")
+  .add_int64_axis("num_rows", {262144, 2097152})
+  .add_int64_axis("num_fields", {1, 4, 16, 64})
+  .add_string_axis("prefix", {"shared", "disjoint"})
+  .add_string_axis("api", {"batched", "looped"})
+  .add_int64_axis("hit_rate", {80});

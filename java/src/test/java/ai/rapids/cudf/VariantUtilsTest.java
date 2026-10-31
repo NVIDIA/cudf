@@ -20,10 +20,23 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static ai.rapids.cudf.AssertUtils.assertColumnsAreEqual;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class VariantUtilsTest extends CudfTestBase {
   private static final ListType BINARY_TYPE =
@@ -37,6 +50,30 @@ public class VariantUtilsTest extends CudfTestBase {
       list.add(VariantEncoder.oneByte(value, "byte literal"));
     }
     return list;
+  }
+
+  private static byte statusId(VariantOperationStatus status) {
+    return (byte) status.getNativeId();
+  }
+
+  private static void assertStatusColumnsAreEqual(ColumnView expected, ColumnView actual) {
+    assertColumnsAreEqual(expected, actual);
+    // Logical equality and null count alone do not exclude an allocated all-valid mask.
+    assertNull(actual.getValid());
+  }
+
+  private static final class ScopedExecutor implements AutoCloseable {
+    private final ExecutorService executor;
+
+    private ScopedExecutor(int threads) {
+      executor = Executors.newFixedThreadPool(threads);
+    }
+
+    @Override
+    public void close() throws InterruptedException {
+      executor.shutdownNow();
+      assertTrue(executor.awaitTermination(10, TimeUnit.SECONDS));
+    }
   }
 
   @SafeVarargs
@@ -911,6 +948,770 @@ public class VariantUtilsTest extends CudfTestBase {
           assertEquals(target, extractedResult.getType());
           assertEquals(0, directResult.getRowCount());
           assertEquals(0, extractedResult.getRowCount());
+        }
+      }
+    }
+  }
+
+  @Test
+  void variantOperationStatusIdsMatchNativeValues() {
+    VariantOperationStatus[] statuses = {
+        VariantOperationStatus.SUCCESS,
+        VariantOperationStatus.ROW_NULL,
+        VariantOperationStatus.MISSING_PATH,
+        VariantOperationStatus.VARIANT_NULL,
+        VariantOperationStatus.TYPE_MISMATCH,
+        VariantOperationStatus.MALFORMED_VARIANT,
+        VariantOperationStatus.OVERFLOW,
+        VariantOperationStatus.INVALID_CONVERSION
+    };
+
+    for (int nativeId = 0; nativeId < statuses.length; nativeId++) {
+      assertEquals(nativeId, statuses[nativeId].getNativeId());
+      assertEquals(statuses[nativeId], VariantOperationStatus.fromNative(nativeId));
+    }
+    assertThrows(IllegalArgumentException.class, () -> VariantOperationStatus.fromNative(-1));
+    assertThrows(IllegalArgumentException.class, () -> VariantOperationStatus.fromNative(8));
+  }
+
+  @Test
+  void getVariantFieldValueStatusDistinguishesRowOutcomes() {
+    VariantEncoder encoder = new VariantEncoder("x");
+    VariantEncoder missingEncoder = new VariantEncoder("y");
+    try (ColumnVector variant = ColumnVector.fromStructs(
+             VARIANT_TYPE,
+             variant(encoder.metadata(), encoder.object(fields(
+                 field("x", VariantEncoder.int32(7))))),
+             variant(encoder.metadata(), encoder.object(fields(
+                 field("x", VariantEncoder.nullValue())))),
+             variant(bytes(0x02), encoder.object(fields(
+                 field("x", VariantEncoder.int32(9))))),
+             null,
+             variant(missingEncoder.metadata(), missingEncoder.object(fields(
+                 field("y", VariantEncoder.int32(11))))));
+         VariantOperationResult result =
+             VariantUtils.getVariantFieldValueWithStatus(variant, "x");
+         ColumnVector expectedValues = ColumnVector.fromLists(
+             BINARY_TYPE,
+             VariantEncoder.int32(7),
+             VariantEncoder.nullValue(),
+             null,
+             null,
+             null);
+         ColumnVector expectedStatus = ColumnVector.fromUnsignedBytes(
+             statusId(VariantOperationStatus.SUCCESS),
+             statusId(VariantOperationStatus.VARIANT_NULL),
+             statusId(VariantOperationStatus.MALFORMED_VARIANT),
+             statusId(VariantOperationStatus.ROW_NULL),
+             statusId(VariantOperationStatus.MISSING_PATH))) {
+      assertColumnsAreEqual(expectedValues, result.getValue());
+      assertStatusColumnsAreEqual(expectedStatus, result.getStatus());
+      assertEquals(DType.UINT8, result.getStatus().getType());
+      assertEquals(0, result.getStatus().getNullCount());
+      assertNull(result.getStatus().getValid());
+      assertEquals(result.getValue().getRowCount(), result.getStatus().getRowCount());
+    }
+  }
+
+  @Test
+  void getVariantFieldValueStatusCoversMissingPathForms() {
+    VariantEncoder encoder = new VariantEncoder("x");
+    try (ColumnVector arrays = makeArrayVariantColumn();
+         VariantOperationResult outOfBounds =
+             VariantUtils.getVariantFieldValueWithStatus(arrays, "$[99]");
+         ColumnVector expectedArrayStatus = ColumnVector.fromUnsignedBytes(
+             statusId(VariantOperationStatus.MISSING_PATH),
+             statusId(VariantOperationStatus.MISSING_PATH));
+         ColumnVector nullIntermediate = ColumnVector.fromStructs(
+             VARIANT_TYPE,
+             variant(encoder.metadata(), encoder.object(fields(
+                 field("x", VariantEncoder.nullValue())))));
+         VariantOperationResult nested =
+             VariantUtils.getVariantFieldValueWithStatus(nullIntermediate, "$.x.y");
+         ColumnVector expectedNestedStatus = ColumnVector.fromUnsignedBytes(
+             statusId(VariantOperationStatus.MISSING_PATH))) {
+      assertStatusColumnsAreEqual(expectedArrayStatus, outOfBounds.getStatus());
+      assertStatusColumnsAreEqual(expectedNestedStatus, nested.getStatus());
+    }
+  }
+
+  @Test
+  void castVariantValueStatusDistinguishesRowOutcomes() {
+    try (ColumnVector values = ColumnVector.fromLists(
+             BINARY_TYPE,
+             VariantEncoder.int32(42),
+             VariantEncoder.nullValue(),
+             VariantEncoder.int8(5),
+             bytes(VariantEncoder.simple(0x05), 0x01),
+             bytes(),
+             null);
+         VariantOperationResult result =
+             VariantUtils.castVariantValueWithStatus(values, DType.INT32);
+         ColumnVector expectedValues = ColumnVector.fromBoxedInts(42, null, null, null, null, null);
+         ColumnVector expectedStatus = ColumnVector.fromUnsignedBytes(
+             statusId(VariantOperationStatus.SUCCESS),
+             statusId(VariantOperationStatus.VARIANT_NULL),
+             statusId(VariantOperationStatus.TYPE_MISMATCH),
+             statusId(VariantOperationStatus.MALFORMED_VARIANT),
+             statusId(VariantOperationStatus.MALFORMED_VARIANT),
+             statusId(VariantOperationStatus.ROW_NULL))) {
+      assertColumnsAreEqual(expectedValues, result.getValue());
+      assertStatusColumnsAreEqual(expectedStatus, result.getStatus());
+      assertEquals(0, result.getStatus().getNullCount());
+    }
+  }
+
+  @Test
+  void castBooleanAndStringStatusesUseTheirNativePaths() {
+    try (ColumnVector boolValues = ColumnVector.fromLists(
+             BINARY_TYPE,
+             VariantEncoder.bool(true),
+             VariantEncoder.nullValue(),
+             VariantEncoder.int8(1),
+             bytes(0xfc));
+         VariantOperationResult boolResult =
+             VariantUtils.castVariantValueWithStatus(boolValues, DType.BOOL8);
+         ColumnVector expectedBools = ColumnVector.fromBoxedBooleans(true, null, null, null);
+         ColumnVector expectedBoolStatus = ColumnVector.fromUnsignedBytes(
+             statusId(VariantOperationStatus.SUCCESS),
+             statusId(VariantOperationStatus.VARIANT_NULL),
+             statusId(VariantOperationStatus.TYPE_MISMATCH),
+             statusId(VariantOperationStatus.MALFORMED_VARIANT));
+         ColumnVector stringValues = ColumnVector.fromLists(
+             BINARY_TYPE,
+             VariantEncoder.string("hi"),
+             VariantEncoder.nullValue(),
+             VariantEncoder.int32(1),
+             bytes(VariantEncoder.header(0x01, 5)));
+         VariantOperationResult stringResult =
+             VariantUtils.castVariantValueWithStatus(stringValues, DType.STRING);
+         ColumnVector expectedStrings = ColumnVector.fromStrings("hi", null, null, null);
+         ColumnVector expectedStringStatus = ColumnVector.fromUnsignedBytes(
+             statusId(VariantOperationStatus.SUCCESS),
+             statusId(VariantOperationStatus.VARIANT_NULL),
+             statusId(VariantOperationStatus.TYPE_MISMATCH),
+             statusId(VariantOperationStatus.MALFORMED_VARIANT))) {
+      assertColumnsAreEqual(expectedBools, boolResult.getValue());
+      assertStatusColumnsAreEqual(expectedBoolStatus, boolResult.getStatus());
+      assertColumnsAreEqual(expectedStrings, stringResult.getValue());
+      assertStatusColumnsAreEqual(expectedStringStatus, stringResult.getStatus());
+    }
+  }
+
+  @Test
+  void castFloatingPointStatusesUseTheirNativePaths() {
+    try (ColumnVector values = ColumnVector.fromLists(
+             BINARY_TYPE,
+             VariantEncoder.float32(1.25f),
+             VariantEncoder.float64(-2.5),
+             VariantEncoder.nullValue(),
+             bytes(VariantEncoder.simple(0x07), 0x01),
+             null);
+         VariantOperationResult floats =
+             VariantUtils.castVariantValueWithStatus(values, DType.FLOAT32);
+         VariantOperationResult doubles =
+             VariantUtils.castVariantValueWithStatus(values, DType.FLOAT64);
+         ColumnVector expectedFloats =
+             ColumnVector.fromBoxedFloats(1.25f, null, null, null, null);
+         ColumnVector expectedDoubles =
+             ColumnVector.fromBoxedDoubles(null, -2.5, null, null, null);
+         ColumnVector expectedFloatStatus = ColumnVector.fromUnsignedBytes(
+             statusId(VariantOperationStatus.SUCCESS),
+             statusId(VariantOperationStatus.TYPE_MISMATCH),
+             statusId(VariantOperationStatus.VARIANT_NULL),
+             statusId(VariantOperationStatus.TYPE_MISMATCH),
+             statusId(VariantOperationStatus.ROW_NULL));
+         ColumnVector expectedDoubleStatus = ColumnVector.fromUnsignedBytes(
+             statusId(VariantOperationStatus.TYPE_MISMATCH),
+             statusId(VariantOperationStatus.SUCCESS),
+             statusId(VariantOperationStatus.VARIANT_NULL),
+             statusId(VariantOperationStatus.MALFORMED_VARIANT),
+             statusId(VariantOperationStatus.ROW_NULL))) {
+      assertColumnsAreEqual(expectedFloats, floats.getValue());
+      assertColumnsAreEqual(expectedDoubles, doubles.getValue());
+      assertStatusColumnsAreEqual(expectedFloatStatus, floats.getStatus());
+      assertStatusColumnsAreEqual(expectedDoubleStatus, doubles.getStatus());
+    }
+  }
+
+  @Test
+  void variantPriorStatusRejectsAllValidMasks() {
+    try (ColumnVector values = ColumnVector.fromLists(
+             BINARY_TYPE, VariantEncoder.int32(7), VariantEncoder.int32(8));
+         ColumnVector data = ColumnVector.fromUnsignedBytes((byte) 0, (byte) 0);
+         ColumnVector maskOwner =
+             ColumnVector.fromBoxedUnsignedBytes((byte) 0, (byte) 0, null);
+         ColumnView allValidMaskedStatus = new ColumnView(
+             DType.UINT8, 2, Optional.of(0L), data.getData(), maskOwner.getValid());
+         CloseableArray<ColumnView> statusViews =
+             CloseableArray.wrap(allValidMaskedStatus.splitAsViews(1));
+         CloseableArray<ColumnView> valueViews = CloseableArray.wrap(values.splitAsViews(1))) {
+      ColumnView slicedStatus = statusViews.get(1);
+      ColumnView slicedValues = valueViews.get(1);
+      assertEquals(0, allValidMaskedStatus.getNullCount());
+      assertNotNull(allValidMaskedStatus.getValid());
+      assertEquals(0, slicedStatus.getNullCount());
+      assertNotNull(slicedStatus.getValid());
+      assertThrows(IllegalArgumentException.class,
+          () -> VariantUtils.castVariantValueWithStatus(values, DType.INT32, allValidMaskedStatus));
+      assertThrows(IllegalArgumentException.class,
+          () -> VariantUtils.castVariantValueWithStatus(slicedValues, DType.INT32, slicedStatus));
+    }
+  }
+
+  @Test
+  void variantPriorStatusSupportsNonzeroOffsetAndEmptyInputs() {
+    try (ColumnVector values = ColumnVector.fromLists(
+             BINARY_TYPE, VariantEncoder.int32(0), VariantEncoder.int32(7),
+             VariantEncoder.int32(8), VariantEncoder.int32(9));
+         ColumnVector status = ColumnVector.fromUnsignedBytes(
+             statusId(VariantOperationStatus.TYPE_MISMATCH),
+             statusId(VariantOperationStatus.SUCCESS),
+             statusId(VariantOperationStatus.MISSING_PATH),
+             statusId(VariantOperationStatus.SUCCESS));
+         CloseableArray<ColumnView> valueViews = CloseableArray.wrap(values.splitAsViews(1));
+         CloseableArray<ColumnView> statusViews = CloseableArray.wrap(status.splitAsViews(1));
+         VariantOperationResult sliced =
+             VariantUtils.castVariantValueWithStatus(
+                 valueViews.get(1), DType.INT32, statusViews.get(1));
+         ColumnVector expectedValues = ColumnVector.fromBoxedInts(7, null, 9);
+         ColumnVector expectedStatus = ColumnVector.fromUnsignedBytes(
+             statusId(VariantOperationStatus.SUCCESS),
+             statusId(VariantOperationStatus.MISSING_PATH),
+             statusId(VariantOperationStatus.SUCCESS));
+         ColumnVector emptyValues = ColumnVector.fromLists(BINARY_TYPE);
+         ColumnVector emptyStatus = ColumnVector.fromUnsignedBytes();
+         VariantOperationResult empty =
+             VariantUtils.castVariantValueWithStatus(emptyValues, DType.INT32, emptyStatus)) {
+      assertColumnsAreEqual(expectedValues, sliced.getValue());
+      assertStatusColumnsAreEqual(expectedStatus, sliced.getStatus());
+      assertColumnsAreEqual(expectedStatus, statusViews.get(1));
+      assertEquals(0, empty.getValue().getRowCount());
+      assertEquals(0, empty.getStatus().getRowCount());
+      assertNull(empty.getStatus().getValid());
+    }
+  }
+
+  @Test
+  void variantResultCloseIsIdempotentAndRetainedColumnsRemainValid() {
+    try (ColumnVector values = ColumnVector.fromLists(BINARY_TYPE, VariantEncoder.int32(7));
+         VariantOperationResult result =
+             VariantUtils.castVariantValueWithStatus(values, DType.INT32);
+         ColumnVector retainedValue = result.getValue().incRefCount();
+         ColumnVector retainedStatus = result.getStatus().incRefCount();
+         ColumnVector expectedValue = ColumnVector.fromInts(7);
+         ColumnVector expectedStatus = ColumnVector.fromUnsignedBytes((byte) 0)) {
+      result.close();
+      result.close();
+      assertEquals(1, retainedValue.getRefCount());
+      assertEquals(1, retainedStatus.getRefCount());
+      assertColumnsAreEqual(expectedValue, retainedValue);
+      assertColumnsAreEqual(expectedStatus, retainedStatus);
+    }
+  }
+
+  @Test
+  void castVariantValuePropagatesEveryPriorStatusWithoutMutatingInput() {
+    try (ColumnVector values = ColumnVector.fromLists(
+             BINARY_TYPE,
+             VariantEncoder.int32(7),
+             VariantEncoder.int32(1),
+             VariantEncoder.int32(2),
+             VariantEncoder.int32(3),
+             VariantEncoder.int32(4),
+             VariantEncoder.int32(5),
+             VariantEncoder.int32(6),
+             VariantEncoder.int32(7),
+             VariantEncoder.int8(8));
+         ColumnVector priorStatus = ColumnVector.fromUnsignedBytes(
+             statusId(VariantOperationStatus.SUCCESS),
+             statusId(VariantOperationStatus.ROW_NULL),
+             statusId(VariantOperationStatus.MISSING_PATH),
+             statusId(VariantOperationStatus.VARIANT_NULL),
+             statusId(VariantOperationStatus.TYPE_MISMATCH),
+             statusId(VariantOperationStatus.MALFORMED_VARIANT),
+             statusId(VariantOperationStatus.OVERFLOW),
+             statusId(VariantOperationStatus.INVALID_CONVERSION),
+             statusId(VariantOperationStatus.SUCCESS));
+         ColumnVector expectedOriginalStatus = ColumnVector.fromUnsignedBytes(
+             statusId(VariantOperationStatus.SUCCESS),
+             statusId(VariantOperationStatus.ROW_NULL),
+             statusId(VariantOperationStatus.MISSING_PATH),
+             statusId(VariantOperationStatus.VARIANT_NULL),
+             statusId(VariantOperationStatus.TYPE_MISMATCH),
+             statusId(VariantOperationStatus.MALFORMED_VARIANT),
+             statusId(VariantOperationStatus.OVERFLOW),
+             statusId(VariantOperationStatus.INVALID_CONVERSION),
+             statusId(VariantOperationStatus.SUCCESS));
+         ColumnVector expectedFinalStatus = ColumnVector.fromUnsignedBytes(
+             statusId(VariantOperationStatus.SUCCESS),
+             statusId(VariantOperationStatus.ROW_NULL),
+             statusId(VariantOperationStatus.MISSING_PATH),
+             statusId(VariantOperationStatus.VARIANT_NULL),
+             statusId(VariantOperationStatus.TYPE_MISMATCH),
+             statusId(VariantOperationStatus.MALFORMED_VARIANT),
+             statusId(VariantOperationStatus.OVERFLOW),
+             statusId(VariantOperationStatus.INVALID_CONVERSION),
+             statusId(VariantOperationStatus.TYPE_MISMATCH));
+         VariantOperationResult result =
+             VariantUtils.castVariantValueWithStatus(values, DType.INT32, priorStatus);
+         ColumnVector expectedValues =
+             ColumnVector.fromBoxedInts(7, null, null, null, null, null, null, null, null)) {
+      assertColumnsAreEqual(expectedValues, result.getValue());
+      assertStatusColumnsAreEqual(expectedFinalStatus, result.getStatus());
+      assertColumnsAreEqual(expectedOriginalStatus, priorStatus);
+    }
+  }
+
+  @Test
+  void fusedVariantStatusMatchesStagedExtraction() {
+    VariantEncoder encoder = new VariantEncoder("x");
+    VariantEncoder missingEncoder = new VariantEncoder("y");
+    try (ColumnVector variant = ColumnVector.fromStructs(
+             VARIANT_TYPE,
+             variant(encoder.metadata(), encoder.object(fields(
+                 field("x", VariantEncoder.int32(7))))),
+             variant(missingEncoder.metadata(), missingEncoder.object(fields(
+                 field("y", VariantEncoder.int32(8))))),
+             variant(encoder.metadata(), encoder.object(fields(
+                 field("x", VariantEncoder.nullValue())))),
+             variant(encoder.metadata(), encoder.object(fields(
+                 field("x", VariantEncoder.int8(9))))),
+             variant(bytes(0x02), encoder.object(fields(
+                 field("x", VariantEncoder.int32(10))))),
+             null);
+         VariantOperationResult raw =
+             VariantUtils.getVariantFieldValueWithStatus(variant, "x");
+         VariantOperationResult staged = VariantUtils.castVariantValueWithStatus(
+             raw.getValue(), DType.INT32, raw.getStatus());
+         VariantOperationResult fused =
+             VariantUtils.extractVariantFieldWithStatus(variant, "x", DType.INT32);
+         ColumnVector expectedValues =
+             ColumnVector.fromBoxedInts(7, null, null, null, null, null);
+         ColumnVector expectedStatus = ColumnVector.fromUnsignedBytes(
+             statusId(VariantOperationStatus.SUCCESS),
+             statusId(VariantOperationStatus.MISSING_PATH),
+             statusId(VariantOperationStatus.VARIANT_NULL),
+             statusId(VariantOperationStatus.TYPE_MISMATCH),
+             statusId(VariantOperationStatus.MALFORMED_VARIANT),
+             statusId(VariantOperationStatus.ROW_NULL));
+         ColumnVector expectedRawStatus = ColumnVector.fromUnsignedBytes(
+             statusId(VariantOperationStatus.SUCCESS),
+             statusId(VariantOperationStatus.MISSING_PATH),
+             statusId(VariantOperationStatus.VARIANT_NULL),
+             statusId(VariantOperationStatus.SUCCESS),
+             statusId(VariantOperationStatus.MALFORMED_VARIANT),
+             statusId(VariantOperationStatus.ROW_NULL))) {
+      assertColumnsAreEqual(expectedValues, staged.getValue());
+      assertColumnsAreEqual(expectedValues, fused.getValue());
+      assertStatusColumnsAreEqual(expectedStatus, staged.getStatus());
+      assertStatusColumnsAreEqual(expectedStatus, fused.getStatus());
+      assertStatusColumnsAreEqual(expectedRawStatus, raw.getStatus());
+    }
+  }
+
+  @Test
+  void variantStatusSupportsSlicesAndEmptyInputs() {
+    try (ColumnVector values = ColumnVector.fromLists(
+             BINARY_TYPE,
+             VariantEncoder.int8(0),
+             VariantEncoder.int32(7),
+             null,
+             VariantEncoder.int32(9));
+         ColumnVector slice = values.subVector(1, 4);
+         VariantOperationResult sliced =
+             VariantUtils.castVariantValueWithStatus(slice, DType.INT32);
+         ColumnVector expectedValues = ColumnVector.fromBoxedInts(7, null, 9);
+         ColumnVector expectedStatus = ColumnVector.fromUnsignedBytes(
+             statusId(VariantOperationStatus.SUCCESS),
+             statusId(VariantOperationStatus.ROW_NULL),
+             statusId(VariantOperationStatus.SUCCESS));
+         ColumnVector emptyValues = ColumnVector.fromLists(BINARY_TYPE);
+         ColumnVector emptyVariant = ColumnVector.fromStructs(VARIANT_TYPE);
+         VariantOperationResult emptyCast =
+             VariantUtils.castVariantValueWithStatus(emptyValues, DType.INT32);
+         VariantOperationResult emptyGet =
+             VariantUtils.getVariantFieldValueWithStatus(emptyVariant, "x");
+         VariantOperationResult emptyExtract =
+             VariantUtils.extractVariantFieldWithStatus(emptyVariant, "x", DType.INT32)) {
+      assertColumnsAreEqual(expectedValues, sliced.getValue());
+      assertStatusColumnsAreEqual(expectedStatus, sliced.getStatus());
+      assertEquals(0, emptyCast.getValue().getRowCount());
+      assertEquals(0, emptyCast.getStatus().getRowCount());
+      assertEquals(0, emptyGet.getValue().getRowCount());
+      assertEquals(0, emptyGet.getStatus().getRowCount());
+      assertEquals(0, emptyExtract.getValue().getRowCount());
+      assertEquals(0, emptyExtract.getStatus().getRowCount());
+      assertEquals(DType.UINT8, emptyCast.getStatus().getType());
+      assertEquals(DType.UINT8, emptyGet.getStatus().getType());
+      assertEquals(DType.UINT8, emptyExtract.getStatus().getType());
+      assertNull(emptyCast.getStatus().getValid());
+      assertNull(emptyGet.getStatus().getValid());
+      assertNull(emptyExtract.getStatus().getValid());
+    }
+  }
+
+  @Test
+  void variantStatusApisValidateArguments() {
+    try (ColumnVector variant = makeXyzVariantColumn();
+         ColumnVector values = VariantUtils.getVariantFieldValue(variant, "x");
+         ColumnVector wrongType = ColumnVector.fromInts(0, 0, 0);
+         ColumnVector wrongSize = ColumnVector.fromUnsignedBytes((byte) 0);
+         ColumnVector nullableStatus =
+             ColumnVector.fromBoxedUnsignedBytes((byte) 0, null, (byte) 0);
+         ColumnVector nonVariant = ColumnVector.fromInts(1, 2, 3)) {
+      assertThrows(NullPointerException.class,
+          () -> VariantUtils.getVariantFieldValueWithStatus(null, "x"));
+      assertThrows(NullPointerException.class,
+          () -> VariantUtils.getVariantFieldValueWithStatus(variant, null));
+      assertThrows(NullPointerException.class,
+          () -> VariantUtils.castVariantValueWithStatus(null, DType.INT32));
+      assertThrows(NullPointerException.class,
+          () -> VariantUtils.castVariantValueWithStatus(values, null));
+      assertThrows(NullPointerException.class,
+          () -> VariantUtils.castVariantValueWithStatus(values, DType.INT32, null));
+      assertThrows(NullPointerException.class,
+          () -> VariantUtils.extractVariantFieldWithStatus(null, "x", DType.INT32));
+      assertThrows(NullPointerException.class,
+          () -> VariantUtils.extractVariantFieldWithStatus(variant, null, DType.INT32));
+      assertThrows(NullPointerException.class,
+          () -> VariantUtils.extractVariantFieldWithStatus(variant, "x", null));
+
+      assertThrows(IllegalArgumentException.class,
+          () -> VariantUtils.castVariantValueWithStatus(values, DType.UINT32));
+      assertThrows(IllegalArgumentException.class,
+          () -> VariantUtils.extractVariantFieldWithStatus(variant, "x", DType.UINT32));
+      assertThrows(IllegalArgumentException.class,
+          () -> VariantUtils.castVariantValueWithStatus(values, DType.INT32, wrongType));
+      assertThrows(IllegalArgumentException.class,
+          () -> VariantUtils.castVariantValueWithStatus(values, DType.INT32, wrongSize));
+      assertThrows(IllegalArgumentException.class,
+          () -> VariantUtils.castVariantValueWithStatus(values, DType.INT32, nullableStatus));
+
+      assertThrows(CudfException.class,
+          () -> VariantUtils.getVariantFieldValueWithStatus(variant, "$.x["));
+      assertThrows(CudfException.class,
+          () -> VariantUtils.extractVariantFieldWithStatus(variant, "$.x[", DType.INT32));
+      assertThrows(CudfException.class,
+          () -> VariantUtils.getVariantFieldValueWithStatus(nonVariant, "x"));
+      assertThrows(CudfException.class,
+          () -> VariantUtils.castVariantValueWithStatus(nonVariant, DType.INT32));
+      assertThrows(CudfException.class,
+          () -> VariantUtils.extractVariantFieldWithStatus(nonVariant, "x", DType.INT32));
+    }
+  }
+
+  @Test
+  void decimalStatusCoversAllWidthsAndScaleForwarding() {
+    VariantEncoder encoder = new VariantEncoder("x");
+    DType[] targets = {
+        DType.create(DType.DTypeEnum.DECIMAL32, -2),
+        DType.create(DType.DTypeEnum.DECIMAL64, -2),
+        DType.create(DType.DTypeEnum.DECIMAL128, -2)
+    };
+    try (ColumnVector variant = ColumnVector.fromStructs(
+             VARIANT_TYPE,
+             variant(encoder.metadata(), encoder.object(fields(
+                 field("x", VariantEncoder.decimal4(1234, 2))))),
+             variant(encoder.metadata(), encoder.object(fields(
+                 field("x", VariantEncoder.decimal8(-5678, 2))))),
+             variant(encoder.metadata(), encoder.object(fields(
+                 field("x", VariantEncoder.decimal16(BigInteger.valueOf(9012), 2))))));
+         VariantOperationResult raw = VariantUtils.getVariantFieldValueWithStatus(variant, "x");
+         ColumnVector expectedStatus =
+             ColumnVector.fromUnsignedBytes((byte) 0, (byte) 0, (byte) 0)) {
+      for (DType target : targets) {
+        try (ColumnVector expected = VariantUtils.castVariantValue(raw.getValue(), target);
+             VariantOperationResult direct =
+                 VariantUtils.castVariantValueWithStatus(raw.getValue(), target);
+             VariantOperationResult staged =
+                 VariantUtils.castVariantValueWithStatus(raw.getValue(), target, raw.getStatus());
+             VariantOperationResult fused =
+                 VariantUtils.extractVariantFieldWithStatus(variant, "x", target)) {
+          assertEquals(target, direct.getValue().getType());
+          assertColumnsAreEqual(expected, direct.getValue());
+          assertColumnsAreEqual(expected, staged.getValue());
+          assertColumnsAreEqual(expected, fused.getValue());
+          assertStatusColumnsAreEqual(expectedStatus, direct.getStatus());
+          assertStatusColumnsAreEqual(expectedStatus, staged.getStatus());
+          assertStatusColumnsAreEqual(expectedStatus, fused.getStatus());
+          assertStatusColumnsAreEqual(expectedStatus, raw.getStatus());
+        }
+      }
+    }
+  }
+
+  @Test
+  void decimalStatusPreservesOverflowAndMalformedOutcomes() {
+    DType target = DType.create(DType.DTypeEnum.DECIMAL32, -2);
+    try (ColumnVector values = ColumnVector.fromLists(
+             BINARY_TYPE,
+             VariantEncoder.decimal4(1234, 2),
+             VariantEncoder.decimal8((long) Integer.MAX_VALUE + 1, 2),
+             VariantEncoder.decimal16(BigInteger.ONE, 39),
+             VariantEncoder.primitiveHeader(8),
+             VariantEncoder.nullValue(), null, VariantEncoder.int32(1));
+         VariantOperationResult direct = VariantUtils.castVariantValueWithStatus(values, target);
+         ColumnVector expectedValues = ColumnVector.decimalFromBoxedInts(
+             -2, 1234, null, null, null, null, null, null);
+         ColumnVector expectedStatus = ColumnVector.fromUnsignedBytes(
+             statusId(VariantOperationStatus.SUCCESS),
+             statusId(VariantOperationStatus.OVERFLOW),
+             statusId(VariantOperationStatus.MALFORMED_VARIANT),
+             statusId(VariantOperationStatus.MALFORMED_VARIANT),
+             statusId(VariantOperationStatus.VARIANT_NULL),
+             statusId(VariantOperationStatus.ROW_NULL),
+             statusId(VariantOperationStatus.TYPE_MISMATCH))) {
+      assertColumnsAreEqual(expectedValues, direct.getValue());
+      assertStatusColumnsAreEqual(expectedStatus, direct.getStatus());
+    }
+  }
+
+  @Test
+  void variantPathsPreserveEmbeddedNulAcrossAllExtractionApis() {
+    String key = "a\0b";
+    VariantEncoder encoder = new VariantEncoder("a", key);
+    try (ColumnVector variant = ColumnVector.fromStructs(
+             VARIANT_TYPE, variant(encoder.metadata(), encoder.object(fields(
+                 field("a", VariantEncoder.int32(7)),
+                 field(key, VariantEncoder.int32(42))))));
+         ColumnVector expectedRaw = ColumnVector.fromLists(BINARY_TYPE, VariantEncoder.int32(42));
+         ColumnVector expectedValue = ColumnVector.fromInts(42);
+         ColumnVector expectedStatus = ColumnVector.fromUnsignedBytes((byte) 0)) {
+      for (String path : new String[] {key, "$." + key}) {
+        try (ColumnVector raw = VariantUtils.getVariantFieldValue(variant, path);
+             ColumnVector fused = VariantUtils.extractVariantField(variant, path, DType.INT32);
+             VariantOperationResult rawStatus =
+                 VariantUtils.getVariantFieldValueWithStatus(variant, path);
+             VariantOperationResult fusedStatus =
+                 VariantUtils.extractVariantFieldWithStatus(variant, path, DType.INT32)) {
+          assertColumnsAreEqual(expectedRaw, raw);
+          assertColumnsAreEqual(expectedValue, fused);
+          assertColumnsAreEqual(expectedRaw, rawStatus.getValue());
+          assertStatusColumnsAreEqual(expectedStatus, rawStatus.getStatus());
+          assertColumnsAreEqual(expectedValue, fusedStatus.getValue());
+          assertStatusColumnsAreEqual(expectedStatus, fusedStatus.getStatus());
+        }
+      }
+    }
+  }
+
+  @Test
+  void variantResultCloseAttemptsBothColumnsWhenCallbacksThrow() {
+    RuntimeException shared = new IllegalStateException("shared close failure");
+    // The CUDA exception below is only a Java callback failure; it does not poison the GPU.
+    Throwable[][] failures = {
+        {new IllegalStateException("value close"), new IllegalArgumentException("status close")},
+        {new AssertionError("value close"), new AssertionError("status close")},
+        {new CudaFatalException("callback failure", 719),
+            new IllegalStateException("status close")},
+        {shared, shared}
+    };
+    for (Throwable[] failure : failures) {
+      try (ColumnVector values = ColumnVector.fromLists(BINARY_TYPE, VariantEncoder.int32(7))) {
+        VariantOperationResult result =
+            VariantUtils.castVariantValueWithStatus(values, DType.INT32);
+        ColumnVector value = result.getValue();
+        ColumnVector status = result.getStatus();
+        try {
+          ColumnVector[] columns = {value, status};
+          for (int i = 0; i < columns.length; i++) {
+            Throwable callbackFailure = failure[i];
+            columns[i].setEventHandler((column, refCount) -> {
+              if (callbackFailure instanceof Error) {
+                throw (Error) callbackFailure;
+              }
+              throw (RuntimeException) callbackFailure;
+            });
+          }
+          Throwable thrown = assertThrows(Throwable.class, result::close);
+          assertSame(failure[0], thrown);
+          assertEquals(0, value.getRefCount());
+          assertEquals(0, status.getRefCount());
+          if (failure[0] == failure[1]) {
+            assertEquals(0, thrown.getSuppressed().length);
+          } else {
+            assertEquals(1, thrown.getSuppressed().length);
+            assertSame(failure[1], thrown.getSuppressed()[0]);
+          }
+          assertDoesNotThrow(result::close);
+        } finally {
+          // Also clean up correctly if this regression test is run against the old implementation.
+          value.setEventHandler(null);
+          status.setEventHandler(null);
+          if (value.getRefCount() > 0) {
+            value.close();
+          }
+          if (status.getRefCount() > 0) {
+            status.close();
+          }
+        }
+      }
+    }
+  }
+
+  @Test
+  void variantResultSupportsConcurrentClose() throws Exception {
+    try (ColumnVector values = ColumnVector.fromLists(BINARY_TYPE, VariantEncoder.int32(7))) {
+      for (int iteration = 0; iteration < 32; iteration++) {
+        try (VariantOperationResult result =
+                 VariantUtils.castVariantValueWithStatus(values, DType.INT32);
+             ScopedExecutor workers = new ScopedExecutor(8)) {
+          ColumnVector value = result.getValue();
+          ColumnVector status = result.getStatus();
+          AtomicInteger valueCloses = new AtomicInteger();
+          AtomicInteger statusCloses = new AtomicInteger();
+          value.setEventHandler((column, refCount) -> valueCloses.incrementAndGet());
+          status.setEventHandler((column, refCount) -> statusCloses.incrementAndGet());
+          CountDownLatch ready = new CountDownLatch(8);
+          CountDownLatch start = new CountDownLatch(1);
+          List<Future<?>> closes = new ArrayList<>();
+          try {
+            for (int i = 0; i < 8; i++) {
+              closes.add(workers.executor.submit(() -> {
+                ready.countDown();
+                if (!start.await(10, TimeUnit.SECONDS)) {
+                  throw new AssertionError("concurrent close was not started");
+                }
+                result.close();
+                return null;
+              }));
+            }
+            assertTrue(ready.await(10, TimeUnit.SECONDS));
+            start.countDown();
+            for (Future<?> close : closes) {
+              close.get(10, TimeUnit.SECONDS);
+            }
+            assertEquals(1, valueCloses.get());
+            assertEquals(1, statusCloses.get());
+            assertEquals(0, value.getRefCount());
+            assertEquals(0, status.getRefCount());
+          } finally {
+            start.countDown();
+          }
+        }
+      }
+    }
+  }
+
+  @Test
+  void variantResultClosesWithoutHoldingMonitorAcrossCallbacks() throws Exception {
+    CountDownLatch enteredCallback = new CountDownLatch(1);
+    CountDownLatch releaseCallback = new CountDownLatch(1);
+    try (ColumnVector values = ColumnVector.fromLists(BINARY_TYPE, VariantEncoder.int32(7));
+         VariantOperationResult result =
+             VariantUtils.castVariantValueWithStatus(values, DType.INT32);
+         ScopedExecutor workers = new ScopedExecutor(2)) {
+      ColumnVector value = result.getValue();
+      ColumnVector status = result.getStatus();
+      AtomicInteger valueCloses = new AtomicInteger();
+      AtomicInteger statusCloses = new AtomicInteger();
+      value.setEventHandler((column, refCount) -> {
+        valueCloses.incrementAndGet();
+        enteredCallback.countDown();
+        assertFalse(Thread.holdsLock(result));
+        try {
+          assertTrue(releaseCallback.await(10, TimeUnit.SECONDS));
+        } catch (InterruptedException failure) {
+          Thread.currentThread().interrupt();
+          throw new AssertionError(failure);
+        }
+        result.close();
+      });
+      status.setEventHandler((column, refCount) -> statusCloses.incrementAndGet());
+      Future<?> owner = workers.executor.submit(result::close);
+      try {
+        assertTrue(enteredCallback.await(10, TimeUnit.SECONDS));
+        // This close must not wait for the first caller's callback to finish.
+        workers.executor.submit(result::close).get(10, TimeUnit.SECONDS);
+        assertEquals(1, valueCloses.get());
+        assertEquals(0, statusCloses.get());
+      } finally {
+        releaseCallback.countDown();
+      }
+      owner.get(10, TimeUnit.SECONDS);
+      assertEquals(1, valueCloses.get());
+      assertEquals(1, statusCloses.get());
+      assertEquals(0, value.getRefCount());
+      assertEquals(0, status.getRefCount());
+    } finally {
+      releaseCallback.countDown();
+    }
+  }
+
+  @Test
+  void variantStructStatusExtractionSupportsNonzeroOffsets() {
+    VariantEncoder encoder = new VariantEncoder("x");
+    try (ColumnVector variant = ColumnVector.fromStructs(
+             VARIANT_TYPE,
+             variant(encoder.metadata(), encoder.object(fields())),
+             variant(encoder.metadata(), encoder.object(fields(
+                 field("x", VariantEncoder.int32(7))))),
+             variant(encoder.metadata(), encoder.object(fields(
+                 field("x", VariantEncoder.int8(8))))),
+             variant(encoder.metadata(), encoder.object(fields(
+                 field("x", VariantEncoder.nullValue())))),
+             null,
+             variant(encoder.metadata(), encoder.object(fields())));
+         CloseableArray<ColumnView> views = CloseableArray.wrap(variant.splitAsViews(1));
+         VariantOperationResult raw =
+             VariantUtils.getVariantFieldValueWithStatus(views.get(1), "x");
+         VariantOperationResult fused =
+             VariantUtils.extractVariantFieldWithStatus(views.get(1), "x", DType.INT32);
+         ColumnVector expectedRaw = ColumnVector.fromLists(BINARY_TYPE,
+             VariantEncoder.int32(7), VariantEncoder.int8(8), VariantEncoder.nullValue(),
+             null, null);
+         ColumnVector expectedValues = ColumnVector.fromBoxedInts(7, null, null, null, null);
+         ColumnVector expectedRawStatus = ColumnVector.fromUnsignedBytes(
+             statusId(VariantOperationStatus.SUCCESS), statusId(VariantOperationStatus.SUCCESS),
+             statusId(VariantOperationStatus.VARIANT_NULL),
+             statusId(VariantOperationStatus.ROW_NULL),
+             statusId(VariantOperationStatus.MISSING_PATH));
+         ColumnVector expectedFusedStatus = ColumnVector.fromUnsignedBytes(
+             statusId(VariantOperationStatus.SUCCESS),
+             statusId(VariantOperationStatus.TYPE_MISMATCH),
+             statusId(VariantOperationStatus.VARIANT_NULL),
+             statusId(VariantOperationStatus.ROW_NULL),
+             statusId(VariantOperationStatus.MISSING_PATH))) {
+      assertColumnsAreEqual(expectedRaw, raw.getValue());
+      assertStatusColumnsAreEqual(expectedRawStatus, raw.getStatus());
+      assertColumnsAreEqual(expectedValues, fused.getValue());
+      assertStatusColumnsAreEqual(expectedFusedStatus, fused.getStatus());
+    }
+  }
+
+  @Test
+  void decimalStatusUsesPositiveScaleWithExplicitExpectedValues() {
+    VariantEncoder encoder = new VariantEncoder("x");
+    try (ColumnVector variant = ColumnVector.fromStructs(VARIANT_TYPE,
+             variant(encoder.metadata(), encoder.object(fields(
+                 field("x", VariantEncoder.decimal4(12345, 0))))),
+             variant(encoder.metadata(), encoder.object(fields(
+                 field("x", VariantEncoder.decimal8(-12345, 0))))),
+             variant(encoder.metadata(), encoder.object(fields(
+                 field("x", VariantEncoder.decimal16(BigInteger.valueOf(12345), 2))))));
+         VariantOperationResult raw = VariantUtils.getVariantFieldValueWithStatus(variant, "x");
+         ColumnVector expected32 = ColumnVector.decimalFromInts(2, 123, -123, 1);
+         ColumnVector expected64 = ColumnVector.decimalFromLongs(2, 123, -123, 1);
+         ColumnVector expected128 = ColumnVector.decimalFromBigInt(
+             2, BigInteger.valueOf(123), BigInteger.valueOf(-123), BigInteger.ONE);
+         ColumnVector expectedStatus =
+             ColumnVector.fromUnsignedBytes((byte) 0, (byte) 0, (byte) 0)) {
+      for (ColumnVector expected : new ColumnVector[] {expected32, expected64, expected128}) {
+        DType target = expected.getType();
+        try (VariantOperationResult direct =
+                 VariantUtils.castVariantValueWithStatus(raw.getValue(), target);
+             VariantOperationResult staged =
+                 VariantUtils.castVariantValueWithStatus(raw.getValue(), target, raw.getStatus());
+             VariantOperationResult fused =
+                 VariantUtils.extractVariantFieldWithStatus(variant, "x", target)) {
+          assertColumnsAreEqual(expected, direct.getValue());
+          assertColumnsAreEqual(expected, staged.getValue());
+          assertColumnsAreEqual(expected, fused.getValue());
+          assertStatusColumnsAreEqual(expectedStatus, direct.getStatus());
+          assertStatusColumnsAreEqual(expectedStatus, staged.getStatus());
+          assertStatusColumnsAreEqual(expectedStatus, fused.getStatus());
+          assertStatusColumnsAreEqual(expectedStatus, raw.getStatus());
         }
       }
     }

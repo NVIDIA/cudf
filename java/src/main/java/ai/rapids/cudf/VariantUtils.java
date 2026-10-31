@@ -35,6 +35,22 @@ public class VariantUtils {
     }
   }
 
+  private static void validatePriorStatus(ColumnView values, ColumnView priorStatus) {
+    Objects.requireNonNull(priorStatus, "priorStatus");
+    if (!DType.UINT8.equals(priorStatus.getType())) {
+      throw new IllegalArgumentException(
+          "prior Variant status must have type UINT8, found " + priorStatus.getType());
+    }
+    if (values.getRowCount() != priorStatus.getRowCount()) {
+      throw new IllegalArgumentException(
+          "prior Variant status row count must match the value row count");
+    }
+    if (priorStatus.getValid() != null) {
+      throw new IllegalArgumentException(
+          "prior Variant status must not have a validity buffer, even when all rows are valid");
+    }
+  }
+
   /**
    * Extract raw Variant-encoded value bytes at {@code path} from a Variant struct column.
    *
@@ -51,6 +67,26 @@ public class VariantUtils {
     Objects.requireNonNull(variantStruct, "variantStruct");
     Objects.requireNonNull(path, "path");
     return new ColumnVector(getVariantFieldValue(variantStruct.getNativeView(), path));
+  }
+
+  /**
+   * Extract raw Variant-encoded value bytes and return a per-row operation status.
+   *
+   * <p>The value result has the same behavior as {@link #getVariantFieldValue(ColumnView, String)}.
+   * A terminal encoded Variant null remains a valid raw value and has
+   * {@link VariantOperationStatus#VARIANT_NULL} status. Other statuses distinguish SQL-null rows,
+   * missing paths, and malformed encodings.
+   *
+   * @param variantStruct Variant materialization
+   * @param path JSONPath-like path accepted by cuDF's Variant extractor
+   * @return owning value and status columns
+   */
+  public static VariantOperationResult getVariantFieldValueWithStatus(
+      ColumnView variantStruct, String path) {
+    Objects.requireNonNull(variantStruct, "variantStruct");
+    Objects.requireNonNull(path, "path");
+    return new VariantOperationResult(
+        getVariantFieldValueWithStatus(variantStruct.getNativeView(), path));
   }
 
   /**
@@ -97,6 +133,56 @@ public class VariantUtils {
   }
 
   /**
+   * Decode raw Variant values and return a per-row operation status.
+   *
+   * <p>The status distinguishes successful decoding, SQL-null input, encoded Variant null,
+   * physical-type mismatch, malformed input, and decimal overflow
+   * ({@link VariantOperationStatus#OVERFLOW}). The status column is initialized to
+   * {@link VariantOperationStatus#SUCCESS} before the native cast.
+   *
+   * <p>Supported target types and decoding semantics match
+   * {@link #castVariantValue(ColumnView, DType)}.
+   *
+   * @param valueBytes LIST&lt;UINT8&gt; column of raw Variant-encoded values
+   * @param targetType decoded output type
+   * @return owning value and status columns
+   */
+  public static VariantOperationResult castVariantValueWithStatus(
+      ColumnView valueBytes, DType targetType) {
+    Objects.requireNonNull(valueBytes, "valueBytes");
+    validateTargetType(targetType);
+    return new VariantOperationResult(castVariantValueWithStatus(
+        valueBytes.getNativeView(), targetType.getTypeId().getNativeId(),
+        targetType.getScale(), 0));
+  }
+
+  /**
+   * Decode raw Variant values while propagating status from an earlier raw extraction.
+   *
+   * <p>The incoming status is copied before the native call and is never modified. Rows whose
+   * incoming status is not {@link VariantOperationStatus#SUCCESS} are not decoded; their status is
+   * propagated and their value is null.
+   *
+   * <p>Supported target types and decoding semantics match
+   * {@link #castVariantValue(ColumnView, DType)}.
+   *
+   * @param valueBytes LIST&lt;UINT8&gt; column of raw Variant-encoded values
+   * @param targetType decoded output type
+   * @param priorStatus UINT8 status column aligned with {@code valueBytes}, with no validity
+   *                    buffer (an all-valid mask is also rejected)
+   * @return owning value and final status columns
+   */
+  public static VariantOperationResult castVariantValueWithStatus(
+      ColumnView valueBytes, DType targetType, ColumnView priorStatus) {
+    Objects.requireNonNull(valueBytes, "valueBytes");
+    validateTargetType(targetType);
+    validatePriorStatus(valueBytes, priorStatus);
+    return new VariantOperationResult(castVariantValueWithStatus(
+        valueBytes.getNativeView(), targetType.getTypeId().getNativeId(),
+        targetType.getScale(), priorStatus.getNativeView()));
+  }
+
+  /**
    * Extract a Variant field and decode it into {@code targetType} in one native call.
    * Supported target types are {@link DType#STRING}, {@link DType#INT8}, {@link DType#INT16},
    * {@link DType#INT32}, {@link DType#INT64}, {@link DType#FLOAT32}, {@link DType#FLOAT64}, and
@@ -132,13 +218,46 @@ public class VariantUtils {
         targetType.getScale()));
   }
 
+  /**
+   * Extract and decode a Variant field and return a per-row operation status.
+   *
+   * <p>The value column has the same target type and row order as
+   * {@link #extractVariantField(ColumnView, String, DType)}. Status values distinguish successful
+   * extraction and decoding from SQL-null input, missing paths, encoded Variant null,
+   * physical-type mismatch, malformed input, and decimal overflow
+   * ({@link VariantOperationStatus#OVERFLOW}).
+   *
+   * @param variantStruct Variant materialization
+   * @param path JSONPath-like path accepted by cuDF's Variant extractor
+   * @param targetType decoded output type
+   * @return owning value and status columns
+   */
+  public static VariantOperationResult extractVariantFieldWithStatus(
+      ColumnView variantStruct, String path, DType targetType) {
+    Objects.requireNonNull(variantStruct, "variantStruct");
+    Objects.requireNonNull(path, "path");
+    validateTargetType(targetType);
+    return new VariantOperationResult(extractVariantFieldWithStatus(
+        variantStruct.getNativeView(), path, targetType.getTypeId().getNativeId(),
+        targetType.getScale()));
+  }
+
   private static native long getVariantFieldValue(long variantStructHandle, String path);
+
+  private static native long[] getVariantFieldValueWithStatus(
+      long variantStructHandle, String path);
 
   private static native long getVariantTypeId(long valueBytesHandle);
 
   private static native long castVariantValue(
       long valueBytesHandle, int cudfTypeId, int scale);
 
+  private static native long[] castVariantValueWithStatus(
+      long valueBytesHandle, int cudfTypeId, int scale, long priorStatusHandle);
+
   private static native long extractVariantField(
+      long variantStructHandle, String path, int cudfTypeId, int scale);
+
+  private static native long[] extractVariantFieldWithStatus(
       long variantStructHandle, String path, int cudfTypeId, int scale);
 }

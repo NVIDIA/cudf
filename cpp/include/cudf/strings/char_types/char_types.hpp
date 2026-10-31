@@ -126,6 +126,33 @@ std::unique_ptr<column> filter_characters_of_type(
  */
 std::uint8_t const* get_character_flags_table(cuda::stream_ref stream = cudf::get_default_stream());
 
+/**
+ * @brief Returns a pointer to device memory holding the static character cases table.
+ *
+ * The table is a static lookup indexed by Unicode code-point (values up to 0xFFFF)
+ * mapping a character to its upper/lower-case counterpart. On first call the table is
+ * copied into device memory and cached; subsequent calls return the cached pointer.
+ * This call is thread-safe.
+ *
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @return Device memory pointer to the character cases table
+ */
+std::uint16_t const* get_character_cases_table(
+  cuda::stream_ref stream = cudf::get_default_stream());
+
+/**
+ * @brief Returns a pointer to device memory holding the special-case mapping table.
+ *
+ * The table handles the small set of characters whose case conversion does not fit
+ * the character cases table (for example one code-point mapping to several). On first
+ * call the table is copied into device memory and cached; subsequent calls return the
+ * cached pointer. This call is thread-safe.
+ *
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @return Device memory pointer to the special-case mapping table
+ */
+void const* get_special_case_mapping_table(cuda::stream_ref stream = cudf::get_default_stream());
+
 /** @} */  // end of doxygen group
 }  // namespace strings
 }  // namespace CUDF_EXPORT cudf

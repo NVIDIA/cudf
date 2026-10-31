@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from libc.stdint cimport uint8_t, uintptr_t
+from libc.stdint cimport uint8_t, uint16_t, uintptr_t
 from libcpp.memory cimport unique_ptr
 from libcpp.utility cimport move
 from pylibcudf.column cimport Column
@@ -28,7 +28,9 @@ __all__ = [
     "StringCharacterTypes",
     "all_characters_of_type",
     "filter_characters_of_type",
+    "get_character_cases_table_ptr",
     "get_character_flags_table_ptr",
+    "get_special_case_mapping_table_ptr",
 ]
 
 cpdef get_character_flags_table_ptr(
@@ -55,6 +57,56 @@ cpdef get_character_flags_table_ptr(
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().get()
     cdef const uint8_t* tbl = cpp_char_types.get_character_flags_table(_cs)
+    return int(<uintptr_t>tbl)
+
+cpdef get_character_cases_table_ptr(
+    object stream: CudaStreamLike | None = None,
+):
+    """
+    Return a device pointer to the character-cases lookup table.
+
+    The table maps a code point (indexed 0..0xFFFF) to its upper/lower-case
+    counterpart and backs case conversion. The table is lazily copied to the
+    device on first use and remains valid for the process lifetime.
+
+    Parameters
+    ----------
+    stream : Stream | None
+        CUDA stream on which to perform the (first-use) device copy.
+
+    Returns
+    -------
+    int
+        The device address of the ``uint16`` cases table.
+    """
+    cdef Stream _stream = _get_stream(stream)
+    cdef cudaStream_t _cs = _stream.view().get()
+    cdef const uint16_t* tbl = cpp_char_types.get_character_cases_table(_cs)
+    return int(<uintptr_t>tbl)
+
+cpdef get_special_case_mapping_table_ptr(
+    object stream: CudaStreamLike | None = None,
+):
+    """
+    Return a device pointer to the special-case mapping table.
+
+    The table handles characters whose case conversion does not fit the cases
+    table (one code point mapping to several). The table is lazily copied to the
+    device on first use and remains valid for the process lifetime.
+
+    Parameters
+    ----------
+    stream : Stream | None
+        CUDA stream on which to perform the (first-use) device copy.
+
+    Returns
+    -------
+    int
+        The device address of the special-case mapping table.
+    """
+    cdef Stream _stream = _get_stream(stream)
+    cdef cudaStream_t _cs = _stream.view().get()
+    cdef const void* tbl = cpp_char_types.get_special_case_mapping_table(_cs)
     return int(<uintptr_t>tbl)
 
 cpdef Column all_characters_of_type(

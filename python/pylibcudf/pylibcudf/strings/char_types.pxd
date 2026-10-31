@@ -25,3 +25,7 @@ cpdef Column filter_characters_of_type(
 )
 
 cpdef get_character_flags_table_ptr(object stream = *)
+
+cpdef get_character_cases_table_ptr(object stream = *)
+
+cpdef get_special_case_mapping_table_ptr(object stream = *)

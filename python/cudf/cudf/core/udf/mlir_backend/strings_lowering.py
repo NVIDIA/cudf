@@ -4,7 +4,8 @@
 
 Covers ``len`` (UTF-8 character count), the string comparison operators
 (``==``/``!=``/``<``/``<=``/``>``/``>=``), the affix/search/predicate methods,
-``+`` (concatenation) and ``strip``/``lstrip``/``rstrip`` --- the
+``+`` (concatenation), ``strip``/``lstrip``/``rstrip``, ``s[i]``/``s[a:b]``
+(character indexing and slicing), ``replace`` and ``upper``/``lower`` --- the
 string-*producing* ops, which allocate a new buffer via NRT --- over
 ``mlir_string``, ``Masked(mlir_string)`` and
 string-literal operands; masked operands yield a ``Masked`` result whose validity
@@ -28,6 +29,7 @@ from numba_cuda_mlir.lowering_utilities import (
     convert,
     get_or_insert_function,
 )
+from numba_cuda_mlir.numba_cuda.types import slice2_type
 from numba_cuda_mlir.numba_cuda.typing.templates import (
     AbstractTemplate,
     AttributeTemplate,
@@ -35,7 +37,11 @@ from numba_cuda_mlir.numba_cuda.typing.templates import (
 )
 from numba_cuda_mlir.typing import signature as nb_signature
 
-from pylibcudf.strings.char_types import get_character_flags_table_ptr
+from pylibcudf.strings.char_types import (
+    get_character_cases_table_ptr,
+    get_character_flags_table_ptr,
+    get_special_case_mapping_table_ptr,
+)
 
 from cudf.core.udf.mlir_backend import string_lowering_impl as _impl
 from cudf.core.udf.mlir_backend.masked_lowering import (
@@ -101,6 +107,12 @@ _STRIP_METHODS = {
     "strip": _impl.lower_strip,
     "lstrip": _impl.lower_lstrip,
     "rstrip": _impl.lower_rstrip,
+}
+
+# case-conversion method name -> its pure-MLIR impl (no arg -> mlir_string).
+_CASE_METHODS = {
+    "upper": _impl.lower_upper,
+    "lower": _impl.lower_lower,
 }
 
 # character-class predicate method name -> its pure-MLIR impl (no arg -> bool).
@@ -332,6 +344,80 @@ def _make_strip_attr(attrname: str, masked: bool) -> object:
     return resolve
 
 
+def _make_replace_attr(masked: bool) -> object:
+    """Build ``resolve_replace`` for ``s.replace(old, new)`` -> string.
+
+    Parameters
+    ----------
+    masked : bool
+        Whether the receiver is ``Masked(mlir_string)`` (wraps the result).
+
+    Returns
+    -------
+    callable
+        A ``resolve_`` function for the attribute template.
+    """
+    recvr = _masked_string if masked else mlir_string
+
+    class _ReplaceTemplate(AbstractTemplate):
+        key = f"MLIRString.replace.{'m' if masked else 's'}"
+
+        def generic(self, args, kws):
+            """Resolve ``s.replace(old, new)``.
+
+            Both ``old`` and ``new`` are string operands; the result is
+            ``Masked(mlir_string)`` when the receiver or either argument is
+            masked, else ``mlir_string``.
+            """
+            if len(args) != 2 or kws:
+                return None
+            is_masked = (
+                masked
+                or _is_masked_string(args[0])
+                or _is_masked_string(args[1])
+            )
+            result_ty = MaskedType(mlir_string) if is_masked else mlir_string
+            return nb_signature(result_ty, args[0], args[1], recvr=self.this)
+
+    def resolve(self, mod):
+        return types.BoundFunction(_ReplaceTemplate, recvr)
+
+    return resolve
+
+
+def _make_case_attr(attrname: str, masked: bool) -> object:
+    """Build a ``resolve_<upper/lower>`` for a no-arg method returning a string.
+
+    Parameters
+    ----------
+    attrname : str
+        Method name (``"upper"`` or ``"lower"``).
+    masked : bool
+        Whether the receiver is ``Masked(mlir_string)`` (wraps the result).
+
+    Returns
+    -------
+    callable
+        A ``resolve_`` function for the attribute template.
+    """
+    recvr = _masked_string if masked else mlir_string
+    result_ty = MaskedType(mlir_string) if masked else mlir_string
+
+    class _CaseTemplate(AbstractTemplate):
+        key = f"MLIRString.{attrname}.{'m' if masked else 's'}"
+
+        def generic(self, args, kws):
+            """Resolve ``s.upper()`` / ``s.lower()`` -> (masked) mlir_string."""
+            if not args and not kws:
+                return nb_signature(result_ty, recvr=self.this)
+            return None
+
+    def resolve(self, mod):
+        return types.BoundFunction(_CaseTemplate, recvr)
+
+    return resolve
+
+
 @typing_registry.register_attr
 class MLIRStringAttrs(AttributeTemplate):
     """Attribute typing for ``mlir_string`` methods."""
@@ -424,6 +510,21 @@ for _name in _STRIP_METHODS:
         f"resolve_{_name}",
         _make_strip_attr(_name, masked=True),
     )
+setattr(MLIRStringAttrs, "resolve_replace", _make_replace_attr(masked=False))
+setattr(
+    MaskedMLIRStringAttrs, "resolve_replace", _make_replace_attr(masked=True)
+)
+for _name in _CASE_METHODS:
+    setattr(
+        MLIRStringAttrs,
+        f"resolve_{_name}",
+        _make_case_attr(_name, masked=False),
+    )
+    setattr(
+        MaskedMLIRStringAttrs,
+        f"resolve_{_name}",
+        _make_case_attr(_name, masked=True),
+    )
 
 
 class ConcatMLIRStringTemplate(AbstractTemplate):
@@ -464,6 +565,41 @@ class ConcatMLIRStringTemplate(AbstractTemplate):
             return nb_signature(MaskedType(mlir_string), a, b)
         if isinstance(a, MLIRStringType) or isinstance(b, MLIRStringType):
             return nb_signature(mlir_string, a, b)
+        return None
+
+
+class GetitemMLIRStringTemplate(AbstractTemplate):
+    """``s[i]``/``s[a:b]`` (``operator.getitem``) over (masked) strings."""
+
+    key = operator.getitem
+
+    def generic(
+        self, args: tuple[types.Type, ...], kws: dict
+    ) -> Signature | None:
+        """Resolve ``s[i]`` (integer index) or ``s[a:b]`` (2-element slice).
+
+        Parameters
+        ----------
+        args : tuple of types.Type
+            ``(string, index_or_slice)`` types.
+        kws : dict
+            Keyword argument types (must be empty).
+
+        Returns
+        -------
+        Signature or None
+            ``mlir_string`` (plain receiver) or ``Masked(mlir_string)`` (masked
+            receiver). Strided slices (``s[a:b:c]``) are not supported.
+        """
+        if len(args) != 2 or kws:
+            return None
+        a, b = args
+        if not (isinstance(b, types.Integer) or b == slice2_type):
+            return None
+        if isinstance(a, MLIRStringType):
+            return nb_signature(mlir_string, a, b)
+        if _is_masked_string(a):
+            return nb_signature(MaskedType(mlir_string), a, b)
         return None
 
 
@@ -648,13 +784,27 @@ def _make_lower_binary(impl_fn: object) -> object:
     return _getattr
 
 
-def _flags_table_ptr_const() -> ir.Value:
-    """MLIR pointer constant for the libcudf character-flags device table."""
-    addr = int(get_character_flags_table_ptr())
+def _table_ptr_const(addr: int) -> ir.Value:
+    """MLIR pointer constant for a libcudf device-table address."""
     if addr >= (1 << 63):
         addr -= 1 << 64
     i64 = ir.IntegerType.get_signless(64)
     return llvm.inttoptr(llvm.PointerType.get(), arith.constant(i64, addr))
+
+
+def _flags_table_ptr_const() -> ir.Value:
+    """MLIR pointer constant for the libcudf character-flags device table."""
+    return _table_ptr_const(int(get_character_flags_table_ptr()))
+
+
+def _cases_table_ptr_const() -> ir.Value:
+    """MLIR pointer constant for the libcudf character-cases device table."""
+    return _table_ptr_const(int(get_character_cases_table_ptr()))
+
+
+def _special_table_ptr_const() -> ir.Value:
+    """MLIR pointer constant for the libcudf special-case mapping device table."""
+    return _table_ptr_const(int(get_special_case_mapping_table_ptr()))
 
 
 def _make_lower_is(impl_fn: object) -> object:
@@ -692,6 +842,57 @@ def _make_lower_strip(impl_fn: object) -> object:
             strip_view = _impl._empty_view()
             valid = vr
         result = impl_fn(builder.mlir_gpu_module, recv, strip_view)
+        _store_maybe_masked(builder, target, result, valid)
+
+    def _getattr(context, builder, target, value, attr=None):
+        builder.store_var(target, DeferredMethodCall(value, _impl_lower))
+
+    return _getattr
+
+
+def _make_lower_replace() -> object:
+    """Build the ``lower_getattr`` for ``s.replace(old, new)``.
+
+    Packs a ``Masked`` result when the receiver or either argument is masked;
+    validity is the AND of the three operand validity bits.
+    """
+
+    def _impl_lower(builder, target, args, kwargs):
+        valid_ty = builder.get_mlir_type(types.boolean)
+        true_val = arith.constant(valid_ty, 1)
+        src, vs = _view_and_valid(builder, args[0], true_val)
+        old, vo = _view_and_valid(builder, args[1], true_val)
+        new, vn = _view_and_valid(builder, args[2], true_val)
+        result = _impl.lower_replace(builder.mlir_gpu_module, src, old, new)
+        _store_maybe_masked(
+            builder, target, result, arith.andi(arith.andi(vs, vo), vn)
+        )
+
+    def _getattr(context, builder, target, value, attr=None):
+        builder.store_var(target, DeferredMethodCall(value, _impl_lower))
+
+    return _getattr
+
+
+def _make_lower_case(impl_fn: object) -> object:
+    """Build the ``lower_getattr`` for ``s.upper()`` / ``s.lower()``.
+
+    Passes the flags, cases, and special-case device-table pointers through to
+    the case-conversion impl; packs a ``Masked`` result when the receiver is
+    masked.
+    """
+
+    def _impl_lower(builder, target, args, kwargs):
+        valid_ty = builder.get_mlir_type(types.boolean)
+        true_val = arith.constant(valid_ty, 1)
+        view, valid = _view_and_valid(builder, args[0], true_val)
+        result = impl_fn(
+            builder.mlir_gpu_module,
+            view,
+            _flags_table_ptr_const(),
+            _cases_table_ptr_const(),
+            _special_table_ptr_const(),
+        )
         _store_maybe_masked(builder, target, result, valid)
 
     def _getattr(context, builder, target, value, attr=None):
@@ -774,6 +975,44 @@ def _lower_nrt_decref(
     func.call(result=[], callee=callee.name.value, operands_=[meminfo])
 
 
+def _lower_getitem_int_op(
+    builder: MLIRLower, target: Var, args: list[Var], kwargs: list
+) -> None:
+    """``s[i]`` -> single-character ``mlir_string`` / ``Masked(mlir_string)``.
+
+    Validity comes from the receiver only (the integer index is always valid).
+    """
+    valid_ty = builder.get_mlir_type(types.boolean)
+    true_val = arith.constant(valid_ty, 1)
+    view, valid = _view_and_valid(builder, args[0], true_val)
+    idx_i64 = convert(
+        builder.load_var(args[1]), ir.IntegerType.get_signless(64)
+    )
+    result = _impl.lower_getitem_int(builder.mlir_gpu_module, view, idx_i64)
+    _store_maybe_masked(builder, target, result, valid)
+
+
+def _lower_getitem_slice_op(
+    builder: MLIRLower, target: Var, args: list[Var], kwargs: list
+) -> None:
+    """``s[a:b]`` -> substring ``mlir_string`` / ``Masked(mlir_string)``.
+
+    Extracts the slice's ``start``/``stop`` (``index`` type) and casts them to
+    ``i64``; validity comes from the receiver only.
+    """
+    valid_ty = builder.get_mlir_type(types.boolean)
+    true_val = arith.constant(valid_ty, 1)
+    view, valid = _view_and_valid(builder, args[0], true_val)
+    slice_val = builder.load_var(args[1])
+    i64 = ir.IntegerType.get_signless(64)
+    start = arith.index_cast(i64, slice_val.start)
+    stop = arith.index_cast(i64, slice_val.stop)
+    result = _impl.lower_getitem_slice(
+        builder.mlir_gpu_module, view, start, stop
+    )
+    _store_maybe_masked(builder, target, result, valid)
+
+
 def _lower_setitem_cpointer_mlir_string(
     builder: MLIRLower, target: Var, args: list[Var], kwargs: list
 ) -> None:
@@ -826,6 +1065,23 @@ def _register() -> None:
     for lhs_ty, rhs_ty in _STR_COMBOS:
         lowering_registry.lower(operator.add, lhs_ty, rhs_ty)(_lower_concat_op)
 
+    # ``s[i]`` (integer index) -> single-character (masked) mlir_string
+    typing_registry.register_global(operator.getitem)(
+        GetitemMLIRStringTemplate
+    )
+    lowering_registry.lower(operator.getitem, mlir_string, types.Integer)(
+        _lower_getitem_int_op
+    )
+    lowering_registry.lower(operator.getitem, _masked_string, types.Integer)(
+        _lower_getitem_int_op
+    )
+    lowering_registry.lower(operator.getitem, mlir_string, slice2_type)(
+        _lower_getitem_slice_op
+    )
+    lowering_registry.lower(operator.getitem, _masked_string, slice2_type)(
+        _lower_getitem_slice_op
+    )
+
     # ``out[i] = s`` marshalling a produced string into an output array
     lowering_registry.lower(
         operator.setitem,
@@ -856,6 +1112,22 @@ def _register() -> None:
         strip_getattr = _make_lower_strip(strip_impl)
         lowering_registry.lower_getattr(mlir_string, name)(strip_getattr)
         lowering_registry.lower_getattr(_masked_string, name)(strip_getattr)
+
+    # replace(old, new) -> (masked) mlir_string
+    replace_getattr = _make_lower_replace()
+    lowering_registry.lower_getattr(mlir_string, "replace")(replace_getattr)
+    lowering_registry.lower_getattr(_masked_string, "replace")(replace_getattr)
+
+    # upper/lower (no arg) -> (masked) mlir_string
+    for name, case_impl in _CASE_METHODS.items():
+        case_getattr = _make_lower_case(case_impl)
+        lowering_registry.lower_getattr(mlir_string, name)(case_getattr)
+        lowering_registry.lower_getattr(_masked_string, name)(case_getattr)
+
+    # replace(old, new) -> (masked) mlir_string
+    replace_getattr = _make_lower_replace()
+    lowering_registry.lower_getattr(mlir_string, "replace")(replace_getattr)
+    lowering_registry.lower_getattr(_masked_string, "replace")(replace_getattr)
 
 
 _register()

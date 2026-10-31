@@ -332,6 +332,7 @@ void host_compress(compression_type compression,
   auto h_results = cudf::detail::make_pinned_vector<codec_exec_result>(results, stream);
 
   std::vector<std::future<std::pair<size_t, size_t>>> tasks;
+  cudf::detail::futures_wait_guard tasks_guard{tasks};
   auto const num_streams =
     std::min<std::size_t>(num_chunks, cudf::detail::host_worker_pool().get_thread_count());
   auto const streams = cudf::detail::fork_streams(stream, num_streams);

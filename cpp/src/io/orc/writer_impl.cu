@@ -21,6 +21,7 @@
 #include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
+#include <cudf/detail/utilities/host_worker_pool.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/stream_pool.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -2893,6 +2894,7 @@ void writer::impl::write_orc_data_to_sink(encoded_data const& enc_data,
 
   // Write stripes
   std::vector<std::future<void>> write_tasks;
+  cudf::detail::futures_wait_guard write_tasks_guard{write_tasks};
   for (size_t stripe_id = 0; stripe_id < stripes.size(); ++stripe_id) {
     auto& stripe = stripes[stripe_id];
 

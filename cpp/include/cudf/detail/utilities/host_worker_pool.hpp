@@ -12,6 +12,7 @@
 #include <BS_thread_pool.hpp>
 
 #include <cstddef>
+#include <future>
 #include <memory>
 
 namespace cudf::detail {
@@ -104,6 +105,41 @@ class CUDF_EXPORT hierarchical_thread_pool {
    * @brief Get the number of threads in this pool.
    */
   [[nodiscard]] std::size_t get_thread_count() const { return pool_.get_thread_count(); }
+};
+
+/**
+ * @brief RAII guard that waits on all valid futures in `futures` upon destruction
+ *
+ * Futures returned by `hierarchical_thread_pool::submit_task` do not block on destruction. This
+ * guard waits for all of them without retrieving their results, so exceptions stored by the tasks
+ * are discarded and any in-flight exception propagates unchanged.
+ *
+ * @note Construct the guard after the futures container and after every object the tasks reference.
+ *
+ * @tparam Container Container of `std::future` objects
+ */
+template <typename Container>
+class futures_wait_guard {
+ public:
+  /**
+   * @brief Construct a guard over a container of futures.
+   *
+   * @param futures Futures to wait on when the guard is destroyed
+   */
+  explicit futures_wait_guard(Container& futures) noexcept : futures_{futures} {}
+
+  futures_wait_guard(futures_wait_guard const&)            = delete;
+  futures_wait_guard& operator=(futures_wait_guard const&) = delete;
+
+  ~futures_wait_guard() noexcept
+  {
+    for (auto& future : futures_) {
+      if (future.valid()) { future.wait(); }
+    }
+  }
+
+ private:
+  Container& futures_;
 };
 
 /**

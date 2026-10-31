@@ -25,6 +25,7 @@
 #include <cudf/copying.hpp>
 #include <cudf/detail/get_value.cuh>
 #include <cudf/detail/utilities/buffer_factories.hpp>
+#include <cudf/detail/utilities/host_worker_pool.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/linked_column.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -2618,6 +2619,7 @@ void writer::impl::write_parquet_data_to_sink(
 
   if (num_rowgroups != 0) {
     std::vector<std::future<void>> write_tasks;
+    cudf::detail::futures_wait_guard write_tasks_guard{write_tasks};
 
     for (auto r = 0; r < static_cast<int>(num_rowgroups); r++) {
       int const p        = rg_to_part[r];

@@ -19,7 +19,6 @@
 #include <thrust/host_vector.h>
 
 #include <algorithm>
-#include <exception>
 #include <functional>
 #include <future>
 #include <memory>
@@ -64,27 +63,18 @@ template <typename T, typename UnaryOp>
   }
 
   std::vector<std::future<result_type>> tasks;
+  cudf::detail::futures_wait_guard tasks_guard{tasks};
   tasks.reserve(inputs.size());
 
-  auto pending_exception = std::exception_ptr{};
-  try {
-    std::transform(inputs.begin(), inputs.end(), std::back_inserter(tasks), [&op](T const& input) {
-      return cudf::detail::host_worker_pool().submit_task(
-        [&op, input_ptr = &input] { return op(*input_ptr); });
-    });
-  } catch (...) {
-    pending_exception = std::current_exception();
-  }
+  std::transform(inputs.begin(), inputs.end(), std::back_inserter(tasks), [&op](T const& input) {
+    return cudf::detail::host_worker_pool().submit_task(
+      [&op, input_ptr = &input] { return op(*input_ptr); });
+  });
 
+  // Rethrows the first task failure; the guard waits for the remaining tasks on unwinding
   for (auto& task : tasks) {
-    try {
-      results.emplace_back(task.get());
-    } catch (...) {
-      if (not pending_exception) { pending_exception = std::current_exception(); }
-    }
+    results.emplace_back(task.get());
   }
-
-  if (pending_exception) { std::rethrow_exception(pending_exception); }
 
   return results;
 }

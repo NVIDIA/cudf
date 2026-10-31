@@ -32,7 +32,7 @@ using metadata_base = parquet::detail::metadata;
  */
 struct page_statistics_input {
   size_type column_index;  ///< Index of the logical filter column
-  cudf::table statistics;  ///< Compacted page-level min, max, and all-null stats columns
+  cudf::table statistics;  ///< Compacted page-level min, max, all-null and has-NaN stats columns
   std::vector<size_type> page_row_offsets;  ///< Row offset of each page, spanning all rows
 };
 

@@ -19,44 +19,23 @@ namespace cudf::io::parquet::detail {
 namespace {
 
 /**
- * @brief Returns whether a comparison operator can prune row groups via statistics
- *
- * Some Parquet writers exclude `NaN`s from stats, so a floating-point chunk holding a NaN is
- * indistinguishable from one that does not. `col != val` is the only comparison leaf a NaN
- * satisfies, so it is the only one we cannot prune.
+ * @brief Returns whether a comparison operator can prune row groups or pages via statistics
  *
  * @param op The comparison operator
- * @param dtype The data type of the column being compared
- * @return true if the comparison can be used to prune row groups
+ * @return True if the comparison can be used to prune row groups or pages
  */
-[[nodiscard]] bool is_prunable_comparison(ast::ast_operator op, cudf::data_type dtype)
+[[nodiscard]] bool is_prunable_comparison(ast::ast_operator op)
 {
   using cudf::ast::ast_operator;
   switch (op) {
     case ast_operator::EQUAL: [[fallthrough]];
+    case ast_operator::NOT_EQUAL: [[fallthrough]];
     case ast_operator::LESS: [[fallthrough]];
     case ast_operator::LESS_EQUAL: [[fallthrough]];
     case ast_operator::GREATER: [[fallthrough]];
     case ast_operator::GREATER_EQUAL: return true;
-    case ast_operator::NOT_EQUAL: return not cudf::is_floating_point(dtype);
     default: return false;
   }
-}
-
-/**
- * @brief Returns the operator that `NOT(col op val)` is equivalent to, if any
- *
- * @param op The comparison operator
- * @param dtype The data type of the column being compared
- * @return The complemented operator, or std::nullopt if the comparison cannot be complemented
- */
-[[nodiscard]] std::optional<ast::ast_operator> negate_comparison(ast::ast_operator op,
-                                                                 cudf::data_type dtype)
-{
-  // A comparison cannot be complemented when the column may hold a `NaN`: IEEE-754 makes every
-  // ordered comparison with a NaN false, so `NOT(col < val)` is true where `col >= val` is not.
-  if (cudf::is_floating_point(dtype)) { return std::nullopt; }
-  return transform_operator<operator_transform::NEGATE>(op);
 }
 
 }  // namespace
@@ -90,9 +69,7 @@ void stats_columns_collector::collect_surviving_predicates(ast::expression const
 simplified_expression_opt stats_columns_collector::simplify_comparison(
   ast::ast_operator op, ast::column_reference const& col_ref, ast::literal const&)
 {
-  if (not is_prunable_comparison(op, _output_dtypes[col_ref.get_column_index()])) {
-    return std::nullopt;
-  }
+  if (not is_prunable_comparison(op)) { return std::nullopt; }
   return col_ref;
 }
 
@@ -113,7 +90,7 @@ simplified_expression_opt stats_columns_collector::simplify_negated_unary_op(
 simplified_expression_opt stats_columns_collector::simplify_negated_comparison(
   ast::ast_operator op, ast::column_reference const& col_ref, ast::literal const& literal)
 {
-  auto const negated_op = negate_comparison(op, _output_dtypes[col_ref.get_column_index()]);
+  auto const negated_op = transform_operator<operator_transform::NEGATE>(op);
   if (not negated_op.has_value()) { return std::nullopt; }
   return simplify_comparison(*negated_op, col_ref, literal);
 }
@@ -149,68 +126,92 @@ ast::expression const& stats_expression_converter::push_non_null_guard(
   return _tree.push(ast::operation{ast_operator::NULL_LOGICAL_AND, not_all_null, stats_expr});
 }
 
-simplified_expression_opt stats_expression_converter::simplify_comparison(
-  ast::ast_operator op, ast::column_reference const& col_ref, ast::literal const& literal_ref)
+ast::expression const& stats_expression_converter::push_nan_guard(size_type col_index,
+                                                                  ast::expression const& literal,
+                                                                  ast::expression const& stats_expr)
 {
   using cudf::ast::ast_operator;
 
-  auto const col_index = col_ref.get_column_index();
+  if (not cudf::is_floating_point(_output_dtypes[col_index])) { return stats_expr; }
 
-  // Some Parquet writers exclude `NaN`s from stats, so we can't reliably prune row groups for
-  // columns that may contain them.
-  if (not is_prunable_comparison(op, _output_dtypes[col_index])) { return std::nullopt; }
+  // A `NaN` literal satisfies the predicate for every non-null value, which `lit != lit` detects
+  auto const& is_nan_lit = _tree.push(ast::operation{ast_operator::NOT_EQUAL, literal, literal});
+  auto const& has_nan    = _tree.push(ast::column_reference{col_index * stats_cols_per_column + 3});
+  auto const& nan_matches =
+    _tree.push(ast::operation{ast_operator::NULL_LOGICAL_OR, is_nan_lit, has_nan});
 
-  auto const& literal = _tree.push(literal_ref);
+  // Null-aware so that a chunk known to be NaN-free is decided by `stats_expr` alone, while one
+  // whose NaN count is unknown is kept unless `stats_expr` is true anyway.
+  return _tree.push(ast::operation{ast_operator::NULL_LOGICAL_OR, nan_matches, stats_expr});
+}
 
-  switch (op) {
-    /* transform to stats conditions
-    col == val --> vmin <= val && vmax >= val
-    col != val --> vmin != vmax || vmax != val
-    col >  val --> vmax > val
-    col <  val --> vmin < val
-    col >= val --> vmax >= val
-    col <= val --> vmin <= val
-    */
-    case ast_operator::EQUAL: {
-      auto const& vmin = _tree.push(ast::column_reference{col_index * stats_cols_per_column});
-      auto const& vmax = _tree.push(ast::column_reference{col_index * stats_cols_per_column + 1});
-      // The two halves are separately optional in the statistics, so they are combined null-aware
-      // to keep whichever one is present decisive.
-      auto const& in_range = _tree.push(
-        ast::operation{ast_operator::NULL_LOGICAL_AND,
-                       _tree.push(ast::operation{ast_operator::GREATER_EQUAL, vmax, literal}),
-                       _tree.push(ast::operation{ast_operator::LESS_EQUAL, vmin, literal})});
-      // An all-null chunk has no min or max, so this range test is unknown there and would keep
-      // the chunk. The guard makes it prune instead.
-      return push_non_null_guard(col_index, in_range);
+simplified_expression_opt stats_expression_converter::simplify_comparison(
+  ast::ast_operator op, ast::column_reference const& col_ref, ast::literal const& literal_ref)
+{
+  if (not is_prunable_comparison(op)) { return std::nullopt; }
+  return push_comparison(
+    op, col_ref.get_column_index(), literal_ref, op == ast::ast_operator::NOT_EQUAL);
+}
+
+ast::expression const& stats_expression_converter::push_comparison(ast::ast_operator op,
+                                                                   size_type col_index,
+                                                                   ast::literal const& literal_ref,
+                                                                   bool nan_satisfies)
+{
+  using cudf::ast::ast_operator;
+
+  auto const& literal    = _tree.push(literal_ref);
+  auto const& stats_expr = [&]() -> ast::expression const& {
+    switch (op) {
+      /* transform to stats conditions
+      col == val --> vmin <= val && vmax >= val
+      col != val --> vmin != vmax || vmax != val
+      col >  val --> vmax > val
+      col <  val --> vmin < val
+      col >= val --> vmax >= val
+      col <= val --> vmin <= val
+      */
+      case ast_operator::EQUAL: {
+        auto const& vmin = _tree.push(ast::column_reference{col_index * stats_cols_per_column});
+        auto const& vmax = _tree.push(ast::column_reference{col_index * stats_cols_per_column + 1});
+        // The two halves are separately optional in the statistics, so they are combined
+        // null-aware to keep whichever one is present decisive.
+        return _tree.push(
+          ast::operation{ast_operator::NULL_LOGICAL_AND,
+                         _tree.push(ast::operation{ast_operator::GREATER_EQUAL, vmax, literal}),
+                         _tree.push(ast::operation{ast_operator::LESS_EQUAL, vmin, literal})});
+      }
+      case ast_operator::NOT_EQUAL: {
+        auto const& vmin = _tree.push(ast::column_reference{col_index * stats_cols_per_column});
+        auto const& vmax = _tree.push(ast::column_reference{col_index * stats_cols_per_column + 1});
+        // Null-aware for the same reason as the range test above: either half can be the one the
+        // statistics carry.
+        return _tree.push(
+          ast::operation{ast_operator::NULL_LOGICAL_OR,
+                         _tree.push(ast::operation{ast_operator::NOT_EQUAL, vmin, vmax}),
+                         _tree.push(ast::operation{ast_operator::NOT_EQUAL, vmax, literal})});
+      }
+      case ast_operator::LESS: [[fallthrough]];
+      case ast_operator::LESS_EQUAL: {
+        auto const& vmin = _tree.push(ast::column_reference{col_index * stats_cols_per_column});
+        return _tree.push(ast::operation{op, vmin, literal});
+      }
+      case ast_operator::GREATER: [[fallthrough]];
+      case ast_operator::GREATER_EQUAL: {
+        auto const& vmax = _tree.push(ast::column_reference{col_index * stats_cols_per_column + 1});
+        return _tree.push(ast::operation{op, vmax, literal});
+      }
+      default: CUDF_UNREACHABLE("Non-prunable operator should not reach stats conversion");
     }
-    case ast_operator::NOT_EQUAL: {
-      auto const& vmin = _tree.push(ast::column_reference{col_index * stats_cols_per_column});
-      auto const& vmax = _tree.push(ast::column_reference{col_index * stats_cols_per_column + 1});
-      // Null-aware for the same reason as the range test above: either half can be the one the
-      // statistics carry.
-      auto const& outside_range = _tree.push(
-        ast::operation{ast_operator::NULL_LOGICAL_OR,
-                       _tree.push(ast::operation{ast_operator::NOT_EQUAL, vmin, vmax}),
-                       _tree.push(ast::operation{ast_operator::NOT_EQUAL, vmax, literal})});
-      // A null does not satisfy `!=` either, and an all-null chunk has no min or max to make this
-      // test decisive, so the guard prunes it.
-      return push_non_null_guard(col_index, outside_range);
-    }
-    case ast_operator::LESS: [[fallthrough]];
-    case ast_operator::LESS_EQUAL: {
-      auto const& vmin = _tree.push(ast::column_reference{col_index * stats_cols_per_column});
-      // An all-null chunk has no min, leaving this test unknown, so the guard prunes it.
-      return push_non_null_guard(col_index, _tree.push(ast::operation{op, vmin, literal}));
-    }
-    case ast_operator::GREATER: [[fallthrough]];
-    case ast_operator::GREATER_EQUAL: {
-      auto const& vmax = _tree.push(ast::column_reference{col_index * stats_cols_per_column + 1});
-      // An all-null chunk has no max, leaving this test unknown, so the guard prunes it.
-      return push_non_null_guard(col_index, _tree.push(ast::operation{op, vmax, literal}));
-    }
-    default: CUDF_UNREACHABLE("Non-prunable operator should not reach stats conversion");
-  }
+  }();
+
+  // A `NaN` satisfies `!=` and negated ordered comparisons but is excluded from the min and max, so
+  // a chunk that may hold one is kept.
+  auto const& nan_guarded =
+    nan_satisfies ? push_nan_guard(col_index, literal, stats_expr) : stats_expr;
+  // A null satisfies no comparison, and an all-null chunk has no min or max to make the test
+  // decisive, so the non-null guard prunes it.
+  return push_non_null_guard(col_index, nan_guarded);
 }
 
 simplified_expression_opt stats_expression_converter::simplify_unary_op(
@@ -238,9 +239,15 @@ simplified_expression_opt stats_expression_converter::simplify_negated_unary_op(
 simplified_expression_opt stats_expression_converter::simplify_negated_comparison(
   ast::ast_operator op, ast::column_reference const& col_ref, ast::literal const& literal)
 {
-  auto const negated_op = negate_comparison(op, _output_dtypes[col_ref.get_column_index()]);
-  if (not negated_op.has_value()) { return std::nullopt; }
-  return simplify_comparison(*negated_op, col_ref, literal);
+  auto const negated_op = transform_operator<operator_transform::NEGATE>(op);
+  if (not negated_op.has_value() or not is_prunable_comparison(*negated_op)) {
+    return std::nullopt;
+  }
+  // IEEE-754 makes every ordered comparison with a `NaN` false, so a `NaN` value or literal
+  // satisfies `NOT(col < val)` but not `col >= val`. Equality complements exactly, so only
+  // `NOT(col == val)`, i.e. `col != val`, is satisfied by a `NaN` among those.
+  return push_comparison(
+    *negated_op, col_ref.get_column_index(), literal, *negated_op != ast::ast_operator::EQUAL);
 }
 
 simplified_expression_opt stats_expression_converter::get_stats_expr() const { return _stats_expr; }

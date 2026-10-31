@@ -1483,10 +1483,10 @@ std::unique_ptr<table> aggregate_reader_metadata::read_column_chunk_bounds(
   columns.push_back(std::move(file_indices));
   columns.push_back(std::move(row_group_indices));
 
-  row_group_stats_caster const stats_col{.total_row_groups     = total_row_groups,
-                                         .per_file_metadata    = per_file_metadata,
-                                         .row_group_indices    = input_row_group_indices,
-                                         .has_is_null_operator = false};
+  row_group_stats_caster const stats_col{.total_row_groups        = total_row_groups,
+                                         .per_file_metadata       = per_file_metadata,
+                                         .row_group_indices       = input_row_group_indices,
+                                         .with_null_and_nan_stats = false};
 
   for (auto const& column_name : column_names) {
     auto schema_indices_per_source = std::vector<int>(per_file_metadata.size());

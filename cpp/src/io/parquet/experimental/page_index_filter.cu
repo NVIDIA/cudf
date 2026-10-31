@@ -41,9 +41,9 @@ using metadata_base = parquet::detail::metadata;
 namespace {
 
 /**
- * @brief Converts page-level statistics of an input column to three device columns (min, max
- * values, and all-null) with the host page-row offsets that map its rows back to the input column's
- * pages.
+ * @brief Converts page-level statistics of an input column to four device columns (min, max
+ * values, all-null and has-NaN) with the host page-row offsets that map its rows back to the input
+ * column's pages.
  */
 struct page_stats_caster : public stats_caster_base {
   cudf::size_type total_rows;
@@ -52,13 +52,13 @@ struct page_stats_caster : public stats_caster_base {
 
   /**
    * @brief Computes host side data including page row offsets and host columns containing
-   * page-level min, max, and all-null statistics for a column
+   * page-level min, max, all-null and has-NaN statistics for a column
    *
    * @param schema_indices_per_source Column schema index in each source
    * @param dtype Column data type
    * @param stream CUDA stream
-   * @return A tuple of page row offsets and host columns containing page-level min, max, and
-   * all-null statistics
+   * @return A tuple of page row offsets and host columns containing page-level min, max, all-null
+   * and has-NaN statistics
    */
   template <typename T>
   [[nodiscard]] auto compute_host_data(std::span<size_type const> schema_indices_per_source,
@@ -75,12 +75,14 @@ struct page_stats_caster : public stats_caster_base {
 
     auto const total_pages = col_chunk_page_offsets.back();
 
-    // Create host columns with page-level min, max, and all-null statistics. The all-null column
-    // is true only when every value in the page is null, false when none are, and null when only
-    // some are, which is what lets it answer both IS_NULL and IS NOT NULL.
+    // Create host columns with page-level min, max, all-null and has-NaN statistics. The all-null
+    // column is true only when every value in the page is null, false when none are, and null when
+    // only some are, which is what lets it answer both IS_NULL and IS NOT NULL. The has-NaN column
+    // is null when the column index carries no NaN counts.
     host_column<T> min(total_pages, stream);
     host_column<T> max(total_pages, stream);
     host_column<bool> all_null(total_pages, stream);
+    host_column<bool> has_nan(total_pages, stream);
 
     // Populate the host columns with page-level min, max statistics from the page index
     auto page_offset_idx = 0;
@@ -126,6 +128,11 @@ struct page_stats_caster : public stats_caster_base {
                        "Number of page null counts must match the number of pages in the column "
                        "chunk",
                        std::invalid_argument);
+          CUDF_EXPECTS(not column_index.nan_counts.has_value() or
+                         column_index.nan_counts.value().size() == num_pages_in_colchunk,
+                       "Number of page NaN counts must match the number of pages in the column "
+                       "chunk",
+                       std::invalid_argument);
 
           // For all pages in this column chunk
           std::for_each(
@@ -140,12 +147,17 @@ struct page_stats_caster : public stats_caster_base {
                 min.set_index(column_page_idx, std::nullopt, colchunk.meta_data.type);
                 max.set_index(column_page_idx, std::nullopt, colchunk.meta_data.type);
                 all_null.val[column_page_idx] = true;
+                has_nan.val[column_page_idx]  = false;
                 return;
               }
 
               // Translate binary data to Type then to <T>
               min.set_index(column_page_idx, min_value, colchunk.meta_data.type, ts_scale);
               max.set_index(column_page_idx, max_value, colchunk.meta_data.type, ts_scale);
+              has_nan.set_has_nan(column_page_idx,
+                                  column_index.nan_counts.has_value()
+                                    ? std::make_optional(column_index.nan_counts.value()[page_idx])
+                                    : std::nullopt);
 
               // Check if the page doesn't have a null count
               if (not column_index.null_counts.has_value()) {
@@ -169,13 +181,16 @@ struct page_stats_caster : public stats_caster_base {
         });
       });
 
-    return std::tuple{
-      std::move(page_row_offsets), std::move(min), std::move(max), std::move(all_null)};
+    return std::tuple{std::move(page_row_offsets),
+                      std::move(min),
+                      std::move(max),
+                      std::move(all_null),
+                      std::move(has_nan)};
   }
 
   /**
-   * @brief Builds a `page_statistics_input` storing compact per-column stats (min, max, all-null)
-   * with the host page-row offsets that map its rows back to the input column's pages.
+   * @brief Builds a `page_statistics_input` storing compact per-column stats (min, max, all-null,
+   * has-NaN) with the host page-row offsets that map its rows back to the input column's pages.
    *
    * @tparam T Underlying type of the column
    * @param column_index Logical filter column index used by the stats expression
@@ -197,8 +212,9 @@ struct page_stats_caster : public stats_caster_base {
     if constexpr (cudf::is_compound<T>() and not cuda::std::is_same_v<T, string_view>) {
       CUDF_FAIL("Compound types other than strings do not have statistics");
     } else {
-      // Compute page row offsets, and page-statistics (min, max and all-null) host columns.
-      auto [page_row_offsets, min, max, all_null] =
+      // Compute page row offsets, and page-statistics (min, max, all-null and has-NaN) host
+      // columns.
+      auto [page_row_offsets, min, max, all_null, has_nan] =
         compute_host_data<T>(schema_indices_per_source, dtype, stream);
 
       std::vector<std::unique_ptr<column>> columns;
@@ -207,6 +223,8 @@ struct page_stats_caster : public stats_caster_base {
       columns.emplace_back(max.to_device(dtype, stream, mr.get_output_mr()));
       columns.emplace_back(
         all_null.to_device(data_type{type_id::BOOL8}, stream, mr.get_output_mr()));
+      columns.emplace_back(
+        has_nan.to_device(data_type{type_id::BOOL8}, stream, mr.get_output_mr()));
 
       return page_statistics_input{
         .column_index = column_index,

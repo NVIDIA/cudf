@@ -899,12 +899,13 @@ def test_ir_execution_context() -> None:
     context.get_cuda_stream()  # no exception
 
 
-def test_validate_dynamic_planning() -> None:
-    with pytest.raises(TypeError, match="sample_chunk_count must be"):
+@pytest.mark.parametrize("value", [object(), True, False])
+def test_validate_dynamic_planning(value: object) -> None:
+    with pytest.raises(TypeError, match="sample_byte_count must be"):
         ConfigOptions.from_polars_engine(
             pl.GPUEngine(
                 executor="streaming",
-                executor_options={"dynamic_planning": {"sample_chunk_count": object()}},
+                executor_options={"dynamic_planning": {"sample_byte_count": value}},
             )
         )
     with pytest.raises(TypeError, match="infer_ordering must be"):
@@ -916,12 +917,12 @@ def test_validate_dynamic_planning() -> None:
         )
 
 
-def test_dynamic_planning_sample_chunk_count_min() -> None:
-    with pytest.raises(ValueError, match="sample_chunk_count must be at least 1"):
+def test_dynamic_planning_sample_byte_count_min() -> None:
+    with pytest.raises(ValueError, match="sample_byte_count must be at least 0"):
         ConfigOptions.from_polars_engine(
             pl.GPUEngine(
                 executor="streaming",
-                executor_options={"dynamic_planning": {"sample_chunk_count": 0}},
+                executor_options={"dynamic_planning": {"sample_byte_count": -1}},
             )
         )
 
@@ -931,7 +932,10 @@ def test_dynamic_planning_defaults() -> None:
     assert config.executor.name == "streaming"
     # Dynamic planning is enabled by default
     assert config.executor.dynamic_planning is not None
-    assert config.executor.dynamic_planning.sample_chunk_count == 2
+    assert (
+        config.executor.dynamic_planning.sample_byte_count
+        == config.executor.target_partition_size
+    )
     assert config.executor.dynamic_planning.infer_ordering is True
     assert config.executor.join_filter_pushdown is None
 
@@ -944,17 +948,16 @@ def test_dynamic_planning_disabled_from_env(monkeypatch: pytest.MonkeyPatch) -> 
     assert config.executor.dynamic_planning is None
 
 
-def test_dynamic_planning_sample_chunk_count_from_env(
+def test_dynamic_planning_sample_byte_count_from_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Test that sample_chunk_count_reduce can be configured via env var
     monkeypatch.setenv(
-        "CUDF_POLARS__EXECUTOR__DYNAMIC_PLANNING__SAMPLE_CHUNK_COUNT", "3"
+        "CUDF_POLARS__EXECUTOR__DYNAMIC_PLANNING__SAMPLE_BYTE_COUNT", "3"
     )
     config = ConfigOptions.from_polars_engine(pl.GPUEngine())
     assert config.executor.name == "streaming"
     assert config.executor.dynamic_planning is not None
-    assert config.executor.dynamic_planning.sample_chunk_count == 3
+    assert config.executor.dynamic_planning.sample_byte_count == 3
 
 
 def test_dynamic_planning_infer_ordering_from_options() -> None:
@@ -1084,7 +1087,10 @@ def test_dynamic_planning_from_instance() -> None:
     )
     assert config.executor.name == "streaming"
     assert config.executor.dynamic_planning is not None
-    assert config.executor.dynamic_planning.sample_chunk_count == 2  # default
+    assert (
+        config.executor.dynamic_planning.sample_byte_count
+        == config.executor.target_partition_size
+    )  # default
 
 
 def test_parse_memory_resource_config() -> None:

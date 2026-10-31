@@ -3,6 +3,10 @@ name: Build staged wheels
 on:
   workflow_call:
     inputs:
+      matrix_type:
+        default: "auto"
+        required: false
+        type: string
       build-datetime:
         required: false
         type: string
@@ -44,6 +48,7 @@ jobs:
     with:
       build_type: ${{ inputs.build_type }}
       matrix_name: wheels-build
+      matrix_type: ${{ inputs.matrix_type }}
       matrix_filter: ${{ inputs.matrix_filter }}
       pure_wheel: ${{ inputs.pure-wheel }}
   build:

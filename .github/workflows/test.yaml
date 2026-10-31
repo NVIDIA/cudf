@@ -50,7 +50,7 @@ jobs:
     uses: rapidsai/shared-workflows/.github/workflows/conda-cpp-tests.yaml@main
     with:
       build_type: ${{ inputs.build_type }}
-      matrix_type: nightly,pull-request
+      matrix_type: cuda-13-4-nightly,nightly
       branch: ${{ inputs.branch }}
       date: ${{ inputs.date }}
       script: ci/test_cpp.sh
@@ -152,6 +152,7 @@ jobs:
       script: "ci/test_python_cudf.sh"
       # https://github.com/NVIDIA/cudf/issues/23498
       matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
+      matrix_type: cuda-13-4-nightly,nightly
   conda-python-other-tests:
     # Tests for dask_cudf, custreamz, cudf_kafka are separated for CI parallelism
     permissions:
@@ -170,6 +171,7 @@ jobs:
       script: "ci/test_python_other.sh"
       # https://github.com/NVIDIA/cudf/issues/23498
       matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
+      matrix_type: cuda-13-4-nightly,nightly
   # Test the packaged cuDF Java JAR built by build.yaml java-build for every Maven classifier.
   java-build-matrix:
     permissions:
@@ -235,6 +237,7 @@ jobs:
       sha: ${{ inputs.sha }}
       script: ci/test_wheel_cudf.sh
   # Same as wheel-tests-cudf, but installs the nightly cupy wheel from
+      matrix_type: cuda-13-4-nightly,nightly
   # scientific-python-nightly-wheels.
   wheel-tests-cudf-cupy-nightly:
     permissions:
@@ -254,6 +257,7 @@ jobs:
       script: "env CUPY_NIGHTLY=true ci/test_wheel_cudf.sh"
       # Only the 'latest' dependency set is compatible with nightly cupy.
       matrix_filter: map(select(.DEPENDENCIES == "latest"))
+      matrix_type: cuda-13-4-nightly,nightly
   wheel-tests-dask-cudf:
     permissions:
       actions: read
@@ -269,6 +273,7 @@ jobs:
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
       script: ci/test_wheel_dask_cudf.sh
+      matrix_type: cuda-13-4-nightly,nightly
   unit-tests-cudf-pandas:
     permissions:
       actions: read
@@ -286,6 +291,7 @@ jobs:
       script: ci/cudf_pandas_scripts/run_tests.sh
       # https://github.com/NVIDIA/cudf/issues/23498
       matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
+      matrix_type: cuda-13-4-nightly,nightly
   third-party-integration-tests-cudf-pandas:
     permissions:
       actions: read
@@ -341,6 +347,7 @@ jobs:
       script: "ci/test_wheel_cudf_polars.sh"
       # https://github.com/NVIDIA/cudf/issues/23498
       matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
+      matrix_type: cuda-13-4-nightly,nightly
   cudf-polars-polars-tests:
     strategy:
       fail-fast: false
@@ -388,6 +395,7 @@ jobs:
         --cudf-polars-num-shards ${{ matrix.num_shards }}
       # https://github.com/NVIDIA/cudf/issues/23498
       matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
+      matrix_type: cuda-13-4-nightly,nightly
   tpc-tests-cudf-polars:
     permissions:
       actions: read
@@ -406,6 +414,7 @@ jobs:
       matrix_filter: map(select(.ARCH == "amd64")) | group_by(.CUDA_VER|split(".")|map(tonumber)|.[0]) | map(max_by([(.PY_VER|split(".")|map(tonumber)), (.CUDA_VER|split(".")|map(tonumber))]))
       container-options: "--cap-add CAP_SYS_PTRACE --shm-size=8g --ulimit=nofile=1000000:1000000"
       script: "ci/run_cudf_polars_tpc.sh"
+      matrix_type: cuda-13-4-nightly,nightly
   cudf-polars-test-summary:
     needs: cudf-polars-polars-tests
     if: ${{ !cancelled() && needs.cudf-polars-polars-tests.result != 'skipped' }}

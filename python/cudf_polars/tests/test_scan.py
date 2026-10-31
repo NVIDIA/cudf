@@ -181,6 +181,18 @@ def test_negative_slice_pushdown_raises(engine: pl.GPUEngine, tmp_path):
     assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
+def test_scan_cloud_storage_options_raises(engine: pl.GPUEngine):
+    # libcudf/KvikIO cannot honor storage_options (endpoint, credentials, ...),
+    # so a cloud scan that sets them must fall back to the CPU.
+    q = pl.scan_parquet(
+        "s3://bucket/x.parquet",
+        schema={"a": pl.Int64},
+        storage_options={"aws_region": "us-east-1"},
+        credential_provider=None,
+    )
+    assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
 def test_scan_parquet_prefetch_file_metadata_in_memory_raises():
     with pytest.raises(
         NotImplementedError,

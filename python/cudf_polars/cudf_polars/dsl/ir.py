@@ -816,12 +816,16 @@ class Scan(IR):
             # TODO: polars has this implemented for parquet,
             # maybe we can do this too?
             raise NotImplementedError("slice pushdown for negative slices")
-        if self.cloud_options is not None and any(
-            self.cloud_options.get(k) is not None for k in ("aws", "azure", "gcp")
+        if (
+            self.cloud_options is not None
+            and self.cloud_options.get("config") is not None
         ):
-            raise NotImplementedError(
-                "Read from cloud storage"
-            )  # pragma: no cover; no test yet
+            # Polars serializes the user's ``storage_options`` (endpoint, credentials,
+            # headers, ...) into ``cloud_options["config"]``, keyed by provider
+            # (``Aws``, ``Azure``, ``Gcp``, ``Http``, ``Hf``). libcudf/KvikIO can't
+            # honor those options, so fall back to the CPU rather than reading with
+            # the wrong endpoint or credentials.
+            raise NotImplementedError("Read from cloud storage with storage_options")
         if self.typ == "csv":
             if any(
                 plc.io.SourceInfo._is_remote_uri(p) for p in self.paths

@@ -1343,6 +1343,7 @@ class Index(SingleColumnFrame):
         # There should be no `None` values in Joined indices,
         # so essentially it would be `left/right` or 'inner'
         # in case of MultiIndex
+        plain_join = not isinstance(lhs, cudf.MultiIndex)
         if isinstance(lhs, cudf.MultiIndex):
             on = (
                 lhs._data.get_labels_by_index(level)[0]
@@ -1365,7 +1366,24 @@ class Index(SingleColumnFrame):
         lhs = lhs.to_frame()
         rhs = rhs.to_frame()
 
+        # https://github.com/rapidsai/cudf/issues/9981
+        # A right join keeps the dtype of other, also when one side is empty.
+        # This is not the merge rule, where the non-empty side wins, so cast
+        # the key back. All key values come from other, or the result is
+        # empty, so the cast is exact.
+        right_join_dtype = None
+        if (
+            plain_join
+            and how == "right"
+            and (len(lhs) == 0) != (len(rhs) == 0)
+        ):
+            right_join_dtype = rhs._data[rhs._column_names[0]].dtype
+
         output = lhs.merge(rhs, how=how, on=on, sort=sort)
+        if right_join_dtype is not None:
+            name = output._column_names[0]
+            if output._data[name].dtype != right_join_dtype:
+                output[name] = output[name].astype(right_join_dtype)
 
         # If both inputs were MultiIndexes, the output is a MultiIndex.
         # Otherwise, the output is only a MultiIndex if there are multiple

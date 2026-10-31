@@ -5,6 +5,7 @@
 
 package ai.rapids.cudf;
 
+import com.github.luben.zstd.Zstd;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -15,8 +16,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
+import java.util.zip.CRC32;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -50,6 +53,32 @@ class PackagedJarOriginCheck {
     Path resource = tempDir.resolve(arch).resolve(os).resolve(System.mapLibraryName(baseName));
     Files.createDirectories(resource.getParent());
     Files.write(resource, expected);
+    assertStandaloneExtract(baseName, expected);
+  }
+
+  @Test
+  void nativeDepUtilExtractsZstdChunksWithOnlyPackagedJar() throws Exception {
+    String baseName = "standalonezstdtest";
+    byte[] expected = "standalone compressed native library"
+        .getBytes(StandardCharsets.UTF_8);
+    Path resource = tempDir.resolve(System.getProperty("os.arch"))
+        .resolve(System.getProperty("os.name"))
+        .resolve(System.mapLibraryName(baseName));
+    Path chunks = resource.resolveSibling(resource.getFileName() + ".chunks");
+    Files.createDirectories(chunks);
+    Files.write(chunks.resolve("00000"), Zstd.compress(expected, 9));
+    CRC32 crc = new CRC32();
+    crc.update(expected);
+    String manifest = String.format(Locale.ROOT,
+        "format.version=1%nlibrary.size=%d%nchunk.size=%d%nchunk.count=1%n"
+            + "chunk.compression=zstd%nchunk.00000.crc32=%08x%n",
+        expected.length, expected.length, crc.getValue());
+    Files.write(resource.resolveSibling(resource.getFileName() + ".chunks.properties"),
+        manifest.getBytes(StandardCharsets.ISO_8859_1));
+    assertStandaloneExtract(baseName, expected);
+  }
+
+  private void assertStandaloneExtract(String baseName, byte[] expected) throws Exception {
     Path destination = tempDir.resolve("extracted").resolve(System.mapLibraryName(baseName));
     Files.createDirectories(destination.getParent());
 

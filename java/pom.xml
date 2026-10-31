@@ -137,6 +137,12 @@
 
     <dependencies>
         <dependency>
+            <groupId>com.github.luben</groupId>
+            <artifactId>zstd-jni</artifactId>
+            <version>1.5.6-6</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
             <version>${slf4j.version}</version>
@@ -850,6 +856,93 @@
                                     </includes>
                                 </resource>
                             </resources>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <version>3.6.1</version>
+                <executions>
+                    <execution>
+                        <id>embed-zstd-jni</id>
+                        <phase>process-resources</phase>
+                        <goals><goal>unpack</goal></goals>
+                        <configuration>
+                            <artifactItems>
+                                <artifactItem>
+                                    <groupId>com.github.luben</groupId>
+                                    <artifactId>zstd-jni</artifactId>
+                                    <version>1.5.6-6</version>
+                                    <includes>com/github/luben/zstd/**,linux/${os.arch}/**</includes>
+                                    <outputDirectory>${project.build.outputDirectory}</outputDirectory>
+                                    <overWrite>true</overWrite>
+                                </artifactItem>
+                            </artifactItems>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.0.0</version>
+                <configuration>
+                    <includePluginDependencies>true</includePluginDependencies>
+                    <includeProjectDependencies>false</includeProjectDependencies>
+                </configuration>
+                <dependencies>
+                    <dependency>
+                        <groupId>org.python</groupId>
+                        <artifactId>jython-standalone</artifactId>
+                        <version>2.7.3</version>
+                    </dependency>
+                    <dependency>
+                        <groupId>com.github.luben</groupId>
+                        <artifactId>zstd-jni</artifactId>
+                        <version>1.5.6-6</version>
+                    </dependency>
+                </dependencies>
+                <executions>
+                    <execution>
+                        <id>chunk-native-library</id>
+                        <phase>process-resources</phase>
+                        <goals><goal>java</goal></goals>
+                        <configuration>
+                            <mainClass>org.python.util.jython</mainClass>
+                            <arguments>
+                                <argument>${project.basedir}/buildscripts/native_chunks.py</argument>
+                                <argument>produce</argument>
+                                <argument>${project.build.outputDirectory}/${os.arch}/${os.name}/libcudf.so</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>store-native-chunks</id>
+                        <phase>package</phase>
+                        <goals><goal>java</goal></goals>
+                        <configuration>
+                            <mainClass>org.python.util.jython</mainClass>
+                            <arguments>
+                                <argument>${project.basedir}/buildscripts/native_chunks.py</argument>
+                                <argument>store</argument>
+                                <argument>${project.build.outputDirectory}</argument>
+                                <argument>${project.build.directory}/${project.build.finalName}-${cuda.classifier}.jar</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>verify-zstd-native-chunks</id>
+                        <phase>verify</phase>
+                        <goals><goal>java</goal></goals>
+                        <configuration>
+                            <mainClass>org.python.util.jython</mainClass>
+                            <arguments>
+                                <argument>${project.basedir}/buildscripts/native_chunks.py</argument>
+                                <argument>verify</argument>
+                                <argument>${project.build.directory}/${project.build.finalName}-${cuda.classifier}.jar</argument>
+                            </arguments>
                         </configuration>
                     </execution>
                 </executions>

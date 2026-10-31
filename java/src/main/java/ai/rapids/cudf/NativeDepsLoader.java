@@ -4,6 +4,7 @@
  */
 package ai.rapids.cudf;
 
+import com.github.luben.zstd.ZstdInputStreamNoFinalizer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -575,7 +576,8 @@ public class NativeDepsLoader {
     long expectedSize = manifest.expectedChunkSize(chunkIndex);
     long expectedCrc32 = manifest.expectedChunkCrc32(chunkIndex);
     return executor.submit(() -> {
-      extractChunk(chunkResource, outputChannel, outputOffset, expectedSize, expectedCrc32);
+      extractChunk(chunkResource, outputChannel, outputOffset, expectedSize, expectedCrc32,
+          manifest.zstdCompressed);
       return null;
     });
   }
@@ -626,12 +628,14 @@ public class NativeDepsLoader {
 
   private static void extractChunk(
       URL resource, FileChannel outputChannel, long outputOffset,
-      long expectedSize, long expectedCrc32) throws IOException {
+      long expectedSize, long expectedCrc32, boolean zstdCompressed) throws IOException {
     byte[] buffer = new byte[COPY_BUFFER_SIZE];
     ByteBuffer bytes = ByteBuffer.wrap(buffer);
     CRC32 crc = new CRC32();
     long totalBytes = 0;
-    try (InputStream in = resource.openStream()) {
+    try (InputStream resourceStream = resource.openStream();
+         InputStream in = zstdCompressed
+             ? new ZstdInputStreamNoFinalizer(resourceStream) : resourceStream) {
       int read;
       while ((read = in.read(buffer)) != -1) {
         if (read == 0) {
@@ -687,17 +691,21 @@ public class NativeDepsLoader {
     private static final String LIBRARY_SIZE_KEY = "library.size";
     private static final String CHUNK_SIZE_KEY = "chunk.size";
     private static final String CHUNK_COUNT_KEY = "chunk.count";
+    private static final String CHUNK_COMPRESSION_KEY = "chunk.compression";
 
     private final long librarySize;
     private final long chunkSize;
     private final int chunkCount;
     private final long[] chunkCrc32;
+    private final boolean zstdCompressed;
 
-    private ChunkManifest(long librarySize, long chunkSize, int chunkCount, long[] chunkCrc32) {
+    private ChunkManifest(long librarySize, long chunkSize, int chunkCount, long[] chunkCrc32,
+                          boolean zstdCompressed) {
       this.librarySize = librarySize;
       this.chunkSize = chunkSize;
       this.chunkCount = chunkCount;
       this.chunkCrc32 = chunkCrc32;
+      this.zstdCompressed = zstdCompressed;
     }
 
     private static ChunkManifest load(URL resource) throws IOException {
@@ -725,12 +733,18 @@ public class NativeDepsLoader {
             resource, expectedChunkCount, chunkCountLong));
       }
       int chunkCount = (int) chunkCountLong;
+      String compression = properties.getProperty(CHUNK_COMPRESSION_KEY, "none").trim();
+      if (!"none".equals(compression) && !"zstd".equals(compression)) {
+        throw new IOException("Unsupported native dependency chunk compression " + compression
+            + " in " + resource);
+      }
       long[] chunkCrc32 = new long[chunkCount];
       for (int i = 0; i < chunkCount; i++) {
         String key = String.format(Locale.ROOT, "chunk.%05d.crc32", i);
         chunkCrc32[i] = parseCrc32(properties, key, resource);
       }
-      return new ChunkManifest(librarySize, chunkSize, chunkCount, chunkCrc32);
+      return new ChunkManifest(librarySize, chunkSize, chunkCount, chunkCrc32,
+          "zstd".equals(compression));
     }
 
     private static long parseCrc32(Properties properties, String key, URL resource)

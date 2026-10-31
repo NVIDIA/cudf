@@ -1673,6 +1673,62 @@ TEST_F(OrcWriterTest, Decimal32)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(col, result.tbl->view().column(0));
 }
 
+struct OrcNestedColumnCountsTest
+  : public OrcStatisticsTest,
+    public ::testing::WithParamInterface<std::tuple<cudf::size_type, bool, bool>> {};
+
+TEST_P(OrcNestedColumnCountsTest, NestedColumnCounts)
+{
+  auto const [num_rows, nullable, chunked] = GetParam();
+  auto const values                        = cuda::counting_iterator{0};
+  auto const validity                      = cudf::detail::make_counting_transform_iterator(
+    0, [nullable](auto i) { return not nullable or i % 3 != 1; });
+  int32_col elements(values, values + num_rows);
+  struct_col structs{{elements}, validity};
+  int32_col offsets(values, values + num_rows + 1);
+  auto [null_mask, null_count] = cudf::test::detail::make_null_mask(validity, validity + num_rows);
+  auto lists                   = cudf::purge_nonempty_nulls(
+    cudf::make_lists_column(
+      num_rows, offsets.release(), elements.release(), null_count, std::move(null_mask))
+      ->view());
+  table_view input{{structs, lists->view()}};
+  auto const non_nulls = num_rows - null_count;
+
+  auto const path = temp_env->get_temp_filepath("NestedColumnCounts.orc");
+  if (chunked) {
+    cudf::io::chunked_orc_writer_options options =
+      cudf::io::chunked_orc_writer_options::builder(cudf::io::sink_info{path});
+    cudf::io::orc_chunked_writer(options).write(input).write(input);
+  } else {
+    cudf::io::orc_writer_options options =
+      cudf::io::orc_writer_options::builder(cudf::io::sink_info{path}, input);
+    cudf::io::write_orc(options);
+  }
+  auto const stats = cudf::io::read_parsed_orc_statistics(cudf::io::source_info{path});
+  ASSERT_EQ(stats.file_stats.size(), 5);
+  auto const writes = chunked ? 2 : 1;
+  EXPECT_EQ(stats.file_stats[0].number_of_values, writes * num_rows);
+  for (auto const column : {1, 2, 3, 4}) {
+    auto const has_null = nullable and column != 4;
+    EXPECT_EQ(stats.file_stats[column].number_of_values, writes * non_nulls);
+    EXPECT_EQ(stats.file_stats[column].has_null, has_null);
+    uint64_t stripe_values = 0;
+    for (auto const& stripe : stats.stripes_stats) {
+      ASSERT_EQ(stripe.size(), 5);
+      ASSERT_TRUE(stripe[column].number_of_values.has_value());
+      stripe_values += *stripe[column].number_of_values;
+      EXPECT_EQ(stripe[column].has_null, has_null);
+    }
+    EXPECT_EQ(stripe_values, writes * non_nulls);
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(OrcStatisticsTest,
+                         OrcNestedColumnCountsTest,
+                         ::testing::Combine(::testing::Values(5, 1025),
+                                            ::testing::Bool(),
+                                            ::testing::Bool()));
+
 TEST_F(OrcStatisticsTest, Overflow)
 {
   using int64_limits     = cuda::std::numeric_limits<int64_t>;

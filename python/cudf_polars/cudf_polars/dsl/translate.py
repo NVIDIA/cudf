@@ -242,7 +242,7 @@ class Translator:
         # IR is versioned with major.minor, minor is bumped for backwards
         # compatible changes (e.g. adding new nodes), major is bumped for
         # incompatible changes (e.g. renaming nodes).
-        if (version := self.visitor.version()) >= (16, 1):
+        if (version := self.visitor.version()) >= (16, 2):
             e = NotImplementedError(
                 f"No support for polars IR {version=}"
             )  # pragma: no cover; no such version for now.
@@ -1656,11 +1656,17 @@ def _(
                 f"expected 'groups_to_rows'"
             )
 
-        order_by_expr = (
-            translator.translate_expr(n=node.order_by, schema=schema)
-            if has_order_by
-            else None
-        )
+        order_by_expr = None
+        if has_order_by:
+            order_by_expr, row_encode_flags = _translate_window_order_by(
+                translator, node.order_by, schema
+            )
+            if row_encode_flags is not None:
+                if descending or nulls_last:
+                    raise NotImplementedError(
+                        "over(order_by=...) with row_encode and sort flags on the window"
+                    )
+                descending, nulls_last = row_encode_flags
 
         named_aggs = [agg for agg, _ in aggs]
 
@@ -1715,6 +1721,46 @@ def _(
             *children,
         )
     assert_never(node.options)
+
+
+def _translate_window_order_by(
+    translator: Translator, n: int, schema: Schema
+) -> tuple[expr.Expr, tuple[bool, bool] | None]:
+    """
+    Translate the ``order_by`` of a window expression.
+
+    Polars encodes ``over(..., order_by=[a, b])`` as a ``row_encode`` of the
+    keys. We sort on a struct of the keys instead, which libcudf compares
+    lexicographically, so the sort flags must be the same for every key.
+
+    Returns the translated key and, for a ``row_encode``, its
+    ``(descending, nulls_last)`` flags.
+    """
+    node = translator.visitor.view_expression(n)
+    if not (
+        isinstance(node, plrs._expr_nodes.Function)
+        and isinstance(node.function_data, tuple)
+        and node.function_data[0] == "row_encode_ordered"
+    ):
+        return translator.translate_expr(n=n, schema=schema), None
+    _, descending, nulls_last, _, encode_nulls, propagate_nulls = node.function_data
+    if encode_nulls is not None or propagate_nulls:
+        raise NotImplementedError("row_encode with custom null handling")
+    if len(set(descending)) > 1 or len(set(nulls_last)) > 1:
+        raise NotImplementedError("row_encode with per-key sort options")
+    children = [translator.translate_expr(n=c, schema=schema) for c in node.input]
+    struct_dtype = DataType(
+        pl.Struct(
+            [
+                pl.Field(f"f{i}", child.dtype.polars_type)
+                for i, child in enumerate(children)
+            ]
+        )
+    )
+    return (
+        expr.UnaryFunction(struct_dtype, "as_struct", (), *children),
+        (descending[0], nulls_last[0]),
+    )
 
 
 def _translate_rolling(

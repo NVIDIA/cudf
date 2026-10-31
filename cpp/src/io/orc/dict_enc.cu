@@ -111,7 +111,7 @@ int blocks_per_dictionary(Kernel kernel,
   auto const budget =
     target_waves * blocks_per_sm * cudf::detail::num_multiprocessors() / num_dictionaries;
   auto const blocks_to_cover =
-    std::max(cudf::util::div_rounding_up_safe(max_dict_rows, block_size), size_type{1});
+    std::max(cudf::detail::div_rounding_up_safe(max_dict_rows, block_size), size_type{1});
   return std::clamp<int>(budget, 1, blocks_to_cover);
 }
 

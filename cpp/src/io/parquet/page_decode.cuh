@@ -1497,7 +1497,7 @@ __device__ void zero_fill_null_positions_shared(
   auto const start_bit_idx = valid_map_offset;
   auto const end_bit_idx   = valid_map_offset + num_values;
   auto const start_block   = start_bit_idx / bits_per_mask;
-  auto const end_block     = cudf::util::div_rounding_up_safe(end_bit_idx, bits_per_mask);
+  auto const end_block     = cudf::detail::div_rounding_up_safe(end_bit_idx, bits_per_mask);
 
   // When nulls are dense, assigning one thread per value allows coalesced writes. When nulls are
   // sparse, coalescence is no longer critical since writes are few, and assigning each thread a

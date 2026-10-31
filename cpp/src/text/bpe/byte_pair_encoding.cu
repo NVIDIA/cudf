@@ -775,8 +775,8 @@ void encode_segments(char const* d_input_chars,
   // encode the distinct short segments with a warp per 32 segments
   auto const finder = get_bpe_merge_pairs_impl(merge_pairs)->get_rank_finder();
   if (num_encode > 0) {
-    auto const num_warps =
-      cudf::util::div_rounding_up_safe(num_encode, static_cast<IndexType>(cudf::detail::warp_size));
+    auto const num_warps = cudf::detail::div_rounding_up_safe(
+      num_encode, static_cast<IndexType>(cudf::detail::warp_size));
     auto const grid = cudf::detail::grid_1d(
       static_cast<int64_t>(num_warps) * cudf::detail::warp_size, short_block_size);
     bpe_short_kernel<decltype(finder), IndexType>

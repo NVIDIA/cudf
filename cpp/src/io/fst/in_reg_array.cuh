@@ -43,7 +43,7 @@ class MultiFragmentInRegArray {
 
   // The total number of fragments required to store all the items
   static constexpr uint32_t FRAGMENTS_PER_ITEM =
-    cudf::util::div_rounding_up_safe(MIN_BITS_PER_ITEM, BITS_PER_FRAG_ITEM);
+    cudf::detail::div_rounding_up_safe(MIN_BITS_PER_ITEM, BITS_PER_FRAG_ITEM);
 
   //------------------------------------------------------------------------------
   // HELPER FUNCTIONS

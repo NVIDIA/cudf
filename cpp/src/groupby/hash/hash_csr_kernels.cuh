@@ -270,7 +270,7 @@ void launch_hash_csr_sample_kernel(size_type num_rows,
                                    size_type* counts,
                                    cuda::stream_ref stream)
 {
-  auto const num_samples = cudf::util::div_rounding_up_safe(num_rows, stride);
+  auto const num_samples = cudf::detail::div_rounding_up_safe(num_rows, stride);
   if (num_samples == 0) { return; }
   auto const config = cudf::detail::grid_1d{num_samples, hash_csr_block_size};
   hash_csr_sample_kernel<<<config.num_blocks, config.num_threads_per_block, 0, stream.get()>>>(

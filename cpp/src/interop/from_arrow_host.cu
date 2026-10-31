@@ -117,7 +117,7 @@ std::pair<std::unique_ptr<cuda::device_buffer<cudf::bitmask_type>>, size_type> g
   auto const mask_words   = num_bitmask_words(num_rows);
   auto const padded_words = bitmask_allocation_size_words(num_rows);
   auto const bit_index    = input->offset % bits_in_byte;
-  auto const copy_size    = cudf::util::div_rounding_up_safe(num_rows + bit_index, bits_in_byte);
+  auto const copy_size    = cudf::detail::div_rounding_up_safe(num_rows + bit_index, bits_in_byte);
 
   auto mask = cuda::device_buffer<bitmask_type>(
     stream, cudf::get_current_device_resource_ref(), padded_words, cuda::no_init);
@@ -200,7 +200,7 @@ std::unique_ptr<column> dispatch_copy_from_arrow_host::operator()<bool>(ArrowSch
   auto const offset_index = input->offset / bits_in_byte;
   auto const data_words   = num_bitmask_words(num_rows);
   auto const bit_index    = input->offset % bits_in_byte;
-  auto const copy_size    = cudf::util::div_rounding_up_safe(num_rows + bit_index, bits_in_byte);
+  auto const copy_size    = cudf::detail::div_rounding_up_safe(num_rows + bit_index, bits_in_byte);
 
   auto data = cuda::device_buffer<bitmask_type>(
     stream, cudf::get_current_device_resource_ref(), data_words, cuda::no_init);

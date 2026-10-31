@@ -112,7 +112,7 @@ void write_compressed_to_sink(data_sink* out_sink,
   if (data.empty() and tail.empty()) { return; }
 
   auto const block_size      = compression_block_size(compression, requested_block_size);
-  auto const num_data_blocks = cudf::util::div_rounding_up_safe(data.size(), block_size);
+  auto const num_data_blocks = cudf::detail::div_rounding_up_safe(data.size(), block_size);
   auto const num_blocks      = num_data_blocks + (tail.empty() ? 0 : 1);
 
   auto h_inputs =
@@ -138,8 +138,8 @@ void write_compressed_to_sink(data_sink* out_sink,
   out_offsets[0]       = 0;
   std::transform_inclusive_scan(
     h_inputs.begin(), h_inputs.end(), out_offsets.begin() + 1, std::plus{}, [&](auto const& input) {
-      return cudf::util::round_up_safe(io::detail::max_compressed_size(compression, input.size()),
-                                       alignment);
+      return cudf::detail::round_up_safe(io::detail::max_compressed_size(compression, input.size()),
+                                         alignment);
     });
   auto const temp_mr = cudf::get_current_device_resource_ref();
   cuda::device_buffer<uint8_t> comp_buffer(stream, temp_mr, out_offsets.back(), cuda::no_init);

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -24,7 +24,7 @@ byte_range_info create_byte_range_info_max() { return {0, std::numeric_limits<in
 std::vector<byte_range_info> create_byte_range_infos_consecutive(int64_t total_bytes,
                                                                  int64_t range_count)
 {
-  auto range_size = util::div_rounding_up_safe(total_bytes, range_count);
+  auto range_size = cudf::detail::div_rounding_up_safe(total_bytes, range_count);
   auto ranges     = std::vector<byte_range_info>();
 
   ranges.reserve(range_count);

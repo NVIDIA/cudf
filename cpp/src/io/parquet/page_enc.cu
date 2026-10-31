@@ -3425,7 +3425,7 @@ void InitFragmentStatistics(device_span<statistics_group> groups,
 {
   int const num_fragments = fragments.size();
   int const dim =
-    util::div_rounding_up_safe(num_fragments, encode_block_size / cudf::detail::warp_size);
+    cudf::detail::div_rounding_up_safe(num_fragments, encode_block_size / cudf::detail::warp_size);
   gpuInitFragmentStats<<<dim, encode_block_size, 0, stream.get()>>>(groups, fragments);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
@@ -3549,7 +3549,7 @@ void decide_compression(device_span<EncColumnChunk> chunks,
                         cuda::stream_ref stream)
 {
   auto const num_blocks =
-    util::div_rounding_up_safe<int>(chunks.size(), decide_compression_warps_in_block);
+    cudf::detail::div_rounding_up_safe<int>(chunks.size(), decide_compression_warps_in_block);
   decide_compression_kernel<<<num_blocks, decide_compression_block_size, 0, stream.get()>>>(
     chunks, page_level_compression);
   CUDF_CUDA_TRY(cudaGetLastError());
@@ -3561,7 +3561,7 @@ void EncodePageHeaders(device_span<EncPage> pages,
                        statistics_chunk const* chunk_stats,
                        cuda::stream_ref stream)
 {
-  auto const num_blocks = util::div_rounding_up_safe<int>(pages.size(), encode_block_size);
+  auto const num_blocks = cudf::detail::div_rounding_up_safe<int>(pages.size(), encode_block_size);
   gpuEncodePageHeaders<<<num_blocks, encode_block_size, 0, stream.get()>>>(
     pages, comp_results, page_stats, chunk_stats);
   CUDF_CUDA_TRY(cudaGetLastError());

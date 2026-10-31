@@ -9,6 +9,7 @@
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/column/column_factories.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/reshape.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
@@ -78,7 +79,7 @@ TYPED_TEST(TableToDeviceArrayTypedTest, SupportedTypes)
     cols.begin(), cols.end(), views.begin(), [](auto const& col) { return col->view(); });
   cudf::table_view input{views};
 
-  auto output = cudf::detail::make_zeroed_device_uvector<T>(nrows * ncols, stream, mr);
+  auto output = cudf::detail::make_zeroed_device_buffer<T>(nrows * ncols, stream, mr);
 
   cudf::table_to_array(
     input,
@@ -111,7 +112,7 @@ TYPED_TEST(FixedPointTableToDeviceArrayTest, SupportedFixedPointTypes)
   cudf::table_view input({col0, col1});
   size_t num_elements = input.num_rows() * input.num_columns();
 
-  auto output = cudf::detail::make_zeroed_device_uvector<RepType>(num_elements, stream, mr);
+  auto output = cudf::detail::make_zeroed_device_buffer<RepType>(num_elements, stream, mr);
 
   cudf::table_to_array(
     input,

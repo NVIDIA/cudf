@@ -9,13 +9,13 @@
 #include <cudf_test/type_list_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
+#include <cudf/detail/utilities/buffer_factories.hpp>
+#include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
-
-#include <rmm/device_uvector.hpp>
 
 struct DispatcherTest : public cudf::test::BaseFixture {};
 
@@ -67,12 +67,15 @@ CUDF_KERNEL void dispatch_test_kernel(cudf::type_id id, bool* d_result)
 
 TYPED_TEST(TypedDispatcherTest, DeviceDispatch)
 {
-  auto result = cudf::detail::make_zeroed_device_uvector<bool>(
+  auto result = cudf::detail::make_zeroed_device_buffer<bool>(
     1, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
   dispatch_test_kernel<<<1, 1, 0, cudf::get_default_stream().get()>>>(cudf::type_to_id<TypeParam>(),
                                                                       result.data());
   CUDF_CUDA_TRY(cudaDeviceSynchronize());
-  EXPECT_EQ(true, result.front_element(cudf::get_default_stream()));
+  bool host_result{};
+  cudf::detail::cuda_memcpy<bool>(
+    cudf::host_span<bool>{&host_result, 1}, result, cudf::get_default_stream());
+  EXPECT_TRUE(host_result);
 }
 
 struct IdDispatcherTest : public DispatcherTest,
@@ -134,12 +137,15 @@ CUDF_KERNEL void double_dispatch_test_kernel(cudf::type_id id1, cudf::type_id id
 
 TYPED_TEST(TypedDoubleDispatcherTest, DeviceDoubleDispatch)
 {
-  auto result = cudf::detail::make_zeroed_device_uvector<bool>(
+  auto result = cudf::detail::make_zeroed_device_buffer<bool>(
     1, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
   double_dispatch_test_kernel<<<1, 1, 0, cudf::get_default_stream().get()>>>(
     cudf::type_to_id<TypeParam>(), cudf::type_to_id<TypeParam>(), result.data());
   CUDF_CUDA_TRY(cudaDeviceSynchronize());
-  EXPECT_EQ(true, result.front_element(cudf::get_default_stream()));
+  bool host_result{};
+  cudf::detail::cuda_memcpy<bool>(
+    cudf::host_span<bool>{&host_result, 1}, result, cudf::get_default_stream());
+  EXPECT_TRUE(host_result);
 }
 
 struct IdDoubleDispatcherTest : public DispatcherTest,

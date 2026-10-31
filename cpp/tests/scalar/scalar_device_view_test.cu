@@ -8,6 +8,7 @@
 #include <cudf_test/type_list_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/scalar/scalar_device_view.cuh>
@@ -195,9 +196,9 @@ TEST_F(StringScalarDeviceViewTest, Value)
 
   auto scalar_device_view = cudf::get_scalar_device_view(s);
   cudf::detail::device_scalar<bool> result{cudf::get_default_stream()};
-  auto value_v = cudf::detail::make_device_uvector(cudf::host_span<char const>{value},
-                                                   cudf::get_default_stream(),
-                                                   cudf::get_current_device_resource_ref());
+  auto value_v = cudf::detail::make_device_buffer(cudf::host_span<char const>{value},
+                                                  cudf::get_default_stream(),
+                                                  cudf::get_current_device_resource_ref());
 
   test_string_value<<<1, 1, 0, cudf::get_default_stream().get()>>>(
     scalar_device_view, value_v.data(), value.size(), result.data());

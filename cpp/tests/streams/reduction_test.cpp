@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,6 +8,7 @@
 #include <cudf_test/default_stream.hpp>
 #include <cudf_test/testing_main.hpp>
 
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/reduction.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -40,7 +41,7 @@ TEST_F(ReductionTest, SegmentedReductionSum)
     {1, 2, 3, 1, 0, 3, 1, 0, 0, 0},
     {true, true, true, true, false, true, true, false, false, false}};
   auto const offsets   = std::vector<cudf::size_type>{0, 3, 6, 7, 8, 10, 10};
-  auto const d_offsets = cudf::detail::make_device_uvector_async(
+  auto const d_offsets = cudf::detail::make_device_buffer_async(
     offsets, cudf::test::get_default_stream(), cudf::get_current_device_resource_ref());
 
   auto res =
@@ -58,7 +59,7 @@ TEST_F(ReductionTest, SegmentedReductionSumScalarInit)
     {1, 2, 3, 1, 0, 3, 1, 0, 0, 0},
     {true, true, true, true, false, true, true, false, false, false}};
   auto const offsets   = std::vector<cudf::size_type>{0, 3, 6, 7, 8, 10, 10};
-  auto const d_offsets = cudf::detail::make_device_uvector_async(
+  auto const d_offsets = cudf::detail::make_device_buffer_async(
     offsets, cudf::test::get_default_stream(), cudf::get_current_device_resource_ref());
   auto const init_scalar = cudf::make_fixed_width_scalar<int>(3, cudf::test::get_default_stream());
   auto res =

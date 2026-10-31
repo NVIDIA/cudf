@@ -8,13 +8,13 @@
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/detail/utilities/batched_memset.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/device_uvector.hpp>
-
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/tuple>
 
@@ -49,12 +49,12 @@ TEST(MultiBufferTestIntegral, BasicTest1)
     });
 
   // Copy host vector data to device
-  std::vector<rmm::device_uvector<uint64_t>> device_buffers;
+  std::vector<cuda::device_buffer<uint64_t>> device_buffers;
   std::transform(expected.begin(),
                  expected.end(),
                  std::back_inserter(device_buffers),
                  [stream, mr](auto const& vec) {
-                   return cudf::detail::make_device_uvector_async(vec, stream, mr);
+                   return cudf::detail::make_device_buffer_async(vec, stream, mr);
                  });
 
   // Initialize device buffers for memset

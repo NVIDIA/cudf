@@ -8,14 +8,15 @@
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/detail/utilities/batched_memcpy.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/device_vector.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 
 #include <iterator>
@@ -73,11 +74,11 @@ TEST(BatchedMemcpyTest, BasicTest)
     return data;
   });
   // Copy the vectors to device
-  std::vector<rmm::device_uvector<T1>> h_device_vecs;
+  std::vector<cuda::device_buffer<T1>> h_device_vecs;
   h_device_vecs.reserve(h_sources.size());
   std::transform(
     h_sources.begin(), h_sources.end(), std::back_inserter(h_device_vecs), [stream, mr](auto& vec) {
-      return cudf::detail::make_device_uvector_async(vec, stream, mr);
+      return cudf::detail::make_device_buffer_async(vec, stream, mr);
     });
   // Pointers to the source vectors
   std::vector<T1*> h_src_ptrs;
@@ -87,23 +88,23 @@ TEST(BatchedMemcpyTest, BasicTest)
       return static_cast<T1*>(vec.data());
     });
   // Copy the source data pointers to device
-  auto d_src_ptrs = cudf::detail::make_device_uvector_async(h_src_ptrs, stream, mr);
+  auto d_src_ptrs = cudf::detail::make_device_buffer_async(h_src_ptrs, stream, mr);
 
   // Total number of elements in all buffers
   auto const total_buff_len = std::accumulate(h_lens.cbegin(), h_lens.cend(), 0);
 
   // Create one giant buffer for destination
-  auto d_dst_data = cudf::detail::make_zeroed_device_uvector_async<T1>(total_buff_len, stream, mr);
+  auto d_dst_data = cudf::detail::make_zeroed_device_buffer_async<T1>(total_buff_len, stream, mr);
   // Pointers to destination buffers within the giant destination buffer
   std::vector<T1*> h_dst_ptrs(num_buffs);
   std::for_each(cuda::counting_iterator<std::size_t>{0},
                 cuda::counting_iterator{num_buffs},
                 [&](auto i) { return h_dst_ptrs[i] = d_dst_data.data() + h_lens_excl_sum[i]; });
   // Copy destination data pointers to device
-  auto d_dst_ptrs = cudf::detail::make_device_uvector_async(h_dst_ptrs, stream, mr);
+  auto d_dst_ptrs = cudf::detail::make_device_buffer_async(h_dst_ptrs, stream, mr);
 
   // Copy buffer size iterators (in bytes) to device
-  auto d_sizes_bytes = cudf::detail::make_device_uvector_async(h_sizes_bytes, stream, mr);
+  auto d_sizes_bytes = cudf::detail::make_device_buffer_async(h_sizes_bytes, stream, mr);
 
   // Run the batched memcpy
   cudf::detail::batched_memcpy_async(

@@ -24,7 +24,9 @@
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/type_traits>
 #include <cuda/stream>
@@ -798,7 +800,8 @@ TEST_F(FromArrowDeviceTest, StringViewType)
 
   cuda::stream_ref stream = cudf::get_default_stream();
   auto items              = view.buffer_views[1].data.as_binary_view;
-  auto d_items            = rmm::device_uvector<ArrowBinaryView>(input.length, stream);
+  auto d_items            = cuda::device_buffer<ArrowBinaryView>(
+    stream, cudf::get_current_device_resource_ref(), input.length, cuda::no_init);
   CUDF_CUDA_TRY(cudaMemcpyAsync(d_items.data(),
                                 items,
                                 input.length * sizeof(ArrowBinaryView),
@@ -908,7 +911,8 @@ TEST_F(FromArrowDeviceTest, StringViewTypeWithProducerOwnedPrivateData)
 
   cuda::stream_ref stream = cudf::get_default_stream();
   auto items              = view.buffer_views[1].data.as_binary_view;
-  auto d_items            = rmm::device_uvector<ArrowBinaryView>(input->length, stream);
+  auto d_items            = cuda::device_buffer<ArrowBinaryView>(
+    stream, cudf::get_current_device_resource_ref(), input->length, cuda::no_init);
   CUDF_CUDA_TRY(cudaMemcpyAsync(d_items.data(),
                                 items,
                                 input->length * sizeof(ArrowBinaryView),

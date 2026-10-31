@@ -17,12 +17,13 @@
 #include <cudf/column/column_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/wrappers/durations.hpp>
 #include <cudf/wrappers/timestamps.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <thrust/logical.h>
 #include <thrust/sequence.h>
 
@@ -105,7 +106,10 @@ TYPED_TEST(ChronoColumnTest, ChronoDurationsMatchPrimitiveRepresentation)
   auto primitive_col =
     cudf::test::fixed_width_column_wrapper<Rep>(chrono_col_data.begin(), chrono_col_data.end());
 
-  rmm::device_uvector<int32_t> indices(this->size(), cudf::get_default_stream());
+  cuda::device_buffer<int32_t> indices(cudf::get_default_stream(),
+                                       cudf::get_current_device_resource_ref(),
+                                       this->size(),
+                                       cuda::no_init);
   thrust::sequence(
     rmm::exec_policy_nosync(cudf::get_default_stream()), indices.begin(), indices.end());
   EXPECT_TRUE(thrust::all_of(rmm::exec_policy_nosync(cudf::get_default_stream()),
@@ -161,7 +165,10 @@ TYPED_TEST(ChronoColumnTest, ChronosCanBeComparedInDeviceCode)
   auto chrono_rhs_col = cudf::test::generate_timestamps<T>(
     this->size(), cudf::test::time_point_ms(start_rhs), cudf::test::time_point_ms(stop_rhs));
 
-  rmm::device_uvector<int32_t> indices(this->size(), cudf::get_default_stream());
+  cuda::device_buffer<int32_t> indices(cudf::get_default_stream(),
+                                       cudf::get_current_device_resource_ref(),
+                                       this->size(),
+                                       cuda::no_init);
   thrust::sequence(
     rmm::exec_policy_nosync(cudf::get_default_stream()), indices.begin(), indices.end());
 

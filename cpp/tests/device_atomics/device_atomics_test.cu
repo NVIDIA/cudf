@@ -10,6 +10,7 @@
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/detail/device_scalar.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/device_atomics.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/utilities/default_stream.hpp>
@@ -137,9 +138,9 @@ struct AtomicsTest : public cudf::test::BaseFixture {
     result_init[4] = result_init[1];
     result_init[5] = result_init[2];
 
-    auto dev_data = cudf::detail::make_device_uvector(
+    auto dev_data = cudf::detail::make_device_buffer(
       v, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
-    auto dev_result = cudf::detail::make_device_uvector(
+    auto dev_result = cudf::detail::make_device_buffer(
       result_init, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
 
     if (block_size == 0) { block_size = vec_size; }

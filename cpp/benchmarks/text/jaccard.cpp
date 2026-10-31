@@ -6,6 +6,7 @@
 #include <benchmarks/common/generate_input.hpp>
 #include <benchmarks/common/memory_stats.hpp>
 
+#include <cudf/strings/combine.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
 
@@ -22,14 +23,27 @@ static void bench_jaccard(nvbench::state& state)
   auto const max_width       = static_cast<cudf::size_type>(state.get_int64("max_width"));
   auto const substring_width = static_cast<cudf::size_type>(state.get_int64("substring_width"));
 
+  if (static_cast<int64_t>(num_rows) * max_width > (1L << 30)) {
+    state.skip("Skip benchmarks larger than 1GB");
+    return;
+  }
+
+  // Each pair of rows shares a common half so the intersection counts are not trivially 0:
+  //   input1 = A + B and input2 = A + C
   data_profile const strings_profile =
     data_profile_builder()
-      .distribution(cudf::type_id::STRING, distribution_id::NORMAL, min_width, max_width)
+      .distribution(cudf::type_id::STRING, distribution_id::NORMAL, min_width / 2, max_width / 2)
       .no_validity();
-  auto const input_table = create_random_table(
-    {cudf::type_id::STRING, cudf::type_id::STRING}, row_count{num_rows}, strings_profile);
-  cudf::strings_column_view input1(input_table->view().column(0));
-  cudf::strings_column_view input2(input_table->view().column(1));
+  auto const parts =
+    create_random_table({cudf::type_id::STRING, cudf::type_id::STRING, cudf::type_id::STRING},
+                        row_count{num_rows},
+                        strings_profile);
+  auto const col1 = cudf::strings::concatenate(
+    cudf::table_view({parts->view().column(0), parts->view().column(1)}));
+  auto const col2 = cudf::strings::concatenate(
+    cudf::table_view({parts->view().column(0), parts->view().column(2)}));
+  cudf::strings_column_view input1(col1->view());
+  cudf::strings_column_view input2(col2->view());
 
   auto stream = cudf::get_default_stream();
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
@@ -51,6 +65,6 @@ static void bench_jaccard(nvbench::state& state)
 NVBENCH_BENCH(bench_jaccard)
   .set_name("jaccard")
   .add_int64_axis("min_width", {0})
-  .add_int64_axis("max_width", {128, 512, 1024, 2048})
+  .add_int64_axis("max_width", {128, 512, 2048, 8192, 32768})
   .add_int64_axis("num_rows", {32768, 131072, 262144})
   .add_int64_axis("substring_width", {5, 10});

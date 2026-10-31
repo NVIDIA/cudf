@@ -10,30 +10,35 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/sizes_to_offsets_iterator.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
-#include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
-#include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/hashing/detail/murmurhash3_x86_32.cuh>
-#include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-#include <cudf/utilities/span.hpp>
 
 #include <nvtext/jaccard.hpp>
 
 #include <rmm/exec_policy.hpp>
 
-#include <cub/device/device_segmented_sort.cuh>
+#include <cooperative_groups.h>
+#include <cooperative_groups/reduce.h>
+#include <cub/block/block_reduce.cuh>
+#include <cub/block/block_scan.cuh>
 #include <cub/warp/warp_reduce.cuh>
+#include <cuco/bucket_storage.cuh>
+#include <cuco/hash_functions.cuh>
+#include <cuco/static_set_ref.cuh>
+#include <cuda/atomic>
 #include <cuda/buffer>
 #include <cuda/iterator>
+#include <cuda/std/algorithm>
+#include <cuda/std/bit>
 #include <cuda/std/functional>
 #include <cuda/std/iterator>
+#include <cuda/std/limits>
+#include <cuda/std/span>
+#include <cuda/std/tuple>
 #include <cuda/stream>
-#include <thrust/binary_search.h>
-#include <thrust/execution_policy.h>
-#include <thrust/sequence.h>
 #include <thrust/transform.h>
 
 namespace nvtext {
@@ -43,159 +48,34 @@ namespace {
 constexpr cudf::thread_index_type block_size       = 256;
 constexpr cudf::thread_index_type bytes_per_thread = 4;
 
-/**
- * @brief Retrieve the row data (span) for the given column/row-index
- *
- * @param values Flat vector of all values
- * @param offsets Offsets identifying rows within values
- * @param row_idx Row index to retrieve
- * @return A device-span of the row values
- */
-__device__ auto get_row(uint32_t const* values, int64_t const* offsets, cudf::size_type row_idx)
-{
-  auto const offset = offsets[row_idx];
-  auto const size   = offsets[row_idx + 1] - offset;
-  auto const begin  = values + offset;
-  return cudf::device_span<uint32_t const>(begin, size);
-}
+using hash_value_type = uint32_t;
 
-/**
- * @brief Kernel to count the unique values within each row of the input column
- *
- * This is called with a warp per row.
- *
- * @param d_values Sorted hash values to count uniqueness
- * @param d_offsets Offsets to each set of row elements in d_values
- * @param rows Number of rows in the output
- * @param d_results Number of unique values in each row
- */
-CUDF_KERNEL void sorted_unique_fn(uint32_t const* d_values,
-                                  int64_t const* d_offsets,
-                                  cudf::size_type rows,
-                                  cudf::size_type* d_results)
-{
-  auto const idx = cudf::detail::grid_1d::global_thread_id();
-  if (idx >= (static_cast<cudf::thread_index_type>(rows) * cudf::detail::warp_size)) { return; }
+// Number of bits in a hash value
+constexpr int hash_bits = cuda::std::numeric_limits<hash_value_type>::digits;
 
-  using warp_reduce = cub::WarpReduce<cudf::size_type>;
-  __shared__ typename warp_reduce::TempStorage temp_storage;
+// Hash value 0 is reserved as the empty-slot sentinel for the sets
+constexpr hash_value_type empty_hash = 0;
 
-  auto const row_idx  = idx / cudf::detail::warp_size;
-  auto const lane_idx = idx % cudf::detail::warp_size;
-  auto const row      = get_row(d_values, d_offsets, row_idx);
-  auto const begin    = row.begin();
+// The hash values are already well distributed so they are used directly as the probe hash
+using probe_type       = cuco::linear_probing<1, cuco::identity_hash<hash_value_type>>;
+using storage_ref_type = cuco::bucket_storage_ref<hash_value_type, 1, cuco::extent<int32_t>>;
+using set_ref_type     = cuco::static_set_ref<hash_value_type,
+                                              cuda::thread_scope_block,
+                                              cuda::std::equal_to<hash_value_type>,
+                                              probe_type,
+                                              storage_ref_type,
+                                              cuco::op::insert_tag,
+                                              cuco::op::contains_tag>;
 
-  cudf::size_type count = 0;
-  for (auto itr = begin + lane_idx; itr < row.end(); itr += cudf::detail::warp_size) {
-    count += (itr == begin || *itr != *(itr - 1));
-  }
-  auto const result = warp_reduce(temp_storage).Sum(count);
-  if (lane_idx == 0) { d_results[row_idx] = result; }
-}
-
-/**
- * @brief Count the unique values within each row of the input column
- *
- * @param values Sorted hash values to count uniqueness
- * @param offsets Offsets to each set of row elements in d_values
- * @param rows Number of rows in the output
- * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Memory resources used for temporary allocations and the returned buffer
- * @return Number of unique values
- */
-cuda::device_buffer<cudf::size_type> compute_unique_counts(uint32_t const* values,
-                                                           int64_t const* offsets,
-                                                           cudf::size_type rows,
-                                                           cuda::stream_ref stream,
-                                                           cudf::memory_resources mr)
-{
-  auto d_results =
-    cuda::device_buffer<cudf::size_type>(stream, mr.get_output_mr(), rows, cuda::no_init);
-  auto const num_blocks = cudf::util::div_rounding_up_safe(
-    static_cast<cudf::thread_index_type>(rows) * cudf::detail::warp_size, block_size);
-  sorted_unique_fn<<<num_blocks, block_size, 0, stream.get()>>>(
-    values, offsets, rows, d_results.data());
-  CUDF_CUDA_TRY(cudaGetLastError());
-  return d_results;
-}
-
-/**
- * @brief Kernel to count the number of common values within each row of the 2 input columns
- *
- * This is called with a warp per row.
- *
- * @param d_values1 Sorted hash values to check against d_values2
- * @param d_offsets1 Offsets to each set of row elements in d_values1
- * @param d_values2 Sorted hash values to check against d_values1
- * @param d_offsets2 Offsets to each set of row elements in d_values2
- * @param rows Number of rows in the output
- * @param d_results Number of common values in each row
- */
-CUDF_KERNEL void sorted_intersect_fn(uint32_t const* d_values1,
-                                     int64_t const* d_offsets1,
-                                     uint32_t const* d_values2,
-                                     int64_t const* d_offsets2,
-                                     cudf::size_type rows,
-                                     cudf::size_type* d_results)
-{
-  auto const idx = cudf::detail::grid_1d::global_thread_id();
-  if (idx >= (static_cast<cudf::thread_index_type>(rows) * cudf::detail::warp_size)) { return; }
-
-  using warp_reduce = cub::WarpReduce<cudf::size_type>;
-  __shared__ typename warp_reduce::TempStorage temp_storage;
-
-  auto const row_idx  = idx / cudf::detail::warp_size;
-  auto const lane_idx = idx % cudf::detail::warp_size;
-
-  auto const needles  = get_row(d_values1, d_offsets1, row_idx);
-  auto const haystack = get_row(d_values2, d_offsets2, row_idx);
-
-  auto begin     = haystack.begin();
-  auto const end = haystack.end();
-
-  cudf::size_type count = 0;
-  for (auto itr = needles.begin() + lane_idx; itr < needles.end() && begin < end;
-       itr += cudf::detail::warp_size) {
-    if (itr != needles.begin() && *itr == *(itr - 1)) { continue; }  // skip duplicates
-    // search haystack for this needle (*itr)
-    auto const found = thrust::lower_bound(thrust::seq, begin, end, *itr);
-    count += (found != end) && (*found == *itr);  // increment if found;
-    begin = found;                                // shorten the next lower-bound range
-  }
-  // sum up the counts across this warp
-  auto const result = warp_reduce(temp_storage).Sum(count);
-  if (lane_idx == 0) { d_results[row_idx] = result; }
-}
-
-/**
- * @brief Count the number of common values within each row of the 2 input columns
- *
- * @param values1 Sorted hash values to check against values2
- * @param offsets1 Offsets to each set of row elements in values1
- * @param values2 Sorted hash values to check against values1
- * @param offsets2 Offsets to each set of row elements in values2
- * @param rows Number of rows in the output
- * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Memory resources used for temporary allocations and the returned buffer
- * @return Number of common values
- */
-cuda::device_buffer<cudf::size_type> compute_intersect_counts(uint32_t const* values1,
-                                                              int64_t const* offsets1,
-                                                              uint32_t const* values2,
-                                                              int64_t const* offsets2,
-                                                              cudf::size_type rows,
-                                                              cuda::stream_ref stream,
-                                                              cudf::memory_resources mr)
-{
-  auto d_results =
-    cuda::device_buffer<cudf::size_type>(stream, mr.get_output_mr(), rows, cuda::no_init);
-  auto const num_blocks = cudf::util::div_rounding_up_safe(
-    static_cast<cudf::thread_index_type>(rows) * cudf::detail::warp_size, block_size);
-  sorted_intersect_fn<<<num_blocks, block_size, 0, stream.get()>>>(
-    values1, offsets1, values2, offsets2, rows, d_results.data());
-  CUDF_CUDA_TRY(cudaGetLastError());
-  return d_results;
-}
+// Shared-memory slots for each of the 2 sets used per row by the warp-per-row kernel
+constexpr int32_t warp_slots_per_set = 768;  // 8 warps * 2 sets * 768 * 4 bytes = 48KB
+// Shared-memory slots for each of the 2 sets used per row partition by the partition kernel
+constexpr int32_t block_slots_per_set = 2048;  // 2 sets * 2048 * 4 bytes = 16KB
+// The sets are sized to keep the load factor at or below 0.5
+constexpr int64_t warp_set_capacity  = warp_slots_per_set / 2;
+constexpr int64_t block_set_capacity = block_slots_per_set / 2;
+// Maximum number of partitions per row; rows needing more rely on sub-partitioning
+constexpr int64_t max_partitions = 4096;
 
 /**
  * @brief Counts the number of substrings in each row of the given strings column
@@ -211,7 +91,7 @@ cuda::device_buffer<cudf::size_type> compute_intersect_counts(uint32_t const* va
  */
 CUDF_KERNEL void count_substrings_kernel(cudf::column_device_view const d_strings,
                                          cudf::size_type width,
-                                         int64_t* d_counts)
+                                         cuda::std::span<int64_t> d_counts)
 {
   auto const idx = cudf::detail::grid_1d::global_thread_id();
   if (idx >= (static_cast<cudf::thread_index_type>(d_strings.size()) * cudf::detail::warp_size)) {
@@ -252,7 +132,8 @@ CUDF_KERNEL void count_substrings_kernel(cudf::column_device_view const d_string
  * Each warp processes a single string.
  * Substrings of string "hello world" with width=4 produce:
  *   "hell", "ello", "llo ", "lo w", "o wo", " wor", "worl", "orld"
- * Each of these substrings is hashed and the hash stored in d_results
+ * Each of these substrings is hashed and the hash stored in d_results.
+ * A hash value of 0 is stored as 1 since 0 is reserved as the empty-slot sentinel.
  *
  * @param d_strings Input column of strings
  * @param width Substring size in characters
@@ -261,8 +142,8 @@ CUDF_KERNEL void count_substrings_kernel(cudf::column_device_view const d_string
  */
 CUDF_KERNEL void substring_hash_kernel(cudf::column_device_view const d_strings,
                                        cudf::size_type width,
-                                       int64_t const* d_output_offsets,
-                                       uint32_t* d_results)
+                                       cuda::std::span<int64_t const> d_output_offsets,
+                                       cuda::std::span<hash_value_type> d_results)
 {
   auto const idx     = cudf::detail::grid_1d::global_thread_id();
   auto const str_idx = idx / cudf::detail::warp_size;
@@ -270,173 +151,501 @@ CUDF_KERNEL void substring_hash_kernel(cudf::column_device_view const d_strings,
   auto const d_str = d_strings.element<cudf::string_view>(str_idx);
   if (d_str.empty()) { return; }
 
-  __shared__ uint32_t hvs[block_size];  // temp store for hash values
-
-  auto const hasher     = cudf::hashing::detail::MurmurHash3_x86_32<cudf::string_view>{0};
-  auto const end        = d_str.data() + d_str.size_bytes();
-  auto const warp_count = (d_str.size_bytes() / cudf::detail::warp_size) + 1;
-
   namespace cg        = cooperative_groups;
   auto const warp     = cg::tiled_partition<cudf::detail::warp_size>(cg::this_thread_block());
   auto const lane_idx = warp.thread_rank();
+  auto const hasher   = cudf::hashing::detail::MurmurHash3_x86_32<cudf::string_view>{0};
+  auto const begin    = d_str.data();
+  auto const end      = begin + d_str.size_bytes();
 
-  auto d_hashes = d_results + d_output_offsets[str_idx];
-  auto itr      = d_str.data() + lane_idx;
-  for (auto i = 0; i < warp_count; ++i) {
-    uint32_t hash = 0;
-    if (itr < end && cudf::strings::detail::is_begin_utf8_char(*itr)) {
+  auto d_hashes = d_results.begin() + d_output_offsets[str_idx];
+  for (auto itr = begin; itr < end; itr += cudf::detail::warp_size) {
+    auto const ptr       = itr + lane_idx;
+    auto valid           = false;
+    hash_value_type hash = 0;
+    if (ptr < end && cudf::strings::detail::is_begin_utf8_char(*ptr)) {
       // resolve substring
       auto const sub_str =
-        cudf::string_view(itr, static_cast<cudf::size_type>(cuda::std::distance(itr, end)));
+        cudf::string_view(ptr, static_cast<cudf::size_type>(cuda::std::distance(ptr, end)));
       auto const [bytes, left] = cudf::strings::detail::bytes_to_character_position(sub_str, width);
       // hash only if we have the full width of characters or this is the beginning of the string
-      if ((left == 0) || (itr == d_str.data())) { hash = hasher(cudf::string_view(itr, bytes)); }
+      if ((left == 0) || (ptr == begin)) {
+        hash  = cuda::std::max(hasher(cudf::string_view(ptr, bytes)), hash_value_type{1});
+        valid = true;
+      }
     }
-    hvs[threadIdx.x] = hash;  // store hash into shared memory
-    warp.sync();
-    if (lane_idx == 0) {
-      // copy valid hash values for this warp into d_hashes
-      auto const hashes     = &hvs[threadIdx.x];
-      auto const hashes_end = hashes + cudf::detail::warp_size;
-      d_hashes =
-        thrust::copy_if(thrust::seq, hashes, hashes_end, d_hashes, [](auto h) { return h != 0; });
-    }
-    warp.sync();
-    itr += cudf::detail::warp_size;
+    // compact the valid hash values for this warp into d_hashes
+    auto const mask = warp.ballot(valid);
+    if (valid) { d_hashes[cuda::std::popcount(mask & ((1u << lane_idx) - 1u))] = hash; }
+    d_hashes += cuda::std::popcount(mask);
   }
-}
-
-void segmented_sort(uint32_t const* input,
-                    uint32_t* output,
-                    int64_t items,
-                    cudf::size_type segments,
-                    cuda::device_buffer<int64_t>::iterator offsets,
-                    cuda::stream_ref stream,
-                    cudf::memory_resources mr)
-{
-  auto const temp_mr = mr.get_temporary_mr();
-  cuda::device_buffer<std::byte> temp{stream, temp_mr};
-  std::size_t temp_bytes = 0;
-  cub::DeviceSegmentedSort::SortKeys(
-    temp.data(), temp_bytes, input, output, items, segments, offsets, offsets + 1, stream.get());
-  temp = cuda::device_buffer<std::byte>(stream, temp_mr, temp_bytes, cuda::no_init);
-  cub::DeviceSegmentedSort::SortKeys(
-    temp.data(), temp_bytes, input, output, items, segments, offsets, offsets + 1, stream.get());
 }
 
 /**
  * @brief Create hashes for each substring
  *
- * The hashes are sorted using a segmented-sort as setup to
- * perform the unique and intersect operations.
- *
- * @param input Input strings column to hash
+ * @param d_strings Input strings column to hash
  * @param width Substring width in characters
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Memory resources used for temporary allocations and the returned buffers
- * @return The sorted hash values and offsets to each row
+ * @return The hash values and offsets to each row
  */
-std::pair<cuda::device_buffer<uint32_t>, cuda::device_buffer<int64_t>> hash_substrings(
-  cudf::strings_column_view const& input,
+std::pair<cuda::device_buffer<hash_value_type>, cuda::device_buffer<int64_t>> hash_substrings(
+  cudf::column_device_view const& d_strings,
   cudf::size_type width,
   cuda::stream_ref stream,
   cudf::memory_resources mr)
 {
   auto const output_mr = mr.get_output_mr();
-  auto const temp_mr   = mr.get_temporary_mr();
-  auto const d_strings = cudf::column_device_view::create(input.parent(), stream, temp_mr);
 
   // count substrings
-  auto offsets = cuda::device_buffer<int64_t>(stream, output_mr, input.size() + 1, cuda::no_init);
+  auto offsets = cuda::device_buffer<int64_t>(
+    stream, output_mr, static_cast<std::size_t>(d_strings.size()) + 1, cuda::no_init);
   auto const num_blocks = cudf::util::div_rounding_up_safe(
-    static_cast<cudf::thread_index_type>(input.size()) * cudf::detail::warp_size, block_size);
-  count_substrings_kernel<<<num_blocks, block_size, 0, stream.get()>>>(
-    *d_strings, width, offsets.data());
+    static_cast<cudf::thread_index_type>(d_strings.size()) * cudf::detail::warp_size, block_size);
+  count_substrings_kernel<<<num_blocks, block_size, 0, stream.get()>>>(d_strings, width, offsets);
   CUDF_CUDA_TRY(cudaGetLastError());
   auto const total_hashes = cudf::detail::sizes_to_offsets(
     offsets.begin(), offsets.end(), offsets.begin(), 0, stream, mr.as_temporary());
 
   // hash substrings
-  cuda::device_buffer<uint32_t> hashes(stream, temp_mr, total_hashes, cuda::no_init);
+  auto hashes =
+    cuda::device_buffer<hash_value_type>(stream, output_mr, total_hashes, cuda::no_init);
   substring_hash_kernel<<<num_blocks, block_size, 0, stream.get()>>>(
-    *d_strings, width, offsets.data(), hashes.data());
+    d_strings, width, offsets, hashes);
   CUDF_CUDA_TRY(cudaGetLastError());
 
-  // sort hashes
-  cuda::device_buffer<uint32_t> sorted(stream, output_mr, total_hashes, cuda::no_init);
-  if (total_hashes < static_cast<int64_t>(std::numeric_limits<int>::max())) {
-    segmented_sort(hashes.data(),
-                   sorted.data(),
-                   sorted.size(),
-                   input.size(),
-                   offsets.begin(),
-                   stream,
-                   mr.as_temporary());
-  } else {
-    // The CUB segmented sort can only handle max<int> total values
-    // so this code calls it in sections.
-    auto const section_size   = std::numeric_limits<int>::max() / 2L;
-    auto const sort_sections  = cudf::util::div_rounding_up_safe(total_hashes, section_size);
-    auto const offset_indices = [&] {
-      // build a set of indices that point to offsets subsections
-      auto sub_offsets =
-        cuda::device_buffer<int64_t>(stream, temp_mr, sort_sections + 1, cuda::no_init);
-      thrust::sequence(rmm::exec_policy_nosync(stream, temp_mr),
-                       sub_offsets.begin(),
-                       sub_offsets.end(),
-                       0L,
-                       section_size);
-      auto indices =
-        cuda::device_buffer<int64_t>(stream, temp_mr, sub_offsets.size(), cuda::no_init);
-      thrust::lower_bound(rmm::exec_policy_nosync(stream, temp_mr),
-                          offsets.begin(),
-                          offsets.end(),
-                          sub_offsets.begin(),
-                          sub_offsets.end(),
-                          indices.begin());
-      return cudf::detail::make_host_vector(indices, stream);
-    }();
+  return std::make_pair(std::move(hashes), std::move(offsets));
+}
 
-    auto const get_offset = [&](int64_t index) {
-      int64_t value = 0;
-      cudf::detail::cuda_memcpy<int64_t>(
-        cudf::host_span<int64_t>(&value, 1),
-        cudf::device_span<int64_t const>(offsets.data() + index, 1),
-        stream);
-      return value;
-    };
+/**
+ * @brief Retrieve the row data (span) for the given column/row-index
+ *
+ * @param values Flat vector of all values
+ * @param offsets Offsets identifying rows within values
+ * @param row_idx Row index to retrieve
+ * @return A device-span of the row values
+ */
+__device__ cuda::std::span<hash_value_type const> get_row(
+  cuda::std::span<hash_value_type const> values,
+  cuda::std::span<int64_t const> offsets,
+  cudf::size_type row_idx)
+{
+  auto const offset = offsets[row_idx];
+  return values.subspan(offset, offsets[row_idx + 1] - offset);
+}
 
-    // Call segmented sort with the sort sections
-    for (auto i = 0L; i < sort_sections; ++i) {
-      auto const index1 = offset_indices[i];
-      auto const index2 = std::min(offset_indices[i + 1], static_cast<int64_t>(offsets.size() - 1));
-      auto const offset1 = get_offset(index1);
-      auto const offset2 = get_offset(index2);
+/**
+ * @brief Creates a set over the given shared-memory slots
+ *
+ * @param slots Shared-memory slots for the set; must be initialized to `empty_hash`
+ * @param num_slots Number of slots
+ * @return A set reference over the slots
+ */
+__device__ set_ref_type make_set(hash_value_type* slots, int32_t num_slots)
+{
+  return set_ref_type{cuco::empty_key<hash_value_type>{empty_hash},
+                      {},
+                      {},
+                      {},
+                      storage_ref_type{cuco::extent<int32_t>{num_slots}, slots}};
+}
 
-      auto const num_items    = offset2 - offset1;
-      auto const num_segments = index2 - index1;
+/**
+ * @brief Returns the partition for the given hash value
+ *
+ * The partition is computed from the high bits of the hash since
+ * the set slot is computed from the low bits.
+ * Scaling the hash by the number of partitions and keeping only the high bits
+ * maps the hash range evenly onto `[0, partitions)`.
+ *
+ * @param hash Hash value to partition
+ * @param partitions Number of partitions
+ * @return Partition index in `[0, partitions)`
+ */
+__device__ uint32_t partition_of(hash_value_type hash, uint64_t partitions)
+{
+  return static_cast<uint32_t>((static_cast<uint64_t>(hash) * partitions) >> hash_bits);
+}
 
-      // There is a bug in the CUB segmented sort and the workaround is to
-      // shift the offset values so the first offset is 0.
-      // This transform can be removed once the bug is fixed.
-      auto sort_offsets =
-        cuda::device_buffer<int64_t>(stream, temp_mr, num_segments + 1, cuda::no_init);
-      thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
-                        offsets.begin() + index1,
-                        offsets.begin() + index2 + 1,
-                        sort_offsets.begin(),
-                        [offset1] __device__(auto const o) { return o - offset1; });
-
-      segmented_sort(hashes.data() + offset1,
-                     sorted.data() + offset1,
-                     num_items,
-                     num_segments,
-                     sort_offsets.begin(),
-                     stream,
-                     mr.as_temporary());
+/**
+ * @brief Inserts the hashes into set1 and set2 and counts the results
+ *
+ * The values in hashes1 are inserted into set1 and the values in hashes2
+ * are inserted into set2. Each value successfully inserted into set2 is
+ * checked against set1 to count the intersection.
+ *
+ * Only values for which `filter(value)==true` are processed.
+ * The group must be synchronized before calling this function so the sets are initialized.
+ *
+ * @tparam Group Cooperative group type processing the hashes
+ * @tparam Filter Predicate type for selecting the hashes to process
+ * @param group Cooperative group processing the hashes
+ * @param hashes1 Values to insert into set1
+ * @param hashes2 Values to insert into set2
+ * @param set1 Set for the first values
+ * @param set2 Set for the second values
+ * @param filter Selects the values to process
+ * @return The unique counts of set1 and set2 and the intersection count for this thread
+ */
+template <typename Group, typename Filter>
+__device__ cuda::std::tuple<cudf::size_type, cudf::size_type, cudf::size_type> count_hashes(
+  Group const& group,
+  cuda::std::span<hash_value_type const> hashes1,
+  cuda::std::span<hash_value_type const> hashes2,
+  set_ref_type& set1,
+  set_ref_type& set2,
+  Filter filter)
+{
+  cudf::size_type count1 = 0;
+  for (auto i = static_cast<int64_t>(group.thread_rank()); i < static_cast<int64_t>(hashes1.size());
+       i += group.size()) {
+    auto const hash = hashes1[i];
+    if (filter(hash)) { count1 += set1.insert(hash); }
+  }
+  group.sync();  // set1 must be complete before it is probed
+  cudf::size_type count2     = 0;
+  cudf::size_type intersects = 0;
+  for (auto i = static_cast<int64_t>(group.thread_rank()); i < static_cast<int64_t>(hashes2.size());
+       i += group.size()) {
+    auto const hash = hashes2[i];
+    if (filter(hash) && set2.insert(hash)) {
+      ++count2;
+      intersects += set1.contains(hash);
     }
   }
-  return std::make_pair(std::move(sorted), std::move(offsets));
+  return {count1, count2, intersects};
+}
+
+/**
+ * @brief Counts the unique and intersect values for rows that fit within a warp's sets
+ *
+ * Each warp processes a single row using 2 shared-memory sets.
+ * Rows too large for the sets are skipped and processed by `count_partitions_kernel`.
+ *
+ * @param d_hashes1 Hash values for the first column
+ * @param d_offsets1 Offsets to each row's values in d_hashes1
+ * @param d_hashes2 Hash values for the second column
+ * @param d_offsets2 Offsets to each row's values in d_hashes2
+ * @param d_counts1 Output unique counts for the first column
+ * @param d_counts2 Output unique counts for the second column
+ * @param d_intersects Output intersect counts
+ */
+CUDF_KERNEL void count_rows_kernel(cuda::std::span<hash_value_type const> d_hashes1,
+                                   cuda::std::span<int64_t const> d_offsets1,
+                                   cuda::std::span<hash_value_type const> d_hashes2,
+                                   cuda::std::span<int64_t const> d_offsets2,
+                                   cuda::std::span<cudf::size_type> d_counts1,
+                                   cuda::std::span<cudf::size_type> d_counts2,
+                                   cuda::std::span<cudf::size_type> d_intersects)
+{
+  auto const idx = cudf::detail::grid_1d::global_thread_id();
+  auto const row = static_cast<cudf::size_type>(idx / cudf::detail::warp_size);
+  if (row >= static_cast<cudf::size_type>(d_counts1.size())) { return; }
+
+  auto const hashes1 = get_row(d_hashes1, d_offsets1, row);
+  auto const hashes2 = get_row(d_hashes2, d_offsets2, row);
+  if (static_cast<int64_t>(cuda::std::max(hashes1.size(), hashes2.size())) > warp_set_capacity) {
+    return;
+  }
+
+  namespace cg     = cooperative_groups;
+  auto const block = cg::this_thread_block();
+  auto const warp  = cg::tiled_partition<cudf::detail::warp_size>(block);
+
+  constexpr auto warps_per_block = block_size / cudf::detail::warp_size;
+  __shared__ hash_value_type slots[warps_per_block][2 * warp_slots_per_set];
+  auto const warp_slots = slots[threadIdx.x / cudf::detail::warp_size];
+  for (auto i = static_cast<int32_t>(warp.thread_rank()); i < 2 * warp_slots_per_set;
+       i += cudf::detail::warp_size) {
+    warp_slots[i] = empty_hash;
+  }
+  auto set1 = make_set(warp_slots, warp_slots_per_set);
+  auto set2 = make_set(warp_slots + warp_slots_per_set, warp_slots_per_set);
+  warp.sync();
+
+  auto const [count1, count2, intersects] =
+    count_hashes(warp, hashes1, hashes2, set1, set2, [](auto) { return true; });
+
+  auto const sum1           = cg::reduce(warp, count1, cg::plus<cudf::size_type>());
+  auto const sum2           = cg::reduce(warp, count2, cg::plus<cudf::size_type>());
+  auto const sum_intersects = cg::reduce(warp, intersects, cg::plus<cudf::size_type>());
+  if (warp.thread_rank() == 0) {
+    d_counts1[row]    = sum1;
+    d_counts2[row]    = sum2;
+    d_intersects[row] = sum_intersects;
+  }
+}
+
+/**
+ * @brief Scatters each row's hashes into contiguous partition buckets
+ *
+ * Each block processes a single row. Rows with fewer than 2 partitions are skipped.
+ * The start of each bucket is written to `d_buckets[d_work_offsets[row] + partition]`.
+ *
+ * @param d_hashes Hash values to partition
+ * @param d_offsets Offsets to each row's values in d_hashes
+ * @param d_work_offsets Offsets to each row's partitions
+ * @param d_output Partitioned hash values
+ * @param d_buckets Offsets to each partition's values in d_output
+ */
+CUDF_KERNEL void partition_hashes_kernel(cuda::std::span<hash_value_type const> d_hashes,
+                                         cuda::std::span<int64_t const> d_offsets,
+                                         cuda::std::span<int64_t const> d_work_offsets,
+                                         cuda::std::span<hash_value_type> d_output,
+                                         cuda::std::span<int64_t> d_buckets)
+{
+  auto const row        = static_cast<cudf::size_type>(blockIdx.x);
+  auto const partitions = static_cast<int32_t>(d_work_offsets[row + 1] - d_work_offsets[row]);
+  if (partitions < 2) { return; }
+
+  __shared__ int32_t bins[max_partitions];
+  for (auto i = static_cast<int32_t>(threadIdx.x); i < partitions; i += block_size) {
+    bins[i] = 0;
+  }
+  __syncthreads();
+
+  // build a histogram of the partitions
+  auto const offset = d_offsets[row];
+  auto const hashes = get_row(d_hashes, d_offsets, row);
+  auto const size   = static_cast<int64_t>(hashes.size());
+  for (auto i = static_cast<int64_t>(threadIdx.x); i < size; i += block_size) {
+    cuda::atomic_ref<int32_t, cuda::thread_scope_block>{bins[partition_of(hashes[i], partitions)]}
+      .fetch_add(1, cuda::memory_order_relaxed);
+  }
+  __syncthreads();
+
+  // exclusive scan of the histogram in block-sized chunks to get each bucket's start;
+  // cub is used for block-wide collectives since a block-sized cooperative_groups tile
+  // requires cg::block_tile_memory scratch on architectures older than sm80
+  using block_scan = cub::BlockScan<int32_t, block_size>;
+  __shared__ typename block_scan::TempStorage temp_storage;
+  int32_t carry = 0;
+  for (int32_t base = 0; base < partitions; base += block_size) {
+    auto const i     = base + static_cast<int32_t>(threadIdx.x);
+    auto const value = i < partitions ? bins[i] : 0;
+    int32_t scanned  = 0;
+    int32_t total    = 0;
+    block_scan(temp_storage).ExclusiveSum(value, scanned, total);
+    if (i < partitions) {
+      bins[i]                            = carry + scanned;
+      d_buckets[d_work_offsets[row] + i] = offset + carry + scanned;
+    }
+    carry += total;
+    __syncthreads();
+  }
+
+  // scatter the values into their buckets
+  auto output = d_output.begin() + offset;
+  for (auto i = static_cast<int64_t>(threadIdx.x); i < size; i += block_size) {
+    auto const hash = hashes[i];
+    auto const pos =
+      cuda::atomic_ref<int32_t, cuda::thread_scope_block>{bins[partition_of(hash, partitions)]}
+        .fetch_add(1, cuda::memory_order_relaxed);
+    output[pos] = hash;
+  }
+}
+
+/**
+ * @brief Counts the unique and intersect values for one partition of a row
+ *
+ * Each block processes a single (row, partition) work item using 2 shared-memory sets.
+ * The counts are accumulated atomically into the output for each row.
+ *
+ * In the unlikely event a partition overflows a set, the partition is processed again
+ * in multiple passes using sub-partitions of its hash range.
+ *
+ * @param d_hashes1 Hash values for the first column
+ * @param d_offsets1 Offsets to each row's values in d_hashes1
+ * @param d_parted1 Partitioned hash values for the first column
+ * @param d_buckets1 Offsets to each partition's values in d_parted1
+ * @param d_hashes2 Hash values for the second column
+ * @param d_offsets2 Offsets to each row's values in d_hashes2
+ * @param d_parted2 Partitioned hash values for the second column
+ * @param d_buckets2 Offsets to each partition's values in d_parted2
+ * @param d_work_offsets Offsets to each row's partitions
+ * @param d_counts1 Output unique counts for the first column
+ * @param d_counts2 Output unique counts for the second column
+ * @param d_intersects Output intersect counts
+ */
+CUDF_KERNEL void count_partitions_kernel(cuda::std::span<hash_value_type const> d_hashes1,
+                                         cuda::std::span<int64_t const> d_offsets1,
+                                         cuda::std::span<hash_value_type const> d_parted1,
+                                         cuda::std::span<int64_t const> d_buckets1,
+                                         cuda::std::span<hash_value_type const> d_hashes2,
+                                         cuda::std::span<int64_t const> d_offsets2,
+                                         cuda::std::span<hash_value_type const> d_parted2,
+                                         cuda::std::span<int64_t const> d_buckets2,
+                                         cuda::std::span<int64_t const> d_work_offsets,
+                                         cuda::std::span<cudf::size_type> d_counts1,
+                                         cuda::std::span<cudf::size_type> d_counts2,
+                                         cuda::std::span<cudf::size_type> d_intersects)
+{
+  auto const work = static_cast<int64_t>(blockIdx.x);
+  // rows with no work items have empty ranges so upper_bound finds the row owning this item
+  auto const row = static_cast<cudf::size_type>(
+    cuda::std::distance(
+      d_work_offsets.begin(),
+      cuda::std::upper_bound(d_work_offsets.begin(), d_work_offsets.end(), work)) -
+    1);
+  auto const partitions = static_cast<uint64_t>(d_work_offsets[row + 1] - d_work_offsets[row]);
+  auto const partition  = static_cast<uint64_t>(work - d_work_offsets[row]);
+
+  // locate the values for this partition
+  auto get_bucket = [&](cuda::std::span<hash_value_type const> d_hashes,
+                        cuda::std::span<int64_t const> d_offsets,
+                        cuda::std::span<hash_value_type const> d_parted,
+                        cuda::std::span<int64_t const> d_buckets) {
+    if (partitions == 1) { return get_row(d_hashes, d_offsets, row); }
+    auto const begin = d_buckets[work];
+    auto const end   = (partition + 1 < partitions) ? d_buckets[work + 1] : d_offsets[row + 1];
+    return cuda::std::span<hash_value_type const>(d_parted.begin() + begin, d_parted.begin() + end);
+  };
+  auto const hashes1 = get_bucket(d_hashes1, d_offsets1, d_parted1, d_buckets1);
+  auto const hashes2 = get_bucket(d_hashes2, d_offsets2, d_parted2, d_buckets2);
+
+  __shared__ hash_value_type slots[2 * block_slots_per_set];
+  auto set1 = make_set(slots, block_slots_per_set);
+  auto set2 = make_set(slots + block_slots_per_set, block_slots_per_set);
+
+  // cub is used for block-wide collectives since a block-sized cooperative_groups tile
+  // requires cg::block_tile_memory scratch on architectures older than sm80
+  using block_reduce = cub::BlockReduce<cudf::size_type, block_size>;
+  __shared__ typename block_reduce::TempStorage temp_storage;
+  __shared__ cudf::size_type totals[3];
+
+  // the block group is needed to call count_hashes() which is shared with count_rows_kernel
+  auto const block = cooperative_groups::this_thread_block();
+
+  uint64_t sub_partitions    = 1;
+  cudf::size_type count1     = 0;
+  cudf::size_type count2     = 0;
+  cudf::size_type intersects = 0;
+  for (uint64_t sub = 0; sub < sub_partitions;) {
+    for (auto i = static_cast<int32_t>(threadIdx.x); i < 2 * block_slots_per_set; i += block_size) {
+      slots[i] = empty_hash;
+    }
+    block.sync();
+
+    auto const total_partitions = partitions * sub_partitions;
+    auto const target           = partition * sub_partitions + sub;
+    auto filter                 = [total_partitions, target](hash_value_type hash) {
+      return total_partitions == 1 || partition_of(hash, total_partitions) == target;
+    };
+    auto const [c1, c2, c_intersects] = count_hashes(block, hashes1, hashes2, set1, set2, filter);
+
+    auto const sum1 = block_reduce(temp_storage).Sum(c1);
+    block.sync();
+    auto const sum2 = block_reduce(temp_storage).Sum(c2);
+    block.sync();
+    auto const sum_intersects = block_reduce(temp_storage).Sum(c_intersects);
+    if (threadIdx.x == 0) {
+      totals[0] = sum1;
+      totals[1] = sum2;
+      totals[2] = sum_intersects;
+    }
+    block.sync();
+    auto const total1           = totals[0];
+    auto const total2           = totals[1];
+    auto const total_intersects = totals[2];
+    block.sync();
+
+    if (total1 >= block_slots_per_set || total2 >= block_slots_per_set) {
+      // a set is full so some inserts may have failed: restart with more sub-partitions
+      sub_partitions *= 2;
+      sub        = 0;
+      count1     = 0;
+      count2     = 0;
+      intersects = 0;
+      continue;
+    }
+    count1 += total1;
+    count2 += total2;
+    intersects += total_intersects;
+    ++sub;
+  }
+
+  if (threadIdx.x == 0) {
+    using atomic_ref = cuda::atomic_ref<cudf::size_type, cuda::thread_scope_device>;
+    atomic_ref{d_counts1[row]}.fetch_add(count1, cuda::memory_order_relaxed);
+    atomic_ref{d_counts2[row]}.fetch_add(count2, cuda::memory_order_relaxed);
+    atomic_ref{d_intersects[row]}.fetch_add(intersects, cuda::memory_order_relaxed);
+  }
+}
+
+/**
+ * @brief Partition the values of rows too large for count_rows_kernel and count them
+ *
+ * @param hashes1 Hash values for the first column
+ * @param offsets1 Offsets to each row's values in hashes1
+ * @param hashes2 Hash values for the second column
+ * @param offsets2 Offsets to each row's values in hashes2
+ * @param d_counts1 Output unique counts for the first column
+ * @param d_counts2 Output unique counts for the second column
+ * @param d_intersects Output intersect counts
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used for temporary allocations
+ */
+void count_partitions(cuda::std::span<hash_value_type const> hashes1,
+                      cuda::std::span<int64_t const> offsets1,
+                      cuda::std::span<hash_value_type const> hashes2,
+                      cuda::std::span<int64_t const> offsets2,
+                      cuda::std::span<cudf::size_type> d_counts1,
+                      cuda::std::span<cudf::size_type> d_counts2,
+                      cuda::std::span<cudf::size_type> d_intersects,
+                      cuda::stream_ref stream,
+                      cudf::memory_resources mr)
+{
+  auto const rows    = static_cast<cudf::size_type>(d_counts1.size());
+  auto const temp_mr = mr.get_temporary_mr();
+
+  // compute the number of partitions for each row: rows handled by count_rows_kernel get 0
+  auto work_offsets = cuda::device_buffer<int64_t>(
+    stream, temp_mr, static_cast<std::size_t>(rows) + 1, cuda::no_init);
+  thrust::transform(
+    rmm::exec_policy_nosync(stream, temp_mr),
+    cuda::counting_iterator<cudf::size_type>{0},
+    cuda::counting_iterator<cudf::size_type>{rows},
+    work_offsets.begin(),
+    [offsets1, offsets2] __device__(auto row) -> int64_t {
+      auto const size =
+        cuda::std::max(offsets1[row + 1] - offsets1[row], offsets2[row + 1] - offsets2[row]);
+      if (size <= warp_set_capacity) { return 0; }
+      return cuda::std::min(cudf::util::div_rounding_up_safe(size, int64_t{block_set_capacity}),
+                            int64_t{max_partitions});
+    });
+  auto const total_work = cudf::detail::sizes_to_offsets(
+    work_offsets.begin(), work_offsets.end(), work_offsets.begin(), 0, stream, mr.as_temporary());
+  if (total_work == 0) { return; }
+
+  // scatter the hashes of each row into their partitions
+  auto parted1 =
+    cuda::device_buffer<hash_value_type>(stream, temp_mr, hashes1.size(), cuda::no_init);
+  auto parted2 =
+    cuda::device_buffer<hash_value_type>(stream, temp_mr, hashes2.size(), cuda::no_init);
+  auto buckets1 = cuda::device_buffer<int64_t>(stream, temp_mr, total_work, cuda::no_init);
+  auto buckets2 = cuda::device_buffer<int64_t>(stream, temp_mr, total_work, cuda::no_init);
+  partition_hashes_kernel<<<rows, block_size, 0, stream.get()>>>(
+    hashes1, offsets1, work_offsets, parted1, buckets1);
+  CUDF_CUDA_TRY(cudaGetLastError());
+  partition_hashes_kernel<<<rows, block_size, 0, stream.get()>>>(
+    hashes2, offsets2, work_offsets, parted2, buckets2);
+  CUDF_CUDA_TRY(cudaGetLastError());
+
+  // count each (row, partition) work item
+  count_partitions_kernel<<<total_work, block_size, 0, stream.get()>>>(hashes1,
+                                                                       offsets1,
+                                                                       parted1,
+                                                                       buckets1,
+                                                                       hashes2,
+                                                                       offsets2,
+                                                                       parted2,
+                                                                       buckets2,
+                                                                       work_offsets,
+                                                                       d_counts1,
+                                                                       d_counts2,
+                                                                       d_intersects);
+  CUDF_CUDA_TRY(cudaGetLastError());
 }
 
 /**
@@ -449,9 +658,9 @@ std::pair<cuda::device_buffer<uint32_t>, cuda::device_buffer<int64_t>> hash_subs
  * and |x| is the number of unique values in x.
  */
 struct jaccard_fn {
-  cudf::size_type const* d_uniques1;
-  cudf::size_type const* d_uniques2;
-  cudf::size_type const* d_intersects;
+  cuda::std::span<cudf::size_type const> d_uniques1;
+  cuda::std::span<cudf::size_type const> d_uniques2;
+  cuda::std::span<cudf::size_type const> d_intersects;
 
   __device__ float operator()(cudf::size_type idx) const
   {
@@ -483,38 +692,46 @@ std::unique_ptr<cudf::column> jaccard_index(cudf::strings_column_view const& inp
   constexpr auto output_type = cudf::data_type{cudf::type_id::FLOAT32};
   if (input1.is_empty()) { return cudf::make_empty_column(output_type); }
 
-  auto const temp_resources                         = mr.as_temporary();
-  auto const [d_uniques1, d_uniques2, d_intersects] = [&] {
+  auto const rows           = input1.size();
+  auto const temp_mr        = mr.get_temporary_mr();
+  auto const temp_resources = mr.as_temporary();
+
+  // unique counts for each column and the intersect counts
+  auto counts             = cuda::make_buffer(stream, temp_mr, 3L * rows, cudf::size_type{0});
+  auto const d_counts     = cuda::std::span<cudf::size_type>(counts);
+  auto const d_counts1    = d_counts.subspan(0, rows);
+  auto const d_counts2    = d_counts.subspan(rows, rows);
+  auto const d_intersects = d_counts.subspan(2L * rows, rows);
+
+  {
     // build hashes of the substrings
-    auto const [hash1, offsets1] = hash_substrings(input1, width, stream, temp_resources);
-    auto const [hash2, offsets2] = hash_substrings(input2, width, stream, temp_resources);
+    auto const d_strings1 = cudf::column_device_view::create(input1.parent(), stream, temp_mr);
+    auto const d_strings2 = cudf::column_device_view::create(input2.parent(), stream, temp_mr);
+    auto const [hash1, offsets1] = hash_substrings(*d_strings1, width, stream, temp_resources);
+    auto const [hash2, offsets2] = hash_substrings(*d_strings2, width, stream, temp_resources);
 
-    // compute the unique counts in each set and the intersection counts
-    auto d_uniques1 =
-      compute_unique_counts(hash1.data(), offsets1.data(), input1.size(), stream, temp_resources);
-    auto d_uniques2 =
-      compute_unique_counts(hash2.data(), offsets2.data(), input2.size(), stream, temp_resources);
-    auto d_intersects = compute_intersect_counts(hash1.data(),
-                                                 offsets1.data(),
-                                                 hash2.data(),
-                                                 offsets2.data(),
-                                                 input1.size(),
-                                                 stream,
-                                                 temp_resources);
+    // count rows small enough to be processed by a single warp
+    auto const num_blocks = cudf::util::div_rounding_up_safe(
+      static_cast<cudf::thread_index_type>(rows) * cudf::detail::warp_size, block_size);
+    count_rows_kernel<<<num_blocks, block_size, 0, stream.get()>>>(
+      hash1, offsets1, hash2, offsets2, d_counts1, d_counts2, d_intersects);
+    CUDF_CUDA_TRY(cudaGetLastError());
 
-    return std::tuple{std::move(d_uniques1), std::move(d_uniques2), std::move(d_intersects)};
-  }();
+    // count the remaining rows by partitioning their values
+    count_partitions(
+      hash1, offsets1, hash2, offsets2, d_counts1, d_counts2, d_intersects, stream, temp_resources);
+  }
 
   auto results = cudf::make_numeric_column(
-    output_type, input1.size(), cudf::mask_state::UNALLOCATED, stream, mr.get_output_mr());
+    output_type, rows, cudf::mask_state::UNALLOCATED, stream, mr.get_output_mr());
   auto d_results = results->mutable_view().data<float>();
 
   // compute the jaccard using the unique counts and the intersect counts
-  thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+  thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
                     cuda::counting_iterator<cudf::size_type>{0},
-                    cuda::counting_iterator<cudf::size_type>{results->size()},
+                    cuda::counting_iterator<cudf::size_type>{rows},
                     d_results,
-                    jaccard_fn{d_uniques1.data(), d_uniques2.data(), d_intersects.data()});
+                    jaccard_fn{d_counts1, d_counts2, d_intersects});
 
   if (input1.null_count() || input2.null_count()) {
     auto [null_mask, null_count] =

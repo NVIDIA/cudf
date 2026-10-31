@@ -109,7 +109,8 @@ bool expect_columns_equal(cudf::column_view const& lhs,
 /**
  * @brief Verifies the element-wise equivalence of two columns.
  *
- * Uses machine epsilon to compare floating point types.
+ * Compares floating point types by ULP (units in the last place) distance:
+ * the number of representable floating-point values between the two operands.
  * Treats null elements as equivalent.
  *
  * @note This function should not be used directly. Use `CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT`

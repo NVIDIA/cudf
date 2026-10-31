@@ -27,6 +27,7 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/std/bit>
 #include <cuda/std/cmath>
 #include <cuda/std/iterator>
 #include <cuda/std/limits>
@@ -388,6 +389,55 @@ class corresponding_rows_unequal {
   DeviceComparator comp;
 };
 
+//! @cond Doxygen_Suppress
+/** @brief Shared implementation of float_distance; U must be the unsigned type of F's width. */
+template <typename F, typename U>
+__device__ U float_distance_impl(F x, F y)
+{
+  static_assert(sizeof(F) == sizeof(U));
+  static_assert(std::is_floating_point_v<F>);
+  static_assert(std::is_unsigned_v<U>);
+  using uint_t               = U;
+  constexpr uint_t sign_mask = uint_t{1} << (sizeof(F) * 8 - 1);
+
+  if (cuda::std::isnan(x) || cuda::std::isnan(y)) {
+    return cuda::std::numeric_limits<uint_t>::max();
+  }
+
+  uint_t const ux = cuda::std::bit_cast<uint_t>(x);
+  uint_t const uy = cuda::std::bit_cast<uint_t>(y);
+
+  bool const x_neg = (ux & sign_mask) != 0;
+  bool const y_neg = (uy & sign_mask) != 0;
+
+  if (x_neg == y_neg) { return ux > uy ? ux - uy : uy - ux; }
+
+  // opposite signs: distance is the sum of each value's distance from zero
+  uint_t const mag_x = ux & ~sign_mask;
+  uint_t const mag_y = uy & ~sign_mask;
+
+  return mag_x + mag_y;
+}
+//! @endcond
+
+/**
+ * @brief Number of representable values between two floats.
+ *
+ * Counts steps in the IEEE 754 ordering, so the result is the number of `nextafter` calls
+ * needed to reach `y` from `x`. `+0` and `-0` are 0 apart; `inf` is 1 past `max()`. Returns
+ * `numeric_limits<uint32_t>::max()` if either input is NaN.
+ */
+__device__ uint32_t float_distance(float x, float y)
+{
+  return float_distance_impl<float, uint32_t>(x, y);
+}
+
+/** @copydoc float_distance(float, float) */
+__device__ uint64_t float_distance(double x, double y)
+{
+  return float_distance_impl<double, uint64_t>(x, y);
+}
+
 template <typename DeviceComparator>
 class corresponding_rows_not_equivalent {
   column_device_view lhs_row_indices;
@@ -426,17 +476,12 @@ class corresponding_rows_not_equivalent {
         T const x = lhs.element<T>(lhs_index);
         T const y = rhs.element<T>(rhs_index);
 
-        // Must handle inf and nan separately
-        if (cuda::std::isinf(x) || cuda::std::isinf(y)) {
-          return x != y;  // comparison of (inf==inf) returns true
-        } else if (cuda::std::isnan(x) || cuda::std::isnan(y)) {
+        // Must handle nan separately
+        if (cuda::std::isnan(x) || cuda::std::isnan(y)) {
           return cuda::std::isnan(x) !=
                  cuda::std::isnan(y);  // comparison of (nan==nan) returns false
         } else {
-          T const abs_x_minus_y = cuda::std::abs(x - y);
-          return abs_x_minus_y >= cuda::std::numeric_limits<T>::min() &&
-                 abs_x_minus_y >
-                   cuda::std::numeric_limits<T>::epsilon() * cuda::std::abs(x + y) * fp_ulps;
+          return float_distance(x, y) > std::make_unsigned_t<size_type>(fp_ulps);
         }
       } else {
         // if either is null, then the inequality was checked already

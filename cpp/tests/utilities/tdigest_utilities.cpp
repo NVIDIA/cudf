@@ -69,10 +69,18 @@ void tdigest_sample_compare(cudf::tdigest::tdigest_column_view const& tdv,
                                            ->release()
                                            .front());
 
+  // Observed means are 1 to 9 ULPs from the reference values. Run-to-run noise is 0 to 5 ULPs
+  // and stays within that range (3000 runs).
+  size_type constexpr tdigest_mean_fp_ulps = 12;
+
   auto expected_mean   = cudf::device_span<double const>(d_expected_mean);
   auto expected_weight = cudf::device_span<double const>(d_expected_weight);
-  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
-    expected_mean, *sampled_result_mean, debug_output_level::FIRST_ERROR, default_ulp, stream, mr);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_mean,
+                                      *sampled_result_mean,
+                                      debug_output_level::FIRST_ERROR,
+                                      tdigest_mean_fp_ulps,
+                                      stream,
+                                      mr);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     expected_weight, *sampled_result_weight, debug_output_level::FIRST_ERROR, stream, mr);
 }

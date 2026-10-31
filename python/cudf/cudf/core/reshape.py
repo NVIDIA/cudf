@@ -327,7 +327,7 @@ def concat(
     if isinstance(objs, dict):
         inputs = list(objs.values())
     else:
-        inputs = list(objs)
+        objs = inputs = list(objs)
     result = _concat_impl(
         objs,
         axis=axis,

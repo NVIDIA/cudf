@@ -36,7 +36,7 @@
 #include <type_traits>
 #include <utility>
 
-namespace cudf::io::parquet::experimental::detail {
+namespace cudf::io::parquet::hybrid_scan::detail {
 
 using io::detail::inline_column_buffer;
 using parquet::detail::ColumnChunkDesc;
@@ -1498,4 +1498,4 @@ INSTANTIATE_HYBRID_SCAN_COLUMNS_APIS(read_columns_mode::ALL_COLUMNS)
 
 #undef INSTANTIATE_HYBRID_SCAN_COLUMNS_APIS
 
-}  // namespace cudf::io::parquet::experimental::detail
+}  // namespace cudf::io::parquet::hybrid_scan::detail

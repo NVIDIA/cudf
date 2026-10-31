@@ -23,7 +23,7 @@
 
 #include <numeric>
 
-namespace cudf::io::parquet::experimental::detail {
+namespace cudf::io::parquet::hybrid_scan::detail {
 
 using parquet::detail::ColumnChunkDesc;
 using parquet::detail::pass_intermediate_data;
@@ -196,4 +196,4 @@ void hybrid_scan_reader_impl::setup_next_pass(
   }
 }
 
-}  // namespace cudf::io::parquet::experimental::detail
+}  // namespace cudf::io::parquet::hybrid_scan::detail

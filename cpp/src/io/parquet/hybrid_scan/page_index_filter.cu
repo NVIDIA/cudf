@@ -33,7 +33,7 @@
 #include <utility>
 #include <vector>
 
-namespace cudf::io::parquet::experimental::detail {
+namespace cudf::io::parquet::hybrid_scan::detail {
 
 using parquet::detail::stats_caster_base;
 using metadata_base = parquet::detail::metadata;
@@ -452,4 +452,4 @@ thrust::host_vector<bool> aggregate_reader_metadata::compute_data_page_mask(
   return data_page_mask;
 }
 
-}  // namespace cudf::io::parquet::experimental::detail
+}  // namespace cudf::io::parquet::hybrid_scan::detail

@@ -29,7 +29,10 @@
 #include <utility>
 #include <vector>
 
-namespace cudf::io::parquet::experimental::detail {
+namespace cudf::io::parquet::hybrid_scan::detail {
+
+using cudf::io::parquet::experimental::read_columns_mode;
+using cudf::io::parquet::experimental::use_data_page_mask;
 
 using cudf::io::parquet::detail::ColumnChunkDesc;
 using cudf::io::parquet::detail::PageInfo;
@@ -628,4 +631,4 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
   std::optional<read_columns_mode> _selected_columns_mode;
 };
 
-}  // namespace cudf::io::parquet::experimental::detail
+}  // namespace cudf::io::parquet::hybrid_scan::detail

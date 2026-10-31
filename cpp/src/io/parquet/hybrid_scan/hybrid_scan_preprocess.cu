@@ -30,7 +30,7 @@
 
 #include <numeric>
 
-namespace cudf::io::parquet::experimental::detail {
+namespace cudf::io::parquet::hybrid_scan::detail {
 
 namespace {
 
@@ -439,4 +439,4 @@ void hybrid_scan_reader_impl::update_row_mask(cudf::column_view const& in_row_ma
   }
 }
 
-}  // namespace cudf::io::parquet::experimental::detail
+}  // namespace cudf::io::parquet::hybrid_scan::detail

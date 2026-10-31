@@ -22,7 +22,9 @@
 #include <type_traits>
 #include <vector>
 
-namespace cudf::io::parquet::experimental::detail {
+namespace cudf::io::parquet::hybrid_scan::detail {
+
+using cudf::io::parquet::experimental::dictionary_byte_range;
 
 using aggregate_reader_metadata_base = parquet::detail::aggregate_reader_metadata;
 using metadata_base                  = parquet::detail::metadata;
@@ -423,4 +425,4 @@ class parquet_filter_normalizer : public parquet::detail::parquet_filter_normali
   std::unordered_map<int32_t, std::string> _column_indices_to_names;
 };
 
-}  // namespace cudf::io::parquet::experimental::detail
+}  // namespace cudf::io::parquet::hybrid_scan::detail

@@ -865,21 +865,21 @@ add_library(
   src/io/parquet/compact_protocol_reader.cpp
   src/io/parquet/compact_protocol_writer.cpp
   src/io/parquet/decode_preprocess.cu
-  src/io/parquet/experimental/dictionary_page_filter.cu
   src/io/parquet/experimental/deletion_vectors.cu
   src/io/parquet/experimental/deletion_vectors_helpers.cu
   src/io/parquet/experimental/hybrid_scan.cpp
-  src/io/parquet/experimental/hybrid_scan_chunking.cu
-  src/io/parquet/experimental/hybrid_scan_helpers.cpp
-  src/io/parquet/experimental/hybrid_scan_impl.cpp
   src/io/parquet/experimental/hybrid_scan_multifile.cpp
-  src/io/parquet/experimental/hybrid_scan_preprocess.cu
-  src/io/parquet/experimental/page_index_filter.cu
-  src/io/parquet/experimental/page_index_filter_utils.cu
   src/io/parquet/experimental/parquet_footer.cpp
   src/io/parquet/experimental/variant_extract.cu
   src/io/parquet/experimental/variant_path.cpp
   src/io/parquet/expression_transform_helpers.cpp
+  src/io/parquet/hybrid_scan/dictionary_page_filter.cu
+  src/io/parquet/hybrid_scan/hybrid_scan_chunking.cu
+  src/io/parquet/hybrid_scan/hybrid_scan_helpers.cpp
+  src/io/parquet/hybrid_scan/hybrid_scan_impl.cpp
+  src/io/parquet/hybrid_scan/hybrid_scan_preprocess.cu
+  src/io/parquet/hybrid_scan/page_index_filter.cu
+  src/io/parquet/hybrid_scan/page_index_filter_utils.cu
   src/io/parquet/io_utils/parquet_io_utils.cpp
   src/io/parquet/page_data.cu
   src/io/parquet/chunk_dict.cu

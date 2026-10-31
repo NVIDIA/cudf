@@ -23,7 +23,7 @@
 #include <span>
 #include <vector>
 
-namespace cudf::io::parquet::experimental::detail {
+namespace cudf::io::parquet::hybrid_scan::detail {
 
 using metadata_base = parquet::detail::metadata;
 
@@ -115,4 +115,4 @@ compute_page_row_offsets_and_colchunk_page_offsets(
   cuda::stream_ref stream,
   cudf::memory_resources mr);
 
-}  // namespace cudf::io::parquet::experimental::detail
+}  // namespace cudf::io::parquet::hybrid_scan::detail

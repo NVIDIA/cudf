@@ -4,7 +4,7 @@
  */
 
 #include "../compact_protocol_reader.hpp"
-#include "hybrid_scan_impl.hpp"
+#include "io/parquet/hybrid_scan/hybrid_scan_impl.hpp"
 
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/io/experimental/hybrid_scan.hpp>
@@ -50,7 +50,7 @@ std::optional<int64_t> dictionary_page_length(std::span<uint8_t const> page_byte
 
 hybrid_scan_metadata::hybrid_scan_metadata(cudf::host_span<uint8_t const> footer_bytes,
                                            parquet_reader_options const& options)
-  : _metadata{std::make_shared<detail::aggregate_reader_metadata>(
+  : _metadata{std::make_shared<hybrid_scan::detail::aggregate_reader_metadata>(
       std::vector<std::span<uint8_t const>>{footer_bytes},
       options.is_enabled_use_arrow_schema(),
       options.is_enabled_allow_mismatched_pq_schemas())}
@@ -59,7 +59,7 @@ hybrid_scan_metadata::hybrid_scan_metadata(cudf::host_span<uint8_t const> footer
 
 hybrid_scan_metadata::hybrid_scan_metadata(FileMetaData const& parquet_metadata,
                                            parquet_reader_options const& options)
-  : _metadata{std::make_shared<detail::aggregate_reader_metadata>(
+  : _metadata{std::make_shared<hybrid_scan::detail::aggregate_reader_metadata>(
       std::vector<FileMetaData>{parquet_metadata},
       options.is_enabled_use_arrow_schema(),
       options.is_enabled_allow_mismatched_pq_schemas())}
@@ -68,7 +68,7 @@ hybrid_scan_metadata::hybrid_scan_metadata(FileMetaData const& parquet_metadata,
 
 hybrid_scan_metadata::hybrid_scan_metadata(FileMetaData&& parquet_metadata,
                                            parquet_reader_options const& options)
-  : _metadata{std::make_shared<detail::aggregate_reader_metadata>(
+  : _metadata{std::make_shared<hybrid_scan::detail::aggregate_reader_metadata>(
       // Move iterators avoid the copy an initializer list would make
       std::vector<FileMetaData>(std::make_move_iterator(&parquet_metadata),
                                 std::make_move_iterator(&parquet_metadata + 1)),
@@ -81,21 +81,21 @@ hybrid_scan_metadata::~hybrid_scan_metadata() = default;
 
 hybrid_scan_reader::hybrid_scan_reader(cudf::host_span<uint8_t const> footer_bytes,
                                        parquet_reader_options const& options)
-  : _impl{std::make_unique<detail::hybrid_scan_reader_impl>(
+  : _impl{std::make_unique<hybrid_scan::detail::hybrid_scan_reader_impl>(
       std::vector<std::span<uint8_t const>>{footer_bytes}, options)}
 {
 }
 
 hybrid_scan_reader::hybrid_scan_reader(FileMetaData const& parquet_metadata,
                                        parquet_reader_options const& options)
-  : _impl{std::make_unique<detail::hybrid_scan_reader_impl>(
+  : _impl{std::make_unique<hybrid_scan::detail::hybrid_scan_reader_impl>(
       std::vector<FileMetaData>{parquet_metadata}, options)}
 {
 }
 
 hybrid_scan_reader::hybrid_scan_reader(FileMetaData&& parquet_metadata,
                                        parquet_reader_options const& options)
-  : _impl{std::make_unique<detail::hybrid_scan_reader_impl>(
+  : _impl{std::make_unique<hybrid_scan::detail::hybrid_scan_reader_impl>(
       // Move iterators avoid the copy an initializer list would make
       std::vector<FileMetaData>(std::make_move_iterator(&parquet_metadata),
                                 std::make_move_iterator(&parquet_metadata + 1)),
@@ -104,7 +104,8 @@ hybrid_scan_reader::hybrid_scan_reader(FileMetaData&& parquet_metadata,
 }
 
 hybrid_scan_reader::hybrid_scan_reader(hybrid_scan_metadata metadata)
-  : _impl{std::make_unique<detail::hybrid_scan_reader_impl>(std::move(metadata._metadata))}
+  : _impl{
+      std::make_unique<hybrid_scan::detail::hybrid_scan_reader_impl>(std::move(metadata._metadata))}
 {
 }
 

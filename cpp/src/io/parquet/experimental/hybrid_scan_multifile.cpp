@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "hybrid_scan_impl.hpp"
+#include "io/parquet/hybrid_scan/hybrid_scan_impl.hpp"
 
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/io/experimental/hybrid_scan_multifile.hpp>
@@ -18,20 +18,21 @@ namespace cudf::io::parquet::experimental {
 hybrid_scan_multifile::hybrid_scan_multifile(
   cudf::host_span<cudf::host_span<uint8_t const> const> footer_bytes,
   parquet_reader_options const& options)
-  : _impl{std::make_unique<detail::hybrid_scan_reader_impl>(
+  : _impl{std::make_unique<hybrid_scan::detail::hybrid_scan_reader_impl>(
       std::vector<std::span<uint8_t const>>(footer_bytes.begin(), footer_bytes.end()), options)}
 {
 }
 
 hybrid_scan_multifile::hybrid_scan_multifile(cudf::host_span<FileMetaData const> parquet_metadata,
                                              parquet_reader_options const& options)
-  : _impl{std::make_unique<detail::hybrid_scan_reader_impl>(parquet_metadata, options)}
+  : _impl{std::make_unique<hybrid_scan::detail::hybrid_scan_reader_impl>(parquet_metadata, options)}
 {
 }
 
 hybrid_scan_multifile::hybrid_scan_multifile(std::vector<FileMetaData>&& parquet_metadata,
                                              parquet_reader_options const& options)
-  : _impl{std::make_unique<detail::hybrid_scan_reader_impl>(std::move(parquet_metadata), options)}
+  : _impl{std::make_unique<hybrid_scan::detail::hybrid_scan_reader_impl>(
+      std::move(parquet_metadata), options)}
 {
 }
 

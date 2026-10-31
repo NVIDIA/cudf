@@ -3,6 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "io/comp/compression.hpp"
+#include "io/comp/nvcomp_adapter.hpp"
+
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_view.hpp>
 #include <cudf/contiguous_split.hpp>
@@ -12,13 +15,17 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/offsets_iterator_factory.cuh>
+#include <cudf/detail/utilities/batched_memcpy.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/cuda.hpp>
+#include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/dictionary/dictionary_column_view.hpp>
+#include <cudf/io/detail/codec.hpp>
 #include <cudf/lists/lists_column_view.hpp>
+#include <cudf/null_mask.hpp>
 #include <cudf/structs/structs_column_view.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/bit.hpp>
@@ -36,15 +43,25 @@
 #include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
+#include <thrust/fill.h>
 #include <thrust/for_each.h>
 #include <thrust/reduce.h>
 #include <thrust/scan.h>
 #include <thrust/transform.h>
 
+#include <algorithm>
 #include <cstddef>
+#include <cstring>
+#include <functional>
+#include <limits>
+#include <map>
 #include <numeric>
 #include <optional>
+#include <ranges>
 #include <stdexcept>
+#include <tuple>
+#include <type_traits>
+#include <utility>
 
 namespace cudf {
 namespace {
@@ -68,6 +85,8 @@ static constexpr std::size_t desired_batch_size = 1 * 1024 * 1024;
  * block.
  */
 struct src_buf_info {
+  src_buf_info() = default;
+
   src_buf_info(cudf::type_id _type,
                column_view const offsets,
                int _offset_stack_pos,
@@ -97,13 +116,13 @@ struct src_buf_info {
   {
   }
 
-  cudf::type_id type;
+  cudf::type_id type{cudf::type_id::EMPTY};
   detail::input_offsetalator offsets{};
   bool is_offsets{false};             // offsets if I am an offset buffer
-  int offset_stack_pos;               // position in the offset stack buffer
-  int parent_offsets_index;           // immediate parent that has offsets, or -1 if none
-  bool is_validity;                   // if I am a validity buffer
-  size_type column_offset;            // offset in the case of a sliced column
+  int offset_stack_pos{0};            // position in the offset stack buffer
+  int parent_offsets_index{-1};       // immediate parent that has offsets, or -1 if none
+  bool is_validity{false};            // if I am a validity buffer
+  size_type column_offset{0};         // offset in the case of a sliced column
   size_type full_copy_row_count{-1};  // rows I copy in full, or -1 if I follow the splits
 };
 
@@ -131,6 +150,27 @@ struct dst_buf_info {
 
   int src_buf_index;  // source buffer index
   int dst_buf_index;  // destination buffer index
+};
+
+struct compression_region_layout {
+  std::size_t uncompressed_offset;
+  std::size_t uncompressed_bytes;  ///< Packed buffer size, including trailing padding
+  std::size_t data_bytes;  ///< Number of bytes, from the region start, that hold column data
+  cudf::type_id type;
+  cudf::experimental::pack_region_kind kind;
+  std::vector<size_type> column_path;  ///< See `pack_region_info::column_path`
+  uint8_t const* direct_source;
+  dst_buf_info copy;  ///< Copies the region from its source columns into the payload layout
+};
+
+/**
+ * @brief A range of copy batches or compression blocks whose output fits a bounded staging buffer.
+ */
+struct pack_window {
+  std::size_t first_item;      ///< Index of the first copy batch or compression block
+  std::size_t end_item;        ///< One past the index of the last item
+  std::size_t payload_offset;  ///< Payload offset of the window's first byte
+  std::size_t bytes;           ///< Staging bytes; for copy windows, also the payload bytes spanned
 };
 
 /**
@@ -304,39 +344,33 @@ __device__ void copy_buffer(uint8_t* __restrict__ dst,
  * @param index_to_buffer A function that given a `buf_index` returns the destination buffer
  * @param src_bufs Input source buffers
  * @param buf_info Information on the range of values to be copied for each destination buffer
+ * @param dst_offset_base Offset subtracted from each `dst_offset`, used to write a window of the
+ * output into a buffer that starts at that offset
  */
 template <int block_size, typename IndexToDstBuf>
 CUDF_KERNEL void copy_partitions(IndexToDstBuf index_to_buffer,
                                  uint8_t const** src_bufs,
-                                 dst_buf_info* buf_info)
+                                 dst_buf_info* buf_info,
+                                 std::size_t dst_offset_base)
 {
   auto const buf_index     = blockIdx.x;
   auto const src_buf_index = buf_info[buf_index].src_buf_index;
 
   // copy, shifting offsets and validity bits as needed
-  auto& dst = buf_info[buf_index];
+  auto& dst            = buf_info[buf_index];
+  auto* const dst_data = index_to_buffer(buf_index) + (dst.dst_offset - dst_offset_base);
   if (dst.is_offsets) {
     if (dst.element_size == 4) {
-      copy_buffer<block_size, true, int32_t>(index_to_buffer(buf_index) + dst.dst_offset,
-                                             src_bufs[src_buf_index],
-                                             threadIdx.x,
-                                             dst,
-                                             blockDim.x);
+      copy_buffer<block_size, true, int32_t>(
+        dst_data, src_bufs[src_buf_index], threadIdx.x, dst, blockDim.x);
     }
     // wide offsets (for long strings)
     else {
-      copy_buffer<block_size, true, int64_t>(index_to_buffer(buf_index) + dst.dst_offset,
-                                             src_bufs[src_buf_index],
-                                             threadIdx.x,
-                                             dst,
-                                             blockDim.x);
+      copy_buffer<block_size, true, int64_t>(
+        dst_data, src_bufs[src_buf_index], threadIdx.x, dst, blockDim.x);
     }
   } else {
-    copy_buffer<block_size, false>(index_to_buffer(buf_index) + dst.dst_offset,
-                                   src_bufs[src_buf_index],
-                                   threadIdx.x,
-                                   dst,
-                                   blockDim.x);
+    copy_buffer<block_size, false>(dst_data, src_bufs[src_buf_index], threadIdx.x, dst, blockDim.x);
   }
 }
 
@@ -448,6 +482,66 @@ size_type count_src_bufs(InputIter begin, InputIter end)
     return 1 + (col.nullable() ? 1 : 0) + children_counts;
   });
   return std::accumulate(buf_iter, buf_iter + std::distance(begin, end), 0);
+}
+
+[[nodiscard]] cudf::experimental::pack_region_kind region_kind(src_buf_info const& source)
+{
+  using cudf::experimental::pack_region_kind;
+  if (source.is_validity) { return pack_region_kind::validity; }
+  if (source.is_offsets) { return pack_region_kind::offsets; }
+  if (source.type == type_id::STRING) { return pack_region_kind::string_characters; }
+  return pack_region_kind::data;
+}
+
+/**
+ * @brief Appends the child path of the column owning each source buffer of `col`.
+ *
+ * Buffers are visited in the order `setup_source_buf_info()` lists them, and each is checked
+ * against its entry in `sources`. Validity and offsets buffers belong to the column they describe.
+ *
+ * @param col Column to visit
+ * @param path Child path of `col`
+ * @param sources Source buffers of the table, as listed by `setup_source_buf_info()`
+ * @param paths Output; receives one path per source buffer
+ */
+void append_source_column_paths(column_view const& col,
+                                std::span<size_type const> path,
+                                std::span<src_buf_info const> sources,
+                                std::vector<std::vector<size_type>>& paths)
+{
+  auto const add_child = [&](size_type child_index) {
+    std::vector<size_type> child_path(path.begin(), path.end());
+    child_path.push_back(child_index);
+    append_source_column_paths(col.child(child_index), child_path, sources, paths);
+  };
+  auto const add_buffer = [&](type_id type, bool is_validity = false) {
+    CUDF_EXPECTS(paths.size() < sources.size() && sources[paths.size()].type == type &&
+                   sources[paths.size()].is_validity == is_validity,
+                 "Column paths do not match the source buffers");
+    paths.emplace_back(path.begin(), path.end());
+  };
+  if (col.nullable()) { add_buffer(type_id::INT32, true); }
+  add_buffer(col.type().id());
+  switch (col.type().id()) {
+    case type_id::STRING:
+      if (col.num_children() > 0) { add_buffer(col.child(0).type().id()); }
+      break;
+    case type_id::LIST:
+      add_buffer(type_id::INT32);
+      add_child(lists_column_view::child_column_index);
+      break;
+    case type_id::STRUCT:
+      for (size_type i = 0; i < col.num_children(); ++i) {
+        add_child(i);
+      }
+      break;
+    case type_id::DICTIONARY32:
+      if (col.num_children() == 0) { break; }
+      add_child(dictionary_column_view::indices_column_index);
+      add_child(dictionary_column_view::keys_column_index);
+      break;
+    default: break;
+  }
 }
 
 /**
@@ -778,19 +872,12 @@ std::pair<src_buf_info*, size_type> setup_source_buf_info(InputIter begin,
  *                     This is a pointer reference because it is updated by this function as the
  *                     columns's validity and data buffers are visited
  * @param mb A metadata_builder instance to update with the column's packed metadata
- * @param use_src_null_count True for the chunked_pack case where current_info has invalid null
- *                           count information. The null count should be taken
- *                           from `src` because this case is restricted to a single partition
- *                           (no splits)
  * @returns a std::tuple containing:
  *          column size, data offset, bitmask offset, and null count
  */
 template <typename BufInfo>
 std::tuple<std::size_t, int64_t, int64_t, size_type> build_output_column_metadata(
-  column_view const& src,
-  BufInfo& current_info,
-  detail::metadata_builder& mb,
-  bool use_src_null_count)
+  column_view const& src, BufInfo& current_info, detail::metadata_builder& mb)
 {
   auto [bitmask_offset, null_count] = [&]() {
     if (src.nullable()) {
@@ -801,13 +888,8 @@ std::tuple<std::size_t, int64_t, int64_t, size_type> build_output_column_metadat
           ? -1  // this means that the bitmask buffer pointer should be nullptr
           : static_cast<int64_t>(current_info->dst_offset);
 
-      // use_src_null_count is used for the chunked contig split case, where we have
-      // no splits: the null_count is just the source column's null_count
-      size_type const null_count = use_src_null_count
-                                     ? src.null_count()
-                                     : (current_info->num_elements == 0
-                                          ? 0
-                                          : (current_info->num_rows - current_info->valid_count));
+      size_type const null_count =
+        current_info->num_elements == 0 ? 0 : (current_info->num_rows - current_info->valid_count);
 
       ++current_info;
       return std::pair(bitmask_offset, null_count);
@@ -874,7 +956,7 @@ BufInfo build_output_columns(InputIter begin,
   auto current_info = info_begin;
   std::transform(begin, end, out_begin, [&current_info, base_ptr, &mb](column_view const& src) {
     auto [col_size, data_offset, bitmask_offset, null_count] =
-      build_output_column_metadata<BufInfo>(src, current_info, mb, false);
+      build_output_column_metadata<BufInfo>(src, current_info, mb);
 
     auto const bitmask_ptr =
       base_ptr != nullptr && bitmask_offset != -1
@@ -932,13 +1014,77 @@ BufInfo populate_metadata(InputIter begin,
 {
   auto current_info = info_begin;
   std::for_each(begin, end, [&current_info, &mb](column_view const& src) {
-    build_output_column_metadata<BufInfo>(src, current_info, mb, true);
+    build_output_column_metadata<BufInfo>(src, current_info, mb);
 
     // children
     current_info = populate_metadata(src.child_begin(), src.child_end(), current_info, mb);
   });
 
   return current_info;
+}
+
+/**
+ * @brief Validity buffers to recount, batched by bit offset and row count.
+ */
+struct recount_batch {
+  std::vector<bitmask_type const*> masks;
+  std::vector<dst_buf_info*> infos;
+};
+// Keyed by {bit_shift, num_rows}: where the copied rows start in the first mask word, and how many.
+using recount_batches = std::map<std::pair<int, size_type>, recount_batch>;
+
+/**
+ * @brief Set valid counts of a single-partition copy, visiting buffers in `populate_metadata`
+ * order.
+ *
+ * A column's null count describes its own rows, which differ from the copied rows for a child of
+ * a sliced parent. Such buffers are added to `recounts`; the others take the column's null count.
+ */
+template <typename InputIter>
+dst_buf_info* collect_valid_counts(InputIter begin,
+                                   InputIter end,
+                                   dst_buf_info* current_info,
+                                   recount_batches& recounts)
+{
+  std::for_each(begin, end, [&](column_view const& src) {
+    if (src.nullable()) {
+      auto const row_start =
+        current_info->src_element_index * detail::size_in_bits<bitmask_type>() +
+        current_info->bit_shift;
+      if (std::cmp_equal(row_start, src.offset()) &&
+          std::cmp_equal(current_info->num_rows, src.size())) {
+        current_info->valid_count = src.size() - src.null_count();
+      } else if (current_info->num_elements > 0) {
+        auto& batch =
+          recounts[{current_info->bit_shift, static_cast<size_type>(current_info->num_rows)}];
+        batch.masks.push_back(src.null_mask() + current_info->src_element_index);
+        batch.infos.push_back(current_info);
+      }
+      ++current_info;
+    }
+    ++current_info;
+    current_info = collect_valid_counts(src.child_begin(), src.child_end(), current_info, recounts);
+  });
+  return current_info;
+}
+
+/**
+ * @brief Set the valid count of every validity buffer of a single-partition copy of `input`.
+ */
+void resolve_valid_counts(cudf::table_view const& input,
+                          host_span<dst_buf_info> buf_info,
+                          cuda::stream_ref stream)
+{
+  recount_batches batches;
+  collect_valid_counts(input.begin(), input.end(), buf_info.data(), batches);
+  for (auto const& [range, batch] : batches) {
+    auto const [bit_shift, num_rows] = range;
+    auto const null_counts =
+      cudf::batch_null_count(batch.masks, bit_shift, bit_shift + num_rows, stream);
+    for (std::size_t i = 0; i < batch.infos.size(); ++i) {
+      batch.infos[i]->valid_count = num_rows - null_counts[i];
+    }
+  }
 }
 
 /**
@@ -1804,13 +1950,14 @@ void copy_data(int num_batches_to_copy,
                uint8_t** d_dst_bufs,
                device_span<dst_buf_info> d_dst_buf_info,
                uint8_t* user_buffer,
+               std::size_t dst_offset_base,
                cuda::stream_ref stream)
 {
   constexpr size_type block_size = 256;
   if (user_buffer != nullptr) {
     auto index_to_buffer = [user_buffer] __device__(unsigned int) { return user_buffer; };
     copy_partitions<block_size><<<num_batches_to_copy, block_size, 0, stream.get()>>>(
-      index_to_buffer, d_src_bufs, d_dst_buf_info.data() + starting_batch);
+      index_to_buffer, d_src_bufs, d_dst_buf_info.data() + starting_batch, dst_offset_base);
     CUDF_CUDA_TRY(cudaGetLastError());
   } else {
     auto index_to_buffer = [d_dst_bufs,
@@ -1820,7 +1967,7 @@ void copy_data(int num_batches_to_copy,
       return d_dst_bufs[dst_buf_index];
     };
     copy_partitions<block_size><<<num_batches_to_copy, block_size, 0, stream.get()>>>(
-      index_to_buffer, d_src_bufs, d_dst_buf_info.data() + starting_batch);
+      index_to_buffer, d_src_bufs, d_dst_buf_info.data() + starting_batch, dst_offset_base);
     CUDF_CUDA_TRY(cudaGetLastError());
   }
 }
@@ -1901,6 +2048,57 @@ struct contiguous_split_state {
     return is_empty ? 0 : chunk_iter_state->total_size;
   }
 
+  [[nodiscard]] cuda::stream_ref get_stream() const { return stream; }
+
+  [[nodiscard]] std::vector<compression_region_layout> compute_compression_regions() const
+  {
+    if (is_empty || num_src_bufs == 0) { return {}; }
+
+    // Recreate the source descriptors once while preparing the plan. Their ordering is the same
+    // ordering used by the already-computed destination descriptors. pack_into() then reuses the
+    // resulting region list without traversing the table again.
+    std::vector<src_buf_info> source_info(num_src_bufs);
+    setup_source_buf_info(
+      input.begin(), input.end(), source_info.data(), source_info.data(), stream);
+
+    std::vector<std::vector<size_type>> paths;
+    paths.reserve(num_src_bufs);
+    for (size_type i = 0; i < input.num_columns(); ++i) {
+      append_source_column_paths(input.column(i), {&i, 1}, source_info, paths);
+    }
+    CUDF_EXPECTS(paths.size() == source_info.size(),
+                 "Column paths do not match the source buffers");
+
+    std::vector<compression_region_layout> regions;
+    regions.reserve(num_bufs);
+    for (auto const& destination_info : partition_buf_size_and_dst_buf_info->h_dst_buf_info) {
+      if (destination_info.buf_size == 0) { continue; }
+      auto const& source      = source_info[destination_info.src_buf_index];
+      auto const source_bytes = destination_info.num_elements * destination_info.element_size;
+      // Compression can borrow a source buffer only when contiguous_split would copy its bytes.
+      // Sliced validity and offset buffers still require the normalization kernel.
+      auto const can_use_source_directly =
+        destination_info.src_element_index >= 0 && destination_info.value_shift == 0 &&
+        destination_info.bit_shift == 0 && source_bytes <= destination_info.buf_size &&
+        src_and_dst_pointers->h_src_bufs[destination_info.src_buf_index] != nullptr;
+      auto const direct_source =
+        can_use_source_directly
+          ? src_and_dst_pointers->h_src_bufs[destination_info.src_buf_index] +
+              destination_info.src_element_index * destination_info.element_size
+          : nullptr;
+      regions.emplace_back(destination_info.dst_offset,
+                           destination_info.buf_size,
+                           source_bytes,
+                           source.type,
+                           region_kind(source),
+                           paths[destination_info.src_buf_index],
+                           direct_source,
+                           destination_info);
+    }
+    std::ranges::sort(regions, {}, &compression_region_layout::uncompressed_offset);
+    return regions;
+  }
+
   std::vector<packed_table> contiguous_split()
   {
     CUDF_EXPECTS(user_buffer_size == 0, "Cannot contiguous split with a user buffer");
@@ -1916,6 +2114,7 @@ struct contiguous_split_state {
               src_and_dst_pointers->d_dst_bufs,
               chunk_iter_state->d_batched_dst_buf_info,
               nullptr,
+              0,
               stream);
 
     // these "orig" dst_buf_info pointers describe the prior-to-batching destination
@@ -1968,11 +2167,85 @@ struct contiguous_split_state {
               src_and_dst_pointers->d_dst_bufs,
               chunk_iter_state->d_batched_dst_buf_info,
               user_buffer.data(),
+              0,
               stream);
 
     // We do not need to post-process null counts since the null count info is
     // taken from the source table in the contiguous_split_chunk case (no splits)
     return chunk_iter_state->advance_iteration();
+  }
+
+  void copy_into(cudf::device_span<uint8_t> user_buffer)
+  {
+    CUDF_EXPECTS(num_partitions == 1, "copy_into does not support partitioned input");
+    CUDF_EXPECTS(user_buffer.size() >= get_total_contiguous_size(),
+                 "The destination buffer is smaller than the prepared packed size");
+
+    if (is_empty || input.num_columns() == 0) { return; }
+
+    // Do not advance the iterator: a prepared plan is intentionally reusable.
+    auto const num_batches =
+      std::get<1>(chunk_iter_state->get_current_starting_index_and_buff_count());
+    copy_window_into({0, num_batches, 0, get_total_contiguous_size()}, user_buffer.data());
+  }
+
+  /**
+   * @brief Group the copy batches into windows whose output spans at most `max_bytes`.
+   */
+  [[nodiscard]] std::vector<pack_window> compute_pack_windows(std::size_t max_bytes) const
+  {
+    if (is_empty || input.num_columns() == 0) { return {}; }
+    auto const batches =
+      cudf::detail::make_pinned_vector(chunk_iter_state->d_batched_dst_buf_info, stream);
+    std::vector<pack_window> windows;
+    std::size_t end = 0;
+    for (std::size_t i = 0; i < batches.size(); ++i) {
+      auto const bytes =
+        util::round_up_safe(batches[i].num_elements * batches[i].element_size, split_align);
+      if (bytes == 0) { continue; }
+      auto const begin = batches[i].dst_offset;
+      CUDF_EXPECTS(begin >= end, "Copy batches are not ordered by destination offset");
+      CUDF_EXPECTS(bytes <= max_bytes, "The staging buffer is smaller than a copy batch");
+      if (windows.empty() || begin + bytes - windows.back().payload_offset > max_bytes) {
+        windows.emplace_back(i, i, begin, 0);
+      }
+      auto& window    = windows.back();
+      window.end_item = i + 1;
+      window.bytes    = begin + bytes - window.payload_offset;
+      end             = begin + bytes;
+    }
+    return windows;
+  }
+
+  /**
+   * @brief Run copies of this table's buffers whose destination offsets are relative to `buffer`.
+   */
+  void copy_batches_into(device_span<dst_buf_info> batches, uint8_t* buffer)
+  {
+    if (batches.empty()) { return; }
+    copy_data(batches.size(),
+              0,
+              src_and_dst_pointers->d_src_bufs,
+              src_and_dst_pointers->d_dst_bufs,
+              batches,
+              buffer,
+              0,
+              stream);
+  }
+
+  /**
+   * @brief Pack the payload bytes covered by `window` into `buffer`, which holds `window.bytes`.
+   */
+  void copy_window_into(pack_window const& window, uint8_t* buffer)
+  {
+    copy_data(window.end_item - window.first_item,
+              window.first_item,
+              src_and_dst_pointers->d_src_bufs,
+              src_and_dst_pointers->d_dst_bufs,
+              chunk_iter_state->d_batched_dst_buf_info,
+              buffer,
+              window.payload_offset,
+              stream);
   }
 
   std::unique_ptr<std::vector<uint8_t>> build_packed_column_metadata()
@@ -1993,11 +2266,13 @@ struct contiguous_split_state {
       return std::move(empty_packed_tables.data.metadata);
     }
 
-    auto& h_dst_buf_info  = partition_buf_size_and_dst_buf_info->h_dst_buf_info;
-    auto cur_dst_buf_info = h_dst_buf_info.data();
+    // The copy descriptors keep their valid count flags; null counts are resolved on a copy.
+    auto const& h_dst_buf_info = partition_buf_size_and_dst_buf_info->h_dst_buf_info;
+    std::vector<dst_buf_info> buf_info(h_dst_buf_info.begin(), h_dst_buf_info.end());
+    resolve_valid_counts(input, buf_info, stream);
     detail::metadata_builder mb{input.num_columns(), std::nullopt};
 
-    populate_metadata(input.begin(), input.end(), cur_dst_buf_info, mb);
+    populate_metadata(input.begin(), input.end(), buf_info.data(), mb);
 
     return std::make_unique<std::vector<uint8_t>>(std::move(mb.build()));
   }
@@ -2044,8 +2319,9 @@ struct contiguous_split_state {
                                        stream,
                                        temp_mr);
 
-    // allocate output partition buffers, in the non-chunked case
-    if (user_buffer_size == 0) {
+    // allocate output partition buffers for contiguous_split; chunked_pack and prepared pack plans
+    // pass no `mr` and write into caller-provided memory
+    if (user_buffer_size == 0 && mr.has_value()) {
       out_buffers.reserve(num_partitions);
       auto h_buf_sizes = partition_buf_size_and_dst_buf_info->h_buf_sizes;
       std::transform(h_buf_sizes,
@@ -2276,5 +2552,1607 @@ std::size_t packed_size(cudf::table_view const& input,
   // Return the total size for the single partition
   return partition_buf_size_and_dst_buf_info->h_buf_sizes[0];
 }
+
+namespace experimental {
+
+namespace {
+
+using io::detail::codec_exec_result;
+using io::detail::codec_status;
+
+[[nodiscard]] bool is_concrete_codec(pack_compression compression)
+{
+  return compression == pack_compression::none || compression == pack_compression::cascaded ||
+         compression == pack_compression::zstd || compression == pack_compression::snappy;
+}
+
+[[nodiscard]] io::compression_type to_io_compression(pack_compression compression)
+{
+  switch (compression) {
+    case pack_compression::zstd: return io::compression_type::ZSTD;
+    case pack_compression::snappy: return io::compression_type::SNAPPY;
+    default: CUDF_FAIL("Codec is not provided by the cuIO codec API");
+  }
+}
+
+// The integral type nvCOMP Cascaded interprets a buffer as.
+[[nodiscard]] type_id cascaded_type(type_id type, bool is_validity)
+{
+  if (is_validity) { return type_id::UINT32; }
+  switch (type) {
+    case type_id::INT8:
+    case type_id::UINT8:
+    case type_id::INT16:
+    case type_id::UINT16:
+    case type_id::INT32:
+    case type_id::UINT32:
+    case type_id::INT64:
+    case type_id::UINT64: return type;
+    case type_id::TIMESTAMP_DAYS:
+    case type_id::DURATION_DAYS:
+    case type_id::DECIMAL32: return type_id::INT32;
+    case type_id::FLOAT32: return type_id::UINT32;
+    case type_id::TIMESTAMP_SECONDS:
+    case type_id::TIMESTAMP_MILLISECONDS:
+    case type_id::TIMESTAMP_MICROSECONDS:
+    case type_id::TIMESTAMP_NANOSECONDS:
+    case type_id::DURATION_SECONDS:
+    case type_id::DURATION_MILLISECONDS:
+    case type_id::DURATION_MICROSECONDS:
+    case type_id::DURATION_NANOSECONDS:
+    case type_id::DECIMAL64: return type_id::INT64;
+    case type_id::FLOAT64: return type_id::UINT64;
+    // Byte data, and types nvCOMP Cascaded cannot represent natively (128-bit values and
+    // padding-only structural buffers), use lossless byte-wise compression.
+    default: return type_id::UINT8;
+  }
+}
+
+[[nodiscard]] cudaMemoryType memory_type(void const* ptr)
+{
+  cudaPointerAttributes attributes{};
+  CUDF_CUDA_TRY(cudaPointerGetAttributes(&attributes, ptr));
+  return attributes.type;
+}
+
+/// Runs `work`, synchronizing `stream` before an exception frees host data its copies still read.
+template <typename Work>
+decltype(auto) sync_on_throw(cuda::stream_ref stream, Work&& work)
+{
+  try {
+    return work();
+  } catch (...) {
+    // The pending exception takes precedence over a synchronization error.
+    std::ignore = cudaStreamSynchronize(stream.get());
+    throw;
+  }
+}
+
+/**
+ * @brief A contiguous range of blocks processed by a single batched codec call.
+ *
+ * Zstd and Snappy go through the cuIO codec API and Cascaded through the nvCOMP adapter. Cascaded
+ * compresses all blocks of a call as one value type, so each Cascaded value type is its own batch.
+ */
+struct block_batch {
+  pack_compression codec;
+  type_id cascaded_type;
+  std::size_t block_begin     = 0;
+  std::size_t block_end       = 0;
+  std::size_t max_block_bytes = 0;
+  std::size_t total_bytes     = 0;
+};
+
+[[nodiscard]] std::size_t max_allowed_block_bytes(pack_compression codec)
+{
+  if (codec == pack_compression::cascaded) {
+    return io::detail::nvcomp::cascaded_compress_max_allowed_chunk_size();
+  }
+  return io::detail::compress_max_allowed_chunk_size(to_io_compression(codec))
+    .value_or(std::numeric_limits<std::size_t>::max());
+}
+
+[[nodiscard]] std::size_t block_alignment(pack_compression codec)
+{
+  if (codec == pack_compression::cascaded) {
+    return io::detail::nvcomp::cascaded_compress_required_alignment();
+  }
+  return std::max(sizeof(uint64_t),
+                  io::detail::compress_required_chunk_alignment(to_io_compression(codec)));
+}
+
+[[nodiscard]] std::size_t max_compressed_block_bytes(block_batch const& batch)
+{
+  if (batch.codec == pack_compression::cascaded) {
+    return io::detail::nvcomp::cascaded_compress_max_output_chunk_size(batch.cascaded_type,
+                                                                       batch.max_block_bytes);
+  }
+  return io::detail::max_compressed_size(to_io_compression(batch.codec), batch.max_block_bytes);
+}
+
+void copy_blocks(device_span<device_span<uint8_t const> const> inputs,
+                 device_span<device_span<uint8_t> const> outputs,
+                 cuda::stream_ref stream)
+{
+  if (inputs.empty()) { return; }
+  auto const sources = cuda::make_transform_iterator(
+    inputs.begin(),
+    cuda::proclaim_return_type<uint8_t const*>(
+      [] __device__(device_span<uint8_t const> span) { return span.data(); }));
+  auto const destinations = cuda::make_transform_iterator(
+    outputs.begin(), cuda::proclaim_return_type<uint8_t*>([] __device__(device_span<uint8_t> span) {
+      return span.data();
+    }));
+  auto const sizes = cuda::make_transform_iterator(
+    inputs.begin(),
+    cuda::proclaim_return_type<std::size_t>(
+      [] __device__(device_span<uint8_t const> span) { return span.size(); }));
+  cudf::detail::batched_memcpy_async(sources, destinations, sizes, inputs.size(), stream);
+}
+
+struct buffer_copy {
+  uint8_t const* source;
+  uint8_t* destination;
+  std::size_t size;
+};
+
+/// Copies every buffer with one kernel, where per-buffer memcpy calls cost microseconds each.
+void copy_buffers(std::span<buffer_copy const> copies,
+                  cuda::stream_ref stream,
+                  rmm::device_async_resource_ref temp_mr)
+{
+  if (copies.empty()) { return; }
+  // The upload reads `copies` in stream order, and callers free it once this returns.
+  auto const d_copies = cudf::detail::make_device_uvector(copies, stream, temp_mr);
+  auto const sources  = cuda::make_transform_iterator(
+    d_copies.begin(), cuda::proclaim_return_type<uint8_t const*>([] __device__(buffer_copy copy) {
+      return copy.source;
+    }));
+  auto const destinations = cuda::make_transform_iterator(
+    d_copies.begin(), cuda::proclaim_return_type<uint8_t*>([] __device__(buffer_copy copy) {
+      return copy.destination;
+    }));
+  auto const sizes = cuda::make_transform_iterator(
+    d_copies.begin(),
+    cuda::proclaim_return_type<std::size_t>([] __device__(buffer_copy copy) { return copy.size; }));
+  cudf::detail::batched_memcpy_async(sources, destinations, sizes, copies.size(), stream);
+}
+
+void compress_batch(block_batch const& batch,
+                    device_span<device_span<uint8_t const> const> inputs,
+                    device_span<device_span<uint8_t> const> outputs,
+                    device_span<codec_exec_result> results,
+                    cuda::stream_ref stream,
+                    cudf::memory_resources mr)
+{
+  if (batch.codec == pack_compression::cascaded) {
+    return io::detail::nvcomp::batched_cascaded_compress(
+      batch.cascaded_type, inputs, outputs, results, batch.max_block_bytes, stream, mr);
+  }
+  io::detail::compress(to_io_compression(batch.codec), inputs, outputs, results, stream, mr);
+}
+
+void decompress_batch(pack_compression codec,
+                      device_span<device_span<uint8_t const> const> inputs,
+                      device_span<device_span<uint8_t> const> outputs,
+                      device_span<codec_exec_result> results,
+                      std::size_t max_block_bytes,
+                      std::size_t total_bytes,
+                      cuda::stream_ref stream,
+                      cudf::memory_resources mr)
+{
+  if (codec == pack_compression::none) { return copy_blocks(inputs, outputs, stream); }
+  io::detail::decompress(
+    to_io_compression(codec), inputs, outputs, results, max_block_bytes, total_bytes, stream, mr);
+}
+
+/// Blocks decompressed together: one codec and, for Cascaded, one value type, because a Cascaded
+/// batch cannot mix value types.
+struct decompression_task {
+  pack_compression codec;
+  type_id cascaded_type;
+  std::vector<device_span<uint8_t const>> inputs;
+  std::vector<device_span<uint8_t>> outputs;
+  std::size_t max_block_bytes = 0;
+  std::size_t total_bytes     = 0;
+};
+
+// A compressed payload starts with one uint64_t per block: the compressed size, or the raw size
+// with raw_block_flag set for a block stored uncompressed. Zero marks a block that failed to
+// compress.
+constexpr uint64_t raw_block_flag             = uint64_t{1} << 63;
+constexpr std::size_t max_raw_block_bytes     = 1024 * 1024;
+constexpr std::size_t compression_block_bytes = 64 * 1024;
+// Smaller regions stay uncompressed under `automatic`.
+constexpr std::size_t automatic_min_region_bytes = 4 * 1024;
+// `automatic` stores a block raw unless compressing it saves at least this many bytes.
+constexpr std::size_t automatic_min_savings_bytes = 256;
+
+// Leads with a version, like legacy packed metadata, so the first field identifies the format.
+struct compression_metadata_header {
+  int32_t version;
+  uint32_t num_regions;
+  uint64_t num_blocks;
+  uint64_t legacy_metadata_bytes;
+  uint64_t uncompressed_payload_bytes;
+};
+
+struct compression_metadata_entry {
+  uint64_t uncompressed_offset;
+  uint64_t uncompressed_bytes;
+  uint64_t data_bytes;   ///< Size of the leading data stored in blocks; the rest is padding
+  uint64_t block_bytes;  ///< Uncompressed size of every block except possibly the last
+  uint64_t block_begin;  ///< Index of the region's first block
+  uint64_t num_blocks;
+  int32_t type;
+  uint32_t is_validity;
+  int32_t compression;  ///< `none` when every block of the region is stored raw
+  uint32_t reserved;
+};
+
+// Both are written with memcpy, so padding would copy uninitialized bytes into the metadata.
+static_assert(std::has_unique_object_representations_v<compression_metadata_header>);
+static_assert(std::has_unique_object_representations_v<compression_metadata_entry>);
+
+// Shares the version sequence of legacy packed metadata and must not collide with it.
+constexpr int32_t compression_metadata_version = 3;
+static_assert(compression_metadata_version > cudf::detail::packed_metadata_version);
+
+struct prepared_compression_region {
+  compression_region_layout layout;
+  uint8_t const* source;  ///< Null for a staged region
+  pack_compression compression;
+  type_id cascaded_type;
+  bool allow_uncompressed_fallback;
+  std::size_t block_bytes;
+  std::size_t num_blocks;
+  std::size_t block_begin = 0;
+  std::size_t alignment   = sizeof(uint64_t);  ///< Alignment of compressed blocks in the payload
+};
+
+struct block_descriptor {
+  uint8_t const* input;  ///< Null for a block staged into its window before compression
+  std::size_t input_bytes;
+  std::size_t output_bytes;  ///< Worst-case output size; equals `input_bytes` for raw blocks
+  std::size_t region;
+  bool is_raw;
+  std::size_t window_offset = 0;  ///< Offset of the slot within its window's staging buffer
+  std::size_t staged_offset = 0;  ///< Offset of the staged input within the window
+
+  /// The block's input, given its window's staging buffer.
+  [[nodiscard]] __host__ __device__ uint8_t const* input_in(uint8_t const* window) const
+  {
+    return input != nullptr ? input : window + staged_offset;
+  }
+};
+
+/// The copy of block `block_index` of a staged region, which is split like the copy batches.
+[[nodiscard]] dst_buf_info staging_copy(dst_buf_info const& region_copy,
+                                        std::size_t block_index,
+                                        std::size_t block_bytes,
+                                        std::size_t dst_offset)
+{
+  auto copy                     = region_copy;
+  auto const elements_per_block = block_bytes / copy.element_size;
+  auto const rows_per_block     = copy.valid_count > 0
+                                    ? elements_per_block * detail::size_in_bits<bitmask_type>()
+                                    : elements_per_block;
+  copy.num_elements =
+    std::min(elements_per_block, region_copy.num_elements - block_index * elements_per_block);
+  copy.num_rows          = (block_index + 1) * rows_per_block > region_copy.num_rows
+                             ? region_copy.num_rows - block_index * rows_per_block
+                             : rows_per_block;
+  copy.src_element_index = region_copy.src_element_index + block_index * elements_per_block;
+  copy.dst_offset        = dst_offset;
+  copy.valid_count       = 0;  // Keeps the copy kernel from counting bits that nothing reads
+  return copy;
+}
+
+template <typename T>
+void append_bytes(std::vector<uint8_t>& output, std::span<T const> values)
+{
+  auto const begin = reinterpret_cast<uint8_t const*>(values.data());
+  output.insert(output.end(), begin, begin + values.size_bytes());
+}
+
+template <typename T>
+[[nodiscard]] T read_bytes(std::span<uint8_t const> input, std::size_t offset)
+{
+  CUDF_EXPECTS(offset <= input.size() && sizeof(T) <= input.size() - offset,
+               "Compressed region metadata is truncated");
+  T value;
+  std::memcpy(&value, input.data() + offset, sizeof(T));
+  return value;
+}
+
+template <typename T>
+[[nodiscard]] std::vector<T> read_array(std::span<uint8_t const> input,
+                                        std::size_t offset,
+                                        std::size_t count)
+{
+  CUDF_EXPECTS(offset <= input.size() && count <= (input.size() - offset) / sizeof(T),
+               "Compressed region metadata is truncated");
+  std::vector<T> values(count);
+  std::memcpy(values.data(), input.data() + offset, count * sizeof(T));
+  return values;
+}
+
+[[nodiscard]] std::size_t compression_metadata_size(std::size_t legacy_bytes,
+                                                    std::size_t num_regions,
+                                                    std::size_t num_blocks)
+{
+  return sizeof(compression_metadata_header) + num_regions * sizeof(compression_metadata_entry) +
+         num_blocks * sizeof(uint64_t) + legacy_bytes;
+}
+
+[[nodiscard]] std::vector<uint8_t> make_compression_metadata(
+  std::span<uint8_t const> legacy_metadata,
+  std::size_t uncompressed_payload_bytes,
+  std::span<compression_metadata_entry const> entries,
+  std::span<uint64_t const> block_offsets)
+{
+  CUDF_EXPECTS(entries.size() <= std::numeric_limits<uint32_t>::max(),
+               "Too many compressed regions");
+  std::vector<uint8_t> output;
+  output.reserve(
+    compression_metadata_size(legacy_metadata.size(), entries.size(), block_offsets.size()));
+  compression_metadata_header const header{compression_metadata_version,
+                                           static_cast<uint32_t>(entries.size()),
+                                           block_offsets.size(),
+                                           legacy_metadata.size(),
+                                           uncompressed_payload_bytes};
+  append_bytes(output, std::span{&header, 1});
+  append_bytes(output, entries);
+  append_bytes(output, block_offsets);
+  append_bytes(output, legacy_metadata);
+  return output;
+}
+
+struct compression_metadata {
+  std::size_t uncompressed_payload_bytes;
+  std::vector<compression_metadata_entry> entries;
+  std::vector<uint64_t> block_offsets;
+  std::span<uint8_t const> legacy_metadata;
+};
+
+[[nodiscard]] bool has_compression_metadata(std::span<uint8_t const> metadata)
+{
+  return metadata.size() >= sizeof(int32_t) &&
+         read_bytes<int32_t>(metadata, 0) == compression_metadata_version;
+}
+
+[[nodiscard]] compression_metadata read_compression_metadata(std::span<uint8_t const> metadata)
+{
+  auto const header = read_bytes<compression_metadata_header>(metadata, 0);
+  CUDF_EXPECTS(header.version == compression_metadata_version,
+               "Packed metadata is not a supported compression metadata version");
+  auto const entries_offset = sizeof(compression_metadata_header);
+  auto const blocks_offset =
+    entries_offset + header.num_regions * sizeof(compression_metadata_entry);
+  CUDF_EXPECTS(blocks_offset <= metadata.size() &&
+                 header.num_blocks <= (metadata.size() - blocks_offset) / sizeof(uint64_t),
+               "Compressed-region metadata has invalid bounds");
+  auto const legacy_offset = blocks_offset + header.num_blocks * sizeof(uint64_t);
+  CUDF_EXPECTS(header.legacy_metadata_bytes == metadata.size() - legacy_offset,
+               "Compressed-region metadata has invalid bounds");
+
+  return {header.uncompressed_payload_bytes,
+          read_array<compression_metadata_entry>(metadata, entries_offset, header.num_regions),
+          read_array<uint64_t>(metadata, blocks_offset, header.num_blocks),
+          metadata.subspan(legacy_offset, header.legacy_metadata_bytes)};
+}
+
+/// Supplies the packed column buffers that materialization allocates.
+struct buffer_source {
+  /// Returns the size of the buffer at `offset`, which must hold `required_bytes` of column data.
+  std::function<std::size_t(int64_t offset, std::size_t required_bytes, bool is_validity)> size;
+  /// Schedules filling `destination` with the buffer at `offset`.
+  std::function<void(int64_t offset, device_span<uint8_t> destination)> fill;
+};
+
+using detail::packed_metadata_access;
+
+std::unique_ptr<column> allocate_materialized_column(
+  packed_metadata_view::column_view const& metadata,
+  buffer_source const& source,
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
+{
+  auto null_mask = cudf::detail::create_null_mask(0, mask_state::UNALLOCATED, stream, mr);
+  if (auto const offset = packed_metadata_access::null_mask_offset(metadata); offset != -1) {
+    auto const bytes =
+      source.size(offset, num_bitmask_words(metadata.num_rows()) * sizeof(bitmask_type), true);
+    null_mask = cuda::device_buffer<bitmask_type>(
+      stream,
+      mr.get_output_mr(),
+      cudf::util::div_rounding_up_safe(
+        std::max(bytes, bitmask_allocation_size_bytes(metadata.num_rows())), sizeof(bitmask_type)),
+      cuda::no_init);
+    source.fill(offset, {reinterpret_cast<uint8_t*>(null_mask.data()), bytes});
+  } else {
+    CUDF_EXPECTS(metadata.null_count() == 0, "Packed column with nulls has no validity buffer");
+  }
+
+  auto const data_offset = packed_metadata_access::data_offset(metadata);
+  // Empty chars start where the offsets do, so they must not be filled from the offsets.
+  auto const has_chars = metadata.type().id() != type_id::STRING ||
+                         (metadata.num_children() > 0 &&
+                          data_offset != packed_metadata_access::data_offset(metadata.child(0)));
+  rmm::device_buffer data;
+  if (data_offset != -1 && has_chars) {
+    auto const required_bytes = is_fixed_width(metadata.type())
+                                  ? metadata.num_rows() * size_of(metadata.type())
+                                  : std::size_t{0};
+    auto const bytes          = source.size(data_offset, required_bytes, false);
+    data                      = rmm::device_buffer(bytes, stream, mr.get_output_mr());
+    source.fill(data_offset, {static_cast<uint8_t*>(data.data()), bytes});
+  }
+
+  std::vector<std::unique_ptr<column>> children;
+  children.reserve(metadata.num_children());
+  std::ranges::transform(std::views::iota(size_type{0}, metadata.num_children()),
+                         std::back_inserter(children),
+                         [&](size_type i) {
+                           return allocate_materialized_column(
+                             metadata.child(i), source, stream, mr);
+                         });
+
+  return std::make_unique<column>(metadata.type(),
+                                  metadata.num_rows(),
+                                  std::move(data),
+                                  std::move(null_mask),
+                                  metadata.null_count(),
+                                  std::move(children));
+}
+
+void collect_buffer_offsets(packed_metadata_view::column_view const& metadata,
+                            std::vector<int64_t>& offsets)
+{
+  for (auto const offset : {packed_metadata_access::null_mask_offset(metadata),
+                            packed_metadata_access::data_offset(metadata)}) {
+    if (offset != -1) { offsets.push_back(offset); }
+  }
+  for (size_type i = 0; i < metadata.num_children(); ++i) {
+    collect_buffer_offsets(metadata.child(i), offsets);
+  }
+}
+
+struct packed_buffer {
+  std::size_t offset;
+  pack_region_info info;
+  std::optional<std::size_t> data_bytes;  ///< Unpadded size, unknown for string characters
+};
+
+/// Lists the buffers of `column` in payload order, matching the regions planning discovers.
+void append_packed_buffers(packed_metadata_view::column_view const& column,
+                           std::vector<size_type>& path,
+                           pack_region_kind data_kind,
+                           std::vector<packed_buffer>& buffers)
+{
+  auto const add =
+    [&](int64_t offset, pack_region_kind kind, type_id type, std::optional<std::size_t> bytes) {
+      if (offset == -1) { return; }
+      buffers.emplace_back(offset, pack_region_info{0, path, kind, type, 0}, bytes);
+    };
+  auto const rows = static_cast<std::size_t>(column.num_rows());
+  auto const type = column.type();
+  add(packed_metadata_access::null_mask_offset(column),
+      pack_region_kind::validity,
+      type_id::INT32,
+      cudf::util::div_rounding_up_safe(rows, std::size_t{32}) * sizeof(bitmask_type));
+  if (type.id() == type_id::STRING) {
+    add(packed_metadata_access::data_offset(column),
+        pack_region_kind::string_characters,
+        type.id(),
+        std::nullopt);
+  } else {
+    add(packed_metadata_access::data_offset(column),
+        data_kind,
+        type.id(),
+        is_fixed_width(type) ? std::optional{rows * size_of(type)} : std::nullopt);
+  }
+
+  auto const has_offsets_child = type.id() == type_id::STRING || type.id() == type_id::LIST;
+  for (size_type i = 0; i < column.num_children(); ++i) {
+    // Offsets belong to the column they describe.
+    if (has_offsets_child && i == 0) {
+      append_packed_buffers(column.child(i), path, pack_region_kind::offsets, buffers);
+      continue;
+    }
+    path.push_back(i);
+    append_packed_buffers(column.child(i), path, pack_region_kind::data, buffers);
+    path.pop_back();
+  }
+}
+
+std::vector<packed_buffer> list_packed_buffers(packed_metadata_view const& metadata)
+{
+  std::vector<packed_buffer> buffers;
+  for (size_type i = 0; i < metadata.num_columns(); ++i) {
+    std::vector<size_type> path{i};
+    append_packed_buffers(metadata.column(i), path, pack_region_kind::data, buffers);
+  }
+  return buffers;
+}
+
+/**
+ * @brief Provides device pointers into a packed payload.
+ *
+ * Device and pinned payloads are read in place. Only the byte ranges requested before `load()`
+ * are copied from a pageable payload, so materializing a column subset transfers only its bytes and
+ * their alignment padding.
+ */
+class byte_range_loader {
+ public:
+  explicit byte_range_loader(std::span<uint8_t const> payload)
+    : _payload{payload},
+      _memory_type{payload.empty() ? cudaMemoryTypeDevice : memory_type(payload.data())}
+  {
+  }
+
+  void request(std::span<uint8_t const> bytes)
+  {
+    if (is_pageable() && !bytes.empty()) {
+      // Staged bytes keep their alignment in the payload, which codecs such as Cascaded require.
+      auto const offset = static_cast<std::size_t>(bytes.data() - _payload.data());
+      _ranges.emplace_back(offset / split_align * split_align, offset + bytes.size(), 0);
+    }
+  }
+
+  void load(cuda::stream_ref stream, cudf::memory_resources mr)
+  {
+    if (_ranges.empty()) { return; }
+    std::ranges::sort(_ranges, {}, &range::begin);
+    std::vector<range> merged{_ranges.front()};
+    for (auto const& next : _ranges) {
+      // Ranges separated by alignment padding, such as consecutive blocks, merge into one copy.
+      if (next.begin <= merged.back().end + split_align) {
+        merged.back().end = std::max(merged.back().end, next.end);
+      } else {
+        merged.push_back(next);
+      }
+    }
+    std::size_t staged_bytes = 0;
+    for (auto& item : merged) {
+      item.staged_offset = staged_bytes;
+      staged_bytes = cudf::util::round_up_safe(staged_bytes + item.end - item.begin, split_align);
+    }
+    _staged = rmm::device_buffer(staged_bytes, stream, mr.get_temporary_mr());
+    std::vector<void*> destinations;
+    std::vector<void const*> sources;
+    std::vector<std::size_t> sizes;
+    for (auto const& item : merged) {
+      destinations.push_back(static_cast<uint8_t*>(_staged.data()) + item.staged_offset);
+      sources.push_back(_payload.data() + item.begin);
+      sizes.push_back(item.end - item.begin);
+    }
+    CUDF_CUDA_TRY(cudf::detail::memcpy_batch_async(
+      destinations.data(), sources.data(), sizes.data(), merged.size(), stream));
+    _ranges = std::move(merged);
+  }
+
+  /// Whether `load()` copied any pageable bytes, which stay in use until the stream reaches them.
+  [[nodiscard]] bool has_pending_host_reads() const { return !_ranges.empty(); }
+
+  [[nodiscard]] bool is_pageable() const { return _memory_type == cudaMemoryTypeUnregistered; }
+
+  [[nodiscard]] bool is_host_accessible() const
+  {
+    return is_pageable() || _memory_type == cudaMemoryTypeHost;
+  }
+
+  /// Translates a payload pointer whose bytes were requested to a device-accessible pointer.
+  [[nodiscard]] uint8_t const* device_pointer(uint8_t const* data) const
+  {
+    if (!is_pageable()) { return data; }
+    auto const offset = static_cast<std::size_t>(data - _payload.data());
+    auto const item   = std::prev(std::ranges::upper_bound(_ranges, offset, {}, &range::begin));
+    return static_cast<uint8_t const*>(_staged.data()) + item->staged_offset +
+           (offset - item->begin);
+  }
+
+ private:
+  struct range {
+    std::size_t begin;
+    std::size_t end;
+    std::size_t staged_offset;
+  };
+
+  std::span<uint8_t const> _payload;
+  cudaMemoryType _memory_type;
+  std::vector<range> _ranges;
+  rmm::device_buffer _staged;
+};
+
+/// Materializes the selected top-level columns, or every column when `selection` is empty.
+std::vector<std::unique_ptr<column>> materialize_columns(
+  packed_metadata_view const& metadata,
+  std::optional<std::span<size_type const>> selection,
+  buffer_source const& source,
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
+{
+  auto const count =
+    selection.has_value() ? selection->size() : static_cast<std::size_t>(metadata.num_columns());
+  std::vector<std::unique_ptr<column>> columns;
+  columns.reserve(count);
+  for (std::size_t i = 0; i < count; ++i) {
+    auto const index = selection.has_value() ? (*selection)[i] : static_cast<size_type>(i);
+    columns.push_back(allocate_materialized_column(metadata.column(index), source, stream, mr));
+  }
+  return columns;
+}
+
+// Copies column buffers out of an uncompressed payload, syncing only when copies read host memory.
+// Each buffer extends to the next buffer's offset, so no sizes are read back from the device.
+std::unique_ptr<table> materialize_uncompressed(packed_data_view input,
+                                                std::optional<std::span<size_type const>> selection,
+                                                byte_range_loader& loader,
+                                                cuda::stream_ref stream,
+                                                cudf::memory_resources mr)
+{
+  if (input.metadata.empty()) {
+    CUDF_EXPECTS(
+      !selection.has_value() || selection->empty(), "column index out of range", std::out_of_range);
+    return std::make_unique<table>();
+  }
+  auto const metadata = packed_metadata_view{input.metadata};
+  std::vector<int64_t> offsets;
+  for (size_type i = 0; i < metadata.num_columns(); ++i) {
+    collect_buffer_offsets(metadata.column(i), offsets);
+  }
+  std::ranges::sort(offsets);
+  offsets.erase(std::ranges::unique(offsets).begin(), offsets.end());
+  CUDF_EXPECTS(offsets.empty() ||
+                 (offsets.front() >= 0 && std::cmp_less(offsets.back(), input.payload.size())),
+               "Packed column buffer lies outside the payload");
+
+  std::vector<std::span<uint8_t const>> payload_ranges;
+  std::vector<uint8_t*> destinations;
+  buffer_source const source{
+    [&](int64_t offset, std::size_t required_bytes, bool) {
+      auto const next = std::ranges::upper_bound(offsets, offset);
+      auto const end =
+        next == offsets.end() ? input.payload.size() : static_cast<std::size_t>(*next);
+      // A payload span longer than the packed data would otherwise oversize its last buffer.
+      auto const bytes = next == offsets.end() && required_bytes > 0
+                           ? std::min(required_bytes, end - offset)
+                           : end - offset;
+      CUDF_EXPECTS(bytes >= required_bytes, "Packed column buffer is smaller than its column");
+      return bytes;
+    },
+    [&](int64_t offset, device_span<uint8_t> destination) {
+      payload_ranges.push_back(input.payload.subspan(offset, destination.size()));
+      loader.request(payload_ranges.back());
+      destinations.push_back(destination.data());
+    }};
+  auto columns = materialize_columns(metadata, selection, source, stream, mr);
+  loader.load(stream, mr);
+  std::vector<buffer_copy> copies;
+  for (std::size_t i = 0; i < payload_ranges.size(); ++i) {
+    copies.push_back(
+      {loader.device_pointer(payload_ranges[i].data()), destinations[i], payload_ranges[i].size()});
+  }
+  copy_buffers(copies, stream, mr.get_temporary_mr());
+  // Host sources are read when the stream reaches each copy, so they must outlive this call.
+  if (loader.has_pending_host_reads()) { stream.sync(); }
+  return std::make_unique<table>(std::move(columns), metadata.num_rows());
+}
+
+[[nodiscard]] pack_compression select_automatic_compression(compression_region_layout const& layout)
+{
+  if (layout.uncompressed_bytes < automatic_min_region_bytes) { return pack_compression::none; }
+  return layout.kind == pack_region_kind::string_characters ? pack_compression::none
+                                                            : pack_compression::cascaded;
+}
+
+std::unique_ptr<detail::contiguous_split_state> make_split_state(cudf::table_view const& input,
+                                                                 pack_options const& options,
+                                                                 cuda::stream_ref stream,
+                                                                 cudf::memory_resources mr)
+{
+  // Copy batches are at most desired_batch_size bytes, and each must fit in a staging window.
+  CUDF_EXPECTS(options.staging_buffer_bytes >= desired_batch_size,
+               "The staging buffer must hold at least 1 MiB",
+               std::invalid_argument);
+  // Whole-table layout with no output allocation; pack_into() writes to the caller's destination.
+  // The plan owns this state, so it uses the output resource.
+  return std::make_unique<detail::contiguous_split_state>(
+    input, 0, stream, std::nullopt, mr.get_output_mr());
+}
+
+struct plan_input {
+  plan_input(cudf::table_view const& input,
+             pack_options const& options,
+             cuda::stream_ref stream,
+             cudf::memory_resources mr)
+    : state{make_split_state(input, options, stream, mr)}
+  {
+    if (auto planned = state->build_packed_column_metadata(); planned != nullptr) {
+      metadata = std::move(*planned);
+    }
+  }
+
+  plan_input(cudf::packed_columns const& input,
+             pack_options const& options,
+             cuda::stream_ref stream,
+             cudf::memory_resources mr)
+  {
+    CUDF_EXPECTS(input.metadata != nullptr && input.gpu_data != nullptr,
+                 "Packed input must contain metadata and a device allocation",
+                 std::invalid_argument);
+    auto const table =
+      cudf::detail::unpack(*input.metadata, static_cast<uint8_t const*>(input.gpu_data->data()));
+    state        = make_split_state(table, options, stream, mr);
+    auto planned = state->build_packed_column_metadata();
+    // Like cudf::pack, a table without rows packs no buffers. This drops the dictionary keys that
+    // contiguous_split copies into an empty partition.
+    if (table.num_rows() == 0 && input.gpu_data->size() > 0) {
+      if (planned != nullptr) { metadata = std::move(*planned); }
+      return;
+    }
+    // Equal metadata means equal buffer offsets, so the planned layout matches the allocation.
+    // An empty allocation has no layout to match, however its empty columns are described.
+    CUDF_EXPECTS(
+      state->get_total_contiguous_size() == input.gpu_data->size() &&
+        (input.gpu_data->size() == 0 || (planned != nullptr && *planned == *input.metadata)),
+      "Packed metadata does not describe the layout of the device allocation",
+      std::invalid_argument);
+    metadata      = *input.metadata;
+    packed_source = {static_cast<uint8_t const*>(input.gpu_data->data()), input.gpu_data->size()};
+  }
+
+  std::unique_ptr<detail::contiguous_split_state> state;
+  std::vector<uint8_t> metadata;
+  cudf::device_span<uint8_t const> packed_source;  ///< Borrowed allocation of packed_columns input
+};
+
+/// Points each block's codec input at its source and its output at its staging slot.
+void set_block_spans(device_span<block_descriptor const> blocks,
+                     uint8_t* slots,
+                     device_span<device_span<uint8_t const>> inputs,
+                     device_span<device_span<uint8_t>> outputs,
+                     device_span<codec_exec_result> results,
+                     cuda::stream_ref stream,
+                     rmm::device_async_resource_ref temp_mr)
+{
+  thrust::for_each_n(rmm::exec_policy_nosync(stream, temp_mr),
+                     cuda::counting_iterator<std::size_t>{0},
+                     blocks.size(),
+                     [blocks, slots, inputs, outputs, results] __device__(std::size_t i) {
+                       auto const& block = blocks[i];
+                       inputs[i]         = {block.input_in(slots), block.input_bytes};
+                       outputs[i]        = {slots + block.window_offset, block.output_bytes};
+                       results[i]        = {0, codec_status::FAILURE};
+                     });
+}
+
+/// Whether a block is stored uncompressed, because it is raw or compression failed or saved too
+/// little in a region that allows the fallback.
+[[nodiscard]] bool is_stored_raw(block_descriptor const& block,
+                                 prepared_compression_region const& region,
+                                 codec_exec_result const& result)
+{
+  if (block.is_raw) { return true; }
+  auto const failed = result.status != codec_status::SUCCESS;
+  CUDF_EXPECTS(!failed || region.allow_uncompressed_fallback, "Compression failed");
+  return region.allow_uncompressed_fallback &&
+         (failed || result.bytes_written >= block.input_bytes ||
+          block.input_bytes - result.bytes_written < automatic_min_savings_bytes);
+}
+
+/// Describes each region in the compression metadata, given the block size table.
+[[nodiscard]] std::vector<compression_metadata_entry> make_compression_entries(
+  std::span<prepared_compression_region const> regions, std::span<uint64_t const> table)
+{
+  std::vector<compression_metadata_entry> entries;
+  entries.reserve(regions.size());
+  for (auto const& region : regions) {
+    auto const all_raw =
+      std::ranges::all_of(table.subspan(region.block_begin, region.num_blocks),
+                          [](auto entry) { return (entry & raw_block_flag) != 0; });
+    entries.emplace_back(
+      region.layout.uncompressed_offset,
+      region.layout.uncompressed_bytes,
+      region.layout.data_bytes,
+      region.block_bytes,
+      region.block_begin,
+      region.num_blocks,
+      static_cast<int32_t>(region.layout.type),
+      region.layout.kind == pack_region_kind::validity ? 1U : 0U,
+      static_cast<int32_t>(all_raw ? pack_compression::none : region.compression),
+      0U);
+  }
+  return entries;
+}
+
+}  // namespace
+
+class pack_plan::impl {
+ public:
+  impl(plan_input&& source, pack_options const& options, cudf::memory_resources mr)
+    : impl(std::move(source), options, {}, {}, std::move(mr))
+  {
+  }
+
+  impl(plan_input&& source,
+       pack_options const& options,
+       std::vector<compression_region_layout> layouts,
+       std::span<pack_region const> configured_regions,
+       cudf::memory_resources mr)
+    : input(std::move(source))
+  {
+    auto const uncompressed_bytes = input.state->get_total_contiguous_size();
+    auto const uses_compression_metadata =
+      configured_regions.empty() ? options.compression != pack_compression::none
+                                 : std::ranges::any_of(configured_regions, [](auto const& region) {
+                                     return region.codec != pack_compression::none;
+                                   });
+
+    auto destination_bytes = uncompressed_bytes;
+    if (uncompressed_bytes > 0 && !uses_compression_metadata) {
+      plan_copy_windows(options.staging_buffer_bytes);
+    } else if (uncompressed_bytes > 0) {
+      if (layouts.empty()) { layouts = input.state->compute_compression_regions(); }
+      plan_regions(layouts, configured_regions, options);
+      plan_compression_blocks();
+      // The capacity bound: the block size table, then a worst-case slot per block.
+      auto const table_bytes =
+        cudf::util::round_up_safe(blocks.size() * sizeof(uint64_t), split_align);
+      destination_bytes = plan_compression_windows(table_bytes, options.staging_buffer_bytes, mr);
+      d_blocks =
+        cudf::detail::make_device_uvector(blocks, input.state->get_stream(), mr.get_output_mr());
+    }
+
+    auto const metadata_bytes =
+      regions.empty()
+        ? input.metadata.size()
+        : compression_metadata_size(input.metadata.size(), regions.size(), blocks.size());
+    storage_sizes = pack_sizes{metadata_bytes, destination_bytes, split_align, uncompressed_bytes};
+  }
+
+  [[nodiscard]] pack_sizes const& sizes() const { return storage_sizes; }
+
+  [[nodiscard]] pack_result pack(std::span<uint8_t> destination,
+                                 bool to_host,
+                                 cudf::memory_resources mr) const
+  {
+    return regions.empty() ? pack_uncompressed(destination, to_host, mr)
+                           : pack_compressed(destination, to_host, mr);
+  }
+
+ private:
+  plan_input input;
+  pack_sizes storage_sizes;
+  std::vector<prepared_compression_region> regions;
+  std::vector<block_batch> batches;
+  std::vector<block_descriptor> blocks;
+  std::optional<rmm::device_uvector<block_descriptor>> d_blocks;
+  std::vector<pack_window> windows;  ///< Block windows, or copy batch windows when uncompressed
+  std::size_t max_window_bytes        = 0;
+  std::size_t max_window_output_bytes = 0;  ///< Bound on a block window's compacted output
+  std::size_t max_window_blocks       = 0;
+  /// Copies of the staged blocks into their windows, and the first copy of each window
+  std::unique_ptr<rmm::device_uvector<dst_buf_info>> staging_copies;
+  std::vector<std::size_t> window_staging_copies;
+
+  /// Copies the table into `destination`, one staged window at a time for host destinations.
+  [[nodiscard]] pack_result pack_uncompressed(std::span<uint8_t> destination,
+                                              bool to_host,
+                                              cudf::memory_resources mr) const
+  {
+    auto& state = *input.state;
+    if (to_host) {
+      auto const stream = state.get_stream();
+      rmm::device_buffer staging(max_window_bytes, stream, mr.get_temporary_mr());
+      for (auto const& window : windows) {
+        state.copy_window_into(window, static_cast<uint8_t*>(staging.data()));
+        CUDF_CUDA_TRY(cudf::detail::memcpy_async(
+          destination.data() + window.payload_offset, staging.data(), window.bytes, stream));
+      }
+    } else {
+      state.copy_into({destination.data(), destination.size()});
+    }
+    return {input.metadata, storage_sizes.uncompressed_payload_bytes};
+  }
+
+  /// Compresses each window of blocks into staging memory and compacts it into `destination`,
+  /// through a second staging buffer for host destinations.
+  [[nodiscard]] pack_result pack_compressed(std::span<uint8_t> destination,
+                                            bool to_host,
+                                            cudf::memory_resources mr) const
+  {
+    auto& state        = *input.state;
+    auto const stream  = state.get_stream();
+    auto const temp_mr = mr.get_temporary_mr();
+
+    auto const num_blocks  = blocks.size();
+    auto const table_bytes = num_blocks * sizeof(uint64_t);
+    auto const compacted_bytes =
+      to_host ? max_window_output_bytes + max_window_blocks * split_align : 0;
+    rmm::device_buffer staging(max_window_bytes + compacted_bytes, stream, temp_mr);
+    auto* const slots     = static_cast<uint8_t*>(staging.data());
+    auto* const compacted = slots + max_window_bytes;
+
+    rmm::device_uvector<device_span<uint8_t const>> inputs(num_blocks, stream, temp_mr);
+    rmm::device_uvector<device_span<uint8_t>> outputs(num_blocks, stream, temp_mr);
+    rmm::device_uvector<codec_exec_result> results(num_blocks, stream, temp_mr);
+    set_block_spans(*d_blocks, slots, inputs, outputs, results, stream, temp_mr);
+    // Raw blocks are copied straight from their input during compaction.
+    auto const compress_window = [&](std::size_t window_idx) {
+      auto const& window      = windows[window_idx];
+      auto const copies_begin = window_staging_copies[window_idx];
+      auto const copies_end   = window_staging_copies[window_idx + 1];
+      if (copies_end > copies_begin) {
+        state.copy_batches_into(device_span<dst_buf_info>{*staging_copies}.subspan(
+                                  copies_begin, copies_end - copies_begin),
+                                slots);
+      }
+      for (auto const& batch : batches) {
+        auto const begin = std::max(batch.block_begin, window.first_item);
+        auto const end   = std::min(batch.block_end, window.end_item);
+        if (begin >= end || batch.codec == pack_compression::none) { continue; }
+        compress_batch(batch,
+                       device_span{inputs}.subspan(begin, end - begin),
+                       device_span{outputs}.subspan(begin, end - begin),
+                       device_span{results}.subspan(begin, end - begin),
+                       stream,
+                       mr);
+      }
+    };
+
+    std::vector<uint64_t> table(num_blocks, 0);
+    std::vector<uint64_t> block_offsets(num_blocks, 0);
+    auto payload_bytes = table_bytes;
+    // The asynchronous uploads read these until the stream synchronizes on the next window's
+    // results.
+    std::vector<uint8_t const*> sources;
+    std::vector<uint8_t*> targets;
+    std::vector<std::size_t> copy_bytes;
+    sync_on_throw(stream, [&] {
+      for (std::size_t window_idx = 0; window_idx < windows.size(); ++window_idx) {
+        auto const& window = windows[window_idx];
+        compress_window(window_idx);
+        auto const h_results = cudf::detail::make_pinned_vector(
+          device_span<codec_exec_result const>{results}.subspan(
+            window.first_item, window.end_item - window.first_item),
+          stream);
+        auto const window_begin = payload_bytes;
+        sources.clear();
+        targets.clear();
+        copy_bytes.clear();
+        for (auto block_idx = window.first_item; block_idx < window.end_item; ++block_idx) {
+          auto const& block  = blocks[block_idx];
+          auto const& region = regions[block.region];
+          auto const& result = h_results[block_idx - window.first_item];
+          auto const is_raw  = is_stored_raw(block, region, result);
+          auto const bytes   = is_raw ? block.input_bytes : result.bytes_written;
+          payload_bytes =
+            cudf::util::round_up_safe(payload_bytes, is_raw ? sizeof(uint64_t) : region.alignment);
+          block_offsets[block_idx] = payload_bytes;
+          table[block_idx]         = is_raw ? (raw_block_flag | bytes) : bytes;
+          sources.push_back(is_raw ? block.input_in(slots) : slots + block.window_offset);
+          targets.push_back(to_host ? compacted + (payload_bytes - window_begin)
+                                    : destination.data() + payload_bytes);
+          copy_bytes.push_back(bytes);
+          payload_bytes += bytes;
+        }
+        auto const d_sources = cudf::detail::make_device_uvector_async(sources, stream, temp_mr);
+        auto const d_targets = cudf::detail::make_device_uvector_async(targets, stream, temp_mr);
+        auto const d_copy_bytes =
+          cudf::detail::make_device_uvector_async(copy_bytes, stream, temp_mr);
+        cudf::detail::batched_memcpy_async(
+          d_sources.begin(), d_targets.begin(), d_copy_bytes.begin(), d_sources.size(), stream);
+        if (to_host) {
+          CUDF_CUDA_TRY(cudf::detail::memcpy_async(
+            destination.data() + window_begin, compacted, payload_bytes - window_begin, stream));
+        }
+      }
+    });
+    if (to_host) {
+      std::memcpy(destination.data(), table.data(), table_bytes);
+    } else {
+      cudf::detail::cuda_memcpy_async<uint64_t>(
+        device_span{reinterpret_cast<uint64_t*>(destination.data()), num_blocks}, table, stream);
+    }
+    stream.sync();
+
+    return {make_compression_metadata(input.metadata,
+                                      storage_sizes.uncompressed_payload_bytes,
+                                      make_compression_entries(regions, table),
+                                      block_offsets),
+            payload_bytes};
+  }
+
+  void plan_copy_windows(std::size_t window_budget)
+  {
+    // The destination kind is known only in pack_into(), so any uncompressed plan must be able to
+    // stage host output, one window of copy batches at a time.
+    windows = input.state->compute_pack_windows(window_budget);
+    for (auto const& window : windows) {
+      max_window_bytes = std::max(max_window_bytes, window.bytes);
+    }
+  }
+
+  /// Resolves the codec and block size of each region, staging the input when needed.
+  void plan_regions(std::span<compression_region_layout const> layouts,
+                    std::span<pack_region const> configured_regions,
+                    pack_options const& options)
+  {
+    CUDF_EXPECTS(configured_regions.empty() || configured_regions.size() == layouts.size(),
+                 "Region configuration does not match the prepared layout");
+    auto const uncompressed_bytes = input.state->get_total_contiguous_size();
+    auto const window_budget      = options.staging_buffer_bytes;
+    auto const raw_block_bytes =
+      std::min(max_raw_block_bytes, window_budget) / split_align * split_align;
+
+    auto const configured_codec = [&](std::size_t index) {
+      return configured_regions.empty() ? options.compression : configured_regions[index].codec;
+    };
+    std::vector<pack_compression> codecs(layouts.size());
+    std::ranges::transform(
+      std::views::iota(std::size_t{0}, layouts.size()), codecs.begin(), [&](auto index) {
+        auto const codec     = configured_codec(index);
+        auto const requested = codec == pack_compression::automatic
+                                 ? select_automatic_compression(layouts[index])
+                                 : codec;
+        CUDF_EXPECTS(is_concrete_codec(requested),
+                     "Unsupported pack compression codec",
+                     std::invalid_argument);
+        return requested;
+      });
+    // Codecs read their input with aligned loads, so a misaligned source must be staged.
+    auto const is_direct = [&](std::size_t index) {
+      auto const source = reinterpret_cast<std::uintptr_t>(layouts[index].direct_source);
+      return source != 0 && (codecs[index] == pack_compression::none ||
+                             source % block_alignment(codecs[index]) == 0);
+    };
+    // A packed input is already in payload layout, so regions are compressed from it in place.
+    // Other regions are staged one window at a time.
+    auto const region_source = [&](std::size_t region_index) -> uint8_t const* {
+      auto const& layout = layouts[region_index];
+      if (!input.packed_source.empty()) {
+        return input.packed_source.data() + layout.uncompressed_offset;
+      }
+      return is_direct(region_index) ? layout.direct_source : nullptr;
+    };
+
+    std::size_t uncompressed_end = 0;
+    regions.reserve(layouts.size());
+    for (std::size_t region_index = 0; region_index < layouts.size(); ++region_index) {
+      auto const& layout = layouts[region_index];
+      CUDF_EXPECTS(layout.uncompressed_offset == uncompressed_end,
+                   "Prepared compression regions do not cover a contiguous payload");
+      uncompressed_end = layout.uncompressed_offset + layout.uncompressed_bytes;
+
+      auto const automatic = configured_codec(region_index) == pack_compression::automatic;
+      auto const requested = codecs[region_index];
+
+      auto block_bytes = raw_block_bytes;
+      auto cascaded    = type_id::UINT8;
+      if (requested != pack_compression::none) {
+        // Region sizes are multiples of split_align, so every block is a whole number of values.
+        // Half the staging buffer leaves room for a block's worst-case compressed size.
+        block_bytes = std::max(
+          split_align,
+          std::min(
+            {compression_block_bytes, max_allowed_block_bytes(requested), window_budget / 2}) /
+            split_align * split_align);
+        cascaded = cascaded_type(layout.type, layout.kind == pack_region_kind::validity);
+      }
+      regions.emplace_back(layout,
+                           region_source(region_index),
+                           requested,
+                           cascaded,
+                           automatic,
+                           block_bytes,
+                           cudf::util::div_rounding_up_safe(layout.data_bytes, block_bytes));
+    }
+    CUDF_EXPECTS(uncompressed_end == uncompressed_bytes,
+                 "Prepared compression regions do not cover the complete payload");
+  }
+
+  /// Groups regions into batches by codec and lays out their blocks batch by batch.
+  void plan_compression_blocks()
+  {
+    // Blocks of all regions that share a codec, and for Cascaded its options, form one batch.
+    std::vector<std::size_t> region_batch;
+    for (auto const& region : regions) {
+      auto const batch = std::ranges::find_if(batches, [&](auto const& item) {
+        return item.codec == region.compression && (item.codec != pack_compression::cascaded ||
+                                                    item.cascaded_type == region.cascaded_type);
+      });
+      region_batch.push_back(batch - batches.begin());
+      if (batch == batches.end()) {
+        batches.emplace_back(region.compression, region.cascaded_type);
+      }
+      auto& target           = batches[region_batch.back()];
+      target.max_block_bytes = std::max(target.max_block_bytes, region.block_bytes);
+      target.total_bytes += region.layout.data_bytes;
+    }
+    for (std::size_t batch_idx = 0; batch_idx < batches.size(); ++batch_idx) {
+      auto const is_raw     = batches[batch_idx].codec == pack_compression::none;
+      auto const slot_bytes = is_raw ? 0 : max_compressed_block_bytes(batches[batch_idx]);
+      auto const alignment  = is_raw ? sizeof(uint64_t) : block_alignment(batches[batch_idx].codec);
+      batches[batch_idx].block_begin = blocks.size();
+      for (std::size_t region_idx = 0; region_idx < regions.size(); ++region_idx) {
+        if (region_batch[region_idx] != batch_idx) { continue; }
+        auto& region       = regions[region_idx];
+        region.block_begin = blocks.size();
+        region.alignment   = alignment;
+        for (std::size_t offset = 0; offset < region.layout.data_bytes;
+             offset += region.block_bytes) {
+          auto const bytes = std::min(region.block_bytes, region.layout.data_bytes - offset);
+          blocks.emplace_back(region.source != nullptr ? region.source + offset : nullptr,
+                              bytes,
+                              is_raw ? bytes : slot_bytes,
+                              region_idx,
+                              is_raw);
+        }
+      }
+      batches[batch_idx].block_end = blocks.size();
+    }
+  }
+
+  /**
+   * @brief Groups blocks, starting at `payload_offset`, into staging windows of worst-case block
+   * slots and staged inputs, and returns the destination capacity.
+   */
+  [[nodiscard]] std::size_t plan_compression_windows(std::size_t payload_offset,
+                                                     std::size_t window_budget,
+                                                     cudf::memory_resources mr)
+  {
+    // A slot also fits the raw block, which bounds output with uncompressed fallback.
+    auto destination_bytes = payload_offset;
+    std::vector<dst_buf_info> copies;
+    std::size_t window_output_bytes = 0;
+    for (std::size_t block_idx = 0; block_idx < blocks.size(); ++block_idx) {
+      auto& block = blocks[block_idx];
+      auto const slot_bytes =
+        cudf::util::round_up_safe(std::max(block.output_bytes, block.input_bytes), split_align);
+      // A raw block is staged into its slot, which no codec writes, and otherwise compacted
+      // straight from its source, so it needs no slot.
+      auto const is_staged     = block.input == nullptr;
+      auto const working_bytes = !block.is_raw || is_staged ? slot_bytes : std::size_t{0};
+      auto const staged_bytes =
+        is_staged && !block.is_raw ? cudf::util::round_up_safe(block.input_bytes, split_align) : 0;
+      CUDF_EXPECTS(slot_bytes + staged_bytes <= window_budget,
+                   "The staging buffer is too small for the compression block size");
+      // Host destinations also compact each window's output, raw blocks included, into staging.
+      if (windows.empty() || windows.back().bytes + working_bytes + staged_bytes > window_budget ||
+          window_output_bytes + slot_bytes > window_budget) {
+        windows.emplace_back(block_idx, block_idx, destination_bytes, 0);
+        window_staging_copies.push_back(copies.size());
+        window_output_bytes = 0;
+      }
+      auto& window        = windows.back();
+      block.window_offset = window.bytes;
+      block.staged_offset = block.is_raw ? block.window_offset : block.window_offset + slot_bytes;
+      if (is_staged) {
+        auto const& region = regions[block.region];
+        copies.push_back(staging_copy(region.layout.copy,
+                                      block_idx - region.block_begin,
+                                      region.block_bytes,
+                                      block.staged_offset));
+      }
+      destination_bytes += slot_bytes;
+      window.end_item = block_idx + 1;
+      window.bytes += working_bytes + staged_bytes;
+      window_output_bytes += slot_bytes;
+      max_window_bytes        = std::max(max_window_bytes, window.bytes);
+      max_window_output_bytes = std::max(max_window_output_bytes, window_output_bytes);
+      max_window_blocks       = std::max(max_window_blocks, window.end_item - window.first_item);
+    }
+    window_staging_copies.push_back(copies.size());
+    if (!copies.empty()) {
+      staging_copies = std::make_unique<rmm::device_uvector<dst_buf_info>>(
+        cudf::detail::make_device_uvector(copies, input.state->get_stream(), mr.get_output_mr()));
+    }
+    return destination_bytes;
+  }
+};
+
+struct pack_plan_builder::impl {
+  impl(plan_input&& input, pack_options options, cudf::memory_resources mr)
+    : input(std::move(input)),
+      options(std::move(options)),
+      mr(std::move(mr)),
+      layouts(this->input.state->compute_compression_regions())
+  {
+    regions.reserve(layouts.size());
+    std::ranges::transform(
+      std::views::iota(std::size_t{0}, layouts.size()),
+      std::back_inserter(regions),
+      [&](std::size_t i) {
+        auto const& layout = layouts[i];
+        return pack_region{
+          pack_region_info{
+            i, layout.column_path, layout.kind, layout.type, layout.uncompressed_bytes},
+          this->options.compression};
+      });
+  }
+
+  plan_input input;
+  pack_options options;
+  cudf::memory_resources mr;
+  std::vector<compression_region_layout> layouts;
+  std::vector<pack_region> regions;
+};
+
+pack_plan::pack_plan(std::unique_ptr<impl>&& implementation) : _impl(std::move(implementation)) {}
+
+pack_plan::pack_plan(pack_plan&&) noexcept            = default;
+pack_plan& pack_plan::operator=(pack_plan&&) noexcept = default;
+pack_plan::~pack_plan()                               = default;
+
+pack_plan_builder::pack_plan_builder(std::unique_ptr<impl>&& implementation)
+  : _impl(std::move(implementation))
+{
+}
+
+pack_plan_builder::pack_plan_builder(pack_plan_builder&&) noexcept            = default;
+pack_plan_builder& pack_plan_builder::operator=(pack_plan_builder&&) noexcept = default;
+pack_plan_builder::~pack_plan_builder()                                       = default;
+
+std::span<pack_region> pack_plan_builder::regions()
+{
+  CUDF_EXPECTS(_impl != nullptr, "Cannot inspect a moved-from pack plan builder");
+  return _impl->regions;
+}
+
+std::span<pack_region const> pack_plan_builder::regions() const
+{
+  CUDF_EXPECTS(_impl != nullptr, "Cannot inspect a moved-from pack plan builder");
+  return _impl->regions;
+}
+
+pack_plan pack_plan_builder::build() &&
+{
+  CUDF_FUNC_RANGE();
+  CUDF_EXPECTS(_impl != nullptr, "Cannot build a moved-from pack plan builder");
+  auto const builder = std::move(_impl);
+  return pack_plan{std::make_unique<pack_plan::impl>(std::move(builder->input),
+                                                     builder->options,
+                                                     std::move(builder->layouts),
+                                                     builder->regions,
+                                                     builder->mr)};
+}
+
+pack_sizes pack_plan::sizes() const
+{
+  CUDF_EXPECTS(_impl != nullptr, "Cannot inspect a moved-from pack plan");
+  return _impl->sizes();
+}
+
+pack_plan_builder make_pack_plan_builder(cudf::table_view const& input,
+                                         pack_options const& options,
+                                         cuda::stream_ref stream,
+                                         cudf::memory_resources mr)
+{
+  CUDF_FUNC_RANGE();
+  return pack_plan_builder{
+    std::make_unique<pack_plan_builder::impl>(plan_input{input, options, stream, mr}, options, mr)};
+}
+
+pack_plan_builder make_pack_plan_builder(cudf::packed_columns const& input,
+                                         pack_options const& options,
+                                         cuda::stream_ref stream,
+                                         cudf::memory_resources mr)
+{
+  CUDF_FUNC_RANGE();
+  return pack_plan_builder{
+    std::make_unique<pack_plan_builder::impl>(plan_input{input, options, stream, mr}, options, mr)};
+}
+
+pack_plan prepare_pack(cudf::table_view const& input,
+                       pack_options const& options,
+                       cuda::stream_ref stream,
+                       cudf::memory_resources mr)
+{
+  CUDF_FUNC_RANGE();
+  return pack_plan{
+    std::make_unique<pack_plan::impl>(plan_input{input, options, stream, mr}, options, mr)};
+}
+
+pack_result pack_into(pack_plan const& plan,
+                      std::span<uint8_t> destination,
+                      cudf::memory_resources mr)
+{
+  CUDF_FUNC_RANGE();
+  CUDF_EXPECTS(plan._impl != nullptr, "Cannot execute a moved-from pack plan");
+  auto const& impl  = *plan._impl;
+  auto const& sizes = impl.sizes();
+  CUDF_EXPECTS(destination.size() >= sizes.payload_bytes,
+               "The destination buffer is smaller than the prepared packed size",
+               std::invalid_argument);
+  CUDF_EXPECTS(
+    destination.empty() ||
+      reinterpret_cast<std::uintptr_t>(destination.data()) % sizes.payload_alignment == 0,
+    "The destination pointer does not satisfy the prepared payload alignment",
+    std::invalid_argument);
+  // Host destinations are written with DMA copies through bounded device staging memory, because
+  // kernel stores to pinned memory are several times slower.
+  auto const to_host = !destination.empty() && [&] {
+    auto const type = memory_type(destination.data());
+    return type == cudaMemoryTypeHost || type == cudaMemoryTypeUnregistered;
+  }();
+  return impl.pack(destination, to_host, mr);
+}
+
+table_view unpack_view(packed_data_view input)
+{
+  CUDF_FUNC_RANGE();
+  CUDF_EXPECTS(!has_compression_metadata(input.metadata),
+               "Compressed packed data cannot be exposed as a zero-copy table view",
+               std::invalid_argument);
+  if (input.metadata.empty()) { return table_view{}; }
+  CUDF_EXPECTS(
+    input.payload.empty() || memory_type(input.payload.data()) != cudaMemoryTypeUnregistered ||
+      [] {
+        int device = 0;
+        int access = 0;
+        CUDF_CUDA_TRY(cudaGetDevice(&device));
+        CUDF_CUDA_TRY(cudaDeviceGetAttribute(&access, cudaDevAttrPageableMemoryAccess, device));
+        return access != 0;
+      }(),
+    "A zero-copy view requires a device-accessible payload");
+  auto const view = cudf::detail::unpack(input.metadata, input.payload.data());
+  // String characters are followed by their offsets, so known sizes bound every buffer.
+  CUDF_EXPECTS(std::ranges::all_of(list_packed_buffers(packed_metadata_view{input.metadata}),
+                                   [&](auto const& buffer) {
+                                     return buffer.offset <= input.payload.size() &&
+                                            buffer.data_bytes.value_or(0) <=
+                                              input.payload.size() - buffer.offset;
+                                   }),
+               "Packed column buffer lies outside the payload");
+  return view;
+}
+
+namespace {
+
+std::unique_ptr<table> materialize_selection(packed_data_view input,
+                                             std::optional<std::span<size_type const>> selection,
+                                             cuda::stream_ref stream,
+                                             cudf::memory_resources mr)
+{
+  byte_range_loader loader{input.payload};
+  if (!selection.has_value()) { loader.request(input.payload); }
+  if (!has_compression_metadata(input.metadata)) {
+    return materialize_uncompressed(input, selection, loader, stream, mr);
+  }
+
+  // Blocks are aligned relative to the payload start, as decoders require.
+  CUDF_EXPECTS(reinterpret_cast<std::uintptr_t>(input.payload.data()) % split_align == 0,
+               "The compressed payload is not aligned to the packed payload alignment",
+               std::invalid_argument);
+  auto const parsed = read_compression_metadata(input.metadata);
+  CUDF_EXPECTS(!parsed.entries.empty(), "Compressed payload has no region directory");
+  auto const num_blocks = parsed.block_offsets.size();
+  CUDF_EXPECTS(num_blocks <= input.payload.size() / sizeof(uint64_t),
+               "Compressed payload is truncated relative to its block table");
+
+  auto const payload_contains = [&](uint64_t offset, uint64_t bytes) {
+    return offset <= input.payload.size() && bytes <= input.payload.size() - offset;
+  };
+  std::size_t uncompressed_end = 0;
+  for (auto const& entry : parsed.entries) {
+    CUDF_EXPECTS(entry.uncompressed_bytes > 0, "Compressed region has an empty extent");
+    CUDF_EXPECTS(entry.uncompressed_offset == uncompressed_end &&
+                   entry.uncompressed_bytes <= parsed.uncompressed_payload_bytes - uncompressed_end,
+                 "Compressed regions do not cover a valid contiguous output");
+    uncompressed_end += entry.uncompressed_bytes;
+    auto const compression = static_cast<pack_compression>(entry.compression);
+    CUDF_EXPECTS(is_concrete_codec(compression), "Compressed region declares an unsupported codec");
+    CUDF_EXPECTS(
+      entry.data_bytes <= entry.uncompressed_bytes &&
+        (entry.data_bytes == 0 || entry.block_bytes > 0) &&
+        entry.num_blocks == (entry.data_bytes == 0 ? 0
+                                                   : cudf::util::div_rounding_up_safe(
+                                                       entry.data_bytes, entry.block_bytes)) &&
+        entry.block_begin <= num_blocks && entry.num_blocks <= num_blocks - entry.block_begin,
+      "Compressed region has an invalid block directory");
+  }
+  CUDF_EXPECTS(uncompressed_end == parsed.uncompressed_payload_bytes,
+               "Compressed regions do not cover the complete output");
+
+  auto const* const block_table = reinterpret_cast<uint64_t const*>(input.payload.data());
+  // Host payloads are read in place once the stream has written them.
+  if (loader.is_host_accessible()) { stream.sync(); }
+  auto const copied_block_sizes = loader.is_host_accessible()
+                                    ? std::nullopt
+                                    : std::optional{cudf::detail::make_pinned_vector(
+                                        device_span{block_table, num_blocks}, stream)};
+  auto const block_sizes =
+    copied_block_sizes.has_value()
+      ? std::span<uint64_t const>{copied_block_sizes->data(), copied_block_sizes->size()}
+      : std::span<uint64_t const>{block_table, num_blocks};
+
+  std::vector<decompression_task> tasks;
+  auto const find_or_add_task = [&](pack_compression codec, type_id cascaded_type) -> auto& {
+    auto iter = std::ranges::find_if(tasks, [&](auto const& item) {
+      return item.codec == codec && item.cascaded_type == cascaded_type;
+    });
+    if (iter == tasks.end()) {
+      iter = tasks.insert(tasks.end(), decompression_task{codec, cascaded_type});
+    }
+    return *iter;
+  };
+  auto submit_decompression = [&](compression_metadata_entry const& entry, void* destination) {
+    auto const compression = static_cast<pack_compression>(entry.compression);
+    auto const cascaded =
+      compression == pack_compression::cascaded
+        ? cascaded_type(static_cast<type_id>(entry.type), entry.is_validity != 0)
+        : type_id::UINT8;
+    auto* const output   = static_cast<uint8_t*>(destination);
+    auto const block_end = entry.block_begin + entry.num_blocks;
+    for (auto block_idx = entry.block_begin; block_idx < block_end; ++block_idx) {
+      auto const offset   = (block_idx - entry.block_begin) * entry.block_bytes;
+      auto const expected = std::min<std::size_t>(entry.block_bytes, entry.data_bytes - offset);
+      auto const is_raw   = (block_sizes[block_idx] & raw_block_flag) != 0;
+      auto const bytes    = block_sizes[block_idx] & ~raw_block_flag;
+      CUDF_EXPECTS(
+        (is_raw ? bytes == expected : compression != pack_compression::none && bytes > 0) &&
+          payload_contains(parsed.block_offsets[block_idx], bytes),
+        "Compressed block is missing or truncated");
+      auto& task       = is_raw ? find_or_add_task(pack_compression::none, type_id::UINT8)
+                                : find_or_add_task(compression, cascaded);
+      auto const block = input.payload.subspan(parsed.block_offsets[block_idx], bytes);
+      loader.request(block);
+      task.inputs.emplace_back(block.data(), block.size());
+      task.outputs.emplace_back(output + offset, expected);
+      task.max_block_bytes = std::max(task.max_block_bytes, expected);
+      task.total_bytes += expected;
+    }
+  };
+
+  auto const find_entry = [&](int64_t offset) {
+    return std::ranges::lower_bound(parsed.entries,
+                                    static_cast<uint64_t>(offset),
+                                    {},
+                                    &compression_metadata_entry::uncompressed_offset);
+  };
+  buffer_source const source{
+    [&](int64_t offset, std::size_t required_bytes, bool is_validity) {
+      CUDF_EXPECTS(offset >= 0, "Compressed column buffer has no packed offset");
+      auto const entry = find_entry(offset);
+      CUDF_EXPECTS(entry != parsed.entries.end() &&
+                     std::cmp_equal(entry->uncompressed_offset, offset) &&
+                     (entry->is_validity != 0) == is_validity,
+                   "Compressed regions do not match the packed column schema at offset " +
+                     std::to_string(offset));
+      CUDF_EXPECTS(entry->data_bytes >= required_bytes,
+                   "Compressed region holds less data than its column buffer");
+      return static_cast<std::size_t>(entry->uncompressed_bytes);
+    },
+    [&](int64_t offset, device_span<uint8_t> destination) {
+      submit_decompression(*find_entry(offset), destination.data());
+    }};
+  auto const metadata = packed_metadata_view{parsed.legacy_metadata};
+  auto columns        = materialize_columns(metadata, selection, source, stream, mr);
+  loader.load(stream, mr);
+  for (auto& task : tasks) {
+    for (auto& block : task.inputs) {
+      block = {loader.device_pointer(block.data()), block.size()};
+    }
+  }
+
+  if (tasks.empty()) { return std::make_unique<table>(std::move(columns), metadata.num_rows()); }
+
+  // Cascaded tasks go first so that their value-type groups form one contiguous range of blocks.
+  auto const num_cascaded = static_cast<std::size_t>(
+    std::ranges::distance(tasks.begin(), std::ranges::stable_partition(tasks, [](auto const& item) {
+                                           return item.codec == pack_compression::cascaded;
+                                         }).begin()));
+
+  // Descriptors for all codecs go up in one copy and their results come back in one copy.
+  std::vector<std::size_t> task_offsets{0};
+  std::vector<device_span<uint8_t const>> inputs;
+  std::vector<device_span<uint8_t>> outputs;
+  for (auto const& task : tasks) {
+    inputs.insert(inputs.end(), task.inputs.begin(), task.inputs.end());
+    outputs.insert(outputs.end(), task.outputs.begin(), task.outputs.end());
+    task_offsets.push_back(inputs.size());
+  }
+  auto const h_results = sync_on_throw(stream, [&] {
+    auto const temp_mr   = mr.get_temporary_mr();
+    auto const d_inputs  = cudf::detail::make_device_uvector_async(inputs, stream, temp_mr);
+    auto const d_outputs = cudf::detail::make_device_uvector_async(outputs, stream, temp_mr);
+    rmm::device_uvector<codec_exec_result> results(inputs.size(), stream, temp_mr);
+    thrust::fill(rmm::exec_policy_nosync(stream, temp_mr),
+                 results.begin(),
+                 results.end(),
+                 codec_exec_result{0, codec_status::FAILURE});
+
+    auto const spans = [&](std::size_t begin, std::size_t end) {
+      auto const count = end - begin;
+      return std::tuple{device_span{d_inputs}.subspan(begin, count),
+                        device_span{d_outputs}.subspan(begin, count),
+                        device_span{results}.subspan(begin, count)};
+    };
+    if (num_cascaded > 0) {
+      auto const [d_in, d_out, d_results] = spans(0, task_offsets[num_cascaded]);
+      io::detail::nvcomp::batched_cascaded_decompress(
+        d_in, d_out, d_results, {task_offsets.data(), num_cascaded + 1}, stream, mr);
+    }
+    for (auto i = num_cascaded; i < tasks.size(); ++i) {
+      auto const [d_in, d_out, d_results] = spans(task_offsets[i], task_offsets[i + 1]);
+      decompress_batch(tasks[i].codec,
+                       d_in,
+                       d_out,
+                       d_results,
+                       tasks[i].max_block_bytes,
+                       tasks[i].total_bytes,
+                       stream,
+                       mr);
+    }
+    return cudf::detail::make_pinned_vector(results, stream);
+  });
+  for (std::size_t i = 0; i < tasks.size(); ++i) {
+    if (tasks[i].codec == pack_compression::none) { continue; }
+    CUDF_EXPECTS(std::ranges::all_of(std::views::iota(task_offsets[i], task_offsets[i + 1]),
+                                     [&](std::size_t k) {
+                                       return h_results[k].status == codec_status::SUCCESS &&
+                                              h_results[k].bytes_written == outputs[k].size();
+                                     }),
+                 "Decompression failed");
+  }
+  return std::make_unique<table>(std::move(columns), metadata.num_rows());
+}
+
+}  // namespace
+
+std::unique_ptr<table> materialize(packed_data_view input,
+                                   cuda::stream_ref stream,
+                                   cudf::memory_resources mr)
+{
+  CUDF_FUNC_RANGE();
+  return materialize_selection(input, std::nullopt, stream, mr);
+}
+
+std::unique_ptr<table> materialize(packed_data_view input,
+                                   std::span<size_type const> column_indices,
+                                   cuda::stream_ref stream,
+                                   cudf::memory_resources mr)
+{
+  CUDF_FUNC_RANGE();
+  return materialize_selection(input, column_indices, stream, mr);
+}
+
+std::vector<pack_region_info> get_packed_region_info(std::span<uint8_t const> metadata)
+{
+  CUDF_FUNC_RANGE();
+  auto const parsed = has_compression_metadata(metadata)
+                        ? std::optional{read_compression_metadata(metadata)}
+                        : std::nullopt;
+  auto const legacy = parsed.has_value() ? parsed->legacy_metadata : metadata;
+  if (legacy.empty()) { return {}; }
+
+  auto buffers = list_packed_buffers(packed_metadata_view{legacy});
+  // An empty buffer shares its offset with the buffer after it, and the stable sort keeps it first.
+  std::ranges::stable_sort(buffers, {}, &packed_buffer::offset);
+
+  std::vector<pack_region_info> regions;
+  regions.reserve(buffers.size());
+  for (std::size_t i = 0; i < buffers.size(); ++i) {
+    auto& buffer = buffers[i];
+    // String characters always precede their offsets, so the last buffer has a known size.
+    CUDF_EXPECTS(i + 1 < buffers.size() || parsed.has_value() || buffer.data_bytes.has_value(),
+                 "Packed metadata is malformed");
+    auto const end = i + 1 < buffers.size() ? buffers[i + 1].offset
+                     : parsed.has_value()
+                       ? parsed->uncompressed_payload_bytes
+                       : cudf::util::round_up_safe(buffer.offset + *buffer.data_bytes, split_align);
+    CUDF_EXPECTS(end >= buffer.offset, "Packed metadata is malformed");
+    if (end == buffer.offset) { continue; }
+    buffer.info.region_index       = regions.size();
+    buffer.info.uncompressed_bytes = end - buffer.offset;
+    regions.push_back(std::move(buffer.info));
+  }
+  CUDF_EXPECTS(!parsed.has_value() || regions.size() == parsed->entries.size(),
+               "Compressed-region metadata does not match the column metadata");
+  return regions;
+}
+
+}  // namespace experimental
 
 };  // namespace cudf

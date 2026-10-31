@@ -1123,7 +1123,26 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * @param isPtx is the code of the function ptx? true or C/C++ false.
    */
   public final ColumnVector transform(String udf, boolean isPtx) {
-    return new ColumnVector(transform(getNativeView(), udf, isPtx));
+    return transform(udf, isPtx, DType.INT32);
+  }
+
+  /**
+   * Transform a vector using a custom function, producing a column of the given type.  Be careful
+   * this is not simple to do.  You need to be positive you know what type of data you are
+   * processing and how the data is laid out.  This also only works on fixed length types.
+   * @param udf This function will be applied to every element in the vector
+   * @param isPtx is the code of the function ptx? true or C/C++ false.
+   * @param outputType the type of the output column. The type of the UDF's output parameter
+   *                   must match it. Only fixed-width types are supported.
+   * @throws IllegalArgumentException if outputType is not a fixed-width type
+   */
+  public final ColumnVector transform(String udf, boolean isPtx, DType outputType) {
+    if (outputType.getSizeInBytes() == 0) {
+      throw new IllegalArgumentException(
+          "transform only supports fixed-width output types, got " + outputType);
+    }
+    return new ColumnVector(transform(getNativeView(), udf, isPtx,
+        outputType.getTypeId().getNativeId(), outputType.getScale()));
   }
 
   /**
@@ -5178,7 +5197,8 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
 
   private static native long containsVector(long valuesHandle, long searchSpaceHandle) throws CudfException;
 
-  private static native long transform(long viewHandle, String udf, boolean isPtx);
+  private static native long transform(long viewHandle, String udf, boolean isPtx,
+      int outputTypeId, int outputScale);
 
   private static native long clamper(long nativeView, long loScalarHandle, long loScalarReplaceHandle,
                                      long hiScalarHandle, long hiScalarReplaceHandle);

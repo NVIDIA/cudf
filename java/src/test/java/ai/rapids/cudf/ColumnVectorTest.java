@@ -137,6 +137,65 @@ public class ColumnVectorTest extends CudfTestBase {
   }
 
   @Test
+  void testTransformVectorInt64Output() {
+    String udf = "__device__ inline void f(" +
+        "long long* output," +
+        "int input" +
+        "){" +
+        "*output = static_cast<long long>(input) * input;" +
+        "}";
+    try (ColumnVector cv = ColumnVector.fromBoxedInts(2, null, Integer.MAX_VALUE);
+         ColumnVector result = cv.transform(udf, false, DType.INT64);
+         ColumnVector expected = ColumnVector.fromBoxedLongs(
+             4L, null, (long) Integer.MAX_VALUE * Integer.MAX_VALUE)) {
+      assertColumnsAreEqual(expected, result);
+    }
+  }
+
+  @Test
+  void testTransformVectorInt64OutputFromFloat64() {
+    String udf = "__device__ inline void f(" +
+        "long long* output," +
+        "double input" +
+        "){" +
+        "*output = static_cast<long long>(input * 2.0);" +
+        "}";
+    try (ColumnVector cv = ColumnVector.fromBoxedDoubles(1.5, null, -3.25);
+         ColumnVector result = cv.transform(udf, false, DType.INT64);
+         ColumnVector expected = ColumnVector.fromBoxedLongs(3L, null, -6L)) {
+      assertColumnsAreEqual(expected, result);
+    }
+  }
+
+  @Test
+  void testTransformVectorFloat64Output() {
+    String udf = "__device__ inline void f(" +
+        "double* output," +
+        "double input" +
+        "){" +
+        "*output = input * 0.5 + 1.0;" +
+        "}";
+    try (ColumnVector cv = ColumnVector.fromBoxedDoubles(2.0, null, -3.0);
+         ColumnVector result = cv.transform(udf, false, DType.FLOAT64);
+         ColumnVector expected = ColumnVector.fromBoxedDoubles(2.0, null, -0.5)) {
+      assertColumnsAreEqual(expected, result);
+    }
+  }
+
+  @Test
+  void testTransformVectorRejectsNonFixedWidthOutput() {
+    try (ColumnVector cv = ColumnVector.fromBoxedInts(2, 3)) {
+      IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () ->
+          cv.transform(cuda, false, DType.STRING));
+      assertEquals("transform only supports fixed-width output types, got STRING", ex.getMessage());
+      ex = assertThrows(IllegalArgumentException.class, () -> cv.transform(cuda, false, DType.LIST));
+      assertEquals("transform only supports fixed-width output types, got LIST", ex.getMessage());
+      ex = assertThrows(IllegalArgumentException.class, () -> cv.transform(cuda, false, DType.STRUCT));
+      assertEquals("transform only supports fixed-width output types, got STRUCT", ex.getMessage());
+    }
+  }
+
+  @Test
   void testDistinctCount() {
     try (ColumnVector cv = ColumnVector.fromBoxedLongs(5L, 3L, null, null, 5L)) {
       assertEquals(3, cv.distinctCount());

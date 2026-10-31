@@ -13,6 +13,8 @@
 #include <cudf_test/random.hpp>
 #include <cudf_test/testing_main.hpp>
 
+#include <cudf/detail/utilities/buffer_factories.hpp>
+#include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/json.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/utilities/default_stream.hpp>
@@ -635,10 +637,10 @@ TEST_F(JsonParserTest, ExtractColumn)
   cudf::io::json_reader_options default_options{};
 
   std::string const input = R"( [{"a":0.0, "b":1.0}, {"a":0.1, "b":1.1}, {"a":0.2, "b":1.2}] )";
-  auto const d_input      = cudf::detail::make_device_uvector_async(
-    cudf::host_span<char const>{input.c_str(), input.size()},
-    stream,
-    cudf::get_current_device_resource_ref());
+  auto const d_input =
+    cudf::detail::make_device_buffer_async(cudf::host_span<char const>{input.c_str(), input.size()},
+                                           stream,
+                                           cudf::get_current_device_resource_ref());
   // Get the JSON's tree representation
   auto const cudf_table = json_parser(d_input, default_options, stream, mr);
 
@@ -843,12 +845,12 @@ TEST_F(JsonTest, PostProcessTokenStream)
   thrust::copy(input.cbegin(), input.cend(), token_tuples);
 
   // Initialize device-side test data
-  auto const d_offsets = cudf::detail::make_device_uvector_async(
+  auto const d_offsets = cudf::detail::make_device_buffer_async(
     cudf::host_span<token_index_t const>{offsets.data(), offsets.size()},
     stream,
     cudf::get_current_device_resource_ref());
-  auto const d_tokens = cudf::detail::make_device_uvector_async(
-    tokens, stream, cudf::get_current_device_resource_ref());
+  auto const d_tokens =
+    cudf::detail::make_device_buffer_async(tokens, stream, cudf::get_current_device_resource_ref());
 
   // Run system-under-test
   auto [d_filtered_tokens, d_filtered_indices] =
@@ -892,7 +894,7 @@ TEST_P(JsonDelimiterParamTest, UTF_JSON)
   {"a":1,"b":Infinity,"c":[null], "d": {"year":-600,"author": "Kaniyan"}}])";
   std::replace(ascii_pass.begin(), ascii_pass.end(), '\n', delimiter);
 
-  auto const d_ascii_pass = cudf::detail::make_device_uvector(
+  auto const d_ascii_pass = cudf::detail::make_device_buffer(
     cudf::host_span<char const>{ascii_pass.c_str(), ascii_pass.size()},
     stream,
     cudf::get_current_device_resource_ref());
@@ -909,7 +911,7 @@ TEST_P(JsonDelimiterParamTest, UTF_JSON)
   {"a":1,"b":Infinity,"c":[null], "d": {"year":-600,"author": "filip ʒakotɛ"}}])";
   std::replace(utf_failed.begin(), utf_failed.end(), '\n', delimiter);
 
-  auto const d_utf_failed = cudf::detail::make_device_uvector(
+  auto const d_utf_failed = cudf::detail::make_device_buffer(
     cudf::host_span<char const>{utf_failed.c_str(), utf_failed.size()},
     stream,
     cudf::get_current_device_resource_ref());
@@ -926,10 +928,10 @@ TEST_P(JsonDelimiterParamTest, UTF_JSON)
   {"a":1,"b":NaN,"c":[null, null], "d": {"year": 2, "author": "filip ʒakotɛ"}}])";
   std::replace(utf_pass.begin(), utf_pass.end(), '\n', delimiter);
 
-  auto const d_utf_pass = cudf::detail::make_device_uvector(
-    cudf::host_span<char const>{utf_pass.c_str(), utf_pass.size()},
-    stream,
-    cudf::get_current_device_resource_ref());
+  auto const d_utf_pass =
+    cudf::detail::make_device_buffer(cudf::host_span<char const>{utf_pass.c_str(), utf_pass.size()},
+                                     stream,
+                                     cudf::get_current_device_resource_ref());
   CUDF_EXPECT_NO_THROW(json_parser(d_utf_pass, default_options, stream, mr));
 }
 
@@ -947,10 +949,10 @@ TEST_F(JsonParserTest, ExtractColumnWithQuotes)
   options.enable_keep_quotes(true);
 
   std::string const input = R"( [{"a":"0.0", "b":1.0}, {"b":1.1}, {"b":2.1, "a":"2.0"}] )";
-  auto const d_input      = cudf::detail::make_device_uvector_async(
-    cudf::host_span<char const>{input.c_str(), input.size()},
-    stream,
-    cudf::get_current_device_resource_ref());
+  auto const d_input =
+    cudf::detail::make_device_buffer_async(cudf::host_span<char const>{input.c_str(), input.size()},
+                                           stream,
+                                           cudf::get_current_device_resource_ref());
   // Get the JSON's tree representation
   auto const cudf_table = json_parser(d_input, options, stream, mr);
 
@@ -990,7 +992,7 @@ TEST_F(JsonParserTest, ExpectFailMixStructAndList)
 
   // libcudf does not currently support a mix of lists and structs.
   for (auto const& input : inputs_fail) {
-    auto const d_input = cudf::detail::make_device_uvector_async(
+    auto const d_input = cudf::detail::make_device_buffer_async(
       cudf::host_span<char const>{input.c_str(), input.size()},
       stream,
       cudf::get_current_device_resource_ref());
@@ -999,7 +1001,7 @@ TEST_F(JsonParserTest, ExpectFailMixStructAndList)
   }
 
   for (auto const& input : inputs_succeed) {
-    auto const d_input = cudf::detail::make_device_uvector_async(
+    auto const d_input = cudf::detail::make_device_buffer_async(
       cudf::host_span<char const>{input.c_str(), input.size()},
       stream,
       cudf::get_current_device_resource_ref());
@@ -1021,9 +1023,9 @@ TEST_F(JsonParserTest, EmptyString)
 
   std::string const input = R"([])";
   auto const d_input =
-    cudf::detail::make_device_uvector(cudf::host_span<char const>{input.c_str(), input.size()},
-                                      stream,
-                                      cudf::get_current_device_resource_ref());
+    cudf::detail::make_device_buffer(cudf::host_span<char const>{input.c_str(), input.size()},
+                                     stream,
+                                     cudf::get_current_device_resource_ref());
   // Get the JSON's tree representation
   auto const cudf_table = json_parser(d_input, default_options, stream, mr);
 
@@ -1410,9 +1412,9 @@ TEST_F(JsonTest, RejectsUnquotedValuesWithInvalidLeadingChar)
                                              token_t::StructEnd,
                                              token_t::LineEnd};
     std::vector<cuio_json::SymbolOffsetT> token_indices{0, 0, 1, 3, 5, 6, 6, 6, 7};
-    auto d_tokens = cudf::detail::make_device_uvector_async(
+    auto d_tokens = cudf::detail::make_device_buffer_async(
       tokens, stream, cudf::get_current_device_resource_ref());
-    auto d_token_indices = cudf::detail::make_device_uvector_async(
+    auto d_token_indices = cudf::detail::make_device_buffer_async(
       token_indices, stream, cudf::get_current_device_resource_ref());
 
     cuio_json::detail::validate_token_stream(d_input, d_tokens, d_token_indices, opts, stream);

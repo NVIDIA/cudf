@@ -647,6 +647,97 @@ TEST_F(JITExpressionTest, Rescale)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view(), VERBOSITY);
 }
 
+class JITLazyEvaluationTest : public JITExpressionTest {
+ protected:
+  column_wrapper<int32_t> a{10, 20, 30, 40, 50, 60};
+  column_wrapper<int32_t> b{2, 0, 5, 0, 10, 0};
+  column_wrapper<int32_t> zero{0, 0, 0, 0, 0, 0};
+  column_wrapper<int32_t> threshold{5, 5, 5, 5, 5, 5};
+  cudf::ast::tree tree{};
+  cudf::ast::column_reference a_ref{0};
+  cudf::ast::column_reference b_ref{1};
+  cudf::ast::column_reference zero_ref{2};
+  cudf::ast::column_reference threshold_ref{3};
+};
+
+TEST_F(JITLazyEvaluationTest, UnguardedDivisionFails)
+{
+  auto table = cudf::table_view{{a, b, zero, threshold}};
+  auto& div  = cudf::ast::jit::operation(tree, cudf::ast::jit::op::DIV_OVERFLOW, {a_ref, b_ref});
+
+  EXPECT_THROW(cudf::compute_column_jit(table, div), cudf::evaluation_error);
+}
+
+TEST_F(JITLazyEvaluationTest, IfElseSkipsUnselectedBranch)
+{
+  auto table    = cudf::table_view{{a, b, zero, threshold}};
+  auto& nonzero = cudf::ast::jit::operation(tree, cudf::ast::jit::op::NOT_EQUAL, {b_ref, zero_ref});
+  auto& div     = cudf::ast::jit::operation(tree, cudf::ast::jit::op::DIV_OVERFLOW, {a_ref, b_ref});
+  auto& select =
+    cudf::ast::jit::operation(tree, cudf::ast::jit::op::IF_ELSE, {div, zero_ref, nonzero});
+
+  auto expected = column_wrapper<int32_t>{5, 0, 6, 0, 5, 0};
+  auto result   = cudf::compute_column_jit(table, select);
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, result->view(), VERBOSITY);
+}
+
+TEST_F(JITLazyEvaluationTest, IfElseSkipsUnselectedBranchWithNulls)
+{
+  auto nullable_a = column_wrapper<int32_t>{{10, 20, 30, 40, 50, 60}, {1, 1, 0, 1, 1, 1}};
+  auto table      = cudf::table_view{{nullable_a, b, zero, threshold}};
+  auto& nonzero = cudf::ast::jit::operation(tree, cudf::ast::jit::op::NOT_EQUAL, {b_ref, zero_ref});
+  auto& div     = cudf::ast::jit::operation(tree, cudf::ast::jit::op::DIV_OVERFLOW, {a_ref, b_ref});
+  auto& select =
+    cudf::ast::jit::operation(tree, cudf::ast::jit::op::IF_ELSE, {div, zero_ref, nonzero});
+
+  auto expected = column_wrapper<int32_t>{{5, 0, 6, 0, 5, 0}, {1, 1, 0, 1, 1, 1}};
+  auto result   = cudf::compute_column_jit(table, select);
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view(), VERBOSITY);
+}
+
+TEST_F(JITLazyEvaluationTest, LogicalOperatorsSkipRightOperand)
+{
+  auto table    = cudf::table_view{{a, b, zero, threshold}};
+  auto& nonzero = cudf::ast::jit::operation(tree, cudf::ast::jit::op::NOT_EQUAL, {b_ref, zero_ref});
+  auto& is_zero = cudf::ast::jit::operation(tree, cudf::ast::jit::op::EQUAL, {b_ref, zero_ref});
+  auto& div     = cudf::ast::jit::operation(tree, cudf::ast::jit::op::DIV_OVERFLOW, {a_ref, b_ref});
+  auto& big = cudf::ast::jit::operation(tree, cudf::ast::jit::op::GREATER, {div, threshold_ref});
+
+  auto expected_and = column_wrapper<bool>{false, false, true, false, false, false};
+  auto expected_or  = column_wrapper<bool>{false, true, true, true, false, true};
+  for (auto and_op : {cudf::ast::jit::op::LOGICAL_AND, cudf::ast::jit::op::NULL_LOGICAL_AND}) {
+    auto& conjunction = cudf::ast::jit::operation(tree, and_op, {nonzero, big});
+    auto result       = cudf::compute_column_jit(table, conjunction);
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_and, result->view(), VERBOSITY);
+  }
+  for (auto or_op : {cudf::ast::jit::op::LOGICAL_OR, cudf::ast::jit::op::NULL_LOGICAL_OR}) {
+    auto& disjunction = cudf::ast::jit::operation(tree, or_op, {is_zero, big});
+    auto result       = cudf::compute_column_jit(table, disjunction);
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_or, result->view(), VERBOSITY);
+  }
+}
+
+TEST_F(JITLazyEvaluationTest, SharedSubexpressionsAcrossBranches)
+{
+  auto table    = cudf::table_view{{a, b, zero, threshold}};
+  auto& sum     = cudf::ast::jit::operation(tree, cudf::ast::jit::op::ADD, {a_ref, b_ref});
+  auto& in_cond = cudf::ast::jit::operation(tree, cudf::ast::jit::op::SUB, {sum, a_ref});
+  auto& is_zero = cudf::ast::jit::operation(tree, cudf::ast::jit::op::EQUAL, {in_cond, zero_ref});
+  auto& scaled  = cudf::ast::jit::operation(tree, cudf::ast::jit::op::MUL, {sum, a_ref});
+  auto& in_else = cudf::ast::jit::operation(tree, cudf::ast::jit::op::SUB, {sum, a_ref});
+  auto& select =
+    cudf::ast::jit::operation(tree, cudf::ast::jit::op::IF_ELSE, {scaled, in_else, is_zero});
+  auto& after = cudf::ast::jit::operation(tree, cudf::ast::jit::op::MUL, {sum, a_ref});
+  auto& total = cudf::ast::jit::operation(tree, cudf::ast::jit::op::ADD, {select, after});
+
+  auto expected = column_wrapper<int32_t>{122, 800, 1055, 3200, 3010, 7200};
+  auto result   = cudf::compute_column_jit(table, total);
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, result->view(), VERBOSITY);
+}
+
 TEST_F(JITExpressionTest, OverflowFused)
 {
   constexpr auto I32_MAX = std::numeric_limits<int32_t>::max();

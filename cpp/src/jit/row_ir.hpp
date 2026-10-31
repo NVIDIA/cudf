@@ -118,6 +118,9 @@ struct [[nodiscard]] instance_context {
   std::vector<var_info> input_vars_;           ///< The input variables for the IR
   std::vector<untyped_var_info> output_vars_;  ///< The output variables for the IR
   std::unordered_multimap<size_t, node const*> cse_nodes_;  ///< multimap of IR nodes
+  std::vector<std::pair<size_t, node const*>>
+    cse_log_;                             ///< nodes registered within the open conditional scopes
+  std::vector<size_t> cse_scope_starts_;  ///< offsets into `cse_log_` where the open scopes begin
   cuda::stream_ref stream_;  ///< The CUDA stream for any device operations during IR generation
   rmm::device_async_resource_ref
     mr_;  ///< The device memory resource for any device memory allocation during IR generation
@@ -187,6 +190,19 @@ struct [[nodiscard]] instance_context {
    * @param candidate Newly instantiated node
    */
   void add_cse_node(node const& candidate);
+
+  /**
+   * @brief Opens a scope for nodes that are evaluated conditionally.
+   *
+   * Nodes registered in the scope can only be reused by nodes in the same scope, since the code
+   * that computes them is not always executed.
+   */
+  void push_cse_scope();
+
+  /**
+   * @brief Closes the innermost conditional scope, dropping the nodes registered in it.
+   */
+  void pop_cse_scope();
 
   /**
    * @brief Generate a globally unique temporary variable identifier
@@ -463,6 +479,21 @@ struct [[nodiscard]] node {
    * @param sink The code sink to which the generated code is emitted
    */
   void emit_code(instance_context& ctx, target_info const& info, code_sink& sink);
+
+  /**
+   * @brief Whether the node only evaluates the arguments that its other arguments make necessary.
+   * @return true for `IF_ELSE` and the logical `AND` and `OR` operators
+   */
+  [[nodiscard]] bool is_lazy() const;
+
+  /**
+   * @brief Generate the code for a lazy IR node, which evaluates its conditional arguments in
+   * nested blocks.
+   * @param ctx The context within which the IR is instantiated
+   * @param info The target information
+   * @param sink The code sink to which the generated code is emitted
+   */
+  void emit_lazy_code(instance_context& ctx, target_info const& info, code_sink& sink);
 };
 
 /**

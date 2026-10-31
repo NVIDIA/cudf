@@ -392,6 +392,40 @@ public class CompiledExpressionTest extends CudfTestBase {
   }
 
   @Test
+  public void testIfElseTransform() {
+    try (Table t = new Table.TestBuilder()
+        .column(true, false, null, true)
+        .column(1, 2, 3, 4)
+        .column(10, 20, 30, 40)
+        .build()) {
+      TernaryOperation expr = new TernaryOperation(TernaryOperator.IF_ELSE,
+          new ColumnReference(0), new ColumnReference(1), new ColumnReference(2));
+      try (CompiledExpression compiledExpr = expr.compile();
+           ColumnVector actual = compiledExpr.computeColumn(t);
+           ColumnVector expected = ColumnVector.fromBoxedInts(1, 20, 30, 4)) {
+        assertColumnsAreEqual(expected, actual);
+      }
+    }
+  }
+
+  @Test
+  public void testJitIfElseTransform() {
+    try (Table t = new Table.TestBuilder()
+        .column(true, false, null, true)
+        .column(1, 2, 3, 4)
+        .column(10, 20, 30, 40)
+        .build()) {
+      TernaryOperation expr = new TernaryOperation(TernaryOperator.IF_ELSE,
+          new ColumnReference(0), new ColumnReference(1), new ColumnReference(2));
+      try (CompiledExpression compiledExpr = expr.compileJit();
+           ColumnVector actual = compiledExpr.computeColumn(t);
+           ColumnVector expected = ColumnVector.fromBoxedInts(1, 20, 30, 4)) {
+        assertColumnsAreEqual(expected, actual);
+      }
+    }
+  }
+
+  @Test
   public void testDecimalLiteralValidation() {
     Assertions.assertThrows(IllegalArgumentException.class,
         () -> Literal.ofDecimal(DType.INT32, BigInteger.ONE));

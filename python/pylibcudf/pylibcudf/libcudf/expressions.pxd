@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2024, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from libc.stdint cimport int32_t
 from libcpp.memory cimport unique_ptr
@@ -65,6 +65,8 @@ cdef extern from "cudf/ast/expressions.hpp" namespace "cudf::ast" nogil:
         RINT
         BIT_INVERT
         NOT
+        # Ternary operators
+        IF_ELSE
 
     cdef cppclass expression:
         pass
@@ -89,6 +91,12 @@ cdef extern from "cudf/ast/expressions.hpp" namespace "cudf::ast" nogil:
     cdef cppclass operation(expression):
         operation(ast_operator, const expression &)
         operation(ast_operator, const expression &, const expression&)
+        operation(
+            ast_operator,
+            const expression &,
+            const expression &,
+            const expression &
+        )
 
     cdef cppclass column_name_reference(expression):
         # column_name_reference is only meant for use in file I/O such as the

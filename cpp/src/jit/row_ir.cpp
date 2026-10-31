@@ -267,6 +267,7 @@ opcode as_opcode(ast::ast_operator op)
     case ast::ast_operator::NULL_LOGICAL_AND: return opcode::NULL_LOGICAL_AND;
     case ast::ast_operator::LOGICAL_OR: return opcode::LOGICAL_OR;
     case ast::ast_operator::NULL_LOGICAL_OR: return opcode::NULL_LOGICAL_OR;
+    case ast::ast_operator::IF_ELSE: return opcode::IF_ELSE;
     case ast::ast_operator::IDENTITY: return opcode::IDENTITY;
     case ast::ast_operator::IS_NULL: return opcode::IS_NULL;
     case ast::ast_operator::SIN: return opcode::SIN;
@@ -486,6 +487,22 @@ node const* instance_context::find_equivalent(node const& candidate) const
 void instance_context::add_cse_node(node const& candidate)
 {
   cse_nodes_.emplace(candidate.hash(), &candidate);
+  if (!cse_scope_starts_.empty()) { cse_log_.emplace_back(candidate.hash(), &candidate); }
+}
+
+void instance_context::push_cse_scope() { cse_scope_starts_.push_back(cse_log_.size()); }
+
+void instance_context::pop_cse_scope()
+{
+  auto const start = cse_scope_starts_.back();
+  cse_scope_starts_.pop_back();
+  for (auto it = cse_log_.begin() + static_cast<std::ptrdiff_t>(start); it != cse_log_.end();
+       ++it) {
+    auto [first, last] = cse_nodes_.equal_range(it->first);
+    cse_nodes_.erase(
+      std::find_if(first, last, [&](auto const& entry) { return entry.second == it->second; }));
+  }
+  cse_log_.resize(start);
 }
 
 std::string instance_context::make_tmp_id()
@@ -661,20 +678,41 @@ std::string to_cuda_type(cudf::data_type type, bool nullable)
   return nullable ? std::format("cuda::std::optional<{}>", name) : name;
 }
 
+bool node::is_lazy() const
+{
+  return op_ == opcode::IF_ELSE || op_ == opcode::LOGICAL_AND || op_ == opcode::NULL_LOGICAL_AND ||
+         op_ == opcode::LOGICAL_OR || op_ == opcode::NULL_LOGICAL_OR;
+}
+
 void node::instantiate(instance_context& ctx)
 {
-  for (auto& arg : args_) {
-    arg->instantiate(ctx);
-  }
-
   // check if an equivalent node has already been instantiated in this context. If so, alias the
-  // node.
+  // node. This is checked before the arguments are instantiated, since the arguments of a lazy node
+  // that is aliased must not be evaluated.
   if (auto equivalent = ctx.find_equivalent(*this)) {
     id_              = equivalent->id_;
     type_            = equivalent->type_;
     scale_reference_ = equivalent->scale_reference_;
     alias_           = equivalent;
     return;
+  }
+
+  if (is_lazy()) {
+    // The condition is the last argument of `IF_ELSE` and the first of the logical operators. All
+    // other arguments are conditionally evaluated, so nodes registered while instantiating them
+    // must not be reused outside of them.
+    auto const condition = op_ == opcode::IF_ELSE ? args_.size() - 1 : 0;
+    args_[condition]->instantiate(ctx);
+    for (size_t i = 0; i < args_.size(); ++i) {
+      if (i == condition) { continue; }
+      ctx.push_cse_scope();
+      args_[i]->instantiate(ctx);
+      ctx.pop_cse_scope();
+    }
+  } else {
+    for (auto& arg : args_) {
+      arg->instantiate(ctx);
+    }
   }
 
   id_ = ctx.make_tmp_id();
@@ -708,15 +746,20 @@ void node::instantiate(instance_context& ctx)
 
 void node::emit_code(instance_context& instance, target_info const& info, code_sink& sink)
 {
-  for (auto& arg : args_) {
-    arg->emit_code(instance, info, sink);
-  }
-
   if (alias_ != nullptr) {
     CUDF_EXPECTS(alias_->emitted_,
                  "Alias node has not been emitted yet. This should never happen.",
                  std::runtime_error);
     return;
+  }
+
+  if (is_lazy()) {
+    emit_lazy_code(instance, info, sink);
+    return;
+  }
+
+  for (auto& arg : args_) {
+    arg->emit_code(instance, info, sink);
   }
 
   switch (info.id) {
@@ -819,6 +862,61 @@ if(expected__{1}.has_value()) {{
   emitted_ = true;
 }
 
+void node::emit_lazy_code(instance_context& instance, target_info const& info, code_sink& sink)
+{
+  CUDF_EXPECTS(info.id == target::CUDA,
+               std::format("Unsupported target: {}", static_cast<int>(info.id)),
+               std::invalid_argument);
+
+  auto const nullable = instance.has_nulls();
+  auto const type     = to_cuda_type(type_, nullable);
+
+  if (op_ == opcode::IF_ELSE) {
+    auto& then_node      = *args_[0];
+    auto& else_node      = *args_[1];
+    auto& condition_node = *args_[2];
+    condition_node.emit_code(instance, info, sink);
+    sink.emit(std::format(
+      "{} {};\nif ({}) {{\n",
+      type,
+      id_,
+      nullable ? std::format("{}.value_or(false)", condition_node.id_) : condition_node.id_));
+    then_node.emit_code(instance, info, sink);
+    sink.emit(std::format("{} = {};\n}} else {{\n", id_, then_node.id_));
+    else_node.emit_code(instance, info, sink);
+    sink.emit(std::format("{} = {};\n}}\n", id_, else_node.id_));
+  } else {
+    auto& lhs                  = *args_[0];
+    auto& rhs                  = *args_[1];
+    auto const is_and          = op_ == opcode::LOGICAL_AND || op_ == opcode::NULL_LOGICAL_AND;
+    auto const propagates_null = op_ == opcode::LOGICAL_AND || op_ == opcode::LOGICAL_OR;
+    // The left operand decides the result if it is false for AND and true for OR. The operators
+    // that propagate nulls are also decided by a null left operand, but need the right operand to
+    // find out whether a valid left operand is outweighed by a null right operand.
+    auto const [decided, result] = [&]() -> std::pair<std::string, std::string> {
+      auto const value = is_and ? "false" : "true";
+      if (!nullable) { return {std::format("{}{}", is_and ? "!" : "", lhs.id_), value}; }
+      if (propagates_null) {
+        return {std::format("!{}.has_value()", lhs.id_), "cuda::std::nullopt"};
+      }
+      return {std::format("{0}.has_value() && {1}*{0}", lhs.id_, is_and ? "!" : ""), value};
+    }();
+    lhs.emit_code(instance, info, sink);
+    sink.emit(
+      std::format("{} {};\nif ({}) {{\n{} = {};\n}} else {{\n", type, id_, decided, id_, result));
+    rhs.emit_code(instance, info, sink);
+    sink.emit(
+      std::format("{} = cudf::detail::row_ir::evaluate<cudf::detail::row_ir::opcode::{}, "
+                  "cudf::error_policy::PROPAGATE>({}, {});\n}}\n",
+                  id_,
+                  get_op_info(op_, error_policy_).name,
+                  lhs.id_,
+                  rhs.id_));
+  }
+
+  emitted_ = true;
+}
+
 std::unique_ptr<row_ir::node> ast_converter::add_ir_node(ast::literal const& expr)
 {
   auto id = expr.is_scalar_column_view() ? instance_.add_input(expr.get_scalar_column_view())
@@ -850,6 +948,9 @@ std::unique_ptr<row_ir::node> ast_converter::add_ir_node(ast::operation const& e
   std::vector<std::unique_ptr<row_ir::node>> args;
   for (auto& operand : expr.get_operands()) {
     args.emplace_back(operand.get().accept(*this));
+  }
+  if (expr.get_operator() == ast::ast_operator::IF_ELSE) {
+    std::ranges::rotate(args, args.begin() + 1);
   }
   return std::make_unique<row_ir::node>(
     as_opcode(expr.get_operator()), std::nullopt, error_policy::PROPAGATE, std::move(args));

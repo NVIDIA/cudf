@@ -126,6 +126,7 @@ enum class jni_serialized_expression_type : int8_t {
   BINARY_OPERATION      = 4,
   COLUMN_NAME_REFERENCE = 5,
   JIT_OPERATION         = 6,
+  TERNARY_OPERATION     = 7,
 };
 
 /**
@@ -199,6 +200,19 @@ cudf::ast::ast_operator jni_to_binary_operator(jbyte jni_op_value)
     case 21: return cudf::ast::ast_operator::LOGICAL_OR;
     case 22: return cudf::ast::ast_operator::NULL_LOGICAL_OR;
     default: throw std::invalid_argument("unexpected JNI AST binary operator value");
+  }
+}
+
+/**
+ * Convert a Java AST serialized byte representing an AST ternary operator into the
+ * corresponding libcudf AST operator.
+ * NOTE: This must be kept in sync with the enumeration in TernaryOperator.java!
+ */
+cudf::ast::ast_operator jni_to_ternary_operator(jbyte jni_op_value)
+{
+  switch (jni_op_value) {
+    case 0: return cudf::ast::ast_operator::IF_ELSE;
+    default: throw std::invalid_argument("unexpected JNI AST ternary operator value");
   }
 }
 
@@ -448,6 +462,17 @@ cudf::ast::operation const& compile_binary_expression(cudf::jni::ast::compiled_e
   return compiled_expr.add_operation(ast_op, left_child, right_child);
 }
 
+/** Decode a serialized AST ternary expression */
+cudf::ast::operation const& compile_ternary_expression(cudf::jni::ast::compiled_expr& compiled_expr,
+                                                       jni_serialized_ast& jni_ast)
+{
+  auto const ast_op                         = jni_to_ternary_operator(jni_ast.read_byte());
+  cudf::ast::expression const& first_child  = compile_expression(compiled_expr, jni_ast);
+  cudf::ast::expression const& second_child = compile_expression(compiled_expr, jni_ast);
+  cudf::ast::expression const& third_child  = compile_expression(compiled_expr, jni_ast);
+  return compiled_expr.add_operation(ast_op, first_child, second_child, third_child);
+}
+
 /** Decode a serialized JIT AST expression */
 cudf::ast::expression const& compile_jit_expression(cudf::jni::ast::compiled_expr& compiled_expr,
                                                     jni_serialized_ast& jni_ast)
@@ -527,6 +552,8 @@ cudf::ast::expression const& compile_expression(cudf::jni::ast::compiled_expr& c
       return compile_unary_expression(compiled_expr, jni_ast);
     case jni_serialized_expression_type::BINARY_OPERATION:
       return compile_binary_expression(compiled_expr, jni_ast);
+    case jni_serialized_expression_type::TERNARY_OPERATION:
+      return compile_ternary_expression(compiled_expr, jni_ast);
     case jni_serialized_expression_type::JIT_OPERATION:
       return compile_jit_expression(compiled_expr, jni_ast);
     default: throw std::invalid_argument("data is not a serialized AST expression");

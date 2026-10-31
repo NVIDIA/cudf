@@ -257,14 +257,36 @@ cdef class Operation(Expression):
         Left input expression (left operand)
     right: Expression, default None
         Right input expression (right operand).
-        You should only pass this if the input expression is a binary operation.
+        You should only pass this if the input expression is a binary or
+        ternary operation.
+    third: Expression, default None
+        Third input expression (third operand).
+        You should only pass this if the input expression is a ternary operation,
+        such as ``ASTOperator.IF_ELSE`` whose operands are
+        ``(condition, then, else)``.
     """
-    def __cinit__(self, ast_operator op, Expression left, Expression right=None):
+    def __cinit__(
+        self,
+        ast_operator op,
+        Expression left,
+        Expression right=None,
+        Expression third=None,
+    ):
+        if third is not None and right is None:
+            raise ValueError("third operand requires a right operand")
         self.left = left
         self.right = right
+        self.third = third
         if right is None:
             self.c_obj = <_expression_ptr> move(make_unique[libcudf_exp.operation](
                 op, dereference(left.c_obj)
+            ))
+        elif third is not None:
+            self.c_obj = <_expression_ptr> move(make_unique[libcudf_exp.operation](
+                op,
+                dereference(left.c_obj),
+                dereference(right.c_obj),
+                dereference(third.c_obj),
             ))
         else:
             self.c_obj = <_expression_ptr> move(make_unique[libcudf_exp.operation](

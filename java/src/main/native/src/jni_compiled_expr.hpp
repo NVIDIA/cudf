@@ -75,6 +75,14 @@ class compiled_expr {
     return expressions.emplace<cudf::ast::operation>(op, left, right);
   }
 
+  cudf::ast::operation const& add_operation(cudf::ast::ast_operator op,
+                                            cudf::ast::expression const& first,
+                                            cudf::ast::expression const& second,
+                                            cudf::ast::expression const& third)
+  {
+    return expressions.emplace<cudf::ast::operation>(op, first, second, third);
+  }
+
   template <typename F>
   cudf::ast::expression const& add_jit_expression(F&& factory)
   {

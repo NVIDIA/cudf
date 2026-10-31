@@ -109,8 +109,29 @@ jobs:
       sha: ${{ inputs.sha }}
       pure-conda: cuda_major
       matrix_type: nightly
+  python-build-cudf-polars-quent:
+    needs: ["build-details"]
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: read
+      pull-requests: read
+    secrets: inherit # zizmor: ignore[secrets-inherit]
+    uses: rapidsai/shared-workflows/.github/workflows/conda-python-build.yaml@main
+    with:
+      build_type: ${{ inputs.build_type || 'branch' }}
+      build-datetime: ${{ needs.build-details.outputs.build-datetime }}
+      branch: ${{ inputs.branch }}
+      date: ${{ inputs.date }}
+      script: ci/build_python_cudf_polars_quent.sh
+      sha: ${{ inputs.sha }}
+      # The package is abi3 and has no CUDA dependency, so build one per architecture:
+      # pick the entry with the oldest Python, then the oldest CUDA.
+      matrix_filter: group_by(.ARCH) | map(min_by([(.PY_VER | split(".") | map(tonumber)), (.CUDA_VER | split(".") | map(tonumber))]))
+      matrix_type: nightly
   upload-conda:
-    needs: [cpp-build, python-build, python-build-noarch]
+    needs: [cpp-build, python-build, python-build-noarch, python-build-cudf-polars-quent]
     permissions:
       actions: read
       contents: read

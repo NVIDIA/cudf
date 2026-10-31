@@ -23,6 +23,7 @@ jobs:
       - conda-cpp-tests
       - conda-python-build
       - conda-python-build-noarch
+      - conda-python-build-cudf-polars-quent
       - conda-python-import-tests
       - conda-python-cudf-tests
       - conda-python-cudf-polars-tests
@@ -213,6 +214,7 @@ jobs:
           - 'python/cudf_polars/tests/quent/**'
           - 'ci/build_wheel_cudf_polars_quent.sh'
           - 'ci/run_cudf_polars_quent_tests.sh'
+          - 'ci/utils/set_cargo_version.sh'
         test_python_cudf_streaming:
           - 'python/cudf_streaming/**'
           - 'python/libcudf_streaming/**'
@@ -223,6 +225,7 @@ jobs:
           - 'ci/build_cpp_runtime.sh'
           - 'ci/build_python.sh'
           - 'ci/build_python_noarch.sh'
+          - 'ci/build_python_cudf_polars_quent.sh'
           - 'ci/build_python_common.sh'
           - 'ci/build_parallel.sh'
         test_python_conda_common:
@@ -506,6 +509,35 @@ jobs:
       script: ci/build_python_noarch.sh
       pure-conda: cuda_major
       matrix_type: pull-request
+  conda-python-build-cudf-polars-quent:
+    needs: [build-details, checks, changed-files]
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: read
+      pull-requests: read
+    secrets: inherit # zizmor: ignore[secrets-inherit]
+    uses: rapidsai/shared-workflows/.github/workflows/conda-python-build.yaml@main
+    if: >
+      fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_common ||
+      fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_libcudf ||
+      fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_kafka ||
+      fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_streaming ||
+      fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_all ||
+      fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf_polars ||
+      fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda_builds ||
+      fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda_common ||
+      fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf_polars_runner ||
+      fromJSON(needs.changed-files.outputs.changed_file_groups).test_cudf_polars_quent
+    with:
+      build_type: pull-request
+      build-datetime: ${{ needs.build-details.outputs.build-datetime }}
+      script: ci/build_python_cudf_polars_quent.sh
+      # The package is abi3 and has no CUDA dependency, so build one for amd64:
+      # pick the entry with the oldest Python, then the oldest CUDA.
+      matrix_filter: map(select(.ARCH == "amd64")) | group_by(.ARCH) | map(min_by([(.PY_VER | split(".") | map(tonumber)), (.CUDA_VER | split(".") | map(tonumber))]))
+      matrix_type: pull-request
   conda-python-import-tests:
     needs: [conda-python-build, changed-files]
     permissions:
@@ -593,7 +625,13 @@ jobs:
       matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
       matrix_type: pull-request
   conda-python-cudf-polars-tests:
-    needs: [conda-python-build, conda-python-build-noarch, changed-files]
+    needs:
+      [
+        conda-python-build,
+        conda-python-build-noarch,
+        conda-python-build-cudf-polars-quent,
+        changed-files,
+      ]
     permissions:
       actions: read
       contents: read
@@ -611,7 +649,8 @@ jobs:
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf_polars ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda_builds ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda_common ||
-      fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf_polars_runner
+      fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf_polars_runner ||
+      fromJSON(needs.changed-files.outputs.changed_file_groups).test_cudf_polars_quent
     with:
       build_type: pull-request
       # https://github.com/NVIDIA/cudf/pull/22381/changes#r3196736965

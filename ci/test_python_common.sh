@@ -36,6 +36,7 @@ CMD="${CMD} \
   --prepend-channel \"${CPP_CHANNEL}\" \
   --prepend-channel \"${PYTHON_CHANNEL}\" \
   --prepend-channel \"${PYTHON_NOARCH_CHANNEL}\" \
+  ${CUDF_POLARS_QUENT_CHANNEL:+--prepend-channel \"${CUDF_POLARS_QUENT_CHANNEL}\"} \
   --matrix \"${DEPENDENCY_MATRIX}\""
 
 eval ${CMD} | tee "${ENV_YAML_DIR}/env.yaml"

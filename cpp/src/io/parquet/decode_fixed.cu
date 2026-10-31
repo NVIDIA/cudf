@@ -335,6 +335,16 @@ __device__ inline void decode_fixed_width_split_values(
       }
     } else if (dtype_len == 4) {
       gpuOutputByteStreamSplit<int32_t>(dst, src, num_values);
+    } else if (s->output_cvt.dtype_len_in == sizeof(int32_t)) {
+      // 8- and 16-bit integers are stored as INT32, so keep the low-order bytes of each value,
+      // which are in the first byte streams
+      if (dtype_len == sizeof(int16_t)) {
+        gpuOutputByteStreamSplit<int16_t>(dst, src, num_values);
+      } else if (dtype_len == sizeof(int8_t)) {
+        gpuOutputByteStreamSplit<int8_t>(dst, src, num_values);
+      } else {
+        s->set_error_code(decode_error::UNSUPPORTED_ENCODING);
+      }
     } else {
       s->set_error_code(decode_error::UNSUPPORTED_ENCODING);
     }

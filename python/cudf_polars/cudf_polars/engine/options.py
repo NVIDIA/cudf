@@ -206,6 +206,8 @@ class StreamingOptions:
         Directory for disk-backed buffers. When set, the RapidsMPF buffer
         resource gets a disk memory tier whose files live in a subdirectory it
         owns under this path.
+        The external sort (``sort_strategy="external"``) also uses this directory
+        to write intermediate files.
         Env: ``RAPIDSMPF_DISK_SPILL_DIR``.
         Default: disabled.
         Category: rapidsmpf.
@@ -310,6 +312,17 @@ class StreamingOptions:
         Env: ``CUDF_POLARS__EXECUTOR__JOIN_FILTER_PUSHDOWN`` and
         ``CUDF_POLARS__EXECUTOR__JOIN_FILTER_PUSHDOWN__*``.
         Default: disabled.
+        Category: executor.
+    sort_strategy
+        How multi-partition ``Sort`` nodes execute. ``"in-memory"`` buffers the
+        local input, range-shuffles it and sorts each received partition in
+        device memory. ``"external"`` streams the input into the (disk-spilling)
+        shuffler as it arrives and sorts each partition with an external merge
+        sort (sorted runs on disk under ``disk_spill_dir``, or in host memory
+        without one), so neither the full shard nor a full partition is ever
+        resident in device memory.
+        Env: ``CUDF_POLARS__EXECUTOR__SORT_STRATEGY``.
+        Default: ``"in-memory"``.
         Category: executor.
     sink_to_directory
         Whether multi-partition sink operations should write to a directory
@@ -458,6 +471,9 @@ class StreamingOptions:
     )
     parallel_sink_batches: bool | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__PARALLEL_SINK_BATCHES", parse_boolean
+    )
+    sort_strategy: Literal["in-memory", "external"] | Unspecified = _opt(
+        "executor", "CUDF_POLARS__EXECUTOR__SORT_STRATEGY"
     )
     quent_context: QuentConfig | None | Unspecified = _opt(
         "executor",
@@ -787,8 +803,9 @@ class StreamingOptions:
             default=None,
             type=str,
             help=textwrap.dedent("""\
-                Directory for disk-backed buffers (enables the disk memory tier).
-                Env: RAPIDSMPF_DISK_SPILL_DIR. Built-in default: disabled."""),
+                Directory for disk-backed buffers (disk memory tier, external sort
+                run pages). Env: RAPIDSMPF_DISK_SPILL_DIR. Built-in default:
+                disabled."""),
         )
         g.add_argument(
             "--experimental-unbounded-file-read-cache",
@@ -888,6 +905,17 @@ class StreamingOptions:
             help=textwrap.dedent("""\
                 Target IO partition size in bytes. 0 = auto.
                 Env: CUDF_POLARS__EXECUTOR__TARGET_PARTITION_SIZE. Built-in default: auto."""),
+        )
+        g.add_argument(
+            "--sort-strategy",
+            dest="sort_strategy",
+            default=None,
+            type=str,
+            choices=["in-memory", "external"],
+            help=textwrap.dedent("""\
+                Multi-partition Sort strategy: "in-memory" (default) or "external"
+                (stream into the shuffler; external merge sort per partition with
+                runs on disk). Env: CUDF_POLARS__EXECUTOR__SORT_STRATEGY."""),
         )
         g.add_argument(
             "--dynamic-planning",

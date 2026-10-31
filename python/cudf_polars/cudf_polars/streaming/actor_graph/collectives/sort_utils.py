@@ -10,11 +10,14 @@ import polars as pl
 
 import pylibcudf as plc
 from cudf_streaming.channel_metadata import OrderKey, OrderScheme, Ordering
-from cudf_streaming.table_chunk import TableChunk
+from cudf_streaming.table_chunk import (
+    TableChunk,
+    make_table_chunks_available_or_wait,
+)
 
-from cudf_polars.containers import Column, DataFrame, DataType
-from cudf_polars.dsl.expr import Col
-from cudf_polars.dsl.ir import Empty
+from cudf_polars.containers import DataFrame, DataType
+from cudf_polars.dsl.expr import Col, NamedExpr
+from cudf_polars.dsl.ir import Empty, Sort
 from cudf_polars.dsl.utils.naming import names_to_indices, unique_names
 from cudf_polars.streaming.actor_graph.collectives.allgather import AllGatherManager
 from cudf_polars.streaming.actor_graph.utils import (
@@ -22,6 +25,7 @@ from cudf_polars.streaming.actor_graph.utils import (
     concat_batch,
     empty_table_chunk,
 )
+from cudf_polars.utils.cuda_stream import get_joined_cuda_stream
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -30,7 +34,8 @@ if TYPE_CHECKING:
     from rapidsmpf.streaming.core.context import Context
     from rmm.pylibrmm.stream import Stream
 
-    from cudf_polars.dsl.ir import IRExecutionContext, Sort
+    from cudf_polars.dsl.ir import IRExecutionContext
+    from cudf_polars.streaming.actor_graph.collectives.shuffle import ShuffleManager
     from cudf_polars.typing import Schema
 
 
@@ -167,30 +172,12 @@ def select_local_split_candidates(
     df = df.select(by)
     name_gen = unique_names(df.column_names)
     part_id_dtype = DataType(pl.UInt32())
-    if df.num_rows == 0:
-        # Return empty DataFrame with the correct column names and dtypes
-        return DataFrame(
-            [
-                *df.columns,
-                Column(
-                    plc.column_factories.make_empty_column(
-                        part_id_dtype.plc_type, stream=df.stream
-                    ),
-                    dtype=part_id_dtype,
-                    name=next(name_gen),
-                ),
-                Column(
-                    plc.column_factories.make_empty_column(
-                        part_id_dtype.plc_type, stream=df.stream
-                    ),
-                    dtype=part_id_dtype,
-                    name=next(name_gen),
-                ),
-            ],
-            stream=df.stream,
-        )
-
-    candidates = [i * df.num_rows // num_partitions for i in range(num_partitions)]
+    # No candidates from an empty chunk: gathering at row 0 would be out of bounds.
+    candidates = (
+        [i * df.num_rows // num_partitions for i in range(num_partitions)]
+        if df.num_rows > 0
+        else []
+    )
     row_id = plc.Column.from_iterable_of_py(
         candidates, part_id_dtype.plc_type, stream=df.stream
     )
@@ -277,6 +264,180 @@ def get_final_sort_boundaries(
         sort_boundaries_candidates.column_names,
         sort_boundaries_candidates.dtypes,
         stream=sort_boundaries_candidates.stream,
+    )
+
+
+def sort_by_column_names(ir: Sort) -> list[str]:
+    """
+    Resolve the underlying column names for a ``Sort`` node's keys.
+
+    A sort key's ``NamedExpr.name`` reflects its output alias, which may differ from
+    the referenced column after upstream renames. E.g., a join dedup may leave
+    ``ORDER BY df2.text`` represented as ``Col('text:df2').alias('text')``. Resolve
+    through the underlying ``Col`` so schema lookups use the actual column name.
+
+    Parameters
+    ----------
+    ir
+        The ``Sort`` node.
+
+    Returns
+    -------
+    The referenced column names, in sort key order.
+
+    Raises
+    ------
+    NotImplementedError
+        If any sort key is not a bare column reference.
+    """
+    by = [ne.value.name for ne in ir.by if isinstance(ne.value, Col)]
+    if len(by) != len(ir.by):
+        raise NotImplementedError("Sorting columns must be column names.")
+    return by
+
+
+def sort_to_order_keys(ir: Sort) -> list[OrderKey]:
+    """
+    Convert a ``Sort`` node's keys to order keys.
+
+    Parameters
+    ----------
+    ir
+        The ``Sort`` node.
+
+    Returns
+    -------
+    One ``OrderKey`` per sort key: the key's column index in ``ir.schema`` with
+    its sort order and null order.
+    """
+    return [
+        OrderKey(index, order, null_order)
+        for index, order, null_order in zip(
+            names_to_indices(tuple(sort_by_column_names(ir)), ir.schema),
+            ir.order,
+            ir.null_order,
+            strict=False,
+        )
+    ]
+
+
+def append_row_sequence_column(
+    df: DataFrame, rank: int, local_row_offset: int
+) -> plc.Table:
+    """
+    Append a globally unique, monotonically increasing row id to a chunk.
+
+    Used by stable sorts so that rows with equal keys keep their input order
+    after the shuffle.
+
+    Parameters
+    ----------
+    df
+        The chunk's frame.
+    rank
+        The rank of this process.
+    local_row_offset
+        Number of rows of earlier chunks on this rank.
+
+    Returns
+    -------
+    The columns of ``df`` followed by a ``UInt64`` column holding
+    ``(rank << 48) + local_row_offset + row_index``.
+    """
+    start = (rank * (1 << 48)) + local_row_offset
+    seq_id_col = plc.filling.sequence(
+        df.table.num_rows(),
+        plc.Scalar.from_py(start, plc.DataType(plc.TypeId.UINT64), stream=df.stream),
+        plc.Scalar.from_py(1, plc.DataType(plc.TypeId.UINT64), stream=df.stream),
+        stream=df.stream,
+    )
+    return plc.Table([*df.table.columns(), seq_id_col])
+
+
+def build_post_sort_ir(ir: Sort) -> Sort:
+    """
+    Return the ``Sort`` applied to each partition received from the shuffle.
+
+    For a stable sort this adds the row sequence column from
+    :func:`append_row_sequence_column` as a trailing ascending sort key, so
+    equal keys keep their input order.
+
+    Parameters
+    ----------
+    ir
+        The original ``Sort`` node.
+
+    Returns
+    -------
+    ``ir`` itself for an unstable sort, otherwise a ``Sort`` with the extra key.
+    """
+    if not ir.stable:
+        return ir
+    assert ir.zlice is None
+    seq_id_name = next(unique_names(ir.schema.keys()))
+    return Sort(
+        ir.schema | {seq_id_name: DataType(pl.UInt64())},
+        (
+            *ir.by,
+            NamedExpr(seq_id_name, Col(DataType(pl.UInt64()), seq_id_name)),
+        ),
+        (*ir.order, plc.types.Order.ASCENDING),
+        (*ir.null_order, plc.types.NullOrder.AFTER),
+        ir.stable,
+        None,
+        ir.children[0],
+    )
+
+
+def build_order_scheme(
+    context: Context,
+    order_keys: list[OrderKey],
+    sort_boundaries_df: DataFrame,
+) -> OrderScheme:
+    """
+    Build the ``OrderScheme`` metadata describing a range-partitioned sort output.
+
+    Parameters
+    ----------
+    context
+        The RapidsMPF context.
+    order_keys
+        The output's order keys, as returned by :func:`sort_to_order_keys`.
+    sort_boundaries_df
+        The boundaries from :func:`compute_sort_boundaries`. Only the leading
+        ``len(order_keys)`` key columns are used; the tie-breaker columns are
+        dropped.
+
+    Returns
+    -------
+    A single-``Ordering`` scheme over the boundary keys, with strict boundaries
+    when there are no boundaries or no two boundaries share the same key.
+    """
+    n_keys = len(order_keys)
+    stream = sort_boundaries_df.stream
+    # sort_boundaries_df will contain a tie-breaker column
+    by_table = plc.Table(sort_boundaries_df.table.columns()[:n_keys])
+    n_rows = by_table.num_rows()
+
+    strict_boundaries = (
+        n_rows == 0
+        # TODO: Use unique_count_table
+        # Requires https://github.com/NVIDIA/cudf/pull/22487
+        or plc.stream_compaction.unique(
+            by_table,
+            list(range(n_keys)),
+            plc.stream_compaction.DuplicateKeepOption.KEEP_FIRST,
+            plc.types.NullEquality.EQUAL,
+            stream=stream,
+        ).num_rows()
+        == n_rows
+    )
+
+    boundaries_chunk = TableChunk.from_pylibcudf_table(
+        by_table, stream, exclusive_view=False, br=context.br()
+    )
+    return OrderScheme(
+        [Ordering(order_keys, boundaries_chunk, strict_boundaries=strict_boundaries)]
     )
 
 
@@ -376,107 +537,56 @@ async def compute_sort_boundaries(
         return local_boundaries_df
 
 
-def sort_by_column_names(ir: Sort) -> list[str]:
-    """
-    Resolve the underlying column names for a ``Sort`` node's keys.
-
-    A sort key's ``NamedExpr.name`` reflects its output alias, which may differ from
-    the referenced column after upstream renames. E.g., a join dedup may leave
-    ``ORDER BY df2.text`` represented as ``Col('text:df2').alias('text')``. Resolve
-    through the underlying ``Col`` so schema lookups use the actual column name.
-
-    Parameters
-    ----------
-    ir
-        The ``Sort`` node.
-
-    Returns
-    -------
-    The referenced column names, in sort key order.
-
-    Raises
-    ------
-    NotImplementedError
-        If any sort key is not a bare column reference.
-    """
-    by = [ne.value.name for ne in ir.by if isinstance(ne.value, Col)]
-    if len(by) != len(ir.by):
-        raise NotImplementedError("Sorting columns must be column names.")
-    return by
-
-
-def sort_to_order_keys(ir: Sort) -> list[OrderKey]:
-    """
-    Convert a ``Sort`` node's keys to order keys.
-
-    Parameters
-    ----------
-    ir
-        The ``Sort`` node.
-
-    Returns
-    -------
-    One ``OrderKey`` per sort key: the key's column index in ``ir.schema`` with
-    its sort order and null order.
-    """
-    return [
-        OrderKey(index, order, null_order)
-        for index, order, null_order in zip(
-            names_to_indices(tuple(sort_by_column_names(ir)), ir.schema),
-            ir.order,
-            ir.null_order,
-            strict=False,
-        )
-    ]
-
-
-def build_order_scheme(
+async def insert_chunk_with_sort_splits(
     context: Context,
-    order_keys: list[OrderKey],
+    inserter: ShuffleManager.Inserter,
+    chunk: TableChunk,
+    seq_num: int,
+    ir: Sort,
+    ir_context: IRExecutionContext,
     sort_boundaries_df: DataFrame,
-) -> OrderScheme:
+    by_indices: Sequence[int],
+) -> None:
     """
-    Build the ``OrderScheme`` metadata describing a range-partitioned sort output.
+    Range-split a pre-sorted chunk by the sort boundaries and insert it.
 
     Parameters
     ----------
     context
         The RapidsMPF context.
-    order_keys
-        The output's order keys, as returned by :func:`sort_to_order_keys`.
+    inserter
+        The shuffle inserter to insert the split chunk into.
+    chunk
+        The chunk to split. It must already be sorted by the sort keys.
+    seq_num
+        The chunk's sequence number, used as the tie-breaker source partition.
+    ir
+        The ``Sort`` node providing the sort order and null order.
+    ir_context
+        The IR execution context.
     sort_boundaries_df
-        The boundaries from :func:`compute_sort_boundaries`. Only the leading
-        ``len(order_keys)`` key columns are used; the tie-breaker columns are
-        dropped.
-
-    Returns
-    -------
-    A single-``Ordering`` scheme over the boundary keys, with strict boundaries
-    when there are no boundaries or no two boundaries share the same key.
+        The boundaries from :func:`compute_sort_boundaries`.
+    by_indices
+        Column indices of the sort keys in the chunk.
     """
-    n_keys = len(order_keys)
-    stream = sort_boundaries_df.stream
-    # sort_boundaries_df will contain a tie-breaker column
-    by_table = plc.Table(sort_boundaries_df.table.columns()[:n_keys])
-    n_rows = by_table.num_rows()
-
-    strict_boundaries = (
-        n_rows == 0
-        # TODO: Use unique_count_table
-        # Requires https://github.com/NVIDIA/cudf/pull/22487
-        or plc.stream_compaction.unique(
-            by_table,
-            list(range(n_keys)),
-            plc.stream_compaction.DuplicateKeepOption.KEEP_FIRST,
-            plc.types.NullEquality.EQUAL,
-            stream=stream,
-        ).num_rows()
-        == n_rows
+    # The chunk's data moves into shuffler-owned packed buffers,
+    # nothing lasting is added.
+    available_chunk, _ = await make_table_chunks_available_or_wait(
+        context, chunk, reserve_extra=0, net_memory_delta=0
     )
-
-    boundaries_chunk = TableChunk.from_pylibcudf_table(
-        by_table, stream, exclusive_view=False, br=context.br()
+    tbl = available_chunk.table_view()
+    sort_cols_tbl = plc.Table([tbl.columns()[i] for i in by_indices])
+    stream = get_joined_cuda_stream(
+        ir_context.get_cuda_stream,
+        upstreams=(available_chunk.stream, sort_boundaries_df.stream),
     )
-    return OrderScheme(
-        [Ordering(order_keys, boundaries_chunk, strict_boundaries=strict_boundaries)]
+    splits = find_sort_splits(
+        sort_cols_tbl,
+        sort_boundaries_df.table,
+        seq_num,
+        list(ir.order),
+        list(ir.null_order),
+        stream=stream,
+        chunk_relative=True,
     )
+    await inserter.insert_split(available_chunk, splits)

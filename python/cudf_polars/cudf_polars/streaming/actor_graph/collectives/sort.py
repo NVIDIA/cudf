@@ -8,8 +8,6 @@ import math
 from functools import partial
 from typing import TYPE_CHECKING
 
-import polars as pl
-
 import pylibcudf as plc
 from cudf_streaming.channel_metadata import (
     ChannelMetadata,
@@ -19,22 +17,26 @@ from cudf_streaming.channel_metadata import (
 )
 from cudf_streaming.table_chunk import (
     TableChunk,
-    make_table_chunks_available_or_wait,
 )
 from rapidsmpf.shuffler import PartitionAssignment
 from rapidsmpf.streaming.core.actor import define_actor
 from rapidsmpf.streaming.core.message import Message
 
-from cudf_polars.containers import DataFrame, DataType
-from cudf_polars.dsl.expr import Col, NamedExpr
+from cudf_polars.containers import DataFrame
+from cudf_polars.dsl.expr import Col
 from cudf_polars.dsl.ir import Sort
-from cudf_polars.dsl.utils.naming import names_to_indices, unique_names
+from cudf_polars.dsl.utils.naming import names_to_indices
 from cudf_polars.streaming.actor_graph.collectives.allgather import AllGatherManager
+from cudf_polars.streaming.actor_graph.collectives.external_sort import (
+    global_sort_external,
+)
 from cudf_polars.streaming.actor_graph.collectives.shuffle import ShuffleManager
 from cudf_polars.streaming.actor_graph.collectives.sort_utils import (
+    append_row_sequence_column,
     build_order_scheme,
+    build_post_sort_ir,
     compute_sort_boundaries,
-    find_sort_splits,
+    insert_chunk_with_sort_splits,
     select_local_split_candidates,
     sort_by_column_names,
     sort_to_order_keys,
@@ -71,7 +73,6 @@ from cudf_polars.streaming.actor_graph.utils import (
 )
 from cudf_polars.streaming.repartition import Repartition
 from cudf_polars.streaming.sort import _has_simple_zlice
-from cudf_polars.utils.cuda_stream import get_joined_cuda_stream
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -240,20 +241,8 @@ async def _receive_and_buffer_chunks(
             )
         )
         if ir.stable:
-            nrows = df.table.num_rows()
-            start = (comm.rank * (1 << 48)) + local_row_offset
-            seq_id_col = plc.filling.sequence(
-                nrows,
-                plc.Scalar.from_py(
-                    start, plc.DataType(plc.TypeId.UINT64), stream=df.stream
-                ),
-                plc.Scalar.from_py(
-                    1, plc.DataType(plc.TypeId.UINT64), stream=df.stream
-                ),
-                stream=df.stream,
-            )
-            local_row_offset += nrows
-            tbl = plc.Table([*df.table.columns(), seq_id_col])
+            tbl = append_row_sequence_column(df, comm.rank, local_row_offset)
+            local_row_offset += tbl.num_rows()
         else:
             tbl = df.table
         chunk_store.insert(
@@ -291,8 +280,6 @@ async def _insert_chunks_into_shuffle(
     by: list[str],
 ) -> tuple[ShuffleManager, Sort]:
     """Create shuffle manager and insert each buffered chunk with sort-based splits."""
-    column_order = list(ir.order)
-    null_order = list(ir.null_order)
     by_indices = names_to_indices(tuple(by), ir.schema)
 
     skip_insert = metadata_in.duplicated and comm.rank != 0
@@ -308,54 +295,20 @@ async def _insert_chunks_into_shuffle(
         while (msg := await ch_in.recv(context)) is not None:
             if skip_insert:
                 continue
-            seq_num = msg.sequence_number
-            # The chunk's data moves into shuffler-owned packed buffers,
-            # nothing lasting is added.
-            available_chunk, _ = await make_table_chunks_available_or_wait(
-                context,
-                TableChunk.from_message(msg, br=context.br()),
-                reserve_extra=0,
-                net_memory_delta=0,
-            )
-            tbl = available_chunk.table_view()
-            sort_cols_tbl = plc.Table([tbl.columns()[i] for i in by_indices])
-
-            stream = get_joined_cuda_stream(
-                ir_context.get_cuda_stream,
-                upstreams=(available_chunk.stream, sort_boundaries_df.stream),
-            )
-
             # TODO: Pre-sort chunks if they do not originate from the ChunkStore.
             # (Not possible until we use _global_sort outside of sort_actor.)
-            splits = find_sort_splits(
-                sort_cols_tbl,
-                sort_boundaries_df.table,
-                seq_num,
-                column_order,
-                null_order,
-                stream=stream,
-                chunk_relative=True,
+            await insert_chunk_with_sort_splits(
+                context,
+                inserter,
+                TableChunk.from_message(msg, br=context.br()),
+                msg.sequence_number,
+                ir,
+                ir_context,
+                sort_boundaries_df,
+                by_indices,
             )
-            await inserter.insert_split(available_chunk, splits)
 
-    post_sort_ir = ir
-    if ir.stable:
-        assert ir.zlice is None
-        seq_id_name = next(unique_names(ir.schema.keys()))
-        post_sort_ir = Sort(
-            ir.schema | {seq_id_name: DataType(pl.UInt64())},
-            (
-                *ir.by,
-                NamedExpr(seq_id_name, Col(DataType(pl.UInt64()), seq_id_name)),
-            ),
-            (*ir.order, plc.types.Order.ASCENDING),
-            (*ir.null_order, plc.types.NullOrder.AFTER),
-            ir.stable,
-            None,
-            ir.children[0],
-        )
-
-    return shuffle, post_sort_ir
+    return shuffle, build_post_sort_ir(ir)
 
 
 async def _extract_partitions_and_send(
@@ -550,6 +503,23 @@ async def sort_actor(
                 ch_out,
                 ch_in,
                 metadata_out,
+                tracer=tracer,
+            )
+            return
+
+        if executor.sort_strategy == "external":
+            await global_sort_external(
+                context,
+                comm,
+                ir,
+                ir_context,
+                ch_in,
+                ch_out,
+                metadata_in,
+                by,
+                num_partitions,
+                executor,
+                collective_ids,
                 tracer=tracer,
             )
             return

@@ -286,7 +286,7 @@ std::size_t aggregate_reader_metadata::total_rows_in_row_groups(
 std::unique_ptr<cudf::column> aggregate_reader_metadata::build_all_true_row_mask(
   std::span<std::vector<size_type> const> row_group_indices,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr) const
+  cudf::memory_resources mr) const
 {
   CUDF_FUNC_RANGE();
   auto const num_rows = total_rows_in_row_groups(row_group_indices);
@@ -294,9 +294,8 @@ std::unique_ptr<cudf::column> aggregate_reader_metadata::build_all_true_row_mask
                "Total rows in row groups exceed the cudf's column size limit. Retry with a smaller "
                "set of row groups",
                std::invalid_argument);
-  auto true_scalar =
-    cudf::numeric_scalar<bool>(true, true, stream, cudf::get_current_device_resource_ref());
-  return cudf::make_column_from_scalar(true_scalar, num_rows, stream, mr);
+  auto true_scalar = cudf::numeric_scalar<bool>(true, true, stream, mr.get_temporary_mr());
+  return cudf::make_column_from_scalar(true_scalar, num_rows, stream, mr.get_output_mr());
 }
 
 std::tuple<std::vector<input_column_info>,

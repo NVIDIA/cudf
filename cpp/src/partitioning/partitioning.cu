@@ -10,6 +10,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/row_operator/hashing.cuh>
 #include <cudf/detail/scatter.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
@@ -368,7 +369,7 @@ void copy_block_partitions_impl(InputIter const input,
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 
-rmm::device_uvector<size_type> compute_gather_map(size_type num_rows,
+cuda::device_buffer<size_type> compute_gather_map(size_type num_rows,
                                                   size_type num_partitions,
                                                   size_type const* row_partition_numbers,
                                                   size_type const* row_partition_offset,
@@ -378,10 +379,11 @@ rmm::device_uvector<size_type> compute_gather_map(size_type num_rows,
                                                   cuda::stream_ref stream)
 {
   auto sequence = cuda::counting_iterator<cudf::size_type>{0};
-  rmm::device_uvector<size_type> gather_map(num_rows, stream);
+  cuda::device_buffer<size_type> gather_map(
+    stream, cudf::get_current_device_resource_ref(), num_rows, cuda::no_init);
 
   copy_block_partitions_impl(sequence,
-                             gather_map.begin(),
+                             gather_map.data(),
                              num_rows,
                              num_partitions,
                              row_partition_numbers,
@@ -480,7 +482,8 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table_g
   CUDF_EXPECTS(num_partitions < std::numeric_limits<size_type>::max(),
                "num_partitions exceeds cudf's supported limit");
 
-  auto row_partition_numbers = rmm::device_uvector<size_type>(num_rows, stream);
+  cuda::device_buffer<size_type> row_partition_numbers(
+    stream, cudf::get_current_device_resource_ref(), num_rows, cuda::no_init);
 
   // Compute partition number for each row
   if (is_power_two(num_partitions)) {
@@ -506,7 +509,7 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table_g
   // Build histogram via cub::DeviceHistogram::HistogramEven.
   // HistogramEven writes num_partitions bins; the extra element is used by the exclusive scan
   // below to produce the total row count as the last offset. Zero-initialize to avoid UB.
-  auto histogram = cudf::detail::make_zeroed_device_uvector_async<size_type>(
+  auto histogram = cudf::detail::make_zeroed_device_buffer_async<size_type>(
     num_partitions + 1, stream, cudf::get_current_device_resource_ref());
   {
     auto const num_levels  = num_partitions + 1;
@@ -547,7 +550,8 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table_g
   auto const pinned_offsets = cudf::detail::make_pinned_vector_async(histogram, stream);
 
   // Build scatter map: atomically increment partition offsets
-  rmm::device_uvector<size_type> scatter_map(num_rows, stream);
+  cuda::device_buffer<size_type> scatter_map(
+    stream, cudf::get_current_device_resource_ref(), num_rows, cuda::no_init);
   thrust::transform(
     rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
     row_partition_numbers.begin(),
@@ -606,7 +610,7 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table(
   std::size_t const grid_size = util::div_rounding_up_safe(num_rows, rows_per_block);
 
   // Allocate array to hold which partition each row belongs to
-  auto row_partition_numbers = rmm::device_uvector<size_type>(num_rows, stream, temp_mr);
+  cuda::device_buffer<size_type> row_partition_numbers(stream, temp_mr, num_rows, cuda::no_init);
 
   // Array to hold the size of each partition computed by each block
   //  i.e., { {block0 partition0 size, block1 partition0 size, ...},
@@ -615,17 +619,17 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table(
   //          {block0 partition(num_partitions-1) size, block1
   //          partition(num_partitions -1) size, ...} }
   auto block_partition_sizes =
-    rmm::device_uvector<size_type>(grid_size * num_partitions, stream, temp_mr);
+    cuda::device_buffer<size_type>(stream, temp_mr, grid_size * num_partitions, cuda::no_init);
 
   auto scanned_block_partition_sizes =
-    rmm::device_uvector<size_type>(grid_size * num_partitions, stream, temp_mr);
+    cuda::device_buffer<size_type>(stream, temp_mr, grid_size * num_partitions, cuda::no_init);
 
   // Holds the total number of rows in each partition
   auto global_partition_sizes =
-    cudf::detail::make_zeroed_device_uvector_async<size_type>(num_partitions, stream, temp_mr);
+    cudf::detail::make_zeroed_device_buffer_async<size_type>(num_partitions, stream, temp_mr);
 
   auto row_partition_offset =
-    cudf::detail::make_zeroed_device_uvector_async<size_type>(num_rows, stream, temp_mr);
+    cudf::detail::make_zeroed_device_buffer_async<size_type>(num_rows, stream, temp_mr);
 
   // If the number of partitions is a power of two, we can compute the partition
   // number of each row more efficiently with bitwise operations
@@ -784,7 +788,8 @@ struct dispatch_map_type {
     requires(is_index_type<MapType>())
   {
     // Build a histogram of the number of rows in each partition
-    rmm::device_uvector<size_type> histogram(num_partitions + 1, stream);
+    cuda::device_buffer<size_type> histogram(
+      stream, cudf::get_current_device_resource_ref(), num_partitions + 1, cuda::no_init);
     std::size_t temp_storage_bytes{};
     std::size_t const num_levels = num_partitions + 1;
     size_type const lower_level  = 0;
@@ -824,7 +829,8 @@ struct dispatch_map_type {
 
     // Unfortunately need to materialize the scatter map because
     // `detail::scatter` requires multiple passes through the iterator
-    rmm::device_uvector<size_type> scatter_map(partition_map.size(), stream);
+    cuda::device_buffer<size_type> scatter_map(
+      stream, cudf::get_current_device_resource_ref(), partition_map.size(), cuda::no_init);
 
     // For each `partition_map[i]`, atomically increment the corresponding
     // partition offset to determine `i`s location in the output

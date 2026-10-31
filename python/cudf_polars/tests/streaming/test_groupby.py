@@ -15,7 +15,11 @@ import polars as pl
 from polars.testing import assert_frame_equal
 
 import pylibcudf as plc
-from cudf_streaming.channel_metadata import OrderScheme
+from cudf_streaming.channel_metadata import (
+    OrderScheme,
+    RowOrdering,
+    RowOrderingScope,
+)
 from cudf_streaming.table_chunk import TableChunk
 
 from cudf_polars import Translator
@@ -187,7 +191,43 @@ def test_groupby_adjusts_truncated_ordering_with_maintain_order(
     (ordering,) = scheme.orderings
     assert tuple(key.column_index for key in ordering.keys) == (0,)
     assert ordering.strict_boundaries is True
-    assert ordering.locally_ordered is True
+    assert metadata.partitioning.row_orderings == (
+        RowOrdering(ordering.keys, RowOrderingScope.GLOBAL),
+    )
+
+
+def test_groupby_dynamic_preserves_index_ordering(spmd_engine_factory) -> None:
+    engine = spmd_engine_factory(
+        StreamingOptions(
+            max_rows_per_partition=2,
+            fallback_mode="raise",
+            raise_on_fail=True,
+        )
+    )
+    q = (
+        pl.LazyFrame({"time": range(0, 720_000, 120_000), "value": range(6)})
+        .with_columns(pl.col("time").cast(pl.Datetime("ms")))
+        .sort("time")
+        .group_by_dynamic("time", every="2m")
+        .agg(pl.col("value").sum())
+    )
+    ir = Translator(q._ldf.visit(), engine).translate_ir()
+    result, metadata_collector = evaluate_logical_plan(
+        ir, ConfigOptions.from_polars_engine(engine), collect_metadata=True
+    )
+    assert_frame_equal(result, q.collect())
+
+    assert metadata_collector is not None
+    assert len(metadata_collector) == 1
+    metadata = metadata_collector[0]
+    assert metadata.partitioning is not None
+    assert isinstance(metadata.partitioning.inter_rank, OrderScheme)
+    (ordering,) = metadata.partitioning.inter_rank.orderings
+    assert tuple(key.column_index for key in ordering.keys) == (0,)
+    assert ordering.strict_boundaries is True
+    assert metadata.partitioning.row_orderings == (
+        RowOrdering(ordering.keys, RowOrderingScope.GLOBAL),
+    )
 
 
 @pytest.mark.parametrize("keys", [("key",), ("key", "key2")])

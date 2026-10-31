@@ -5,6 +5,7 @@
 
 #include <cudf/column/column_child_offsets.hpp>
 #include <cudf/strings/strings_column_view.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
@@ -14,7 +15,6 @@
 #include <jit/util.hpp>
 #include <rtcx/rtcx.hpp>
 
-#include <concepts>
 #include <format>
 #include <iterator>
 #include <numeric>
@@ -31,15 +31,14 @@ std::string reflect_input_element(transform_input_spec const& spec, bool use_phy
 struct reflect_input_element_fn {
   template <typename T>
   std::string operator()(transform_input_spec const& spec, bool use_physical_type) const
-    requires(is_fixed_width<T>() || std::same_as<T, string_view>)
+    requires(cudf::concepts::fixed_width<T> || cudf::concepts::string_view<T>)
   {
     auto type = data_type{spec.type};
     return type_to_name(use_physical_type ? jit::physical_type_of(type) : type);
   }
 
-  template <typename T>
+  template <cudf::concepts::dictionary T>
   std::string operator()(transform_input_spec const& spec, bool use_physical_type) const
-    requires(std::same_as<T, dictionary32>)
   {
     return std::format(
       "cudf::dictionary_element<{}, {}>",
@@ -49,8 +48,6 @@ struct reflect_input_element_fn {
 
   template <typename T>
   std::string operator()(transform_input_spec const& spec, bool) const
-    requires(!is_fixed_width<T>() && !std::same_as<T, string_view> &&
-             !std::same_as<T, dictionary32>)
   {
     CUDF_FAIL(std::format("Unsupported input element type for JIT input: {}",
                           type_to_name(data_type{spec.type})),
@@ -61,25 +58,22 @@ struct reflect_input_element_fn {
 std::string reflect_output_element(transform_output_spec const& spec, bool use_physical_type);
 
 struct reflect_output_element_fn {
-  template <typename T>
+  template <cudf::concepts::fixed_width T>
   std::string operator()(transform_output_spec const& spec, bool use_physical_type) const
-    requires(is_fixed_width<T>())
   {
     auto type = data_type{spec.type};
     return type_to_name(use_physical_type ? jit::physical_type_of(type) : type);
   }
 
-  template <typename T>
+  template <cudf::concepts::string_view T>
   std::string operator()(transform_output_spec const& spec, bool use_physical_type) const
-    requires(std::same_as<T, string_view>)
   {
     return spec.has_string_offsets ? "cuda::std::span<char>"
                                    : "cudf::repr_element<cudf::string_view>";
   }
 
-  template <typename T>
+  template <cudf::concepts::dictionary T>
   std::string operator()(transform_output_spec const& spec, bool use_physical_type) const
-    requires(std::same_as<T, dictionary32>)
   {
     return std::format(
       "cudf::dictionary_element<{}, {}>",
@@ -89,8 +83,6 @@ struct reflect_output_element_fn {
 
   template <typename T>
   std::string operator()(transform_output_spec const& spec, bool) const
-    requires(!is_fixed_width<T>() && !std::same_as<T, string_view> &&
-             !std::same_as<T, dictionary32>)
   {
     CUDF_FAIL(std::format("Unsupported output element type for JIT output: {}",
                           type_to_name(data_type{spec.type})),
@@ -101,23 +93,20 @@ struct reflect_output_element_fn {
 struct reflect_input_value_fn {
   template <typename T>
   std::string operator()(transform_input_spec const& spec, bool use_physical_type) const
-    requires(is_fixed_width<T>() || std::same_as<T, string_view>)
+    requires(cudf::concepts::fixed_width<T> || cudf::concepts::string_view<T>)
   {
     auto type = data_type{spec.type};
     return type_to_name(use_physical_type ? jit::physical_type_of(type) : type);
   }
 
-  template <typename T>
+  template <cudf::concepts::dictionary T>
   std::string operator()(transform_input_spec const& spec, bool use_physical_type) const
-    requires(std::same_as<T, dictionary32>)
   {
     return reflect_input_element(spec.children.at(dictionary_keys_column_index), use_physical_type);
   }
 
   template <typename T>
   std::string operator()(transform_input_spec const& spec, bool) const
-    requires(!is_fixed_width<T>() && !std::same_as<T, string_view> &&
-             !std::same_as<T, dictionary32>)
   {
     CUDF_FAIL(std::format("Unsupported input value type for JIT input: {}",
                           type_to_name(data_type{spec.type})),
@@ -126,24 +115,21 @@ struct reflect_input_value_fn {
 };
 
 struct reflect_output_value_fn {
-  template <typename T>
+  template <cudf::concepts::fixed_width T>
   std::string operator()(transform_output_spec const& spec, bool use_physical_type) const
-    requires(is_fixed_width<T>())
   {
     auto type = data_type{spec.type};
     return type_to_name(use_physical_type ? jit::physical_type_of(type) : type);
   }
 
-  template <typename T>
+  template <cudf::concepts::string_view T>
   std::string operator()(transform_output_spec const& spec, bool use_physical_type) const
-    requires(std::same_as<T, string_view>)
   {
     return spec.has_string_offsets ? "cuda::std::span<char>" : "cudf::string_view";
   }
 
   template <typename T>
   std::string operator()(transform_output_spec const& spec, bool) const
-    requires(!is_fixed_width<T>() && !std::same_as<T, string_view>)
   {
     CUDF_FAIL(std::format("Unsupported output value type for JIT output: {}",
                           type_to_name(data_type{spec.type})),

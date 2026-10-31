@@ -980,3 +980,150 @@ def test_concat_literal():
     cuda.synchronize()
 
     assert eq.get().tolist() == [True] * n
+
+
+# --- strip / lstrip / rstrip (string-producing; allocate via NRT) -----------
+def _verify_strings(out, expected):
+    """Compare produced ``out`` strings to ``expected`` device-side, then free.
+
+    Must be called inside an active ``nrt_enabled()`` context. Returns the
+    per-row equality as a host list.
+    """
+    n = len(expected)
+    exp, _keep = _make_mlir_string_array(expected)
+    eq = cp.zeros(n, dtype=np.bool_)
+
+    @cuda.jit(
+        types.void(
+            types.boolean[::1],
+            types.CPointer(mlir_string),
+            types.CPointer(mlir_string),
+        ),
+        extensions=[mlir_string_arg_handler],
+    )
+    def verify(r, o, c):
+        i = cuda.grid(1)
+        if i < r.size:
+            r[i] = o[i] == c[i]
+
+    @cuda.jit(
+        types.void(types.CPointer(mlir_string)),
+        extensions=[mlir_string_arg_handler],
+    )
+    def free(o):
+        i = cuda.grid(1)
+        if i < n:
+            NRT_decref(o[i])
+
+    verify[1, n](eq, out, exp)
+    free[1, n](out)
+    cuda.synchronize()
+    return eq.get().tolist()
+
+
+def test_strip_whitespace():
+    """``s.strip()`` trims leading and trailing ASCII whitespace."""
+    vals = ["  abc  ", "\tx\n", "nows", "   ", "", " a b "]
+    expected = [v.strip() for v in vals]
+    n = len(vals)
+    arr, _keep = _make_mlir_string_array(vals)
+    out, _out_keep = _make_output_mlir_string_array(n)
+
+    with nrt_enabled(), MLIRNumbaCudaConfig():
+
+        @cuda.jit(
+            types.void(
+                types.CPointer(mlir_string), types.CPointer(mlir_string)
+            ),
+            extensions=[mlir_string_arg_handler],
+        )
+        def produce(o, a):
+            i = cuda.grid(1)
+            if i < n:
+                o[i] = a[i].strip()
+
+        produce[1, n](out, arr)
+        got = _verify_strings(out, expected)
+
+    assert got == [True] * n
+
+
+def test_lstrip_whitespace():
+    """``s.lstrip()`` trims only leading ASCII whitespace."""
+    vals = ["  abc  ", "\tx\n", "nows", "   ", " a b "]
+    expected = [v.lstrip() for v in vals]
+    n = len(vals)
+    arr, _keep = _make_mlir_string_array(vals)
+    out, _out_keep = _make_output_mlir_string_array(n)
+
+    with nrt_enabled(), MLIRNumbaCudaConfig():
+
+        @cuda.jit(
+            types.void(
+                types.CPointer(mlir_string), types.CPointer(mlir_string)
+            ),
+            extensions=[mlir_string_arg_handler],
+        )
+        def produce(o, a):
+            i = cuda.grid(1)
+            if i < n:
+                o[i] = a[i].lstrip()
+
+        produce[1, n](out, arr)
+        got = _verify_strings(out, expected)
+
+    assert got == [True] * n
+
+
+def test_rstrip_whitespace():
+    """``s.rstrip()`` trims only trailing ASCII whitespace."""
+    vals = ["  abc  ", "\tx\n", "nows", "   ", " a b "]
+    expected = [v.rstrip() for v in vals]
+    n = len(vals)
+    arr, _keep = _make_mlir_string_array(vals)
+    out, _out_keep = _make_output_mlir_string_array(n)
+
+    with nrt_enabled(), MLIRNumbaCudaConfig():
+
+        @cuda.jit(
+            types.void(
+                types.CPointer(mlir_string), types.CPointer(mlir_string)
+            ),
+            extensions=[mlir_string_arg_handler],
+        )
+        def produce(o, a):
+            i = cuda.grid(1)
+            if i < n:
+                o[i] = a[i].rstrip()
+
+        produce[1, n](out, arr)
+        got = _verify_strings(out, expected)
+
+    assert got == [True] * n
+
+
+def test_strip_chars():
+    """``s.strip("x")`` trims the given character set from both ends."""
+    vals = ["xxabcxx", "xax", "abc", "xxx", "", "xaxbx"]
+    expected = [v.strip("x") for v in vals]
+    n = len(vals)
+    arr, _keep = _make_mlir_string_array(vals)
+    out, _out_keep = _make_output_mlir_string_array(n)
+
+    with nrt_enabled(), MLIRNumbaCudaConfig():
+
+        @cuda.jit(
+            types.void(
+                types.CPointer(mlir_string), types.CPointer(mlir_string)
+            ),
+            extensions=[mlir_string_arg_handler],
+        )
+        def produce(o, a):
+            i = cuda.grid(1)
+            if i < n:
+                o[i] = a[i].strip("x")
+
+        produce[1, n](out, arr)
+        got = _verify_strings(out, expected)
+
+    assert got == [True] * n

@@ -51,13 +51,13 @@ class reader_impl {
    * @param parquet_metadatas Pre-materialized Parquet file metadata(s). Read from sources if empty
    * @param options Settings for controlling reading behavior
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resource to use for device memory allocation
+   * @param mr Memory resources used to allocate temporary and output device memory
    */
   explicit reader_impl(std::vector<std::unique_ptr<datasource>>&& sources,
                        std::vector<FileMetaData>&& parquet_metadatas,
                        parquet_reader_options const& options,
                        cuda::stream_ref stream,
-                       rmm::device_async_resource_ref mr);
+                       cudf::memory_resources mr);
 
   /**
    * @brief Read an entire set or a subset of data and returns a set of columns
@@ -98,7 +98,7 @@ class reader_impl {
    * @param parquet_metadatas Pre-materialized Parquet file metadata(s). Read from sources if empty
    * @param options Settings for controlling reading behavior
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resource to use for device memory allocation
+   * @param mr Memory resources used to allocate temporary and output device memory
    */
   explicit reader_impl(std::size_t chunk_read_limit,
                        std::size_t pass_read_limit,
@@ -106,7 +106,7 @@ class reader_impl {
                        std::vector<FileMetaData>&& parquet_metadatas,
                        parquet_reader_options const& options,
                        cuda::stream_ref stream,
-                       rmm::device_async_resource_ref mr);
+                       cudf::memory_resources mr);
 
   reader_impl(reader_impl const&)            = delete;
   reader_impl& operator=(reader_impl const&) = delete;
@@ -513,7 +513,7 @@ class reader_impl {
   void apply_decimal_width_cast(std::vector<std::unique_ptr<cudf::column>>& out_columns);
 
   cuda::stream_ref _stream;
-  rmm::device_async_resource_ref _mr{cudf::get_current_device_resource_ref()};
+  cudf::memory_resources _mr;
 
   // Reader configs.
   struct {

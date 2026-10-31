@@ -333,6 +333,8 @@ std::unique_ptr<column> binary_operation(
  * @brief Performs a binary operation between two columns using a
  * user-defined PTX function.
  *
+ * @deprecated in release 26.12. Use `cudf::transform` instead.
+ *
  * The output contains the result of `op(lhs[i], rhs[i])` for all `0 <= i < lhs.size()`
  *
  * Regardless of the operator, the validity of the output value is the logical
@@ -352,7 +354,7 @@ std::unique_ptr<column> binary_operation(
  * @throw cudf::logic_error if @p lhs and @p rhs dtypes aren't numeric
  * @throw cudf::logic_error if @p output_type dtype isn't numeric
  */
-std::unique_ptr<column> binary_operation(
+[[deprecated("Use cudf::transform instead")]] std::unique_ptr<column> binary_operation(
   column_view const& lhs,
   column_view const& rhs,
   std::string const& ptx,

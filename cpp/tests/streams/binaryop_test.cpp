@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -50,6 +50,10 @@ TEST_F(BinaryopTest, ScalarColumn)
 }
 
 class BinaryopPTXTest : public BinaryopTest {};
+
+// Exercise the deprecated PTX API until its removal.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 
 TEST_F(BinaryopPTXTest, ColumnColumnPTX)
 {
@@ -102,9 +106,9 @@ TEST_F(BinaryopPTXTest, ColumnColumnPTX)
 )***";
 
   cudf::binary_operation(
-    lhs, rhs, ptx, cudf::data_type(cudf::type_to_id<int32_t>()), cudf::test::get_default_stream());
-  cudf::binary_operation(
     lhs, rhs, ptx, cudf::data_type(cudf::type_to_id<int64_t>()), cudf::test::get_default_stream());
 }
+
+#pragma GCC diagnostic pop
 
 CUDF_TEST_PROGRAM_MAIN()

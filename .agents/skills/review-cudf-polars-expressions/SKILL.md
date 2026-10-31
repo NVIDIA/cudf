@@ -67,7 +67,7 @@ Start with scoping an implementation for the single partition path for cudf-pola
     4. Implement any short-circuiting opportunities by checking Column properties like the `null_count` or `size` that minimizes `pylibcudf` calls.
     5. Do not use APIs that convert the data CPU objects like `to_arrow` or `to_pylist` unless absolutely necessary.
     6. Ensure `pylibcudf` APIs calls are passed a stream object so they do not use their default stream argument.
-    7. Follow any additional guidance in `python/REVIEW_GUIDELINES.md`
+    7. Follow any additional guidance in `python/REVIEW_GUIDELINES.md` and `python/cudf_polars/REVIEW_GUIDELINES.md`
 3. When raising an exception to match Polars or to note that some functionality is not supported, prefer raising these exceptions in the `__init__` method instead of the `do_evaluate` methods of the `Expr` subclasses.
 4. Ensure the `is_pointwise` on the `Expr` subclass correctly reflects if the expression is a pointwise operation.
 

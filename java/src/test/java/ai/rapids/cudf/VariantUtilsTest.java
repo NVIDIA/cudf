@@ -237,6 +237,20 @@ public class VariantUtilsTest extends CudfTestBase {
           (bits >>> 24) & 0xff);
     }
 
+    private static List<Byte> timestamp(long value, boolean nanoseconds, boolean ntz) {
+      // Variant primitive type IDs: TIMESTAMP_MICROS=12, TIMESTAMP_NTZ_MICROS=13,
+      // TIMESTAMP_NANOS=18, TIMESTAMP_NTZ_NANOS=19. All have an int64 payload.
+      int primitiveType;
+      if (nanoseconds) {
+        primitiveType = ntz ? 19 : 18;
+      } else {
+        primitiveType = ntz ? 13 : 12;
+      }
+      List<Byte> encoded = int64(value);
+      encoded.set(0, oneByte(simple(primitiveType), "timestamp header"));
+      return encoded;
+    }
+
     private static List<Byte> float64(double value) {
       long bits = Double.doubleToRawLongBits(value);
       return bytes(simple(0x07),
@@ -912,6 +926,233 @@ public class VariantUtilsTest extends CudfTestBase {
           assertEquals(0, directResult.getRowCount());
           assertEquals(0, extractedResult.getRowCount());
         }
+      }
+    }
+  }
+
+  @Test
+  void castTimestampValuesPreservesPayloadForBothUnitsAndEncodings() {
+    for (boolean nanoseconds : new boolean[] {false, true}) {
+      DType target = nanoseconds ? DType.TIMESTAMP_NANOSECONDS : DType.TIMESTAMP_MICROSECONDS;
+      for (boolean ntz : new boolean[] {false, true}) {
+        try (ColumnVector values = ColumnVector.fromLists(
+                 BINARY_TYPE,
+                 VariantEncoder.timestamp(Long.MIN_VALUE, nanoseconds, ntz),
+                 VariantEncoder.timestamp(-1700000000000123L, nanoseconds, ntz),
+                 VariantEncoder.timestamp(-1, nanoseconds, ntz),
+                 VariantEncoder.timestamp(0, nanoseconds, ntz),
+                 VariantEncoder.timestamp(1, nanoseconds, ntz),
+                 VariantEncoder.timestamp(1700000000000123L, nanoseconds, ntz),
+                 VariantEncoder.timestamp(Long.MAX_VALUE, nanoseconds, ntz));
+             ColumnVector result = VariantUtils.castVariantValue(values, target);
+             ColumnVector ticks = ColumnVector.fromLongs(
+                 Long.MIN_VALUE, -1700000000000123L, -1, 0, 1, 1700000000000123L, Long.MAX_VALUE);
+             ColumnVector expected = ticks.castTo(target)) {
+          assertColumnsAreEqual(expected, result);
+        }
+      }
+    }
+  }
+
+  @Test
+  void extractTimestampValuesPreservesPayloadForBothUnitsAndEncodings() {
+    VariantEncoder encoder = new VariantEncoder("time");
+    for (boolean nanoseconds : new boolean[] {false, true}) {
+      DType target = nanoseconds ? DType.TIMESTAMP_NANOSECONDS : DType.TIMESTAMP_MICROSECONDS;
+      for (boolean ntz : new boolean[] {false, true}) {
+        List<StructData> rows = new ArrayList<>();
+        for (long ticks : new long[] {
+            Long.MIN_VALUE, -1700000000000123L, -1, 0, 1, 1700000000000123L, Long.MAX_VALUE}) {
+          rows.add(variant(encoder.metadata(), encoder.object(fields(
+              field("time", VariantEncoder.timestamp(ticks, nanoseconds, ntz))))));
+        }
+        try (ColumnVector values = ColumnVector.fromStructs(
+                 VARIANT_TYPE, rows.toArray(new StructData[0]));
+             ColumnVector result = VariantUtils.extractVariantField(values, "$.time", target);
+             ColumnVector ticks = ColumnVector.fromLongs(
+                 Long.MIN_VALUE, -1700000000000123L, -1, 0, 1, 1700000000000123L, Long.MAX_VALUE);
+             ColumnVector expected = ticks.castTo(target)) {
+          assertColumnsAreEqual(expected, result);
+        }
+      }
+    }
+  }
+
+  @Test
+  void castTimestampSliceRejectsOtherUnitsTypesAndTruncatedPayloads() {
+    for (boolean nanoseconds : new boolean[] {false, true}) {
+      DType target = nanoseconds ? DType.TIMESTAMP_NANOSECONDS : DType.TIMESTAMP_MICROSECONDS;
+      List<Byte> truncated = new ArrayList<>(VariantEncoder.timestamp(123, nanoseconds, false));
+      truncated.remove(truncated.size() - 1);
+      try (ColumnVector values = ColumnVector.fromLists(
+               BINARY_TYPE,
+               VariantEncoder.int8(0),
+               VariantEncoder.timestamp(7, nanoseconds, false),
+               VariantEncoder.timestamp(-7, nanoseconds, true),
+               VariantEncoder.timestamp(7, !nanoseconds, false),
+               VariantEncoder.timestamp(-7, !nanoseconds, true),
+               VariantEncoder.int64(7),
+               VariantEncoder.string("2026-10-23"),
+               VariantEncoder.nullValue(),
+               VariantEncoder.primitiveHeader(nanoseconds ? 18 : 12),
+               truncated,
+               null);
+           ColumnVector sliced = values.subVector(1, 11);
+           ColumnVector result = VariantUtils.castVariantValue(sliced, target);
+           ColumnVector ticks = ColumnVector.fromBoxedLongs(
+               7L, -7L, null, null, null, null, null, null, null, null);
+           ColumnVector expected = ticks.castTo(target)) {
+        assertColumnsAreEqual(expected, result);
+      }
+    }
+  }
+
+  @Test
+  void extractTimestampSlicePreservesNullsAndRejectsMismatches() {
+    VariantEncoder encoder = new VariantEncoder("time");
+    for (boolean nanoseconds : new boolean[] {false, true}) {
+      DType target = nanoseconds ? DType.TIMESTAMP_NANOSECONDS : DType.TIMESTAMP_MICROSECONDS;
+      List<Byte> truncated = new ArrayList<>(VariantEncoder.timestamp(123, nanoseconds, true));
+      truncated.remove(truncated.size() - 1);
+      try (ColumnVector values = ColumnVector.fromStructs(
+               VARIANT_TYPE,
+               variant(encoder.metadata(), encoder.object(fields())),
+               variant(encoder.metadata(), encoder.object(fields(
+                   field("time", VariantEncoder.timestamp(7, nanoseconds, false))))),
+               variant(encoder.metadata(), encoder.object(fields(
+                   field("time", VariantEncoder.timestamp(-7, nanoseconds, true))))),
+               variant(encoder.metadata(), encoder.object(fields(
+                   field("time", VariantEncoder.timestamp(7, !nanoseconds, false))))),
+               variant(encoder.metadata(), encoder.object(fields(
+                   field("time", VariantEncoder.timestamp(-7, !nanoseconds, true))))),
+               variant(encoder.metadata(), encoder.object(fields(
+                   field("time", VariantEncoder.int64(7))))),
+               variant(encoder.metadata(), encoder.object(fields(
+                   field("time", VariantEncoder.nullValue())))),
+               variant(encoder.metadata(), encoder.object(fields(
+                   field("time", VariantEncoder.primitiveHeader(nanoseconds ? 19 : 13))))),
+               variant(encoder.metadata(), encoder.object(fields(field("time", truncated)))),
+               variant(encoder.metadata(), encoder.object(fields())),
+               null);
+           ColumnVector sliced = values.subVector(1, 11);
+           ColumnVector result = VariantUtils.extractVariantField(sliced, "time", target);
+           ColumnVector ticks = ColumnVector.fromBoxedLongs(
+               7L, -7L, null, null, null, null, null, null, null, null);
+           ColumnVector expected = ticks.castTo(target)) {
+        assertColumnsAreEqual(expected, result);
+      }
+    }
+  }
+
+  @Test
+  void timestampMixedRowsCrossValidityMaskBoundaries() {
+    VariantEncoder encoder = new VariantEncoder("time");
+    for (boolean nanoseconds : new boolean[] {false, true}) {
+      DType target = nanoseconds ? DType.TIMESTAMP_NANOSECONDS : DType.TIMESTAMP_MICROSECONDS;
+      List<List<Byte>> rawRows = new ArrayList<>();
+      List<StructData> variantRows = new ArrayList<>();
+      // Slice away three leading nulls to exercise an unaligned input offset as well as
+      // multiple 32-bit validity words, including a partially populated final word.
+      for (int i = 0; i < 3; i++) {
+        rawRows.add(null);
+        variantRows.add(null);
+      }
+      Long[] expectedTicks = new Long[161];
+      for (int i = 0; i < expectedTicks.length; i++) {
+        List<Byte> value;
+        switch (i % 8) {
+          case 0:
+            expectedTicks[i] = (long) i + 1;
+            value = VariantEncoder.timestamp(expectedTicks[i], nanoseconds, false);
+            break;
+          case 1:
+            expectedTicks[i] = -(long) i - 1;
+            value = VariantEncoder.timestamp(expectedTicks[i], nanoseconds, true);
+            break;
+          case 2:
+            value = VariantEncoder.timestamp(i, !nanoseconds, false);
+            break;
+          case 3:
+            value = VariantEncoder.timestamp(i, !nanoseconds, true);
+            break;
+          case 4:
+            rawRows.add(null);
+            variantRows.add(null);
+            continue;
+          case 5:
+            value = VariantEncoder.nullValue();
+            break;
+          case 6:
+            value = new ArrayList<>(VariantEncoder.timestamp(i, nanoseconds, true));
+            value.remove(value.size() - 1);
+            break;
+          default:
+            value = VariantEncoder.int64(i);
+            break;
+        }
+        rawRows.add(value);
+        variantRows.add(variant(encoder.metadata(), encoder.object(fields(field("time", value)))));
+      }
+      @SuppressWarnings("unchecked")
+      List<Byte>[] encodedRows = (List<Byte>[]) rawRows.toArray(new List<?>[0]);
+      try (ColumnVector raw = ColumnVector.fromLists(BINARY_TYPE, encodedRows);
+           ColumnVector structs = ColumnVector.fromStructs(
+               VARIANT_TYPE, variantRows.toArray(new StructData[0]));
+           CloseableArray<ColumnView> rawViews = CloseableArray.wrap(raw.splitAsViews(3));
+           CloseableArray<ColumnView> structViews = CloseableArray.wrap(structs.splitAsViews(3));
+           ColumnVector cast = VariantUtils.castVariantValue(rawViews.get(1), target);
+           ColumnVector extracted =
+               VariantUtils.extractVariantField(structViews.get(1), "time", target);
+           ColumnVector ticks = ColumnVector.fromBoxedLongs(expectedTicks);
+           ColumnVector expected = ticks.castTo(target)) {
+        assertColumnsAreEqual(expected, cast);
+        assertColumnsAreEqual(expected, extracted);
+      }
+    }
+  }
+
+  @Test
+  void timestampTargetsSupportEmptyAndAllNullInputs() {
+    for (DType target : new DType[] {
+        DType.TIMESTAMP_MICROSECONDS, DType.TIMESTAMP_NANOSECONDS}) {
+      try (ColumnVector emptyValues = ColumnVector.fromLists(BINARY_TYPE);
+           ColumnVector emptyVariant = ColumnVector.fromStructs(VARIANT_TYPE);
+           ColumnVector emptyCast = VariantUtils.castVariantValue(emptyValues, target);
+           ColumnVector emptyExtract =
+               VariantUtils.extractVariantField(emptyVariant, "time", target);
+           ColumnVector nullValues = ColumnVector.fromLists(BINARY_TYPE, null, null);
+           ColumnVector nullVariant = ColumnVector.fromStructs(VARIANT_TYPE, null, null);
+           ColumnVector nullCast = VariantUtils.castVariantValue(nullValues, target);
+           ColumnVector nullExtract = VariantUtils.extractVariantField(nullVariant, "time", target);
+           ColumnVector nullTicks = ColumnVector.fromBoxedLongs(null, null);
+           ColumnVector expectedNulls = nullTicks.castTo(target)) {
+        assertEquals(target, emptyCast.getType());
+        assertEquals(target, emptyExtract.getType());
+        assertEquals(0, emptyCast.getRowCount());
+        assertEquals(0, emptyExtract.getRowCount());
+        assertColumnsAreEqual(expectedNulls, nullCast);
+        assertColumnsAreEqual(expectedNulls, nullExtract);
+      }
+    }
+  }
+
+  @Test
+  void timestampTargetsRejectUnsupportedUnits() {
+    try (ColumnVector values = ColumnVector.fromLists(
+             BINARY_TYPE, VariantEncoder.timestamp(7, false, false));
+         ColumnVector variant = makeXyzVariantColumn();
+         ColumnVector emptyValues = ColumnVector.fromLists(BINARY_TYPE);
+         ColumnVector emptyVariant = ColumnVector.fromStructs(VARIANT_TYPE)) {
+      for (DType target : new DType[] {
+          DType.TIMESTAMP_SECONDS, DType.TIMESTAMP_MILLISECONDS, DType.TIMESTAMP_DAYS}) {
+        assertThrows(IllegalArgumentException.class,
+            () -> VariantUtils.castVariantValue(values, target));
+        assertThrows(IllegalArgumentException.class,
+            () -> VariantUtils.extractVariantField(variant, "x", target));
+        assertThrows(IllegalArgumentException.class,
+            () -> VariantUtils.castVariantValue(emptyValues, target));
+        assertThrows(IllegalArgumentException.class,
+            () -> VariantUtils.extractVariantField(emptyVariant, "x", target));
       }
     }
   }

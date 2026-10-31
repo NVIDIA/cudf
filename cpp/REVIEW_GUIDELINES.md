@@ -220,6 +220,7 @@ Suggested fix:
 - Use `host_span`/`device_span`; no owning vectors passed by copy/reference unless explicitly moved
 - Prefer span parameters over pointer + size/length pairs (e.g. `T const* data, size_t size`)
 - Prefer `std::span` over `host_span<T>` whenever no host-device communication is required
+- Flag `host_span` passed as `std::span` anywhere in an API chain where `is_device_accessible()` is useful (e.g. a path to a host-device copy): the implicit conversion silently drops it and the copy takes the pageable path
 
 **Stream Management**:
 - Stream and MR as last two parameters (stream before MR)

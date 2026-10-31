@@ -170,6 +170,7 @@ ConfigureTest(
 # * join tests ------------------------------------------------------------------------------------
 ConfigureTest(
   JOIN_TEST
+  join/asof_join_tests.cpp
   join/join_tests.cpp
   join/conditional_join_tests.cu
   join/cross_join_tests.cpp

@@ -9,6 +9,7 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
+#include <cuda/std/concepts>
 #include <cuda/std/type_traits>
 #include <thrust/iterator/iterator_adaptor.h>
 #include <thrust/iterator/iterator_facade.h>
@@ -176,9 +177,8 @@ __device__ inline weak_ordering compare_elements(string_view lhs, string_view rh
  * @param rhs The second element
  * @return Indicates the relationship between the elements
  */
-template <typename Element>
+template <cuda::std::floating_point Element>
 __device__ weak_ordering relational_compare(Element lhs, Element rhs)
-  requires(cuda::std::is_floating_point_v<Element>)
 {
   if (isnan(lhs) and isnan(rhs)) {
     return weak_ordering::EQUIVALENT;
@@ -221,7 +221,6 @@ inline __device__ auto null_compare(bool lhs_is_null, bool rhs_is_null, null_ord
  */
 template <typename Element>
 __device__ weak_ordering relational_compare(Element lhs, Element rhs)
-  requires(not cuda::std::is_floating_point_v<Element>)
 {
   return detail::compare_elements(lhs, rhs);
 }
@@ -234,9 +233,8 @@ __device__ weak_ordering relational_compare(Element lhs, Element rhs)
  * @param rhs second element
  * @return `true` if `lhs` == `rhs` else `false`.
  */
-template <typename Element>
+template <cuda::std::floating_point Element>
 __device__ bool equality_compare(Element lhs, Element rhs)
-  requires(cuda::std::is_floating_point_v<Element>)
 {
   if (isnan(lhs) and isnan(rhs)) { return true; }
   return lhs == rhs;
@@ -252,7 +250,6 @@ __device__ bool equality_compare(Element lhs, Element rhs)
  */
 template <typename Element>
 __device__ bool equality_compare(Element const lhs, Element const rhs)
-  requires(not cuda::std::is_floating_point_v<Element>)
 {
   return lhs == rhs;
 }

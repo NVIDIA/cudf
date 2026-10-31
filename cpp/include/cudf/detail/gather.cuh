@@ -22,6 +22,7 @@
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/types.hpp>
 #include <cudf/utilities/bit.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
@@ -135,7 +136,7 @@ void gather_helper(InputItr source_itr,
 }
 
 // Error case when no other overload or specialization is available
-template <typename Element, typename Enable = void>
+template <typename Element>
 struct column_gatherer_impl {
   template <typename... Args>
   std::unique_ptr<column> operator()(Args&&...)
@@ -187,8 +188,8 @@ struct column_gatherer {
  * @tparam Element Dispatched type for the column being gathered
  * @tparam MapIterator Iterator type for the gather map
  */
-template <typename Element>
-struct column_gatherer_impl<Element, std::enable_if_t<is_rep_layout_compatible<Element>()>> {
+template <cudf::concepts::rep_layout_compatible Element>
+struct column_gatherer_impl<Element> {
   /**
    * @brief Type-dispatched function to gather from one column to another based
    * on a `gather_map`.

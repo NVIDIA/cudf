@@ -1,10 +1,11 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #pragma once
 
+#include <cuda/std/concepts>
 #include <cuda/std/type_traits>
 
 namespace cudf::detail {
@@ -21,9 +22,8 @@ namespace cudf::detail {
  * @param exp Exponent operand
  * @return Result of `base` to the power of `exp` of type `Base`
  */
-template <typename Base, typename Exp>
+template <cuda::std::integral Base, cuda::std::integral Exp>
 __device__ inline constexpr auto integral_pow(Base base, Exp exp) -> Base
-  requires(cuda::std::is_integral_v<Base> and cuda::std::is_integral_v<Exp>)
 {
   if constexpr (cuda::std::is_signed_v<Exp>) {
     if (exp < 0) {
@@ -58,9 +58,10 @@ __device__ inline constexpr auto integral_pow(Base base, Exp exp) -> Base
  * @param rhs Right-hand side operand
  * @return Result of integer floor division of `lhs` by `rhs` of type `Common`
  */
-template <typename LHS, typename RHS, typename Common = cuda::std::common_type_t<LHS, RHS>>
+template <typename LHS,
+          typename RHS,
+          cuda::std::integral Common = cuda::std::common_type_t<LHS, RHS>>
 __device__ inline constexpr auto integral_floor_div(LHS lhs, RHS rhs) -> Common
-  requires(cuda::std::is_integral_v<Common>)
 {
   if constexpr (cuda::std::is_signed_v<Common>) {
     auto const numerator         = static_cast<Common>(lhs);

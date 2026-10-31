@@ -9,6 +9,7 @@
 
 #include <cudf/detail/utilities/cast_functor.cuh>
 #include <cudf/reduction/detail/reduction_policy.cuh>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/execution_env.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -51,7 +52,7 @@ template <typename InputIterator,
           typename OffsetIterator,
           typename OutputIterator,
           typename BinaryOp,
-          typename OutputType = cuda::std::iter_value_t<OutputIterator>>
+          cudf::concepts::fixed_width OutputType = cuda::std::iter_value_t<OutputIterator>>
 void segmented_reduce(InputIterator d_in,
                       OffsetIterator d_offset_begin,
                       OffsetIterator d_offset_end,
@@ -59,7 +60,7 @@ void segmented_reduce(InputIterator d_in,
                       BinaryOp op,
                       OutputType initial_value,
                       cuda::stream_ref stream)
-  requires(is_fixed_width<OutputType>() && !cudf::is_fixed_point<OutputType>())
+  requires(not cudf::concepts::fixed_point<OutputType>)
 {
   auto const num_segments = static_cast<size_type>(std::distance(d_offset_begin, d_offset_end)) - 1;
   auto const binary_op    = cudf::detail::cast_functor<OutputType>(op);
@@ -86,7 +87,6 @@ void segmented_reduce(InputIterator,
                       BinaryOp,
                       OutputType,
                       cuda::stream_ref)
-  requires(!(is_fixed_width<OutputType>() && !cudf::is_fixed_point<OutputType>()))
 {
   CUDF_FAIL(
     "Unsupported data types called on segmented_reduce. Only numeric and chrono types are "

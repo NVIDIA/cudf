@@ -202,9 +202,9 @@ __device__ __inline__ char const* skip_leading_delimiter_run(char const* begin,
 }
 
 /**
- * @brief CUDA kernel iterates over the data until the end of the current field
+ * @brief Iterate over the data until the end of the current field.
  *
- * Also iterates over (one or more) delimiter characters after the field.
+ * Delimiter runs are skipped by the caller before scanning the next field.
  * Function applies to formats with field delimiters and line terminators.
  *
  * @param begin Pointer to the first element of the string
@@ -213,8 +213,7 @@ __device__ __inline__ char const* skip_leading_delimiter_run(char const* begin,
  * @param escape_char A boolean value to signify whether to consider `\` as escape character or
  * just a character.
  *
- * @return Pointer to the last character in the field, including the
- *  delimiter(s) following the field data
+ * @return Pointer to the first delimiter or record terminator after the field, or `end`.
  */
 __device__ __inline__ char const* seek_field_end(char const* begin,
                                                  char const* end,
@@ -237,9 +236,6 @@ __device__ __inline__ char const* seek_field_end(char const* begin,
       quotation = !quotation;
     } else if (!quotation) {
       if (*current == opts.delimiter) {
-        while (opts.multi_delimiter && (current + 1 < end) && *(current + 1) == opts.delimiter) {
-          ++current;
-        }
         break;
       } else if (*current == opts.terminator) {
         break;
@@ -261,6 +257,16 @@ __device__ __inline__ char const* seek_field_end(char const* begin,
     if (current < end) { current++; }
   }
   return current;
+}
+
+/**
+ * @brief Returns whether the field scan stopped at a delimiter within the record.
+ */
+__device__ __inline__ bool is_field_delimiter(char const* field_end,
+                                              char const* row_end,
+                                              parse_options_view const& opts)
+{
+  return field_end < row_end and *field_end == opts.delimiter;
 }
 
 /**

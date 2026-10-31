@@ -640,7 +640,8 @@ void infer_column_types(parse_options const& parse_opts,
   for (auto col_idx = 0u; col_idx < column_flags.size(); ++col_idx) {
     if (not(column_flags[col_idx] & column_parse::inferred)) { continue; }
     auto const& stats = column_stats[inf_col_idx++];
-    if (stats.null_count == num_records or stats.total_count() == 0) {
+    // Missing fields are absent from the histogram and also represent nulls.
+    if (stats.null_count == stats.total_count()) {
       // Entire column is NULL; allocate the smallest amount of memory
       column_types[col_idx] = data_type(cudf::type_id::INT8);
     } else if (stats.string_count > 0L) {

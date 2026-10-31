@@ -762,6 +762,9 @@ table_with_metadata reader_impl::read_chunk_internal(read_mode mode)
 {
   CUDF_FUNC_RANGE();
 
+  // The filter copies the surviving rows to the output, so columns are temporary until then
+  auto const mr = _expr_conv.get_converted_expr().has_value() ? _mr.as_temporary() : _mr;
+
   // If `_output_metadata` has been constructed, just copy it over.
   auto out_metadata = _output_metadata ? table_metadata{*_output_metadata} : table_metadata{};
   out_metadata.schema_info.resize(_output_buffers.size());
@@ -788,7 +791,7 @@ table_with_metadata reader_impl::read_chunk_internal(read_mode mode)
       std::vector<size_t>(_file_itm_data.num_rows_per_source.size(), 0);
 
     // Finalize output
-    return finalize_output(mode, out_metadata, out_columns);
+    return finalize_output(mode, out_metadata, out_columns, mr);
   }
 
   auto& pass            = *_pass_itm_data;
@@ -821,7 +824,7 @@ table_with_metadata reader_impl::read_chunk_internal(read_mode mode)
   preprocess_chunk_strings(mode, read_info);
 
   // Allocate memory buffers for the output columns.
-  allocate_columns(mode, read_info.skip_rows, read_info.num_rows);
+  allocate_columns(mode, read_info.skip_rows, read_info.num_rows, mr);
 
   // Parse data into the output buffers.
   decode_page_data(mode, read_info.skip_rows, read_info.num_rows);
@@ -857,7 +860,7 @@ table_with_metadata reader_impl::read_chunk_internal(read_mode mode)
   assemble_dict_transcoded_columns(out_columns);
 
   out_columns = cudf::structs::detail::enforce_null_consistency(
-    std::move(out_columns), _stream, _mr.get_output_mr());
+    std::move(out_columns), _stream, mr.get_output_mr());
 
   // Compute the output number of rows per source
   if (mode == read_mode::CHUNKED_READ) {
@@ -869,7 +872,7 @@ table_with_metadata reader_impl::read_chunk_internal(read_mode mode)
   }
 
   // Add empty columns if needed. Filter output columns based on filter.
-  return finalize_output(mode, out_metadata, out_columns);
+  return finalize_output(mode, out_metadata, out_columns, mr);
 }
 
 std::vector<size_t> reader_impl::calculate_output_num_rows_per_source(size_t const chunk_start_row,
@@ -971,13 +974,25 @@ std::optional<std::vector<std::string>> reader_impl::get_column_projection(
   return std::nullopt;
 }
 
-void reader_impl::apply_decimal_width_cast(std::vector<std::unique_ptr<column>>& out_columns)
+cudf::memory_resources reader_impl::column_mr(cudf::memory_resources mr,
+                                              data_type type,
+                                              bool is_top_level) const
+{
+  auto const will_cast = _options.decimal_width != type_id::EMPTY and cudf::is_fixed_point(type) and
+                         type.id() != _options.decimal_width;
+  auto const will_encode =
+    is_top_level and _options.output_dict_columns and type.id() == type_id::STRING;
+  return (will_cast or will_encode) ? mr.as_temporary() : mr;
+}
+
+void reader_impl::apply_decimal_width_cast(std::vector<std::unique_ptr<column>>& out_columns,
+                                           cudf::memory_resources mr)
 {
   // TODO: Instead of casting the columns after the read is done, we should
   // be able to decode data directly into the target decimal type buffer.
   if (_options.decimal_width == type_id::EMPTY) { return; }
   for (auto& col : out_columns) {
-    col = cast_decimals_to_width(std::move(col), _options.decimal_width, _stream, _mr);
+    col = cast_decimals_to_width(std::move(col), _options.decimal_width, _stream, mr);
   }
 }
 
@@ -1008,7 +1023,8 @@ column_selection_options reader_impl::make_column_selection_options(
 
 table_with_metadata reader_impl::finalize_output(read_mode mode,
                                                  table_metadata& out_metadata,
-                                                 std::vector<std::unique_ptr<column>>& out_columns)
+                                                 std::vector<std::unique_ptr<column>>& out_columns,
+                                                 cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -1017,14 +1033,20 @@ table_with_metadata reader_impl::finalize_output(read_mode mode,
     if (!_output_metadata) {
       column_name_info& col_name = out_metadata.schema_info[i];
       out_columns.emplace_back(
-        io::detail::empty_like(_output_buffers[i], &col_name, _stream, _mr.get_output_mr()));
+        io::detail::empty_like(_output_buffers[i],
+                               &col_name,
+                               _stream,
+                               column_mr(mr, _output_buffers[i].type, true).get_output_mr()));
     } else {
       out_columns.emplace_back(
-        io::detail::empty_like(_output_buffers[i], nullptr, _stream, _mr.get_output_mr()));
+        io::detail::empty_like(_output_buffers[i],
+                               nullptr,
+                               _stream,
+                               column_mr(mr, _output_buffers[i].type, true).get_output_mr()));
     }
   }
 
-  apply_decimal_width_cast(out_columns);
+  apply_decimal_width_cast(out_columns, mr);
 
   // Encode any remaining flat STRING columns to DICTIONARY32 via a post-hoc
   // `dictionary::detail::encode`: columns not produced by the direct transcode fast path, or all of
@@ -1072,14 +1094,14 @@ table_with_metadata reader_impl::finalize_output(read_mode mode,
     if (_options.prepend_row_index_column) {
       out_columns.emplace(
         out_columns.begin(),
-        synthesize_row_index_column(_file_itm_data.row_groups, read_info, _stream, _mr));
+        synthesize_row_index_column(_file_itm_data.row_groups, read_info, _stream, mr));
       out_metadata.schema_info.emplace(out_metadata.schema_info.begin(),
                                        column_name_info{.name = "row_index", .is_nullable = false});
     }
     if (_options.prepend_source_index_column) {
       out_columns.emplace(
         out_columns.begin(),
-        synthesize_source_index_column(out_metadata.num_rows_per_source, _stream, _mr));
+        synthesize_source_index_column(out_metadata.num_rows_per_source, _stream, mr));
       out_metadata.schema_info.emplace(
         out_metadata.schema_info.begin(),
         column_name_info{.name = "source_index", .is_nullable = false});
@@ -1112,10 +1134,38 @@ table_with_metadata reader_impl::finalize_output(read_mode mode,
 
     CUDF_EXPECTS(predicate->view().type().id() == type_id::BOOL8,
                  "Predicate filter should return a boolean");
-    // Exclude columns present in filter only in output
-    auto output_table = cudf::detail::apply_mask(
-      only_output, *predicate, cudf::detail::mask_type::RETENTION, _stream, _mr);
-    return {encode_output_dict_columns(std::move(output_table)), std::move(out_metadata)};
+    // Exclude columns present in filter only in output. STRING columns to be dictionary encoded
+    // are copied again by the encode, so their surviving rows go to the temporary resource.
+    std::vector<size_type> encode_indices;
+    std::vector<size_type> other_indices;
+    for (size_type i = 0; i < only_output.num_columns(); ++i) {
+      auto const will_encode =
+        _options.output_dict_columns and only_output.column(i).type().id() == type_id::STRING;
+      (will_encode ? encode_indices : other_indices).push_back(i);
+    }
+    auto const apply_predicate = [&](std::vector<size_type> const& indices,
+                                     cudf::memory_resources apply_mr) {
+      return cudf::detail::apply_mask(only_output.select(indices),
+                                      *predicate,
+                                      cudf::detail::mask_type::RETENTION,
+                                      _stream,
+                                      apply_mr)
+        ->release();
+    };
+    auto encode_columns = encode_indices.empty()
+                            ? std::vector<std::unique_ptr<column>>{}
+                            : apply_predicate(encode_indices, _mr.as_temporary());
+    auto other_columns  = other_indices.empty() ? std::vector<std::unique_ptr<column>>{}
+                                                : apply_predicate(other_indices, _mr);
+    std::vector<std::unique_ptr<column>> output_columns(only_output.num_columns());
+    for (size_t i = 0; i < encode_indices.size(); ++i) {
+      output_columns[encode_indices[i]] = std::move(encode_columns[i]);
+    }
+    for (size_t i = 0; i < other_indices.size(); ++i) {
+      output_columns[other_indices[i]] = std::move(other_columns[i]);
+    }
+    return {encode_output_dict_columns(std::make_unique<table>(std::move(output_columns))),
+            std::move(out_metadata)};
   }
   return {encode_output_dict_columns(std::make_unique<table>(std::move(out_columns))),
           std::move(out_metadata)};

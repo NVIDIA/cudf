@@ -330,11 +330,13 @@ class reader_impl {
    * @param mode Value indicating if the data sources are read all at once or chunk by chunk
    * @param out_metadata The output table metadata
    * @param out_columns The columns for building the output table
+   * @param mr Memory resources for the columns before the filter is applied
    * @return The output table along with columns' metadata
    */
   table_with_metadata finalize_output(read_mode mode,
                                       table_metadata& out_metadata,
-                                      std::vector<std::unique_ptr<column>>& out_columns);
+                                      std::vector<std::unique_ptr<column>>& out_columns,
+                                      cudf::memory_resources mr);
 
   /**
    * @brief Allocate data buffers for the output columns.
@@ -342,8 +344,27 @@ class reader_impl {
    * @param mode Value indicating if the data sources are read all at once or chunk by chunk
    * @param skip_rows Crop all rows below skip_rows
    * @param num_rows Number of rows to read
+   * @param mr Memory resources for the columns before the filter is applied
    */
-  void allocate_columns(read_mode mode, size_t skip_rows, size_t num_rows);
+  void allocate_columns(read_mode mode,
+                        size_t skip_rows,
+                        size_t num_rows,
+                        cudf::memory_resources mr);
+
+  /**
+   * @brief Memory resources for a decoded column buffer.
+   *
+   * A buffer that the reader copies again, by the decimal cast or by the dictionary encode, is
+   * allocated on the temporary resource.
+   *
+   * @param mr Memory resources for the columns before the filter is applied
+   * @param type Data type of the column buffer
+   * @param is_top_level Whether the column buffer is a top-level column
+   * @return Memory resources for the column buffer
+   */
+  [[nodiscard]] cudf::memory_resources column_mr(cudf::memory_resources mr,
+                                                 data_type type,
+                                                 bool is_top_level) const;
 
   /**
    * @brief Calculate per-page offsets for string data
@@ -509,8 +530,10 @@ class reader_impl {
    * @brief Cast any fixed-point output columns to the decimal width specified in options.
    *
    * @param out_columns Output columns to cast
+   * @param mr Memory resources for the columns before the filter is applied
    */
-  void apply_decimal_width_cast(std::vector<std::unique_ptr<cudf::column>>& out_columns);
+  void apply_decimal_width_cast(std::vector<std::unique_ptr<cudf::column>>& out_columns,
+                                cudf::memory_resources mr);
 
   cuda::stream_ref _stream;
   cudf::memory_resources _mr;

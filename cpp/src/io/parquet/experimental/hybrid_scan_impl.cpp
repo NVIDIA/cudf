@@ -1072,6 +1072,10 @@ table_with_metadata hybrid_scan_reader_impl::read_chunk_internal(read_mode mode,
     return result;
   }
 
+  // A non-empty row mask copies the surviving rows to the output, so columns are temporary until
+  // then
+  auto const mr = row_mask.is_empty() ? _mr : _mr.as_temporary();
+
   // If `_output_metadata` has been constructed, just copy it over.
   auto out_metadata = _output_metadata ? table_metadata{*_output_metadata} : table_metadata{};
   out_metadata.schema_info.resize(_output_buffers.size());
@@ -1098,7 +1102,7 @@ table_with_metadata hybrid_scan_reader_impl::read_chunk_internal(read_mode mode,
       std::vector<std::size_t>(_file_itm_data.num_rows_per_source.size(), 0);
 
     // Finalize output
-    return finalize_output(columns_mode, out_metadata, out_columns, row_mask);
+    return finalize_output(columns_mode, out_metadata, out_columns, row_mask, mr);
   }
 
   auto& pass            = *_pass_itm_data;
@@ -1125,7 +1129,7 @@ table_with_metadata hybrid_scan_reader_impl::read_chunk_internal(read_mode mode,
   preprocess_chunk_strings(mode, read_info);
 
   // Allocate memory buffers for the output columns.
-  allocate_columns(mode, read_info.skip_rows, read_info.num_rows);
+  allocate_columns(mode, read_info.skip_rows, read_info.num_rows, mr);
 
   // Parse data into the output buffers.
   decode_page_data(mode, read_info.skip_rows, read_info.num_rows);
@@ -1155,7 +1159,7 @@ table_with_metadata hybrid_scan_reader_impl::read_chunk_internal(read_mode mode,
   }
 
   out_columns = cudf::structs::detail::enforce_null_consistency(
-    std::move(out_columns), _stream, _mr.get_output_mr());
+    std::move(out_columns), _stream, mr.get_output_mr());
 
   // Compute the output number of rows per source
   if (mode == read_mode::CHUNKED_READ) {
@@ -1167,7 +1171,7 @@ table_with_metadata hybrid_scan_reader_impl::read_chunk_internal(read_mode mode,
   }
 
   // Add empty columns if needed. Filter output columns based on filter.
-  return finalize_output(columns_mode, out_metadata, out_columns, row_mask);
+  return finalize_output(columns_mode, out_metadata, out_columns, row_mask, mr);
 }
 
 template <typename RowMaskView>
@@ -1175,7 +1179,8 @@ table_with_metadata hybrid_scan_reader_impl::finalize_output(
   read_columns_mode columns_mode,
   table_metadata& out_metadata,
   std::vector<std::unique_ptr<column>>& out_columns,
-  RowMaskView row_mask)
+  RowMaskView row_mask,
+  cudf::memory_resources mr)
 {
   // Create empty columns as needed (this can happen if we've ended up with no actual data to
   // read)
@@ -1183,10 +1188,16 @@ table_with_metadata hybrid_scan_reader_impl::finalize_output(
     if (!_output_metadata) {
       column_name_info& col_name = out_metadata.schema_info[i];
       out_columns.emplace_back(
-        io::detail::empty_like(_output_buffers[i], &col_name, _stream, _mr.get_output_mr()));
+        io::detail::empty_like(_output_buffers[i],
+                               &col_name,
+                               _stream,
+                               column_mr(mr, _output_buffers[i].type, true).get_output_mr()));
     } else {
       out_columns.emplace_back(
-        io::detail::empty_like(_output_buffers[i], nullptr, _stream, _mr.get_output_mr()));
+        io::detail::empty_like(_output_buffers[i],
+                               nullptr,
+                               _stream,
+                               column_mr(mr, _output_buffers[i].type, true).get_output_mr()));
     }
   }
 
@@ -1213,21 +1224,21 @@ table_with_metadata hybrid_scan_reader_impl::finalize_output(
   // increment the output chunk count
   _file_itm_data._output_chunk_count++;
 
-  apply_decimal_width_cast(out_columns);
+  apply_decimal_width_cast(out_columns, mr);
 
   // Prepend the source and row index columns to filter columns only
   if (columns_mode == read_columns_mode::FILTER_COLUMNS) {
     if (_options.prepend_row_index_column) {
       out_columns.emplace(out_columns.begin(),
                           parquet::detail::synthesize_row_index_column(
-                            _file_itm_data.row_groups, read_info, _stream, _mr));
+                            _file_itm_data.row_groups, read_info, _stream, mr));
       out_metadata.schema_info.emplace(out_metadata.schema_info.begin(),
                                        column_name_info{.name = "row_index", .is_nullable = false});
     }
     if (_options.prepend_source_index_column) {
       out_columns.emplace(out_columns.begin(),
                           parquet::detail::synthesize_source_index_column(
-                            out_metadata.num_rows_per_source, _stream, _mr));
+                            out_metadata.num_rows_per_source, _stream, mr));
       out_metadata.schema_info.emplace(
         out_metadata.schema_info.begin(),
         column_name_info{.name = "source_index", .is_nullable = false});

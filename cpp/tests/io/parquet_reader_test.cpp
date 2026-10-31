@@ -14,12 +14,15 @@
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/io_metadata_utilities.hpp>
 #include <cudf_test/iterator_utilities.hpp>
+#include <cudf_test/memory_resource_utilities.hpp>
 #include <cudf_test/table_utilities.hpp>
 
 #include <cudf/column/column.hpp>
+#include <cudf/column/column_factories.hpp>
 #include <cudf/copying.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/io/parquet_metadata.hpp>
+#include <cudf/null_mask.hpp>
 #include <cudf/reshape.hpp>
 #include <cudf/stream_compaction.hpp>
 #include <cudf/table/table.hpp>
@@ -56,7 +59,173 @@ auto page_boundary_slices(cudf::size_type const num_rows)
     {{0, num_rows}, {31, 3}, {32, 3}, {33, 3}, {255, 2}}};
 }
 
+constexpr cudf::size_type memory_resources_test_num_rows = 10'000;
+
+// Nullable INT32, STRING, DECIMAL32 and LIST<DECIMAL32> columns. With `as_struct`, the last three
+// are inside a nullable STRUCT column.
+std::unique_ptr<cudf::table> make_memory_resources_test_table(bool as_struct)
+{
+  auto constexpr num_rows = memory_resources_test_num_rows;
+  auto const sequence     = cuda::counting_iterator<int32_t>{0};
+  auto const valids       = cuda::transform_iterator(sequence, [](auto i) { return i % 7 != 0; });
+  auto const strings =
+    cuda::transform_iterator(sequence, [](auto i) { return "value_" + std::to_string(i % 100); });
+
+  cudf::test::fixed_width_column_wrapper<int32_t> ints(sequence, sequence + num_rows, valids);
+  cudf::test::strings_column_wrapper strs(strings, strings + num_rows, valids);
+  cudf::test::fixed_point_column_wrapper<int32_t> decimals(
+    sequence, sequence + num_rows, valids, numeric::scale_type{-2});
+  auto const offsets = cuda::transform_iterator(sequence, [](auto i) { return 2 * i; });
+  cudf::test::fixed_width_column_wrapper<int32_t> list_offsets(offsets, offsets + num_rows + 1);
+  cudf::test::fixed_point_column_wrapper<int32_t> list_decimals(
+    sequence, sequence + 2 * num_rows, numeric::scale_type{-2});
+  auto lists = cudf::make_lists_column(num_rows,
+                                       list_offsets.release(),
+                                       list_decimals.release(),
+                                       0,
+                                       cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+
+  std::vector<std::unique_ptr<cudf::column>> columns;
+  columns.push_back(strs.release());
+  columns.push_back(decimals.release());
+  columns.push_back(std::move(lists));
+  if (as_struct) {
+    auto const struct_valids =
+      cuda::transform_iterator(sequence, [](auto i) { return i % 5 != 0; });
+    std::vector<bool> const struct_validity(struct_valids, struct_valids + num_rows);
+    cudf::test::structs_column_wrapper structs(std::move(columns), struct_validity);
+    columns.clear();
+    columns.push_back(structs.release());
+  }
+  columns.insert(columns.begin(), ints.release());
+  return std::make_unique<cudf::table>(std::move(columns));
+}
+
+void write_memory_resources_test_file(cudf::table_view input, std::string const& filepath)
+{
+  auto const write_options =
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, input)
+      .compression(cudf::io::compression_type::SNAPPY)
+      .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+      .row_group_size_rows(memory_resources_test_num_rows / 4)
+      .max_page_size_rows(memory_resources_test_num_rows / 16)
+      .build();
+  cudf::io::write_parquet(write_options);
+}
+
+// Reads with distinct output and temporary resources. The output resource must allocate the
+// returned table and, for `EXACT`, nothing else.
+void expect_read_uses_memory_resources(cudf::io::parquet_reader_options const& options,
+                                       cudf::test::memory_resource_expectations expectations = {
+                                         cudf::test::output_allocation_expectation::EXACT,
+                                         cudf::test::temporary_allocation_expectation::SOME})
+{
+  auto const stream   = cudf::test::get_default_stream();
+  auto const expected = cudf::io::read_parquet(options, stream);
+
+  cudf::test::memory_resource_test_harness harness;
+  {
+    auto const result = cudf::io::read_parquet(options, stream, harness.resources());
+    harness.expect_resource_usage(result.tbl->alloc_size(), expectations, stream);
+    CUDF_TEST_EXPECT_TABLES_EQUAL(expected.tbl->view(), result.tbl->view());
+  }
+  harness.expect_no_live_allocations(stream);
+}
+
 }  // namespace
+
+TEST_F(ParquetReaderTest, ReadUsesMemoryResources)
+{
+  auto const filepath = temp_env->get_temp_filepath("ReadUsesMemoryResources.parquet");
+  write_memory_resources_test_file(make_memory_resources_test_table(false)->view(), filepath);
+
+  auto literal_value = cudf::numeric_scalar<int32_t>(memory_resources_test_num_rows / 3);
+  auto literal       = cudf::ast::literal(literal_value);
+  auto col_ref       = cudf::ast::column_reference(0);
+  auto filter        = cudf::ast::operation(cudf::ast::ast_operator::LESS, col_ref, literal);
+
+  auto const builder = [&] {
+    return cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath});
+  };
+  {
+    SCOPED_TRACE("plain");
+    expect_read_uses_memory_resources(builder().build());
+  }
+  {
+    SCOPED_TRACE("decimal cast");
+    expect_read_uses_memory_resources(builder().decimal_width(cudf::type_id::DECIMAL128).build());
+  }
+  {
+    SCOPED_TRACE("dictionary output");
+    expect_read_uses_memory_resources(builder().output_dict_columns(true).build());
+  }
+  {
+    SCOPED_TRACE("synthetic columns");
+    expect_read_uses_memory_resources(
+      builder().prepend_row_index_column(true).prepend_source_index_column(true).build());
+  }
+  {
+    SCOPED_TRACE("filter");
+    expect_read_uses_memory_resources(builder().filter(filter).build());
+  }
+  {
+    SCOPED_TRACE("filter with decimal cast, dictionary output and synthetic columns");
+    expect_read_uses_memory_resources(builder()
+                                        .filter(filter)
+                                        .decimal_width(cudf::type_id::DECIMAL128)
+                                        .output_dict_columns(true)
+                                        .prepend_row_index_column(true)
+                                        .prepend_source_index_column(true)
+                                        .build());
+  }
+}
+
+TEST_F(ParquetReaderTest, ReadStructsUsesMemoryResources)
+{
+  auto const filepath = temp_env->get_temp_filepath("ReadStructsUsesMemoryResources.parquet");
+  write_memory_resources_test_file(make_memory_resources_test_table(true)->view(), filepath);
+
+  auto literal_value = cudf::numeric_scalar<int32_t>(memory_resources_test_num_rows / 3);
+  auto literal       = cudf::ast::literal(literal_value);
+  auto col_ref       = cudf::ast::column_reference(0);
+  auto filter        = cudf::ast::operation(cudf::ast::ast_operator::LESS, col_ref, literal);
+
+  auto const builder = [&] {
+    return cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+      .decimal_width(cudf::type_id::DECIMAL128);
+  };
+  {
+    // Null consistency replaces the decoded null masks of the struct's children
+    SCOPED_TRACE("plain");
+    expect_read_uses_memory_resources(builder().build(),
+                                      {cudf::test::output_allocation_expectation::AT_LEAST_LIVE,
+                                       cudf::test::temporary_allocation_expectation::SOME});
+  }
+  {
+    SCOPED_TRACE("filter");
+    expect_read_uses_memory_resources(builder().filter(filter).build());
+  }
+}
+
+TEST_F(ParquetReaderTest, ReadAllRowsFilteredUsesMemoryResources)
+{
+  auto const filepath =
+    temp_env->get_temp_filepath("ReadAllRowsFilteredUsesMemoryResources.parquet");
+  write_memory_resources_test_file(make_memory_resources_test_table(false)->view(), filepath);
+
+  auto literal_value = cudf::numeric_scalar<int32_t>(-1);
+  auto literal       = cudf::ast::literal(literal_value);
+  auto col_ref       = cudf::ast::column_reference(0);
+  auto filter        = cudf::ast::operation(cudf::ast::ast_operator::LESS, col_ref, literal);
+
+  expect_read_uses_memory_resources(
+    cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+      .filter(filter)
+      .decimal_width(cudf::type_id::DECIMAL128)
+      .output_dict_columns(true)
+      .prepend_row_index_column(true)
+      .build());
+}
 
 TEST_F(ParquetReaderTest, ManyTinyStringPages)
 {

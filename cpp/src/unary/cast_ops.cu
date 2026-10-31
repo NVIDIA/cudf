@@ -340,7 +340,7 @@ struct dispatch_unary_cast_to {
       auto output =
         std::make_unique<column>(cudf::data_type{type.id(), input.type().scale()},
                                  size,
-                                 rmm::device_buffer{size * sizeof(TargetDeviceT), stream},
+                                 rmm::device_buffer{size * sizeof(TargetDeviceT), stream, mr},
                                  detail::copy_bitmask(input, stream, mr),
                                  input.null_count());
 

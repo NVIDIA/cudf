@@ -32,6 +32,14 @@ constexpr bool is_m2_supported()
   return is_numeric<Source>() && !is_fixed_point<Source>();
 }
 
+struct is_m2_supported_fn {
+  template <typename Source>
+  bool operator()() const
+  {
+    return is_m2_supported<Source>();
+  }
+};
+
 struct m2_functor {
   template <typename Source, typename... Args>
   void operator()(Args&&...)  //
@@ -86,6 +94,11 @@ struct m2_functor {
 };
 
 }  // namespace
+
+bool is_m2_supported(data_type type)
+{
+  return type.id() != type_id::EMPTY && type_dispatcher(type, is_m2_supported_fn{});
+}
 
 std::unique_ptr<column> compute_m2(data_type source_type,
                                    column_view const& sum_sqr,

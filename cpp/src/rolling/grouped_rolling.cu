@@ -8,7 +8,7 @@
 #include "detail/rolling.cuh"
 #include "detail/rolling_utils.cuh"
 
-#include <cudf/detail/groupby/sort_helper.hpp>
+#include <cudf/detail/groupby/groupby_helper.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/rolling.hpp>
@@ -73,11 +73,11 @@ std::unique_ptr<column> grouped_rolling_window(table_view const& group_keys,
       input, default_outputs, preceding_window, following_window, min_periods, aggr, stream, mr);
   }
 
-  using sort_groupby_helper = cudf::groupby::detail::sort::sort_groupby_helper;
+  using cudf::groupby::detail::groupby_helper;
 
-  sort_groupby_helper helper{group_keys, cudf::null_policy::INCLUDE, cudf::sorted::YES, {}};
-  auto const& group_offsets{helper.group_offsets(stream)};
-  auto const& group_labels{helper.group_labels(stream)};
+  groupby_helper helper{group_keys, cudf::null_policy::INCLUDE, cudf::sorted::YES};
+  auto const& group_offsets{helper.group_offsets(stream, cudf::get_current_device_resource_ref())};
+  auto const& group_labels{helper.group_labels(stream, cudf::get_current_device_resource_ref())};
 
   // `group_offsets` are interpreted in adjacent pairs, each pair representing the offsets
   // of the first, and one past the last elements in a group.
@@ -344,7 +344,7 @@ std::unique_ptr<table> grouped_range_rolling_window(table_view const& group_keys
 [[nodiscard]] static null_order deduce_null_order(
   column_view const& orderby,
   order order,
-  rmm::device_uvector<size_type> const& offsets,
+  device_span<size_type const> offsets,
   rmm::device_uvector<size_type> const& per_group_nulls,
   cuda::stream_ref stream)
 {
@@ -447,10 +447,10 @@ std::unique_ptr<column> grouped_range_rolling_window(table_view const& group_key
   };
   auto [preceding_column, following_column] = [&]() {
     if (group_keys.num_columns() > 0 && order_by_column.has_nulls()) {
-      using sort_helper = cudf::groupby::detail::sort::sort_groupby_helper;
-      sort_helper helper{group_keys, null_policy::INCLUDE, sorted::YES, {}};
-      auto const& labels   = helper.group_labels(stream);
-      auto const& offsets  = helper.group_offsets(stream);
+      using cudf::groupby::detail::groupby_helper;
+      groupby_helper helper{group_keys, null_policy::INCLUDE, sorted::YES};
+      auto const& labels   = helper.group_labels(stream, cudf::get_current_device_resource_ref());
+      auto const& offsets  = helper.group_offsets(stream, cudf::get_current_device_resource_ref());
       auto per_group_nulls = order_by_column.has_nulls()
                                ? detail::nulls_per_group(order_by_column, offsets, stream)
                                : rmm::device_uvector<size_type>{0, stream};

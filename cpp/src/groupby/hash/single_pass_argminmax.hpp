@@ -25,4 +25,10 @@ std::unique_ptr<column> compute_argminmax(reduction_context const& ctx,
                                           cuda::stream_ref stream,
                                           cudf::memory_resources mr);
 
+// The expensive nested comparator has a separate owner for parallel compilation.
+std::unique_ptr<column> compute_nested_argminmax(reduction_context const& ctx,
+                                                 bool is_argmin,
+                                                 cuda::stream_ref stream,
+                                                 cudf::memory_resources mr);
+
 }  // namespace cudf::groupby::detail::hash

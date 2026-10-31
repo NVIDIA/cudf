@@ -39,7 +39,7 @@ constexpr bool is_reduction_supported(aggregation::Kind kind)
     case aggregation::MIN:
     case aggregation::MAX: return cudf::is_fixed_width<T>() && is_relationally_comparable<T, T>();
     case aggregation::ARGMIN:
-    case aggregation::ARGMAX: return is_relationally_comparable<T, T>();
+    case aggregation::ARGMAX: return is_relationally_comparable<T, T>() || cudf::is_nested<T>();
     default: return false;
   }
 }

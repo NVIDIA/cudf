@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -159,8 +159,8 @@ TYPED_TEST(groupby_var_test, dictionary)
                   cudf::make_variance_aggregation<cudf::groupby_aggregation>());
 }
 
-// This test ensures that the same results are produced by the sort-based and
-// hash-based implementations of groupby-variance.
+// This test ensures that groupby-variance produces the same results whether or not the request
+// also contains an aggregation that sorts values within each group.
 TYPED_TEST(groupby_var_test, sort_vs_hash)
 {
   using K = int32_t;
@@ -180,7 +180,7 @@ TYPED_TEST(groupby_var_test, sort_vs_hash)
 
   auto result1 = gb_obj.aggregate(requests);
 
-  // This agg forces a sort groupby.
+  // This agg sorts values within each group.
   auto agg2 = cudf::make_quantile_aggregation<cudf::groupby_aggregation>({0.25});
   requests[0].aggregations.push_back(std::move(agg2));
 

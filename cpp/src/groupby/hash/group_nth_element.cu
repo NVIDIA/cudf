@@ -7,8 +7,6 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/column/column_view.hpp>
 #include <cudf/copying.hpp>
-#include <cudf/detail/aggregation/aggregation.hpp>
-#include <cudf/detail/algorithms/reduce.cuh>
 #include <cudf/detail/gather.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/types.hpp>
@@ -22,7 +20,6 @@
 #include <cuda/iterator>
 #include <cuda/stream>
 #include <thrust/scan.h>
-#include <thrust/scatter.h>
 #include <thrust/transform.h>
 #include <thrust/uninitialized_fill.h>
 
@@ -37,27 +34,25 @@ std::unique_ptr<column> group_nth_element(column_view const& values,
                                           size_type n,
                                           null_policy null_handling,
                                           cuda::stream_ref stream,
-                                          rmm::device_async_resource_ref mr)
+                                          cudf::memory_resources mr)
 {
   CUDF_EXPECTS(static_cast<size_t>(values.size()) == group_labels.size(),
                "Size of values column should be same as that of group labels");
 
   if (num_groups == 0) { return empty_like(values); }
 
-  auto nth_index = cuda::device_buffer<size_type>(
-    stream, cudf::get_current_device_resource_ref(), num_groups, cuda::no_init);
-  // TODO: replace with async version
-  thrust::uninitialized_fill_n(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-    nth_index.begin(),
-    num_groups,
-    values.size());
+  auto nth_index =
+    cuda::device_buffer<size_type>(stream, mr.get_temporary_mr(), num_groups, cuda::no_init);
+  thrust::uninitialized_fill_n(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+                               nth_index.begin(),
+                               num_groups,
+                               values.size());
 
   // nulls_policy::INCLUDE (equivalent to pandas nth(dropna=None) but return nulls for n
   if (null_handling == null_policy::INCLUDE || !values.has_nulls()) {
     // Returns index of nth value.
     thrust::transform_if(
-      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
       group_sizes.begin<size_type>(),
       group_sizes.end<size_type>(),
       group_offsets.begin(),
@@ -70,54 +65,29 @@ std::unique_ptr<column> group_nth_element(column_view const& values,
         return (n < 0) ? group_size >= (-n) : group_size > n;
       });
   } else {  // skip nulls (equivalent to pandas nth(dropna='any'))
-    // Returns index of nth value.
-    auto values_view = column_device_view::create(values, stream);
+    // The scan numbers the valid rows within each group, and its output visitor records the row
+    // whose number is the requested one. `group_sizes` holds the valid count of each group, so a
+    // negative `n` counts back from the last valid row.
+    auto values_view = column_device_view::create(values, stream, mr.get_temporary_mr());
     auto bitmask_iterator =
       cuda::transform_iterator(cudf::detail::make_validity_iterator(*values_view),
                                cuda::proclaim_return_type<size_type>(
                                  [] __device__(auto b) { return static_cast<size_type>(b); }));
-    cuda::device_buffer<size_type> intra_group_index(
-      stream, cudf::get_current_device_resource_ref(), values.size(), cuda::no_init);
-    // intra group index for valids only.
-    thrust::exclusive_scan_by_key(
-      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-      group_labels.begin(),
-      group_labels.end(),
-      bitmask_iterator,
-      intra_group_index.begin());
-    // group_size to recalculate n if n<0
-    cuda::device_buffer<size_type> group_count = [&] {
-      if (n < 0) {
-        cuda::device_buffer<size_type> group_count(
-          stream, cudf::get_current_device_resource_ref(), num_groups, cuda::no_init);
-        cudf::detail::reduce_by_key_async(group_labels.begin(),
-                                          group_labels.end(),
-                                          bitmask_iterator,
-                                          cuda::make_discard_iterator(),
-                                          group_count.begin(),
-                                          cuda::std::plus<size_type>(),
-                                          stream);
-        return group_count;
-      } else {
-        return cuda::device_buffer<size_type>(
-          stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init);
-      }
-    }();
-    // gather the valid index == n
-    thrust::scatter_if(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                       cuda::counting_iterator<size_type>{0},
-                       cuda::counting_iterator<size_type>{values.size()},
-                       group_labels.begin(),                   // map
-                       cuda::counting_iterator<size_type>{0},  // stencil
-                       nth_index.begin(),
-                       [n,
-                        bitmask_iterator,
-                        group_size        = group_count.begin(),
-                        group_labels      = group_labels.begin(),
-                        intra_group_index = intra_group_index.begin()] __device__(auto i) -> bool {
-                         auto nth = ((n < 0) ? group_size[group_labels[i]] + n : n);
-                         return (bitmask_iterator[i] && intra_group_index[i] == nth);
-                       });
+    auto const record_nth = cuda::tabulate_output_iterator{
+      [n,
+       bitmask_iterator,
+       group_sizes  = group_sizes.begin<size_type>(),
+       group_labels = group_labels.begin(),
+       nth_index    = nth_index.begin()] __device__(cuda::std::ptrdiff_t i, size_type intra) {
+        auto const group = group_labels[i];
+        auto const nth   = n < 0 ? group_sizes[group] + n : n;
+        if (bitmask_iterator[i] && intra == nth) { nth_index[group] = static_cast<size_type>(i); }
+      }};
+    thrust::exclusive_scan_by_key(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+                                  group_labels.begin(),
+                                  group_labels.end(),
+                                  bitmask_iterator,
+                                  record_nth);
   }
 
   auto output_table = cudf::detail::gather(table_view{{values}},

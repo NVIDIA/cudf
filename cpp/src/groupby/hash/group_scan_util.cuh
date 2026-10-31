@@ -108,12 +108,6 @@ struct group_scan_functor<K, T, std::enable_if_t<is_group_scan_supported<K, T>()
 
     if (values.is_empty()) { return result; }
 
-    auto result_table = mutable_table_view({*result});
-    // Need an address of the aggregation kind to pass to the span
-    auto const kind = K;
-    cudf::detail::initialize_with_identity(
-      result_table, host_span<aggregation::Kind const>(&kind, 1), stream);
-
     auto result_view =
       mutable_column_device_view::create(result->mutable_view(), stream, mr.get_temporary_mr());
     auto values_view = column_device_view::create(values, stream, mr.get_temporary_mr());
@@ -134,8 +128,7 @@ struct group_scan_functor<K, T, std::enable_if_t<is_group_scan_supported<K, T>()
         make_null_replacement_iterator(*values_view, OpType::template identity<DeviceType>()),
         cudf::detail::cast_fn<ResultDeviceType>{});
       do_scan(input, result_view->begin<ResultDeviceType>(), OpType{});
-      result->set_null_mask(cudf::detail::copy_bitmask(values, stream, mr.get_output_mr()),
-                            values.null_count());
+      result->set_null_mask(cudf::detail::copy_bitmask(values, stream, mr), values.null_count());
     } else {
       auto input = cuda::transform_iterator(values_view->begin<DeviceType>(),
                                             cudf::detail::cast_fn<ResultDeviceType>{});

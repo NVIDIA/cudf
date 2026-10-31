@@ -17,6 +17,7 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/traits.hpp>
 
 #include <cuda/buffer>
 #include <cuda/stream>
@@ -78,11 +79,10 @@ void finalize_minmax_for_compound_types(hash_compound_agg_finalizer const& final
                                         MakeArgAggFn make_arg_agg)
 {
   if (finalizer.cache->has_result(finalizer.col, agg)) { return; }
-  if (finalizer.input_type.id() == type_id::STRING) {
+  if (finalizer.input_type.id() == type_id::STRING || cudf::is_nested(finalizer.input_type)) {
     auto transformed_agg = make_arg_agg();
     finalizer.cache->add_result(finalizer.col, agg, gather_argminmax(finalizer, *transformed_agg));
   }  // else: no-op, since this is only relevant for compound aggregations
-  // TODO: support other nested types.
 }
 
 // Specialization for MIN aggregation

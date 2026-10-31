@@ -46,7 +46,6 @@ static void nvbench_groupby_rank(nvbench::state& state,
     cuda::stream_ref stream_view{launch.get_stream()};
     cudf::groupby::groupby gb_obj(
       keys, cudf::null_policy::EXCLUDE, is_sorted ? cudf::sorted::YES : cudf::sorted::NO);
-    // groupby scan uses sort implementation
     auto result = gb_obj.scan(requests);
   });
   state.add_buffer_size(

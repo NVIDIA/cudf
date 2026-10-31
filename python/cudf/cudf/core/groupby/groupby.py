@@ -999,16 +999,24 @@ class GroupBy(Serializable, Reducible, Scannable):
             else []
         )
         positions = value_columns.pop() if need_positions else None
-        # get_groups already returns groups in sorted key order.
-        if not order_groups or self._sort or len(offsets) <= 2:
+        if not order_groups or len(offsets) <= 2:
             return offsets, key_columns, value_columns
 
         # Cache the requested group order, preserving row order within each group.
         if self._group_ordering is None:
             group_starts = as_column(offsets[:-1])
-            assert positions is not None
-            first_positions = positions.take(group_starts)
-            group_order = first_positions.argsort().to_numpy()
+            if self._sort:
+                group_names = _index_from_data(
+                    {
+                        i: col.take(group_starts)
+                        for i, col in enumerate(key_columns)
+                    }
+                )
+                group_order = cp.asnumpy(group_names.argsort())
+            else:
+                assert positions is not None
+                first_positions = positions.take(group_starts)
+                group_order = first_positions.argsort().to_numpy()
 
             if np.array_equal(group_order, np.arange(len(offsets) - 1)):
                 self._group_ordering = (offsets, None)
@@ -2201,7 +2209,6 @@ class GroupBy(Serializable, Reducible, Scannable):
         # Get the groups
         # TODO: convince Cython to convert the std::vector offsets
         # into a numpy array directly, rather than a list.
-        # TODO: this uses the sort-based groupby, could one use hash-based?
         _, offsets, _, group_values = self._grouped()
         group_offsets = np.asarray(offsets, dtype=SIZE_TYPE_DTYPE)
         size_per_group = np.diff(group_offsets)

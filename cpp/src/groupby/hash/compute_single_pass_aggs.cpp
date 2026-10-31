@@ -87,7 +87,6 @@ std::unique_ptr<column> compute_aggregation(aggregation::Kind kind,
 
 bool is_single_pass_agg_supported(data_type values_type, aggregation::Kind kind)
 {
-  if (cudf::is_nested(values_type)) { return false; }
   if (kind == aggregation::COUNT_VALID || kind == aggregation::COUNT_ALL) { return true; }
   if (values_type.id() == type_id::EMPTY) { return false; }
   return type_dispatcher(values_type,

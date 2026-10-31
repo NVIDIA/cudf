@@ -30,10 +30,7 @@ namespace CUDF_EXPORT cudf {
 //! `groupby` APIs
 namespace groupby {
 namespace detail {
-namespace sort {
-struct sort_groupby_helper;
-
-}  // namespace sort
+struct groupby_helper;
 }  // namespace detail
 
 /**
@@ -85,6 +82,10 @@ struct aggregation_result {
 
 /**
  * @brief Groups values by keys and computes aggregations on those groups.
+ *
+ * Grouping metadata is cached across calls using the temporary resource supplied when the
+ * metadata is first needed. That resource must remain valid until this object is destroyed.
+ * Returned tables and columns use the supplied output resource.
  */
 class groupby {
  public:
@@ -99,9 +100,11 @@ class groupby {
    * @brief Construct a groupby object with the specified `keys`
    *
    * If the `keys` are already sorted, better performance may be achieved by
-   * passing `keys_are_sorted == true` and indicating the  ascending/descending
-   * order of each column and null order in  `column_order` and
-   * `null_precedence`, respectively.
+   * passing `keys_are_sorted == sorted::YES`. Adjacent equivalent rows form groups,
+   * regardless of the ascending/descending order or null precedence of the keys.
+   * If null keys are excluded and `keys` contains nulls, grouping uses hashing to
+   * filter those rows even when `keys_are_sorted == sorted::YES`. The returned
+   * groups may therefore appear in a different order from the input keys.
    *
    * @note This object does *not* maintain the lifetime of `keys`. It is the
    * user's responsibility to ensure the `groupby` object does not outlive the
@@ -111,12 +114,8 @@ class groupby {
    * @param null_handling Indicates whether rows in `keys` that contain
    * NULL values should be included
    * @param keys_are_sorted Indicates whether rows in `keys` are already sorted
-   * @param column_order If `keys_are_sorted == YES`, indicates whether each
-   * column is ascending/descending. If empty, assumes all  columns are
-   * ascending. Ignored if `keys_are_sorted == false`.
-   * @param null_precedence If `keys_are_sorted == YES`, indicates the ordering
-   * of null values in each column. Else, ignored. If empty, assumes all columns
-   * use `null_order::AFTER`. Ignored if `keys_are_sorted == false`.
+   * @param column_order Unused; retained for compatibility
+   * @param null_precedence Unused; retained for compatibility
    */
   explicit groupby(table_view const& keys,
                    null_policy null_handling                      = null_policy::EXCLUDE,
@@ -173,15 +172,15 @@ class groupby {
    * @param requests The set of columns to aggregate and the aggregations to
    * perform
    * @param stream CUDA stream used for device memory operations and kernel launches.
-   * @param mr Device memory resource used to allocate the returned table and columns' device memory
+   * @param mr Memory resources for returned data and temporary storage
    * @return Pair containing the table with each group's distinct key and
    * a vector of aggregation_results for each request in the same order as
    * specified in `requests`.
    */
   std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> aggregate(
     std::span<aggregation_request const> requests,
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+    cuda::stream_ref stream   = cudf::get_default_stream(),
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref());
   /**
    * @brief Performs grouped scans on the specified values.
    *
@@ -229,15 +228,15 @@ class groupby {
    *
    * @param requests The set of columns to scan and the scans to perform
    * @param stream CUDA stream used for device memory operations and kernel launches.
-   * @param mr Device memory resource used to allocate the returned table and columns' device memory
+   * @param mr Memory resources for returned data and temporary storage
    * @return Pair containing the table with each group's key and
    * a vector of aggregation_results for each request in the same order as
    * specified in `requests`.
    */
   std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> scan(
     std::span<scan_request const> requests,
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+    cuda::stream_ref stream   = cudf::get_default_stream(),
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Performs grouped shifts for specified values.
@@ -284,7 +283,7 @@ class groupby {
    * @param offsets The offsets by which to shift the input
    * @param fill_values Fill values for indeterminable outputs
    * @param stream CUDA stream used for device memory operations and kernel launches.
-   * @param mr Device memory resource used to allocate the returned table and columns' device memory
+   * @param mr Memory resources for returned data and temporary storage
    * @return Pair containing the tables with each group's key and the columns shifted
    *
    * @throws cudf::logic_error if @p fill_value[i] dtype does not match @p values[i] dtype for
@@ -294,8 +293,8 @@ class groupby {
     table_view const& values,
     std::span<size_type const> offsets,
     std::vector<std::reference_wrapper<scalar const>> const& fill_values,
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+    cuda::stream_ref stream   = cudf::get_default_stream(),
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief The grouped data corresponding to a groupby operation on a set of values.
@@ -304,6 +303,8 @@ class groupby {
    * a table of grouped keys and a table of grouped values. In addition, it holds
    * a vector of integer offsets into the rows of the tables, such that
    * `offsets[i+1] - offsets[i]` gives the size of group `i`.
+   *
+   * Rows within each group keep their input order; the order of the groups is arbitrary.
    */
   struct groups {
     std::unique_ptr<table> keys;     ///< Table of grouped keys
@@ -320,13 +321,12 @@ class groupby {
    *
    * @param values Table representing values on which a groupby operation is to be performed
    * @param stream CUDA stream used for device memory operations and kernel launches.
-   * @param mr Device memory resource used to allocate the returned tables's device memory in the
-   * returned groups
+   * @param mr Memory resources for returned data and temporary storage
    * @return A `groups` object representing grouped keys and values
    */
-  groups get_groups(cudf::table_view values           = {},
-                    cuda::stream_ref stream           = cudf::get_default_stream(),
-                    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  groups get_groups(cudf::table_view values   = {},
+                    cuda::stream_ref stream   = cudf::get_default_stream(),
+                    cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Performs grouped replace nulls on @p value
@@ -335,9 +335,9 @@ class groupby {
    * in group `j` that precedes or follows `value[i]`. If a non-null value is not found in the
    * specified direction, `value[i]` is left NULL.
    *
-   * The returned pair contains a column of the sorted keys and the result column. In result column,
-   * values of the same group are in contiguous memory. In each group, the order of values maintain
-   * their original order. The order of groups are not guaranteed.
+   * The returned pair contains a column of the grouped keys and the result column. In the result
+   * column, values of the same group are in contiguous memory. In each group, the order of values
+   * maintain their original order. The ordering of groups is undefined.
    *
    * Example:
    * @code{.pseudo}
@@ -360,57 +360,36 @@ class groupby {
    * @param[in] replace_policies Specify the position of replacement values relative to null values,
    * one for each column
    * @param[in] stream CUDA stream used for device memory operations and kernel launches.
-   * @param[in] mr Device memory resource used to allocate device memory of the returned column
+   * @param[in] mr Memory resources for returned data and temporary storage
    *
-   * @return Pair that contains a table with the sorted keys and the result column
+   * @return Pair that contains a table with the grouped keys and the result column
    */
   std::pair<std::unique_ptr<table>, std::unique_ptr<table>> replace_nulls(
     table_view const& values,
     std::span<cudf::replace_policy const> replace_policies,
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+    cuda::stream_ref stream   = cudf::get_default_stream(),
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
  private:
   table_view _keys;                                      ///< Keys that determine grouping
   null_policy _include_null_keys{null_policy::EXCLUDE};  ///< Include rows in keys
                                                          ///< with NULLs
   sorted _keys_are_sorted{sorted::NO};                   ///< Whether or not the keys are sorted
-  std::vector<order> _column_order{};                    ///< If keys are sorted, indicates
-                                                         ///< the order of each column
-  std::vector<null_order> _null_precedence{};            ///< If keys are sorted,
-                                                         ///< indicates null order
-                                                         ///< of each column
-  std::unique_ptr<detail::sort::sort_groupby_helper>
-    _helper;  ///< Helper object
-              ///< used by sort based implementation
+  std::unique_ptr<detail::groupby_helper> _helper;       ///< Cached grouping metadata
 
   /**
-   * @brief Get the sort helper object
+   * @brief Get the grouping helper object
    *
    * The object is constructed on first invocation and subsequent invocations
    * of this function return the memoized object.
    */
-  detail::sort::sort_groupby_helper& helper();
+  detail::groupby_helper& helper();
 
   /**
-   * @brief Dispatches to the appropriate implementation to satisfy the
-   * aggregation requests.
+   * @brief Compute scan requests over the cached groups.
    */
-  std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> dispatch_aggregation(
-    std::span<aggregation_request const> requests,
-    cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr);
-
-  // Sort-based groupby
-  std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> sort_aggregate(
-    std::span<aggregation_request const> requests,
-    cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr);
-
-  std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> sort_scan(
-    std::span<scan_request const> requests,
-    cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr);
+  std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> scan_grouped(
+    std::span<scan_request const> requests, cuda::stream_ref stream, cudf::memory_resources mr);
 };
 
 /**
@@ -464,7 +443,7 @@ struct streaming_aggregation_request {
  * inside the hash set, which must fit in `cudf::size_type`.
  *
  * All column types (including variable-width types such as strings, lists, and structs)
- * are supported for key columns.  Only hash-based aggregation kinds are supported; use
+ * are supported for key columns. Streaming supports the aggregation kinds listed below; use
  * `is_streaming_groupby_supported()` to query a specific (value type, aggregation kind)
  * combination.
  *

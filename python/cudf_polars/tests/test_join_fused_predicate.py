@@ -176,3 +176,33 @@ def test_mismatched_integer_widths(engine: pl.GPUEngine):
     right = pl.LazyFrame({"k": [1, 2, 3], "b": pl.Series([3, 2, 1], dtype=pl.Int64)})
     q = left.join(right, on="k", how="inner").filter(pl.col("a") < pl.col("b"))
     assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
+@pytest.mark.parametrize("otherwise", [None, 0.5], ids=["null", "literal"])
+@pytest.mark.parametrize("conditional_first", [True, False], ids=["lhs", "rhs"])
+def test_conditional_expression_of_both_inputs(
+    engine: pl.GPUEngine, otherwise, conditional_first
+):
+    # The shape of TPC-DS queries 4 and 31: libcudf's AST has no conditional,
+    # so the comparison is rewritten with AND and OR.
+    left = pl.LazyFrame(
+        {
+            "k": [1, 2, 3, 4, 5, 6],
+            "a": [1.0, -1.0, 4.0, None, 9.0, 0.5],
+            "c": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+        }
+    )
+    right = pl.LazyFrame(
+        {
+            "k": [1, 2, 3, 4, 5, 6],
+            "y": [2.0, 2.0, 0.0, 2.0, 3.0, 1.0],
+            "d": [1.0, 4.0, 1.0, 1.0, 1.0, 0.1],
+        }
+    )
+    conditional = (
+        pl.when(pl.col("a") > 0).then(pl.col("a") / pl.col("y")).otherwise(otherwise)
+    )
+    other = pl.col("c") / pl.col("d")
+    predicate = conditional > other if conditional_first else other < conditional
+    q = left.join(right, on="k", how="inner").filter(predicate)
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)

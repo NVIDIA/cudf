@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from decimal import Decimal
+from decimal import Decimal, localcontext
 from typing import TYPE_CHECKING, ClassVar
 
 import polars as pl
@@ -17,6 +17,7 @@ import pylibcudf as plc
 
 from cudf_polars.containers import Column
 from cudf_polars.dsl.expressions.base import ExecutionContext, Expr
+from cudf_polars.dsl.expressions.literal import Literal
 
 pl_expr = polars._expr_nodes
 
@@ -30,18 +31,39 @@ __all__ = ["BinOp"]
 _DECIMAL128_MAX_PRECISION = 38
 
 
-def _decimal_rescale_may_overflow(left: DataType, right: DataType) -> bool:
+def _decimal_precision(node: Expr) -> int:
+    """
+    The number of digits needed for the values of a Decimal expression.
+
+    A literal only needs as many digits as its value, which can be far fewer
+    than its type declares: polars gives the literal ``24`` the type
+    ``Decimal(38, 0)``.
+    """
+    dtype = node.dtype.polars_type
+    assert isinstance(dtype, pl.Decimal)
+    if isinstance(node, Literal) and isinstance(node.value, Decimal):
+        # The default context rounds to 28 digits, which would change the
+        # count for a value near the 38 digit limit.
+        with localcontext() as ctx:
+            ctx.prec = 2 * _DECIMAL128_MAX_PRECISION
+            scaled = node.value.scaleb(dtype.scale)
+            if scaled == scaled.to_integral_value():
+                return max(len(str(abs(int(scaled)))), 1)
+    return dtype.precision or _DECIMAL128_MAX_PRECISION
+
+
+def _decimal_rescale_may_overflow(left: Expr, right: Expr) -> bool:
     """Whether rescaling two Decimals to their finer scale can exceed 38 digits."""
     if not (
-        plc.traits.is_fixed_point(left.plc_type)
-        and plc.traits.is_fixed_point(right.plc_type)
+        plc.traits.is_fixed_point(left.dtype.plc_type)
+        and plc.traits.is_fixed_point(right.dtype.plc_type)
     ):
         return False
-    lt, rt = left.polars_type, right.polars_type
+    lt, rt = left.dtype.polars_type, right.dtype.polars_type
     assert isinstance(lt, pl.Decimal)
     assert isinstance(rt, pl.Decimal)
-    lp = lt.precision or _DECIMAL128_MAX_PRECISION
-    rp = rt.precision or _DECIMAL128_MAX_PRECISION
+    lp = _decimal_precision(left)
+    rp = _decimal_precision(right)
     scale = max(lt.scale, rt.scale)
     return max(lp - lt.scale, rp - rt.scale) + scale > _DECIMAL128_MAX_PRECISION
 
@@ -66,9 +88,7 @@ class BinOp(Expr):
         self.op = op
         self.children = (left, right)
         self.is_pointwise = True
-        if op in BinOp._COMPARISONS and _decimal_rescale_may_overflow(
-            left.dtype, right.dtype
-        ):
+        if op in BinOp._COMPARISONS and _decimal_rescale_may_overflow(left, right):
             # Polars 2.1 compares decimals of different scales exactly, but
             # libcudf rescales to the finer scale in 128 bits and wraps.
             raise NotImplementedError(

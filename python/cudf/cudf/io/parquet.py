@@ -583,7 +583,7 @@ _BIN_OPS = {
 
 
 def _raise_for_unsupported_scalar_types(val: Any):
-    if not (
+    if (
         isinstance(val, (int, float))
         or isinstance(val, (datetime.date, datetime.timedelta))
         or isinstance(val, str)

@@ -527,7 +527,7 @@ class alignas(16) column_device_view_core : public detail::column_device_view_ba
   }
 
   /**
-   * @brief Returns a decoded element at the specified index.
+   * @brief Returns a decoded copy of the element at the specified index.
    *
    * If the element at the specified index is NULL, i.e.,
    * `is_null(element_index) == true`, then any attempt to use the result will
@@ -544,7 +544,7 @@ class alignas(16) column_device_view_core : public detail::column_device_view_ba
    * @return The element at the specified index
    */
   template <typename T, CUDF_ENABLE_IF(is_dictionary_encoded<T>)>
-  [[nodiscard]] __device__ decltype(auto) element(size_type element_index) const noexcept
+  [[nodiscard]] __device__ auto element(size_type element_index) const noexcept
   {
     auto const& indices = child(dictionary_indices_column_index);
     auto const& keys    = child(dictionary_keys_column_index);
@@ -562,8 +562,7 @@ class alignas(16) column_device_view_core : public detail::column_device_view_ba
    * @return The child value
    */
   template <typename T, CUDF_ENABLE_IF(is_repr_element<T>)>
-  [[nodiscard]] __device__ typename T::value_type const& element(
-    size_type element_index) const noexcept
+  [[nodiscard]] __device__ auto element(size_type element_index) const noexcept
   {
     return static_cast<typename T::value_type const*>(_data)[_offset + element_index];
   }
@@ -743,8 +742,7 @@ class alignas(16) mutable_column_device_view_core : public detail::column_device
    * @param element_index Position of the desired string element
    * @return string_view instance representing this element at this index
    */
-  template <typename T,
-            CUDF_ENABLE_IF(cuda::std::is_same_v<cuda::std::remove_cv_t<T>, string_view>)>
+  template <typename T, CUDF_ENABLE_IF(cuda::std::same_as<cuda::std::remove_cv_t<T>, string_view>)>
   [[nodiscard]] __device__ T element(size_type element_index) const noexcept
   {
     size_type index       = element_index + offset();  // account for this view's _offset
@@ -784,7 +782,7 @@ class alignas(16) mutable_column_device_view_core : public detail::column_device
    * @return A mutable view of the string's preallocated character storage
    */
   template <typename T,
-            CUDF_ENABLE_IF(cuda::std::is_same_v<cuda::std::remove_cv_t<T>, cuda::std::span<char>>)>
+            CUDF_ENABLE_IF(cuda::std::same_as<cuda::std::remove_cv_t<T>, cuda::std::span<char>>)>
   [[nodiscard]] __device__ T element(size_type element_index) const noexcept
   {
     auto const index   = element_index + offset();
@@ -796,33 +794,6 @@ class alignas(16) mutable_column_device_view_core : public detail::column_device
   }
 
   /**
-   * @brief Returns a decoded element at the specified index.
-   *
-   * If the element at the specified index is NULL, i.e.,
-   * `is_null(element_index) == true`, then any attempt to use the result will
-   * lead to undefined behavior.
-   *
-   * This function accounts for the offset.
-   *
-   * This function does not participate in overload resolution if `is_dictionary_encoded<T>` is
-   * false.
-   *
-   * @tparam T The element type, e.g., `dictionary_element<int32_t, float>` for a dictionary column
-   * with `int32_t` indices and `float` keys
-   * @param element_index Position of the desired element
-   * @return The element at the specified index
-   */
-  template <typename T, CUDF_ENABLE_IF(is_dictionary_encoded<T>)>
-  [[nodiscard]] __device__ decltype(auto) element(size_type element_index) const noexcept
-  {
-    auto const& indices = child(dictionary_indices_column_index);
-    auto const& keys    = child(dictionary_keys_column_index);
-    auto const index    = indices.template element<typename T::index_type>(
-      element_index + offset());  // account for this view's _offset
-    return keys.template element<typename T::key_type>(index);
-  }
-
-  /**
    * @brief Reads a raw child value.
    *
    * The child must be valid. Use nullable_element<T>() to check child validity.
@@ -831,7 +802,7 @@ class alignas(16) mutable_column_device_view_core : public detail::column_device
    * @return The child value
    */
   template <typename T, CUDF_ENABLE_IF(is_repr_element<T>)>
-  [[nodiscard]] __device__ typename T::value_type& element(size_type element_index) const noexcept
+  [[nodiscard]] __device__ auto element(size_type element_index) const noexcept
   {
     return static_cast<typename T::value_type*>(const_cast<void*>(_data))[_offset + element_index];
   }
@@ -891,7 +862,7 @@ class alignas(16) mutable_column_device_view_core : public detail::column_device
    * @param value The value to assign
    */
   template <typename T,
-            CUDF_ENABLE_IF(cuda::std::is_same_v<cuda::std::remove_cv_t<T>, cuda::std::span<char>>)>
+            CUDF_ENABLE_IF(cuda::std::same_as<cuda::std::remove_cv_t<T>, cuda::std::span<char>>)>
   __device__ void assign(size_type element_index, T value) const noexcept
   {
     // no-op for mutable string elements

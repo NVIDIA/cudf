@@ -72,15 +72,6 @@ struct reflect_output_element_fn {
                                    : "cudf::repr_element<cudf::string_view>";
   }
 
-  template <cudf::concepts::dictionary T>
-  std::string operator()(transform_output_spec const& spec, bool use_physical_type) const
-  {
-    return std::format(
-      "cudf::dictionary_element<{}, {}>",
-      reflect_output_element(spec.children.at(dictionary_indices_column_index), use_physical_type),
-      reflect_output_element(spec.children.at(dictionary_keys_column_index), use_physical_type));
-  }
-
   template <typename T>
   std::string operator()(transform_output_spec const& spec, bool) const
   {
@@ -123,7 +114,8 @@ struct reflect_output_value_fn {
   }
 
   template <cudf::concepts::string_view T>
-  std::string operator()(transform_output_spec const& spec, bool use_physical_type) const
+  std::string operator()(transform_output_spec const& spec,
+                         [[maybe_unused]] bool use_physical_type) const
   {
     return spec.has_string_offsets ? "cuda::std::span<char>" : "cudf::string_view";
   }
@@ -296,7 +288,7 @@ std::vector<transform_output_spec> make_output_specs(
   std::span<std::unique_ptr<column> const> string_offsets)
 {
   CUDF_EXPECTS(string_offsets.empty() || string_offsets.size() == outputs.size(),
-               "Number of output offsets must be empty or match the number of outputs",
+               "Number of string offsets must be empty or match the number of outputs",
                std::invalid_argument);
 
   std::vector<transform_output_spec> result;

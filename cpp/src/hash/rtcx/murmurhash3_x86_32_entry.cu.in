@@ -1,0 +1,30 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+#include <cudf/column/column_device_view.cuh>
+#include <cudf/detail/utilities/grid_1d.cuh>
+#include <cudf/hashing/detail/hashing.hpp>
+#include <cudf/table/table_device_view.cuh>
+
+extern "C" __device__ cudf::hash_value_type cudf_murmurhash3_x86_32_rtcx_int32(
+  cudf::column_device_view column, uint32_t seed, bool nullable, cudf::size_type row_index);
+
+extern "C" __global__ void cudf_murmurhash3_x86_32_rtcx_entry(
+  cudf::mutable_column_device_view output,
+  uint32_t seed,
+  cudf::table_device_view input,
+  bool nullable)
+{
+  auto const row_index = cudf::detail::grid_1d::global_thread_id();
+  if (row_index >= input.num_rows()) { return; }
+
+  auto hash = cudf_murmurhash3_x86_32_rtcx_int32(input.column(0), seed, nullable, row_index);
+  for (cudf::size_type column_index = 1; column_index < input.num_columns(); ++column_index) {
+    hash = cudf::hashing::detail::hash_combine(
+      hash,
+      cudf_murmurhash3_x86_32_rtcx_int32(input.column(column_index), seed, nullable, row_index));
+  }
+  output.element<cudf::hash_value_type>(row_index) = hash;
+}

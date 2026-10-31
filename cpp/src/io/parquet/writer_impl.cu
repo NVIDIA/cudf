@@ -1634,9 +1634,10 @@ size_t column_index_buffer_size(EncColumnChunk* ck,
   //   (ck_max_stats_len + 4) * num_pages * 2 for min/max values
   //     (each binary requires 4 bytes length + ck_max_stats_len)
   //   sizeof(int64_t) * num_pages for null_counts
+  //   6 bytes overhead + 5 bytes * num_pages for nan_counts (floating point only)
   //
-  // so 26 bytes overhead + sizeof(char) +
-  //    (sizeof(bool) + sizeof(int64_t) + 2 * (4 + ck_max_stats_len)) * num_pages
+  // so 32 bytes overhead + sizeof(char) +
+  //    (sizeof(bool) + sizeof(int64_t) + 5 + 2 * (4 + ck_max_stats_len)) * num_pages
   //
   // we already have ck->ck_stat_size = 48 + 2 * ck_max_stats_len
   // all of the overhead and non-stats data can fit in under 48 bytes

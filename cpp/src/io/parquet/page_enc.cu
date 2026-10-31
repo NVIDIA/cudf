@@ -26,6 +26,7 @@
 #include <cub/warp/warp_reduce.cuh>
 #include <cuda/cmath>
 #include <cuda/iterator>
+#include <cuda/std/algorithm>
 #include <cuda/std/chrono>
 #include <cuda/std/functional>
 #include <cuda/std/iterator>
@@ -753,6 +754,10 @@ CUDF_KERNEL void __launch_bounds__(128)
               stats_hdr_len += 5 * 3 + 2 * max_stats_len;
             } else {
               stats_hdr_len += ((col_g.stats_dtype >= dtype_int64) ? 10 : 5) * 3;
+            }
+            // nan_count
+            if (col_g.stats_dtype == dtype_float32 || col_g.stats_dtype == dtype_float64) {
+              stats_hdr_len += 6;
             }
             page_g.max_hdr_size += stats_hdr_len;
           }
@@ -2996,6 +3001,8 @@ __device__ uint8_t* EncodeStatistics(uint8_t* start,
     encoder.field_bool(7, true);
     encoder.field_bool(8, true);
   }
+  // nan_count must be written for floating point columns, even if zero
+  if (dtype == dtype_float32 or dtype == dtype_float64) { encoder.field_int64(9, s->nan_count); }
   encoder.end(&end);
   return end;
 }
@@ -3380,6 +3387,22 @@ CUDF_KERNEL void __launch_bounds__(1)
       }
     });
     encoder.field_list_end(7);
+  }
+
+  // nan_counts. Omitted if a page holds only NaNs, as min/max can't be written for such a page
+  if (col_g.stats_dtype == dtype_float32 or col_g.stats_dtype == dtype_float64) {
+    auto const page_stats       = column_stats.begin() + pageidx;
+    auto const has_all_nan_page = cuda::std::any_of(
+      page_stats + first_data_page, page_stats + num_pages, [](statistics_chunk const& stats) {
+        return stats.nan_count > 0 and stats.nan_count == stats.non_nulls;
+      });
+    if (not has_all_nan_page) {
+      encoder.field_list_begin(8, num_data_pages, FieldType::I64);
+      for (uint32_t page = first_data_page; page < num_pages; page++) {
+        encoder.put_int64(column_stats[pageidx + page].nan_count);
+      }
+      encoder.field_list_end(8);
+    }
   }
 
   if (col_g.physical_type == Type::BYTE_ARRAY) {

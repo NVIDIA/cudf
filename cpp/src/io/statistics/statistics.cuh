@@ -84,12 +84,12 @@ union statistics_val {
 struct statistics_chunk {
   uint32_t non_nulls{};        //!< number of non-null values in chunk
   uint32_t null_count{};       //!< number of null values in chunk
+  uint32_t nan_count{};        //!< number of NaN values in chunk (floating point only)
   statistics_val min_value{};  //!< minimum value in chunk
   statistics_val max_value{};  //!< maximum value in chunk
   statistics_val sum{};        //!< sum of chunk
   uint8_t has_minmax{};        //!< Nonzero if min_value and max_values are valid
   uint8_t has_sum{};           //!< Nonzero if sum is valid
-  uint8_t has_nan{};           //!< Nonzero if a NaN was seen (floating point only)
 };
 
 struct statistics_group {

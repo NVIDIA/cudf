@@ -1023,6 +1023,58 @@ TEST_F(ParquetWriterTest, FloatingPointWithNaNStatsOmittedNested)
   EXPECT_FALSE(stats.max_value.has_value());
 }
 
+TEST_F(ParquetWriterTest, FloatingPointNaNCounts)
+{
+  // Float chunks carry `Statistics.nan_count` and `ColumnIndex.nan_counts`
+  auto constexpr num_rows  = 3000;
+  auto constexpr rg_size   = 1000;
+  auto constexpr page_size = 500;
+  auto constexpr nand      = std::numeric_limits<double>::quiet_NaN();
+  auto constexpr nanf      = std::numeric_limits<float>::quiet_NaN();
+  auto const is_nan_row    = [](int i) {
+    // Row group 0 has no NaN, row group 1 a single NaN, and row group 2 an all-NaN second page
+    return i == 1010 or i >= 2500;
+  };
+  std::vector<double> d_data(num_rows);
+  std::vector<float> f_data(num_rows);
+  for (int i = 0; i < num_rows; ++i) {
+    d_data[i] = is_nan_row(i) ? nand : 5.0;
+    f_data[i] = is_nan_row(i) ? nanf : 5.0f;
+  }
+  column_wrapper<double> col_d(d_data.begin(), d_data.end());
+  column_wrapper<float> col_f(f_data.begin(), f_data.end());
+  auto const expected = table_view{{col_d, col_f}};
+
+  auto const filepath = temp_env->get_temp_filepath("FloatingPointNaNCounts.parquet");
+  cudf::io::parquet_writer_options const out_opts =
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
+      .stats_level(cudf::io::statistics_freq::STATISTICS_COLUMN)
+      .row_group_size_rows(rg_size)
+      .max_page_size_rows(page_size)
+      .max_page_fragment_size(page_size);
+  cudf::io::write_parquet(out_opts);
+
+  auto const source = cudf::io::datasource::create(filepath);
+  cudf::io::parquet::FileMetaData fmd;
+  read_footer(source, &fmd);
+  ASSERT_EQ(fmd.row_groups.size(), 3);
+
+  std::array<int64_t, 3> const expected_nan_counts{0, 1, 500};
+  std::array<std::optional<std::vector<int64_t>>, 3> const expected_page_nan_counts{
+    std::vector<int64_t>{0, 0}, std::vector<int64_t>{1, 0}, std::nullopt};
+  for (int rg = 0; rg < 3; ++rg) {
+    for (auto const& chunk : fmd.row_groups[rg].columns) {
+      auto const& stats = get_statistics(chunk);
+      EXPECT_EQ(stats.nan_count, expected_nan_counts[rg]);
+      // min/max are omitted for chunks with NaNs so that legacy readers don't misuse them
+      EXPECT_EQ(stats.min_value.has_value(), expected_nan_counts[rg] == 0);
+      EXPECT_EQ(stats.max_value.has_value(), expected_nan_counts[rg] == 0);
+      // An all-NaN page has no valid min/max, so the column index omits `nan_counts`
+      EXPECT_EQ(read_column_index(source, chunk).nan_counts, expected_page_nan_counts[rg]);
+    }
+  }
+}
+
 TEST_F(ParquetWriterTest, CheckColumnIndexTruncation)
 {
   std::array coldata{// in-range 7 bit.  should truncate to "yyyyyyyz"

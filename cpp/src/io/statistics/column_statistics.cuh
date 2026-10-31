@@ -204,8 +204,9 @@ struct merge_group_statistics_functor {
 
     // PARQUET-1246: if a float/double column contains any NaN, min/max must be omitted,
     // else a reader doing NaN predicate pushdown skips the row group. spark-rapids#15004.
+    // The `nan_count` written alongside lets newer readers still prune on NaN-free chunks.
     if constexpr (IO == detail::io_file_format::PARQUET) {
-      if (chunk.has_nan) { chunk.has_minmax = false; }
+      if (chunk.nan_count > 0) { chunk.has_minmax = false; }
     }
 
     if (t == 0) { s.ck = get_untyped_chunk(chunk); }

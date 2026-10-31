@@ -74,13 +74,14 @@ def test_cast_strict_false_string_to_numeric(engine: pl.GPUEngine, dtype, strict
     df = pl.LazyFrame({"c0": ["1969-12-08 17:00:01", "1", None]})
     query = df.with_columns(pl.col("c0").cast(dtype, strict=strict))
     if strict:
-        with pytest.raises(pl.exceptions.InvalidOperationError):
+        message = f"conversion from `str` to `{dtype._string_repr()}` failed"
+        with pytest.raises(pl.exceptions.InvalidOperationError, match=message):
             query.collect()
         if is_streaming_engine(engine):
             with pytest.RaisesGroup(pl.exceptions.InvalidOperationError):
                 query.collect(engine=engine)
         else:
-            with pytest.raises(pl.exceptions.InvalidOperationError):
+            with pytest.raises(pl.exceptions.InvalidOperationError, match=f"^{message}$"):
                 query.collect(engine=engine)
     else:
         assert_gpu_result_equal(query, engine=engine)

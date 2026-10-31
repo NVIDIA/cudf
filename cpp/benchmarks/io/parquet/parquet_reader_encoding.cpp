@@ -96,8 +96,8 @@ std::unique_ptr<cudf::table> create_nested_table(std::vector<cudf::type_id> cons
   columns.reserve(leaf_types.size());
   for (std::size_t col_idx = 0; col_idx < leaf_types.size(); col_idx++) {
     // Keep the requested leaf cardinality, but avoid the top-level LIST distinct-row path when
-    // small smoke runs have fewer rows than the cardinality axis. That path appends an INT32 list
-    // suffix and is only type-compatible with INT32 leaves.
+    // small smoke runs have fewer rows than the cardinality axis. That path appends a distinct
+    // value to every row, which would change the data of this benchmark.
     auto const list_cardinality =
       cardinality == 0 ? 0 : std::min<cudf::size_type>(cardinality, num_rows - 1);
     auto const profile =

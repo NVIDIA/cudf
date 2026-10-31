@@ -495,8 +495,8 @@ std::unique_ptr<cudf::column> create_random_utf8_string_column(data_profile cons
     random_value_fn<uint32_t, void, cuda::device_buffer<uint32_t>>{string_params.length_params};
   auto valid_dist = random_value_fn<bool, void, cuda::device_buffer<bool>>(
     distribution_params<bool>{1. - profile.get_null_probability().value_or(0)});
-  auto lengths   = len_dist(engine, num_rows + 1);
-  auto null_mask = valid_dist(engine, num_rows + 1);
+  auto lengths   = len_dist(engine, num_rows);
+  auto null_mask = valid_dist(engine, num_rows);
   auto stream    = cudf::get_default_stream();
   auto mr        = cudf::get_current_device_resource_ref();
 
@@ -769,8 +769,9 @@ std::unique_ptr<cudf::column> create_random_column<cudf::list_view>(data_profile
   auto const single_level_mean = get_distribution_mean(dist_params.length_params);
   auto const raw_num_elements =
     static_cast<double>(num_rows) * std::pow(single_level_mean, dist_params.max_depth);
-  cudf::size_type const num_elements = static_cast<cudf::size_type>(
-    std::min(raw_num_elements, static_cast<double>(std::numeric_limits<cudf::size_type>::max())));
+  // Leave room for the offsets of a string leaf, which have one more element than the leaf
+  cudf::size_type const num_elements = static_cast<cudf::size_type>(std::min(
+    raw_num_elements, static_cast<double>(std::numeric_limits<cudf::size_type>::max() - 1)));
 
   auto leaf_column = cudf::type_dispatcher(
     cudf::data_type(dist_params.element_type), create_rand_col_fn{}, profile, engine, num_elements);
@@ -791,9 +792,10 @@ std::unique_ptr<cudf::column> create_random_column<cudf::list_view>(data_profile
 
     auto offsets = len_dist(engine, current_num_rows + 1);
     auto valids  = valid_dist(engine, current_num_rows);
-    // to ensure these values <= current_child_column->size()
+    // to ensure these values <= current_child_column->size(). The lengths are summed as uint32_t,
+    // so clamp the sums as uint32_t too, rather than turning those past INT_MAX negative.
     auto output_offsets = cuda::make_transform_output_iterator(
-      offsets.begin(), clamp_down{current_child_column->size()});
+      offsets.begin(), clamp_down{static_cast<uint32_t>(current_child_column->size())});
 
     thrust::exclusive_scan(thrust::device, offsets.begin(), offsets.end(), output_offsets);
     thrust::device_pointer_cast(offsets.end())[-1] =
@@ -881,14 +883,40 @@ std::unique_ptr<cudf::column> create_distinct_rows_column<cudf::string_view>(
   return std::move(cudf::sample(cudf::table_view({concat_col->view()}), num_rows)->release()[0]);
 }
 
+/**
+ * @brief Functor to create a column of the values 0 to `num_rows - 1`, without nulls.
+ *
+ * The values are distinct as long as the type can represent them all. Returns nullptr for types
+ * other than numeric and string types.
+ */
+struct create_distinct_values_fn {
+  template <typename T>
+  std::unique_ptr<cudf::column> operator()(cudf::size_type num_rows)
+  {
+    if constexpr (cudf::is_numeric_not_bool<T>()) {
+      return cudf::sequence(num_rows, *cudf::make_fixed_width_scalar(T{}));
+    } else if constexpr (std::is_same_v<T, cudf::string_view>) {
+      auto const values = cudf::sequence(num_rows, *cudf::make_fixed_width_scalar<int32_t>(0));
+      return cudf::strings::from_integers(values->view());
+    } else {
+      return nullptr;
+    }
+  }
+};
+
 template <>
 std::unique_ptr<cudf::column> create_distinct_rows_column<cudf::list_view>(
   data_profile const& profile, cuda::std::philox4x32& engine, cudf::size_type num_rows)
 {
   auto const dist_params = profile.get_distribution_params<cudf::list_view>();
   auto col               = create_random_column<cudf::list_view>(profile, engine, num_rows);
-  auto zero              = cudf::make_fixed_width_scalar<cudf::size_type>(0);
-  auto child_column      = cudf::sequence(num_rows, *zero);
+  // Make the rows distinct by appending a distinct value of the element type to each row. The rows
+  // of lists of other than numeric or string elements are left as they are, so they are not
+  // necessarily distinct.
+  auto child_column = cudf::type_dispatcher(
+    cudf::data_type{dist_params.element_type}, create_distinct_values_fn{}, num_rows);
+  if (child_column == nullptr) { return col; }
+  auto zero = cudf::make_fixed_width_scalar<cudf::size_type>(0);
   for (int lvl = dist_params.max_depth; lvl > 0; --lvl) {
     auto offsets_column = cudf::sequence(num_rows + 1, *zero);
     auto list_column =
@@ -933,7 +961,9 @@ std::unique_ptr<cudf::column> create_distinct_rows_column<cudf::struct_view>(
   auto const null_count = col->null_count();
   auto col_contents     = col->release();
   col_contents.children.push_back(std::move(children[0]));
-  auto structs_col = cudf::create_structs_hierarchy(
+  // Unlike create_structs_hierarchy, this also nulls the added child where the struct is null, as
+  // the other children already are. The Parquet writer expects that (#23868).
+  auto structs_col = cudf::make_structs_column(
     num_rows, std::move(col_contents.children), null_count, std::move(*col_contents.null_mask));
   return std::move(cudf::sample(cudf::table_view({structs_col->view()}), num_rows)->release()[0]);
 }

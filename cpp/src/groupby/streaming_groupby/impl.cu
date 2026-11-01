@@ -10,6 +10,7 @@
 #include "groupby/hash/output_utils.hpp"
 #include "partial_aggregates.cuh"
 
+#include <cudf/aggregation.hpp>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/column/column_stream.hpp>
 #include <cudf/column/column_view.hpp>
@@ -19,6 +20,7 @@
 #include <cudf/detail/aggregation/result_cache.hpp>
 #include <cudf/detail/copy.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/unary.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/fixed_point/fixed_point.hpp>
@@ -250,6 +252,11 @@ void streaming_groupby::impl::initialize(table_view const& data, cuda::stream_re
   _initialized = true;
 }
 
+bool streaming_groupby::impl::is_wide_sum(size_type i) const
+{
+  return _agg_kinds[i] == aggregation::SUM && cudf::is_integral_not_bool(_aggregate_input_types[i]);
+}
+
 std::unique_ptr<table> streaming_groupby::impl::make_aggregate_results(
   size_type capacity,
   size_type first_column,
@@ -263,9 +270,9 @@ std::unique_ptr<table> streaming_groupby::impl::make_aggregate_results(
     std::span<int8_t const>{_is_agg_intermediate}.subspan(first_column, num_columns);
   std::vector<std::unique_ptr<column>> schema_columns;
   schema_columns.reserve(num_columns);
-  for (auto const type :
-       std::span<data_type const>{_aggregate_input_types}.subspan(first_column, num_columns)) {
-    schema_columns.push_back(cudf::make_empty_column(type));
+  for (auto i = first_column; i < first_column + num_columns; ++i) {
+    schema_columns.push_back(cudf::make_empty_column(
+      is_wide_sum(i) ? data_type{type_id::DECIMAL128, 0} : _aggregate_input_types[i]));
   }
   auto const schema = table{std::move(schema_columns)};
   auto results      = detail::hash::create_results_table(
@@ -438,6 +445,27 @@ streaming_groupby::impl::finalize_gathered(std::unique_ptr<table> keys,
                                            cuda::stream_ref stream,
                                            cudf::memory_resources mr) const
 {
+  std::unordered_map<size_type, std::unique_ptr<column>> exact_sums;
+  auto gathered_cols = agg_gathered->release();
+  for (size_type i = 0; i < static_cast<size_type>(gathered_cols.size()); ++i) {
+    if (!is_wide_sum(i)) {
+      continue;
+    }
+    auto const input_column = _value_col_indices[i];
+    auto const has_mean = std::any_of(_requests_clone.begin(), _requests_clone.end(), [&](auto const& req) {
+      return req.column_index == input_column && req.aggregation->kind == aggregation::MEAN;
+    });
+    if (has_mean && !exact_sums.contains(input_column)) {
+      exact_sums.emplace(input_column,
+                         cudf::detail::cast(gathered_cols[i]->view(),
+                                            data_type{type_id::FLOAT64},
+                                            stream,
+                                            mr.get_temporary_mr()));
+    }
+    gathered_cols[i] = cudf::detail::cast(gathered_cols[i]->view(), data_type{type_id::INT64}, stream, mr.get_output_mr());
+  }
+  agg_gathered = std::make_unique<table>(std::move(gathered_cols));
+
   // Each input column needs one cache identity shared by all of its simple and compound
   // aggregations. Prefer a result retaining the input type (e.g. SUM for decimal/duration
   // MEAN), even when COUNT was requested first. For promoted numeric results, the compound
@@ -470,6 +498,26 @@ streaming_groupby::impl::finalize_gathered(std::unique_ptr<table> keys,
     ar.aggregations.push_back(std::unique_ptr<groupby_aggregation>{
       dynamic_cast<groupby_aggregation*>(_requests_clone[i].aggregation->clone().release())});
     auto const& agg = *ar.aggregations.front();
+    if (auto const exact_sum = exact_sums.find(_requests_clone[i].column_index);
+        agg.kind == aggregation::MEAN && exact_sum != exact_sums.end() &&
+        !cache.has_result(ar.values, agg)) {
+      // Finalize MEAN from the exact sum in a scratch cache, then share it under the request key.
+      auto const sum_agg   = make_sum_aggregation();
+      auto const count_agg = make_count_aggregation();
+      auto const sum_view  = exact_sum->second->view();
+      cudf::detail::result_cache exact_cache(1);
+      exact_cache.add_result(sum_view,
+                             *count_agg,
+                             std::make_unique<column>(cache.get_result(ar.values, *count_agg),
+                                                      stream,
+                                                      mr.get_temporary_mr()));
+      exact_cache.add_result(sum_view, *sum_agg, std::move(exact_sum->second));
+      exact_sums.erase(exact_sum);
+      auto const finalizer =
+        detail::hash::hash_compound_agg_finalizer(sum_view, &exact_cache, true, stream, mr);
+      cudf::detail::aggregation_dispatcher(agg.kind, finalizer, agg);
+      cache.add_result(ar.values, agg, exact_cache.release_result(sum_view, agg));
+    }
     if (_has_compound_aggs && !cache.has_result(ar.values, agg)) {
       // Gathered intermediates may lack null masks, so MEAN derives nulls from the counts.
       auto const finalizer =

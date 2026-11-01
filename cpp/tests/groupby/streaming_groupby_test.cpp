@@ -30,13 +30,16 @@
 #include <cuda_runtime_api.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
+#include <numeric>
 #include <thread>
 #include <tuple>
-#include <unordered_set>
+#include <unordered_map>
 #include <vector>
 
 static std::vector<cudf::size_type> const KEY_COL{0};
@@ -448,8 +451,20 @@ TEST_F(StreamingGroupbyTest, ColumnwiseGrowthPreservesResultsOnAllocationFailure
   constexpr cudf::size_type num_rows = 65536;
   constexpr std::size_t num_columns  = 3;
   // Four groups initially have 64 partials each. Growth to 1,024 groups collapses them to one.
-  constexpr std::size_t old_column_bytes = 4 * 64 * sizeof(int64_t);
-  constexpr std::size_t new_column_bytes = 1024 * sizeof(int64_t);
+  // Integer SUM state is 128-bit; MIN and MAX keep the int64 input width.
+  constexpr std::size_t old_rows = 4 * 64;
+  constexpr std::size_t new_rows = 1024;
+  constexpr std::array<std::size_t, num_columns> element_bytes{
+    sizeof(__int128_t), sizeof(int64_t), sizeof(int64_t)};
+  auto const is_column_size = [&](std::size_t bytes, std::size_t rows) {
+    return std::any_of(element_bytes.begin(), element_bytes.end(), [&](auto element) {
+      return bytes == rows * element;
+    });
+  };
+  auto const max_old_column_bytes =
+    old_rows * *std::max_element(element_bytes.begin(), element_bytes.end());
+  auto const total_new_bytes =
+    new_rows * std::accumulate(element_bytes.begin(), element_bytes.end(), std::size_t{0});
   std::vector<int32_t> key_data(num_rows);
   std::vector<int64_t> value_data(num_rows);
   std::vector<bool> validity(num_rows);
@@ -480,9 +495,11 @@ TEST_F(StreamingGroupbyTest, ColumnwiseGrowthPreservesResultsOnAllocationFailure
 
   for (std::size_t const fail_after : {0, 1, 2}) {
     SCOPED_TRACE(fail_after);
-    std::unordered_set<void*> old_buffers;
+    std::unordered_map<void*, std::size_t> old_buffers;
+    std::size_t old_bytes        = 0;
     std::size_t retired_columns  = 0;
     std::size_t grown_columns    = 0;
+    std::size_t grown_bytes      = 0;
     std::size_t peak_state_bytes = 0;
     bool growing                 = false;
     rmm::mr::cuda_memory_resource upstream;
@@ -494,18 +511,24 @@ TEST_F(StreamingGroupbyTest, ColumnwiseGrowthPreservesResultsOnAllocationFailure
           throw rmm::bad_alloc{"Injected streaming groupby growth failure"};
         }
         auto* ptr = upstream.allocate(stream, bytes, alignment);
-        if (!growing && bytes == old_column_bytes) { old_buffers.insert(ptr); }
-        if (growing && bytes == new_column_bytes) {
+        if (!growing && is_column_size(bytes, old_rows)) {
+          old_buffers.emplace(ptr, bytes);
+          old_bytes += bytes;
+        }
+        if (growing && is_column_size(bytes, new_rows)) {
           ++grown_columns;
+          grown_bytes += bytes;
           EXPECT_EQ(retired_columns + 1, grown_columns);
-          peak_state_bytes =
-            std::max(peak_state_bytes,
-                     old_buffers.size() * old_column_bytes + grown_columns * new_column_bytes);
+          peak_state_bytes = std::max(peak_state_bytes, old_bytes + grown_bytes);
         }
         return ptr;
       },
       [&](cuda::stream_ref stream, void* ptr, std::size_t bytes, std::size_t alignment, void*) {
-        if (old_buffers.erase(ptr) != 0 && growing) { ++retired_columns; }
+        if (auto const it = old_buffers.find(ptr); it != old_buffers.end()) {
+          old_bytes -= it->second;
+          old_buffers.erase(it);
+          if (growing) { ++retired_columns; }
+        }
         upstream.deallocate(stream, ptr, bytes, alignment);
       }};
     cudf::groupby::streaming_groupby agg{
@@ -524,7 +547,7 @@ TEST_F(StreamingGroupbyTest, ColumnwiseGrowthPreservesResultsOnAllocationFailure
     auto const expected_columns = fail_after == 0 ? num_columns : fail_after;
     EXPECT_EQ(retired_columns, expected_columns);
     EXPECT_EQ(grown_columns, expected_columns);
-    EXPECT_LE(peak_state_bytes, num_columns * new_column_bytes + old_column_bytes);
+    EXPECT_LE(peak_state_bytes, total_new_bytes + max_old_column_bytes);
     EXPECT_EQ(agg.distinct_keys(), fail_after == 0 ? 1024 : 4);
     if (fail_after != 0) { EXPECT_THROW(agg.aggregate(repeated_batch), cudf::logic_error); }
 
@@ -1402,6 +1425,224 @@ TEST_F(StreamingGroupbyTest, ManySmallBatches)
 
   auto [keys, results] = streaming_agg.finalize();
   verify_against_groupby(keys, results, batches, KEY_COL, reqs);
+}
+
+TEST_F(StreamingGroupbyTest, MeanInt64OverflowAcrossBatches)
+{
+  using K = int32_t;
+  using V = int64_t;
+
+  auto constexpr max = std::numeric_limits<V>::max();
+  auto constexpr min = std::numeric_limits<V>::min();
+
+  auto reqs = single_agg_req(1, cudf::make_mean_aggregation<cudf::groupby_aggregation>());
+  cudf::groupby::streaming_groupby streaming_agg(KEY_COL, reqs, DEFAULT_MAX_DISTINCT_KEYS);
+  for (int b = 0; b < 3; ++b) {
+    cudf::test::fixed_width_column_wrapper<K> keys{0, 1, 2};
+    cudf::test::fixed_width_column_wrapper<V> vals{max, min, V{b}};
+    streaming_agg.aggregate(cudf::table_view{{keys, vals}});
+  }
+  auto [keys, results] = streaming_agg.finalize();
+
+  cudf::test::fixed_width_column_wrapper<K> ek{0, 1, 2};
+  cudf::test::fixed_width_column_wrapper<double> ev{
+    static_cast<double>(max), static_cast<double>(min), 1.0};
+  check(keys, results, cudf::table_view{{ek}}, {ev});
+}
+
+TEST_F(StreamingGroupbyTest, MeanInt64OverflowWithinBatch)
+{
+  using K = int32_t;
+  using V = int64_t;
+
+  auto constexpr max = std::numeric_limits<V>::max();
+  auto constexpr min = std::numeric_limits<V>::min();
+  auto constexpr num_rows = 1000;
+
+  std::vector<K> key_data(num_rows);
+  std::vector<V> val_data(num_rows);
+  for (int i = 0; i < num_rows; ++i) {
+    key_data[i] = i % 2;
+    val_data[i] = i % 2 == 0 ? max : min;
+  }
+  cudf::test::fixed_width_column_wrapper<K> keys(key_data.begin(), key_data.end());
+  cudf::test::fixed_width_column_wrapper<V> vals(val_data.begin(), val_data.end());
+
+  auto reqs = single_agg_req(1, cudf::make_mean_aggregation<cudf::groupby_aggregation>());
+  cudf::groupby::streaming_groupby streaming_agg(KEY_COL, reqs, DEFAULT_MAX_DISTINCT_KEYS);
+  streaming_agg.aggregate(cudf::table_view{{keys, vals}});
+  auto [result_keys, results] = streaming_agg.finalize();
+
+  cudf::test::fixed_width_column_wrapper<K> ek{0, 1};
+  cudf::test::fixed_width_column_wrapper<double> ev{static_cast<double>(max),
+                                                    static_cast<double>(min)};
+  check(result_keys, results, cudf::table_view{{ek}}, {ev});
+}
+
+TEST_F(StreamingGroupbyTest, MeanUint64Overflow)
+{
+  using K = int32_t;
+  using V = uint64_t;
+
+  auto constexpr max = std::numeric_limits<V>::max();
+
+  auto reqs = single_agg_req(1, cudf::make_mean_aggregation<cudf::groupby_aggregation>());
+  cudf::groupby::streaming_groupby streaming_agg(KEY_COL, reqs, DEFAULT_MAX_DISTINCT_KEYS);
+  for (int b = 0; b < 3; ++b) {
+    cudf::test::fixed_width_column_wrapper<K> keys{0};
+    cudf::test::fixed_width_column_wrapper<V> vals{max};
+    streaming_agg.aggregate(cudf::table_view{{keys, vals}});
+  }
+  auto [keys, results] = streaming_agg.finalize();
+
+  cudf::test::fixed_width_column_wrapper<K> ek{0};
+  cudf::test::fixed_width_column_wrapper<double> ev{static_cast<double>(max)};
+  check(keys, results, cudf::table_view{{ek}}, {ev});
+}
+
+TEST_F(StreamingGroupbyTest, SumAndMeanInt64OverflowShareState)
+{
+  using K = int32_t;
+  using V = int64_t;
+
+  auto constexpr max = std::numeric_limits<V>::max();
+
+  std::vector<cudf::groupby::streaming_aggregation_request> reqs;
+  reqs.push_back(make_req(1, cudf::make_sum_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(1, cudf::make_mean_aggregation<cudf::groupby_aggregation>()));
+  cudf::groupby::streaming_groupby streaming_agg(KEY_COL, reqs, DEFAULT_MAX_DISTINCT_KEYS);
+  for (int b = 0; b < 3; ++b) {
+    cudf::test::fixed_width_column_wrapper<K> keys{0, 1};
+    cudf::test::fixed_width_column_wrapper<V> vals{max, V{b}};
+    streaming_agg.aggregate(cudf::table_view{{keys, vals}});
+  }
+  auto [keys, results] = streaming_agg.finalize();
+
+  auto const wrapped_sum = static_cast<V>(3 * static_cast<uint64_t>(max));
+  cudf::test::fixed_width_column_wrapper<K> ek{0, 1};
+  cudf::test::fixed_width_column_wrapper<V> e_sum{wrapped_sum, V{3}};
+  cudf::test::fixed_width_column_wrapper<double> e_mean{static_cast<double>(max), 1.0};
+  check(keys, results, cudf::table_view{{ek}}, {e_sum, e_mean});
+}
+
+TEST_F(StreamingGroupbyTest, MeanInt64OverflowWithNulls)
+{
+  using K = int32_t;
+  using V = int64_t;
+
+  auto constexpr max = std::numeric_limits<V>::max();
+
+  std::vector<cudf::groupby::streaming_aggregation_request> reqs;
+  reqs.push_back(make_req(1, cudf::make_sum_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(1, cudf::make_mean_aggregation<cudf::groupby_aggregation>()));
+  cudf::groupby::streaming_groupby streaming_agg(KEY_COL, reqs, DEFAULT_MAX_DISTINCT_KEYS);
+  for (int b = 0; b < 2; ++b) {
+    cudf::test::fixed_width_column_wrapper<K> keys{0, 0, 1};
+    cudf::test::fixed_width_column_wrapper<V> vals{{max, V{7}, V{7}}, {true, false, false}};
+    streaming_agg.aggregate(cudf::table_view{{keys, vals}});
+  }
+  auto [keys, results] = streaming_agg.finalize();
+
+  auto const wrapped_sum = static_cast<V>(2 * static_cast<uint64_t>(max));
+  cudf::test::fixed_width_column_wrapper<K> ek{0, 1};
+  cudf::test::fixed_width_column_wrapper<V> e_sum{{wrapped_sum, V{0}}, {true, false}};
+  cudf::test::fixed_width_column_wrapper<double> e_mean{{static_cast<double>(max), 0.0},
+                                                        {true, false}};
+  check(keys, results, cudf::table_view{{ek}}, {e_sum, e_mean});
+}
+
+TEST_F(StreamingGroupbyTest, MeanInt64OverflowMergeTwoObjects)
+{
+  using K = int32_t;
+  using V = int64_t;
+
+  auto constexpr max = std::numeric_limits<V>::max();
+
+  cudf::test::fixed_width_column_wrapper<K> keys1{0, 1};
+  cudf::test::fixed_width_column_wrapper<V> vals1{max, V{2}};
+  cudf::test::fixed_width_column_wrapper<K> keys2{0, 0, 2};
+  cudf::test::fixed_width_column_wrapper<V> vals2{max, max, V{4}};
+
+  auto reqs1 = single_agg_req(1, cudf::make_mean_aggregation<cudf::groupby_aggregation>());
+  cudf::groupby::streaming_groupby worker1(KEY_COL, reqs1, DEFAULT_MAX_DISTINCT_KEYS);
+  worker1.aggregate(cudf::table_view{{keys1, vals1}});
+
+  auto reqs2 = single_agg_req(1, cudf::make_mean_aggregation<cudf::groupby_aggregation>());
+  cudf::groupby::streaming_groupby worker2(KEY_COL, reqs2, DEFAULT_MAX_DISTINCT_KEYS);
+  worker2.aggregate(cudf::table_view{{keys2, vals2}});
+
+  worker1.merge(worker2);
+  auto [keys, results] = worker1.finalize();
+
+  cudf::test::fixed_width_column_wrapper<K> ek{0, 1, 2};
+  cudf::test::fixed_width_column_wrapper<double> ev{static_cast<double>(max), 2.0, 4.0};
+  check(keys, results, cudf::table_view{{ek}}, {ev});
+}
+
+TEST_F(StreamingGroupbyTest, WideIntegerSumGrowthMatchesGroupby)
+{
+  using K = int32_t;
+  using V = int64_t;
+
+  auto constexpr num_batches = 4;
+  auto constexpr rows_per_batch = 2000;
+
+  std::vector<cudf::groupby::streaming_aggregation_request> reqs;
+  reqs.push_back(make_req(1, cudf::make_sum_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(1, cudf::make_mean_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(1, cudf::make_variance_aggregation<cudf::groupby_aggregation>()));
+  cudf::groupby::streaming_groupby streaming_agg(KEY_COL, reqs, 4 * rows_per_batch);
+
+  std::vector<cudf::table_view> batches;
+  std::vector<std::unique_ptr<cudf::column>> owners;
+  for (int b = 0; b < num_batches; ++b) {
+    std::vector<K> key_data(rows_per_batch);
+    std::vector<V> val_data(rows_per_batch);
+    for (int i = 0; i < rows_per_batch; ++i) {
+      key_data[i] = (b + 1) * i;  // Each batch adds new groups and revisits earlier ones.
+      val_data[i] = (i % 7) - 3 + b * 1000;
+    }
+    owners.push_back(
+      cudf::test::fixed_width_column_wrapper<K>(key_data.begin(), key_data.end()).release());
+    owners.push_back(
+      cudf::test::fixed_width_column_wrapper<V>(val_data.begin(), val_data.end()).release());
+    batches.emplace_back(std::vector<cudf::column_view>{owners[owners.size() - 2]->view(),
+                                                        owners.back()->view()});
+    streaming_agg.aggregate(batches.back());
+  }
+  auto [keys, results] = streaming_agg.finalize();
+
+  verify_against_groupby(keys, results, batches, KEY_COL, reqs);
+}
+
+template <typename T>
+struct StreamingGroupbyIntegralTest : public cudf::test::BaseFixture {};
+
+TYPED_TEST_SUITE(StreamingGroupbyIntegralTest, cudf::test::IntegralTypesNotBool);
+
+TYPED_TEST(StreamingGroupbyIntegralTest, SumMeanVarianceMatchGroupby)
+{
+  using K = int32_t;
+  using V = TypeParam;
+
+  cudf::test::fixed_width_column_wrapper<K> keys1{1, 2, 1, 3};
+  cudf::test::fixed_width_column_wrapper<V, int32_t> vals1{{10, 20, 30, 5}, {true, true, true, false}};
+  cudf::test::fixed_width_column_wrapper<K> keys2{1, 2, 3, 2};
+  cudf::test::fixed_width_column_wrapper<V, int32_t> vals2{50, 40, 7, 60};
+  cudf::table_view batch1{{keys1, vals1}};
+  cudf::table_view batch2{{keys2, vals2}};
+
+  std::vector<cudf::groupby::streaming_aggregation_request> reqs;
+  reqs.push_back(make_req(1, cudf::make_sum_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(1, cudf::make_mean_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(1, cudf::make_variance_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(1, cudf::make_min_aggregation<cudf::groupby_aggregation>()));
+  cudf::groupby::streaming_groupby streaming_agg(KEY_COL, reqs, DEFAULT_MAX_DISTINCT_KEYS);
+  streaming_agg.aggregate(batch1);
+  streaming_agg.aggregate(batch2);
+  auto [keys, results] = streaming_agg.finalize();
+
+  verify_against_groupby(keys, results, {batch1, batch2}, KEY_COL, reqs);
 }
 
 // Test that exceeding distinct-key capacity throws.

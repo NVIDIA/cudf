@@ -29,14 +29,23 @@ namespace hash = detail::hash;
 namespace cg   = cooperative_groups;
 
 template <typename T, aggregation::Kind K>
+constexpr bool is_wide_integer_sum = K == aggregation::SUM && cudf::is_integral_not_bool<T>();
+
+template <typename T, aggregation::Kind K>
+using warp_result_t = cuda::std::conditional_t<is_wide_integer_sum<T, K>,
+                           __int128_t,
+                           hash::rep_type_t<cudf::detail::target_type_t<T, K>>>;
+
+template <typename T, aggregation::Kind K>
 constexpr bool is_warp_aggregation_supported = [] {
-  if constexpr (cuda::std::same_as<T, numeric::decimal128> && K == aggregation::SUM) {
+  if constexpr ((cuda::std::same_as<T, numeric::decimal128> && K == aggregation::SUM) ||
+                is_wide_integer_sum<T, K>) {
     return true;  // This kind has a dedicated existing 128-bit atomic addition.
   }
   if constexpr (hash::is_reduction_supported<T>(K) &&
                 (K == aggregation::SUM || K == aggregation::SUM_OF_SQUARES ||
                  K == aggregation::PRODUCT || K == aggregation::MIN || K == aggregation::MAX)) {
-    using Result = hash::rep_type_t<cudf::detail::target_type_t<T, K>>;
+    using Result = warp_result_t<T, K>;
     return sizeof(hash::rep_type_t<T>) <= sizeof(int64_t) && sizeof(Result) <= sizeof(int64_t) &&
            cudf::has_atomic_support<Result>();
   }
@@ -107,7 +116,7 @@ __device__ void aggregate_value(hash::rep_type_t<T> input,
 {
   if constexpr (is_warp_aggregation_supported<T, K>) {
     if (column.output == nullptr) { return; }
-    using Result = hash::rep_type_t<cudf::detail::target_type_t<T, K>>;
+    using Result = warp_result_t<T, K>;
     using Op     = cudf::detail::corresponding_operator_t<K>;
     auto value   = static_cast<Result>(input);
     if constexpr (K == aggregation::SUM_OF_SQUARES) { value *= value; }

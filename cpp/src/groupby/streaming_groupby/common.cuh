@@ -295,6 +295,7 @@ struct streaming_groupby::impl {
   std::unique_ptr<cuda::device_buffer<size_type>> _key_set;
 
   [[nodiscard]] size_type num_keys() const { return static_cast<size_type>(_key_indices.size()); }
+  [[nodiscard]] bool is_wide_sum(size_type i) const;
   void ensure_not_invalidated() const
   {
     CUDF_EXPECTS(!_invalidated.load(std::memory_order_relaxed),

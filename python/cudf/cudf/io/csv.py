@@ -89,6 +89,49 @@ def _unsupported_compression_error(fmt: str) -> NotImplementedError:
 
 
 @_performance_tracking
+def _set_index_from_list(
+    df: DataFrame,
+    index_col: list | tuple,
+    *,
+    names_given: bool,
+    header: object,
+) -> DataFrame:
+    """Set ``df``'s index from a list of column positions and/or labels.
+
+    Integers are positions into the parsed columns (negative values count from
+    the end, as in pandas), anything else is taken as a column label. Index
+    level names follow pandas: the header label (``None`` for an unnamed
+    leading column) or, when there is no header and no ``names``, the position.
+    """
+    if len(index_col) == 0:
+        return df
+    labels = []
+    index_names = []
+    for col in index_col:
+        if isinstance(col, int):
+            label = df._data.get_labels_by_index(col)[0]
+            if header is None and not names_given:
+                # No header row: pandas labels the level with the position.
+                name = col
+            elif (
+                isinstance(label, str)
+                and not names_given
+                and label.startswith("Unnamed:")
+            ):
+                name = None
+            else:
+                name = label
+        else:
+            label = name = col
+        labels.append(label)
+        index_names.append(name)
+    if len(set(labels)) != len(labels):
+        raise ValueError(f"Duplicate columns in index_col: {index_col}")
+    df = df.set_index(labels)
+    df.index.names = index_names
+    return df
+
+
 @ioutils.doc_read_csv()
 def read_csv(
     filepath_or_buffer,
@@ -354,7 +397,14 @@ def read_csv(
 
     # Set index if the index_col parameter is passed
     if index_col is not None and index_col is not False:
-        if isinstance(index_col, int):
+        if isinstance(index_col, (list, tuple)):
+            df = _set_index_from_list(
+                df,
+                index_col,
+                names_given=names is not None,
+                header=orig_header,
+            )
+        elif isinstance(index_col, int):
             index_col_name = df._data.get_labels_by_index(index_col)[0]
             df = df.set_index(index_col_name)
             if (

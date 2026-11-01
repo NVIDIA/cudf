@@ -448,21 +448,20 @@ streaming_groupby::impl::finalize_gathered(std::unique_ptr<table> keys,
   std::unordered_map<size_type, std::unique_ptr<column>> exact_sums;
   auto gathered_cols = agg_gathered->release();
   for (size_type i = 0; i < static_cast<size_type>(gathered_cols.size()); ++i) {
-    if (!is_wide_sum(i)) {
-      continue;
-    }
+    if (!is_wide_sum(i)) { continue; }
     auto const input_column = _value_col_indices[i];
-    auto const has_mean = std::any_of(_requests_clone.begin(), _requests_clone.end(), [&](auto const& req) {
-      return req.column_index == input_column && req.aggregation->kind == aggregation::MEAN;
-    });
+    auto const has_mean =
+      std::any_of(_requests_clone.begin(), _requests_clone.end(), [&](auto const& req) {
+        return req.column_index == input_column && req.aggregation->kind == aggregation::MEAN;
+      });
     if (has_mean && !exact_sums.contains(input_column)) {
-      exact_sums.emplace(input_column,
-                         cudf::detail::cast(gathered_cols[i]->view(),
-                                            data_type{type_id::FLOAT64},
-                                            stream,
-                                            mr.get_temporary_mr()));
+      exact_sums.emplace(
+        input_column,
+        cudf::detail::cast(
+          gathered_cols[i]->view(), data_type{type_id::FLOAT64}, stream, mr.get_temporary_mr()));
     }
-    gathered_cols[i] = cudf::detail::cast(gathered_cols[i]->view(), data_type{type_id::INT64}, stream, mr.get_output_mr());
+    gathered_cols[i] = cudf::detail::cast(
+      gathered_cols[i]->view(), data_type{type_id::INT64}, stream, mr.get_output_mr());
   }
   agg_gathered = std::make_unique<table>(std::move(gathered_cols));
 
@@ -506,11 +505,11 @@ streaming_groupby::impl::finalize_gathered(std::unique_ptr<table> keys,
       auto const count_agg = make_count_aggregation();
       auto const sum_view  = exact_sum->second->view();
       cudf::detail::result_cache exact_cache(1);
-      exact_cache.add_result(sum_view,
-                             *count_agg,
-                             std::make_unique<column>(cache.get_result(ar.values, *count_agg),
-                                                      stream,
-                                                      mr.get_temporary_mr()));
+      exact_cache.add_result(
+        sum_view,
+        *count_agg,
+        std::make_unique<column>(
+          cache.get_result(ar.values, *count_agg), stream, mr.get_temporary_mr()));
       exact_cache.add_result(sum_view, *sum_agg, std::move(exact_sum->second));
       exact_sums.erase(exact_sum);
       auto const finalizer =

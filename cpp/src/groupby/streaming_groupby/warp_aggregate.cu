@@ -33,8 +33,8 @@ constexpr bool is_wide_integer_sum = K == aggregation::SUM && cudf::is_integral_
 
 template <typename T, aggregation::Kind K>
 using warp_result_t = cuda::std::conditional_t<is_wide_integer_sum<T, K>,
-                           __int128_t,
-                           hash::rep_type_t<cudf::detail::target_type_t<T, K>>>;
+                                               __int128_t,
+                                               hash::rep_type_t<cudf::detail::target_type_t<T, K>>>;
 
 template <typename T, aggregation::Kind K>
 constexpr bool is_warp_aggregation_supported = [] {

@@ -1455,8 +1455,8 @@ TEST_F(StreamingGroupbyTest, MeanInt64OverflowWithinBatch)
   using K = int32_t;
   using V = int64_t;
 
-  auto constexpr max = std::numeric_limits<V>::max();
-  auto constexpr min = std::numeric_limits<V>::min();
+  auto constexpr max      = std::numeric_limits<V>::max();
+  auto constexpr min      = std::numeric_limits<V>::min();
   auto constexpr num_rows = 1000;
 
   std::vector<K> key_data(num_rows);
@@ -1584,7 +1584,7 @@ TEST_F(StreamingGroupbyTest, WideIntegerSumGrowthMatchesGroupby)
   using K = int32_t;
   using V = int64_t;
 
-  auto constexpr num_batches = 4;
+  auto constexpr num_batches    = 4;
   auto constexpr rows_per_batch = 2000;
 
   std::vector<cudf::groupby::streaming_aggregation_request> reqs;
@@ -1606,8 +1606,8 @@ TEST_F(StreamingGroupbyTest, WideIntegerSumGrowthMatchesGroupby)
       cudf::test::fixed_width_column_wrapper<K>(key_data.begin(), key_data.end()).release());
     owners.push_back(
       cudf::test::fixed_width_column_wrapper<V>(val_data.begin(), val_data.end()).release());
-    batches.emplace_back(std::vector<cudf::column_view>{owners[owners.size() - 2]->view(),
-                                                        owners.back()->view()});
+    batches.emplace_back(
+      std::vector<cudf::column_view>{owners[owners.size() - 2]->view(), owners.back()->view()});
     streaming_agg.aggregate(batches.back());
   }
   auto [keys, results] = streaming_agg.finalize();
@@ -1626,7 +1626,8 @@ TYPED_TEST(StreamingGroupbyIntegralTest, SumMeanVarianceMatchGroupby)
   using V = TypeParam;
 
   cudf::test::fixed_width_column_wrapper<K> keys1{1, 2, 1, 3};
-  cudf::test::fixed_width_column_wrapper<V, int32_t> vals1{{10, 20, 30, 5}, {true, true, true, false}};
+  cudf::test::fixed_width_column_wrapper<V, int32_t> vals1{{10, 20, 30, 5},
+                                                           {true, true, true, false}};
   cudf::test::fixed_width_column_wrapper<K> keys2{1, 2, 3, 2};
   cudf::test::fixed_width_column_wrapper<V, int32_t> vals2{50, 40, 7, 60};
   cudf::table_view batch1{{keys1, vals1}};

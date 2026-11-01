@@ -1163,11 +1163,13 @@ names : list of str, default None
     `usecols` holds integer indices). When `usecols` is not used to select
     column indices, `names` can contain more names than there are columns i.n
     the file. In this case the extra columns will only contain null rows.
-index_col : int, string, list of int or string, or False, default None
+index_col : int, string, list or tuple of int or string, or False, default None
     Column(s) to use as the row labels of the DataFrame, either given as
-    string names or as column indices. If a list of columns is given, a
-    MultiIndex is formed. Passing `index_col=False` explicitly disables index
-    column inference and discards the last column.
+    string names or as column indices. A list or tuple of two or more columns
+    forms a MultiIndex. A list or tuple of one column forms a single-level
+    Index. An empty list or tuple keeps the default index. Passing
+    `index_col=False` explicitly disables index column inference and discards
+    the last column.
 usecols : list of int or str, default None
     Returns subset of the columns given in the list. All elements must be
     either integer indices (column number) or strings that correspond to

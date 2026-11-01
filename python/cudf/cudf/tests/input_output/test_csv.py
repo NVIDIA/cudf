@@ -1303,6 +1303,33 @@ def test_csv_reader_index_col_list_header_names(header, names):
         assert_eq(actual, expected)
 
 
+@pytest.mark.parametrize(
+    "index_col, usecols",
+    [
+        ([-1], None),
+        ([-1, 0], None),
+        ([np.int64(0)], None),
+        ([np.int64(-1), 1], None),
+        ([1], [1, 2, 3]),
+        ([-1], [1, 2, 3]),
+    ],
+)
+def test_csv_reader_index_col_list_headerless_names(index_col, usecols):
+    buffer = "1,2,3,4\n5,6,7,8\n"
+    kwargs = {"header": None, "index_col": index_col, "usecols": usecols}
+    actual = cudf.read_csv(StringIO(buffer), **kwargs)
+    expected = pd.read_csv(StringIO(buffer), **kwargs)
+    assert_eq(actual.index, expected.index)
+
+
+def test_csv_reader_index_col_list_numpy_int():
+    buffer = "a,b,c\n1,2,3\n4,5,6\n"
+    kwargs = {"index_col": [np.int64(0), np.int32(1)]}
+    actual = cudf.read_csv(StringIO(buffer), **kwargs)
+    expected = pd.read_csv(StringIO(buffer), **kwargs)
+    assert_eq(actual, expected)
+
+
 def test_csv_reader_index_col_list_unnamed_level():
     buffer = ",b,c\n1,2,3\n4,5,6\n"
     actual = cudf.read_csv(StringIO(buffer), index_col=[0, 1])

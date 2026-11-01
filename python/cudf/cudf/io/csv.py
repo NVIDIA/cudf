@@ -101,18 +101,20 @@ def _set_index_from_list(
     Integers are positions into the parsed columns (negative values count from
     the end, as in pandas), anything else is taken as a column label. Index
     level names follow pandas: the header label (``None`` for an unnamed
-    leading column) or, when there is no header and no ``names``, the position.
+    leading column) or, when there is no header and no ``names``, the column
+    number.
     """
     if len(index_col) == 0:
         return df
     labels = []
     index_names = []
     for col in index_col:
-        if isinstance(col, int):
-            label = df._data.get_labels_by_index(col)[0]
+        if isinstance(col, (int, np.integer)):
+            label = df._data.get_labels_by_index(int(col))[0]
             if header is None and not names_given:
-                # No header row: pandas labels the level with the position.
-                name = col
+                # No header row: pandas names the level with the column
+                # number, which cudf keeps as the (string) column label.
+                name = int(label) if str(label).isdigit() else label
             elif (
                 isinstance(label, str)
                 and not names_given

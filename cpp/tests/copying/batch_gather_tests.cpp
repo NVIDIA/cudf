@@ -963,6 +963,116 @@ TEST_F(BatchGatherMixedTest, StringShortRowsFanRepeatedSource)
   CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
 }
 
+// Below the row gate the batched-memcpy routing must stay OFF: short tables keep the payload
+// kernel's chars machinery (the engine split mirrors `strings::detail::gather`, whose threshold
+// is 524288 rows).
+TEST_F(BatchGatherMixedTest, StringBelowBatchMemcpyGateUsesKernelChars)
+{
+  constexpr cudf::size_type num_rows{524'287};  // one below the gate
+  std::vector<std::string> strings;
+  strings.reserve(num_rows);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    strings.push_back(
+      std::string(static_cast<std::size_t>(1 + (i * 17) % 32), static_cast<char>('a' + i % 26)));
+  }
+  cudf::test::strings_column_wrapper col_str(strings.begin(), strings.end());
+
+  auto col_i32 = make_fixed_column<int32_t>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+
+  cudf::table_view source_table({col_i32->view(), col_str});
+
+  auto const host_map = shuffled_iota(num_rows, 3);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
+
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// At and above the gate every all-short column routes to cub::DeviceMemcpy::Batched: this
+// exercises the flat (column, row) address build (shuffled map, nulls, repeated sources), the
+// boundary rows (0/1/32-byte lengths), a routed column next to an UNROUTED one (rows above the
+// block-copy gate keep the kernel's chars path), and sliced sources. The kernel still owns
+// both columns' masks and offsets. Source columns are periodic, so the map exercises every
+// length class across the full row count.
+TEST_F(BatchGatherMixedTest, StringAtBatchMemcpyGateRoutesRoutedAndUnrouted)
+{
+  constexpr cudf::size_type num_rows{524'288};  // exactly the gate
+  auto make_col = [](int const seed, bool const nullable, bool const short_rows) {
+    std::vector<std::string> strings;
+    std::vector<bool> valid;
+    strings.reserve(num_rows);
+    valid.reserve(num_rows);
+    for (cudf::size_type i = 0; i < num_rows; ++i) {
+      // short_rows: sizes in [0, 32] (the block-copy gate covers the whole column, so the
+      // average is <= 32 B and the routing predicate fires). Otherwise: every row is above
+      // the gate (>= 33 B), so the column must keep the kernel's chars path.
+      auto const size = short_rows ? static_cast<std::size_t>((i * seed + 3) % 33)
+                                   : static_cast<std::size_t>(33 + (i * seed + 5) % 97);
+      strings.push_back(std::string(size, static_cast<char>('a' + (i * seed + i / 7) % 26)));
+      valid.push_back(!nullable or i % 6 != 0);
+    }
+    auto validity = cudf::detail::make_counting_transform_iterator(
+      0, [&valid](cudf::size_type i) { return valid[i]; });
+    return cudf::test::strings_column_wrapper(strings.begin(), strings.end(), validity);
+  };
+  // seed 1 all-short: average <= 32 B -> routed to Batched. seed 101 all-long: every row is
+  // above the block-copy gate -> stays on the kernel's chars path.
+  auto routed_short  = make_col(1, true, true);
+  auto unrouted_long = make_col(101, true, false);
+
+  auto col_i32 = make_fixed_column<int32_t>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+
+  cudf::table_view source_table({col_i32->view(), unrouted_long, routed_short});
+
+  auto const host_map = shuffled_iota(num_rows, 11);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
+
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// Deep below the gate the whole routing machinery must be inert: no routing walk, no CUB
+// call, no per-item flag effect — the table gathers exactly like the reference path. This
+// pins the staging bypass so a future unconditional host-side addition cannot silently
+// reintroduce the small-row overhead.
+TEST_F(BatchGatherMixedTest, StringSubThresholdBypassMatchesReference)
+{
+  constexpr cudf::size_type num_rows{65'536};  // 1/8 of the gate
+  std::vector<std::string> strings;
+  strings.reserve(num_rows);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    strings.push_back(
+      std::string(static_cast<std::size_t>(1 + (i * 23) % 40), static_cast<char>('a' + i % 26)));
+  }
+  auto validity =
+    cudf::detail::make_counting_transform_iterator(0, [](cudf::size_type i) { return i % 4 != 0; });
+  cudf::test::strings_column_wrapper col_str(strings.begin(), strings.end(), validity);
+
+  auto col_i32 = make_fixed_column<int32_t>(
+    num_rows,
+    [](cudf::size_type i) { return i * 7; },
+    [](cudf::size_type i) { return i % 3 != 0; });
+
+  cudf::table_view source_table({col_str, col_i32->view()});
+
+  auto const host_map = shuffled_iota(num_rows, 5);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
+
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
 TEST_F(BatchGatherMixedTest, MixedNullableFixedWidthWithNullFreeLists)
 {
   // Divergence regression (test-first RED): a fixed-width column WITH nulls next to a nullable

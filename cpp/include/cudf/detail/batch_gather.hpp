@@ -137,8 +137,7 @@ std::unique_ptr<table> batch_gather(table_view const& source_table,
  * @param[in] gather_map View of the gather map column to classify
  * @param[in] num_fused_cols Flattened descriptor count of the fused columns in
  * `source_table` — struct leaves and mask-only struct nodes each count, every dictionary
- * counts one for its index payload — an upper bound of the kernel's `num_descriptors` (a
- * struct node whose mask needs no kernel write emits no mask-only descriptor) once the build
+ * counts one for its index payload — matching the kernel's `num_descriptors` once the build
  * walk flattens the same columns
  * @param[in] max_fused_element_size Largest element size in bytes among the fused columns'
  * data payloads (mask-only struct nodes carry none)

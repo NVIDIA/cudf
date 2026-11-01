@@ -26,6 +26,8 @@
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/dictionary/dictionary_factories.hpp>
 #include <cudf/null_mask.hpp>
+#include <cudf/strings/detail/gather.cuh>
+#include <cudf/strings/detail/utilities.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
@@ -45,8 +47,12 @@
 #include <cuda/iterator>
 #include <cuda/ptx>
 #include <cuda/std/bit>
+#include <cuda/std/iterator>
+#include <cuda/std/limits>
 #include <cuda/std/type_traits>
 #include <cuda/stream>
+#include <thrust/binary_search.h>
+#include <thrust/scan.h>
 #include <thrust/transform.h>
 
 #include <algorithm>
@@ -87,8 +93,10 @@ namespace {
 constexpr size_type kDefaultBlockSize{256};
 
 // A struct column joins the descriptor path when every descendant is a fixed-width leaf; any
-// string/list/dictionary child at any depth keeps the WHOLE column in the fallback (partial
-// flattening is a later stage).
+// list child at any depth keeps the WHOLE column in the fallback (partial flattening is a
+// later stage). A STRING child is no longer disqualifying: top-level strings take the
+// string fast path below, and a string inside a struct takes the same fast path via the
+// string_descriptor machinery.
 bool is_fully_fixed_width_struct(column_view const& col)
 {
   for (size_type i = 0; i < col.num_children(); ++i) {
@@ -111,6 +119,7 @@ bool is_descriptor_path_candidate(column_view const& col)
   if (cudf::is_fixed_width(col.type())) { return true; }
   switch (col.type().id()) {
     case type_id::STRUCT: return is_fully_fixed_width_struct(col);
+    case type_id::STRING: return true;
     case type_id::DICTIONARY32: {
       // Unsigned index types defer to the stock gatherer, which recasts them signed. No public
       // factory can produce an unsigned-index dictionary — `dictionary::encode` and the
@@ -128,10 +137,10 @@ bool is_descriptor_path_candidate(column_view const& col)
 // columns contribute one data descriptor, fully-fixed-width structs contribute one descriptor
 // per fixed-width leaf plus one mask-only descriptor per struct node that may need one, and
 // dictionaries contribute one data descriptor over their indices. Mirrors the build walk in
-// descriptor_path_builder; the kernel's num_descriptors is at most this count (a struct node
-// whose mask needs no kernel write emits no mask-only descriptor).
+// descriptor_path_builder; the kernel's num_descriptors is this same count.
 size_type fused_column_descriptor_count(column_view const& col)
 {
+  if (col.type().id() == type_id::STRING) { return 0; }  // strings ride the N3 fast path
   if (col.type().id() == type_id::STRUCT) {
     size_type count = 1;  // mask-only descriptor for this node
     for (size_type i = 0; i < col.num_children(); ++i) {
@@ -160,7 +169,9 @@ size_type fused_descriptor_count(table_view const& source_table)
 size_type max_fused_data_element_size(column_view const& col)
 {
   size_type max_size = 0;
-  if (not is_descriptor_path_candidate(col)) { return max_size; }
+  if (not is_descriptor_path_candidate(col) or col.type().id() == type_id::STRING) {
+    return max_size;  // strings carry no fixed-width descriptor payload
+  }
   if (col.type().id() == type_id::STRUCT) {
     for (size_type c = 0; c < col.num_children(); ++c) {
       max_size = std::max(max_size, max_fused_data_element_size(col.child(c)));
@@ -1127,10 +1138,378 @@ size_type resolve_map_locality_tile_cols(sampled_map_locality const& sampled,
   return classify_map_locality(sampled);
 }
 
+// ---------------------------------------------------------------------------
+// String fast path (N3).
+//
+// Stock per-string-column cost (`strings::detail::gather`): a sizes scan that
+// synchronizes on its last-element readback once PER COLUMN, then a chars
+// kernel, then whole-table mask work — multiplied by the column count. This
+// path batches every string column of the call:
+//
+//   1. ONE virtual keyed exclusive scan (`thrust::exclusive_scan_by_key`, the
+//      `contiguous_split.cu` pattern) over the flat (column, row) domain.
+//      Every gathered size is computed on the fly from the map, the source
+//      mask, and the source offsets — the sizes are never materialized — and
+//      the scan writes each destination offsets value into a flat int64
+//      scratch. The scratch precedes the offsets children because a gathered
+//      column's byte total is unbounded by its source (the map may repeat
+//      rows), so the child widths are unknowable until the totals are read.
+//      The scan's tabulate output also records each column's total.
+//   2. ONE host totals readback: a pinned async D2H enqueued right after the
+//      scan and synchronized just before the payload launch — the sampler's
+//      enqueue-early/resolve-late pattern, and the only synchronization this
+//      path adds. The totals size each column's chars buffer and select its
+//      offsets child width (`create_offsets_child_column`, which also
+//      enforces the column size limit).
+//   3. ONE batched payload kernel for ALL string columns, phased over
+//      disjoint outputs (no ordering between phases): characters with
+//      warp-cooperative uint4 spans per row, except rows above the block-copy
+//      gate which the whole block copies,
+//      destination masks written in-kernel for kernel-masked columns
+//      (constant masks are pre-set by `plan_destination_mask`), the offsets
+//      children finalized from the scratch (narrowing to the child's width),
+//      and per-column valid counts accumulated atomically for the
+//      post-kernel readback.
+//
+// Trap compliance: chars are addressed from the unsliced base with the sliced
+// offsets (the offsets iterator carries the view offset); null rows have zero
+// bytes and distinct validity from empty strings; gathered sizes are scanned
+// in 64 bits.
+// ---------------------------------------------------------------------------
+
+// Row-length gate (bytes) between the warp-cooperative and the block-cooperative copy. A
+// 32-byte row spans at most two 16-byte vectors, so one warp's uint4 span copies it without
+// idle lanes; a longer row serialises across the warp's lanes and the whole block copies it.
+// The 32-byte boundary matches the short/long strategy split of `strings::detail::gather`.
+constexpr int64_t kBlockRowCopyThreshold{32};
+
+// Work item for one string column on the N3 path: source addressing plus the
+// destination buffers the payload kernel writes. The src fields are complete
+// when the item is registered (the scan reads only those); the dst fields are
+// filled after the totals readback, before the payload launch. The
+// user-provided host-only default ctor keeps the implicit one (which nvcc
+// would otherwise attribute __host__ __device__ on this kernel-parameter
+// struct) from calling the host-only constexpr offsetalator ctors in device
+// context.
+struct string_work_item {
+  string_work_item() {}
+  char const* src_chars;            // raw chars base; the offsets carry addressing
+  bitmask_type const* src_mask;     // source mask BASE pointer; nullptr if non-nullable
+  int64_t mask_bit_offset;          // bit offset of the viewed range within src_mask
+  size_type src_rows;               // viewed source row count (bounds checks)
+  input_offsetalator src_offsets;   // source offsets with the view offset applied
+  int64_t const* dst_scratch;       // this column's range of the flat scratch
+  char* dst_chars;                  // destination chars buffer base
+  output_offsetalator dst_offsets;  // destination offsets child (narrowing stores)
+  bitmask_type* dst_mask;           // destination mask; nullptr when pre-set
+  size_type* valid_count;           // atomic valid-row counter; nullptr when pre-set
+};
+
+static_assert(std::is_trivially_copyable_v<string_work_item>,
+              "string_work_item is staged through pinned memory to the device");
+
+// Resolves destination row -> gathered source row, or -1 when the row carries
+// no payload. Under DONT_CHECK the bounds test is skipped (stock parity: the
+// source is then read at the raw index, undefined for out-of-bounds maps).
+__device__ int64_t resolve_gathered_row(input_indexalator gather_map,
+                                        size_type row,
+                                        size_type num_source_rows,
+                                        bool check_bounds,
+                                        bool negative_allowed)
+{
+  auto idx = gather_map[row];
+  if (negative_allowed && idx < 0) { idx += num_source_rows; }
+  bool const in_bounds = !check_bounds || (idx >= 0 && idx < num_source_rows);
+  return in_bounds ? static_cast<int64_t>(idx) : int64_t{-1};
+}
+
+// Payload validity of a resolved row: the source column's own mask only.
+// Ancestor validity is never consulted (stock never ANDs ancestor masks).
+__device__ bool string_row_valid(string_work_item const& item, int64_t src_row)
+{
+  return item.src_mask == nullptr ||
+         bit_is_set(item.src_mask, static_cast<size_type>(item.mask_bit_offset + src_row));
+}
+
+// Scan output: the exclusive prefix into the flat scratch; each column's tail
+// slot doubles as the per-column total, copied out for the batched readback.
+struct string_scan_out_fn {
+  int64_t* scratch;
+  int64_t* col_totals;
+  int64_t rows_per_col;
+
+  __device__ void operator()(int64_t flat, int64_t value) const
+  {
+    scratch[flat] = value;
+    if (flat % rows_per_col == rows_per_col - 1) { col_totals[flat / rows_per_col] = value; }
+  }
+};
+
+// One row published by a warp for the block-cooperative copy; `size == 0` is the no-work marker.
+struct block_row_copy {
+  char const* src;
+  char* dst;
+  int64_t size;
+};
+
+// Char-parallel copy of one all-short block group's rows: every live byte of the group's span
+// is addressed by exactly one thread. A thread owns the byte at `base + tid + k*blockDim.x`
+// for k >= 0 until the span ends and finds its owning row by a binary search over the staged
+// boundaries (thrust::upper_bound + cuda::std::prev, the same device idiom as stock's
+// char-parallel kernel), then resolves that destination row through the gather map exactly
+// like every other chars path. The staging `group_offsets` holds, per group row, that row's
+// dst byte offset; the tail slot closes the last live row with its +1 scratch entry. Dead
+// rows contribute no bytes (their scratch deltas are 0) but still stage as zero-width
+// boundaries. The caller fans only groups whose rows all belong to ONE column and none is
+// published: a per-column scratch slice restarts at each column boundary, so a cross-column
+// window would mix two byte spaces, and the block slot loop would race the fan on published
+// rows' bytes.
+__device__ void copy_group_chars_char_parallel(string_work_item const& item,
+                                               int64_t num_rows,
+                                               int64_t group_start,
+                                               int64_t group_end,
+                                               int64_t* group_offsets,
+                                               int64_t warps_per_block,
+                                               input_indexalator gather_map,
+                                               size_type num_source_rows,
+                                               bool check_bounds,
+                                               bool negative_allowed)
+{
+  auto const lane = static_cast<int64_t>(threadIdx.x);
+  // Stage the window's boundaries: slot w = the dst offset of flat row group_start + w (rows
+  // past the flat end stage INT64_MAX, an unreachable boundary); the tail slot closes the
+  // last live row's span with that row's +1 scratch entry.
+  for (int64_t slot = lane; slot <= warps_per_block; slot += static_cast<int64_t>(blockDim.x)) {
+    auto const flat = group_start + slot;
+    if (flat < group_end) {
+      auto const row      = static_cast<size_type>(flat % num_rows);
+      group_offsets[slot] = item.dst_scratch[row];
+    } else if (slot == warps_per_block) {
+      auto const row      = static_cast<size_type>((group_end - 1) % num_rows);
+      group_offsets[slot] = item.dst_scratch[row + 1];
+    } else {
+      group_offsets[slot] = cuda::std::numeric_limits<int64_t>::max();
+    }
+  }
+  __syncthreads();
+
+  auto const base = group_offsets[0];
+  auto const end  = group_offsets[warps_per_block];
+  if (end <= base) { return; }  // no live bytes in the window (early exit AFTER the barrier)
+  for (int64_t b = base + lane; b < end; b += static_cast<int64_t>(blockDim.x)) {
+    auto const it = cuda::std::prev(
+      thrust::upper_bound(thrust::seq, group_offsets, group_offsets + warps_per_block, b));
+    auto const dst_row = static_cast<size_type>((group_start + (it - group_offsets)) % num_rows);
+    auto const src =
+      resolve_gathered_row(gather_map, dst_row, num_source_rows, check_bounds, negative_allowed);
+    item.dst_chars[b] = item.src_chars[item.src_offsets[src] + (b - *it)];
+  }
+  __syncthreads();  // the next group rewrites group_offsets
+}
+
+// Copies one gathered string row with `stride` threads starting at `tid`: the same alignment
+// arithmetic, uint4 interior and scalar edges for both copy strategies. The warp path calls it
+// with `(lane, warp_size)`, the block-cooperative path with `(threadIdx.x, BlockSize)`.
+__device__ void copy_string_span(
+  char* dst_ptr, char const* src_ptr, int64_t size, int64_t tid, int64_t stride)
+{
+  if (size <= 0) { return; }
+  // The stock boundary arithmetic, on the per-row dst base (the base is
+  // 16-aligned only at row 0 of the buffer; every row realigns).
+  auto const alignment_offset =
+    static_cast<int64_t>(reinterpret_cast<std::uintptr_t>(dst_ptr) % 16);
+  auto const out_start_aligned =
+    (int64_t{4} + alignment_offset + int64_t{15}) / int64_t{16} * int64_t{16} - alignment_offset;
+  auto const out_end_aligned =
+    (size - int64_t{4} + alignment_offset) / int64_t{16} * int64_t{16} - alignment_offset;
+  if (out_end_aligned > out_start_aligned) {
+    for (int64_t p = out_start_aligned + tid * int64_t{16}; p < out_end_aligned;
+         p += stride * int64_t{16}) {
+      *reinterpret_cast<uint4*>(dst_ptr + p) = strings::detail::load_uint4(src_ptr + p);
+    }
+    if (tid < out_start_aligned) { dst_ptr[tid] = src_ptr[tid]; }
+    auto const tail = out_end_aligned + tid;
+    if (tail < size) { dst_ptr[tail] = src_ptr[tail]; }
+  } else {
+    for (int64_t p = tid; p < size; p += stride) {
+      dst_ptr[p] = src_ptr[p];
+    }
+  }
+}
+
+// Batched payload kernel for ALL string columns (one launch per call).
+//
+// Grid-stride phases over disjoint outputs, no ordering required between
+// them:
+//   chars   — every (column, row) pair with a live source takes one warp. The
+//             warp re-resolves the row per lane (one map read each — the map
+//             line is shared, and the resolve is 3 registers), giving every
+//             lane the (src, dst, size) tuple without any shuffle; the copy
+//             then follows the stock string-parallel strategy exactly (uint4
+//             interior between the alignment-safe bounds, scalar edges). A row
+//             longer than `kBlockRowCopyThreshold` is published to shared
+//             memory and copied by the whole block instead, so it does not
+//             serialise across one warp's lanes. A group with NO published row
+//             (every live row at or under the gate) is instead copied
+//             char-parallel by the whole block: one thread per output byte,
+//             the row found by a binary search over the group's staged scratch
+//             boundaries — the stock char-parallel strategy applied to the
+//             already-scanned offsets, which removes the rows-per-warp
+//             starvation on tall short-row tables.
+//   masks   — one thread per (column, 32-row window): the thread re-resolves
+//             each row of its window and packs the gathered validity into one
+//             destination mask word, popping the count into the column's
+//             atomic valid counter. Pre-set masks (ALL_NULL/ALL_VALID) skip
+//             the phase entirely (`dst_mask` nullptr).
+//   offsets — one thread per (column, scratch slot) copies the scanned value
+//             into the offsets child, narrowed to the child's width by the
+//             output iterator. This runs AFTER masks/chars in program order
+//             for one thread, but the three phases touch disjoint buffers, so
+//             no inter-thread ordering exists.
+template <size_type BlockSize>
+CUDF_KERNEL void string_payload_kernel(string_work_item const* items,
+                                       int64_t num_items,
+                                       int64_t rows_per_col,  // num_rows + 1
+                                       size_type num_rows,
+                                       size_type num_source_rows,
+                                       bool check_bounds,
+                                       bool negative_allowed,
+                                       input_indexalator gather_map)
+{
+  // The chars phase coordinates a block group and publishes one slot per warp.
+  static_assert(BlockSize % warp_size == 0);
+  auto const global_tid  = static_cast<int64_t>(blockIdx.x) * BlockSize + threadIdx.x;
+  auto const grid_stride = static_cast<int64_t>(gridDim.x) * BlockSize;
+  auto const lane        = static_cast<size_type>(threadIdx.x % warp_size);
+
+  // ---- chars: one warp per row at or below the block-copy gate; the whole block copies a
+  // longer row; an all-short group is copied char-parallel by the whole block ----
+  //
+  // Rows are handed out per block group: the block's warps take consecutive flat slots and the
+  // group bound is block-uniform, so every thread reaches the barriers below.
+  auto const warps_per_block = static_cast<int64_t>(BlockSize / warp_size);
+  auto const warp_in_block   = static_cast<int64_t>(threadIdx.x) / static_cast<int64_t>(warp_size);
+  auto const thread_in_block = static_cast<int64_t>(threadIdx.x);
+  __shared__ block_row_copy block_rows[BlockSize / warp_size];
+  // The fan window: the group's row boundaries plus the tail sentinel closing the last row.
+  __shared__ int64_t group_offsets[BlockSize / warp_size + 1];
+
+  auto const total_rows = num_items * static_cast<int64_t>(num_rows);
+  for (int64_t group = static_cast<int64_t>(blockIdx.x); group * warps_per_block < total_rows;
+       group += static_cast<int64_t>(gridDim.x)) {
+    auto const flat = group * warps_per_block + warp_in_block;
+
+    char const* src_ptr = nullptr;
+    char* dst_ptr       = nullptr;
+    int64_t size        = 0;
+    if (flat < total_rows) {
+      auto const& item = items[static_cast<size_type>(flat / num_rows)];
+      auto const row   = static_cast<size_type>(flat % num_rows);
+      auto const src =
+        resolve_gathered_row(gather_map, row, num_source_rows, check_bounds, negative_allowed);
+      if (src >= 0 and string_row_valid(item, src)) {
+        auto const s = static_cast<size_type>(src);
+        size         = item.src_offsets[s + 1] - item.src_offsets[s];
+        if (size > 0) {
+          src_ptr = item.src_chars + item.src_offsets[s];
+          dst_ptr = item.dst_chars + item.dst_scratch[row];
+        }
+      }
+    }
+
+    // Publish this warp's row for the block-cooperative copy; an empty slot is the no-work
+    // marker and also the all-short vote input (the vote reads the slots below).
+    auto const publishable = size > kBlockRowCopyThreshold;
+    if (lane == 0) {
+      block_rows[warp_in_block] =
+        publishable ? block_row_copy{src_ptr, dst_ptr, size} : block_row_copy{};
+    }
+    __syncthreads();
+
+    auto const group_start = group * warps_per_block;
+    auto const group_end   = cuda::std::min(group_start + warps_per_block, total_rows);
+    // A fan group must be single-column (a per-column scratch slice restarts at each column
+    // boundary, so a cross-column window is not one byte space) — the check is block-uniform
+    // because num_rows and warps_per_block are.
+    auto const single_column = (group_start / num_rows) == ((group_end - 1) / num_rows);
+    auto const any_long      = thread_in_block < warps_per_block
+                                 ? block_rows[thread_in_block].size > kBlockRowCopyThreshold
+                                 : false;
+    // __syncthreads_or is barrier-safe here: every thread participates (the predicate is
+    // computed unconditionally), only the VALUE differs.
+    if (__syncthreads_or(any_long or not single_column)) {
+      // Block-cooperative rows, one at a time; rows above the gate are rare, so the serial
+      // walk over the block's slots costs nothing on short-row data.
+      for (int64_t slot = 0; slot < warps_per_block; ++slot) {
+        auto const& row_copy = block_rows[slot];
+        if (row_copy.size == 0) { continue; }
+        copy_string_span(row_copy.dst,
+                         row_copy.src,
+                         row_copy.size,
+                         thread_in_block,
+                         static_cast<int64_t>(BlockSize));
+      }
+      // The short rows of a mixed group keep the warp copy (the fan did not run).
+      if (not publishable) {
+        copy_string_span(
+          dst_ptr, src_ptr, size, static_cast<int64_t>(lane), static_cast<int64_t>(warp_size));
+      }
+    } else {
+      // The group is all-short and single-column: fan every live byte across all BlockSize
+      // threads; the fan already wrote this warp's row, so no warp copy follows.
+      copy_group_chars_char_parallel(items[static_cast<size_type>(group_start / num_rows)],
+                                     num_rows,
+                                     group_start,
+                                     group_end,
+                                     group_offsets,
+                                     warps_per_block,
+                                     gather_map,
+                                     num_source_rows,
+                                     check_bounds,
+                                     negative_allowed);
+    }
+    __syncthreads();  // the next group rewrites the slots
+  }
+
+  // ---- masks + valid counts: one thread per (column, 32-row window) ----
+  auto const words_per_col =
+    util::div_rounding_up_safe(static_cast<int64_t>(num_rows), static_cast<int64_t>(warp_size));
+  auto const total_windows = num_items * words_per_col;
+  for (int64_t w = global_tid; w < total_windows; w += grid_stride) {
+    auto const& item = items[static_cast<size_type>(w / words_per_col)];
+    if (item.dst_mask == nullptr) { continue; }
+    auto const word = static_cast<size_type>(w % words_per_col);
+    auto const row0 = static_cast<int64_t>(word) * warp_size;
+    auto const limit =
+      cuda::std::min<int64_t>(int64_t{warp_size}, static_cast<int64_t>(num_rows) - row0);
+    bitmask_type word_bits = 0;
+    for (int64_t s = 0; s < limit; ++s) {
+      auto const src = resolve_gathered_row(gather_map,
+                                            static_cast<size_type>(row0 + s),
+                                            num_source_rows,
+                                            check_bounds,
+                                            negative_allowed);
+      if (src >= 0 and string_row_valid(item, src)) { word_bits |= bitmask_type{1} << s; }
+    }
+    item.dst_mask[word] = word_bits;
+    if (item.valid_count != nullptr) {
+      cuda::atomic_ref<size_type, cuda::thread_scope_device> ref{*item.valid_count};
+      ref.fetch_add(cuda::std::popcount(word_bits), cuda::std::memory_order_relaxed);
+    }
+  }
+
+  // ---- offsets children from the scratch: one thread per entry ----
+  auto const total_entries = num_items * rows_per_col;
+  for (int64_t e = global_tid; e < total_entries; e += grid_stride) {
+    auto const& item        = items[static_cast<size_type>(e / rows_per_col)];
+    auto const r            = static_cast<size_type>(e % rows_per_col);
+    *(item.dst_offsets + r) = item.dst_scratch[r];
+  }
+}
+
 // Tile width for regimes where sampling is skipped; nullopt means "sample the map". Zero/one
 // fused columns keep K1; otherwise the unsampled choice is K2 while the two-column working set
 // plus the map fit half of L2 (a failed L2 query reports 0 bytes and takes the safe K1).
-std::optional<size_type> unsampled_tile_width(size_type num_map_rows,
                                               size_type num_src_rows,
                                               size_type num_fused_cols,
                                               size_type max_fused_element_size,
@@ -1334,6 +1713,7 @@ struct descriptor_counts {
 
 descriptor_counts estimate_descriptor_counts(column_view const& src, bool nullify)
 {
+  if (src.type().id() == type_id::STRING) { return {0, 0}; }  // strings ride the N3 fast path
   if (src.type().id() == type_id::STRUCT) {
     size_type descriptors = kernel_writes_dst_mask(src, nullify) ? 1 : 0;
     size_type masked      = descriptors;
@@ -1432,6 +1812,26 @@ struct descriptor_path_builder {
     std::optional<size_t> kernel_slot;
   };
   std::vector<staged_keys> pending_dictionaries;
+
+  // Top-level string columns on the N3 fast path: one record per column, held
+  // so the launch block can finish their destinations (allocate chars from the
+  // totals, build the offsets children) after the virtual scan's readback. A
+  // record owns every device allocation its destination needs; `dst_slot`
+  // points into `destination`, which is never resized after construction.
+  struct staged_string {
+    column_view src;                  // full source view (offset applied by the offsets iterator)
+    std::unique_ptr<column> offsets;  // destination offsets child (INT32 or INT64, allocated late)
+    rmm::device_buffer chars;         // destination chars buffer (allocated late)
+    std::optional<cuda::device_buffer<bitmask_type>> dst_mask;  // when allocated
+    size_type null_count{};  // host-visible count; 0 placeholder when kernel-masked
+    std::unique_ptr<column>* dst_slot{};
+    // True when the payload kernel writes this column's mask: the kernel then
+    // needs the mask pointer and the per-column atomic counter, and assembly
+    // takes the count from string_counts (never kernel_masked_columns — the
+    // descriptor readback's slots must stay descriptor-only).
+    bool kernel_mask_written{false};
+  };
+  std::vector<staged_string> pending_strings;
 
   size_type push_descriptor(column_descriptor const& desc)
   {
@@ -1719,6 +2119,280 @@ struct descriptor_path_builder {
     if (plan.kernel_mask != nullptr) { set_target(mask_slot, col.get()); }
     return col;
   }
+
+  // Top-level STRING column on the N3 fast path. The destination offsets
+  // child and chars buffer are DEFERRED (their sizes are unknowable until the
+  // virtual scan's totals are read back); this method only plans the mask,
+  // records the deferred entry, and returns nullptr — the launch block fills
+  // `*dst_slot` in `assemble_strings` after the payload launch, or pre-emptively
+  // for the all-null / zero-row cases.
+  //
+  // Mask policy mirrors `plan_destination_mask`: all-null source → ALL_NULL
+  // pre-set, no payload; nullable-with-zero-nulls → ALL_VALID; kernel-masked →
+  // UNINITIALIZED with the kernel writing it and the valid count atomically
+  // accumulated. The source view's own offset is NOT baked into src_chars:
+  // `src_offsets` (an offsetalator over the FULL offsets child, offset
+  // applied) carries the byte addressing, so chars are addressed from the
+  // unsliced base through the sliced offsets exactly as stock does.
+  std::unique_ptr<column> build_string(column_view const& src, std::unique_ptr<column>* dst_slot)
+  {
+    auto plan = plan_destination_mask(src, nullify, num_rows, stream, output_mr);
+    if (plan.skip_data) {
+      // All-null source: ALL_NULL mask, undefined payload, no scan entry. The
+      // destination must still be a full strings column (full-size offsets
+      // child, empty chars) — `allocate_like` is fixed-width-only, so the
+      // column is assembled directly, matching the empty-source completion.
+      auto offsets_col =
+        cudf::strings::detail::create_offsets_child_column(0, num_rows + 1, stream, output_mr);
+      // Empty rows: offsets are all zero. The child's data is uninitialized,
+      // and the comparator flags a null row as dirty unless its span is zero.
+      CUDF_CUDA_TRY(cudaMemsetAsync(offsets_col->mutable_view().data<int32_t>(),
+                                    0,
+                                    offsets_col->size() * sizeof(int32_t),
+                                    stream.get()));
+      return make_strings_column(num_rows,
+                                 std::move(offsets_col),
+                                 rmm::device_buffer{},
+                                 plan.null_count,
+                                 std::move(*plan.buffer));
+    }
+    staged_string staged;
+    staged.src        = src;
+    staged.null_count = plan.null_count;
+    staged.dst_slot   = dst_slot;
+    if (plan.buffer.has_value()) { staged.dst_mask.emplace(std::move(*plan.buffer)); }
+    if (plan.kernel_mask != nullptr) {
+      // A string's mask is kernel-written but never rides kernel_masked_columns
+      // (the descriptor readback's slots): its null count comes from the
+      // payload kernel's own string_counts readback at assembly time.
+      staged.kernel_mask_written = true;
+    }
+    pending_strings.push_back(std::move(staged));
+    return nullptr;
+  }
+
+  // Completes every deferred string column: the virtual keyed exclusive scan
+  // over all string columns' gathered sizes, one batched totals readback, the
+  // batched payload kernel, then per-column assembly of the destination
+  // strings columns. Called by the launch block; `explicit_tile_cols` is
+  // resolved under the totals synchronization when the routed entry left it
+  // open (the sampler latency hides behind the scan).
+  void assemble_strings(column_view const& gather_map,
+                        size_type num_source_rows,
+                        bool check_bounds,
+                        bool negative_allowed,
+                        sampled_map_locality const& sampled,
+                        std::optional<size_type>& explicit_tile_cols)
+  {
+    if (pending_strings.empty()) { return; }
+    auto const num_strings = static_cast<size_type>(pending_strings.size());
+
+    // Live sources only: an empty SOURCE column (possibly no offsets child)
+    // carries no payload work, but its destination still needs a full-size
+    // offsets child (every row empty). Such columns are excluded from the
+    // device items and completed host-side below.
+    std::vector<size_type> live;
+    live.reserve(num_strings);
+    for (size_type i = 0; i < num_strings; ++i) {
+      auto const& staged = pending_strings[i];
+      if (staged.src.size() > 0 and staged.src.num_children() > 0) { live.push_back(i); }
+    }
+
+    std::vector<string_work_item> items(live.size());
+    for (size_t k = 0; k < live.size(); ++k) {
+      auto const& staged        = pending_strings[live[k]];
+      auto const& offsets_child = staged.src.child(cudf::strings_column_view::offsets_column_index);
+      items[k].src_chars        = staged.src.head<char>();
+      items[k].src_mask         = staged.src.null_mask();
+      items[k].mask_bit_offset  = staged.src.offset();
+      items[k].src_rows         = staged.src.size();
+      items[k].src_offsets =
+        cudf::detail::offsetalator_factory::make_input_iterator(offsets_child, staged.src.offset());
+    }
+
+    auto const rows_per_col = static_cast<int64_t>(num_rows) + 1;
+    auto const flat_size    = static_cast<int64_t>(live.size()) * rows_per_col;
+    auto scratch            = cudf::detail::make_zeroed_device_uvector_async<int64_t>(
+      static_cast<std::size_t>(flat_size), stream, temp_mr);
+    auto col_totals =
+      cudf::detail::make_zeroed_device_uvector_async<int64_t>(live.size(), stream, temp_mr);
+
+    auto staging_items =
+      cudf::detail::make_pinned_vector_async<string_work_item>(items.size(), stream);
+    std::copy(items.begin(), items.end(), staging_items.begin());
+    auto d_items = cudf::detail::make_device_uvector_async(
+      host_span<string_work_item const>{staging_items}, stream, temp_mr);
+
+    auto const map_begin = indexalator_factory::make_input_iterator(gather_map);
+    {
+      auto const keys = cuda::transform_iterator(
+        cuda::counting_iterator<int64_t>{0},
+        cuda::proclaim_return_type<int64_t>(
+          [rows_per_col] __device__(int64_t flat) { return flat / rows_per_col; }));
+      auto const values = cuda::transform_iterator(
+        cuda::counting_iterator<int64_t>{0},
+        cuda::proclaim_return_type<int64_t>([d_items = d_items.data(),
+                                             map_begin,
+                                             rows_per_col,
+                                             num_source_rows,
+                                             check_bounds,
+                                             negative_allowed] __device__(int64_t flat) -> int64_t {
+          auto const col   = static_cast<size_type>(flat / rows_per_col);
+          auto const row   = static_cast<size_type>(flat % rows_per_col);
+          auto const& item = d_items[col];
+          if (row >= static_cast<size_type>(rows_per_col - 1)) { return int64_t{0}; }
+          auto const src =
+            resolve_gathered_row(map_begin, row, num_source_rows, check_bounds, negative_allowed);
+          if (src < 0 or not string_row_valid(item, src)) { return int64_t{0}; }
+          return item.src_offsets[static_cast<size_type>(src) + 1] -
+                 item.src_offsets[static_cast<size_type>(src)];
+        }));
+      auto const out = cuda::make_tabulate_output_iterator(
+        string_scan_out_fn{scratch.data(), col_totals.data(), rows_per_col});
+      thrust::exclusive_scan_by_key(
+        rmm::exec_policy_nosync(stream, temp_mr), keys, keys + flat_size, values, out, int64_t{0});
+      CUDF_CUDA_TRY(cudaGetLastError());
+    }
+
+    // One batched totals D2H; its synchronization also resolves the routed
+    // tile width, hiding the sampler latency behind the scan.
+    auto h_col_totals = cudf::detail::make_pinned_vector_async<int64_t>(live.size(), stream);
+    cudf::detail::cuda_memcpy_async<int64_t>(
+      host_span<int64_t>{h_col_totals.data(), static_cast<std::size_t>(live.size())},
+      device_span<int64_t const>{col_totals.data(), static_cast<std::size_t>(live.size())},
+      stream);
+    std::optional<size_type> tile_from_sampler;
+    if (not explicit_tile_cols.has_value()) {
+      tile_from_sampler = resolve_map_locality_tile_cols(sampled, stream);
+    }
+    explicit_tile_cols = explicit_tile_cols.has_value() ? explicit_tile_cols : tile_from_sampler;
+    // resolve_map_locality_tile_cols already synchronized when it sampled; the
+    // explicit sync is needed only on the paths that skipped it (explicit tile
+    // width, or an unclassifiable map). Either way ONE synchronization covers
+    // sampler decode, the scan, and this totals copy.
+    if (tile_from_sampler.has_value() and sampled.staging.empty()) {
+      cudf::detail::sync_stream(stream);
+    } else if (not tile_from_sampler.has_value()) {
+      cudf::detail::sync_stream(stream);
+    }
+
+    // Destination allocation from the totals: each column gets its own chars
+    // buffer (column-owning allocations; no shared pool — every destination
+    // column must own its buffers) and its offsets child at the width
+    // `create_offsets_child_column` picks.
+    std::vector<cudf::device_span<int64_t>> scratch_spans(live.size());
+    std::vector<cudf::device_span<char>> chars_spans(live.size());
+    for (size_t k = 0; k < live.size(); ++k) {
+      auto& staged     = pending_strings[live[k]];
+      auto const bytes = h_col_totals[k];
+      auto offsets_col =
+        cudf::strings::detail::create_offsets_child_column(bytes, num_rows + 1, stream, output_mr);
+      scratch_spans[k] = cudf::device_span<int64_t>{
+        reinterpret_cast<int64_t*>(scratch.data()) + static_cast<std::ptrdiff_t>(k) * rows_per_col,
+        static_cast<std::size_t>(rows_per_col)};
+      staged.offsets = std::move(offsets_col);
+      if (bytes > 0) {
+        staged.chars   = rmm::device_buffer{static_cast<std::size_t>(bytes), stream, output_mr};
+        chars_spans[k] = cudf::device_span<char>{static_cast<char*>(staged.chars.data()),
+                                                 static_cast<std::size_t>(bytes)};
+      }
+    }
+
+    // Wire the payload work items (num_rows > 0 guaranteed for live columns).
+    auto any_kernel_masked = false;
+    for (size_t k = 0; k < live.size(); ++k) {
+      if (pending_strings[live[k]].kernel_mask_written) { any_kernel_masked = true; }
+    }
+    rmm::device_uvector<size_type> string_counts(0, stream, temp_mr);
+    if (any_kernel_masked) {
+      string_counts =
+        cudf::detail::make_zeroed_device_uvector_async<size_type>(live.size(), stream, temp_mr);
+    }
+    for (size_t k = 0; k < live.size(); ++k) {
+      auto const slot      = live[k];
+      auto& staged         = pending_strings[slot];
+      items[k].dst_scratch = scratch_spans[k].data();
+      items[k].dst_chars   = chars_spans[k].empty() ? nullptr : chars_spans[k].data();
+      items[k].dst_offsets =
+        cudf::detail::offsetalator_factory::make_output_iterator(staged.offsets->mutable_view());
+      items[k].dst_mask    = staged.kernel_mask_written ? staged.dst_mask->data() : nullptr;
+      items[k].valid_count = staged.kernel_mask_written ? string_counts.data() + k : nullptr;
+    }
+    auto d_payload_items = cudf::detail::make_device_uvector_async(
+      host_span<string_work_item const>{items}, stream, temp_mr);
+
+    // ---- the ONE batched payload launch ----
+    if (flat_size > 0) {
+      auto const grid = static_cast<unsigned>(
+        std::min<int64_t>(util::div_rounding_up_safe(flat_size, static_cast<int64_t>(block_size)),
+                          static_cast<int64_t>(65535)));
+      string_payload_kernel<block_size>
+        <<<grid, block_size, 0, stream.get()>>>(d_payload_items.data(),
+                                                static_cast<int64_t>(live.size()),
+                                                rows_per_col,
+                                                num_rows,
+                                                num_source_rows,
+                                                check_bounds,
+                                                negative_allowed,
+                                                map_begin);
+      CUDF_CUDA_TRY(cudaGetLastError());
+    }
+
+    std::vector<size_type> h_string_counts(live.size(), 0);
+    if (any_kernel_masked) {
+      // make_host_vector synchronizes; the payload kernel's atomics are done.
+      auto const read_back = cudf::detail::make_host_vector(string_counts, stream);
+      std::copy(read_back.begin(), read_back.end(), h_string_counts.begin());
+    }
+
+    // Assemble the destination columns: chars, offsets, mask, null count.
+    // Non-live staged entries (empty SOURCE columns) still get a full-size
+    // offsets child and no chars: every gathered row is empty. Their masks ride
+    // the same plan (all-null was handled in build_string; NULLIFY/all-valid
+    // arrive here kernel-masked or pre-set).
+    for (size_t k = 0; k < live.size(); ++k) {
+      auto& staged         = pending_strings[live[k]];
+      size_type null_count = staged.null_count;
+      if (staged.kernel_mask_written) { null_count = num_rows - h_string_counts[k]; }
+      auto null_mask = staged.dst_mask.has_value()
+                         ? cuda::device_buffer<bitmask_type>{std::move(*staged.dst_mask)}
+                         : cuda::device_buffer<bitmask_type>{stream, output_mr};
+      auto col       = make_strings_column(num_rows,
+                                     std::move(staged.offsets),
+                                     std::move(staged.chars),
+                                     null_count,
+                                     std::move(null_mask));
+      // The count is applied inline above; nothing to patch into
+      // kernel_masked_columns (descriptor slots stay descriptor-only).
+      *staged.dst_slot = std::move(col);
+    }
+    // Empty-source completions: offsets only, no kernel slot (no mask work is
+    // possible on a zero-row source beyond ALL_VALID/ALL_NULL pre-sets, and a
+    // kernel-written mask on an empty source still needs the kernel — but the
+    // scan never saw this column, so it completes host-side with its planned
+    // mask).
+    for (auto& staged : pending_strings) {
+      if (staged.dst_slot == nullptr or *staged.dst_slot != nullptr) { continue; }
+      auto offsets_col =
+        cudf::strings::detail::create_offsets_child_column(0, num_rows + 1, stream, output_mr);
+      // Empty rows: offsets are all zero. The child's data is uninitialized,
+      // and the comparator flags a null row as dirty unless its span is zero.
+      CUDF_CUDA_TRY(cudaMemsetAsync(offsets_col->mutable_view().data<int32_t>(),
+                                    0,
+                                    offsets_col->size() * sizeof(int32_t),
+                                    stream.get()));
+      auto null_mask   = staged.dst_mask.has_value()
+                           ? cuda::device_buffer<bitmask_type>{std::move(*staged.dst_mask)}
+                           : cuda::device_buffer<bitmask_type>{stream, output_mr};
+      auto col         = make_strings_column(num_rows,
+                                     std::move(offsets_col),
+                                     rmm::device_buffer{},
+                                     staged.null_count,
+                                     std::move(null_mask));
+      *staged.dst_slot = std::move(col);
+    }
+    pending_strings.clear();
+  }
 };
 
 }  // namespace
@@ -1886,13 +2560,23 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
       auto const& src = source_table.column(fused_indices[pos]);
       if (num_rows == 0 and not cudf::is_fixed_width(src.type())) {
         // Empty map: stock's per-type gatherers return exactly these shapes for these types.
-        destination[fused_indices[pos]] = (src.type().id() == type_id::STRUCT)
-                                            ? cudf::empty_like(src)
-                                            : cudf::make_empty_column(type_id::DICTIONARY32);
+        destination[fused_indices[pos]] =
+          (src.type().id() == type_id::STRUCT)
+            ? cudf::empty_like(src)
+            : (src.type().id() == type_id::STRING ? cudf::make_empty_column(type_id::STRING)
+                                                  : cudf::make_empty_column(type_id::DICTIONARY32));
         continue;
       }
       switch (src.type().id()) {
         case type_id::STRUCT: destination[fused_indices[pos]] = builder.build_struct(src, 0); break;
+        case type_id::STRING:
+          // The N3 fast path defers the whole column: the scan launch block
+          // fills the slot in `assemble_strings`. Only an empty map (handled
+          // above) or an all-null source (skip_data, built inline) returns a
+          // column here.
+          destination[fused_indices[pos]] =
+            builder.build_string(src, &destination[fused_indices[pos]]);
+          break;
         case type_id::DICTIONARY32:
           // String-keyed catalogs defer their assembly and fill the slot in
           // `assemble_staged_keys`; every other path builds the column here.
@@ -1921,6 +2605,30 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
     for (size_t i = 0; i < kernel_masked_positions.size(); ++i) {
       kernel_masked_positions[i] = static_cast<size_type>(i);
     }
+  }
+
+  // String fast path (N3): when string columns are present they ride the
+  // batched scan+payload machinery, which also resolves the routed tile width
+  // under its totals synchronization. The descriptor launch below reuses the
+  // resolved width via `explicit_tile_cols` being set. When there are no
+  // descriptors at all (a pure-strings call), the SAME assemble_strings call
+  // performs everything — the launch block below is skipped.
+  auto mutable_tile_cols = explicit_tile_cols;
+  if (not builder.pending_strings.empty() and num_rows > 0) {
+    builder.assemble_strings(gather_map,
+                             num_src_rows,
+                             bounds_policy == out_of_bounds_policy::NULLIFY,
+                             neg_indices == negative_index_policy::ALLOWED,
+                             sampled,
+                             mutable_tile_cols);
+    explicit_tile_cols = mutable_tile_cols;
+  } else if (not builder.pending_strings.empty()) {
+    // Zero rows: every deferred string column becomes an empty strings column
+    // (stock parity with gather_strings on an empty map).
+    for (auto& staged : builder.pending_strings) {
+      *staged.dst_slot = cudf::make_empty_column(type_id::STRING);
+    }
+    builder.pending_strings.clear();
   }
 
   if (not descriptors.empty() and num_rows > 0) {

@@ -3966,6 +3966,22 @@ TEST_F(SortMergeJoinKeyShapeTest, TimestampKeys)
   expect_matches_hash_join(cudf::table_view{{left}}, cudf::table_view{{right}});
 }
 
+TEST_F(SortMergeJoinKeyShapeTest, UnsignedKeysAcrossSignBit)
+{
+  auto const base = uint64_t{1} << 63;
+  auto build      = sorted_keys<uint64_t>(2000, 3, 1);
+  auto probe      = random_keys<uint64_t>(10000, 0, 6100);
+  for (auto& key : build) {
+    key += base - 3000;
+  }
+  for (auto& key : probe) {
+    key += base - 3000;
+  }
+  column_wrapper<uint64_t> right(build.begin(), build.end());
+  column_wrapper<uint64_t> left(probe.begin(), probe.end());
+  expect_matches_hash_join(cudf::table_view{{left}}, cudf::table_view{{right}});
+}
+
 TEST_F(SortMergeJoinKeyShapeTest, NullableUniqueBuildKeys)
 {
   auto const build = sorted_keys<int32_t>(1000, 2, 1);

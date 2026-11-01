@@ -95,6 +95,7 @@ def _set_index_from_list(
     *,
     names_given: bool,
     header: object,
+    prefix: str | None = None,
 ) -> DataFrame:
     """Set ``df``'s index from a list of column positions and/or labels.
 
@@ -113,8 +114,14 @@ def _set_index_from_list(
             label = df._data.get_labels_by_index(int(col))[0]
             if header is None and not names_given:
                 # No header row: pandas names the level with the column
-                # number, which cudf keeps as the (string) column label.
-                name = int(label) if str(label).isdigit() else label
+                # number, which libcudf appends to ``prefix`` to build the
+                # column label.
+                number = str(label).removeprefix(prefix or "")
+                name = (
+                    int(number)
+                    if number.isascii() and number.isdigit()
+                    else label
+                )
             elif (
                 isinstance(label, str)
                 and not names_given
@@ -405,6 +412,7 @@ def read_csv(
                 index_col,
                 names_given=names is not None,
                 header=orig_header,
+                prefix=prefix,
             )
         elif isinstance(index_col, int):
             index_col_name = df._data.get_labels_by_index(index_col)[0]

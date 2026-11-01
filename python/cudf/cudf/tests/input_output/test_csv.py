@@ -1322,6 +1322,16 @@ def test_csv_reader_index_col_list_headerless_names(index_col, usecols):
     assert_eq(actual.index, expected.index)
 
 
+@pytest.mark.parametrize("prefix", ["c", "1"])
+def test_csv_reader_index_col_list_headerless_prefix(prefix):
+    buffer = "1,2,3,4\n5,6,7,8\n"
+    actual = cudf.read_csv(
+        StringIO(buffer), header=None, prefix=prefix, index_col=[-1, 1]
+    )
+    assert list(actual.index.names) == [3, 1]
+    assert list(actual.columns) == [f"{prefix}0", f"{prefix}2"]
+
+
 def test_csv_reader_index_col_list_numpy_int():
     buffer = "a,b,c\n1,2,3\n4,5,6\n"
     kwargs = {"index_col": [np.int64(0), np.int32(1)]}

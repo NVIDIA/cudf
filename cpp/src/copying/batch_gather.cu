@@ -41,14 +41,18 @@
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cub/device/device_memcpy.cuh>
 #include <cuda/atomic>
 #include <cuda/buffer>
+#include <cuda/cmath>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/ptx>
 #include <cuda/std/bit>
+#include <cuda/std/execution>
 #include <cuda/std/iterator>
 #include <cuda/std/limits>
+#include <cuda/std/tuple>
 #include <cuda/std/type_traits>
 #include <cuda/stream>
 #include <thrust/binary_search.h>
@@ -1169,7 +1173,11 @@ size_type resolve_map_locality_tile_cols(sampled_map_locality const& sampled,
 //      (constant masks are pre-set by `plan_destination_mask`), the offsets
 //      children finalized from the scratch (narrowing to the child's width),
 //      and per-column valid counts accumulated atomically for the
-//      post-kernel readback.
+//      post-kernel readback. On tall calls (>= `kBatchMemcpyRowThreshold`)
+//      each all-short column's chars runs through one
+//      `cub::DeviceMemcpy::Batched` over the routed columns' rows (per-column
+//      routing via `chars_via_batched_memcpy`); the kernel keeps masks/offsets
+//      for every column and the chars of any UNROUTED column.
 //
 // Trap compliance: chars are addressed from the unsliced base with the sliced
 // offsets (the offsets iterator carries the view offset); null rows have zero
@@ -1182,6 +1190,13 @@ size_type resolve_map_locality_tile_cols(sampled_map_locality const& sampled,
 // idle lanes; a longer row serialises across the warp's lanes and the whole block copies it.
 // The 32-byte boundary matches the short/long strategy split of `strings::detail::gather`.
 constexpr int64_t kBlockRowCopyThreshold{32};
+
+// Row-count gate (rows) above which the CUB batched-memcpy engine runs instead of the payload
+// kernel's chars phase. Mirrors `strings::detail::gather`'s engine split: stock measured
+// `cub::DeviceMemcpy::Batched` as the winning short-string strategy at >= 524288 rows on H100,
+// and the tall-cell profile shows the payload kernel's per-group barrier walk costing the same
+// regime ~7x its CUB counterpart. Below the gate the payload kernel keeps its 65536-row wins.
+constexpr int64_t kBatchMemcpyRowThreshold{524'288};
 
 // Work item for one string column on the N3 path: source addressing plus the
 // destination buffers the payload kernel writes. The src fields are complete
@@ -1203,6 +1218,10 @@ struct string_work_item {
   output_offsetalator dst_offsets;  // destination offsets child (narrowing stores)
   bitmask_type* dst_mask;           // destination mask; nullptr when pre-set
   size_type* valid_count;           // atomic valid-row counter; nullptr when pre-set
+  // True when this column's chars ride cub::DeviceMemcpy::Batched (tall column whose
+  // average gathered row is at or below the block-copy gate): the kernel's chars phase must
+  // skip the column, masks/offsets stay kernel-owned.
+  bool chars_via_batched_memcpy{false};
 };
 
 static_assert(std::is_trivially_copyable_v<string_work_item>,
@@ -1231,17 +1250,30 @@ __device__ bool string_row_valid(string_work_item const& item, int64_t src_row)
          bit_is_set(item.src_mask, static_cast<size_type>(item.mask_bit_offset + src_row));
 }
 
+// Layout of the flat string workspaces: the scan and the offsets phase index the int64
+// scratch with `rows_per_col = num_rows + 1` slots per column, while the chars phase indexes
+// flat ROWS with `num_rows` rows per column — two divisors. Every grid cell holds at most
+// 41.9M flat rows, so every flat index fits uint32_t (the host enforces the bound); the
+// precomputed 32-bit divisors replace the per-element 64-bit //% at each site.
+struct string_flat_layout {
+  cuda::fast_mod_div<uint32_t> rows_per_col;  // scan/offsets scratch space
+  cuda::fast_mod_div<uint32_t> num_rows;      // chars-phase flat-row space
+};
+
 // Scan output: the exclusive prefix into the flat scratch; each column's tail
 // slot doubles as the per-column total, copied out for the batched readback.
 struct string_scan_out_fn {
   int64_t* scratch;
   int64_t* col_totals;
-  int64_t rows_per_col;
+  string_flat_layout layout;
 
   __device__ void operator()(int64_t flat, int64_t value) const
   {
     scratch[flat] = value;
-    if (flat % rows_per_col == rows_per_col - 1) { col_totals[flat / rows_per_col] = value; }
+    auto const r  = static_cast<uint32_t>(flat) % layout.rows_per_col;
+    if (r == layout.rows_per_col - 1u) {
+      col_totals[static_cast<uint32_t>(flat) / layout.rows_per_col] = value;
+    }
   }
 };
 
@@ -1257,18 +1289,18 @@ struct block_row_copy {
 // for k >= 0 until the span ends and finds its owning row by a binary search over the staged
 // boundaries (thrust::upper_bound + cuda::std::prev, the same device idiom as stock's
 // char-parallel kernel), then resolves that destination row through the gather map exactly
-// like every other chars path. The staging `group_offsets` holds, per group row, that row's
-// dst byte offset; the tail slot closes the last live row with its +1 scratch entry. Dead
-// rows contribute no bytes (their scratch deltas are 0) but still stage as zero-width
-// boundaries. The caller fans only groups whose rows all belong to ONE column and none is
-// published: a per-column scratch slice restarts at each column boundary, so a cross-column
-// window would mix two byte spaces, and the block slot loop would race the fan on published
-// rows' bytes.
+// like every other chars path. `group_offsets` is READ-ONLY here — the caller's common
+// boundary stage staged it (and its first warp already published the offsets values from
+// the same boundaries). Dead rows contribute no bytes (their scratch deltas are 0) but stage
+// as zero-width boundaries. The caller fans only groups whose rows all belong to ONE column
+// and none is published: a per-column scratch slice restarts at each column boundary, so a
+// cross-column window would mix two byte spaces, and the block slot loop would race the fan
+// on published rows' bytes.
 __device__ void copy_group_chars_char_parallel(string_work_item const& item,
-                                               int64_t num_rows,
+                                               string_flat_layout layout,
                                                int64_t group_start,
                                                int64_t group_end,
-                                               int64_t* group_offsets,
+                                               int64_t const* group_offsets,
                                                int64_t warps_per_block,
                                                input_indexalator gather_map,
                                                size_type num_source_rows,
@@ -1276,35 +1308,23 @@ __device__ void copy_group_chars_char_parallel(string_work_item const& item,
                                                bool negative_allowed)
 {
   auto const lane = static_cast<int64_t>(threadIdx.x);
-  // Stage the window's boundaries: slot w = the dst offset of flat row group_start + w (rows
-  // past the flat end stage INT64_MAX, an unreachable boundary); the tail slot closes the
-  // last live row's span with that row's +1 scratch entry.
-  for (int64_t slot = lane; slot <= warps_per_block; slot += static_cast<int64_t>(blockDim.x)) {
-    auto const flat = group_start + slot;
-    if (flat < group_end) {
-      auto const row      = static_cast<size_type>(flat % num_rows);
-      group_offsets[slot] = item.dst_scratch[row];
-    } else if (slot == warps_per_block) {
-      auto const row      = static_cast<size_type>((group_end - 1) % num_rows);
-      group_offsets[slot] = item.dst_scratch[row + 1];
-    } else {
-      group_offsets[slot] = cuda::std::numeric_limits<int64_t>::max();
-    }
-  }
-  __syncthreads();
-
+  // The window's boundaries are ALREADY staged in `group_offsets` by the caller's common
+  // boundary stage: slot w = the dst offset of flat row group_start + w (the +0 boundary of
+  // that row), the tail slot closing the window's last row with its +1 scratch entry, slots
+  // past the flat end INT64_MAX (an unreachable boundary). Both barriers that separated the
+  // staging from the byte copy and from the next group's rewrite live in the caller.
   auto const base = group_offsets[0];
   auto const end  = group_offsets[warps_per_block];
-  if (end <= base) { return; }  // no live bytes in the window (early exit AFTER the barrier)
+  if (end <= base) { return; }  // no live bytes in the window
   for (int64_t b = base + lane; b < end; b += static_cast<int64_t>(blockDim.x)) {
     auto const it = cuda::std::prev(
       thrust::upper_bound(thrust::seq, group_offsets, group_offsets + warps_per_block, b));
-    auto const dst_row = static_cast<size_type>((group_start + (it - group_offsets)) % num_rows);
+    auto const dst_row = static_cast<size_type>(
+      static_cast<uint32_t>(group_start + (it - group_offsets)) % layout.num_rows);
     auto const src =
       resolve_gathered_row(gather_map, dst_row, num_source_rows, check_bounds, negative_allowed);
     item.dst_chars[b] = item.src_chars[item.src_offsets[src] + (b - *it)];
   }
-  __syncthreads();  // the next group rewrites group_offsets
 }
 
 // Copies one gathered string row with `stride` threads starting at `tid`: the same alignment
@@ -1352,31 +1372,39 @@ __device__ void copy_string_span(
 //             serialise across one warp's lanes. A group with NO published row
 //             (every live row at or under the gate) is instead copied
 //             char-parallel by the whole block: one thread per output byte,
-//             the row found by a binary search over the group's staged scratch
+//             the row found by a binary search over the group's staged
 //             boundaries — the stock char-parallel strategy applied to the
 //             already-scanned offsets, which removes the rows-per-warp
-//             starvation on tall short-row tables.
+//             starvation on tall short-row tables. EVERY group first runs a
+//             common boundary stage that stages the group's row boundaries and
+//             (from the same scratch reads) publishes the offsets values. When
+//             a column's `chars_via_batched_memcpy` flag is set (the host
+//             routed that column's chars to `cub::DeviceMemcpy::Batched`), the
+//             kernel's chars machinery leaves that column untouched: its rows
+//             publish empty slots, its groups never take the fan, and the CUB
+//             call owns its bytes.
 //   masks   — one thread per (column, 32-row window): the thread re-resolves
 //             each row of its window and packs the gathered validity into one
 //             destination mask word, popping the count into the column's
 //             atomic valid counter. Pre-set masks (ALL_NULL/ALL_VALID) skip
 //             the phase entirely (`dst_mask` nullptr).
-//   offsets — one thread per (column, scratch slot) copies the scanned value
-//             into the offsets child, narrowed to the child's width by the
-//             output iterator. This runs AFTER masks/chars in program order
-//             for one thread, but the three phases touch disjoint buffers, so
-//             no inter-thread ordering exists.
+//   offsets — the group loop's boundary stage publishes every flat row's offsets
+//             value (the group's first warp, adjacent lanes on adjacent flat
+//             rows, from the staged shared-memory boundaries) plus each
+//             column's N+1 sentinel; the per-entry flat copy loop of the
+//             original design is deleted, removing the second full scratch
+//             traversal and its per-entry 64-bit div/mod.
 template <size_type BlockSize>
 CUDF_KERNEL void string_payload_kernel(string_work_item const* items,
                                        int64_t num_items,
-                                       int64_t rows_per_col,  // num_rows + 1
-                                       size_type num_rows,
+                                       string_flat_layout layout,  // uint32 rows_per_col, num_rows
                                        size_type num_source_rows,
                                        bool check_bounds,
                                        bool negative_allowed,
                                        input_indexalator gather_map)
 {
-  // The chars phase coordinates a block group and publishes one slot per warp.
+  // The chars phase coordinates a block group: one slot per warp, a common boundary stage
+  // that also publishes the offsets values, then one of three copy strategies per group.
   static_assert(BlockSize % warp_size == 0);
   auto const global_tid  = static_cast<int64_t>(blockIdx.x) * BlockSize + threadIdx.x;
   auto const grid_stride = static_cast<int64_t>(gridDim.x) * BlockSize;
@@ -1393,26 +1421,36 @@ CUDF_KERNEL void string_payload_kernel(string_work_item const* items,
   __shared__ block_row_copy block_rows[BlockSize / warp_size];
   // The fan window: the group's row boundaries plus the tail sentinel closing the last row.
   __shared__ int64_t group_offsets[BlockSize / warp_size + 1];
+  __shared__ size_type pub_col;       // warp 0's publish: the window's column
+  __shared__ size_type pub_base_row;  // ...and the first flat row's position inside it
 
+  auto const num_rows   = layout.num_rows;
   auto const total_rows = num_items * static_cast<int64_t>(num_rows);
   for (int64_t group = static_cast<int64_t>(blockIdx.x); group * warps_per_block < total_rows;
        group += static_cast<int64_t>(gridDim.x)) {
     auto const flat = group * warps_per_block + warp_in_block;
 
-    char const* src_ptr = nullptr;
-    char* dst_ptr       = nullptr;
-    int64_t size        = 0;
+    string_work_item const* item_ptr = nullptr;
+    size_type row                    = 0;
+    char const* src_ptr              = nullptr;
+    char* dst_ptr                    = nullptr;
+    int64_t size                     = 0;
     if (flat < total_rows) {
-      auto const& item = items[static_cast<size_type>(flat / num_rows)];
-      auto const row   = static_cast<size_type>(flat % num_rows);
-      auto const src =
-        resolve_gathered_row(gather_map, row, num_source_rows, check_bounds, negative_allowed);
-      if (src >= 0 and string_row_valid(item, src)) {
-        auto const s = static_cast<size_type>(src);
-        size         = item.src_offsets[s + 1] - item.src_offsets[s];
-        if (size > 0) {
-          src_ptr = item.src_chars + item.src_offsets[s];
-          dst_ptr = item.dst_chars + item.dst_scratch[row];
+      item_ptr = &items[static_cast<uint32_t>(flat) / num_rows];
+      row      = static_cast<size_type>(static_cast<uint32_t>(flat) % num_rows);
+      // CUB owns this column's chars (the host routed it): leave src/dst/size null so the
+      // common publish below stores the empty (no-work) slot — the block machinery can then
+      // never rewrite CUB's bytes, and the barriers stay reachable for every warp.
+      if (not item_ptr->chars_via_batched_memcpy) {
+        auto const src =
+          resolve_gathered_row(gather_map, row, num_source_rows, check_bounds, negative_allowed);
+        if (src >= 0 and string_row_valid(*item_ptr, src)) {
+          auto const s = static_cast<size_type>(src);
+          size         = item_ptr->src_offsets[s + 1] - item_ptr->src_offsets[s];
+          if (size > 0) {
+            src_ptr = item_ptr->src_chars + item_ptr->src_offsets[s];
+            dst_ptr = item_ptr->dst_chars + item_ptr->dst_scratch[row];
+          }
         }
       }
     }
@@ -1424,20 +1462,96 @@ CUDF_KERNEL void string_payload_kernel(string_work_item const* items,
       block_rows[warp_in_block] =
         publishable ? block_row_copy{src_ptr, dst_ptr, size} : block_row_copy{};
     }
-    __syncthreads();
-
     auto const group_start = group * warps_per_block;
     auto const group_end   = cuda::std::min(group_start + warps_per_block, total_rows);
+    // Common boundary stage, shared by every chars strategy: each warp's lane 0 stages the
+    // +0 boundary of its OWN flat row (a dead or empty row stages its zero-delta boundary
+    // like any other); a warp past the flat end stages INT64_MAX, the unreachable boundary
+    // that keeps the fan's binary search inside the live slots even when a partial final
+    // group straddles a column boundary (stale values from the previous group are NOT
+    // monotone across it). Slot 0 of the whole domain holds flat row 0's +0 scratch entry.
+    if (flat < total_rows) {
+      if (lane == 0) { group_offsets[warp_in_block] = item_ptr->dst_scratch[row]; }
+    } else if (lane == 0) {
+      group_offsets[warp_in_block] = cuda::std::numeric_limits<int64_t>::max();
+    }
+    // Stage the TAIL boundary: the +1 scratch entry of the window's last live row closes its
+    // span for the binary search. (The +0 boundary of the NEXT flat row is staged by the next
+    // group's own warp, so the tail must come from this group's rows.) Every executed group
+    // has a nonempty window, so this always runs.
+    if (thread_in_block == 0) {
+      auto const last_row = static_cast<size_type>(static_cast<uint32_t>(group_end - 1) % num_rows);
+      group_offsets[warps_per_block] =
+        items[static_cast<size_type>(static_cast<uint32_t>(group_end - 1) / num_rows)]
+          .dst_scratch[last_row + 1];
+    }
+    // Hoist the window's column geometry for warp 0's offsets publish: ONE div/mod pair per
+    // group (thread 0, group-uniform) replaces the per-lane pair below. Warp 0 cannot
+    // broadcast by shuffle — its lanes diverge on the lane_flat bound — so the values ride
+    // the boundary-stage shared memory instead.
+    if (thread_in_block == 0) {
+      pub_col      = static_cast<size_type>(static_cast<uint32_t>(group_start) / num_rows);
+      pub_base_row = static_cast<size_type>(static_cast<uint32_t>(group_start) % num_rows);
+    }
+    __syncthreads();
+
+    // Offsets publish FROM the staged boundaries: the group's first warp stores one offsets
+    // value per active lane, adjacent lanes taking adjacent flat rows — for a single-column
+    // group that is 8 consecutive INT32 entries of one child (the per-warp-lane-0 pattern
+    // was rejected: one 4-byte transaction per warp). This replaces the deleted flat offsets
+    // loop, whose per-entry 64-bit div/mod re-read every scratch entry a second time from
+    // global memory; here the values are already resident in shared memory. One writer per
+    // entry: each flat row belongs to exactly one group and one lane, covering dead/empty
+    // rows and long/mixed groups alike (their windows stage real boundaries too). A row that
+    // ENDS its column (+1 == num_rows) also publishes that column's N+1 tail sentinel —
+    // its +1 boundary is the NEXT column's row-0 boundary, staged by the next group, so the
+    // sentinel is read from the scratch (one global load per column per call). Row 0's value
+    // IS the row-0 sentinel: scratch[0] is both the +0 boundary of flat row 0 and the child's
+    // first entry, written by the ordinary row publish above.
+    if (warp_in_block == 0) {
+      auto const lane_flat = group_start + static_cast<int64_t>(lane);
+      // warp_size (32) exceeds the 8-row window: bound by group_end, or lanes 8+ read
+      // out-of-bounds shared slots and publish rows other blocks own.
+      if (lane_flat < group_end) {
+        if (pub_base_row + static_cast<int64_t>(warp_size) <= num_rows) {
+          // Uniform window: the only div/mod pair per group is the hoisted one above; the
+          // sentinel ride (column-ending lane reads scratch[row+1]) is unchanged.
+          auto const& pub_item              = items[pub_col];
+          auto const pub_row                = pub_base_row + static_cast<int64_t>(lane);
+          *(pub_item.dst_offsets + pub_row) = group_offsets[lane];
+          if (pub_row + 1 == num_rows) {
+            *(pub_item.dst_offsets + num_rows) = pub_item.dst_scratch[pub_row + 1];
+          }
+        } else {
+          // Cross-column window (num_rows < warp_size): rows span two columns, so the
+          // general per-lane div/mod path applies.
+          auto const& pub_item =
+            items[static_cast<size_type>(static_cast<uint32_t>(lane_flat) / num_rows)];
+          auto const pub_row = static_cast<size_type>(static_cast<uint32_t>(lane_flat) % num_rows);
+          *(pub_item.dst_offsets + pub_row) = group_offsets[lane];
+          if (pub_row + 1 == num_rows) {
+            *(pub_item.dst_offsets + num_rows) = pub_item.dst_scratch[pub_row + 1];
+          }
+        }
+      }
+    }
+
     // A fan group must be single-column (a per-column scratch slice restarts at each column
     // boundary, so a cross-column window is not one byte space) — the check is block-uniform
     // because num_rows and warps_per_block are.
-    auto const single_column = (group_start / num_rows) == ((group_end - 1) / num_rows);
-    auto const any_long      = thread_in_block < warps_per_block
-                                 ? block_rows[thread_in_block].size > kBlockRowCopyThreshold
-                                 : false;
+    auto const single_column = (static_cast<uint32_t>(group_start) / num_rows) ==
+                               (static_cast<uint32_t>(group_end - 1) / num_rows);
+    // The fan writes every live byte of the group's span by binary search over the staged
+    // boundaries — it cannot honor a per-item engine split, so it runs only when the owning
+    // column still owns its chars on the kernel path. Block-uniform like single_column.
+    auto const group_kernel_owned =
+      not items[static_cast<size_type>(group_start) / num_rows].chars_via_batched_memcpy;
+    auto const any_long = thread_in_block < warps_per_block
+                            ? block_rows[thread_in_block].size > kBlockRowCopyThreshold
+                            : false;
     // __syncthreads_or is barrier-safe here: every thread participates (the predicate is
     // computed unconditionally), only the VALUE differs.
-    if (__syncthreads_or(any_long or not single_column)) {
+    if (__syncthreads_or(any_long or not single_column or not group_kernel_owned)) {
       // Block-cooperative rows, one at a time; rows above the gate are rare, so the serial
       // walk over the block's slots costs nothing on short-row data.
       for (int64_t slot = 0; slot < warps_per_block; ++slot) {
@@ -1449,16 +1563,17 @@ CUDF_KERNEL void string_payload_kernel(string_work_item const* items,
                          thread_in_block,
                          static_cast<int64_t>(BlockSize));
       }
-      // The short rows of a mixed group keep the warp copy (the fan did not run).
+      // The short rows of a mixed group keep the warp copy (the fan did not run). Routed
+      // rows resolve to no payload (size 0, dst nullptr) so their copy call is a no-op.
       if (not publishable) {
         copy_string_span(
           dst_ptr, src_ptr, size, static_cast<int64_t>(lane), static_cast<int64_t>(warp_size));
       }
     } else {
-      // The group is all-short and single-column: fan every live byte across all BlockSize
-      // threads; the fan already wrote this warp's row, so no warp copy follows.
-      copy_group_chars_char_parallel(items[static_cast<size_type>(group_start / num_rows)],
-                                     num_rows,
+      // The group is all-short, single-column, and kernel-owned: fan every live byte across
+      // all BlockSize threads over the boundaries staged above. Offsets were already published.
+      copy_group_chars_char_parallel(items[static_cast<uint32_t>(group_start) / num_rows],
+                                     layout,
                                      group_start,
                                      group_end,
                                      group_offsets,
@@ -1498,13 +1613,14 @@ CUDF_KERNEL void string_payload_kernel(string_work_item const* items,
     }
   }
 
-  // ---- offsets children from the scratch: one thread per entry ----
-  auto const total_entries = num_items * rows_per_col;
-  for (int64_t e = global_tid; e < total_entries; e += grid_stride) {
-    auto const& item        = items[static_cast<size_type>(e / rows_per_col)];
-    auto const r            = static_cast<size_type>(e % rows_per_col);
-    *(item.dst_offsets + r) = item.dst_scratch[r];
-  }
+  // ---- offsets children: fully covered by the group loop's boundary stage ----
+  //
+  // Every flat row's offsets value was published by its group's first warp — adjacent lanes
+  // taking adjacent flat rows — from the staged boundaries in shared memory (covering
+  // dead/empty rows and long/mixed groups alike), and every column's N+1 sentinel rode the
+  // lane whose row ends its column (its row-0 sentinel is the row-0 publish itself). No
+  // separate pass remains: deleting the old per-entry flat loop removed the second full
+  // scratch traversal and its per-entry 64-bit div/mod.
 }
 
 // Tile width for regimes where sampling is skipped; nullopt means "sample the map". Zero/one
@@ -2187,6 +2303,11 @@ struct descriptor_path_builder {
     if (pending_strings.empty()) { return; }
     auto const num_strings = static_cast<size_type>(pending_strings.size());
 
+    // The CUB batched-memcpy engine only runs above this row gate; every host-side addition
+    // it requires (the routing walk, the flag init, the CUB launch) keys off this one
+    // predicate, so below the gate the host path stays shaped like the pre-routing path.
+    auto const chars_routing_active = num_rows >= kBatchMemcpyRowThreshold;
+
     // Live sources only: an empty SOURCE column (possibly no offsets child)
     // carries no payload work, but its destination still needs a full-size
     // offsets child (every row empty). Such columns are excluded from the
@@ -2212,8 +2333,20 @@ struct descriptor_path_builder {
 
     auto const rows_per_col = static_cast<int64_t>(num_rows) + 1;
     auto const flat_size    = static_cast<int64_t>(live.size()) * rows_per_col;
-    auto scratch            = cudf::detail::make_zeroed_device_uvector_async<int64_t>(
-      static_cast<std::size_t>(flat_size), stream, temp_mr);
+    // The 32-bit precomputed divisors are valid only while every flat index fits uint32_t;
+    // this bound is the enforcement the string_flat_layout contract relies on. The fan-byte
+    // dividend adds up to block_size row slots on top of a flat row index, so the bound is
+    // tightened by that slack.
+    CUDF_EXPECTS(flat_size <= cuda::std::numeric_limits<uint32_t>::max() - block_size,
+                 "Flat string index space exceeds uint32_t; reduce the number of string columns "
+                 "or rows");
+    // Every grid cell holds at most 41.9M flat rows, so the flat index fits uint32_t and the
+    // precomputed 32-bit divisors replace the per-element 64-bit //% (string_flat_layout).
+    string_flat_layout const scan_layout{
+      cuda::fast_mod_div<uint32_t>{static_cast<uint32_t>(rows_per_col)},
+      cuda::fast_mod_div<uint32_t>{static_cast<uint32_t>(num_rows)}};
+    auto scratch =
+      rmm::device_uvector<int64_t>(static_cast<std::size_t>(flat_size), stream, temp_mr);
     auto col_totals =
       cudf::detail::make_zeroed_device_uvector_async<int64_t>(live.size(), stream, temp_mr);
 
@@ -2227,28 +2360,32 @@ struct descriptor_path_builder {
     {
       auto const keys = cuda::transform_iterator(
         cuda::counting_iterator<int64_t>{0},
-        cuda::proclaim_return_type<int64_t>(
-          [rows_per_col] __device__(int64_t flat) { return flat / rows_per_col; }));
+        cuda::proclaim_return_type<int64_t>([scan_layout] __device__(int64_t flat) {
+          return static_cast<int64_t>(static_cast<uint32_t>(flat) / scan_layout.rows_per_col);
+        }));
       auto const values = cuda::transform_iterator(
         cuda::counting_iterator<int64_t>{0},
         cuda::proclaim_return_type<int64_t>([d_items = d_items.data(),
                                              map_begin,
-                                             rows_per_col,
+                                             scan_layout,
                                              num_source_rows,
                                              check_bounds,
                                              negative_allowed] __device__(int64_t flat) -> int64_t {
-          auto const col   = static_cast<size_type>(flat / rows_per_col);
-          auto const row   = static_cast<size_type>(flat % rows_per_col);
+          auto const col   = static_cast<uint32_t>(flat) / scan_layout.rows_per_col;
+          auto const row   = static_cast<uint32_t>(flat) % scan_layout.rows_per_col;
           auto const& item = d_items[col];
-          if (row >= static_cast<size_type>(rows_per_col - 1)) { return int64_t{0}; }
-          auto const src =
-            resolve_gathered_row(map_begin, row, num_source_rows, check_bounds, negative_allowed);
+          if (row >= scan_layout.rows_per_col - 1u) { return int64_t{0}; }
+          auto const src = resolve_gathered_row(map_begin,
+                                                static_cast<size_type>(row),
+                                                num_source_rows,
+                                                check_bounds,
+                                                negative_allowed);
           if (src < 0 or not string_row_valid(item, src)) { return int64_t{0}; }
           return item.src_offsets[static_cast<size_type>(src) + 1] -
                  item.src_offsets[static_cast<size_type>(src)];
         }));
       auto const out = cuda::make_tabulate_output_iterator(
-        string_scan_out_fn{scratch.data(), col_totals.data(), rows_per_col});
+        string_scan_out_fn{scratch.data(), col_totals.data(), scan_layout});
       thrust::exclusive_scan_by_key(
         rmm::exec_policy_nosync(stream, temp_mr), keys, keys + flat_size, values, out, int64_t{0});
       CUDF_CUDA_TRY(cudaGetLastError());
@@ -2298,6 +2435,28 @@ struct descriptor_path_builder {
       }
     }
 
+    // ---- batched-memcpy engine: per-column routing BEFORE the items upload ----
+    // After the totals sync the host knows each column's exact byte count, so the routing
+    // predicate is exact: a column whose average gathered row is <= 32 B has its chars
+    // served by one cub::DeviceMemcpy::Batched over the routed flat (column, row) domain —
+    // stock parity, see `strings::detail::gather`'s engine split. The decision rides the
+    // per-item `chars_via_batched_memcpy` flag, so the kernel skips ONLY the routed
+    // columns' chars: a tall mixed-length call keeps every unrouted column's chars on the
+    // kernel path, and every output region is written by exactly one engine. The items
+    // upload below must stay AFTER this block: the flag is part of the staged struct.
+    auto any_batched_memcpy = false;
+    std::vector<size_type> memcpy_live;  // live indices routed to cub::DeviceMemcpy::Batched
+    if (chars_routing_active) {
+      for (size_t k = 0; k < live.size(); ++k) {
+        auto const bytes = h_col_totals[k];
+        if (bytes > 0 and bytes / num_rows <= static_cast<int64_t>(kBlockRowCopyThreshold)) {
+          memcpy_live.push_back(static_cast<size_type>(k));
+          items[k].chars_via_batched_memcpy = true;
+          any_batched_memcpy                = true;
+        }
+      }
+    }
+
     // Wire the payload work items (num_rows > 0 guaranteed for live columns).
     auto any_kernel_masked = false;
     for (size_t k = 0; k < live.size(); ++k) {
@@ -2321,7 +2480,103 @@ struct descriptor_path_builder {
     auto d_payload_items = cudf::detail::make_device_uvector_async(
       host_span<string_work_item const>{items}, stream, temp_mr);
 
-    // ---- the ONE batched payload launch ----
+    if (any_batched_memcpy) {
+      // (source ptr, destination ptr, byte size) per row over the routed columns' flat
+      // (column, row) domain, built as on-the-fly transform iterators exactly like stock's
+      // own Batched call (`strings::detail::gather`'s engine): NO staging arrays and no
+      // extra pass — each of CUB's three iterators re-runs the resolve lambda instead. The
+      // lambda replicates the kernel chars-phase gate verbatim (resolve/validity/size>0),
+      // nullptr/0 for dead rows; the routed-column table is `d_memcpy_live` (device copy of
+      // the host list), and the buffer count is the flat routed row count.
+      auto const d_memcpy_live = cudf::detail::make_device_uvector_async(
+        host_span<size_type const>{memcpy_live}, stream, temp_mr);
+      // Hoist the member `num_rows` into a local: a `__device__` lambda inside this member
+      // function cannot capture `this`, so the unqualified member name would be ill-formed
+      // in the capture lists below.
+      auto const num_rows_local = num_rows;
+      auto const num_buffers    = static_cast<int64_t>(memcpy_live.size()) * num_rows_local;
+      auto const d_routed       = d_memcpy_live.data();
+      auto const d_items_ptr    = d_payload_items.data();
+      auto const src_addrs_it   = cuda::make_transform_iterator(
+        cuda::counting_iterator<int64_t>{0},
+        cuda::proclaim_return_type<char const*>(
+          [d_routed,
+           d_items_ptr,
+           num_rows_local,
+           num_source_rows,
+           check_bounds,
+           negative_allowed,
+           map_begin] __device__(int64_t flat) -> char const* {
+            auto const col  = static_cast<size_type>(flat / num_rows_local);
+            auto const row  = static_cast<size_type>(flat % num_rows_local);
+            auto const item = d_items_ptr[d_routed[col]];
+            auto const src =
+              resolve_gathered_row(map_begin, row, num_source_rows, check_bounds, negative_allowed);
+            if (src < 0 or not string_row_valid(item, src)) {
+              return static_cast<char const*>(nullptr);
+            }
+            auto const s = static_cast<size_type>(src);
+            return item.src_offsets[s + 1] - item.src_offsets[s] > 0
+                       ? item.src_chars + item.src_offsets[s]
+                       : static_cast<char const*>(nullptr);
+          }));
+      auto const dst_addrs_it = cuda::make_transform_iterator(
+        cuda::counting_iterator<int64_t>{0},
+        cuda::proclaim_return_type<char*>([d_routed,
+                                           d_items_ptr,
+                                           num_rows_local,
+                                           num_source_rows,
+                                           check_bounds,
+                                           negative_allowed,
+                                           map_begin] __device__(int64_t flat) -> char* {
+          auto const col  = static_cast<size_type>(flat / num_rows_local);
+          auto const row  = static_cast<size_type>(flat % num_rows_local);
+          auto const item = d_items_ptr[d_routed[col]];
+          auto const src =
+            resolve_gathered_row(map_begin, row, num_source_rows, check_bounds, negative_allowed);
+          if (src < 0 or not string_row_valid(item, src)) { return static_cast<char*>(nullptr); }
+          auto const s = static_cast<size_type>(src);
+          return item.src_offsets[s + 1] - item.src_offsets[s] > 0
+                   ? item.dst_chars + item.dst_scratch[row]
+                   : static_cast<char*>(nullptr);
+        }));
+      auto const copy_sizes_it = cuda::make_transform_iterator(
+        cuda::counting_iterator<int64_t>{0},
+        cuda::proclaim_return_type<int64_t>([d_routed,
+                                             d_items_ptr,
+                                             num_rows_local,
+                                             num_source_rows,
+                                             check_bounds,
+                                             negative_allowed,
+                                             map_begin] __device__(int64_t flat) -> int64_t {
+          auto const col  = static_cast<size_type>(flat / num_rows_local);
+          auto const row  = static_cast<size_type>(flat % num_rows_local);
+          auto const item = d_items_ptr[d_routed[col]];
+          auto const src =
+            resolve_gathered_row(map_begin, row, num_source_rows, check_bounds, negative_allowed);
+          if (src < 0 or not string_row_valid(item, src)) { return int64_t{0}; }
+          auto const s     = static_cast<size_type>(src);
+          auto const bytes = item.src_offsets[s + 1] - item.src_offsets[s];
+          return bytes > 0 ? bytes : int64_t{0};
+        }));
+      // The env-overload routes CUB's temporary storage to `temp_mr` (not the wrapper's
+      // default-resource form), matching `strings::detail::gather`'s own batched call.
+      // Explicit template args: the CTAD form trips nvcc 13.3 in TUs that lack an
+      // earlier `<thrust/execution_policy.h>` include (include-order sensitive).
+      auto const cub_env =
+        cuda::std::execution::env<cuda::std::execution::prop<cuda::get_stream_t, cuda::stream_ref>,
+                                  cuda::std::execution::prop<cuda::mr::get_memory_resource_t,
+                                                             rmm::device_async_resource_ref>>{
+          cuda::std::execution::prop<cuda::get_stream_t, cuda::stream_ref>{cuda::get_stream_t{},
+                                                                           stream},
+          cuda::std::execution::prop<cuda::mr::get_memory_resource_t,
+                                     rmm::device_async_resource_ref>{
+            cuda::mr::get_memory_resource_t{}, temp_mr}};
+      CUDF_CUDA_TRY(cub::DeviceMemcpy::Batched(
+        src_addrs_it, dst_addrs_it, copy_sizes_it, num_buffers, cub_env));
+    }
+
+    // ---- the ONE batched payload launch (routed columns' chars excluded per item) ----
     if (flat_size > 0) {
       auto const grid = static_cast<unsigned>(
         std::min<int64_t>(util::div_rounding_up_safe(flat_size, static_cast<int64_t>(block_size)),
@@ -2329,8 +2584,7 @@ struct descriptor_path_builder {
       string_payload_kernel<block_size>
         <<<grid, block_size, 0, stream.get()>>>(d_payload_items.data(),
                                                 static_cast<int64_t>(live.size()),
-                                                rows_per_col,
-                                                num_rows,
+                                                scan_layout,
                                                 num_source_rows,
                                                 check_bounds,
                                                 negative_allowed,

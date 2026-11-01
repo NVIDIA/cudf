@@ -706,6 +706,263 @@ TEST_F(BatchGatherMixedTest, MixedNullableStrings)
   CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
 }
 
+// Row lengths straddling the block-copy gate (32 bytes): the uint4 interior, the scalar edge
+// bytes and the byte-parallel fallback all see rows on both sides of the seam.
+TEST_F(BatchGatherMixedTest, StringRowsAcrossBlockCopyGate)
+{
+  constexpr cudf::size_type num_rows{20};
+  cudf::size_type const lengths[num_rows] = {0,  1,  3,  4,  15, 16,  17,  31,  32,   33,
+                                             47, 48, 63, 64, 65, 127, 128, 129, 1023, 4097};
+
+  std::vector<std::string> strings;
+  strings.reserve(num_rows);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    auto const size = static_cast<std::size_t>(lengths[i]);
+    std::string value(size, '\0');
+    for (std::size_t j = 0; j < size; ++j) {
+      value[j] = static_cast<char>('a' + (i + static_cast<cudf::size_type>(j)) % 26);
+    }
+    strings.push_back(std::move(value));
+  }
+  cudf::test::strings_column_wrapper col_str(strings.begin(), strings.end());
+  auto col_i64 = make_fixed_column<int64_t>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+
+  cudf::table_view source_table({col_str, col_i64->view()});
+
+  auto const host_map = shuffled_iota(num_rows);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
+
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// Every row is above the gate and the table spans several block groups, so the published slots
+// are recycled across group iterations; nullable source rows keep the skipped-row path live.
+TEST_F(BatchGatherMixedTest, StringRowsAboveGateAcrossGroups)
+{
+  constexpr cudf::size_type num_rows{600};
+  std::vector<std::string> strings(num_rows);
+  std::vector<bool> valid(num_rows);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    strings[i].assign(static_cast<std::size_t>(33 + i % 97), static_cast<char>('A' + i % 26));
+    valid[i] = i % 11 != 0;
+  }
+  auto validity = cudf::detail::make_counting_transform_iterator(
+    0, [&valid](cudf::size_type i) { return valid[i]; });
+  cudf::test::strings_column_wrapper col_str(strings.begin(), strings.end(), validity);
+
+  cudf::table_view source_table({col_str});
+
+  auto const host_map = shuffled_iota(num_rows, 1234);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
+
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// Fewer rows than one block group: the warps without a row must still reach both barriers.
+TEST_F(BatchGatherMixedTest, StringRowsAboveGateFewerThanOneGroup)
+{
+  cudf::test::strings_column_wrapper col_str{
+    {std::string(33, 'a'), std::string(1024, 'b'), std::string(40, 'c')}};
+
+  cudf::table_view source_table({col_str});
+
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map{{2, 0, 1}};
+
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
+
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// An all-short group takes the char-parallel fan: every live byte of the group is written by
+// exactly one thread via the binary search over the staged scratch boundaries. Rows of length
+// 0 (dead and empty), 1, and the 32-byte gate boundary interleave.
+TEST_F(BatchGatherMixedTest, StringShortRowsCharParallelFan)
+{
+  constexpr cudf::size_type num_rows{100};
+  std::vector<std::string> strings;
+  std::vector<bool> valid;
+  strings.reserve(num_rows);
+  valid.reserve(num_rows);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    auto const size = static_cast<std::size_t>(i % 33);  // 0..32: every row fits a warp span
+    strings.push_back(std::string(size, static_cast<char>('a' + i % 26)));
+    valid.push_back(i % 7 != 0);
+  }
+  auto validity = cudf::detail::make_counting_transform_iterator(
+    0, [&valid](cudf::size_type i) { return valid[i]; });
+  cudf::test::strings_column_wrapper col_str(strings.begin(), strings.end(), validity);
+
+  cudf::table_view source_table({col_str});
+
+  auto const host_map = shuffled_iota(num_rows, 77);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
+
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// A long row anywhere in its block group keeps the whole group on the slot machinery: the long
+// row takes the block-cooperative copy and the short rows of the SAME group keep the warp
+// copy (the fan never runs in a mixed group).
+TEST_F(BatchGatherMixedTest, StringMixedGroupKeepsSlotMachinery)
+{
+  constexpr cudf::size_type num_rows{24};  // 3 block groups of 8 warps; rows 5 and 20 are long
+  std::vector<std::string> strings;
+  strings.reserve(num_rows);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    // Row 5 (group 0) and row 20 (group 2) are long; everything else is short.
+    strings.push_back(
+      std::string(i == 5 or i == 20 ? 500 : 8 + i % 16, static_cast<char>('A' + i % 26)));
+  }
+  cudf::test::strings_column_wrapper col_str(strings.begin(), strings.end());
+
+  cudf::table_view source_table({col_str});
+
+  auto const host_map = shuffled_iota(num_rows, 42);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
+
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// The last group is partial and its final row is the column's byte-range tail: the fan's tail
+// sentinel must close the last live row's span with that row's +1 scratch entry.
+TEST_F(BatchGatherMixedTest, StringShortRowsTailGroupSentinel)
+{
+  constexpr cudf::size_type num_rows{19};  // 2 full 8-warp groups + a 3-row tail group
+  std::vector<std::string> strings;
+  strings.reserve(num_rows);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    strings.push_back(
+      std::string(static_cast<std::size_t>(1 + (i * 7) % 32), static_cast<char>('a' + i % 26)));
+  }
+  cudf::test::strings_column_wrapper col_str(strings.begin(), strings.end());
+
+  cudf::table_view source_table({col_str});
+
+  auto const host_map = shuffled_iota(num_rows, 7);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
+
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// Out-of-bounds map entries inside an all-short fan group: NULLIFY gives those rows no
+// payload (the scan left their scratch spans zero-width), so the fan must skip their bytes
+// while still copying the live rows around them.
+TEST_F(BatchGatherMixedTest, StringShortRowsFanNullifyOutOfBounds)
+{
+  constexpr cudf::size_type num_rows{50};
+  std::vector<std::string> strings;
+  strings.reserve(num_rows);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    strings.push_back(
+      std::string(static_cast<std::size_t>(1 + (i * 11) % 32), static_cast<char>('a' + i % 26)));
+  }
+  cudf::test::strings_column_wrapper col_str(strings.begin(), strings.end());
+
+  cudf::table_view source_table({col_str});
+
+  // 10 destinations gather out-of-bounds (NULLIFY); the rest are a shuffle of live rows.
+  std::vector<cudf::size_type> host_map(num_rows);
+  std::iota(host_map.begin(), host_map.end(), 0);
+  std::shuffle(host_map.begin(), host_map.end(), std::mt19937{9});
+  for (cudf::size_type i = 0; i < num_rows; i += 5) {
+    host_map[i] = num_rows + 1 + i;
+  }
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table, gather_map, cudf::out_of_bounds_policy::NULLIFY);
+  auto reference = run_reference(source_table, gather_map, cudf::out_of_bounds_policy::NULLIFY);
+
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// Negative map entries with negative_index_policy::ALLOWED wrap into the source from the end;
+// the fan's resolve must apply the same wrap for its byte lookups.
+TEST_F(BatchGatherMixedTest, StringShortRowsFanNegativeWrap)
+{
+  constexpr cudf::size_type num_rows{40};
+  std::vector<std::string> strings;
+  strings.reserve(num_rows);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    strings.push_back(
+      std::string(static_cast<std::size_t>(1 + (i * 5) % 32), static_cast<char>('a' + i % 26)));
+  }
+  cudf::test::strings_column_wrapper col_str(strings.begin(), strings.end());
+
+  cudf::table_view source_table({col_str});
+
+  std::vector<cudf::size_type> host_map;
+  host_map.reserve(num_rows);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    host_map.push_back(i % 3 == 0 ? static_cast<cudf::size_type>(-1 - static_cast<int64_t>(i))
+                                  : (num_rows - 1 - i));
+  }
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table,
+                                 gather_map,
+                                 cudf::out_of_bounds_policy::DONT_CHECK,
+                                 cudf::negative_index_policy::ALLOWED);
+  auto reference = run_reference(source_table,
+                                 gather_map,
+                                 cudf::out_of_bounds_policy::DONT_CHECK,
+                                 cudf::negative_index_policy::ALLOWED);
+
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// Repeated map entries: several destination rows share one source row; the fan must copy the
+// same source bytes to each of their disjoint destination spans.
+TEST_F(BatchGatherMixedTest, StringShortRowsFanRepeatedSource)
+{
+  constexpr cudf::size_type num_rows{60};
+  std::vector<std::string> strings;
+  strings.reserve(num_rows);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    strings.push_back(
+      std::string(static_cast<std::size_t>(1 + (i * 13) % 32), static_cast<char>('a' + i % 26)));
+  }
+  cudf::test::strings_column_wrapper col_str(strings.begin(), strings.end());
+
+  cudf::table_view source_table({col_str});
+
+  std::vector<cudf::size_type> host_map;
+  host_map.reserve(num_rows);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    host_map.push_back(i % 7);
+  }
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
+
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
 TEST_F(BatchGatherMixedTest, MixedNullableFixedWidthWithNullFreeLists)
 {
   // Divergence regression (test-first RED): a fixed-width column WITH nulls next to a nullable

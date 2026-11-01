@@ -9,7 +9,7 @@ import math
 from typing import TYPE_CHECKING, Any, ClassVar, TypeGuard, assert_never, cast
 
 import polars as pl
-from polars.exceptions import ComputeError
+from polars.exceptions import ComputeError, InvalidOperationError
 
 import pylibcudf as plc
 
@@ -138,6 +138,38 @@ class Len(Expr):
     @property
     def agg_request(self) -> plc.aggregation.Aggregation:  # noqa: D102
         return plc.aggregation.count(plc.types.NullPolicy.INCLUDE)
+
+
+def _polars_dtype_name(dtype: pl.DataType) -> str:
+    """Name a dtype the way Polars' error messages do (e.g. ``u32``)."""
+    if isinstance(dtype, pl.Datetime):
+        unit = {"ms": "ms", "us": "μs", "ns": "ns"}[dtype.time_unit]
+        if dtype.time_zone is not None:
+            return f"datetime[{unit}, {dtype.time_zone}]"
+        return f"datetime[{unit}]"
+    return {
+        pl.UInt8: "u8",
+        pl.UInt16: "u16",
+        pl.UInt32: "u32",
+        pl.UInt64: "u64",
+        pl.Boolean: "bool",
+        pl.Date: "date",
+        pl.String: "str",
+    }.get(type(dtype), str(dtype))
+
+
+def _check_negate_supported(dtype: DataType) -> None:
+    """Raise as Polars does for dtypes that libcudf cannot negate."""
+    plc_type = dtype.plc_type
+    if (
+        plc.traits.is_unsigned(plc_type)
+        or plc.traits.is_boolean(plc_type)
+        or plc.traits.is_timestamp(plc_type)
+        or plc_type.id() == plc.TypeId.STRING
+    ):
+        raise InvalidOperationError(
+            f"`neg` operation not supported for dtype `{_polars_dtype_name(dtype.polars_type)}`"
+        )
 
 
 class UnaryFunction(Expr):
@@ -2107,6 +2139,8 @@ class UnaryFunction(Expr):
                 return Column(signed, dtype=self.dtype)
         elif self.name in self._OP_MAPPING:
             column = self.children[0].evaluate(df, context=context)
+            if self.name == "negate":
+                _check_negate_supported(column.dtype)
             if column.dtype.plc_type.id() != self.dtype.id():
                 arg = plc.unary.cast(column.obj, self.dtype.plc_type, stream=df.stream)
             else:

@@ -8,7 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
-from functools import partialmethod, wraps
+from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -60,6 +60,11 @@ class CollectionSkips:
             self.config.stash[COLLECTION_SKIPS].add(
                 report.nodeid[report.nodeid.index("tests/") :]
             )
+
+
+def _set_config_attr(config: pytest.Config, name: str, *, value: object) -> None:
+    """Set plugin-owned state without extending pytest's typed Config API."""
+    setattr(config, name, value)
 
 
 def nonnegative_int(value: str) -> int:
@@ -293,8 +298,8 @@ def pytest_runtest_protocol(
             signal.reset(token)
 
 
-@pytest.hookimpl(hookwrapper=True, tryfirst=True)
-def pytest_runtest_call(item: pytest.Item) -> Generator[None, None, None]:
+@pytest.hookimpl(hookwrapper=True, tryfirst=True, specname="pytest_runtest_call")
+def pytest_observe_runtest_call(item: pytest.Item) -> Generator[None, None, None]:
     """Attribute execution signals only to the test body."""
     observation = item.stash[OBSERVATION]
     observation.set_in_call(True)
@@ -335,6 +340,7 @@ def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item]
 ) -> Generator[None, None, None]:
     """Validate against unfiltered collection before narrowing the PR run."""
+    _validate_exception_lists(config, items)
     inventory = {item.nodeid for item in items}
     selection = config.stash.get(SELECTION, None)
     collection_skips = config.stash[COLLECTION_SKIPS]
@@ -6848,7 +6854,6 @@ def pytest_mark_and_shard_items(
     session: pytest.Session, config: pytest.Config, items: list[pytest.Item]
 ) -> None:
     """Apply versioned GPU exceptions to the default strict policy."""
-    _validate_exception_lists(config, items)
     num_shards = config.getoption("cudf_polars_num_shards")
     if num_shards > 1:
         shard_id = config.getoption("cudf_polars_shard_id")

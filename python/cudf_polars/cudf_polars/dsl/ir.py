@@ -3476,8 +3476,13 @@ class Join(IR):
                             *columns[major.num_columns :],
                             *columns[: major.num_columns],
                         )
+                    # Swapped, each left column repeats once per right row, so
+                    # its sortedness does not carry over.
                     left_cols = Join._build_columns(
-                        columns[: left.num_columns], left.columns, stream=stream
+                        columns[: left.num_columns],
+                        left.columns,
+                        left=not swap,
+                        stream=stream,
                     )
                     right_cols = Join._build_columns(
                         columns[left.num_columns :],

@@ -14,7 +14,8 @@ import pylibcudf as plc
 
 from cudf_polars.containers import DataType
 from cudf_polars.dsl import expr as ir_expr
-from cudf_polars.dsl.ir import ConditionalJoin
+from cudf_polars.dsl.ir import ConditionalJoin, IRExecutionContext
+from cudf_polars.dsl.translate import Translator
 from cudf_polars.testing.asserts import assert_gpu_result_equal
 from cudf_polars.utils.versions import POLARS_VERSION_LT_21
 
@@ -470,3 +471,17 @@ def test_cross_join_maintain_order_empty(engine: pl.GPUEngine, maintain_order, e
     right = pl.LazyFrame({"k": right_rows, "a": right_rows}, schema=schema)
     q = left.join(right, how="cross", maintain_order=maintain_order, suffix="_r")
     assert_gpu_result_equal(q, engine=engine, check_row_order=maintain_order != "none")
+
+
+@pytest.mark.parametrize(
+    "maintain_order", ["none", "left", "right", "left_right", "right_left"]
+)
+def test_cross_join_left_sortedness(maintain_order):
+    left = pl.LazyFrame({"x": [0, 1]}).set_sorted("x")
+    right = pl.LazyFrame({"y": [10, 20]})
+    q = left.join(right, how="cross", maintain_order=maintain_order)
+    node = Translator(q._ldf.visit(), pl.GPUEngine()).translate_ir()
+    result = node.evaluate(cache={}, context=IRExecutionContext())
+    swapped = maintain_order.startswith("right")
+    expected = plc.types.Sorted.NO if swapped else plc.types.Sorted.YES
+    assert result.column_map["x"].is_sorted == expected

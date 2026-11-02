@@ -905,6 +905,7 @@ def _translate_cross_and_filter(
         left_on,
         right_on,
         ("Cross", nulls_equal, None, suffix, coalesce, maintain_order),
+        None,
         inp_left,
         inp_right,
     )

@@ -42,6 +42,7 @@
 - CUDA stream/event leaks or improper cleanup
 - Missing RAII or proper cleanup, including in exception paths
 - Raw owning pointers instead of `std::unique_ptr`, `std::shared_ptr`, `std::reference_wrapper`
+- Moving from the raw pointer returned by `std::unique_ptr::release()` (e.g. `std::move(*ptr.release())`, `ptr.release()[0]`, `auto p = contents.data.release();`) leaks the host object; use `std::move(*ptr)` instead. (`table::release()` and `device_uvector::release()` return owning values and are fine.)
 
 ### API Breaking Changes
 - C++ API changes without proper deprecation warnings

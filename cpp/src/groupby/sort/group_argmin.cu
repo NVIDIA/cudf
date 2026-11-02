@@ -48,7 +48,7 @@ std::unique_ptr<column> group_argmin(column_view const& values,
                  output.data()                       // result (must not overlap map)
   );
   auto null_count = indices_view.null_count();
-  auto null_mask  = indices->release().null_mask.release();
+  auto null_mask  = std::move(indices->release().null_mask);
   return std::make_unique<column>(std::move(output), std::move(*null_mask), null_count);
 }
 

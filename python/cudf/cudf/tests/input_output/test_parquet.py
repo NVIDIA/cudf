@@ -1707,23 +1707,35 @@ def test_parquet_writer_int96_timestamps(tmp_path, pdf, gdf):
     assert_eq(expect, got, check_categorical=False, check_dtype=False)
 
 
+@pytest.mark.parametrize("store_schema", [False, True])
 @pytest.mark.parametrize(
     "kwargs, expected", [({}, True), ({"utc_timestamps": False}, False)]
 )
-def test_parquet_writer_chunked_utc_timestamps(tmp_path, kwargs, expected):
+def test_parquet_writer_chunked_utc_timestamps(
+    tmp_path, kwargs, expected, store_schema
+):
     gdf = cudf.DataFrame(
-        {"ts": cudf.Series([0, 1_000_000, None], dtype="datetime64[us]")}
+        {
+            "ts": cudf.Series([0, 1_000_000, None], dtype="datetime64[us]"),
+            "td": cudf.Series([0, 1_000_000, None], dtype="timedelta64[us]"),
+        }
     )
     fname = tmp_path / "gdf.parquet"
 
-    with ParquetWriter(fname, **kwargs) as writer:
+    with ParquetWriter(fname, store_schema=store_schema, **kwargs) as writer:
         writer.write_table(gdf)
         writer.write_table(gdf)
 
-    logical_type = json.loads(
-        pq.ParquetFile(fname).schema.column(0).logical_type.to_json()
-    )
-    assert logical_type["isAdjustedToUTC"] is expected
+    schema = pq.ParquetFile(fname).schema
+    ts_type = json.loads(schema.column(0).logical_type.to_json())
+    td_type = json.loads(schema.column(1).logical_type.to_json())
+    assert ts_type["isAdjustedToUTC"] is expected
+    if store_schema:
+        # Durations are written as unannotated INT64 with the arrow schema
+        assert td_type["Type"] == "None"
+    else:
+        assert td_type["Type"] == "Time"
+        assert td_type["isAdjustedToUTC"] is expected
     assert_eq(
         cudf.read_parquet(fname), cudf.concat([gdf, gdf], ignore_index=True)
     )

@@ -748,21 +748,6 @@ struct range_window_clamper {
     return result;
   }
 
-  /**
-   * @brief Is the given type supported as an orderby column.
-   *
-   * @tparam OrderbyT The type of the elements of the orderby column.
-   */
-  template <typename OrderbyT>
-  static constexpr bool is_supported()
-  {
-    return (cuda::std::is_same_v<OrderbyT, cudf::string_view> &&
-            (cuda::std::is_same_v<WindowType, current_row> ||
-             cuda::std::is_same_v<WindowType, unbounded>)) ||
-           cudf::is_numeric_not_bool<OrderbyT>() || cudf::is_timestamp<OrderbyT>() ||
-           cudf::is_fixed_point<OrderbyT>();
-  }
-
   template <cudf::concepts::timestamp OrderbyT>
   [[nodiscard]] std::unique_ptr<column> operator()(
     column_view const& orderby,

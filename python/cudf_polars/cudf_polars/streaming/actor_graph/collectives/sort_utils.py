@@ -98,8 +98,8 @@ def find_sort_splits(
         ``stream``.
     chunk_relative
         If True, use the position after equal boundary values instead of
-        ``local_row``. Use True when ``tbl`` is a chunk of the partition; False
-        when ``tbl`` is the full partition.
+        ``local_row``. Use True when ``tbl`` is a chunk of the partition. Use
+        False when ``tbl`` is the full partition.
 
     Returns
     -------
@@ -120,7 +120,7 @@ def find_sort_splits(
         stream=stream,
     )
     # Use DataFrame.to_polars() for a stream-aware D→H transfer.
-    # Search bounds return size_type (INT32); part_id/local_row are UInt32.
+    # Search bounds return size_type (INT32). part_id/local_row are UInt32.
     _u32 = DataType(pl.UInt32())
     df = DataFrame.from_table(
         plc.Table([split_first_col, split_part_id, split_local_row]),

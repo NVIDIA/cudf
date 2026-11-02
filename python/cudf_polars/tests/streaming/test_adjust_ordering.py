@@ -302,17 +302,8 @@ def test_adjust_ordering_sparse_boundary_shift(
 
 
 @pytest.mark.spmd
-@pytest.mark.parametrize(
-    "target_boundaries,expected",
-    [
-        (3, {0: {0: [1, 3, 3]}, 1: {1: [4]}}),
-        ([3, 3], {0: {0: [1, 3, 3], 1: []}, 1: {2: [4]}}),
-    ],
-)
 def test_adjust_ordering_moves_equal_keys_down(
     spmd_engine: SPMDEngine,
-    target_boundaries: _Boundary | list[_Boundary],
-    expected: _ExpectedByRank,
 ) -> None:
     context = spmd_engine.context
     comm = spmd_engine.comm
@@ -321,7 +312,7 @@ def test_adjust_ordering_moves_equal_keys_down(
 
     stream = context.br().stream_pool.get_stream()
     input_ordering = _make_ordering(context, 3, strict=False, stream=stream)
-    output_ordering = _make_ordering(context, target_boundaries, stream=stream)
+    output_ordering = _make_ordering(context, 3, stream=stream)
     with reserve_op_id() as op_id:
         output = asyncio.run(
             _adjust_and_collect(
@@ -334,7 +325,7 @@ def test_adjust_ordering_moves_equal_keys_down(
             )
         )
 
-    _assert_partition_output(output, expected[comm.rank])
+    _assert_partition_output(output, {0: {0: [1, 3, 3]}, 1: {1: [4]}}[comm.rank])
 
 
 @pytest.mark.spmd

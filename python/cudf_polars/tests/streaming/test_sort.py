@@ -164,9 +164,11 @@ def test_find_sort_splits_keeps_boundary_values_below(
         find_sort_splits(
             keys,
             candidates,
+            0,
             [plc.types.Order.ASCENDING],
             [null_order],
             stream,
+            chunk_relative=True,
         )
         == expected
     )

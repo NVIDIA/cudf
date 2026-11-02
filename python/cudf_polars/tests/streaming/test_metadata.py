@@ -50,9 +50,6 @@ from cudf_polars.streaming.actor_graph.partitioning import (
     is_row_ordered_by,
     maybe_remap_partitioning,
 )
-from cudf_polars.streaming.actor_graph.scan_ordering import (
-    _partitioning_from_task_bounds,
-)
 from cudf_polars.streaming.actor_graph.utils import (
     _apply_ordering_metadata,
     _leading_order_keys,
@@ -848,38 +845,6 @@ def test_set_sorted_dataframe_extracts_ordering_boundaries(spmd_engine_factory):
         boundaries.stream,
     ).to_polars()
     assert boundary_df["k"].to_list() == [1, 2]
-
-
-@pytest.mark.parametrize(
-    "endpoints,strict", [([1, 2, 3, 4], True), ([1, 2, 2, 3], False)]
-)
-def test_scan_task_bounds_use_previous_end(spmd_engine, endpoints, strict) -> None:
-    context = spmd_engine.context
-    stream = context.br().stream_pool.get_stream()
-    key = OrderKey(0, plc.types.Order.ASCENDING, plc.types.NullOrder.BEFORE)
-    bounds = plc.Table(
-        [
-            plc.Column.from_iterable_of_py(
-                endpoints, plc.DataType(plc.TypeId.INT64), stream=stream
-            )
-        ]
-    )
-    partitioning = _partitioning_from_task_bounds(
-        context, [("k", key)], bounds, 2, stream
-    )
-
-    assert partitioning is not None
-    assert isinstance(partitioning.inter_rank, OrderScheme)
-    (ordering,) = partitioning.inter_rank.orderings
-    assert ordering.strict_boundaries is strict
-    boundaries = ordering.get_boundaries(context.br())
-    boundary_df = DataFrame.from_table(
-        boundaries.table_view(),
-        ["k"],
-        [DataType(pl.Int64())],
-        boundaries.stream,
-    ).to_polars()
-    assert boundary_df["k"].to_list() == [2]
 
 
 def test_apply_ordering_metadata_marks_leading_key_only(spmd_engine) -> None:

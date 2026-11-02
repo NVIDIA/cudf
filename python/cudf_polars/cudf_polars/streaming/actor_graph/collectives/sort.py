@@ -308,6 +308,7 @@ async def _insert_chunks_into_shuffle(
         while (msg := await ch_in.recv(context)) is not None:
             if skip_insert:
                 continue
+            seq_num = msg.sequence_number
             # The chunk's data moves into shuffler-owned packed buffers,
             # nothing lasting is added.
             available_chunk, _ = await make_table_chunks_available_or_wait(
@@ -329,9 +330,11 @@ async def _insert_chunks_into_shuffle(
             splits = find_sort_splits(
                 sort_cols_tbl,
                 sort_boundaries_df.table,
+                seq_num,
                 column_order,
                 null_order,
                 stream=stream,
+                chunk_relative=True,
             )
             await inserter.insert_split(available_chunk, splits)
 

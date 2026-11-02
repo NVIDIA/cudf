@@ -18,6 +18,7 @@
 #include <cudf/strings/detail/utilities.cuh>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/strings/strings_column_view.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -393,12 +394,11 @@ struct parse_datetime {
  * @brief Type-dispatch operator to convert timestamp strings to native fixed-width-type
  */
 struct dispatch_to_timestamps_fn {
-  template <typename T>
+  template <cudf::concepts::timestamp T>
   void operator()(column_device_view const& d_strings,
                   std::string_view format,
                   mutable_column_view& results_view,
                   cuda::stream_ref stream) const
-    requires(cudf::is_timestamp<T>())
   {
     format_compiler compiler(format, stream);
     parse_datetime<T> pfn{d_strings, compiler.format_items(), compiler.subsecond_precision()};
@@ -413,7 +413,6 @@ struct dispatch_to_timestamps_fn {
                   std::string_view,
                   mutable_column_view&,
                   cuda::stream_ref) const
-    requires(not cudf::is_timestamp<T>())
   {
     CUDF_FAIL("Only timestamps type are expected", std::invalid_argument);
   }
@@ -1091,13 +1090,12 @@ struct datetime_formatter_fn {
 //
 using strings_children = std::pair<std::unique_ptr<cudf::column>, rmm::device_uvector<char>>;
 struct dispatch_from_timestamps_fn {
-  template <typename T>
+  template <cudf::concepts::timestamp T>
   strings_children operator()(column_device_view const& d_timestamps,
                               column_device_view const& d_format_names,
                               device_span<format_item const> d_format_items,
                               cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr) const
-    requires(cudf::is_timestamp<T>())
   {
     return make_strings_children(
       datetime_formatter_fn<T>{d_timestamps, d_format_names, d_format_items},
@@ -1108,7 +1106,7 @@ struct dispatch_from_timestamps_fn {
 
   template <typename T, typename... Args>
   strings_children operator()(Args&&...) const
-    requires(not cudf::is_timestamp<T>())
+    requires(not cudf::concepts::timestamp<T>)
   {
     CUDF_FAIL("Only timestamps type are expected", std::invalid_argument);
   }

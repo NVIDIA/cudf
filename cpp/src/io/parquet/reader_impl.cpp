@@ -40,6 +40,46 @@
 
 namespace cudf::io::parquet::detail {
 
+namespace {
+
+/**
+ * @brief Recursively cast decimal columns, including nested ones, to the specified type
+ *
+ * @param col Column to cast
+ * @param decimal_width Target decimal type id
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used to allocate temporary and output device memory
+ * @return The cast column
+ */
+std::unique_ptr<column> cast_decimals_to_width(std::unique_ptr<column>&& col,
+                                               cudf::type_id decimal_width,
+                                               cuda::stream_ref stream,
+                                               cudf::memory_resources mr)
+{
+  auto const col_type = col->type();
+  if (cudf::is_fixed_point(col_type)) {
+    if (col_type.id() == decimal_width) { return col; }
+    return cudf::cast(
+      col->view(), data_type{decimal_width, col_type.scale()}, stream, mr.get_output_mr());
+  }
+  if (col_type.id() != type_id::LIST and col_type.id() != type_id::STRUCT) { return col; }
+
+  auto const size       = col->size();
+  auto const null_count = col->null_count();
+  auto contents         = col->release();
+  for (auto& child : contents.children) {
+    child = cast_decimals_to_width(std::move(child), decimal_width, stream, mr);
+  }
+  return std::make_unique<column>(col_type,
+                                  size,
+                                  std::move(*contents.data),
+                                  std::move(*contents.null_mask),
+                                  null_count,
+                                  std::move(contents.children));
+}
+
+}  // namespace
+
 void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_rows)
 {
   CUDF_FUNC_RANGE();
@@ -94,13 +134,13 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
   // In order to reduce the number of allocations of hostdevice_vector, we allocate a single vector
   // to store all per-chunk pointers to nested data/nullmask. `chunk_offsets[i]` will store the
   // offset into `chunk_nested_data`/`chunk_nested_valids` for the array of pointers for chunk `i`
-  auto chunk_nested_valids = cudf::detail::hostdevice_vector<bitmask_type*>(
-    sum_max_depths, _stream, cudf::get_current_device_resource_ref());
-  auto chunk_nested_data = cudf::detail::hostdevice_vector<void*>(
-    sum_max_depths, _stream, cudf::get_current_device_resource_ref());
+  auto chunk_nested_valids =
+    cudf::detail::hostdevice_vector<bitmask_type*>(sum_max_depths, _stream, _mr.as_temporary());
+  auto chunk_nested_data =
+    cudf::detail::hostdevice_vector<void*>(sum_max_depths, _stream, _mr.as_temporary());
   auto chunk_offsets         = std::vector<size_t>();
   auto chunk_nested_str_data = cudf::detail::hostdevice_vector<void*>(
-    has_strings ? sum_max_depths : 0, _stream, cudf::get_current_device_resource_ref());
+    has_strings ? sum_max_depths : 0, _stream, _mr.as_temporary());
 
   // Update chunks with pointers to column data.
   for (size_t c = 0, chunk_off = 0; c < pass.chunks.size(); c++) {
@@ -186,7 +226,8 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
 
   // Create an empty device vector to store the initial str offset for large string columns from for
   // string decoders.
-  auto initial_str_offsets = cuda::device_buffer<size_t>{_stream, _mr, 0, cuda::no_init};
+  auto initial_str_offsets =
+    cuda::device_buffer<size_t>{_stream, _mr.get_temporary_mr(), 0, cuda::no_init};
 
   pass.chunks.host_to_device_async(_stream);
   chunk_nested_valids.host_to_device_async(_stream);
@@ -197,7 +238,8 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
       cudf::detail::make_pinned_vector_async<size_t>(_input_columns.size(), _stream);
     std::ranges::fill(host_offsets_vector, std::numeric_limits<size_t>::max());
     // Initialize the initial string offsets vector from the host vector
-    initial_str_offsets = cudf::detail::make_device_buffer(host_offsets_vector, _stream, _mr);
+    initial_str_offsets =
+      cudf::detail::make_device_buffer(host_offsets_vector, _stream, _mr.as_temporary());
     chunk_nested_str_data.host_to_device_async(_stream);
   }
 
@@ -532,13 +574,18 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
   _stream.sync();
 }
 
-reader_impl::reader_impl() : _stream{cudaStream_t{cudaStreamDefault}}, _options{} {}
+reader_impl::reader_impl()
+  : _stream{cudaStream_t{cudaStreamDefault}},
+    _mr{cudf::get_current_device_resource_ref()},
+    _options{}
+{
+}
 
 reader_impl::reader_impl(std::vector<std::unique_ptr<datasource>>&& sources,
                          std::vector<FileMetaData>&& parquet_metadatas,
                          parquet_reader_options const& options,
                          cuda::stream_ref stream,
-                         rmm::device_async_resource_ref mr)
+                         cudf::memory_resources mr)
   : reader_impl(0 /*chunk_read_limit*/,
                 0 /*input_pass_read_limit*/,
                 std::forward<std::vector<std::unique_ptr<cudf::io::datasource>>>(sources),
@@ -555,7 +602,7 @@ reader_impl::reader_impl(std::size_t chunk_read_limit,
                          std::vector<FileMetaData>&& file_metadatas,
                          parquet_reader_options const& options,
                          cuda::stream_ref stream,
-                         rmm::device_async_resource_ref mr)
+                         cudf::memory_resources mr)
   : _stream{std::move(stream)},
     _mr{std::move(mr)},
     _options{options.get_timestamp_type(),
@@ -809,8 +856,8 @@ table_with_metadata reader_impl::read_chunk_internal(read_mode mode)
   // remaps indices to the unified keys child.
   assemble_dict_transcoded_columns(out_columns);
 
-  out_columns =
-    cudf::structs::detail::enforce_null_consistency(std::move(out_columns), _stream, _mr);
+  out_columns = cudf::structs::detail::enforce_null_consistency(
+    std::move(out_columns), _stream, _mr.get_output_mr());
 
   // Compute the output number of rows per source
   if (mode == read_mode::CHUNKED_READ) {
@@ -930,11 +977,7 @@ void reader_impl::apply_decimal_width_cast(std::vector<std::unique_ptr<column>>&
   // be able to decode data directly into the target decimal type buffer.
   if (_options.decimal_width == type_id::EMPTY) { return; }
   for (auto& col : out_columns) {
-    auto const col_type = col->type();
-    if (cudf::is_fixed_point(col_type) && col_type.id() != _options.decimal_width) {
-      col =
-        cudf::cast(col->view(), data_type{_options.decimal_width, col_type.scale()}, _stream, _mr);
-    }
+    col = cast_decimals_to_width(std::move(col), _options.decimal_width, _stream, _mr);
   }
 }
 
@@ -973,9 +1016,11 @@ table_with_metadata reader_impl::finalize_output(read_mode mode,
   for (size_t i = out_columns.size(); i < _output_buffers.size(); ++i) {
     if (!_output_metadata) {
       column_name_info& col_name = out_metadata.schema_info[i];
-      out_columns.emplace_back(io::detail::empty_like(_output_buffers[i], &col_name, _stream, _mr));
+      out_columns.emplace_back(
+        io::detail::empty_like(_output_buffers[i], &col_name, _stream, _mr.get_output_mr()));
     } else {
-      out_columns.emplace_back(io::detail::empty_like(_output_buffers[i], nullptr, _stream, _mr));
+      out_columns.emplace_back(
+        io::detail::empty_like(_output_buffers[i], nullptr, _stream, _mr.get_output_mr()));
     }
   }
 
@@ -1057,12 +1102,13 @@ table_with_metadata reader_impl::finalize_output(read_mode mode,
     // Clear the number of rows per source as it is not valid after filtering
     out_metadata.num_rows_per_source.clear();
 
-    bool use_jit = cudf::get_context().use_jit() || _options.use_jit_filter;
+    auto const use_jit = cudf::get_context().use_jit() or _options.use_jit_filter;
     auto predicate =
-      !use_jit
-        ? cudf::detail::compute_column(*read_table, final_filter_expr.value().get(), _stream, _mr)
-        : cudf::compute_column_jit(
-            read_table->view(), final_filter_expr.value().get(), _stream, _mr);
+      use_jit
+        ? cudf::compute_column_jit(
+            read_table->view(), final_filter_expr.value().get(), _stream, _mr.get_temporary_mr())
+        : cudf::detail::compute_column(
+            *read_table, final_filter_expr.value().get(), _stream, _mr.get_temporary_mr());
 
     CUDF_EXPECTS(predicate->view().type().id() == type_id::BOOL8,
                  "Predicate filter should return a boolean");

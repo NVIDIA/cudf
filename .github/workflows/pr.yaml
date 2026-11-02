@@ -263,6 +263,7 @@ jobs:
           - 'ci/test_cudf_polars_polars_tests.sh'
           - 'ci/run_cudf_polars_polars_tests.sh'
           - 'ci/cudf_polars/polars_test_deselections*.txt'
+          - 'ci/cudf_polars/gpu_test_run_list.json'
         test_python_cudf_polars_runner:
           - 'ci/run_cudf_polars_pytests.sh'
         test_cudf_pandas_third_party_integration:
@@ -933,16 +934,6 @@ jobs:
       script: "env POLARS_VERSIONS=earliest ci/test_wheel_cudf_polars.sh"
   cudf-polars-polars-tests:
     needs: [wheel-build, wheel-python-build-noarch, changed-files]
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - engine: spmd
-            shard_id: 0
-            num_shards: 2
-          - engine: spmd
-            shard_id: 1
-            num_shards: 2
     permissions:
       actions: read
       contents: read
@@ -971,10 +962,9 @@ jobs:
       container_image: rapidsai/citestwheel:26.12-latest
       container-options: "--cap-add CAP_SYS_PTRACE"
       script: >-
-        ci/test_cudf_polars_polars_tests.sh --engine ${{ matrix.engine }}
+        env CUDF_POLARS_GPU_RUN_LIST=ci/cudf_polars/gpu_test_run_list.json
+        ci/test_cudf_polars_polars_tests.sh --engine spmd
         --inject-gpu-engine-blocksize default
-        --cudf-polars-shard-id ${{ matrix.shard_id }}
-        --cudf-polars-num-shards ${{ matrix.num_shards }}
   cudf-polars-test-summary:
     needs: cudf-polars-polars-tests
     if: ${{ !cancelled() && needs.cudf-polars-polars-tests.result != 'skipped' }}

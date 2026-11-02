@@ -25,10 +25,12 @@ from cudf_polars.containers import DataType
 from cudf_polars.containers.datatype import _contains_dtype
 from cudf_polars.dsl import expr, ir
 from cudf_polars.dsl.expressions.base import ExecutionContext
-from cudf_polars.dsl.to_ast import insert_colrefs
+from cudf_polars.dsl.to_ast import insert_colrefs, split_join_predicate
 from cudf_polars.dsl.traversal import traversal
 from cudf_polars.dsl.utils.aggregations import decompose_single_agg
 from cudf_polars.dsl.utils.groupby import rewrite_groupby
+from cudf_polars.dsl.utils.groupby_dynamic import rewrite_groupby_dynamic
+from cudf_polars.dsl.utils.lake import LakehouseScanOptions
 from cudf_polars.dsl.utils.naming import unique_names
 from cudf_polars.dsl.utils.per_path import PerPathValues
 from cudf_polars.dsl.utils.replace import replace
@@ -95,18 +97,6 @@ def _contains_categorical_key(keys: Sequence[expr.NamedExpr]) -> bool:
         _contains_dtype(k.value.dtype.polars_type, (pl.Categorical, pl.Enum))
         for k in keys
     )
-
-
-def _supports_categorical(config_options: config.ConfigOptions) -> bool:
-    # TODO: Support multi-rank execution of Categorical columns.
-    executor = config_options.executor
-    if executor.name == "in-memory":
-        return True
-    if executor.ray_context is not None or executor.dask_context is not None:
-        return False
-    if executor.spmd_context is not None:
-        return executor.spmd_context.comm.nranks == 1
-    return executor.cluster == config.Cluster.DEFAULT_SINGLETON
 
 
 def _strip_file_uri(path: str) -> str:
@@ -308,17 +298,6 @@ class Translator:
             ):
                 error = NotImplementedError(
                     f"No GPU support for {result} with Null column dtype."
-                )
-                self.errors.append(error)
-                return ir.ErrorNode(schema, str(error))
-            if not _supports_categorical(self.config_options) and any(
-                isinstance(dtype, pl.Categorical)
-                for dtype in pl.datatypes.unpack_dtypes(*polars_schema.values())
-            ):
-                error = NotImplementedError(
-                    "Categorical columns are only supported on the in-memory "
-                    "executor and single-rank streaming engines; use pl.Enum "
-                    "for multi-rank execution"
                 )
                 self.errors.append(error)
                 return ir.ErrorNode(schema, str(error))
@@ -631,23 +610,14 @@ def _(node: plrs._ir_nodes.Scan, translator: Translator, schema: Schema) -> ir.I
     with_columns = file_options.with_columns
     row_index = file_options.row_index
     include_file_paths = file_options.include_file_paths
-    deletion_files = file_options.deletion_files
-    if (
-        deletion_files
-        or file_options.column_mapping is not None
-        or file_options.default_values is not None
-    ):  # pragma: no cover
-        raise NotImplementedError(
-            "Iceberg format is not supported in cudf-polars. Furthermore, "
-            "row-level deletions, column mapping and default values are not supported."
-        )  # pragma: no cover
-    if file_options.missing_columns_policy != "raise":
-        raise NotImplementedError("Inserting missing columns is not supported.")
     hive_parts = (
         None
         if node.hive_parts is None
         else PerPathValues.from_polars(pl.DataFrame._from_pydf(node.hive_parts))
     )
+    lake_options = LakehouseScanOptions.from_file_options(file_options, node.paths)
+    if lake_options is not None:
+        lake_options.check_field_ids(paths)
     config_options = translator.config_options
     parquet_options = config_options.parquet_options
 
@@ -660,6 +630,10 @@ def _(node: plrs._ir_nodes.Scan, translator: Translator, schema: Schema) -> ir.I
         if (n_rows == 2**32 - 1) or (n_rows == 2**64 - 1):
             # Polars translates slice(10, None) -> (10, u32/64max)
             n_rows = -1
+        if lake_options is not None and lake_options.partition_errors:
+            raise NotImplementedError(
+                "Sliced Iceberg scan with partition values polars cannot supply"
+            )
 
     # TODO: Get compression info from Polars plan
     if typ in ("csv", "ndjson"):
@@ -697,6 +671,7 @@ def _(node: plrs._ir_nodes.Scan, translator: Translator, schema: Schema) -> ir.I
         parquet_options,
         hive_parts=hive_parts,
         cached_parquet_info=None,
+        lake_options=lake_options,
     )
 
 
@@ -759,14 +734,21 @@ def _(node: plrs._ir_nodes.GroupBy, translator: Translator, schema: Schema) -> i
     is_rolling = node.options.rolling is not None
     is_dynamic = node.options.dynamic is not None
     if is_dynamic:
-        raise NotImplementedError("group_by_dynamic")
+        return rewrite_groupby_dynamic(schema, keys, original_aggs, inp, node.options)
     elif is_rolling:
         return rewrite_rolling(
             node.options, schema, keys, original_aggs, translator.config_options, inp
         )
     else:
         # TODO: Investigate whether polars can raise ahead of time
-        return rewrite_groupby(node, schema, keys, original_aggs, inp)
+        return rewrite_groupby(
+            schema,
+            keys,
+            original_aggs,
+            inp,
+            maintain_order=node.maintain_order,
+            zlice=node.options.slice,
+        )
 
 
 @_translate_ir.register
@@ -807,6 +789,7 @@ def _(node: plrs._ir_nodes.Join, translator: Translator, schema: Schema) -> ir.I
             left_on,
             right_on,
             node.options,
+            None,
             inp_left,
             inp_right,
         )
@@ -890,10 +873,55 @@ def _translate_fused_predicate(
     Translate an equi join that Polars plans with an extra, fused predicate.
 
     The join type is ``(<how>, "fused_predicate")``, ``left_on`` and ``right_on`` are
-    the equality keys and ``node.predicate`` is the extra condition. Not supported
-    yet, so it falls back to the CPU.
+    the equality keys and ``node.predicate`` is the extra condition. For an inner
+    join the predicate is evaluated while matching rows, so rows it rejects are
+    never materialized.
     """
-    raise NotImplementedError(f"Unsupported join type {node.options[0]}")
+    how, nulls_equal, zlice, suffix, coalesce, maintain_order = node.options
+    if (
+        how[0] != "Inner"
+    ):  # pragma: no cover; polars only fuses a predicate into an inner join
+        raise NotImplementedError(f"Unsupported join type {how}")
+    if (
+        zlice is not None
+    ):  # pragma: no cover; polars does not push a slice into this join
+        raise NotImplementedError("Slice in a join with a fused predicate")
+    mask = translate_predicate(
+        translator,
+        n=node.predicate.node,
+        output_name=node.predicate.output_name,
+        schema=schema,
+    )
+    # polars does not put dynamic predicate hints in a join predicate
+    assert mask is not None
+    # The predicate is over the output schema, so find which input each
+    # column comes from. A right column that clashes with a left column
+    # is suffixed in the output.
+    columns: dict[str, tuple[plc.expressions.TableReference, str]] = {
+        (f"{name}{suffix}" if name in inp_left.schema else name): (
+            plc.expressions.TableReference.RIGHT,
+            name,
+        )
+        for name in inp_right.schema
+    }
+    columns |= {
+        name: (plc.expressions.TableReference.LEFT, name) for name in inp_left.schema
+    }
+    predicate = split_join_predicate(
+        mask.value,
+        columns=columns,
+        left_names=list(inp_left.schema),
+        right_names=list(inp_right.schema),
+    )
+    return ir.Join(
+        schema,
+        left_on,
+        right_on,
+        ("Inner", nulls_equal, None, suffix, coalesce, maintain_order),
+        predicate,
+        inp_left,
+        inp_right,
+    )
 
 
 @_translate_ir.register
@@ -956,7 +984,14 @@ def _(node: plrs._ir_nodes.Sort, translator: Translator, schema: Schema) -> ir.I
     with set_node(translator.visitor, node.input):
         inp = translator.translate_ir(n=None)
         by = [
-            translate_named_expr(translator, n=e, schema=inp.schema)
+            translate_named_expr(
+                translator,
+                n=e,
+                schema=inp.schema,
+                allow_passthrough=isinstance(
+                    translator.visitor.get_dtype(e.node), pl.Time
+                ),
+            )
             for e in node.by_column
         ]
     if _contains_categorical_key(by):
@@ -1296,9 +1331,9 @@ def _translate_function(
         )
     elif isinstance(name, plrs._expr_nodes.BooleanFunction):
         if name == plrs._expr_nodes.BooleanFunction.IsBetween:
-            column, lo, hi = (
-                translator.translate_expr(n=n, schema=schema) for n in node.input
-            )
+            column, lo, hi = _int128_comparison_operands(
+                translator, node.input, schema
+            ) or (translator.translate_expr(n=n, schema=schema) for n in node.input)
             (closed,) = options
             lop, rop = expr.BooleanFunction._BETWEEN_OPS[closed]
             # IsBetween type coercion does not
@@ -1454,6 +1489,49 @@ def _translate_function(
             return expr.BinOp(dtype, plc.binaryop.BinaryOperator.MUL, *children)
         elif name == "product":
             return expr.Agg(dtype, "product", None, translator._expr_context, *children)
+        elif name == "corr":
+            if options != ("pearson",):
+                raise NotImplementedError("Only Pearson correlation is supported")
+            if translator._expr_context != ExecutionContext.GROUPBY:
+                raise NotImplementedError(
+                    "Correlation is currently only supported in groupby context"
+                )
+            intermediate_dtype = DataType(pl.Float64())
+            left, right = (
+                expr.Cast(intermediate_dtype, True, child)  # noqa: FBT003
+                if child.dtype.polars_type == pl.Float32()
+                else child
+                for child in children
+            )
+            pair_dtype = DataType(
+                pl.Struct(
+                    [
+                        pl.Field("left", left.dtype.polars_type),
+                        pl.Field("right", right.dtype.polars_type),
+                    ]
+                )
+            )
+            correlation = expr.Agg(
+                intermediate_dtype,
+                "corr",
+                None,
+                translator._expr_context,
+                expr.UnaryFunction(pair_dtype, "as_struct", (), left, right),
+            )
+            # Polars returns NaN for undefined correlations, such as groups
+            # with fewer than two valid pairs, while libcudf returns null.
+            result: expr.Expr = expr.UnaryFunction(
+                intermediate_dtype,
+                "fill_null",
+                (),
+                correlation,
+                expr.Literal(intermediate_dtype, float("nan")),
+            )
+            return (
+                result
+                if dtype == intermediate_dtype
+                else expr.Cast(dtype, True, result)  # noqa: FBT003
+            )
         elif name == "quantile":
             # quantile is emitted as a string-named Function expression
             # (function_data=("quantile", interpolation)) with the column
@@ -1884,6 +1962,77 @@ def _(
     )
 
 
+_INT128_COMPARISON_OPS = frozenset(
+    {
+        plrs._expr_nodes.Operator.Eq,
+        plrs._expr_nodes.Operator.EqValidity,
+        plrs._expr_nodes.Operator.NotEq,
+        plrs._expr_nodes.Operator.NotEqValidity,
+        plrs._expr_nodes.Operator.Lt,
+        plrs._expr_nodes.Operator.LtEq,
+        plrs._expr_nodes.Operator.Gt,
+        plrs._expr_nodes.Operator.GtEq,
+    }
+)
+_NARROW_INTEGER_DTYPES = (
+    pl.Int8,
+    pl.Int16,
+    pl.Int32,
+    pl.Int64,
+    pl.UInt8,
+    pl.UInt16,
+    pl.UInt32,
+    pl.UInt64,
+)
+
+
+def _int128_comparison_operands(
+    translator: Translator, nodes: Sequence[int], schema: Schema
+) -> list[expr.Expr] | None:
+    """
+    Translate the operands of a comparison that polars widened to Int128.
+
+    Polars has no 64-bit type that holds both a UInt64 and an Int64 value, so
+    when it compares them (for example a ``pl.len()`` count from the 64-bit
+    runtime with an Int64 column) it casts every operand to Int128. libcudf has
+    no 128-bit integer type, but Decimal(38, 0) holds every such value exactly,
+    so compare the operands as that. Int128 is not otherwise supported, so this
+    only recognizes casts of integers, and integer literals next to them, and
+    returns None for anything else.
+    """
+    visitor = translator.visitor
+    # (the input expression node, or the value of a literal), and whether it is a literal
+    operands: list[tuple[int, bool]] = []
+    for n in nodes:
+        node = visitor.view_expression(n)
+        if not isinstance(visitor.get_dtype(n), pl.Int128):
+            return None
+        if isinstance(node, plrs._expr_nodes.Cast) and isinstance(
+            visitor.get_dtype(node.expr), _NARROW_INTEGER_DTYPES
+        ):
+            operands.append((node.expr, False))
+        elif isinstance(node, plrs._expr_nodes.Literal) and type(node.value) is int:
+            operands.append((node.value, True))
+        else:
+            return None
+    decimal = DataType(pl.Decimal(38, 0))
+    result: list[expr.Expr] = []
+    for operand, is_literal in operands:
+        if is_literal:
+            # polars drops literals outside the 64-bit range from a comparison
+            if -(2**63) <= operand < 2**63:
+                literal_dtype = DataType(pl.Int64())
+            elif 0 <= operand < 2**64:
+                literal_dtype = DataType(pl.UInt64())
+            else:  # pragma: no cover; polars simplifies these away
+                raise NotImplementedError(f"Int128 literal {operand}")
+            translated: expr.Expr = expr.Literal(literal_dtype, operand)
+        else:
+            translated = translator.translate_expr(n=operand, schema=schema)
+        result.append(expr.Cast(decimal, True, translated))  # noqa: FBT003
+    return result
+
+
 @_translate_expr.register
 def _(
     node: plrs._expr_nodes.BinaryExpr,
@@ -1891,6 +2040,12 @@ def _(
     dtype: DataType,
     schema: Schema,
 ) -> expr.Expr:
+    if node.op in _INT128_COMPARISON_OPS and (
+        operands := _int128_comparison_operands(
+            translator, (node.left, node.right), schema
+        )
+    ):
+        return expr.BinOp(dtype, expr.BinOp._MAPPING[node.op], *operands)
     left = translator.translate_expr(n=node.left, schema=schema)
     right = translator.translate_expr(n=node.right, schema=schema)
     if isinstance(left.dtype.polars_type, pl.Array) or isinstance(

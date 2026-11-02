@@ -6,8 +6,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
-from functools import partialmethod
+from functools import partialmethod, wraps
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -20,14 +21,44 @@ from cudf_polars.testing.engine_utils import (
     SMALL_MAX_ROWS_PER_PARTITION,
     SMALL_TARGET_PARTITION_SIZE,
 )
-from cudf_polars.testing.fallback import fallback_used, gpu_attempted, gpu_executed
-from cudf_polars.testing.fallback_report import FallbackReport
+from cudf_polars.testing.fallback import (
+    fallback_used,
+    gpu_attempted,
+    gpu_executed,
+)
+from cudf_polars.testing.fallback_report import COLLECTION, FallbackReport
+from cudf_polars.testing.observation import (
+    Observation,
+    begin_observation,
+    bind_observation,
+    end_observation,
+)
 from cudf_polars.utils.config import StreamingFallbackMode
 
 if TYPE_CHECKING:
-    from collections.abc import Generator, Mapping
+    from collections.abc import Callable, Generator, Mapping
 
     from pluggy import Result
+
+OBSERVATION = pytest.StashKey[Observation]()
+OUTCOMES = pytest.StashKey[list[str]]()
+SELECTION = pytest.StashKey[set[str]]()
+COLLECTION_SKIPS = pytest.StashKey[set[str]]()
+
+
+class CollectionSkips:
+    """Distinguish unavailable optional modules from renamed tests."""
+
+    def __init__(self, config: pytest.Config) -> None:
+        self.config = config
+        config.stash[COLLECTION_SKIPS] = set()
+
+    def pytest_collectreport(self, report: pytest.CollectReport) -> None:
+        """Retain module-level import skips before collection filtering."""
+        if report.skipped and "tests/" in report.nodeid:
+            self.config.stash[COLLECTION_SKIPS].add(
+                report.nodeid[report.nodeid.index("tests/") :]
+            )
 
 
 def nonnegative_int(value: str) -> int:
@@ -36,6 +67,19 @@ def nonnegative_int(value: str) -> int:
     if integer < 0:
         raise ValueError(f"Argument {value} must be non-negative")
     return integer
+
+
+def _read_selection(path: str, key: str) -> set[str]:
+    """Validate a versioned run-list entry before selecting any tests."""
+    manifest = json.loads(Path(path).read_text())
+    if manifest["schema_version"] != 1:
+        raise ValueError("Unsupported run-list schema")
+    nodes = manifest["selections"][key]["nodes"]
+    if not isinstance(nodes, list) or not all(isinstance(node, str) for node in nodes):
+        raise ValueError("Invalid run-list nodes")
+    if len(set(nodes)) != len(nodes) or not nodes:
+        raise ValueError("Empty or duplicate run-list nodes")
+    return set(nodes)
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -57,8 +101,8 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         choices=("default", "small"),
         help=(
             "Blocksize mode for the 'spmd' engine. 'small' forces most tests "
-            "onto the multi-partition path. PR CI uses 'default'; nightly uses "
-            "'small'. Ignored for 'in-memory'."
+            "onto the multi-partition path. PR CI uses 'default'; nightlies "
+            "run both modes. Ignored for 'in-memory'."
         ),
     )
     group.addoption(
@@ -73,6 +117,11 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         "--inject-gpu-engine-report",
         metavar="PATH",
         help="Write per-test GPU execution and fallback diagnostics as JSON on the pytest controller.",
+    )
+    group.addoption(
+        "--inject-gpu-engine-run-list",
+        metavar="PATH",
+        help="Select previously observed GPU-executing nodes and require GPU execution on passing items.",
     )
     group.addoption(
         "--cudf-polars-shard-id",
@@ -141,6 +190,18 @@ def pytest_configure(config: pytest.Config) -> None:
     variant = config.getoption("--inject-gpu-engine")
     blocksize = config.getoption("--inject-gpu-engine-blocksize")
     raise_on_fail = config.getoption("--inject-gpu-engine-raise-on-fail")
+    config.pluginmanager.register(
+        CollectionSkips(config), "cudf-polars-collection-skips"
+    )
+    run_list = config.getoption("--inject-gpu-engine-run-list")
+    if run_list:
+        key = f"{polars.__version__}|{variant}|{blocksize if variant == 'spmd' else 'default'}"
+        try:
+            config.stash[SELECTION] = _read_selection(run_list, key)
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            raise pytest.UsageError(
+                f"Cannot select GPU tests for {key}: {error}"
+            ) from error
     validate_shard_options(
         config.getoption("cudf_polars_shard_id"),
         config.getoption("cudf_polars_num_shards"),
@@ -175,6 +236,20 @@ def pytest_configure(config: pytest.Config) -> None:
     config._inject_gpu_engine = engine  # type: ignore[attr-defined]
     _verify_collect_patch(engine)
 
+    post_opt_callback = polars.GPUEngine._post_opt_callback
+
+    @wraps(post_opt_callback)
+    def attributed_callback(
+        self: polars.GPUEngine, *, background: bool, eager: bool
+    ) -> Callable[..., None] | None:
+        callback = post_opt_callback(self, background=background, eager=eager)
+        # Capture ownership before Rust can invoke translation on another thread,
+        # including after the originating item's observation has been retired.
+        return None if callback is None else bind_observation(callback)
+
+    polars.GPUEngine._post_opt_callback = attributed_callback  # type: ignore[method-assign]
+    config._cudf_polars_post_opt_callback = post_opt_callback  # type: ignore[attr-defined]
+
     config.addinivalue_line(
         "filterwarnings",
         "ignore:.*GPU engine does not support streaming or background collection",
@@ -192,11 +267,26 @@ def pytest_runtest_protocol(
     """Give each injected-engine pytest item isolated execution signals."""
     signals = (fallback_used, gpu_attempted, gpu_executed)
     tokens = [signal.set(False) for signal in signals]
+    observation = begin_observation()
+    item.stash[OBSERVATION] = observation
+    item.stash[OUTCOMES] = []
     try:
         yield
     finally:
+        end_observation(observation)
         for signal, token in zip(signals, tokens, strict=True):
             signal.reset(token)
+
+
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
+def pytest_runtest_call(item: pytest.Item) -> Generator[None, None, None]:
+    """Attribute execution signals only to the test body."""
+    observation = item.stash[OBSERVATION]
+    observation.set_in_call(True)
+    try:
+        yield
+    finally:
+        observation.set_in_call(False)
 
 
 @pytest.hookimpl(hookwrapper=True)
@@ -206,15 +296,79 @@ def pytest_runtest_makereport(
     """Attach per-test execution telemetry to each phase's report."""
     outcome = yield
     report = outcome.get_result()
+    signals = item.stash[OBSERVATION].snapshot()
+    previous = item.stash[OUTCOMES]
+    if (
+        report.when == "teardown"
+        and report.passed
+        and previous == ["passed", "passed"]
+        and item.config.getoption("--inject-gpu-engine-run-list")
+        and signals["gpu_executed"] != "true"
+    ):
+        report.outcome = "failed"
+        report.longrepr = "Selected GPU test passed without observed GPU execution"
+    previous.append(report.outcome)
     if item.config.getoption("--inject-gpu-engine-report"):
         # user_properties travel with TestReport across xdist's worker boundary.
         report.user_properties.extend(
-            (name, str(signal.get()).lower())
-            for name, signal in (
-                ("cudf_polars_fallback", fallback_used),
-                ("cudf_polars_gpu_attempted", gpu_attempted),
-                ("cudf_polars_gpu_executed", gpu_executed),
+            (f"cudf_polars_{name}", value) for name, value in signals.items()
+        )
+
+
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> Generator[None, None, None]:
+    """Validate against unfiltered collection before narrowing the PR run."""
+    inventory = {item.nodeid for item in items}
+    selection = config.stash.get(SELECTION, None)
+    collection_skips = config.stash[COLLECTION_SKIPS]
+    if selection is not None:
+        collected_files = {node.split("::", 1)[0] for node in inventory}
+        full_suite = any(
+            Path(arg.split("::", 1)[0]).name == "tests" for arg in config.args
+        )
+        requested = [
+            arg[arg.index("tests/") :] for arg in config.args if "tests/" in arg
+        ]
+        explicit_node = any("::" in arg for arg in config.args)
+        stale = sorted(
+            node
+            for node in selection - inventory
+            if (full_suite or node.split("::", 1)[0] in collected_files)
+            and not any(node.startswith(module) for module in collection_skips)
+            and (
+                not explicit_node
+                or any(
+                    node == arg
+                    or node.startswith(tuple(arg + sep for sep in ("[", "::", "/")))
+                    for arg in requested
+                )
             )
+        )
+        if stale:
+            raise pytest.UsageError("Stale GPU run-list nodes:\n" + "\n".join(stale))
+        deselected = [item for item in items if item.nodeid not in selection]
+        items[:] = [item for item in items if item.nodeid in selection]
+        if deselected:
+            config.hook.pytest_deselected(items=deselected)
+    yield
+    collection: dict[str, object] = {
+        "selection_mode": "gpu" if selection is not None else "full",
+        "collection_nodeids": sorted(inventory),
+        "collection_skips": sorted(collection_skips),
+        "collected_nodeids": sorted(item.nodeid for item in items),
+        "consistent": True,
+    }
+    config.stash[COLLECTION] = collection
+
+
+@pytest.hookimpl
+def pytest_sessionfinish(session: pytest.Session) -> None:
+    """Transport collection metadata alongside worker reports."""
+    if hasattr(session.config, "workeroutput"):
+        session.config.workeroutput["cudf_polars_collection"] = (
+            session.config.stash.get(COLLECTION, {})
         )
 
 
@@ -249,6 +403,9 @@ def _verify_collect_patch(engine: object) -> None:
 
 def pytest_unconfigure(config: pytest.Config) -> None:
     """Tear down the injected engine."""
+    post_opt_callback = getattr(config, "_cudf_polars_post_opt_callback", None)
+    if post_opt_callback is not None:
+        polars.GPUEngine._post_opt_callback = post_opt_callback  # type: ignore[method-assign]
     engine = getattr(config, "_inject_gpu_engine", None)
     if engine is None:
         return
@@ -265,6 +422,18 @@ def pytest_report_header(config: pytest.Config) -> str:
 
 
 EXPECTED_FAILURES: dict[str, str] = {
+    "tests/unit/io/test_delta.py::test_scan_delta_nanosecond_timestamp": "The test asserts on the verbose log of the polars reader, which the GPU engine does not emit",
+    "tests/unit/io/test_iceberg.py::test_scan_iceberg_parquet_prefilter_with_column_mapping[True]": "The test asserts on the verbose log of the polars reader, which the GPU engine does not emit",
+    "tests/unit/io/test_iceberg.py::test_iceberg_filter_bool_26474": "The GPU engine pushes a boolean XOR into the parquet filter, which libcudf's AST does not support. Plain scan_parquet fails the same way",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_iceberg_filter_bool_26474": "The GPU engine pushes a boolean XOR into the parquet filter, which libcudf's AST does not support. Plain scan_parquet fails the same way",
+    "tests/unit/io/test_iceberg.py::test_scan_iceberg_nan_comparisons[predicate0-<lambda>-Float32-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
+    "tests/unit/io/test_iceberg.py::test_scan_iceberg_nan_comparisons[predicate0-<lambda>-Float64-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
+    "tests/unit/io/test_iceberg.py::test_scan_iceberg_nan_comparisons[predicate1-<lambda>-Float32-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
+    "tests/unit/io/test_iceberg.py::test_scan_iceberg_nan_comparisons[predicate1-<lambda>-Float64-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
+    "tests/unit/io/test_iceberg.py::test_scan_iceberg_nan_comparisons[predicate2-<lambda>-Float32-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
+    "tests/unit/io/test_iceberg.py::test_scan_iceberg_nan_comparisons[predicate2-<lambda>-Float64-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
+    "tests/unit/io/test_iceberg.py::test_scan_iceberg_nan_comparisons[predicate3-<lambda>-Float32-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
+    "tests/unit/io/test_iceberg.py::test_scan_iceberg_nan_comparisons[predicate3-<lambda>-Float64-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
     "tests/unit/io/test_io_plugin.py::test_datetime_io_predicate_pushdown_21790": "cudf-polars validates the IO source schema exactly and does not coerce datetime time units (us vs ns)",
     "tests/unit/io/test_lazy_count_star.py::test_count_parquet[small.parquet-4]": "Debug output on stderr doesn't match",
     "tests/unit/io/test_lazy_count_star.py::test_count_parquet[foods*.parquet-54]": "Debug output on stderr doesn't match",
@@ -353,6 +522,7 @@ EXPECTED_FAILURES: dict[str, str] = {
 
 
 TESTS_TO_SKIP: dict[str, str] = {
+    "tests/unit/io/cloud/test_cloud.py::test_scan_http_same_host": "Checks Polars CPU object-store HTTP connection caching, which the GPU engine does not use",
     "tests/unit/io/test_order_keeping_pushdown.py::test_top_k_through_order_keeping_projection[False-expr6]": "Checks verbose logs or metrics specific to the Polars CPU streaming engine",
     "tests/unit/io/test_order_keeping_pushdown.py::test_top_k_through_order_keeping_projection[False-expr7]": "Checks verbose logs or metrics specific to the Polars CPU streaming engine",
     "tests/unit/io/test_order_keeping_pushdown.py::test_top_k_through_order_keeping_projection[True-expr6]": "Checks verbose logs or metrics specific to the Polars CPU streaming engine",
@@ -477,11 +647,67 @@ if packaging.version.parse(sqlite3.sqlite_version) <= packaging.version.parse("3
             "tests/unit/sql/test_window_functions.py::test_window_order_by_nulls_multiple_keys_29390[False-True]": 'sqlite3.OperationalError: near "NULLS": syntax error',
             "tests/unit/sql/test_window_functions.py::test_window_order_by_nulls_multiple_keys_29390[True-False]": 'sqlite3.OperationalError: near "NULLS": syntax error',
             "tests/unit/sql/test_window_functions.py::test_window_order_by_nulls_multiple_keys_29390[True-True]": 'sqlite3.OperationalError: near "NULLS": syntax error',
+            # RIGHT JOIN and FULL JOIN are rejected by the sqlite build in older CI images.
+            "tests/unit/sql/test_correlated_subqueries.py::test_correlated_membership_in_join_on[SELECT a.id, d.y FROM a RIGHT JOIN d ON d.x IN (SELECT c.id FROM c WHERE c.b_id = a.id)]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_correlated_subqueries.py::test_correlated_one_input_condition_in_join_on[a.id, b.w-EXISTS (SELECT 1 FROM c WHERE c.b_id = b.id)-RIGHT JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_correlated_subqueries.py::test_correlated_one_input_condition_in_join_on[a.id, b.w-NOT EXISTS (SELECT 1 FROM c WHERE c.b_id = b.id)-RIGHT JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_correlated_subqueries.py::test_correlated_one_input_condition_in_join_on[a.id, b.w-EXISTS (SELECT 1 FROM c WHERE c.b_id = a.id)-RIGHT JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_correlated_subqueries.py::test_correlated_one_input_condition_in_join_on[a.id, b.w-a.id IN (SELECT c.b_id FROM c WHERE c.id > a.id)-RIGHT JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_correlated_subqueries.py::test_correlated_one_input_condition_in_join_on[a.id, b.w-a.v = (SELECT MAX(c.id) * 10 FROM c WHERE c.b_id = a.id)-RIGHT JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_correlated_subqueries.py::test_correlated_one_input_condition_in_join_on[a.id, b.w-EXISTS (SELECT 1 FROM c WHERE c.b_id = a.id) AND EXISTS (SELECT 1 FROM c WHERE c.b_id = b.id)-RIGHT JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_correlated_subqueries.py::test_correlated_one_input_condition_in_join_on[a.id, b.w-b.id = a.id AND EXISTS (SELECT 1 FROM c WHERE c.b_id = a.id)-RIGHT JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_correlated_subqueries.py::test_correlated_one_input_condition_in_join_on[a.id, b.w-a.id = (SELECT MAX(b.b_id) FROM c AS b WHERE b.b_id = a.id)-RIGHT JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_correlated_subqueries.py::test_correlated_one_input_condition_in_join_on[b.w-EXISTS (SELECT 1 FROM c WHERE c.b_id = b.id)-RIGHT JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_correlated_subqueries.py::test_correlated_one_input_condition_in_join_on[b.w-NOT EXISTS (SELECT 1 FROM c WHERE c.b_id = b.id)-RIGHT JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_correlated_subqueries.py::test_correlated_one_input_condition_in_join_on[b.w-EXISTS (SELECT 1 FROM c WHERE c.b_id = a.id)-RIGHT JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_correlated_subqueries.py::test_correlated_one_input_condition_in_join_on[b.w-a.id IN (SELECT c.b_id FROM c WHERE c.id > a.id)-RIGHT JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_correlated_subqueries.py::test_correlated_one_input_condition_in_join_on[b.w-a.v = (SELECT MAX(c.id) * 10 FROM c WHERE c.b_id = a.id)-RIGHT JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_correlated_subqueries.py::test_correlated_one_input_condition_in_join_on[b.w-EXISTS (SELECT 1 FROM c WHERE c.b_id = a.id) AND EXISTS (SELECT 1 FROM c WHERE c.b_id = b.id)-RIGHT JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_correlated_subqueries.py::test_correlated_one_input_condition_in_join_on[b.w-b.id = a.id AND EXISTS (SELECT 1 FROM c WHERE c.b_id = a.id)-RIGHT JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_correlated_subqueries.py::test_correlated_one_input_condition_in_join_on[b.w-a.id = (SELECT MAX(b.b_id) FROM c AS b WHERE b.b_id = a.id)-RIGHT JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_correlated_subqueries.py::test_correlated_one_input_condition_in_join_on[a.id, b.w-EXISTS (SELECT 1 FROM c WHERE c.b_id = b.id)-FULL JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_correlated_subqueries.py::test_correlated_one_input_condition_in_join_on[a.id, b.w-NOT EXISTS (SELECT 1 FROM c WHERE c.b_id = b.id)-FULL JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_correlated_subqueries.py::test_correlated_one_input_condition_in_join_on[a.id, b.w-EXISTS (SELECT 1 FROM c WHERE c.b_id = a.id)-FULL JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_correlated_subqueries.py::test_correlated_one_input_condition_in_join_on[a.id, b.w-a.id IN (SELECT c.b_id FROM c WHERE c.id > a.id)-FULL JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_correlated_subqueries.py::test_correlated_one_input_condition_in_join_on[a.id, b.w-a.v = (SELECT MAX(c.id) * 10 FROM c WHERE c.b_id = a.id)-FULL JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_correlated_subqueries.py::test_correlated_one_input_condition_in_join_on[a.id, b.w-EXISTS (SELECT 1 FROM c WHERE c.b_id = a.id) AND EXISTS (SELECT 1 FROM c WHERE c.b_id = b.id)-FULL JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_correlated_subqueries.py::test_correlated_one_input_condition_in_join_on[a.id, b.w-b.id = a.id AND EXISTS (SELECT 1 FROM c WHERE c.b_id = a.id)-FULL JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_correlated_subqueries.py::test_correlated_one_input_condition_in_join_on[a.id, b.w-a.id = (SELECT MAX(b.b_id) FROM c AS b WHERE b.b_id = a.id)-FULL JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_correlated_subqueries.py::test_correlated_one_input_condition_in_join_on[b.w-EXISTS (SELECT 1 FROM c WHERE c.b_id = b.id)-FULL JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_correlated_subqueries.py::test_correlated_one_input_condition_in_join_on[b.w-NOT EXISTS (SELECT 1 FROM c WHERE c.b_id = b.id)-FULL JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_correlated_subqueries.py::test_correlated_one_input_condition_in_join_on[b.w-EXISTS (SELECT 1 FROM c WHERE c.b_id = a.id)-FULL JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_correlated_subqueries.py::test_correlated_one_input_condition_in_join_on[b.w-a.id IN (SELECT c.b_id FROM c WHERE c.id > a.id)-FULL JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_correlated_subqueries.py::test_correlated_one_input_condition_in_join_on[b.w-a.v = (SELECT MAX(c.id) * 10 FROM c WHERE c.b_id = a.id)-FULL JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_correlated_subqueries.py::test_correlated_one_input_condition_in_join_on[b.w-EXISTS (SELECT 1 FROM c WHERE c.b_id = a.id) AND EXISTS (SELECT 1 FROM c WHERE c.b_id = b.id)-FULL JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_correlated_subqueries.py::test_correlated_one_input_condition_in_join_on[b.w-b.id = a.id AND EXISTS (SELECT 1 FROM c WHERE c.b_id = a.id)-FULL JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_correlated_subqueries.py::test_correlated_one_input_condition_in_join_on[b.w-a.id = (SELECT MAX(b.b_id) FROM c AS b WHERE b.b_id = a.id)-FULL JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_distinct.py::test_distinct_with_full_outer_join": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_joins.py::test_join_on_uncorrelated_subquery[RIGHT JOIN b ON a.id = b.id AND a.v IN (SELECT x FROM c)]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_joins.py::test_join_on_uncorrelated_subquery[RIGHT JOIN b ON a.id = b.id AND b.v IN (SELECT x FROM c)]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_joins.py::test_join_on_uncorrelated_subquery[FULL JOIN b ON a.id = b.id AND a.v IN (SELECT x FROM c) AND b.v IN (SELECT x FROM c)]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_joins.py::test_join_on_uncorrelated_subquery[FULL JOIN b ON a.v IN (SELECT x FROM c)]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_joins.py::test_join_on_equality_within_one_input[a.k, a.v, a.x, b.k AS bk, b.v AS bv-a.k = a.v-RIGHT JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_joins.py::test_join_on_equality_within_one_input[a.k, a.v, a.x, b.k AS bk, b.v AS bv-x = a.k-RIGHT JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_joins.py::test_join_on_equality_within_one_input[a.k, a.v, a.x, b.k AS bk, b.v AS bv-b.k = b.v-RIGHT JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_joins.py::test_join_on_equality_within_one_input[a.k, a.v, a.x, b.k AS bk, b.v AS bv-a.k = b.k AND a.k = a.v-RIGHT JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_joins.py::test_join_on_equality_within_one_input[a.k, b.k AS bk-a.k = a.v-RIGHT JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_joins.py::test_join_on_equality_within_one_input[a.k, b.k AS bk-x = a.k-RIGHT JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_joins.py::test_join_on_equality_within_one_input[a.k, b.k AS bk-b.k = b.v-RIGHT JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_joins.py::test_join_on_equality_within_one_input[a.k, b.k AS bk-a.k = b.k AND a.k = a.v-RIGHT JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_joins.py::test_join_on_equality_within_one_input[a.k, a.v, a.x, b.k AS bk, b.v AS bv-a.k = a.v-FULL OUTER JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_joins.py::test_join_on_equality_within_one_input[a.k, a.v, a.x, b.k AS bk, b.v AS bv-x = a.k-FULL OUTER JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_joins.py::test_join_on_equality_within_one_input[a.k, a.v, a.x, b.k AS bk, b.v AS bv-b.k = b.v-FULL OUTER JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_joins.py::test_join_on_equality_within_one_input[a.k, a.v, a.x, b.k AS bk, b.v AS bv-a.k = b.k AND a.k = a.v-FULL OUTER JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_joins.py::test_join_on_equality_within_one_input[a.k, b.k AS bk-a.k = a.v-FULL OUTER JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_joins.py::test_join_on_equality_within_one_input[a.k, b.k AS bk-x = a.k-FULL OUTER JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_joins.py::test_join_on_equality_within_one_input[a.k, b.k AS bk-b.k = b.v-FULL OUTER JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
+            "tests/unit/sql/test_joins.py::test_join_on_equality_within_one_input[a.k, b.k AS bk-a.k = b.k AND a.k = a.v-FULL OUTER JOIN]": "sqlite3.OperationalError: RIGHT and FULL OUTER JOINs are not currently supported",
         }
     )
 
 
 STREAMING_ENGINE_TESTS_TO_SKIP: Mapping[str, str] = {
+    "tests/unit/io/test_delta.py::test_scan_delta_nanosecond_timestamp": "Passes under the streaming engine but fails under the in-memory engine, which xfails it",
     "tests/unit/operations/aggregation/test_aggregations.py::test_boolean_aggs": "float difference in std/var in the unit of least precision",
     # Crashes the worker instead of raising cleanly; skip rather than xfail
     # since a crashed worker never reports a result. See
@@ -698,8 +924,8 @@ STREAMING_ENGINE_EXPECTED_FAILURES_SMALL_BLOCKSIZE: Mapping[str, str] = {
 }
 
 
-@pytest.hookimpl(trylast=True)
-def pytest_collection_modifyitems(
+@pytest.hookimpl(trylast=True, specname="pytest_collection_modifyitems")
+def pytest_mark_and_shard_items(
     session: pytest.Session, config: pytest.Config, items: list[pytest.Item]
 ) -> None:
     """Mark known failing tests."""

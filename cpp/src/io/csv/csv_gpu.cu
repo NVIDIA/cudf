@@ -196,9 +196,14 @@ CUDF_KERNEL void __launch_bounds__(csvparse_block_dim)
     // Checking if this is a column that the user wants --- user can filter columns
     if (column_flags[col] & column_parse::inferred) {
       // points to last character in the field
-      auto const field_len      = static_cast<size_t>(next_delimiter - field_start);
-      auto const unquoted_field = trim_quotes(field_start, next_delimiter, opts.quotechar);
-      auto const unquoted_len   = static_cast<size_t>(unquoted_field.second - unquoted_field.first);
+      auto const field_len = static_cast<size_t>(next_delimiter - field_start);
+      auto unquoted_field  = trim_quotes(field_start, next_delimiter, opts.quotechar);
+      if (opts.detect_whitespace_around_quotes) {
+        auto const trimmed  = trim_whitespaces(field_start, next_delimiter);
+        auto const unquoted = trim_quotes(trimmed.first, trimmed.second, opts.quotechar);
+        if (unquoted.first != trimmed.first) { unquoted_field = unquoted; }
+      }
+      auto const unquoted_len = static_cast<size_t>(unquoted_field.second - unquoted_field.first);
       if (serialized_trie_contains(opts.trie_na, {field_start, field_len})) {
         atomicAdd(&d_column_data[actual_col].null_count, 1);
       } else if (serialized_trie_contains(opts.trie_true, {unquoted_field.first, unquoted_len}) ||

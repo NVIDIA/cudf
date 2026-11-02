@@ -1128,8 +1128,12 @@ cdef class ChunkedParquetWriterOptionsBuilder:
         Set to true if timestamps are to be annotated as UTC
         (``isAdjustedToUTC=true``).
 
-        Only the annotation is affected; timestamp values are written as-is
-        and are not converted.
+        The same flag applies to durations written with the Parquet ``TIME``
+        logical type. When the arrow schema is written, it also sets the
+        timestamp timezone in that schema (``"UTC"`` or none); durations other
+        than days are then written as unannotated ``INT64`` and are unaffected.
+        Only the metadata is affected; values are written as-is and are not
+        converted.
 
         Parameters
         ----------

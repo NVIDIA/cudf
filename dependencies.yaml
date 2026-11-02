@@ -6,7 +6,7 @@ files:
   all:
     output: conda
     matrix:
-      cuda: ["12.9", "13.3"]
+      cuda: ["12.9", "13.4"]
       arch: [x86_64, aarch64]
     includes:
       - build_base
@@ -193,6 +193,19 @@ files:
       - develop
       - iwyu
       - py_version
+  test_cpp_debug:
+    output: none
+    includes:
+      - build_all
+      - build_base
+      - build_cpp
+      - cuda
+      - cuda_version
+      - depends_on_libkvikio
+      - depends_on_libnvcomp
+      - depends_on_librmm
+      - depends_on_rapids_logger
+      - test_cpp
   docs:
     output: none
     includes:
@@ -720,7 +733,7 @@ files:
   test_cudf_pandas_compat:
     output: none
     matrix:
-      cuda: ["12.9", "13.3"]
+      cuda: ["12.9", "13.4"]
       pandas_compat_version: ["3.0"]
     includes:
       - test_cudf_pandas_compat
@@ -882,6 +895,10 @@ dependencies:
               cuda: "13.3"
             packages:
               - cuda-version=13.3
+          - matrix:
+              cuda: "13.4"
+            packages:
+              - cuda-version=13.4
       - output_types: [requirements, constraints]
         matrices:
           # if use_cuda_wheels=false is provided, do not add dependencies on any CUDA wheels
@@ -943,6 +960,11 @@ dependencies:
               use_cuda_wheels: "true"
             packages:
               - cuda-toolkit==13.3.*
+          - matrix:
+              cuda: "13.4"
+              use_cuda_wheels: "true"
+            packages:
+              - cuda-toolkit==13.4.*
   cuda:
     common:
       - output_types: [conda]
@@ -980,7 +1002,7 @@ dependencies:
               use_cuda_wheels: "true"
             packages:
               - cuda-toolkit[nvrtc]==13.*
-              - &nvjitlink_cu13 nvidia-nvjitlink>=13.3,<14
+              - &nvjitlink_cu13 nvidia-nvjitlink>=13.4,<14
           # if no matching matrix selectors passed, list the CUDA 13 requirement
           # (just as a source of documentation, as this populates pyproject.toml in source control)
           - matrix:

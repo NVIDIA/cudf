@@ -230,7 +230,11 @@ def _(node: expr.BinOp, self: Transformer) -> plc_expr.Expression:
 def _(node: expr.BooleanFunction, self: Transformer) -> plc_expr.Expression:
     if node.name is expr.BooleanFunction.Name.IsIn:
         needles, haystack = node.children
-        if isinstance(haystack, expr.LiteralColumn):
+        (nulls_equal,) = node.options
+        # EQUAL gives null for a null needle, which is only what ``is_in`` does
+        # when nulls are not equal. Otherwise it is false, which matters when
+        # the result is negated.
+        if not nulls_equal and isinstance(haystack, expr.LiteralColumn):
             haystack_values = haystack.value
             if haystack_values.dtype == pl.List:
                 # An imploded literal is a one-row list column, use the inner values

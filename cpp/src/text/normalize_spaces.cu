@@ -282,7 +282,7 @@ std::unique_ptr<cudf::column> normalize_spaces(cudf::strings_column_view const& 
     static_cast<int64_t>(reinterpret_cast<std::uintptr_t>(d_input_chars) % bytes_per_thread);
   auto const d_input = spaces_input{d_input_chars - shift, shift, shift + chars_size};
 
-  cudf::detail::grid_1d grid{cudf::util::div_rounding_up_safe(d_input.end, bytes_per_thread),
+  cudf::detail::grid_1d grid{cudf::detail::div_rounding_up_safe(d_input.end, bytes_per_thread),
                              block_size};
   auto const num_warps =
     static_cast<std::size_t>(grid.num_blocks * (block_size / cudf::detail::warp_size));

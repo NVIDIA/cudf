@@ -710,6 +710,7 @@ def test_remap_repeated_right_join_metadata_uses_suffix(translation_engine) -> N
         translated.left_on,
         translated.right_on,
         translated.options,
+        translated.predicate,
         right_ir,
         right_ir,
     )

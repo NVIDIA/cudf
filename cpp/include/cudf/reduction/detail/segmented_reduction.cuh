@@ -8,15 +8,21 @@
 #include "reduction_operators.cuh"
 
 #include <cudf/detail/utilities/cast_functor.cuh>
+#include <cudf/reduction/detail/reduction_policy.cuh>
+#include <cudf/utilities/error.hpp>
+#include <cudf/utilities/execution_env.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_buffer.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_segmented_reduce.cuh>
+#include <cuda/execution>
 #include <cuda/iterator>
+#include <cuda/std/execution>
 #include <cuda/stream>
 #include <thrust/transform.h>
+
+#include <type_traits>
 
 namespace cudf {
 namespace reduction {
@@ -57,31 +63,15 @@ void segmented_reduce(InputIterator d_in,
 {
   auto const num_segments = static_cast<size_type>(std::distance(d_offset_begin, d_offset_end)) - 1;
   auto const binary_op    = cudf::detail::cast_functor<OutputType>(op);
-  // Allocate temporary storage
-  size_t temp_storage_bytes = 0;
-  cub::DeviceSegmentedReduce::Reduce(nullptr,
-                                     temp_storage_bytes,
-                                     d_in,
-                                     d_out,
-                                     num_segments,
-                                     d_offset_begin,
-                                     d_offset_begin + 1,
-                                     binary_op,
-                                     initial_value,
-                                     stream.get());
-  auto d_temp_storage = rmm::device_buffer{temp_storage_bytes, stream};
-
-  // Run reduction
-  cub::DeviceSegmentedReduce::Reduce(d_temp_storage.data(),
-                                     temp_storage_bytes,
-                                     d_in,
-                                     d_out,
-                                     num_segments,
-                                     d_offset_begin,
-                                     d_offset_begin + 1,
-                                     binary_op,
-                                     initial_value,
-                                     stream.get());
+  CUDF_CUDA_TRY(cub::DeviceSegmentedReduce::Reduce(
+    d_in,
+    d_out,
+    num_segments,
+    d_offset_begin,
+    d_offset_begin + 1,
+    binary_op,
+    initial_value,
+    cudf::detail::make_env(stream, cudf::get_current_device_resource_ref())));
 }
 
 template <typename InputIterator,
@@ -143,31 +133,27 @@ void segmented_reduce(InputIterator d_in,
   rmm::device_uvector<IntermediateType> intermediate_result{static_cast<std::size_t>(num_segments),
                                                             stream};
 
-  // Allocate temporary storage
-  size_t temp_storage_bytes = 0;
-  cub::DeviceSegmentedReduce::Reduce(nullptr,
-                                     temp_storage_bytes,
-                                     d_in,
-                                     intermediate_result.data(),
-                                     num_segments,
-                                     d_offset_begin,
-                                     d_offset_begin + 1,
-                                     binary_op,
-                                     initial_value,
-                                     stream.get());
-  auto d_temp_storage = rmm::device_buffer{temp_storage_bytes, stream};
-
-  // Run reduction
-  cub::DeviceSegmentedReduce::Reduce(d_temp_storage.data(),
-                                     temp_storage_bytes,
-                                     d_in,
-                                     intermediate_result.data(),
-                                     num_segments,
-                                     d_offset_begin,
-                                     d_offset_begin + 1,
-                                     binary_op,
-                                     initial_value,
-                                     stream.get());
+  auto const env = [&] {
+    if constexpr (std::is_same_v<Op, op::variance> || std::is_same_v<Op, op::standard_deviation>) {
+      return cudf::detail::make_env(
+        stream,
+        cudf::get_current_device_resource_ref(),
+        cuda::execution::tune(
+          variance_segmented_reduce_policy<IntermediateType,
+                                           cuda::std::iter_value_t<OffsetIterator>,
+                                           std::remove_cv_t<decltype(binary_op)>>{}));
+    } else {
+      return cudf::detail::make_env(stream, cudf::get_current_device_resource_ref());
+    }
+  }();
+  CUDF_CUDA_TRY(cub::DeviceSegmentedReduce::Reduce(d_in,
+                                                   intermediate_result.data(),
+                                                   num_segments,
+                                                   d_offset_begin,
+                                                   d_offset_begin + 1,
+                                                   binary_op,
+                                                   initial_value,
+                                                   env));
 
   // compute the result value from intermediate value in device
   thrust::transform(

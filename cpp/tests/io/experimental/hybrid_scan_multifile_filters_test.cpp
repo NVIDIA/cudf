@@ -23,6 +23,8 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <cuda/std/type_traits>
+
 #include <algorithm>
 #include <cstdint>
 #include <iterator>
@@ -240,7 +242,7 @@ TEST_F(HybridScanMultifileFiltersTest, MismatchedNullabilityDoesNotLeakIntoMetad
 
   auto const options =
     cudf::io::parquet_reader_options::builder().allow_mismatched_pq_schemas(true).build();
-  auto const reader =
+  auto reader =
     cudf::io::parquet::experimental::hybrid_scan_multifile{inputs.footer_byte_spans, options};
 
   // `col0` is REQUIRED in the first source, and stays REQUIRED in the reported metadata even
@@ -268,7 +270,7 @@ TEST_F(HybridScanMultifileFiltersTest, MismatchedNullabilityDoesNotLeakIntoMetad
   EXPECT_EQ(col0_repetition_type(metadatas), cudf::io::parquet::FieldRepetitionType::REQUIRED);
 
   // A reader built from that metadata must produce the same (nullable)table.
-  auto const reader_from_metadata =
+  auto reader_from_metadata =
     cudf::io::parquet::experimental::hybrid_scan_multifile{std::move(metadatas), options};
   auto downstream_column_data = fetch_multisource_device_data(
     inputs, reader_from_metadata.all_column_chunks_byte_ranges(row_groups, options), stream, mr);
@@ -315,7 +317,8 @@ TEST_F(HybridScanMultifileFiltersTest, EmptySource)
   EXPECT_FALSE(page_index_byte_ranges.front().is_empty());
   EXPECT_TRUE(page_index_byte_ranges.back().is_empty());
 
-  auto const passes = reader->construct_row_group_passes(all_rgs, 1);
+  auto const passes = reader->construct_row_group_passes(
+    cudf::io::parquet::experimental::read_columns_mode::ALL_COLUMNS, all_rgs, 1, options);
   ASSERT_EQ(passes.size(), all_rgs.front().size());
   for (auto const& pass : passes) {
     ASSERT_EQ(pass.size(), num_sources);
@@ -354,22 +357,29 @@ TEST_F(HybridScanMultifileFiltersTest, RowGroupPasses)
   {
     auto invalid_rgs = all_rgs;
     invalid_rgs.pop_back();
-    EXPECT_THROW(static_cast<void>(reader->construct_row_group_passes(invalid_rgs, 0)),
-                 std::invalid_argument);
+    EXPECT_THROW(
+      std::ignore = reader->construct_row_group_passes(
+        cudf::io::parquet::experimental::read_columns_mode::ALL_COLUMNS, invalid_rgs, 0, options),
+      std::invalid_argument);
   }
 
   // Empty row group indices => throw error
   {
     auto const empty_rgs = std::vector<std::vector<cudf::size_type>>(num_sources);
-    EXPECT_THROW(static_cast<void>(reader->construct_row_group_passes(empty_rgs, 0)),
-                 std::invalid_argument);
-    EXPECT_THROW(static_cast<void>(reader->construct_row_group_passes(empty_rgs, 1)),
-                 std::invalid_argument);
+    EXPECT_THROW(
+      std::ignore = reader->construct_row_group_passes(
+        cudf::io::parquet::experimental::read_columns_mode::ALL_COLUMNS, empty_rgs, 0, options),
+      std::invalid_argument);
+    EXPECT_THROW(
+      std::ignore = reader->construct_row_group_passes(
+        cudf::io::parquet::experimental::read_columns_mode::ALL_COLUMNS, empty_rgs, 1, options),
+      std::invalid_argument);
   }
 
   // Zero pass read limit => single pass with all row groups
   {
-    auto const passes = reader->construct_row_group_passes(all_rgs, 0);
+    auto const passes = reader->construct_row_group_passes(
+      cudf::io::parquet::experimental::read_columns_mode::ALL_COLUMNS, all_rgs, 0, options);
     ASSERT_EQ(passes.size(), 1);
     ASSERT_EQ(passes.front().size(), num_sources);
     EXPECT_EQ(passes.front(), all_rgs);
@@ -377,7 +387,8 @@ TEST_F(HybridScanMultifileFiltersTest, RowGroupPasses)
 
   // Small pass read limit => each row group in its own pass
   {
-    auto const passes = reader->construct_row_group_passes(all_rgs, 1);
+    auto const passes = reader->construct_row_group_passes(
+      cudf::io::parquet::experimental::read_columns_mode::ALL_COLUMNS, all_rgs, 1, options);
     ASSERT_EQ(passes.size(), num_sources * all_rgs.front().size());
     for (auto const& pass : passes) {
       ASSERT_EQ(pass.size(), num_sources);
@@ -391,7 +402,8 @@ TEST_F(HybridScanMultifileFiltersTest, RowGroupPasses)
 
   // Large pass read limit => multiple passes
   {
-    auto const passes = reader->construct_row_group_passes(all_rgs, 10'000);
+    auto const passes = reader->construct_row_group_passes(
+      cudf::io::parquet::experimental::read_columns_mode::ALL_COLUMNS, all_rgs, 10'000, options);
     ASSERT_GT(passes.size(), 1);
     auto const pass_num_row_groups = [](auto const& pass) {
       return std::accumulate(
@@ -449,10 +461,16 @@ TEST_F(HybridScanMultifileFiltersTest, RowGroupPassesSingleSourceParity)
   auto const all_rgs = multifile_reader->all_row_groups(options);
   ASSERT_EQ(all_rgs.size(), 1);
   auto constexpr pass_read_limit = std::size_t{10'000};
-  auto const multifile_passes =
-    multifile_reader->construct_row_group_passes(all_rgs, pass_read_limit);
-  auto const single_file_passes =
-    single_file_reader->construct_row_group_passes(all_rgs.front(), pass_read_limit);
+  auto const multifile_passes    = multifile_reader->construct_row_group_passes(
+    cudf::io::parquet::experimental::read_columns_mode::ALL_COLUMNS,
+    all_rgs,
+    pass_read_limit,
+    options);
+  auto const single_file_passes = single_file_reader->construct_row_group_passes(
+    cudf::io::parquet::experimental::read_columns_mode::ALL_COLUMNS,
+    all_rgs.front(),
+    pass_read_limit,
+    options);
 
   auto projected_passes = std::vector<std::vector<cudf::size_type>>{};
   projected_passes.reserve(multifile_passes.size());
@@ -776,7 +794,7 @@ TYPED_TEST(HybridScanMultifilePageIndexRowMaskTest, BuildRowMaskWithPageIndexSta
     auto filter_expression =
       cudf::ast::operation(cudf::ast::ast_operator::GREATER, literal, col_ref);
     auto constexpr expected_surviving_rows =
-      num_sources * num_ordered_rows / (std::is_signed_v<T> ? 4 : 2);
+      num_sources * num_ordered_rows / (cuda::std::is_signed_v<T> ? 4 : 2);
     test_filter_data_pages_with_stats(filter_expression, expected_surviving_rows);
   }
 
@@ -788,7 +806,7 @@ TYPED_TEST(HybridScanMultifilePageIndexRowMaskTest, BuildRowMaskWithPageIndexSta
     auto filter_expression =
       cudf::ast::operation(cudf::ast::ast_operator::GREATER_EQUAL, col_ref, literal);
     auto constexpr expected_surviving_rows =
-      num_sources * num_ordered_rows / (std::is_signed_v<T> ? 4 : 2);
+      num_sources * num_ordered_rows / (cuda::std::is_signed_v<T> ? 4 : 2);
     test_filter_data_pages_with_stats(filter_expression, expected_surviving_rows);
   }
 

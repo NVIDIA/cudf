@@ -54,7 +54,6 @@ def _make_ordering(
     order: plc.types.Order = plc.types.Order.ASCENDING,
     null_order: plc.types.NullOrder = plc.types.NullOrder.BEFORE,
     strict: bool = True,
-    locally_ordered: bool = True,
     stream: Stream,
 ) -> Ordering:
     boundary_rows: list[_Boundary] = (
@@ -88,7 +87,6 @@ def _make_ordering(
             br=context.br(),
         ),
         strict_boundaries=strict,
-        locally_ordered=locally_ordered,
     )
 
 
@@ -121,6 +119,7 @@ async def _adjust_and_collect(
     input_ordering: Ordering,
     output_ordering: Ordering,
     *,
+    input_rows_ordered: bool = True,
     collective_id: int,
 ) -> dict[int, pl.DataFrame]:
     """Run adjustment and collect output chunks by partition ID."""
@@ -168,6 +167,7 @@ async def _adjust_and_collect(
                 ch_in,
                 input_ordering,
                 output_ordering,
+                input_rows_ordered=input_rows_ordered,
                 collective_id=collective_id,
             ),
             _consume(),
@@ -192,6 +192,7 @@ async def _adjust_direct(
     input_ordering: Ordering,
     output_ordering: Ordering,
     *,
+    input_rows_ordered: bool = True,
     collective_id: int,
 ) -> None:
     ch_in = context.create_channel()
@@ -209,6 +210,7 @@ async def _adjust_direct(
             ch_in,
             input_ordering,
             output_ordering,
+            input_rows_ordered=input_rows_ordered,
             collective_id=collective_id,
         )
 
@@ -548,7 +550,6 @@ def test_adjust_ordering_locally_sorts_unordered_input(
     input_ordering = _make_ordering(
         context,
         4,
-        locally_ordered=False,
         stream=stream,
     )
     output_ordering = _make_ordering(context, 4, stream=stream)
@@ -560,6 +561,7 @@ def test_adjust_ordering_locally_sorts_unordered_input(
                 [_frame([3, 0, 2, 1]), _frame([7, 5, 6, 4])],
                 input_ordering,
                 output_ordering,
+                input_rows_ordered=False,
                 collective_id=op_id,
             )
         )
@@ -568,7 +570,7 @@ def test_adjust_ordering_locally_sorts_unordered_input(
 
 
 @pytest.mark.spmd
-def test_adjust_ordering_merges_locally_unordered_multi_chunk_output(
+def test_adjust_ordering_concatenates_locally_unordered_chunks(
     spmd_engine: SPMDEngine,
 ) -> None:
     context = spmd_engine.context
@@ -579,8 +581,7 @@ def test_adjust_ordering_merges_locally_unordered_multi_chunk_output(
     stream = context.br().stream_pool.get_stream()
     input_ordering = _make_ordering(
         context,
-        4,
-        locally_ordered=False,
+        [2, 4, 6],
         stream=stream,
     )
     output_ordering = _make_ordering(context, 4, stream=stream)
@@ -589,9 +590,10 @@ def test_adjust_ordering_merges_locally_unordered_multi_chunk_output(
             _adjust_and_collect(
                 context,
                 comm,
-                [_frame([3, 0]), _frame([2, 1]), _frame([7, 5]), _frame([6, 4])],
+                [_frame([1, 0]), _frame([3, 2]), _frame([5, 4]), _frame([7, 6])],
                 input_ordering,
                 output_ordering,
+                input_rows_ordered=False,
                 collective_id=op_id,
             )
         )

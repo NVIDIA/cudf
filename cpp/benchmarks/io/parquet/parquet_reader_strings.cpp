@@ -75,8 +75,13 @@ void BM_parquet_read_file_shape(nvbench::state& state)
     static_cast<cudf::size_type>(state.get_int64("pages_per_row_group"));
   auto const has_page_idx = static_cast<bool>(state.get_int64("has_page_idx"));
 
-  auto source_sink = write_file_shape_parquet_file(
-    d_type, num_rows, num_row_groups, num_pages_per_row_group, source_type, has_page_idx);
+  data_profile const profile = data_profile_builder().cardinality(num_rows / 10).avg_run_length(4);
+  auto source_sink           = write_file_shape_parquet_file(
+    create_random_table({d_type}, row_count{num_rows}, profile)->view(),
+    num_row_groups,
+    num_pages_per_row_group,
+    source_type,
+    has_page_idx);
 
   cudf::io::parquet_reader_options read_opts =
     cudf::io::parquet_reader_options::builder(source_sink.make_source_info());

@@ -11,20 +11,21 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <thrust/binary_search.h>
 
 namespace cudf {
 namespace detail {
 
-rmm::device_uvector<size_type> get_segment_indices(size_type num_rows,
+cuda::device_buffer<size_type> get_segment_indices(size_type num_rows,
                                                    column_view const& offsets,
                                                    cuda::stream_ref stream)
 {
-  rmm::device_uvector<size_type> segment_ids(num_rows, stream);
+  cuda::device_buffer<size_type> segment_ids(
+    stream, cudf::get_current_device_resource_ref(), num_rows, cuda::no_init);
 
   auto offset_begin  = offsets.begin<size_type>();
   auto offset_end    = offsets.end<size_type>();

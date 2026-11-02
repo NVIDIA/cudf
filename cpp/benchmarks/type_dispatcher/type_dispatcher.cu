@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <benchmarks/common/memory_stats.hpp>
+
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_view.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
@@ -11,8 +13,9 @@
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_buffer.hpp>
+#include <cuda/buffer>
 
 #include <nvbench/nvbench.cuh>
 
@@ -178,13 +181,18 @@ void type_dispatcher_benchmark(nvbench::state& state)
   cudf::mutable_table_view source_table{source_columns};
 
   // For no dispatching
-  std::vector<rmm::device_buffer> h_vec(n_cols);
+  std::vector<cuda::device_buffer<TypeParam>> h_vec;
+  h_vec.reserve(n_cols);
+  for (int i = 0; i < n_cols; ++i) {
+    h_vec.emplace_back(cudf::get_default_stream(),
+                       cudf::get_current_device_resource_ref(),
+                       source_size,
+                       cuda::no_init);
+  }
   std::vector<TypeParam*> h_vec_p(n_cols);
-  std::transform(h_vec.begin(), h_vec.end(), h_vec_p.begin(), [source_size](auto& col) {
-    col.resize(source_size * sizeof(TypeParam), cudf::get_default_stream());
-    return static_cast<TypeParam*>(col.data());
-  });
-  rmm::device_uvector<TypeParam*> d_vec(n_cols, cudf::get_default_stream());
+  std::transform(h_vec.begin(), h_vec.end(), h_vec_p.begin(), [](auto& col) { return col.data(); });
+  cuda::device_buffer<TypeParam*> d_vec(
+    cudf::get_default_stream(), cudf::get_current_device_resource_ref(), n_cols, cuda::no_init);
 
   if (dispatching_type == NO_DISPATCHING) {
     CUDF_CUDA_TRY(
@@ -202,9 +210,12 @@ void type_dispatcher_benchmark(nvbench::state& state)
   launch_kernel<functor_type, dispatching_type>(source_table, d_vec.data(), work_per_thread);
   CUDF_CUDA_TRY(cudaDeviceSynchronize());
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
     launch_kernel<functor_type, dispatching_type>(source_table, d_vec.data(), work_per_thread);
   });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 void bench_fp64_bandwidth_host(nvbench::state& state)

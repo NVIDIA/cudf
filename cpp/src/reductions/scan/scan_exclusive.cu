@@ -96,8 +96,7 @@ std::unique_ptr<column> scan_exclusive(column_view const& input,
     return std::make_pair(cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), size_type{0});
   }();
 
-  auto output = scan_agg_dispatch<scan_dispatcher>(
-    input, agg, reinterpret_cast<bitmask_type*>(mask.data()), stream, mr);
+  auto output = scan_agg_dispatch<scan_dispatcher>(input, agg, mask.data(), stream, mr);
   output->set_null_mask(std::move(mask), null_count);
 
   return output;

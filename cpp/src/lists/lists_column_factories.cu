@@ -16,7 +16,6 @@
 
 #include <cuda/iterator>
 #include <cuda/stream>
-#include <thrust/sequence.h>
 
 namespace cudf {
 namespace lists {
@@ -25,7 +24,7 @@ namespace detail {
 std::unique_ptr<cudf::column> make_lists_column_from_scalar(list_scalar const& value,
                                                             size_type size,
                                                             cuda::stream_ref stream,
-                                                            rmm::device_async_resource_ref mr)
+                                                            cudf::memory_resources mr)
 {
   if (size == 0) {
     return make_lists_column(
@@ -35,30 +34,27 @@ std::unique_ptr<cudf::column> make_lists_column_from_scalar(list_scalar const& v
       0,
       cudf::detail::create_null_mask(0, mask_state::UNALLOCATED, stream, mr));
   }
-  auto mr_final = size == 1 ? mr : cudf::get_current_device_resource_ref();
+  // The 1-row column is the result when `size == 1`; otherwise it is an intermediate input to
+  // the gather below.
+  auto const row_mr = size == 1 ? mr : mr.as_temporary();
 
   // Handcraft a 1-row column
   auto sizes_itr = cuda::constant_iterator<size_type>(value.view().size());
-  auto offsets   = std::get<0>(
-    cudf::detail::make_offsets_child_column(sizes_itr, sizes_itr + 1, stream, mr_final));
+  auto offsets =
+    std::get<0>(cudf::detail::make_offsets_child_column(sizes_itr, sizes_itr + 1, stream, row_mr));
   size_type null_count = value.is_valid(stream) ? 0 : 1;
   auto null_mask_state = null_count ? mask_state::ALL_NULL : mask_state::UNALLOCATED;
-  auto null_mask       = cudf::detail::create_null_mask(1, null_mask_state, stream, mr_final);
+  auto null_mask       = cudf::detail::create_null_mask(1, null_mask_state, stream, row_mr);
 
   if (size == 1) {
-    auto child = std::make_unique<column>(value.view(), stream, mr_final);
+    auto child = std::make_unique<column>(value.view(), stream, mr.get_output_mr());
     return make_lists_column(
       1, std::move(offsets), std::move(child), null_count, std::move(null_mask));
   }
 
   auto children_views   = std::vector<column_view>{offsets->view(), value.view()};
-  auto one_row_col_view = column_view(data_type{type_id::LIST},
-                                      1,
-                                      nullptr,
-                                      reinterpret_cast<bitmask_type const*>(null_mask.data()),
-                                      null_count,
-                                      0,
-                                      children_views);
+  auto one_row_col_view = column_view(
+    data_type{type_id::LIST}, 1, nullptr, null_mask.data(), null_count, 0, children_views);
 
   auto begin = cuda::make_constant_iterator(0);
   auto res   = cudf::detail::gather(table_view({one_row_col_view}),
@@ -66,7 +62,7 @@ std::unique_ptr<cudf::column> make_lists_column_from_scalar(list_scalar const& v
                                   begin + size,
                                   out_of_bounds_policy::DONT_CHECK,
                                   stream,
-                                  mr_final);
+                                  mr);
   return std::move(res->release()[0]);
 }
 
@@ -84,11 +80,11 @@ std::unique_ptr<column> make_empty_lists_column(data_type child_type)
 std::unique_ptr<column> make_all_nulls_lists_column(size_type size,
                                                     data_type child_type,
                                                     cuda::stream_ref stream,
-                                                    rmm::device_async_resource_ref mr)
+                                                    cudf::memory_resources mr)
 {
   auto offsets = [&] {
     auto offsets_buff =
-      cudf::detail::make_zeroed_device_uvector_async<int32_t>(size + 1, stream, mr);
+      cudf::detail::make_zeroed_device_uvector_async<int32_t>(size + 1, stream, mr.get_output_mr());
     return std::make_unique<column>(
       std::move(offsets_buff), cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
   }();
@@ -112,7 +108,7 @@ std::unique_ptr<column> make_lists_column(size_type num_rows,
                                           std::unique_ptr<column> offsets_column,
                                           std::unique_ptr<column> child_column,
                                           size_type null_count,
-                                          cuda::device_buffer<std::byte>&& null_mask)
+                                          cuda::device_buffer<cudf::bitmask_type>&& null_mask)
 {
   if (null_count > 0) { CUDF_EXPECTS(null_mask.size() > 0, "Column with nulls must be nullable."); }
   CUDF_EXPECTS(

@@ -18,12 +18,12 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/prefetch.hpp>
 
-#include <rmm/device_buffer.hpp>
 #include <rmm/exec_policy.hpp>
 
-#include <cub/cub.cuh>
+#include <cub/device/device_memcpy.cuh>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/std/execution>
 #include <cuda/std/iterator>
 #include <cuda/stream>
 #include <thrust/binary_search.h>
@@ -269,8 +269,8 @@ std::unique_ptr<cudf::column> gather(strings_column_view const& strings,
   if (average_string_length > string_parallel_threshold) {
     constexpr int max_threadblocks = 65536;
     auto const grid_size =
-      min(cudf::util::div_rounding_up_safe(static_cast<int64_t>(output_count),
-                                           static_cast<int64_t>(warps_per_threadblock)),
+      min(cudf::detail::div_rounding_up_safe(static_cast<int64_t>(output_count),
+                                             static_cast<int64_t>(warps_per_threadblock)),
           static_cast<int64_t>(max_threadblocks));
     gather_chars_fn_string_parallel<<<grid_size,
                                       warps_per_threadblock * cudf::detail::warp_size,
@@ -285,7 +285,7 @@ std::unique_ptr<cudf::column> gather(strings_column_view const& strings,
 
     if (output_count < cub_batch_copy_threshold) {
       constexpr int strings_per_threadblock = 32;
-      auto const grid_size                  = cudf::util::div_rounding_up_safe(
+      auto const grid_size                  = cudf::detail::div_rounding_up_safe(
         static_cast<int64_t>(output_count), static_cast<int64_t>(strings_per_threadblock));
       gather_chars_fn_char_parallel<strings_per_threadblock>
         <<<grid_size, warps_per_threadblock * cudf::detail::warp_size, 0, stream.get()>>>(
@@ -310,27 +310,11 @@ std::unique_ptr<cudf::column> gather(strings_column_view const& strings,
             return d_out_chars + offsets_view[idx];
           }));
 
-      // Determine temporary device storage requirements
-      size_t temp_storage_bytes = 0;
-      cub::DeviceMemcpy::Batched(nullptr,
-                                 temp_storage_bytes,
-                                 in_chars_itr,
-                                 out_chars_itr,
-                                 sizes_itr,
-                                 output_count,
-                                 stream.get());
-
-      // Allocate temporary storage
-      auto d_temp_storage = rmm::device_buffer(temp_storage_bytes, stream, temp_mr);
-
-      // Run batched copy algorithm
-      cub::DeviceMemcpy::Batched(d_temp_storage.data(),
-                                 temp_storage_bytes,
-                                 in_chars_itr,
-                                 out_chars_itr,
-                                 sizes_itr,
-                                 output_count,
-                                 stream.get());
+      auto env = cuda::std::execution::env{
+        cuda::std::execution::prop{cuda::get_stream_t{}, stream},
+        cuda::std::execution::prop{cuda::mr::get_memory_resource_t{}, temp_mr}};
+      CUDF_CUDA_TRY(
+        cub::DeviceMemcpy::Batched(in_chars_itr, out_chars_itr, sizes_itr, output_count, env));
     }
   }
 

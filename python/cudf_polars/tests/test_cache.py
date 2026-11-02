@@ -53,7 +53,6 @@ def test_cache(engine: pl.GPUEngine):
     node_cache = HitCounter()
     qir.evaluate(
         cache=node_cache,
-        timer=None,
         context=IRExecutionContext(),
     )
     assert len(node_cache) == 0

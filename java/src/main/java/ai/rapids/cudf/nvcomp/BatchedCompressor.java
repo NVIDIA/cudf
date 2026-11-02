@@ -81,7 +81,7 @@ public abstract class BatchedCompressor {
             outputChunkAddrs);
 
         final long tempBufferSize = batchedCompressGetTempSize(numChunks, chunkSize,
-          numChunks * chunkSize);
+          numChunks * chunkSize, stream.getStream());
         try (DeviceMemoryBuffer addrsAndSizes = putAddrsAndSizesOnDevice(inputChunkAddrs,
                 inputChunkSizes, outputChunkAddrs, stream);
              DeviceMemoryBuffer tempBuffer =
@@ -299,10 +299,11 @@ public abstract class BatchedCompressor {
    * @param batchSize number of chunks in the batch
    * @param maxChunkSize maximum size of an uncompressed chunk in bytes
    * @param totalSize Upper bound on the total uncompressed size of all chunks
+   * @param stream CUDA stream to use
    * @return The size of required temporary workspace in bytes to compress the batch.
    */
   protected abstract long batchedCompressGetTempSize(long batchSize, long maxChunkSize,
-    long totalSize);
+    long totalSize, long stream);
 
    /**
    * Asynchronously compress a batch of buffers. Note that compressedSizesOutPtr must

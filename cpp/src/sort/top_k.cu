@@ -22,6 +22,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_topk.cuh>
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/execution>
 #include <cuda/stream>
@@ -61,13 +62,15 @@ struct dispatch_topk_fn {
     if (topk_order == order::ASCENDING) {
       CUDF_CUDA_TRY(cub::DeviceTopK::MinPairs(
         nullptr, tmp_size, keys_in, keys_out, vals_in, vals_out, size, k, env));
-      auto tmp = rmm::device_buffer(tmp_size, stream);
+      auto tmp = cuda::device_buffer<std::byte>(
+        stream, cudf::get_current_device_resource_ref(), tmp_size, cuda::no_init);
       CUDF_CUDA_TRY(cub::DeviceTopK::MinPairs(
         tmp.data(), tmp_size, keys_in, keys_out, vals_in, vals_out, size, k, env));
     } else {
       CUDF_CUDA_TRY(cub::DeviceTopK::MaxPairs(
         nullptr, tmp_size, keys_in, keys_out, vals_in, vals_out, size, k, env));
-      auto tmp = rmm::device_buffer(tmp_size, stream);
+      auto tmp = cuda::device_buffer<std::byte>(
+        stream, cudf::get_current_device_resource_ref(), tmp_size, cuda::no_init);
       CUDF_CUDA_TRY(cub::DeviceTopK::MaxPairs(
         tmp.data(), tmp_size, keys_in, keys_out, vals_in, vals_out, size, k, env));
     }

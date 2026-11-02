@@ -19,14 +19,14 @@ namespace cudf {
 namespace detail {
 
 /**
- * @copydoc cudf::create_null_mask(size_type, mask_state, rmm::device_async_resource_ref)
+ * @copydoc cudf::create_null_mask(size_type, mask_state, cudf::memory_resources)
  *
  * @param stream CUDA stream used for device memory operations and kernel launches.
  */
-cuda::device_buffer<std::byte> create_null_mask(size_type size,
-                                                mask_state state,
-                                                cuda::stream_ref stream,
-                                                rmm::device_async_resource_ref mr);
+cuda::device_buffer<cudf::bitmask_type> create_null_mask(size_type size,
+                                                         mask_state state,
+                                                         cuda::stream_ref stream,
+                                                         cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::set_null_mask(bitmask_type*, size_type, size_type, bool)
@@ -158,73 +158,74 @@ std::vector<size_type> segmented_null_count(bitmask_type const* bitmask,
 
 /**
  * @copydoc cudf::copy_bitmask(bitmask_type const*, size_type, size_type,
- *rmm::device_async_resource_ref)
+ *cudf::memory_resources)
  *
  * @param stream CUDA stream used for device memory operations and kernel launches.
  */
-cuda::device_buffer<std::byte> copy_bitmask(bitmask_type const* mask,
-                                            size_type begin_bit,
-                                            size_type end_bit,
-                                            cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr);
+cuda::device_buffer<cudf::bitmask_type> copy_bitmask(bitmask_type const* mask,
+                                                     size_type begin_bit,
+                                                     size_type end_bit,
+                                                     cuda::stream_ref stream,
+                                                     cudf::memory_resources mr);
 
 /**
- * @copydoc cudf::copy_bitmask(column_view const& view, rmm::device_async_resource_ref)
+ * @copydoc cudf::copy_bitmask(column_view const& view, cudf::memory_resources)
  *
  * @param stream CUDA stream used for device memory operations and kernel launches.
  */
-cuda::device_buffer<std::byte> copy_bitmask(column_view const& view,
-                                            cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr);
+cuda::device_buffer<cudf::bitmask_type> copy_bitmask(column_view const& view,
+                                                     cuda::stream_ref stream,
+                                                     cudf::memory_resources mr);
 
 /**
  * @copydoc bitmask_and(host_span<bitmask_type const* const>, host_span<size_type> const,
- * size_type, rmm::device_async_resource_ref)
+ * size_type, cudf::memory_resources)
  *
  * @param stream CUDA stream used for device memory operations and kernel launches
  */
-std::pair<cuda::device_buffer<std::byte>, size_type> bitmask_and(
+std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type> bitmask_and(
   host_span<bitmask_type const* const> masks,
   host_span<size_type const> masks_begin_bits,
   size_type mask_size_bits,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::bitmask_and
  *
  * @param[in] stream CUDA stream used for device memory operations and kernel launches.
  */
-std::pair<cuda::device_buffer<std::byte>, size_type> bitmask_and(table_view const& view,
-                                                                 cuda::stream_ref stream,
-                                                                 rmm::device_async_resource_ref mr);
+std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type> bitmask_and(
+  table_view const& view, cuda::stream_ref stream, cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::segmented_bitmask_and
  */
-std::pair<std::vector<std::unique_ptr<cuda::device_buffer<std::byte>>>, std::vector<size_type>>
+std::pair<std::vector<std::unique_ptr<cuda::device_buffer<cudf::bitmask_type>>>,
+          std::vector<size_type>>
 segmented_bitmask_and(host_span<column_view const> colviews,
                       host_span<size_type const> segment_offsets,
                       cuda::stream_ref stream,
-                      rmm::device_async_resource_ref mr);
+                      cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::segmented_bitmask_and
  */
-std::pair<std::vector<std::unique_ptr<cuda::device_buffer<std::byte>>>, std::vector<size_type>>
+std::pair<std::vector<std::unique_ptr<cuda::device_buffer<cudf::bitmask_type>>>,
+          std::vector<size_type>>
 segmented_bitmask_and(host_span<bitmask_type const* const> masks,
                       host_span<size_type const> segment_offsets,
                       size_type mask_size_bits,
                       cuda::stream_ref stream,
-                      rmm::device_async_resource_ref mr);
+                      cudf::memory_resources mr);
 /**
  * @copydoc cudf::bitmask_or
  *
  * @param[in] stream CUDA stream used for device memory operations and kernel launches.
  */
-std::pair<cuda::device_buffer<std::byte>, size_type> bitmask_or(table_view const& view,
-                                                                cuda::stream_ref stream,
-                                                                rmm::device_async_resource_ref mr);
+std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type> bitmask_or(table_view const& view,
+                                                                         cuda::stream_ref stream,
+                                                                         cudf::memory_resources mr);
 
 /**
  * @brief Performs a bitwise AND of the specified bitmasks,
@@ -252,12 +253,12 @@ cudf::size_type inplace_bitmask_and(device_span<bitmask_type> dest_mask,
  * @param input input column to check for nullability
  * @param output output column to mirror nullability of input
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column's device memory
+ * @param mr Memory resources used for temporary allocations and the returned null masks
  */
 void set_all_valid_null_masks(column_view const& input,
                               column& output,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr);
+                              cudf::memory_resources mr);
 
 }  // namespace detail
 

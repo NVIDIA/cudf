@@ -387,11 +387,11 @@ class device_row_comparator {
     PhysicalEqualityComparator const comparator;
   };
 
-  table_device_view const lhs;
-  table_device_view const rhs;
-  Nullate const check_nulls;
-  null_equality const nulls_are_equal;
-  PhysicalEqualityComparator const comparator;
+  table_device_view lhs;
+  table_device_view rhs;
+  Nullate check_nulls;
+  null_equality nulls_are_equal;
+  PhysicalEqualityComparator comparator;
 };
 
 /**

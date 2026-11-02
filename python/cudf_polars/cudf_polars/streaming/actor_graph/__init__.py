@@ -18,6 +18,7 @@ import cudf_polars.streaming.actor_graph.join
 import cudf_polars.streaming.actor_graph.over
 import cudf_polars.streaming.actor_graph.prefilter_actor
 import cudf_polars.streaming.actor_graph.repartition
+import cudf_polars.streaming.actor_graph.rolling
 import cudf_polars.streaming.actor_graph.union  # noqa: F401
 
 __all__: list[str] = []

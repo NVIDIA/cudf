@@ -27,8 +27,12 @@ namespace cudf::io::parquet::detail {
                                                  int schema_idx);
 
 /**
- * @brief Returns a normalized (lowercased) column name or path when case-insensitive matching is
- * enabled
+ * @brief Returns a normalized (UTF8-aware lowercased) column name or path when case-insensitive
+ * matching is enabled
+ *
+ * @note Uses per-codepoint `std::ctype<wchar_t>::tolower` from `C.UTF-8` locale. Falls back to the
+ * classic locale if `C.UTF-8` is unavailable. Column paths that are not valid UTF-8 are returned
+ * unchanged.
  *
  * @param col_path The column name or path to normalize
  * @param case_sensitive_names Whether to normalize the column path case-insensitively
@@ -39,17 +43,17 @@ namespace cudf::io::parquet::detail {
                                                 bool case_sensitive_names);
 
 /**
- * @brief Compares two column paths with specified case sensitivity
+ * @brief Compares two column paths with specified case sensitivity (UTF8-aware)
  *
  * @param lhs The left-hand side column path
  * @param rhs The right-hand side column path
- * @param case_sensitive Whether to compare the column paths case-sensitively
+ * @param case_sensitive_names Whether to compare the column paths case-sensitively
  *
  * @return Boolean indicating if the column paths are equal
  */
 [[nodiscard]] bool are_column_paths_equal(std::string_view lhs,
                                           std::string_view rhs,
-                                          bool case_sensitive);
+                                          bool case_sensitive_names);
 
 /**
  * @brief Transparent hash for column paths that honors a case-sensitivity policy.

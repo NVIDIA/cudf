@@ -9,8 +9,11 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/export.hpp>
 
+#include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
+#include <string>
 #include <vector>
 
 /**

@@ -93,7 +93,7 @@ struct comparator_adapter {
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @return A pair of pointer to the output bitmask and the buffer containing the bitmask
  */
-std::pair<cuda::device_buffer<std::byte>, bitmask_type const*> build_row_bitmask(
+std::pair<cuda::device_buffer<cudf::bitmask_type>, bitmask_type const*> build_row_bitmask(
   table_view const& input, cuda::stream_ref stream);
 
 /**

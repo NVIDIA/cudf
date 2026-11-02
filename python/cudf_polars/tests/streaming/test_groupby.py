@@ -15,7 +15,11 @@ import polars as pl
 from polars.testing import assert_frame_equal
 
 import pylibcudf as plc
-from cudf_streaming.channel_metadata import OrderScheme
+from cudf_streaming.channel_metadata import (
+    OrderScheme,
+    RowOrdering,
+    RowOrderingScope,
+)
 from cudf_streaming.table_chunk import TableChunk
 
 from cudf_polars import Translator
@@ -143,7 +147,7 @@ def test_groupby_adjusts_truncated_ordering_with_maintain_order(
     """GroupBy can adjust an ordered prefix without tree-reducing."""
     engine = spmd_engine_factory(
         StreamingOptions(
-            target_partition_size=1,
+            target_partition_size=64,
             max_rows_per_partition=8,
             fallback_mode="raise",
             raise_on_fail=True,
@@ -187,7 +191,43 @@ def test_groupby_adjusts_truncated_ordering_with_maintain_order(
     (ordering,) = scheme.orderings
     assert tuple(key.column_index for key in ordering.keys) == (0,)
     assert ordering.strict_boundaries is True
-    assert ordering.locally_ordered is True
+    assert metadata.partitioning.row_orderings == (
+        RowOrdering(ordering.keys, RowOrderingScope.GLOBAL),
+    )
+
+
+def test_groupby_dynamic_preserves_index_ordering(spmd_engine_factory) -> None:
+    engine = spmd_engine_factory(
+        StreamingOptions(
+            max_rows_per_partition=2,
+            fallback_mode="raise",
+            raise_on_fail=True,
+        )
+    )
+    q = (
+        pl.LazyFrame({"time": range(0, 720_000, 120_000), "value": range(6)})
+        .with_columns(pl.col("time").cast(pl.Datetime("ms")))
+        .sort("time")
+        .group_by_dynamic("time", every="2m")
+        .agg(pl.col("value").sum())
+    )
+    ir = Translator(q._ldf.visit(), engine).translate_ir()
+    result, metadata_collector = evaluate_logical_plan(
+        ir, ConfigOptions.from_polars_engine(engine), collect_metadata=True
+    )
+    assert_frame_equal(result, q.collect())
+
+    assert metadata_collector is not None
+    assert len(metadata_collector) == 1
+    metadata = metadata_collector[0]
+    assert metadata.partitioning is not None
+    assert isinstance(metadata.partitioning.inter_rank, OrderScheme)
+    (ordering,) = metadata.partitioning.inter_rank.orderings
+    assert tuple(key.column_index for key in ordering.keys) == (0,)
+    assert ordering.strict_boundaries is True
+    assert metadata.partitioning.row_orderings == (
+        RowOrdering(ordering.keys, RowOrderingScope.GLOBAL),
+    )
 
 
 @pytest.mark.parametrize("keys", [("key",), ("key", "key2")])
@@ -301,6 +341,45 @@ def test_groupby_agg(df, streaming_engine, op, keys):
     assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=False)
 
 
+def test_groupby_order_sensitive_aggs(streaming_engine_factory):
+    streaming_engine = streaming_engine_factory(
+        StreamingOptions(max_rows_per_partition=2, fallback_mode="raise"),
+    )
+    df = pl.LazyFrame(
+        {
+            "key": ["a", "b", "a", "b", "a", "b"],
+            "value": [None, 10, 20, None, 30, 40],
+        }
+    )
+    q = df.group_by("key").agg(
+        pl.col("value").first(),
+        pl.col("value").last().alias("last"),
+        pl.col("value").first(ignore_nulls=True).alias("first_non_null"),
+    )
+    assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=False)
+
+
+def test_groupby_order_sensitive_agg_with_preshuffle_fallback(
+    streaming_engine_factory,
+):
+    streaming_engine = streaming_engine_factory(
+        StreamingOptions(max_rows_per_partition=2, fallback_mode="raise"),
+    )
+    df = pl.LazyFrame(
+        {
+            "key": ["a", "b", "a", "b"],
+            "value": [1, 2, 3, 4],
+        }
+    )
+    q = df.group_by("key").agg(
+        pl.col("value").n_unique(),
+        pl.col("value").first().alias("first"),
+        pl.col("value").last().alias("last"),
+    )
+    with pytest.raises(NotImplementedError, match="preserve input order"):
+        q.collect(engine=streaming_engine)
+
+
 def test_groupby_sort_by_first_last(streaming_engine_factory):
     streaming_engine = streaming_engine_factory(
         StreamingOptions(max_rows_per_partition=2, fallback_mode="raise"),
@@ -315,8 +394,8 @@ def test_groupby_sort_by_first_last(streaming_engine_factory):
 
     q = df.group_by("g").agg(
         pl.col("val").sum().alias("volume"),
-        pl.col("val").sort_by("idx").first().alias("open"),
-        pl.col("val").sort_by("idx").last().alias("close"),
+        pl.col("val").sort_by("idx", maintain_order=True).first().alias("open"),
+        pl.col("val").sort_by("idx", maintain_order=True).last().alias("close"),
     )
     assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=False)
 
@@ -360,8 +439,38 @@ def test_groupby_sort_by_stable_ties_with_preshuffle_fallback(
         pl.col("val").sort_by("idx", maintain_order=True).first().alias("first_tie"),
         pl.col("val").sort_by("idx", maintain_order=True).last().alias("last_tie"),
     )
-    with pytest.raises(NotImplementedError, match="input-order ties"):
+    with pytest.raises(NotImplementedError, match="preserve input order"):
         q.collect(engine=streaming_engine)
+
+
+def test_groupby_first_non_null_sorted_keys(spmd_engine_factory):
+    streaming_engine = spmd_engine_factory(
+        StreamingOptions(
+            max_rows_per_partition=4,
+            target_partition_size=10,
+            fallback_mode="raise",
+        ),
+    )
+    n = 10
+    values = []
+    for group in range(1, 6):
+        values.extend([None] * (group - 1))
+        values.extend(range(group, n - group + 2))
+        values.extend([None] * (group - 1))
+    df = pl.LazyFrame(
+        {
+            "idx": pl.Series(
+                [1] * n + [2] * n + [3] * n + [4] * n + [5] * n,
+                dtype=pl.Int32,
+            ),
+            "a": pl.Series(values, dtype=pl.Int32),
+        }
+    ).set_sorted("idx")
+    q = df.group_by("idx", maintain_order=True).agg(
+        pl.col("a").first(ignore_nulls=True)
+    )
+
+    assert_gpu_result_equal(q, engine=streaming_engine)
 
 
 def test_groupby_sort_by_preserves_sorted_key_order(streaming_engine_factory):
@@ -380,8 +489,8 @@ def test_groupby_sort_by_preserves_sorted_key_order(streaming_engine_factory):
         df.sort("g", descending=True)
         .group_by("g", maintain_order=True)
         .agg(
-            pl.col("val").sort_by("idx").first().alias("open"),
-            pl.col("val").sort_by("idx").last().alias("close"),
+            pl.col("val").sort_by("idx", maintain_order=True).first().alias("open"),
+            pl.col("val").sort_by("idx", maintain_order=True).last().alias("close"),
         )
     )
     assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=True)

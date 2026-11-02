@@ -17,6 +17,7 @@
 #include <cudf/strings/string_view.hpp>
 #include <cudf/types.hpp>
 
+#include <cuda/std/concepts>
 #include <cuda/stream>
 
 #include <cstdint>
@@ -107,14 +108,12 @@ struct statistics_merge_group {
 
 template <typename T>
 __device__ T get_element(column_device_view const& col, uint32_t row)
-  requires(!std::is_same_v<T, statistics::byte_array_view>)
 {
   return col.element<T>(row);
 }
 
-template <typename T>
+template <cuda::std::same_as<statistics::byte_array_view> T>
 __device__ T get_element(column_device_view const& col, uint32_t row)
-  requires(std::is_same_v<T, statistics::byte_array_view>)
 {
   using et              = typename T::element_type;
   size_type const index = row + col.offset();  // account for this view's _offset

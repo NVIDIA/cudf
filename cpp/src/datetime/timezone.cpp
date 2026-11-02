@@ -232,10 +232,8 @@ struct timezone_file {
     } else {
       std::vector<int32_t> tt32(timecnt());
       fin.read(reinterpret_cast<char*>(tt32.data()), tt32.size() * sizeof(int32_t));
-      std::transform(
-        tt32.cbegin(), tt32.cend(), std::back_inserter(transition_times), [](auto& tt) {
-          return __builtin_bswap32(tt);
-        });
+      std::ranges::transform(
+        tt32, std::back_inserter(transition_times), [](auto& tt) { return __builtin_bswap32(tt); });
     }
     ttime_idx.resize(timecnt());
     fin.read(reinterpret_cast<char*>(ttime_idx.data()), timecnt() * sizeof(uint8_t));

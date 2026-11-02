@@ -189,12 +189,6 @@ def cut(
         if right and include_lowest:
             bins[0] = bins[0] - 10 ** (-precision)
 
-        # if right is false the last bin edge is not included
-        if not right:
-            right_edge = bins[-1]
-            x = cupy.asarray(x)
-            x[x == right_edge] = right_edge + 1
-
         # adjust bin edges decimal precision
         int_label_bins = np.around(bins, precision)
 
@@ -204,6 +198,7 @@ def cut(
     else:
         closed = "left"
         left_inclusive = True
+        right_inclusive = False
 
     if isinstance(bins, pd.IntervalIndex):
         interval_labels = bins

@@ -4,10 +4,12 @@
  */
 
 #include <cudf/column/column_factories.hpp>
+#include <cudf/copying.hpp>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/dictionary/dictionary_factories.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/traits.hpp>
 
@@ -17,22 +19,19 @@ struct size_of_helper {
   cudf::data_type type;
   template <typename T>
   constexpr int operator()() const
-    requires(not is_fixed_width<T>())
   {
     CUDF_FAIL("Invalid, non fixed-width element type.");
     return 0;
   }
 
-  template <typename T>
+  template <concepts::fixed_width T>
   constexpr int operator()() const noexcept
-    requires(is_fixed_width<T>() && not is_fixed_point<T>())
   {
     return sizeof(T);
   }
 
-  template <typename T>
+  template <concepts::fixed_point T>
   constexpr int operator()() const noexcept
-    requires(is_fixed_point<T>())
   {
     // Only want the sizeof fixed_point::Rep as fixed_point::scale is stored in data_type
     return sizeof(typename T::rep);
@@ -166,7 +165,13 @@ std::unique_ptr<column> make_dictionary_from_scalar(scalar const& s,
                                                     cuda::stream_ref stream,
                                                     rmm::device_async_resource_ref mr)
 {
-  if (size == 0) return make_empty_column(type_id::DICTIONARY32);
+  if (size == 0) {
+    return make_dictionary_column(
+      empty_like(s),
+      make_empty_column(type_id::INT32),
+      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
+      0);
+  }
   CUDF_EXPECTS(size >= 0, "Column size cannot be negative.");
   CUDF_EXPECTS(s.is_valid(stream), "cannot create a dictionary with a null key");
   return make_dictionary_column(

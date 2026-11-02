@@ -19,12 +19,12 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/functional>
 #include <cuda/std/iterator>
 #include <cuda/std/utility>
 #include <cuda/stream>
-#include <thrust/transform_reduce.h>
 
 #include <type_traits>
 
@@ -75,8 +75,8 @@ auto reduce_device(InputIterator d_in, size_type num_items, Op binary_op, cuda::
   size_t storage_bytes = 0;
   cub::DeviceReduce::Reduce(
     nullptr, storage_bytes, d_in, result.data(), num_items, binary_op, identity, stream.get());
-  auto temp_storage =
-    rmm::device_buffer{storage_bytes, stream, cudf::get_current_device_resource_ref()};
+  auto temp_storage = cuda::device_buffer<std::byte>{
+    stream, cudf::get_current_device_resource_ref(), storage_bytes, cuda::no_init};
 
   // Run reduction
   cub::DeviceReduce::Reduce(temp_storage.data(),

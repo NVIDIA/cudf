@@ -5,6 +5,7 @@
 
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_factories.hpp>
+#include <cudf/detail/is_element_valid.hpp>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -26,7 +27,6 @@
 #include <cuda/iterator>
 #include <cuda/std/utility>
 #include <cuda/stream>
-#include <thrust/for_each.h>
 
 namespace cudf {
 namespace strings {
@@ -151,6 +151,14 @@ std::unique_ptr<column> join_strings(strings_column_view const& input,
     auto chars_data = joined_col->release().data;
     return std::move(*chars_data);
   }();
+
+  // Null rows are skipped when no narep is specified but a separator is still
+  // written after the last valid row if it is followed by only null rows.
+  // Remove this trailing separator by shrinking the output.
+  if (!narep.is_valid(stream) && input.has_nulls() && input.null_count() < input.size() &&
+      !cudf::detail::is_element_valid_sync(input.parent(), input.size() - 1, stream)) {
+    chars.resize(chars.size() - separator.size(), stream);
+  }
 
   // API returns a single output row which cannot exceed row limit(max of size_type).
   CUDF_EXPECTS(chars.size() < static_cast<std::size_t>(std::numeric_limits<size_type>::max()),

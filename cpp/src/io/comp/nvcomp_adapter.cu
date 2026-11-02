@@ -9,6 +9,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/tuple>
@@ -18,18 +19,22 @@ namespace cudf::io::detail::nvcomp {
 
 batched_args create_batched_nvcomp_args(device_span<device_span<uint8_t const> const> inputs,
                                         device_span<device_span<uint8_t> const> outputs,
-                                        cuda::stream_ref stream)
+                                        cuda::stream_ref stream,
+                                        cudf::memory_resources mr)
 {
+  auto const output_mr       = mr.get_output_mr();
+  auto const temp_mr         = mr.get_temporary_mr();
   auto const num_comp_chunks = inputs.size();
-  rmm::device_uvector<void const*> input_data_ptrs(num_comp_chunks, stream);
-  rmm::device_uvector<size_t> input_data_sizes(num_comp_chunks, stream);
-  rmm::device_uvector<void*> output_data_ptrs(num_comp_chunks, stream);
-  rmm::device_uvector<size_t> output_data_sizes(num_comp_chunks, stream);
+  cuda::device_buffer<void const*> input_data_ptrs(
+    stream, output_mr, num_comp_chunks, cuda::no_init);
+  cuda::device_buffer<size_t> input_data_sizes(stream, output_mr, num_comp_chunks, cuda::no_init);
+  cuda::device_buffer<void*> output_data_ptrs(stream, output_mr, num_comp_chunks, cuda::no_init);
+  cuda::device_buffer<size_t> output_data_sizes(stream, output_mr, num_comp_chunks, cuda::no_init);
 
   // Prepare the input vectors
   auto ins_it = cuda::make_zip_iterator(input_data_ptrs.begin(), input_data_sizes.begin());
   thrust::transform(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    rmm::exec_policy_nosync(stream, temp_mr),
     inputs.begin(),
     inputs.end(),
     ins_it,
@@ -38,7 +43,7 @@ batched_args create_batched_nvcomp_args(device_span<device_span<uint8_t const> c
   // Prepare the output vectors
   auto outs_it = cuda::make_zip_iterator(output_data_ptrs.begin(), output_data_sizes.begin());
   thrust::transform(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    rmm::exec_policy_nosync(stream, temp_mr),
     outputs.begin(),
     outputs.end(),
     outs_it,
@@ -50,15 +55,18 @@ batched_args create_batched_nvcomp_args(device_span<device_span<uint8_t const> c
           std::move(output_data_sizes)};
 }
 
-std::pair<rmm::device_uvector<void const*>, rmm::device_uvector<size_t>> create_get_temp_size_args(
-  device_span<device_span<uint8_t const> const> inputs, cuda::stream_ref stream)
+std::pair<cuda::device_buffer<void const*>, cuda::device_buffer<size_t>> create_get_temp_size_args(
+  device_span<device_span<uint8_t const> const> inputs,
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
-  rmm::device_uvector<void const*> input_data_ptrs(inputs.size(), stream);
-  rmm::device_uvector<size_t> input_data_sizes(inputs.size(), stream);
+  auto const output_mr = mr.get_output_mr();
+  cuda::device_buffer<void const*> input_data_ptrs(stream, output_mr, inputs.size(), cuda::no_init);
+  cuda::device_buffer<size_t> input_data_sizes(stream, output_mr, inputs.size(), cuda::no_init);
 
   auto ins_it = cuda::make_zip_iterator(input_data_ptrs.begin(), input_data_sizes.begin());
   thrust::transform(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
     inputs.begin(),
     inputs.end(),
     ins_it,
@@ -70,10 +78,11 @@ std::pair<rmm::device_uvector<void const*>, rmm::device_uvector<size_t>> create_
 void update_compression_results(device_span<nvcompStatus_t const> nvcomp_stats,
                                 device_span<size_t const> actual_output_sizes,
                                 device_span<codec_exec_result> results,
-                                cuda::stream_ref stream)
+                                cuda::stream_ref stream,
+                                cudf::memory_resources mr)
 {
   thrust::transform_if(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
     nvcomp_stats.begin(),
     nvcomp_stats.end(),
     actual_output_sizes.begin(),
@@ -90,10 +99,11 @@ void update_compression_results(device_span<nvcompStatus_t const> nvcomp_stats,
 
 void update_compression_results(device_span<size_t const> actual_output_sizes,
                                 device_span<codec_exec_result> results,
-                                cuda::stream_ref stream)
+                                cuda::stream_ref stream,
+                                cudf::memory_resources mr)
 {
   thrust::transform_if(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
     actual_output_sizes.begin(),
     actual_output_sizes.end(),
     results.begin(),
@@ -105,12 +115,13 @@ void update_compression_results(device_span<size_t const> actual_output_sizes,
 void skip_unsupported_inputs(device_span<size_t> input_sizes,
                              device_span<codec_exec_result> results,
                              std::optional<size_t> max_valid_input_size,
-                             cuda::stream_ref stream)
+                             cuda::stream_ref stream,
+                             cudf::memory_resources mr)
 {
   if (max_valid_input_size.has_value()) {
     auto status_size_it = cuda::make_zip_iterator(input_sizes.begin(), results.begin());
     thrust::transform_if(
-      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
       results.begin(),
       results.end(),
       input_sizes.begin(),
@@ -124,18 +135,17 @@ void skip_unsupported_inputs(device_span<size_t> input_sizes,
   }
 }
 std::pair<size_t, size_t> max_chunk_and_total_input_size(device_span<size_t const> input_sizes,
-                                                         cuda::stream_ref stream)
+                                                         cuda::stream_ref stream,
+                                                         cudf::memory_resources mr)
 {
-  auto const max =
-    thrust::reduce(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                   input_sizes.begin(),
-                   input_sizes.end(),
-                   0ul,
-                   cuda::maximum<size_t>());
-  auto const sum =
-    thrust::reduce(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                   input_sizes.begin(),
-                   input_sizes.end());
+  auto const temp_mr = mr.get_temporary_mr();
+  auto const max     = thrust::reduce(rmm::exec_policy_nosync(stream, temp_mr),
+                                  input_sizes.begin(),
+                                  input_sizes.end(),
+                                  0ul,
+                                  cuda::maximum<size_t>());
+  auto const sum     = thrust::reduce(
+    rmm::exec_policy_nosync(stream, temp_mr), input_sizes.begin(), input_sizes.end());
   return {max, sum};
 }
 

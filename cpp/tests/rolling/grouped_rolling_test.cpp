@@ -18,6 +18,7 @@
 #include <cudf/utilities/bit.hpp>
 
 #include <cuda/iterator>
+#include <cuda/std/type_traits>
 #include <thrust/host_vector.h>
 
 #include <src/rolling/detail/rolling.hpp>
@@ -281,7 +282,7 @@ class GroupedRollingTest : public cudf::test::BaseFixture {
       case cudf::aggregation::SUM:
         return create_reference_output<cudf::DeviceSum,
                                        cudf::aggregation::SUM,
-                                       std::conditional_t<std::is_integral_v<T>, int64_t, T>,
+                                       std::conditional_t<cuda::std::is_integral_v<T>, int64_t, T>,
                                        false>(
           input, group_offsets, preceding_window, following_window, min_periods);
       case cudf::aggregation::MIN:
@@ -980,7 +981,7 @@ class GroupedTimeRangeRollingTest : public cudf::test::BaseFixture {
       case cudf::aggregation::SUM:
         return create_reference_output<cudf::DeviceSum,
                                        cudf::aggregation::SUM,
-                                       std::conditional_t<std::is_integral_v<T>, int64_t, T>,
+                                       std::conditional_t<cuda::std::is_integral_v<T>, int64_t, T>,
                                        false>(timestamp_column,
                                               timestamp_order,
                                               input,

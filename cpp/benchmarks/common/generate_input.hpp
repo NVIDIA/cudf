@@ -9,6 +9,8 @@
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 
+#include <cuda/std/type_traits>
+
 #include <map>
 #include <optional>
 
@@ -58,14 +60,15 @@ distribution_id default_distribution_id()
   return distribution_id::GEOMETRIC;
 }
 
-template <typename T, std::enable_if_t<!std::is_unsigned_v<T> && cudf::is_numeric<T>()>* = nullptr>
+template <typename T,
+          std::enable_if_t<!cuda::std::is_unsigned_v<T> && cudf::is_numeric<T>()>* = nullptr>
 distribution_id default_distribution_id()
 {
   return distribution_id::NORMAL;
 }
 
 template <typename T,
-          std::enable_if_t<!std::is_same_v<T, bool> && std::is_unsigned_v<T> &&
+          std::enable_if_t<!std::is_same_v<T, bool> && cuda::std::is_unsigned_v<T> &&
                            cudf::is_numeric<T>()>* = nullptr>
 distribution_id default_distribution_id()
 {
@@ -520,8 +523,12 @@ class data_profile_builder {
    *
    * Characters are uniformly distributed in the range [lower, upper].
    * Values > 126 will produce multi-byte UTF-8 characters.
+   * The `create_ascii_string_column` function limits the upper bound to 126.
+   * Generating distinct strings (cardinality >= number of rows) appends the row index as
+   * decimal digits, so the range must include '0'-'9' in that case.
    *
-   * @param lower Lower bound of character range (inclusive, must be >= 32)
+   * @param lower Lower bound of character range (inclusive, must be >= 32 and < 127 so that
+   *              strings can always end with a single-byte character)
    * @param upper Upper bound of character range (inclusive)
    * @return this for chaining
    */
@@ -605,7 +612,11 @@ std::unique_ptr<cudf::column> create_string_column(cudf::size_type num_rows,
                                                    int32_t hit_rate);
 
 /**
- * @brief Generates an string column filled with ASCII characters only
+ * @brief Generates a string column filled with ASCII characters only
+ *
+ * This is the same as calling `create_random_column` with `cudf::type_id::STRING`
+ * except the upper bound of the profile's character range is limited to 126.
+ * All other profile settings are used as-is.
  *
  * @param profile Data profile for the output column
  * @param num_rows Number of rows in the output column
@@ -666,5 +677,5 @@ std::vector<cudf::type_id> mix_dtypes(std::pair<cudf::type_id, cudf::type_id> co
  * @param seed Optional, seed for the pseudo-random engine
  * @return null mask device buffer with random null mask data and null count
  */
-std::pair<cuda::device_buffer<std::byte>, cudf::size_type> create_random_null_mask(
+std::pair<cuda::device_buffer<cudf::bitmask_type>, cudf::size_type> create_random_null_mask(
   cudf::size_type size, std::optional<double> null_probability = std::nullopt, unsigned seed = 1);

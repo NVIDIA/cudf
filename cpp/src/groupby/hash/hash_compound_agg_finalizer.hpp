@@ -8,6 +8,7 @@
 #include <cudf/detail/aggregation/aggregation.hpp>
 #include <cudf/detail/aggregation/result_cache.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 namespace cudf::groupby::detail::hash {
 
@@ -17,16 +18,25 @@ namespace cudf::groupby::detail::hash {
 struct hash_compound_agg_finalizer {
   column_view const col;
   data_type const input_type;
+  bool const input_has_nulls;
   cudf::detail::result_cache* const cache;
-  bitmask_type const* const d_row_bitmask;
   cuda::stream_ref const stream;
-  rmm::device_async_resource_ref const mr;
+  cudf::memory_resources const mr;
 
   hash_compound_agg_finalizer(column_view const& col,
                               cudf::detail::result_cache* cache,
-                              bitmask_type const* d_row_bitmask,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr);
+                              cudf::memory_resources mr);
+
+  /**
+   * @param input_has_nulls Whether the aggregated input had nulls. Callers that pass
+   * intermediate results as `col` must provide it because those results carry no input nulls.
+   */
+  hash_compound_agg_finalizer(column_view const& col,
+                              cudf::detail::result_cache* cache,
+                              bool input_has_nulls,
+                              cuda::stream_ref stream,
+                              cudf::memory_resources mr);
 
   // Default case: no-op
   template <aggregation::Kind k>

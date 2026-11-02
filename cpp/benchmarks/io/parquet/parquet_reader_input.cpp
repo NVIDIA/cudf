@@ -82,17 +82,12 @@ void BM_parquet_read_flat_nullable_pages(nvbench::state& state)
 {
   cudf::size_type constexpr num_benchmark_cols = 1;
   auto const data_size                         = static_cast<size_t>(state.get_int64("data_size"));
-  auto const validity                          = state.get_string("validity");
+  auto const null_prob = null_probability_from_percent(state.get_int64("null_percent"));
   auto const page_rows = static_cast<cudf::size_type>(state.get_int64("page_rows"));
   cuio_source_sink_pair source_sink(io_type::DEVICE_BUFFER);
 
   auto const num_rows_written = [&]() {
-    auto profile = data_profile_builder();
-    if (validity == "no_validity") {
-      profile.no_validity();
-    } else {
-      profile.null_probability(validity == "nullable_1" ? 0.01 : 0.50);
-    }
+    auto profile = data_profile_builder().null_probability(null_prob);
     auto const tbl =
       create_random_table({cudf::type_id::INT32}, table_size_bytes{data_size}, profile);
     auto const view = tbl->view();
@@ -173,7 +168,8 @@ NVBENCH_BENCH_TYPES(BM_parquet_read_data, NVBENCH_TYPE_AXES(d_type_list))
 NVBENCH_BENCH(BM_parquet_read_flat_nullable_pages)
   .set_name("parquet_read_flat_nullable_pages")
   .set_min_samples(4)
-  .add_string_axis("validity", {"no_validity", "nullable_1", "nullable_50"})
+  // -1 writes no validity mask at all; N >= 0 writes N% nulls.
+  .add_int64_axis("null_percent", {-1, 1, 50, 90})
   .add_int64_axis("page_rows", {31, 32, 33, 255, 256, 257})
   .add_int64_axis("data_size", {1 << 20});
 

@@ -188,6 +188,8 @@ class orc_reader_options {
    * @brief Returns whether to ignore writer timezone in the stripe footer.
    *
    * @return `true` if the writer timezone in the stripe footer is ignored.
+   *
+   * @see enable_ignore_timezone_in_stripe_footer for what "ignored" covers
    */
   [[nodiscard]] bool get_ignore_timezone_in_stripe_footer() const
   {
@@ -291,6 +293,11 @@ class orc_reader_options {
 
   /**
    * @brief Sets whether to ignore writer timezone in the stripe footer.
+   *
+   * Timestamps are returned on the wall clock the file declares, without converting them to UTC.
+   * The writer timezone is still resolved, because ORC encodes negative timestamps relative to the
+   * ORC epoch as it occurs in that timezone; an unresolvable name is warned about and leaves
+   * timestamps within the timezone's offset of 1970-01-01 up to one second off.
    *
    * @param val Boolean value to enable/disable ignoring writer timezone
    */
@@ -422,6 +429,8 @@ class orc_reader_options_builder {
    *
    * @param ignore Boolean value to enable/disable ignoring writer timezone
    * @return this for chaining
+   *
+   * @see orc_reader_options::enable_ignore_timezone_in_stripe_footer for what "ignored" covers
    */
   orc_reader_options_builder& ignore_timezone_in_stripe_footer(bool ignore)
   {
@@ -1589,8 +1598,8 @@ class orc_chunked_writer {
   /**
    * @brief Writes table to output.
    *
-   * @note If an exception is thrown during encoding or compression, the data from the failing call
-   * is not written to the sink. Data from previous successful calls is unaffected.
+   * @note A call that fails before writing to the sink (e.g. out of memory) may be retried. If it
+   * fails while writing to the sink, the output must be discarded and further writes are rejected.
    *
    * @param[in] table Table that needs to be written
    * @return returns reference of the class object
@@ -1599,6 +1608,9 @@ class orc_chunked_writer {
 
   /**
    * @brief Finishes the chunked/streamed write process.
+   *
+   * Like `write()`, may be retried if it fails before writing to the sink. A failed writer is not
+   * finalized.
    */
   void close();
 

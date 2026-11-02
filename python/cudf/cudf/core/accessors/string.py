@@ -572,6 +572,14 @@ class StringMethods(BaseAccessor):
                 f"found {type(sep)}"
             )
 
+        if not isinstance(self._column.dtype, ListDtype):
+            # An empty string tokenizes to an empty list, which joins to
+            # null. Map those back to "", then restore the input's nulls,
+            # which were filled with "" before tokenizing.
+            data = data.fillna("")
+            if self._column.has_nulls():
+                data = data.set_mask(*self._column.notnull().as_mask())
+
         return self._return_or_inplace(data)
 
     def extract(

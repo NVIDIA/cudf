@@ -4,7 +4,7 @@
  */
 
 #include "strings/count_matches.hpp"
-#include "strings/regex/regex_program_impl.h"
+#include "strings/regex/regex_program_impl.hpp"
 #include "strings/regex/utilities.cuh"
 
 #include <cudf/column/column.hpp>
@@ -12,12 +12,14 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/strings/detail/split.hpp>
 #include <cudf/strings/detail/strings_column_factories.cuh>
 #include <cudf/strings/split/split_re.hpp>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/algorithm>
@@ -121,7 +123,7 @@ struct token_reader_fn {
  * @param stream CUDA stream used for kernel launches.
  */
 template <typename ProgDevice>
-std::pair<rmm::device_uvector<string_index_pair>, std::unique_ptr<column>> generate_tokens(
+std::pair<cuda::device_buffer<string_index_pair>, std::unique_ptr<column>> generate_tokens(
   column_device_view const& d_strings,
   ProgDevice& d_prog,
   split_direction direction,
@@ -149,7 +151,8 @@ std::pair<rmm::device_uvector<string_index_pair>, std::unique_ptr<column>> gener
   auto const d_offsets = cudf::detail::offsetalator_factory::make_input_iterator(offsets->view());
 
   // build a vector of tokens
-  rmm::device_uvector<string_index_pair> tokens(total_tokens, stream);
+  cuda::device_buffer<string_index_pair> tokens(
+    stream, cudf::get_current_device_resource_ref(), total_tokens, cuda::no_init);
   if (total_tokens > 0) {
     auto tr_fn = token_reader_fn{d_strings, direction, d_offsets, tokens.data()};
     launch_for_each_kernel(tr_fn, d_prog, d_strings.size(), stream);
@@ -160,7 +163,7 @@ std::pair<rmm::device_uvector<string_index_pair>, std::unique_ptr<column>> gener
 /**
  * @brief Builds the device regex program once and generates the split tokens with it.
  */
-std::pair<rmm::device_uvector<string_index_pair>, std::unique_ptr<column>> generate_tokens(
+std::pair<cuda::device_buffer<string_index_pair>, std::unique_ptr<column>> generate_tokens(
   column_device_view const& d_strings,
   regex_program const& prog,
   split_direction direction,
@@ -206,6 +209,15 @@ std::unique_ptr<table> split_re(strings_column_view const& input,
                                 rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(!prog.pattern().empty(), "Parameter pattern must not be empty");
+
+  // Fast-path: literal-only patterns bypass the regex engine entirely
+  auto const [fp, literal] = prog.get_literal_fast_path();
+  if (fp == literal_fast_path::LITERAL_ONLY) {
+    auto const delim = string_scalar(literal, true, stream);
+    return direction == split_direction::FORWARD
+             ? cudf::strings::detail::split(input, delim, maxsplit, stream, mr)
+             : cudf::strings::detail::rsplit(input, delim, maxsplit, stream, mr);
+  }
 
   auto const strings_count = input.size();
 
@@ -270,6 +282,15 @@ std::unique_ptr<column> split_record_re(strings_column_view const& input,
                                         rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(!prog.pattern().empty(), "Parameter pattern must not be empty");
+
+  // Fast-path: literal-only patterns bypass the regex engine entirely
+  auto const [fp, literal] = prog.get_literal_fast_path();
+  if (fp == literal_fast_path::LITERAL_ONLY) {
+    auto const delim = string_scalar(literal, true, stream);
+    return direction == split_direction::FORWARD
+             ? cudf::strings::detail::split_record(input, delim, maxsplit, stream, mr)
+             : cudf::strings::detail::rsplit_record(input, delim, maxsplit, stream, mr);
+  }
 
   auto const strings_count = input.size();
   auto d_strings           = column_device_view::create(input.parent(), stream);

@@ -15,11 +15,13 @@
 #include <cudf/io/types.hpp>
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/types.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
 #include <rmm/mr/polymorphic_allocator.hpp>
 
 #include <cuco/static_map.cuh>
+#include <cuda/buffer>
 #include <cuda/stream>
 
 namespace cudf::io::orc::detail {
@@ -323,6 +325,7 @@ void decode_nulls_and_string_dictionaries(column_desc* chunks,
  * @param[in] num_stripes Number of stripes
  * @param[in] first_row Crop all rows below first_row
  * @param[in] tz_table Timezone translation table
+ * @param[in] orc_base_epoch ORC epoch in the writer's timezone
  * @param[in] row_groups Optional row index data [rowgroup][column]
  * @param[in] num_rowgroups Number of row groups in row index data
  * @param[in] rowidx_stride Row index stride
@@ -337,6 +340,7 @@ void decode_column_data(column_desc* chunks,
                         size_type num_stripes,
                         int64_t first_row,
                         table_device_view tz_table,
+                        duration_s orc_base_epoch,
                         int64_t num_rowgroups,
                         size_type rowidx_stride,
                         size_t level,
@@ -442,7 +446,7 @@ void rowgroup_char_counts(device_2dspan<size_type> counts,
  * @param stream CUDA stream used for device memory operations and kernel launches
  */
 void decimal_sizes_to_offsets(device_2dspan<rowgroup_rows const> rg_bounds,
-                              std::map<uint32_t, rmm::device_uvector<uint32_t>>& elem_sizes,
+                              std::map<uint32_t, cuda::device_buffer<uint32_t>>& elem_sizes,
                               cuda::stream_ref stream);
 
 /**

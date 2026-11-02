@@ -80,8 +80,7 @@ inline std::unique_ptr<column> generate_typed_percentile_distribution(
   cuda::stream_ref stream   = get_default_stream(),
   cudf::memory_resources mr = get_current_device_resource_ref())
 {
-  auto const temporary_mr        = mr.get_temporary_mr();
-  auto const temporary_resources = cudf::memory_resources{temporary_mr, temporary_mr};
+  auto const temporary_resources = mr.as_temporary();
   srand(0);
 
   std::vector<double> values;
@@ -203,7 +202,7 @@ void tdigest_simple_aggregation(Func op,
                                 cudf::memory_resources mr = get_current_device_resource_ref())
 {
   auto const temporary_mr                     = mr.get_temporary_mr();
-  auto const temporary_resources              = cudf::memory_resources{temporary_mr, temporary_mr};
+  auto const temporary_resources              = mr.as_temporary();
   bool is_cpu_cluster_computation_disabled[2] = {true, false};
   for (int idx = 0; idx < 2; idx++) {
     cudf::tdigest::detail::is_cpu_cluster_computation_disabled =
@@ -240,7 +239,7 @@ void tdigest_simple_with_nulls_aggregation(
   cudf::memory_resources mr = get_current_device_resource_ref())
 {
   auto const temporary_mr                     = mr.get_temporary_mr();
-  auto const temporary_resources              = cudf::memory_resources{temporary_mr, temporary_mr};
+  auto const temporary_resources              = mr.as_temporary();
   bool is_cpu_cluster_computation_disabled[2] = {true, false};
   for (int idx = 0; idx < 2; idx++) {
     cudf::tdigest::detail::is_cpu_cluster_computation_disabled =
@@ -280,7 +279,7 @@ void tdigest_simple_all_nulls_aggregation(
   cudf::memory_resources mr = get_current_device_resource_ref())
 {
   auto const temporary_mr                     = mr.get_temporary_mr();
-  auto const temporary_resources              = cudf::memory_resources{temporary_mr, temporary_mr};
+  auto const temporary_resources              = mr.as_temporary();
   bool is_cpu_cluster_computation_disabled[2] = {true, false};
   for (int idx = 0; idx < 2; idx++) {
     cudf::tdigest::detail::is_cpu_cluster_computation_disabled =
@@ -312,7 +311,7 @@ void tdigest_merge_simple(Func op,
                           cudf::memory_resources mr = get_current_device_resource_ref())
 {
   auto const temporary_mr                     = mr.get_temporary_mr();
-  auto const temporary_resources              = cudf::memory_resources{temporary_mr, temporary_mr};
+  auto const temporary_resources              = mr.as_temporary();
   bool is_cpu_cluster_computation_disabled[2] = {true, false};
   for (int idx = 0; idx < 2; idx++) {
     cudf::tdigest::detail::is_cpu_cluster_computation_disabled =

@@ -16,15 +16,18 @@
 #include <cudf/io/datasource.hpp>
 #include <cudf/io/experimental/cudftable.hpp>
 #include <cudf/scalar/scalar.hpp>
+#include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_buffer.hpp>
-
+#include <cuda/buffer>
 #include <cuda_runtime.h>
 
 #include <fstream>
+#include <memory>
+#include <utility>
 #include <vector>
 
 // Global environment for temporary files
@@ -541,7 +544,10 @@ TEST_F(CudftableTest, DeviceBufferSource)
                                             cudf::io::sink_info{&buffer}, expected)
                                             .build());
 
-  rmm::device_buffer device_buffer(buffer.size(), cudf::get_default_stream());
+  cuda::device_buffer<std::byte> device_buffer(cudf::get_default_stream(),
+                                               cudf::get_current_device_resource_ref(),
+                                               buffer.size(),
+                                               cuda::no_init);
   auto const stream = cudf::get_default_stream();
   CUDF_CUDA_TRY(cudaMemcpyAsync(
     device_buffer.data(), buffer.data(), buffer.size(), cudaMemcpyDefault, stream.get()));
@@ -549,9 +555,8 @@ TEST_F(CudftableTest, DeviceBufferSource)
   // take the stream
   stream.sync();
 
-  auto device_span = cudf::device_span<std::byte const>(
-    static_cast<std::byte const*>(device_buffer.data()), device_buffer.size());
-  auto result = cudf::io::experimental::read_cudftable(
+  auto device_span = cudf::device_span<std::byte const>(device_buffer.data(), device_buffer.size());
+  auto result      = cudf::io::experimental::read_cudftable(
     cudf::io::experimental::cudftable_reader_options::builder(cudf::io::source_info{device_span})
       .build());
 
@@ -587,14 +592,14 @@ TEST_F(CudftableTest, LongStringColumns)
 TEST_F(CudftableTest, ManyColumns)
 {
   constexpr int num_cols = 1'234;
-  std::vector<cudf::column_view> columns;
+  std::vector<std::unique_ptr<cudf::column>> columns;
   for (int i = 0; i < num_cols; ++i) {
     cudf::test::fixed_width_column_wrapper<int32_t> col({i % 10, (i + 1) % 10, (i + 2) % 10});
-    columns.push_back(col);
+    columns.push_back(col.release());
   }
 
-  cudf::table_view expected(columns);
-  run_test(expected);
+  cudf::table expected(std::move(columns));
+  run_test(expected.view());
 }
 
 TEST_F(CudftableTest, FileTooSmallForHeader)

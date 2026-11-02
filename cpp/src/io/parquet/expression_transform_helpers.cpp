@@ -15,10 +15,12 @@
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/utilities/bit.hpp>
+#include <cudf/utilities/traits.hpp>
 
 #include <cuda/iterator>
 
 #include <algorithm>
+#include <ranges>
 #include <string>
 #include <utility>
 
@@ -121,6 +123,20 @@ bool is_boolean_valued(ast::expression const& expr)
   }
 }
 
+bool is_membership_queryable(cudf::data_type column_type, ast::literal const& literal)
+{
+  CUDF_EXPECTS(column_type.id() == literal.get_data_type().id(),
+               "Mismatched predicate column and literal types");
+  // Booleans and non-comparable compound types cannot be queried
+  if (column_type.id() == cudf::type_id::BOOL8 or
+      (cudf::is_compound(column_type) and column_type.id() != cudf::type_id::STRING)) {
+    return false;
+  }
+  // A decimal literal with a different scale cannot be queried
+  return not cudf::is_fixed_point(column_type) or
+         column_type.scale() == literal.get_data_type().scale();
+}
+
 unary_operand extract_unary_operand(ast::operation const& expr)
 {
   auto const& operands = expr.get_operands();
@@ -171,11 +187,11 @@ parquet_filter_normalizer::parquet_filter_normalizer(
 {
   if (!expr.has_value()) { return; }
   // create map for column name.
-  std::transform(metadata.schema_info.cbegin(),
-                 metadata.schema_info.cend(),
-                 cuda::counting_iterator<std::size_t>{0},
-                 std::inserter(_column_name_to_index, _column_name_to_index.end()),
-                 [](auto const& sch, auto index) { return std::make_pair(sch.name, index); });
+  std::ranges::transform(
+    metadata.schema_info,
+    std::views::iota(std::size_t{0}, metadata.schema_info.size()),
+    std::inserter(_column_name_to_index, _column_name_to_index.end()),
+    [](auto const& sch, auto index) { return std::make_pair(sch.name, index); });
 
   expr.value().get().accept(*this);
 }
@@ -658,7 +674,7 @@ simplified_expression_opt parquet_expression_simplifier::simplify_expr_impl(
 std::optional<std::vector<std::vector<size_type>>> collect_filtered_row_group_indices(
   cudf::table_view table,
   std::reference_wrapper<ast::expression const> ast_expr,
-  host_span<std::vector<size_type> const> input_row_group_indices,
+  std::span<std::vector<size_type> const> input_row_group_indices,
   cuda::stream_ref stream)
 {
   // Filter the input table using AST expression
@@ -675,7 +691,7 @@ std::optional<std::vector<std::vector<size_type>>> collect_filtered_row_group_in
         cudf::device_span<bitmask_type const>{predicate.null_mask(), num_bitmasks}, stream);
     } else {
       auto bitmask = cudf::detail::make_pinned_vector<bitmask_type>(num_bitmasks, stream);
-      std::fill(bitmask.begin(), bitmask.end(), ~bitmask_type{0});
+      std::ranges::fill(bitmask, ~bitmask_type{0});
       return bitmask;
     }
   }();
@@ -690,9 +706,8 @@ std::optional<std::vector<std::vector<size_type>>> collect_filtered_row_group_in
     stream);
 
   // Return if all are required, or all are nulls.
-  if (predicate.null_count() == predicate.size() or std::all_of(is_row_group_required.cbegin(),
-                                                                is_row_group_required.cend(),
-                                                                [](auto i) { return bool(i); })) {
+  if (predicate.null_count() == predicate.size() or
+      std::ranges::all_of(is_row_group_required, [](auto i) { return bool(i); })) {
     return std::nullopt;
   }
 

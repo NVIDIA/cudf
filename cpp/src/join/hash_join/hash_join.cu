@@ -11,7 +11,6 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/row_operator/hashing.cuh>
-#include <cudf/detail/row_operator/primitive_row_operators.cuh>
 #include <cudf/hashing/detail/murmurhash3_x86_32.cuh>
 #include <cudf/join/hash_join.hpp>
 #include <cudf/table/table_view.hpp>
@@ -22,7 +21,7 @@
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
 
-#include <cuda/std/bit>
+#include <cuda/buffer>
 #include <cuda/std/cstdint>
 
 #include <algorithm>
@@ -65,15 +64,9 @@ cuda::std::uint32_t hash_csr_capacity(size_type rows, double load_factor)
   CUDF_EXPECTS(requested <= std::numeric_limits<cuda::std::uint32_t>::max(),
                "HashCSR table capacity is not representable",
                std::overflow_error);
-  auto const capacity = cuda::std::bit_ceil(static_cast<cuda::std::uint64_t>(requested));
-  CUDF_EXPECTS(capacity <= std::numeric_limits<cuda::std::uint32_t>::max(),
-               "HashCSR table capacity is not representable",
-               std::overflow_error);
-  // Avoid power-of-two rounding at the default and lower load factors. Retain the extra
-  // headroom of rounded capacities at higher load factors, where linear probing is sensitive
-  // to occupancy (in particular, load_factor == 1 must not produce an almost-full table).
-  return static_cast<cuda::std::uint32_t>(checked <= CUCO_DESIRED_LOAD_FACTOR ? requested
-                                                                              : capacity);
+  // Hash reduction uses multiply-high, and linear probing wraps with a conditional increment.
+  // Neither requires a power-of-two capacity. Keep one empty slot even at load_factor == 1.
+  return static_cast<cuda::std::uint32_t>(requested);
 }
 }  // namespace
 
@@ -117,14 +110,15 @@ hash_join<Hasher>::hash_join(cudf::table_view const& right,
     _nulls_equal == null_equality::UNEQUAL
       ? cudf::detail::bitmask_and(right, stream, temp_mr).first
       : cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, temp_mr);
-  auto const valid_rows = _nulls_equal == null_equality::UNEQUAL
-                            ? reinterpret_cast<bitmask_type const*>(row_bitmask.data())
-                            : nullptr;
+  auto const valid_rows = _nulls_equal == null_equality::UNEQUAL ? row_bitmask.data() : nullptr;
   // Hashing and comparing variable-width rows again can dominate construction. Cache one
   // representative index per row for keys containing lists or strings, including within structs.
   auto const cache_representatives = std::any_of(right.begin(), right.end(), has_list_or_string);
-  auto representatives             = rmm::device_uvector<size_type>{
-    cache_representatives ? static_cast<std::size_t>(right.num_rows()) : 0, stream, temp_mr};
+  auto representatives             = cuda::device_buffer<size_type>(
+    stream,
+    temp_mr,
+    cache_representatives ? static_cast<std::size_t>(right.num_rows()) : 0,
+    cuda::no_init);
   auto build = [&](auto equality, auto hasher) {
     launch_hash_csr_build_count_kernel(right.num_rows(),
                                        valid_rows,
@@ -145,7 +139,7 @@ hash_join<Hasher>::hash_join(cudf::table_view const& right,
                                                 _impl->_offsets.data(),
                                                 _impl->_offsets.size(),
                                                 stream.get()));
-    rmm::device_buffer temp_storage(temp_storage_bytes, stream, temp_mr);
+    cuda::device_buffer<std::byte> temp_storage(stream, temp_mr, temp_storage_bytes, cuda::no_init);
     CUDF_CUDA_TRY(cub::DeviceScan::InclusiveSum(temp_storage.data(),
                                                 temp_storage_bytes,
                                                 _impl->_offsets.data(),
@@ -154,7 +148,8 @@ hash_join<Hasher>::hash_join(cudf::table_view const& right,
                                                 stream.get()));
   }
   // The output array is not needed until the scan workspace has been released.
-  _impl->_values.resize(right.num_rows(), stream);
+  _impl->_values =
+    cuda::device_buffer<size_type>(stream, _impl->_mr, right.num_rows(), cuda::no_init);
   // Reuse each cumulative end as a scatter cursor. Once all rows in a group have been
   // scattered, its cursor is the group's exclusive begin. No per-row positions are retained.
   if (cache_representatives) {

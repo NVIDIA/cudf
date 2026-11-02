@@ -9,8 +9,11 @@
 #include "io/utilities/hostdevice_vector.hpp"
 
 #include <cudf/types.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
-#include <cub/cub.cuh>
+#include <cub/util_arch.cuh>
+#include <cub/util_type.cuh>
+#include <cuda/buffer>
 #include <cuda/std/iterator>
 
 #include <algorithm>
@@ -437,12 +440,11 @@ auto make_transition_table(
  * @brief Compile-time reflection to check if `OpT` type has the `TempStorage` and
  * `KernelParameter` type members.
  */
-template <typename OpT, typename = void>
-struct is_complex_op : std::false_type {};
-
 template <typename OpT>
-struct is_complex_op<OpT, std::void_t<typename OpT::TempStorage, typename OpT::KernelParameter>>
-  : std::true_type {};
+concept complex_op = requires {
+  typename OpT::TempStorage;
+  typename OpT::KernelParameter;
+};
 
 /**
  * @brief The device view that is passed to the finite-state transducer algorithm. Each of the
@@ -462,19 +464,19 @@ class dfa_device_view {
  private:
   // Complex symbol group lookup operators need to declare a `TempStorage` and `KernelParameter`
   // type member that is passed during device-side initialization.
-  using sgid_lut_init_t = std::conditional_t<is_complex_op<SymbolGroupIdLookupT>::value,
+  using sgid_lut_init_t = std::conditional_t<complex_op<SymbolGroupIdLookupT>,
                                              typename SymbolGroupIdLookupT::KernelParameter,
                                              SymbolGroupIdLookupT>;
 
   // Complex transition table lookup operators need to declare a `TempStorage` and
   // `KernelParameter` type member that is passed during device-side initialization.
-  using transition_table_init_t = std::conditional_t<is_complex_op<TransitionTableT>::value,
+  using transition_table_init_t = std::conditional_t<complex_op<TransitionTableT>,
                                                      typename TransitionTableT::KernelParameter,
                                                      TransitionTableT>;
 
   // Complex translation table lookup operators need to declare a `TempStorage` and
   // `KernelParameter` type member that is passed during device-side initialization.
-  using translation_table_init_t = std::conditional_t<is_complex_op<TranslationTableT>::value,
+  using translation_table_init_t = std::conditional_t<complex_op<TranslationTableT>,
                                                       typename TranslationTableT::KernelParameter,
                                                       TranslationTableT>;
 
@@ -487,13 +489,13 @@ class dfa_device_view {
   static constexpr int32_t MIN_TRANSLATED_OUT = TranslationTableT::MIN_TRANSLATED_OUT;
   static constexpr int32_t MAX_TRANSLATED_OUT = TranslationTableT::MAX_TRANSLATED_OUT;
 
-  using SymbolGroupStorageT      = std::conditional_t<is_complex_op<SymbolGroupIdLookupT>::value,
+  using SymbolGroupStorageT      = std::conditional_t<complex_op<SymbolGroupIdLookupT>,
                                                       typename SymbolGroupIdLookupT::TempStorage,
                                                       typename cub::NullType>;
-  using TransitionTableStorageT  = std::conditional_t<is_complex_op<TransitionTableT>::value,
+  using TransitionTableStorageT  = std::conditional_t<complex_op<TransitionTableT>,
                                                       typename TransitionTableT::TempStorage,
                                                       typename cub::NullType>;
-  using TranslationTableStorageT = std::conditional_t<is_complex_op<TranslationTableT>::value,
+  using TranslationTableStorageT = std::conditional_t<complex_op<TranslationTableT>,
                                                       typename TranslationTableT::TempStorage,
                                                       typename cub::NullType>;
 
@@ -845,7 +847,7 @@ class Dfa {
       TransitionTableInitT const& transition_table_init,
       TranslationTableInitT const& translation_table_init,
       cuda::stream_ref stream)
-    : init_data{single_item, stream}
+    : init_data{single_item, stream, cudf::get_current_device_resource_ref()}
   {
     *init_data.host_ptr() = {sgid_lut_init, transition_table_init, translation_table_init};
     init_data.host_to_device_async(stream);
@@ -889,7 +891,7 @@ class Dfa {
                  cuda::stream_ref stream)
   {
     std::size_t temp_storage_bytes = 0;
-    rmm::device_buffer temp_storage{};
+    cuda::device_buffer<std::byte> temp_storage{stream, cudf::get_current_device_resource_ref()};
     DeviceTransduce(nullptr,
                     temp_storage_bytes,
                     this->get_device_view(),
@@ -902,7 +904,8 @@ class Dfa {
                     stream.get());
 
     if (temp_storage.size() < temp_storage_bytes) {
-      temp_storage.resize(temp_storage_bytes, stream);
+      temp_storage = cuda::device_buffer<std::byte>{
+        stream, cudf::get_current_device_resource_ref(), temp_storage_bytes, cuda::no_init};
     }
 
     DeviceTransduce(temp_storage.data(),

@@ -1006,19 +1006,27 @@ TYPED_TEST(FixedPointTests, ValidateCastRescalePrecision)
   // division are more visible.
   constexpr auto min_scale = -cuda::std::numeric_limits<RepType>::digits10;
   for (int input_scale = 0; input_scale >= min_scale; --input_scale) {
+    RepType input_value = 1;
+    for (int k = 0; k > input_scale; --k) {
+      input_value *= 10;
+    }
+    auto const input = fp_wrapper{{input_value}, scale_type{input_scale}};
     for (int result_scale = 0; result_scale >= min_scale; --result_scale) {
-      RepType input_value = 1;
-      for (int k = 0; k > input_scale; --k) {
-        input_value *= 10;
-      }
+      SCOPED_TRACE(::testing::Message()
+                   << "input_scale=" << input_scale << ", result_scale=" << result_scale);
       RepType result_value = 1;
       for (int k = 0; k > result_scale; --k) {
         result_value *= 10;
       }
-      auto const input    = fp_wrapper{{input_value}, scale_type{input_scale}};
-      auto const expected = fp_wrapper{{result_value}, scale_type{result_scale}};
-      auto const result   = cudf::cast(input, make_fixed_point_data_type<decimalXX>(result_scale));
-      CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
+      auto const result_type = make_fixed_point_data_type<decimalXX>(result_scale);
+      auto const result      = cudf::cast(input, result_type);
+      ASSERT_EQ(result->type(), result_type);
+      ASSERT_EQ(result->size(), 1);
+      EXPECT_EQ(result->null_count(), 0);
+      // Comparing the single stored integer avoids allocating an expected device column
+      // and launching GPU comparison kernels for every scale pair.
+      auto const [values, mask] = cudf::test::to_host<RepType>(result->view());
+      EXPECT_EQ(values.front(), result_value);
     }
   }
 }

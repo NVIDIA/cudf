@@ -10,6 +10,7 @@
 #include <cudf/detail/unary.hpp>
 #include <cudf/dictionary/detail/encode.hpp>
 #include <cudf/dictionary/detail/iterator.cuh>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
@@ -21,6 +22,8 @@
 #include <cuda/std/type_traits>
 #include <cuda/stream>
 #include <thrust/transform.h>
+
+#include <transform/checked_arithmetic.hpp>
 
 namespace cudf {
 namespace detail {
@@ -334,7 +337,7 @@ std::unique_ptr<column> unary_op_with(column_view const& input,
 template <typename OutputType, typename UFN, typename InputIterator>
 std::unique_ptr<cudf::column> transform_fn(InputIterator begin,
                                            InputIterator end,
-                                           cuda::device_buffer<std::byte>&& null_mask,
+                                           cuda::device_buffer<cudf::bitmask_type>&& null_mask,
                                            size_type null_count,
                                            cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
@@ -344,7 +347,7 @@ std::unique_ptr<cudf::column> transform_fn(InputIterator begin,
   std::unique_ptr<cudf::column> output =
     make_fixed_width_column(data_type{type_to_id<OutputType>()},
                             size,
-                            std::forward<cuda::device_buffer<std::byte>>(null_mask),
+                            std::forward<cuda::device_buffer<cudf::bitmask_type>>(null_mask),
                             null_count,
                             stream,
                             mr);
@@ -393,17 +396,20 @@ std::unique_ptr<cudf::column> transform_fn(cudf::dictionary_column_view const& i
 
 template <typename T>
 struct ArithmeticOps {
-  static constexpr bool is_supported() { return std::is_arithmetic_v<T>; }
+  static constexpr bool is_supported() { return cuda::std::is_arithmetic_v<T>; }
 };
 
 template <typename T>
 struct NegateOps {
-  static constexpr bool is_supported() { return std::is_signed_v<T> || cudf::is_duration<T>(); }
+  static constexpr bool is_supported()
+  {
+    return cuda::std::is_signed_v<T> || cudf::is_duration<T>();
+  }
 };
 
 template <typename T>
 struct BitWiseOps {
-  static constexpr bool is_supported() { return std::is_integral_v<T>; }
+  static constexpr bool is_supported() { return cuda::std::is_integral_v<T>; }
 };
 
 template <typename T>
@@ -447,7 +453,7 @@ struct BitwiseCountDispatcher {
   template <typename T>
   static constexpr bool is_supported()
   {
-    return std::is_integral_v<T>;
+    return cuda::std::is_integral_v<T>;
   }
 
   // Always use int32_t as output type for bit count.
@@ -492,7 +498,7 @@ struct LogicalOpDispatcher {
   template <typename T>
   static constexpr bool is_supported()
   {
-    return std::is_arithmetic_v<T> || std::is_same_v<T, bool>;
+    return cuda::std::is_arithmetic_v<T> || std::is_same_v<T, bool>;
   }
 
  public:
@@ -531,17 +537,16 @@ struct LogicalOpDispatcher {
 struct FixedPointOpDispatcher {
   template <typename T, typename... Args>
   std::unique_ptr<column> operator()(Args&&...)
-    requires(not cudf::is_fixed_point<T>())
+    requires(not cudf::concepts::fixed_point<T>)
   {
     CUDF_FAIL("FixedPointOpDispatcher only for fixed_point");
   }
 
-  template <typename T>
+  template <cudf::concepts::fixed_point T>
   std::unique_ptr<column> operator()(column_view const& input,
                                      cudf::unary_operator op,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
-    requires(cudf::is_fixed_point<T>())
   {
     // clang-format off
     switch (op) {
@@ -562,6 +567,11 @@ std::unique_ptr<cudf::column> unary_operation(cudf::column_view const& input,
                                               cuda::stream_ref stream,
                                               rmm::device_async_resource_ref mr)
 {
+  if (checked_arithmetic::is_checked(op)) {
+    // Omitting an error policy for a checked operator means propagate any row error.
+    return checked_arithmetic::unary_operation(input, op, error_policy::PROPAGATE, stream, mr);
+  }
+
   if (cudf::is_fixed_point(input.type()))
     return type_dispatcher(input.type(), detail::FixedPointOpDispatcher{}, input, op, stream, mr);
 
@@ -662,6 +672,16 @@ std::unique_ptr<cudf::column> unary_operation(cudf::column_view const& input,
 {
   CUDF_FUNC_RANGE();
   return detail::unary_operation(input, op, stream, mr);
+}
+
+std::unique_ptr<cudf::column> unary_operation(cudf::column_view const& input,
+                                              cudf::unary_operator op,
+                                              cudf::error_policy policy,
+                                              cuda::stream_ref stream,
+                                              rmm::device_async_resource_ref mr)
+{
+  CUDF_FUNC_RANGE();
+  return detail::checked_arithmetic::unary_operation(input, op, policy, stream, mr);
 }
 
 }  // namespace cudf

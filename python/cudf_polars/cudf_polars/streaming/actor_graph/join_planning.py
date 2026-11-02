@@ -14,14 +14,17 @@ from cudf_polars.streaming.filter_hint import (
 )
 
 if TYPE_CHECKING:
-    from typing import Any, Self
+    from typing import Self
 
     from cudf_streaming.channel_metadata import ChannelMetadata
     from cudf_streaming.table_chunk import TableChunk
     from rapidsmpf.streaming.core.channel import Channel
 
     from cudf_polars.dsl.ir import IR, Join
-    from cudf_polars.streaming.actor_graph.prefilter import PrefilterDecision
+    from cudf_polars.streaming.actor_graph.prefilter import (
+        PrefilterDecision,
+        RuntimePrefilterStatistics,
+    )
     from cudf_polars.streaming.actor_graph.utils import TableSizeStats
     from cudf_polars.streaming.filter_hint import Prefilter
 
@@ -46,7 +49,7 @@ class PrefilterCandidate:
     cardinality_tag: int
     decision: PrefilterDecision | None = None
     key_channel: Channel[TableChunk] | None = None
-    trace: dict[str, Any] | None = None
+    statistics: RuntimePrefilterStatistics | None = None
 
 
 @dataclass(frozen=True, slots=True)

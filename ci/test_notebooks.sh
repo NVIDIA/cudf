@@ -28,7 +28,7 @@ rapids-dependency-file-generator \
 
 rapids-mamba-retry env create --yes -f "${ENV_YAML_DIR}/env.yaml" -n test
 
-# Temporarily allow unbound variables for conda activation.
+# Conda activation hooks can read optional variables before defining them.
 set +u
 conda activate test
 set -u

@@ -51,7 +51,7 @@ build_wheel() (
     --wheel
     --outdir dist
     --verbose
-    # A fixed location keeps isolated-build include paths stable for sccache.
+    # A stable environment path preserves sccache hits for isolated-build includes.
     --env-dir "${build_env_dir}"
     --dependency-constraints-txt "${PIP_CONSTRAINT}"
   )

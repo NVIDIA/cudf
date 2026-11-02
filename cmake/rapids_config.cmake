@@ -19,7 +19,7 @@ else()
   )
 endif()
 
-# Use STRINGS to trim whitespace/newlines
+# Trailing whitespace must not become part of the rapids-cmake branch name.
 file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/../RAPIDS_BRANCH" RAPIDS_BRANCH)
 if(NOT RAPIDS_BRANCH)
   message(

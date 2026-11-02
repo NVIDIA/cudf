@@ -4,6 +4,7 @@
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/debug_utilities.hpp>
@@ -368,6 +369,7 @@ static void BM_sv_hash(nvbench::state& state)
     auto [d_items, data_buffer] = create_sv_array(col_view, stream);
     auto const d_chars          = data_buffer.data();
     state.add_global_memory_reads(num_rows * sizeof(ArrowBinaryView) + data_buffer.size());
+    auto const mem_stats_logger = cudf::memory_stats_logger();
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
       thrust::transform(rmm::exec_policy_nosync(stream),
                         begin,
@@ -375,14 +377,19 @@ static void BM_sv_hash(nvbench::state& state)
                         output.begin(),
                         hash_arrow_sv{d_items.data(), d_chars});
     });
+    state.add_buffer_size(
+      mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
   } else {
     auto d_strings = cudf::column_device_view::create(col_view, stream);
     auto col_size  = column->alloc_size();
     state.add_global_memory_reads(col_size);
+    auto const mem_stats_logger = cudf::memory_stats_logger();
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
       thrust::transform(
         rmm::exec_policy_nosync(stream), begin, end, output.begin(), hash_sv{*d_strings});
     });
+    state.add_buffer_size(
+      mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
   }
 }
 
@@ -410,6 +417,7 @@ static void BM_sv_starts(nvbench::state& state)
     auto [d_items, data_buffer] = create_sv_array(col_view, stream);
     auto const d_chars          = data_buffer.data();
     state.add_global_memory_reads(num_rows * sizeof(ArrowBinaryView) + data_buffer.size());
+    auto const mem_stats_logger = cudf::memory_stats_logger();
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
       thrust::transform(rmm::exec_policy_nosync(stream),
                         begin,
@@ -417,10 +425,13 @@ static void BM_sv_starts(nvbench::state& state)
                         output.begin(),
                         starts_arrow_sv{d_items.data(), d_chars, tgt_size});
     });
+    state.add_buffer_size(
+      mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
   } else {
     auto d_strings = cudf::column_device_view::create(col_view, stream);
     auto col_size  = column->alloc_size();
     state.add_global_memory_reads(col_size);
+    auto const mem_stats_logger = cudf::memory_stats_logger();
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
       thrust::transform(rmm::exec_policy_nosync(stream),
                         begin,
@@ -428,6 +439,8 @@ static void BM_sv_starts(nvbench::state& state)
                         output.begin(),
                         starts_sv{*d_strings, tgt_size});
     });
+    state.add_buffer_size(
+      mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
   }
 }
 
@@ -475,10 +488,13 @@ static void BM_sv_sort(nvbench::state& state)
     auto tmp_stg = cuda::device_buffer<std::byte>{
       stream, cudf::get_current_device_resource_ref(), tmp_bytes, cuda::no_init};
     state.add_global_memory_reads(num_rows * sizeof(ArrowBinaryView) + data_buffer.size());
+    auto const mem_stats_logger = cudf::memory_stats_logger();
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
       cub::DeviceMergeSort::SortKeysCopy(
         tmp_stg.data(), tmp_bytes, in_keys, out_keys, num_rows, comparator, stream.get());
     });
+    state.add_buffer_size(
+      mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
   } else {
     auto d_strings = cudf::column_device_view::create(col_view, stream);
     auto col_size  = column->alloc_size();
@@ -489,10 +505,13 @@ static void BM_sv_sort(nvbench::state& state)
     auto tmp_stg = cuda::device_buffer<std::byte>{
       stream, cudf::get_current_device_resource_ref(), tmp_bytes, cuda::no_init};
     state.add_global_memory_reads(col_size);
+    auto const mem_stats_logger = cudf::memory_stats_logger();
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
       cub::DeviceMergeSort::SortKeysCopy(
         tmp_stg.data(), tmp_bytes, in_keys, out_keys, num_rows, comparator, stream.get());
     });
+    state.add_buffer_size(
+      mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
   }
 }
 
@@ -524,9 +543,12 @@ static void BM_sv_gather(nvbench::state& state)
     state.add_global_memory_reads(gather_size);
     state.add_global_memory_writes(gather_size);
 
+    auto const mem_stats_logger = cudf::memory_stats_logger();
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
       gather_sv_array(d_items, data_buffer, begin, map_rows, stream);
     });
+    state.add_buffer_size(
+      mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
   } else {
     auto const result = cudf::gather(
       cudf::table_view({col_view}), map_view, cudf::out_of_bounds_policy::DONT_CHECK, stream);
@@ -534,10 +556,13 @@ static void BM_sv_gather(nvbench::state& state)
     state.add_global_memory_reads(result->alloc_size());
     state.add_global_memory_writes(result->alloc_size());
 
+    auto const mem_stats_logger = cudf::memory_stats_logger();
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
       cudf::gather(
         cudf::table_view({col_view}), map_view, cudf::out_of_bounds_policy::DONT_CHECK, stream);
     });
+    state.add_buffer_size(
+      mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
   }
 }
 

@@ -131,6 +131,13 @@ class reprog {
   void set_start_inst(int32_t id);
   [[nodiscard]] int32_t get_start_inst() const;
 
+  /**
+   * @brief Adds flags specified inline in the pattern, e.g. `(?i)`
+   *
+   * @param flags Flags to combine with the existing flags
+   */
+  void add_flags(regex_flags flags);
+
   void optimize();
   void finalize();
   void check_for_errors();

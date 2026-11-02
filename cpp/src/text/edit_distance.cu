@@ -230,7 +230,7 @@ CUDF_KERNEL void levenshtein_kernel(cudf::column_device_view d_strings,
 std::unique_ptr<cudf::column> edit_distance(cudf::strings_column_view const& input,
                                             cudf::strings_column_view const& targets,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cudf::memory_resources mr)
 {
   auto const output_type = cudf::data_type{cudf::type_to_id<cudf::size_type>()};
   if (input.is_empty()) { return cudf::make_empty_column(output_type); }
@@ -243,13 +243,13 @@ std::unique_ptr<cudf::column> edit_distance(cudf::strings_column_view const& inp
   }
 
   // create device columns from the input columns
-  auto d_strings = cudf::column_device_view::create(input.parent(), stream);
-  auto d_targets = cudf::column_device_view::create(targets.parent(), stream);
+  auto const temp_mr = mr.get_temporary_mr();
+  auto d_strings     = cudf::column_device_view::create(input.parent(), stream, temp_mr);
+  auto d_targets     = cudf::column_device_view::create(targets.parent(), stream, temp_mr);
 
   // calculate the size of the compute-buffer
-  cuda::device_buffer<std::ptrdiff_t> offsets(
-    stream, cudf::get_current_device_resource_ref(), input.size() + 1, cuda::no_init);
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  cuda::device_buffer<std::ptrdiff_t> offsets(stream, temp_mr, input.size() + 1, cuda::no_init);
+  thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
                     cuda::counting_iterator<cudf::size_type>{0},
                     cuda::counting_iterator<cudf::size_type>{input.size()},
                     offsets.begin(),
@@ -257,10 +257,9 @@ std::unique_ptr<cudf::column> edit_distance(cudf::strings_column_view const& inp
 
   // get the total size of the temporary compute buffer
   // and convert sizes to offsets in-place
-  auto const compute_size =
-    cudf::detail::sizes_to_offsets(offsets.begin(), offsets.end(), offsets.begin(), 0, stream, mr);
-  cuda::device_buffer<cudf::size_type> compute_buffer(
-    stream, cudf::get_current_device_resource_ref(), compute_size, cuda::no_init);
+  auto const compute_size = cudf::detail::sizes_to_offsets(
+    offsets.begin(), offsets.end(), offsets.begin(), 0, stream, mr.as_temporary());
+  cuda::device_buffer<cudf::size_type> compute_buffer(stream, temp_mr, compute_size, cuda::no_init);
   auto d_buffer = compute_buffer.data();
 
   auto results = cudf::make_fixed_width_column(
@@ -269,7 +268,7 @@ std::unique_ptr<cudf::column> edit_distance(cudf::strings_column_view const& inp
     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
     0,
     stream,
-    mr);
+    mr.get_output_mr());
   auto d_results = results->mutable_view().data<cudf::size_type>();
 
   constexpr auto block_size = 256L;
@@ -292,7 +291,7 @@ std::unique_ptr<cudf::column> edit_distance(cudf::strings_column_view const& inp
 std::unique_ptr<cudf::column> edit_distance(cudf::strings_column_view const& input,
                                             cudf::strings_column_view const& targets,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::edit_distance(input, targets, stream, mr);

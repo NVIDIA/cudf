@@ -37,22 +37,8 @@ permissions: {}
 jobs:
   build-details:
     uses: rapidsai/shared-workflows/.github/workflows/compute-build-details.yaml@main
-  telemetry-setup:
-    permissions:
-      id-token: write
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    env:
-      OTEL_SERVICE_NAME: "build-cudf"
-    steps:
-      - name: Telemetry setup
-        # This gate is here and not at the job level because we need the job to not be skipped,
-        # since other jobs depend on it.
-        if: ${{ vars.TELEMETRY_ENABLED == 'true' }}
-        uses: rapidsai/shared-actions/telemetry-dispatch-stash-base-env-vars@main
   checks:
     if: ${{ github.ref == 'refs/heads/main' }}
-    needs: telemetry-setup
     permissions:
       actions: read
       contents: read
@@ -66,7 +52,7 @@ jobs:
       enable_check_version_files_changed: false
       enable_check_version_against_tag: false
   cpp-build:
-    needs: [build-details, telemetry-setup]
+    needs: ["build-details"]
     permissions:
       actions: read
       contents: read
@@ -84,7 +70,7 @@ jobs:
       script: ci/build_cpp.sh
       sha: ${{ inputs.sha }}
   python-build:
-    needs: [build-details, telemetry-setup, cpp-build]
+    needs: ["build-details", "cpp-build"]
     permissions:
       actions: read
       contents: read
@@ -103,7 +89,7 @@ jobs:
       # Build a conda package for each CUDA x ARCH x minimum supported Python version
       matrix_filter: group_by({CUDA_VER, ARCH}) | map(min_by(.PY_VER | split(".") | map(tonumber)))
   python-build-noarch:
-    needs: [build-details, telemetry-setup]
+    needs: ["build-details"]
     permissions:
       actions: read
       contents: read
@@ -189,7 +175,7 @@ jobs:
       docs-projects: cudf,dask-cudf,libcudf
       dry-run: false
   wheel-build:
-    needs: [build-details, telemetry-setup]
+    needs: ["build-details"]
     permissions:
       actions: read
       contents: read
@@ -306,7 +292,7 @@ jobs:
       # trailing underscore to avoid collision with `cudf-streaming` and `cudf-polars`
       publish-wheel-search-key: cudf_wheel_python_cudf_
   wheel-python-build-noarch:
-    needs: [build-details, telemetry-setup]
+    needs: ["build-details"]
     permissions:
       actions: read
       contents: read
@@ -385,25 +371,6 @@ jobs:
             -f branch=$BRANCH \
             -f sha=$SHA \
             -f date=$DATE
-  telemetry-summarize:
-    # This job must use a self-hosted runner to record telemetry traces.
-    runs-on: linux-amd64-cpu4
-    permissions:
-      id-token: write
-    needs:
-      - docs-build
-      - docs-build-matrix
-      - upload-conda
-      - wheel-publish-cudf
-      - wheel-publish-cudf-polars
-      - wheel-publish-dask-cudf
-      - wheel-publish-libcudf
-      - wheel-publish-pylibcudf
-    if: ${{ vars.TELEMETRY_ENABLED == 'true' && !cancelled() }}
-    continue-on-error: true
-    steps:
-      - name: Telemetry summarize
-        uses: rapidsai/shared-actions/telemetry-dispatch-summarize@main
   devcontainers:
     name: Build devcontainers
     secrets: inherit  # zizmor: ignore[secrets-inherit]
@@ -415,7 +382,6 @@ jobs:
       cuda: '["12.9", "13.3"]'
   # Build the cuDF Java JAR for every Maven classifier.
   java-build-matrix:
-    needs: [telemetry-setup]
     permissions:
       contents: read
     uses: rapidsai/shared-workflows/.github/workflows/compute-matrix.yaml@main
@@ -424,7 +390,7 @@ jobs:
       matrix_name: conda-cpp-build
       matrix_filter: 'map(. + {CUDA_MAJOR: (.CUDA_VER | split(".") | .[0])})'
   java-build:
-    needs: [build-details, telemetry-setup, java-build-matrix]
+    needs: ["build-details", "java-build-matrix"]
     permissions:
       actions: read
       contents: read

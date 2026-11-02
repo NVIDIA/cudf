@@ -6,7 +6,7 @@
 
 #include "glushkov.cuh"
 #include "glushkov_regcomp.hpp"
-#include "regcomp.h"
+#include "regcomp.hpp"
 #include "regex.cuh"
 
 #include <cudf/strings/regex/regex_program.hpp>

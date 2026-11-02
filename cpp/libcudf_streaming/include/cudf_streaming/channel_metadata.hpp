@@ -60,16 +60,72 @@ struct order_key {
 };
 
 /**
+ * @brief Rows covered by a row-ordering guarantee.
+ *
+ * `GLOBAL` applies to the complete logical dataset. For duplicated data, this
+ * means one logical copy rather than all copies concatenated together.
+ * `RANK_LOCAL` applies independently to each rank.
+ */
+enum class row_ordering_scope : std::uint8_t {
+  GLOBAL,      ///< The complete logical dataset.
+  RANK_LOCAL,  ///< Each rank's local data independently.
+};
+
+/**
+ * @brief A row-ordering guarantee for a data stream.
+ *
+ * An empty `group_keys` denotes an ungrouped ordering: all rows in the selected
+ * scope are ordered by `order_keys`. Otherwise, each group's subsequence is
+ * ordered by `order_keys`. Groups need not be contiguous or ordered relative
+ * to one another.
+ *
+ * A global ordering applies to the rank-ordered concatenation of FIFO streams.
+ * For duplicated data, each rank contains an ordered copy of the same logical
+ * stream. A rank-local ordering makes no guarantee between ranks.
+ */
+struct row_ordering {
+  std::vector<order_key> order_keys;                     ///< Keys that order rows.
+  row_ordering_scope scope{row_ordering_scope::GLOBAL};  ///< Scope of the guarantee.
+  std::vector<cudf::size_type> group_keys;               ///< Columns defining equality groups.
+
+  /// @brief Default constructor. Produces an invalid (empty) row ordering.
+  row_ordering() = default;
+
+  /**
+   * @brief Construct a row-ordering guarantee.
+   *
+   * @param order_keys Non-empty keys that order rows.
+   * @param scope Scope of the ordering guarantee.
+   * @param group_keys Columns defining equality groups. These must not also
+   * appear in `order_keys`.
+   * @throws std::invalid_argument if `order_keys` is empty or overlaps with
+   * `group_keys`.
+   */
+  row_ordering(std::vector<order_key> order_keys,
+               row_ordering_scope scope,
+               std::vector<cudf::size_type> group_keys = {});
+
+  /**
+   * @brief Equality comparison.
+   * @return True if all fields are equal.
+   */
+  bool operator==(row_ordering const&) const = default;
+};
+
+/**
  * @brief A valid ordering description for order-partitioned data.
  *
  * Data is partitioned by value ranges based on predetermined boundaries.
+ * This type describes partition boundaries only. Row-order guarantees are
+ * stored separately in `partitioning::row_orderings`.
  * For N partitions, there are N-1 boundary rows:
  * - Partition 0: values < boundaries[0]
  * - Partition i (0 < i < N-1): boundaries[i-1] <= values < boundaries[i]
  * - Partition N-1: values >= boundaries[N-2]
  *
- * `keys[i]` is the i-th sort column; ordering is lexicographic by `keys[0]`,
- * then `keys[1]`, and so on.
+ * `keys[i]` is the i-th sort column; partition boundaries are compared
+ * lexicographically by `keys[0]`, then `keys[1]`, and so on. This does not
+ * imply that rows within the partitions are ordered.
  *
  * When `boundaries` is set, its columns must align with `keys`
  * (same count and compatible dtypes). Mismatched dtypes are a usage error.
@@ -77,18 +133,12 @@ struct order_key {
  * `strict_boundaries`: when true, every row in a chunk belongs to a single partition's
  * half-open key range (partition keys do not straddle chunk interiors). When false,
  * a chunk may contain keys spanning multiple partitions.
- *
- * `locally_ordered`: when true, rows within each partition at this level are ordered by
- * `keys`. When false, partitions are still ordered across partition boundaries, but row
- * order within a partition is not guaranteed.
  */
 struct ordering {
   std::vector<order_key> keys;              ///< Sort keys (column, order, null_order per entry).
   std::shared_ptr<table_chunk> boundaries;  ///< N-1 boundary rows for N partitions.
   /// See struct-level note on `strict_boundaries` semantics.
   bool strict_boundaries{false};
-  /// See struct-level note on `locally_ordered` semantics.
-  bool locally_ordered{true};
 
   /// @brief Default constructor. Produces an invalid (empty) ordering.
   ordering() = default;
@@ -100,14 +150,12 @@ struct ordering {
    * @param boundaries Non-null, device-resident boundary table (N-1 rows for N
    * partitions). Accepts a `unique_ptr<table_chunk>` via implicit conversion.
    * @param strict_boundaries See struct-level doc. Defaults to false.
-   * @param locally_ordered See struct-level doc. Defaults to true.
    * @throws std::invalid_argument if `keys` is empty, `boundaries` is null or not
    * device-resident, or `keys.size() != boundaries->shape().second`.
    */
   ordering(std::vector<order_key> keys,
            std::shared_ptr<table_chunk> boundaries,
-           bool strict_boundaries = false,
-           bool locally_ordered   = true);
+           bool strict_boundaries = false);
 
   /**
    * @brief Return a new ordering with updated key column indices, sharing
@@ -116,19 +164,21 @@ struct ordering {
    * @param new_keys Replacement sort keys; size must equal
    * `boundaries->shape().second`.
    * @return A new ordering with `new_keys` and the same boundaries and
-   * ordering flags.
+   * strictness.
    * @throws std::invalid_argument if `new_keys` is empty or size mismatches
    * boundaries.
    */
   [[nodiscard]] ordering with_keys(std::vector<order_key> new_keys) const;
 
   /**
-   * @brief Return a new ordering with updated local row-order metadata.
+   * @brief Return an equivalent ordering with strict boundaries.
    *
-   * @param locally_ordered Whether rows within each partition are ordered by `keys`.
-   * @return A new ordering with the same keys, boundaries, and strictness.
+   * Duplicate boundary rows are removed when converting a non-strict ordering.
+   *
+   * @param br Buffer resource used to allocate new boundary rows.
+   * @return A strict ordering equivalent to this ordering.
    */
-  [[nodiscard]] ordering with_locally_ordered(bool locally_ordered) const;
+  [[nodiscard]] ordering as_strict(rapidsmpf::BufferResource& br) const;
 
   /**
    * @brief Check whether boundary values are aligned with another ordering.
@@ -137,7 +187,7 @@ struct ordering {
    * @param br Buffer resource used for temporary allocations during comparison.
    * @return True when both orderings have matching boundary values and
    * strict_boundaries attributes, and are otherwise compatible (same order and
-   * null_order). This comparison intentionally ignores `locally_ordered`.
+   * null_order).
    */
   [[nodiscard]] bool boundaries_aligned_with(ordering const& other,
                                              rapidsmpf::BufferResource& br) const;
@@ -163,8 +213,7 @@ struct order_scheme {
    */
   order_scheme(std::vector<order_key> keys,
                std::shared_ptr<table_chunk> boundaries,
-               bool strict_boundaries = false,
-               bool locally_ordered   = true);
+               bool strict_boundaries = false);
 
   /**
    * @brief Construct a validated multi-ordering order_scheme.
@@ -235,7 +284,7 @@ struct partitioning_spec {
 };
 
 /**
- * @brief Hierarchical partitioning metadata for a data stream.
+ * @brief Partitioning and row-ordering metadata for a data stream.
  *
  * Describes how data flowing through a channel is partitioned at multiple
  * levels of the system hierarchy. Each level corresponds to a communicator
@@ -247,12 +296,17 @@ struct partitioning_spec {
  * - `local`: Distribution within a rank, corresponding to a single-rank
  *   communicator. Operations at this level repartition data locally without
  *   network communication.
+ * - `row_orderings`: Independent row-ordering guarantees for the stream. These
+ *   guarantees do not require either partitioning level to have a known scheme.
+ *   Producers are responsible for ensuring that every guarantee is valid.
  */
 struct partitioning {
   /// Distribution across ranks (corresponds to primary communicator).
   partitioning_spec inter_rank;
   /// Distribution within a rank (corresponds to local/single communicator).
   partitioning_spec local;
+  /// Row-ordering guarantees for the stream.
+  std::vector<row_ordering> row_orderings{};
 };
 
 /**

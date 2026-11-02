@@ -336,7 +336,6 @@ def _setup_worker(
     kvikio_task_size: int,
     kvikio_bounce_buffer_bytes: int,
     kvikio_reactor_count: int,
-    kvikio_reactor_dispatch: kvikio.RemoteReactorDispatch,
     kvikio_request_ceiling: int,
     dask_worker: distributed.Worker | None = None,
 ) -> None:
@@ -379,8 +378,6 @@ def _setup_worker(
         Size, in bytes, of the kvikio bounce buffer to configure on this worker process.
     kvikio_reactor_count
         Number of ``MULTI_POLL`` reactor threads to configure on this worker process.
-    kvikio_reactor_dispatch
-        ``MULTI_POLL`` reactor dispatch policy to configure on this worker process.
     kvikio_request_ceiling
         ``MULTI_POLL`` concurrent-request ceiling to configure on this worker process.
     """
@@ -398,7 +395,6 @@ def _setup_worker(
             task_size=kvikio_task_size,
             bounce_buffer_bytes=kvikio_bounce_buffer_bytes,
             reactor_count=kvikio_reactor_count,
-            reactor_dispatch=kvikio_reactor_dispatch,
             request_ceiling=kvikio_request_ceiling,
         )
         memory_resource_config = (
@@ -427,7 +423,6 @@ def _setup_worker(
             task_size=kvikio_task_size,
             bounce_buffer_bytes=kvikio_bounce_buffer_bytes,
             reactor_count=kvikio_reactor_count,
-            reactor_dispatch=kvikio_reactor_dispatch,
             request_ceiling=kvikio_request_ceiling,
         )
 
@@ -560,7 +555,6 @@ def _reset_worker(
     kvikio_task_size: int,
     kvikio_bounce_buffer_bytes: int,
     kvikio_reactor_count: int,
-    kvikio_reactor_dispatch: kvikio.RemoteReactorDispatch,
     kvikio_request_ceiling: int,
     dask_worker: distributed.Worker | None = None,
 ) -> None:
@@ -589,8 +583,6 @@ def _reset_worker(
         Size, in bytes, of the kvikio bounce buffer to configure on this worker process.
     kvikio_reactor_count
         Number of ``MULTI_POLL`` reactor threads to configure on this worker process.
-    kvikio_reactor_dispatch
-        ``MULTI_POLL`` reactor dispatch policy to configure on this worker process.
     kvikio_request_ceiling
         ``MULTI_POLL`` concurrent-request ceiling to configure on this worker process.
     dask_worker
@@ -603,7 +595,6 @@ def _reset_worker(
         task_size=kvikio_task_size,
         bounce_buffer_bytes=kvikio_bounce_buffer_bytes,
         reactor_count=kvikio_reactor_count,
-        reactor_dispatch=kvikio_reactor_dispatch,
         request_ceiling=kvikio_request_ceiling,
     )
     attr = f"_cudf_polars_mp_context_{uid}"
@@ -1120,7 +1111,6 @@ class DaskEngine(StreamingEngine):
                     "kvikio_bounce_buffer_bytes"
                 ],
                 kvikio_reactor_count=executor_options["kvikio_reactor_count"],
-                kvikio_reactor_dispatch=executor_options["kvikio_reactor_dispatch"],
                 kvikio_request_ceiling=executor_options["kvikio_request_ceiling"],
             )
 
@@ -1204,7 +1194,6 @@ class DaskEngine(StreamingEngine):
                     "kvikio_bounce_buffer_bytes"
                 ],
                 kvikio_reactor_count=executor_options["kvikio_reactor_count"],
-                kvikio_reactor_dispatch=executor_options["kvikio_reactor_dispatch"],
                 kvikio_request_ceiling=executor_options["kvikio_request_ceiling"],
             ),
             rapidsmpf_options_as_bytes,

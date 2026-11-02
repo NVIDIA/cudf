@@ -26,6 +26,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/functional>
 #include <cuda/std/iterator>
@@ -64,7 +65,7 @@ std::unique_ptr<table> unique(table_view const& input,
       // runtime performance over using the comparator directly in thrust::unique_copy.
       auto row_equal =
         comp.equal_to<true>(nullate::DYNAMIC{has_nested_nulls(keys_view)}, nulls_equal);
-      auto d_results = rmm::device_uvector<bool>(num_rows, stream, temp_mr);
+      auto d_results = cuda::device_buffer<bool>(stream, temp_mr, num_rows, cuda::no_init);
       auto itr       = cuda::counting_iterator<size_type>{0};
       thrust::transform(
         rmm::exec_policy_nosync(stream, temp_mr),

@@ -484,7 +484,7 @@ def test_invalid_regex_raises():
         q.collect(engine=pl.GPUEngine(executor="in-memory", raise_on_fail=True))
 
 
-@pytest.mark.parametrize("pattern", ["a{1000}", "a(?i:B)", ""])
+@pytest.mark.parametrize("pattern", ["a{1000}", "a(?-i:B)", ""])
 def test_unsupported_regex_raises(engine: pl.GPUEngine, pattern):
     df = pl.LazyFrame({"a": ["abc"]})
 
@@ -496,6 +496,30 @@ def test_unsupported_regex_raises(engine: pl.GPUEngine, pattern):
 
     q = df.select(pl.col("a").str.count_matches(pattern))
     assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        "(?i)ab",
+        "a(?i)b",
+        "(?i:a)b",
+        "(?m)^b",
+        "(?s)a.b",
+        "(?ims)^A.B$",
+        "x(?i)Y",
+        "(?s)",
+        "(?i)(?m)",
+    ],
+)
+def test_regex_inline_flags(engine: pl.GPUEngine, pattern):
+    df = pl.LazyFrame({"a": ["ab", "AB", "aB", "Ab", "x\nb", "a\nb", "xy\nAB", None]})
+
+    q = df.select(pl.col("a").str.contains(pattern, strict=True))
+    assert_gpu_result_equal(q, engine=engine)
+
+    q = df.select(pl.col("a").str.count_matches(pattern))
+    assert_gpu_result_equal(q, engine=engine)
 
 
 def test_string_to_integer(engine: pl.GPUEngine, str_to_integer_data, integer_type):

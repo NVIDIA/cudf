@@ -176,9 +176,8 @@ void setup_page_indexes(cudf::io::parquet::experimental::hybrid_scan_multifile c
   std::vector<cudf::host_span<uint8_t const>> page_index_byte_spans;
   page_index_byte_spans.reserve(page_index_byte_ranges.size());
 
-  auto const page_index_buffers = cudf::io::parquet::fetch_page_indexes_to_host(
-    cudf::host_span<std::reference_wrapper<cudf::io::datasource> const>{inputs.datasource_refs},
-    cudf::host_span<cudf::io::parquet::byte_range_info const>{page_index_byte_ranges});
+  auto const page_index_buffers =
+    cudf::io::parquet::fetch_page_indexes_to_host(inputs.datasource_refs, page_index_byte_ranges);
   std::transform(page_index_buffers.begin(),
                  page_index_buffers.end(),
                  std::back_inserter(page_index_byte_spans),
@@ -221,7 +220,7 @@ multisource_device_data fetch_multisource_device_data(
     group_byte_ranges_by_source(byte_ranges_and_source_map, inputs.datasources.size());
   auto [buffers, per_source_spans, tasks] = cudf::io::parquet::fetch_byte_ranges_to_device_async(
     inputs.datasource_refs,
-    cudf::host_span<std::vector<cudf::io::text::byte_range_info> const>{byte_ranges_per_source},
+    byte_ranges_per_source,
     cudf::io::parquet::io_submission_policy::SERIALIZE,
     stream,
     mr);

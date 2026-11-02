@@ -15,14 +15,14 @@ AUDITWHEEL_EXCLUDES=(
   --exclude libcudf.so
   --exclude libcudf_streaming.so
   --exclude libkvikio.so
-  --exclude libnvcomp.so.6
+  --exclude "libnvcomp.so.*"
   --exclude librapids_logger.so
   --exclude librapidsmpf.so
   --exclude librmm.so
-  --exclude libucp.so.0
+  --exclude "libucp.so.*"
   --exclude libucxx.so
-  --exclude "libnvrtc.so.${RAPIDS_CUDA_MAJOR}"
-  --exclude "libnvJitLink.so.${RAPIDS_CUDA_MAJOR}"
+  --exclude "libnvrtc.so.*"
+  --exclude "libnvJitLink.so.*"
 )
 
 repair_wheel() {

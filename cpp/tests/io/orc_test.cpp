@@ -34,10 +34,12 @@
 #include <rmm/mr/cuda_memory_resource.hpp>
 
 #include <cuda/iterator>
+#include <cuda/std/limits>
 
 #include <algorithm>
 #include <array>
 #include <numeric>
+#include <ranges>
 #include <type_traits>
 
 template <typename T, typename SourceElementT = T>
@@ -1673,15 +1675,32 @@ TEST_F(OrcWriterTest, Decimal32)
 
 TEST_F(OrcStatisticsTest, Overflow)
 {
-  int num_rows       = 10;
+  using int64_limits     = cuda::std::numeric_limits<int64_t>;
+  using double_limits    = cuda::std::numeric_limits<double>;
+  using int128_limits    = cuda::std::numeric_limits<__int128_t>;
+  constexpr int num_rows = 10;
+
   auto too_large_seq = cudf::detail::make_counting_transform_iterator(
-    0, [](auto i) { return i * (std::numeric_limits<int64_t>::max() / 20); });
+    0, [](auto i) { return i * (int64_limits::max() / 20); });
   auto too_small_seq = cudf::detail::make_counting_transform_iterator(
-    0, [](auto i) { return i * (std::numeric_limits<int64_t>::min() / 20); });
+    0, [](auto i) { return i * (int64_limits::min() / 20); });
   auto not_too_large_seq = cudf::detail::make_counting_transform_iterator(
-    0, [](auto i) { return i * (std::numeric_limits<int64_t>::max() / 200); });
+    0, [](auto i) { return i * (int64_limits::max() / 200); });
   auto not_too_small_seq = cudf::detail::make_counting_transform_iterator(
-    0, [](auto i) { return i * (std::numeric_limits<int64_t>::min() / 200); });
+    0, [](auto i) { return i * (int64_limits::min() / 200); });
+  // Partial sums overflow but the total (-5) does not
+  auto int64_cancel_seq = cudf::detail::make_counting_transform_iterator(
+    0, [](auto i) { return i < 5 ? int64_limits::max() : int64_limits::min(); });
+  auto double_large_seq = cudf::detail::make_counting_transform_iterator(
+    0, [](auto i) { return i == 0 ? double_limits::max() / 2 : 0.; });
+  auto double_overflow_seq = cuda::make_constant_iterator(double_limits::max());
+  auto int128_cancel_seq   = cudf::detail::make_counting_transform_iterator(
+    0, [](auto i) { return i < 5 ? int128_limits::max() : int128_limits::min(); });
+  auto int128_overflow_seq = cudf::detail::make_counting_transform_iterator(
+    0, [](auto i) { return i == 0 ? int128_limits::max() : __int128_t{1}; });
+  // Fits __int128_t but exceeds ORC's 38-digit decimal limit
+  auto int128_too_many_digits_seq = cudf::detail::make_counting_transform_iterator(
+    0, [](auto i) { return i == 0 ? numeric::detail::exp10<__int128_t>(38) - 1 : __int128_t{1}; });
   auto validity = cudf::test::iterators::nulls_at_multiples_of(2);
 
   column_wrapper<int64_t, typename decltype(too_large_seq)::value_type> col1(
@@ -1692,7 +1711,14 @@ TEST_F(OrcStatisticsTest, Overflow)
     not_too_large_seq, not_too_large_seq + num_rows, validity);
   column_wrapper<int64_t, typename decltype(not_too_small_seq)::value_type> col4(
     not_too_small_seq, not_too_small_seq + num_rows, validity);
-  table_view tbl({col1, col2, col3, col4});
+  column_wrapper<int64_t> col5(int64_cancel_seq, int64_cancel_seq + num_rows);
+  column_wrapper<double> col6(double_large_seq, double_large_seq + num_rows);
+  column_wrapper<double> col7(double_overflow_seq, double_overflow_seq + num_rows);
+  dec128_col col8(int128_cancel_seq, int128_cancel_seq + num_rows, numeric::scale_type{0});
+  dec128_col col9(int128_overflow_seq, int128_overflow_seq + num_rows, numeric::scale_type{0});
+  dec128_col col10(
+    int128_too_many_digits_seq, int128_too_many_digits_seq + num_rows, numeric::scale_type{0});
+  table_view tbl({col1, col2, col3, col4, col5, col6, col7, col8, col9, col10});
 
   auto filepath = temp_env->get_temp_filepath("OrcStatsOverflow.orc");
 
@@ -1700,17 +1726,70 @@ TEST_F(OrcStatisticsTest, Overflow)
     cudf::io::orc_writer_options::builder(cudf::io::sink_info{filepath}, tbl);
   cudf::io::write_orc(out_opts);
 
-  auto const stats = cudf::io::read_parsed_orc_statistics(cudf::io::source_info{filepath});
-
-  auto check_sum_exist = [&](int idx, bool expected) {
-    auto const& s  = stats.file_stats[idx];
-    auto const& ts = std::get<cudf::io::integer_statistics>(s.type_specific_stats);
-    EXPECT_EQ(ts.sum.has_value(), expected);
+  auto const has_sum = [](cudf::io::column_statistics const& s) {
+    return std::visit(
+      [](auto const& ts) {
+        if constexpr (requires { ts.sum; }) {
+          return ts.sum.has_value();
+        } else {
+          return false;
+        }
+      },
+      s.type_specific_stats);
   };
-  check_sum_exist(1, false);
-  check_sum_exist(2, false);
-  check_sum_exist(3, true);
-  check_sum_exist(4, true);
+
+  auto const stats = cudf::io::read_parsed_orc_statistics(cudf::io::source_info{filepath});
+  auto const expected_has_sum =
+    std::array{false, false, true, true, true, true, false, true, false, false};
+  for (auto const idx : std::views::iota(size_t{0}, expected_has_sum.size())) {
+    EXPECT_EQ(has_sum(stats.file_stats[idx + 1]), expected_has_sum[idx]) << "column " << idx;
+  }
+
+  // A stripe without a sum must invalidate the merged file sum
+  column_wrapper<int64_t> overflow_col{int64_limits::max(), int64_limits::max()};
+  column_wrapper<int64_t> small_col{1, 1};
+  std::vector<char> buffer;
+  cudf::io::orc_chunked_writer(
+    cudf::io::chunked_orc_writer_options::builder(cudf::io::sink_info{&buffer}).build())
+    .write(table_view{{overflow_col}})
+    .write(table_view{{small_col}})
+    .close();
+  auto const merged_stats = cudf::io::read_parsed_orc_statistics(
+    cudf::io::source_info{cudf::host_span<char const>{buffer.data(), buffer.size()}});
+  ASSERT_EQ(merged_stats.stripes_stats.size(), 2);
+  EXPECT_FALSE(has_sum(merged_stats.stripes_stats[0][1]));
+  EXPECT_TRUE(has_sum(merged_stats.stripes_stats[1][1]));
+  EXPECT_FALSE(has_sum(merged_stats.file_stats[1]));
+}
+
+TEST_F(OrcStatisticsTest, DecimalSum)
+{
+  using int64_limits = cuda::std::numeric_limits<int64_t>;
+  // Negative sum
+  dec32_col col1{{-3, -2}, numeric::scale_type{0}};
+  // Negative sum below int64 min
+  dec64_col col2{{int64_limits::min(), -1}, numeric::scale_type{0}};
+  // Positive sum above int64 max
+  dec64_col col3{{int64_limits::max(), int64_limits::max()}, numeric::scale_type{0}};
+  // Valid sum that exceeds max() / non_nulls; must still be written
+  dec128_col col4{{__int128_t{1} << 126, 1}, numeric::scale_type{0}};
+  table_view tbl({col1, col2, col3, col4});
+
+  auto const filepath = temp_env->get_temp_filepath("OrcStatsDecimalSum.orc");
+  cudf::io::write_orc(
+    cudf::io::orc_writer_options::builder(cudf::io::sink_info{filepath}, tbl).build());
+
+  auto const stats         = cudf::io::read_parsed_orc_statistics(cudf::io::source_info{filepath});
+  auto const expected_sums = std::array{
+    "-5", "-9223372036854775809", "18446744073709551614", "85070591730234615865843651857942052865"};
+  for (auto const& col_stats : {stats.file_stats, stats.stripes_stats[0]}) {
+    for (auto const idx : std::views::iota(size_t{0}, expected_sums.size())) {
+      auto const& ts =
+        std::get<cudf::io::decimal_statistics>(col_stats[idx + 1].type_specific_stats);
+      ASSERT_TRUE(ts.sum.has_value());
+      EXPECT_EQ(*ts.sum, expected_sums[idx]);
+    }
+  }
 }
 
 TEST_F(OrcStatisticsTest, Decimal128Sum)

@@ -264,7 +264,7 @@ void hybrid_scan_multifile::setup_chunking_for_payload_columns(
                                                                                  mr);
 }
 
-void hybrid_scan_multifile::setup_chunking_for_payload_columns(
+void hybrid_scan_multifile::setup_chunking_for_payload_pages(
   std::size_t chunk_read_limit,
   std::size_t pass_read_limit,
   cudf::host_span<std::vector<size_type> const> row_group_indices,

@@ -1110,6 +1110,294 @@ TEST_F(BatchGatherMixedTest, MixedNullableFixedWidthWithNullFreeLists)
 }
 
 // ============================================================================
+// §5.6b String fallback seam: the per-call row gate at kStringFallbackRowThreshold hands tall
+// string columns to the stock per-column path. The fallback IS the stock path, so every test
+// below compares exactly (CUDF_TEST_EXPECT_TABLES_EQUAL) against a run_reference gather.
+// ============================================================================
+
+class BatchGatherTallSeamTest : public cudf::test::BaseFixture {};
+
+std::vector<std::string> periodic_strings(cudf::size_type num_rows, int const stride)
+{
+  std::vector<std::string> strings;
+  strings.reserve(num_rows);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    strings.push_back(std::string(static_cast<std::size_t>(1 + (i * stride) % 32),
+                                  static_cast<char>('a' + i % 26)));
+  }
+  return strings;
+}
+
+// Class 1: below the threshold the N3 fast path stays pinned — a strings-only table (and a
+// 2-column small case) gathers exactly like stock.
+TEST_F(BatchGatherTallSeamTest, BelowThresholdStringsFastPathPinned)
+{
+  constexpr cudf::size_type num_rows{65'536};
+  auto const strings = periodic_strings(num_rows, 23);
+  auto validity =
+    cudf::detail::make_counting_transform_iterator(0, [](cudf::size_type i) { return i % 4 != 0; });
+  cudf::test::strings_column_wrapper col_str(strings.begin(), strings.end(), validity);
+
+  cudf::table_view source_table({col_str});
+  auto const host_map = shuffled_iota(num_rows, 5);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+TEST_F(BatchGatherTallSeamTest, SmallTwoColumnFastPathPinned)
+{
+  constexpr cudf::size_type num_rows{10'000};
+  auto const strings = periodic_strings(num_rows, 17);
+  cudf::test::strings_column_wrapper col_str(strings.begin(), strings.end());
+  auto col_i32 = make_fixed_column<int32_t>(
+    num_rows,
+    [](cudf::size_type i) { return i * 7; },
+    [](cudf::size_type i) { return i % 3 != 0; });
+
+  cudf::table_view source_table({col_i32->view(), col_str});
+  auto const host_map = shuffled_iota(num_rows, 9);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// Class 2: at and above the threshold strings route to the fallback path — parity with stock,
+// and the fused string machinery must not see the columns.
+TEST_F(BatchGatherTallSeamTest, AtThresholdStringsFallbackPinned)
+{
+  constexpr cudf::size_type num_rows{262'144};
+  auto const strings = periodic_strings(num_rows, 17);
+  auto validity =
+    cudf::detail::make_counting_transform_iterator(0, [](cudf::size_type i) { return i % 6 != 0; });
+  cudf::test::strings_column_wrapper col_str(strings.begin(), strings.end(), validity);
+
+  cudf::table_view source_table({col_str});
+  auto const host_map = shuffled_iota(num_rows, 7);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+TEST_F(BatchGatherTallSeamTest, AboveThresholdStringsFallbackPinned)
+{
+  constexpr cudf::size_type num_rows{300'000};
+  auto const strings = periodic_strings(num_rows, 13);
+  cudf::test::strings_column_wrapper col_str(strings.begin(), strings.end());
+
+  auto col_i32 = make_fixed_column<int32_t>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+
+  cudf::table_view source_table({col_i32->view(), col_str});
+  auto const host_map = shuffled_iota(num_rows, 3);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// Class 3: off-by-one boundary pin — 262143 rows (fast path) and 262144 rows (fallback) must
+// BOTH match stock; the pair fails if the comparison is off by one.
+TEST_F(BatchGatherTallSeamTest, BoundaryBelowByOneUsesFastPath)
+{
+  constexpr cudf::size_type num_rows{262'143};
+  auto const strings = periodic_strings(num_rows, 19);
+  auto validity =
+    cudf::detail::make_counting_transform_iterator(0, [](cudf::size_type i) { return i % 5 != 0; });
+  cudf::test::strings_column_wrapper col_str(strings.begin(), strings.end(), validity);
+
+  auto col_i32 = make_fixed_column<int32_t>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+
+  cudf::table_view source_table({col_i32->view(), col_str});
+  auto const host_map = shuffled_iota(num_rows, 21);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// Class 4a: NULLIFY policy with out-of-bounds entries at the threshold — exercises the
+// fallback's gather_bitmask NULLIFY leg next to fused fixed-width columns in the same call.
+TEST_F(BatchGatherTallSeamTest, NullifyOutOfBoundsAtThreshold)
+{
+  constexpr cudf::size_type num_rows{262'144};
+  auto const strings = periodic_strings(num_rows, 11);
+  auto validity =
+    cudf::detail::make_counting_transform_iterator(0, [](cudf::size_type i) { return i % 7 != 0; });
+  cudf::test::strings_column_wrapper col_str(strings.begin(), strings.end(), validity);
+
+  auto col_i32 = make_fixed_column<int32_t>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+
+  cudf::table_view source_table({col_i32->view(), col_str});
+
+  std::vector<cudf::size_type> host_map;
+  host_map.reserve(num_rows);
+  std::mt19937 rng(13);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    // Mostly in-bounds; every 64th entry is out-of-bounds (source row count + offset).
+    host_map.push_back(i % 64 == 0 ? num_rows + static_cast<cudf::size_type>(rng() % 1024)
+                                   : static_cast<cudf::size_type>(rng() % num_rows));
+  }
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table, gather_map, cudf::out_of_bounds_policy::NULLIFY);
+  auto reference = run_reference(source_table, gather_map, cudf::out_of_bounds_policy::NULLIFY);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// Class 4c: an all-null string source at the threshold — the stock path's null handling must
+// match the fast path's skip_data inline build, parity on both sides of the gate.
+TEST_F(BatchGatherTallSeamTest, AllNullStringsAtThreshold)
+{
+  constexpr cudf::size_type num_rows{262'144};
+  auto const strings = periodic_strings(num_rows, 29);
+  auto all_invalid =
+    cudf::detail::make_counting_transform_iterator(0, [](cudf::size_type) { return false; });
+  cudf::test::strings_column_wrapper col_str(strings.begin(), strings.end(), all_invalid);
+
+  auto col_i32 = make_fixed_column<int32_t>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+
+  cudf::table_view source_table({col_i32->view(), col_str});
+  auto const host_map = shuffled_iota(num_rows, 15);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// Class 5: negative-index policy ALLOWED at the threshold — gated strings take the wrap
+// transform-iterator branch into run_fallback.
+TEST_F(BatchGatherTallSeamTest, NegativeIndexWrapAtThreshold)
+{
+  constexpr cudf::size_type num_rows{262'144};
+  auto const strings = periodic_strings(num_rows, 31);
+  auto validity =
+    cudf::detail::make_counting_transform_iterator(0, [](cudf::size_type i) { return i % 8 != 0; });
+  cudf::test::strings_column_wrapper col_str(strings.begin(), strings.end(), validity);
+
+  auto col_i32 = make_fixed_column<int32_t>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+
+  cudf::table_view source_table({col_i32->view(), col_str});
+
+  std::vector<cudf::size_type> host_map;
+  host_map.reserve(num_rows);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    // Every 8th entry is negative (wraps to num_src_rows + neg), the rest in-bounds.
+    host_map.push_back(i % 8 == 0 ? -(1 + static_cast<cudf::size_type>(i / 8) % num_rows)
+                                  : static_cast<cudf::size_type>((i * 31) % num_rows));
+  }
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table,
+                                 gather_map,
+                                 cudf::out_of_bounds_policy::DONT_CHECK,
+                                 cudf::negative_index_policy::ALLOWED);
+  auto reference = run_reference(source_table,
+                                 gather_map,
+                                 cudf::out_of_bounds_policy::DONT_CHECK,
+                                 cudf::negative_index_policy::ALLOWED);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// Class 6: mixed-table composition at the threshold (m1 style) — strings newly gated, lists
+// unchanged (already fallback), fixed-width still fused; whole-table equality vs stock.
+TEST_F(BatchGatherTallSeamTest, MixedCompositionAtThreshold)
+{
+  constexpr cudf::size_type num_rows{262'144};
+  auto const strings = periodic_strings(num_rows, 37);
+  auto validity =
+    cudf::detail::make_counting_transform_iterator(0, [](cudf::size_type i) { return i % 9 != 0; });
+  cudf::test::strings_column_wrapper col_str(strings.begin(), strings.end(), validity);
+
+  auto col_i32 = make_fixed_column<int32_t>(
+    num_rows,
+    [](cudf::size_type i) { return i * 3; },
+    [](cudf::size_type i) { return i % 2 != 0; });
+
+  // One list<int32> element per row (variable length), non-nullable parent.
+  std::vector<cudf::size_type> offsets;
+  offsets.reserve(num_rows + 1);
+  offsets.push_back(0);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    offsets.push_back(offsets.back() + static_cast<cudf::size_type>(1 + i % 4));
+  }
+  auto elements = make_fixed_column<int32_t>(
+    offsets.back(), [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+  auto col_list = cudf::make_lists_column(
+    num_rows,
+    cudf::test::fixed_width_column_wrapper<cudf::size_type>(offsets.begin(), offsets.end())
+      .release(),
+    std::move(elements),
+    0,
+    cudf::create_null_mask(num_rows, cudf::mask_state::ALL_VALID));
+
+  cudf::table_view source_table({col_i32->view(), col_str, col_list->view()});
+  auto const host_map = shuffled_iota(num_rows, 17);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// Class 7: empty map with a strings table — the gate is off at num_rows == 0; the zero-row
+// empty-column branch of the fast path still handles it (stock parity).
+TEST_F(BatchGatherTallSeamTest, EmptyMapStrings)
+{
+  auto strings = cudf::test::strings_column_wrapper{{"a", "", "ccc", "dd"}};
+  cudf::table_view source_table({strings});
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map{};
+
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// Class 8: sliced (offset != 0) string source at the threshold — the stock path's addressing
+// is offset-safe by construction; guards any future gate-time offset assumption.
+TEST_F(BatchGatherTallSeamTest, SlicedStringsAtThreshold)
+{
+  constexpr cudf::size_type num_rows{262'144};
+  auto const strings = periodic_strings(num_rows + 1000, 41);
+  cudf::test::strings_column_wrapper full_col(strings.begin(), strings.end());
+  auto sliced       = cudf::slice(full_col, {500, 500 + num_rows});
+  auto col_i32_full = make_fixed_column<int32_t>(
+    num_rows + 1000, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+  auto col_i32 = cudf::slice(col_i32_full->view(), {500, 500 + num_rows});
+
+  cudf::table_view source_table({col_i32[0], sliced[0]});
+  auto const host_map = shuffled_iota(num_rows, 19);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// ============================================================================
 // §5.7 Randomized differential against the stock gather (reference oracle).
 // ============================================================================
 

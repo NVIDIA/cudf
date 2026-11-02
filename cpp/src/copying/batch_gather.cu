@@ -541,6 +541,16 @@ constexpr int64_t kBlockRowCopyThreshold{32};
 // regime ~7x its CUB counterpart. Below the gate the payload kernel keeps its 65536-row wins.
 constexpr int64_t kBatchMemcpyRowThreshold{524'288};
 
+// Row-count gate (rows) between the N3 scan+payload string fast path and the stock per-column
+// string path (run_fallback -> column_gatherer<string_view> -> strings::detail::gather). The
+// payload's group-walk cost scales with the call's row count: measured A/B on tall cells shows
+// every string shape at >= 262144 rows losing to the stock path (up to ~1.9x) while 65536 rows
+// wins ~1.7x, and the loss persists even when every column's chars route to CUB — so the
+// discriminator is the call's row count, not bytes-per-row. Above this threshold the
+// chars-routing branch below becomes unreachable through this API; keep it (the stock path
+// runs the same CUB engine there, and a lowered threshold or a1 coarsening revives the band).
+constexpr size_type kStringFallbackRowThreshold{262'144};
+
 // Work item for one string column on the N3 path: source addressing plus the
 // destination buffers the payload kernel writes. The src fields are complete
 // when the item is registered (the scan reads only those); the dst fields are
@@ -1971,7 +1981,13 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
   size_type estimated_kernel_masked = 0;
   for (size_type i = 0; i < source_table.num_columns(); ++i) {
     auto const& src = source_table.column(i);
-    if (is_descriptor_path_candidate(src)) {
+    // Tall string columns take the stock per-column path: the fused string machinery's
+    // barrier walk scales with rows and loses there (measured A/B); small/mid tables keep the
+    // N3 fast path. Gated strings land in fallback_indices below, so neither the build
+    // walk nor assemble_strings ever sees them — and the descriptor estimate below stays
+    // consistent because `estimate_descriptor_counts` already returns {0, 0} for STRING.
+    if (is_descriptor_path_candidate(src) and
+        not(src.type().id() == type_id::STRING and num_rows >= kStringFallbackRowThreshold)) {
       fused_indices.push_back(i);
       if (not(num_rows == 0 and not cudf::is_fixed_width(src.type()))) {
         // Mirror the build's skip: an empty map routes non-fixed-width columns to empty_like

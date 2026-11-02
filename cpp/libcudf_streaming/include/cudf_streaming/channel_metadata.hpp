@@ -131,9 +131,9 @@ struct row_ordering {
  * When `boundaries` is set, its columns must align with `keys`
  * (same count and compatible dtypes). Mismatched dtypes are a usage error.
  *
- * Every row in partition i sorts at or before boundaries[i] when i < N-1.
- * When i > 0, rows also sort at or after boundaries[i-1]. If
- * `strict_boundaries` is true, they sort strictly after that boundary.
+ * Rows in each partition lie between its neighboring boundaries in sort order.
+ * A boundary value may appear in either neighboring partition unless
+ * `strict_boundaries` is true, in which case it belongs to the lower-numbered one.
  */
 struct ordering {
   std::vector<order_key> keys;              ///< Sort keys (column, order, null_order per entry).

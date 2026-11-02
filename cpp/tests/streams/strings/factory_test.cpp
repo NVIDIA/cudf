@@ -9,7 +9,6 @@
 
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
-#include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/std/utility>

@@ -11,7 +11,6 @@
 
 #include <cudf/copying.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
-#include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/sorting.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>

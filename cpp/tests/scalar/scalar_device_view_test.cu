@@ -9,7 +9,6 @@
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/detail/utilities/buffer_factories.hpp>
-#include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/scalar/scalar_device_view.cuh>
 #include <cudf/strings/string_view.cuh>

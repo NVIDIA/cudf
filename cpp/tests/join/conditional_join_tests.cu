@@ -116,7 +116,7 @@ gen_random_nullable_repeated_columns(unsigned int N = 10000, unsigned int num_re
                    std::pair(std::move(right), std::move(right_nulls)));
 }
 
-// `rmm::device_uvector<T>` requires that T be trivially copyable. `thrust::pair` does
+// `cuda::device_buffer<T>` requires that T be trivially copyable. `thrust::pair` does
 // not satisfy this requirement because it defines nontrivial copy/move
 // constructors. Therefore, we need a simple, trivially copyable pair-like
 // object. `index_pair` is a minimal implementation suitable for use in the

@@ -322,7 +322,7 @@ def test_len_frame_dtype_matches_cast_not_hardcoded():
     )
 
     context = IRExecutionContext()
-    result = select.evaluate(cache={}, timer=None, context=context)
+    result = select.evaluate(cache={}, context=context)
     (column,) = result.columns
     assert column.dtype == target
     assert (

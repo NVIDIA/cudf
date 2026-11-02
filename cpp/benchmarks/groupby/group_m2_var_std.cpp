@@ -26,21 +26,25 @@ void run_benchmark(nvbench::state& state,
                    cudf::column_view keys,
                    double null_probability)
 {
-  auto values_builder = data_profile_builder().cardinality(0).distribution(
-    cudf::type_to_id<Type>(), distribution_id::UNIFORM, 0, num_rows);
+  auto values_builder =
+    data_profile_builder().cardinality(0).distribution(cudf::type_to_id<Type>(),
+                                                       distribution_id::UNIFORM,
+                                                       static_cast<Type>(0),
+                                                       static_cast<Type>(num_rows));
   if (null_probability > 0) {
     values_builder.null_probability(null_probability);
   } else {
     values_builder.no_validity();
   }
+  data_profile const values_profile = std::move(values_builder);
 
   std::vector<std::unique_ptr<cudf::column>> values_cols;
   std::vector<cudf::groupby::aggregation_request> requests;
   values_cols.reserve(num_aggs);
   requests.reserve(num_aggs);
   for (cudf::size_type i = 0; i < num_aggs; i++) {
-    auto values = create_random_column(
-      cudf::type_to_id<Type>(), row_count{num_rows}, data_profile{values_builder});
+    auto values =
+      create_random_column(cudf::type_to_id<Type>(), row_count{num_rows}, values_profile);
     auto request   = cudf::groupby::aggregation_request{};
     request.values = values->view();
     if constexpr (Agg == cudf::aggregation::Kind::M2) {
@@ -79,13 +83,11 @@ void bench_groupby_m2_var_std(nvbench::state& state,
   auto const num_rows         = static_cast<cudf::size_type>(state.get_int64("num_rows"));
   auto const null_probability = state.get_float64("null_probability");
   auto const num_aggs         = static_cast<cudf::size_type>(state.get_int64("num_aggs"));
-  data_profile const profile  = data_profile_builder()
-                                 .cardinality(num_rows / value_key_ratio)
-                                 .no_validity()
-                                 .distribution(cudf::type_to_id<int32_t>(),
-                                               distribution_id::UNIFORM,
-                                               static_cast<Type>(0),
-                                               static_cast<Type>(num_rows));
+  data_profile const profile =
+    data_profile_builder()
+      .cardinality(num_rows / value_key_ratio)
+      .no_validity()
+      .distribution(cudf::type_to_id<int32_t>(), distribution_id::UNIFORM, int32_t{0}, num_rows);
   auto const keys = create_random_column(cudf::type_id::INT32, row_count{num_rows}, profile);
   run_benchmark<Type, Agg>(state, num_rows, num_aggs, keys->view(), null_probability);
 }

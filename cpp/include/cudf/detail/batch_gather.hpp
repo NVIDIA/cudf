@@ -32,10 +32,11 @@ namespace detail {
  * kernel that processes all of them in a single launch — fully-fixed-width structs flatten into
  * per-leaf data descriptors plus mask-only descriptors for the struct nodes themselves, and
  * dictionaries contribute a data descriptor over their annotated indices with the gathered mask
- * landing on the dictionary parent. Remaining columns (strings, lists, structs with any
- * non-fixed-width descendant, dictionaries with unsigned indices) fall back to the stock
- * per-column gather path. The fallback keeps mixed-type tables correct by construction; a pure
- * fixed-width table pays exactly one kernel launch.
+ * landing on the dictionary parent. String columns join the fused path's scan+payload machinery
+ * only below a row-count threshold; at or above it (and all lists, structs with any
+ * non-fixed-width descendant, and dictionaries with unsigned indices) they fall back to the
+ * stock per-column gather path. The fallback keeps mixed-type tables correct by construction; a
+ * pure fixed-width table pays exactly one kernel launch.
  *
  * A negative value `i` in the gather map is interpreted as `i + n`, where `n` is the number of
  * rows in `source_table`, when `neg_indices` is `negative_index_policy::ALLOWED`. When

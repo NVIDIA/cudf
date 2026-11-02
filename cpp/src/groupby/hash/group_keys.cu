@@ -135,7 +135,7 @@ std::size_t estimate_capacity(size_type num_rows,
   // half full. Odd strides avoid repeatedly sampling the same phase of power-of-two patterns.
   auto const stride =
     std::max<size_type>(
-      67, cudf::util::div_rounding_up_safe<size_type>(num_rows, hash_csr_sample_capacity / 2)) |
+      67, cudf::detail::div_rounding_up_safe<size_type>(num_rows, hash_csr_sample_capacity / 2)) |
     1;
   auto const max_capacity =
     static_cast<std::size_t>(std::numeric_limits<cuda::std::uint32_t>::max());

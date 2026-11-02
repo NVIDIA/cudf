@@ -367,6 +367,35 @@ TEST_F(BatchGatherSlicedTest, SlicedMixedWidths)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_dec->view(), result->view().column(2));
 }
 
+// Regression for the ALL_NULL null-count semantics: a SLICED all-null source has
+// `src.size() < gather_map.size()`, so the destination null count is the map size —
+// not the source slice size. Asserts the null_count explicitly (table equality alone
+// can mask a wrong count).
+TEST_F(BatchGatherSlicedTest, AllNullSlicedSourceParity)
+{
+  constexpr cudf::size_type source_size{1000};
+  constexpr cudf::size_type slice_begin{100};
+  constexpr cudf::size_type slice_end{600};
+  constexpr cudf::size_type num_rows{500};
+
+  auto source_column = make_fixed_column<int32_t>(
+    source_size, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return false; });
+
+  auto sliced = cudf::slice(source_column->view(), {slice_begin, slice_end});
+  ASSERT_EQ(sliced.size(), 1);
+  ASSERT_EQ(sliced[0].size(), slice_end - slice_begin);
+  auto gather_map = make_fixed_column<cudf::size_type>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+
+  cudf::table_view source_table({sliced[0]});
+  auto result = run_batch_gather(source_table, gather_map->view());
+
+  ASSERT_EQ(result->view().column(0).null_count(), num_rows);
+  auto expected = make_fixed_column<int32_t>(
+    num_rows, [](cudf::size_type) { return 0; }, [](cudf::size_type) { return false; });
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view(), result->view().column(0));
+}
+
 // ============================================================================
 // §5.3 Degenerate shapes.
 // ============================================================================
@@ -1488,6 +1517,69 @@ TEST_F(BatchGatherTallSeamTest, CarvedStringsOutliveCallScopeArena)
   }();
 
   // The arena resource is gone here; the carved columns must still read back correctly.
+  CUDF_TEST_EXPECT_TABLES_EQUAL(run_reference(source_table, gather_map)->view(), result->view());
+}
+
+// Both carve arenas' shared-ownership lifetime: a MIXED batch (strings + fixed-width columns,
+// the fixed-width class including plain leaves, a struct's leaf, and a string-keyed dictionary
+// whose deferred assembly carves its parent mask) must read back correctly AFTER the call's
+// tracking output resource is destroyed. Each carved buffer stores a value copy of its
+// arena's shared resource, so a buffer that instead referenced a call-scope arena would read
+// freed memory in the post-scope comparison below.
+TEST_F(BatchGatherTallSeamTest, CarvedMixedColumnsOutliveCallScopeArena)
+{
+  constexpr cudf::size_type num_rows{65'536};
+  auto const strings = periodic_strings(num_rows, 23);
+  auto validity =
+    cudf::detail::make_counting_transform_iterator(0, [](cudf::size_type i) { return i % 4 != 0; });
+  cudf::test::strings_column_wrapper col_str(strings.begin(), strings.end(), validity);
+  auto col_i32 = make_fixed_column<int32_t>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type i) { return i % 2 == 0; });
+  // A struct leaf + a string-keyed dictionary exercise the struct-node mask carve and the
+  // deferred-assembly dictionary carve (the parent mask rides the fw arena through the
+  // staged record).
+  auto col_i64 = make_fixed_column<int64_t>(
+    num_rows,
+    [](cudf::size_type i) { return 2 * i; },
+    [](cudf::size_type i) { return i % 3 != 0; });
+  std::vector<std::unique_ptr<cudf::column>> struct_children;
+  struct_children.push_back(std::move(col_i64));
+  cudf::test::structs_column_wrapper col_struct{std::move(struct_children)};
+  std::vector<std::string> dict_values(num_rows);
+  std::generate(dict_values.begin(), dict_values.end(), [n = 0]() mutable {
+    return std::string(1, static_cast<char>('a' + (n++) % 3));
+  });
+  auto dict_validity =
+    cudf::detail::make_counting_transform_iterator(0, [](cudf::size_type i) { return i % 5 != 0; });
+  cudf::test::dictionary_column_wrapper<std::string> col_dict(
+    dict_values.begin(), dict_values.end(), dict_validity);
+
+  cudf::table_view source_table({col_i32->view(), col_str, col_struct, col_dict});
+  auto const host_map = shuffled_iota(num_rows, 5);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  // The tracking resource is a block-scope local: it is destroyed at the end of this loop
+  // iteration, well before the comparison runs. Its counters prove both carve arenas and the
+  // stock string-mask allocations actually happened — a 0-allocation result would mean the
+  // test never exercised the carved paths.
+  auto const result = [&] {
+    auto output_mr = rmm::mr::statistics_resource_adaptor{cudf::get_current_device_resource_ref()};
+    auto const reference = run_reference(source_table, gather_map);  // stock path, default resource
+    auto gathered =
+      cudf::detail::batch_gather(source_table,
+                                 gather_map,
+                                 cudf::out_of_bounds_policy::DONT_CHECK,
+                                 cudf::negative_index_policy::NOT_ALLOWED,
+                                 cudf::get_default_stream(),
+                                 cudf::memory_resources{rmm::device_async_resource_ref{output_mr}});
+    CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), gathered->view());
+    auto const arena_allocations = output_mr.get_allocations_counter().value;
+    EXPECT_GT(arena_allocations, 0);
+    return gathered;
+  }();
+
+  // Both arena resources are gone here; the carved columns must still read back correctly.
   CUDF_TEST_EXPECT_TABLES_EQUAL(run_reference(source_table, gather_map)->view(), result->view());
 }
 

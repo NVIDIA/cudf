@@ -7,6 +7,7 @@
 
 #include "compute_single_pass_aggs.hpp"
 #include "grouped_reductions.cuh"
+#include "single_pass_argminmax.hpp"
 #include "single_pass_reductions.hpp"
 
 #include <cudf/column/column_device_view.cuh>
@@ -15,7 +16,6 @@
 #include <cudf/detail/aggregation/aggregation.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
-#include <cudf/detail/utilities/element_argminmax.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/null_mask.hpp>
@@ -226,53 +226,6 @@ struct grouped_reduction_fn {
   }
 
   template <typename T>
-    requires(is_reduction_supported<T>(K) && (K == aggregation::ARGMIN || K == aggregation::ARGMAX))
-  std::unique_ptr<column> operator()(reduction_context const& ctx,
-                                     cuda::stream_ref stream,
-                                     cudf::memory_resources mr) const
-  {
-    auto result = make_fixed_width_column(data_type{type_to_id<size_type>()},
-                                          ctx.num_groups,
-                                          mask_state::UNALLOCATED,
-                                          stream,
-                                          mr.get_output_mr());
-    if (ctx.num_groups == 0) { return result; }
-
-    // The selected row is valid iff the group contains any valid row. An all-null group
-    // may select a null row or the sentinel, so check both before reading its validity bit.
-    constexpr auto is_argmin = K == aggregation::ARGMIN;
-    auto const reduce        = [&](auto output) {
-      reduce_groups(ctx.grouped,
-                    ctx.grouped.rows.begin(),
-                    output,
-                    cudf::detail::element_argminmax_fn<rep_type_t<T>>{
-                      ctx.d_values, ctx.values.has_nulls(), is_argmin},
-                    is_argmin ? cudf::detail::ARGMIN_SENTINEL : cudf::detail::ARGMAX_SENTINEL,
-                    stream,
-                    mr);
-    };
-    auto const out = result->mutable_view().begin<size_type>();
-    auto null_mask =
-      cudf::create_null_mask(ctx.num_groups,
-                             ctx.nullable ? mask_state::ALL_VALID : mask_state::UNALLOCATED,
-                             stream,
-                             mr.get_output_mr());
-    auto const mask = reinterpret_cast<bitmask_type*>(null_mask.data());
-    reduce(cuda::tabulate_output_iterator{
-      [out, mask, values = ctx.d_values] __device__(cuda::std::ptrdiff_t group, size_type row) {
-        out[group] = row;
-        if (mask != nullptr && (row < 0 || row >= values.size() || values.is_null(row))) {
-          cudf::clear_bit(mask, static_cast<size_type>(group));
-        }
-      }});
-    if (ctx.nullable) {
-      auto const null_count = count_group_nulls(mask, ctx.num_groups, stream, mr);
-      result->set_null_mask(std::move(null_mask), null_count);
-    }
-    return result;
-  }
-
-  template <typename T>
     requires(is_reduction_supported<T>(K) && K == aggregation::SUM_OVERFLOW)
   std::unique_ptr<column> operator()(reduction_context const& ctx,
                                      cuda::stream_ref stream,
@@ -294,7 +247,7 @@ struct grouped_reduction_fn {
       if (ctx.nullable) {
         null_mask =
           cudf::create_null_mask(ctx.num_groups, mask_state::ALL_VALID, stream, mr.get_output_mr());
-        auto const mask   = reinterpret_cast<bitmask_type*>(null_mask.data());
+        auto const mask   = null_mask.data();
         auto const values = cudf::detail::make_counting_transform_iterator(
           0,
           grouped_sum_overflow_fn<Source, true>{
@@ -456,7 +409,7 @@ struct grouped_reductions_fn {
       if constexpr (Nullable) {
         for (size_type i = 0; i < num_columns; ++i) {
           auto const begin = group_valid.data() + static_cast<std::size_t>(i) * first.num_groups;
-          auto const resources = is_intermediate[i] ? cudf::memory_resources{temp_mr, temp_mr} : mr;
+          auto const resources = is_intermediate[i] ? mr.as_temporary() : mr;
           auto [mask, null_count] =
             make_mask_from_validity(begin, begin + first.num_groups, stream, resources);
           results[i]->set_null_mask(std::move(mask), null_count);
@@ -501,7 +454,11 @@ std::unique_ptr<column> compute_reduction(reduction_context const& ctx,
                                           cuda::stream_ref stream,
                                           cudf::memory_resources mr)
 {
-  return type_dispatcher(ctx.values_type, grouped_reduction_fn<K>{}, ctx, stream, mr);
+  if constexpr (K == aggregation::ARGMIN || K == aggregation::ARGMAX) {
+    return compute_argminmax(ctx, K == aggregation::ARGMIN, stream, mr);
+  } else {
+    return type_dispatcher(ctx.values_type, grouped_reduction_fn<K>{}, ctx, stream, mr);
+  }
 }
 
 }  // namespace cudf::groupby::detail::hash

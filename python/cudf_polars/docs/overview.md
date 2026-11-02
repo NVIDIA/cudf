@@ -617,7 +617,7 @@ translator = Translator(q._ldf.visit(), pl.GPUEngine())
 ir = translator.translate_ir()
 
 # DataFrame living on the device
-result = ir.evaluate(cache={}, timer=None, context=IRExecutionContext())
+result = ir.evaluate(cache={}, context=IRExecutionContext())
 
 # Polars dataframe
 host_result = result.to_polars()
@@ -659,50 +659,6 @@ These provide a higher-level grouping over the lower-level libcudf calls (e.g.
 The module `cudf_polars.streaming.explain` contains functions for dumping
 the query for a given `LazyFrame`.
 
-
-## Structured Output
-
-`cudf_polars.streaming.explain.serialize_query` can be used to output
-the query plan in a structured format.
-
-```python
->>> import dataclasses
->>> import polars as pl
->>> from cudf_polars.streaming.explain import serialize_query
->>> q = pl.LazyFrame({"a": ['a', 'b', 'a'], "b": [1, 2, 3]}).group_by("a").agg(pl.len())
->>> dataclasses.asdict(serialize_query(q, engine=pl.GPUEngine()))
-{'roots': ['526964741'],
- 'nodes': {'526964741': {'id': '526964741',
-   'children': ['1694929589'],
-   'schema': {'a': 'STRING', 'len': 'UINT32'},
-   'properties': {'columns': ['a', 'len']},
-   'type': 'Select'},
-  '1694929589': {'id': '1694929589',
-   'children': ['2632275007'],
-   'schema': {'a': 'STRING', '___0': 'UINT32'},
-   'properties': {'keys': ['a']},
-   'type': 'GroupBy'},
-  '2632275007': {'id': '2632275007',
-   'children': [],
-   'schema': {'a': 'STRING'},
-   'properties': {},
-   'type': 'DataFrameScan'}},
- 'partition_info': {'526964741': {'count': 1, 'partitioned_on': ()},
-  '1694929589': {'count': 1, 'partitioned_on': ()},
-  '2632275007': {'count': 1, 'partitioned_on': ()}}}
-```
-
-The structured schema has three top-level fields:
-
-1. `roots`: the integer ID for the "root" (final) nodes in the query plan
-2. `partition_info`: partitioning information at each stage of the query
-3. `nodes`: A mapping from integer node id to node details. Each node ID
-   that appears in the output will be present in this mapping.
-   Inspect `children` to understand which nodes this node depends on.
-
-Note that all integers are stored as strings to make round-tripping
-to JSON easier.
-
 ## Quent
 
 cudf-polars uses [Quent] for instrumentation. The output can be opened
@@ -710,9 +666,10 @@ with `quent-open` and might be helpful for users and developers of cudf-polars.
 
 ### Enabling Quent Telemetry
 
-Set `CUDF_POLARS__EXECUTOR__QUENT_CONTEXT=1` and `CUDF_POLARS_LOG_TRACES=1` to
-enable full instrumentation. These must be set before the `cudf_polars` module
-is imported.
+Set `CUDF_POLARS__EXECUTOR__QUENT_CONTEXT=1` to export plans, actor lifetimes,
+aggregate actor statistics, runtime decisions, and per-node `Evaluate`
+lifecycles. Asynchronous scan work uses the same lifecycle with task metadata,
+disk-to-device transfer usage, failures, and actual output bytes.
 
 ### Schema
 

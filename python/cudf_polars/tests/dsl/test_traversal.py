@@ -175,7 +175,6 @@ def test_rewrite_ir_node():
 
     result = new.evaluate(
         cache={},
-        timer=None,
         context=IRExecutionContext(),
     ).to_polars()
 
@@ -211,7 +210,6 @@ def test_rewrite_scan_node(tmp_path):
 
     result = new.evaluate(
         cache={},
-        timer=None,
         context=IRExecutionContext(),
     ).to_polars()
 
@@ -288,7 +286,6 @@ def test_rewrite_names_and_ops():
 
     got = new_ir.evaluate(
         cache={},
-        timer=None,
         context=IRExecutionContext(),
     ).to_polars()
 

@@ -216,7 +216,7 @@ struct metadata : public FileMetaData {
   /**
    * @brief Parses column and offset indexes from the page index bytes starting at `min_offset`
    */
-  void setup_page_index(cudf::host_span<uint8_t const> page_index_bytes, int64_t min_offset);
+  void setup_page_index(std::span<uint8_t const> page_index_bytes, int64_t min_offset);
 
   /**
    * @brief Returns whether the page index has been set up
@@ -384,9 +384,9 @@ class aggregate_reader_metadata {
    */
   [[nodiscard]] std::pair<std::vector<cuda::device_buffer<uint8_t>>,
                           std::vector<cudf::device_span<cuda::std::byte const>>>
-  read_bloom_filters(host_span<std::unique_ptr<datasource> const> sources,
-                     host_span<std::vector<size_type> const> row_group_indices,
-                     host_span<int const> column_schemas,
+  read_bloom_filters(std::span<std::unique_ptr<datasource> const> sources,
+                     std::span<std::vector<size_type> const> row_group_indices,
+                     std::span<int const> column_schemas,
                      size_type num_row_groups,
                      cuda::stream_ref stream,
                      rmm::device_async_resource_ref mr) const;
@@ -394,14 +394,11 @@ class aggregate_reader_metadata {
   /**
    * @brief Collects Parquet types for the columns with the specified schema indices
    *
-   * @param row_group_indices Lists of row groups, once per source
    * @param column_schemas Schema indices of columns whose types will be collected
    *
    * @return A list of parquet types for the columns matching the provided schema indices
    */
-  [[nodiscard]] std::vector<Type> get_parquet_types(
-    host_span<std::vector<size_type> const> row_group_indices,
-    host_span<int const> column_schemas) const;
+  [[nodiscard]] std::vector<Type> get_parquet_types(std::span<int const> column_schemas) const;
 
   /**
    * @brief Filters the row groups using row bounds (`skip_rows` and `num_rows`)
@@ -418,7 +415,7 @@ class aggregate_reader_metadata {
                            std::vector<std::vector<size_type>>,
                            std::vector<std::vector<size_t>>,
                            std::vector<std::vector<size_t>>>
-  apply_row_bounds_filter(cudf::host_span<std::vector<size_type> const> input_row_group_indices,
+  apply_row_bounds_filter(std::span<std::vector<size_type> const> input_row_group_indices,
                           int64_t rows_to_skip,
                           int64_t rows_to_read) const;
 
@@ -438,7 +435,7 @@ class aggregate_reader_metadata {
    * @return A vector of surviving row group indices
    */
   [[nodiscard]] std::vector<std::vector<size_type>> apply_byte_bounds_filter(
-    host_span<std::vector<size_type> const> input_row_group_indices,
+    std::span<std::vector<size_type> const> input_row_group_indices,
     size_t bytes_to_skip,
     std::optional<size_t> const& bytes_to_read) const;
 
@@ -457,8 +454,8 @@ class aggregate_reader_metadata {
    * @return True if any filter column carries row-group statistics
    */
   [[nodiscard]] bool any_row_group_stats_available(
-    host_span<std::vector<size_type> const> input_row_group_indices,
-    host_span<int const> filter_column_schemas) const;
+    std::span<std::vector<size_type> const> input_row_group_indices,
+    std::span<int const> filter_column_schemas) const;
 
  protected:
   /**
@@ -491,10 +488,10 @@ class aggregate_reader_metadata {
    * @return Surviving row group indices if any of them are filtered.
    */
   [[nodiscard]] std::optional<std::vector<std::vector<size_type>>> apply_stats_filters(
-    host_span<std::vector<size_type> const> input_row_group_indices,
+    std::span<std::vector<size_type> const> input_row_group_indices,
     size_type total_row_groups,
-    host_span<data_type const> output_dtypes,
-    host_span<int const> output_column_schemas,
+    std::span<data_type const> output_dtypes,
+    std::span<int const> output_column_schemas,
     std::reference_wrapper<ast::expression const> filter,
     cuda::stream_ref stream) const;
 
@@ -514,13 +511,13 @@ class aggregate_reader_metadata {
    * @return Surviving row group indices if any of them are filtered.
    */
   [[nodiscard]] std::optional<std::vector<std::vector<size_type>>> apply_bloom_filters(
-    cudf::host_span<cudf::device_span<cuda::std::byte const> const> bloom_filter_data,
-    host_span<std::vector<size_type> const> input_row_group_indices,
-    host_span<std::vector<ast::literal*> const> literals,
-    host_span<std::vector<ast::ast_operator> const> operators,
+    std::span<cudf::device_span<cuda::std::byte const> const> bloom_filter_data,
+    std::span<std::vector<size_type> const> input_row_group_indices,
+    std::span<std::vector<ast::literal*> const> literals,
+    std::span<std::vector<ast::ast_operator> const> operators,
     size_type total_row_groups,
-    host_span<data_type const> output_dtypes,
-    host_span<int const> bloom_filter_col_schemas,
+    std::span<data_type const> output_dtypes,
+    std::span<int const> bloom_filter_col_schemas,
     std::reference_wrapper<ast::expression const> filter,
     cuda::stream_ref stream) const;
 
@@ -530,7 +527,7 @@ class aggregate_reader_metadata {
   void initialize_internals(bool use_arrow_schema, bool has_cols_from_mismatched_srcs);
 
  public:
-  aggregate_reader_metadata(host_span<std::unique_ptr<datasource> const> sources,
+  aggregate_reader_metadata(std::span<std::unique_ptr<datasource> const> sources,
                             bool use_arrow_schema,
                             bool has_cols_from_mismatched_srcs,
                             bool read_page_indexes = true);
@@ -818,11 +815,11 @@ class aggregate_reader_metadata {
    */
   [[nodiscard]] std::pair<std::optional<std::vector<std::vector<size_type>>>,
                           surviving_row_group_metrics>
-  filter_row_groups(host_span<std::unique_ptr<datasource> const> sources,
-                    host_span<std::vector<size_type> const> input_row_group_indices,
+  filter_row_groups(std::span<std::unique_ptr<datasource> const> sources,
+                    std::span<std::vector<size_type> const> input_row_group_indices,
                     size_type total_row_groups,
-                    host_span<data_type const> output_dtypes,
-                    host_span<int const> output_column_schemas,
+                    std::span<data_type const> output_dtypes,
+                    std::span<int const> output_column_schemas,
                     std::reference_wrapper<ast::expression const> filter,
                     cuda::stream_ref stream) const;
 
@@ -852,14 +849,14 @@ class aggregate_reader_metadata {
                            std::vector<size_t>,
                            size_type,
                            surviving_row_group_metrics>
-  select_row_groups(host_span<std::unique_ptr<datasource> const> sources,
-                    host_span<std::vector<size_type> const> row_group_indices,
+  select_row_groups(std::span<std::unique_ptr<datasource> const> sources,
+                    std::span<std::vector<size_type> const> row_group_indices,
                     int64_t row_start,
                     std::optional<int64_t> const& row_count,
                     size_t start_byte,
                     std::optional<size_t> const& byte_count,
-                    host_span<data_type const> output_dtypes,
-                    host_span<int const> output_column_schemas,
+                    std::span<data_type const> output_dtypes,
+                    std::span<int const> output_column_schemas,
                     std::optional<std::reference_wrapper<ast::expression const>> filter,
                     cuda::stream_ref stream) const;
 

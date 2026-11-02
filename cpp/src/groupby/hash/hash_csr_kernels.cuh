@@ -16,6 +16,8 @@
 
 #include <cooperative_groups.h>
 #include <cuda/atomic>
+#include <cuda/cmath>
+#include <cuda/std/bit>
 #include <cuda/std/cstdint>
 #include <cuda/std/limits>
 #include <cuda/std/utility>
@@ -71,7 +73,7 @@ struct hash_set_ref {
   {
     representative = cudf::detail::CUDF_SIZE_TYPE_SENTINEL;
     // Multiply-high reduces the hash to any capacity without division or modulo.
-    auto slot = __umulhi(__brev(hash_value), capacity);
+    auto slot = cuda::mul_hi(cuda::std::bit_reverse(hash_value), capacity);
     for (cuda::std::uint32_t step = 0; step < max_probes; ++step) {
       auto slot_ref = cuda::atomic_ref<slot_type, cuda::thread_scope_device>{slots[slot]};
       auto current  = slot_ref.load(cuda::memory_order_relaxed);
@@ -102,15 +104,22 @@ struct hash_set_ref {
  * the rows still to come are skipped: the caller then rebuilds with a larger set.
  */
 template <typename Equal, typename Hasher>
-CUDF_KERNEL void hash_csr_build_kernel(size_type num_rows,
-                                       bitmask_type const* valid_rows,
-                                       build_position_type* positions,
-                                       size_type* slot_counts,
-                                       bool count_by_representative,
-                                       hash_set_ref set,
-                                       Equal equal,
-                                       Hasher hasher,
-                                       cuda::std::int32_t* overflow)
+CUDF_KERNEL void
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 800 && __CUDA_ARCH__ < 1000
+// Ampere and Hopper compile this kernel to over 120 registers, two blocks per SM; bounding it
+// trades a few spills for 2.5x the occupancy. Any bound raises Blackwell's register count, and
+// Turing cannot fit five 256-thread blocks per SM.
+__launch_bounds__(hash_csr_block_size, 5)
+#endif
+  hash_csr_build_kernel(size_type num_rows,
+                        bitmask_type const* valid_rows,
+                        build_position_type* positions,
+                        size_type* slot_counts,
+                        bool count_by_representative,
+                        hash_set_ref set,
+                        Equal equal,
+                        Hasher hasher,
+                        cuda::std::int32_t* overflow)
 {
   auto const block  = cooperative_groups::this_thread_block();
   auto const warp   = cooperative_groups::tiled_partition<cudf::detail::warp_size>(block);
@@ -261,7 +270,7 @@ void launch_hash_csr_sample_kernel(size_type num_rows,
                                    size_type* counts,
                                    cuda::stream_ref stream)
 {
-  auto const num_samples = cudf::util::div_rounding_up_safe(num_rows, stride);
+  auto const num_samples = cudf::detail::div_rounding_up_safe(num_rows, stride);
   if (num_samples == 0) { return; }
   auto const config = cudf::detail::grid_1d{num_samples, hash_csr_block_size};
   hash_csr_sample_kernel<<<config.num_blocks, config.num_threads_per_block, 0, stream.get()>>>(

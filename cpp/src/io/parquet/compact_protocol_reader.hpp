@@ -14,6 +14,8 @@
 #include <cudf/utilities/span.hpp>
 
 #include <cuda/std/bit>
+#include <cuda/std/concepts>
+#include <cuda/std/type_traits>
 
 #include <algorithm>
 #include <concepts>
@@ -95,7 +97,7 @@ class CompactProtocolReader {
 
   // Returns a varint-encoded integer. `T` is constrained to unsigned so `numeric_limits<T>::digits`
   // is the full value width; a signed `T` would drop the sign bit and misplace the overflow bound.
-  template <std::unsigned_integral T>
+  template <cuda::std::unsigned_integral T>
   T get_varint()
   {
     T v = 0;
@@ -117,7 +119,7 @@ class CompactProtocolReader {
   template <typename T>
   T get_zigzag()
   {
-    using U   = std::make_unsigned_t<T>;
+    using U   = cuda::std::make_unsigned_t<T>;
     U const u = get_varint<U>();
     return static_cast<T>((u >> 1u) ^ -static_cast<T>(u & 1));
   }
@@ -152,12 +154,15 @@ class CompactProtocolReader {
  public:
   // Generate Thrift structure parsing routines
   void read(SchemaElement* s);
-  void read(LogicalType* l);
+  void read(LogicalType* l, LogicalTypePayload* payload);
   void read(DecimalType* d);
   void read(TimeType* t);
   void read(TimeUnit* u);
   void read(TimestampType* t);
   void read(IntType* t);
+  void read(GeometryType* g);
+  void read(VariantType* v);
+  void read(GeographyType* g);
   void read(RowGroup* r);
   void read(ColumnChunk* c);
   void read(BloomFilterAlgorithm* bf);

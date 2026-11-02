@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "group_reductions.hpp"
 #include "lists/utilities.hpp"
 
 #include <cudf/aggregation.hpp>
@@ -15,10 +16,16 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
+#include <cudf/utilities/traits.hpp>
 
 #include <rmm/device_buffer.hpp>
+#include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
+#include <cuda/iterator>
+#include <cuda/std/cstddef>
 #include <thrust/gather.h>
+#include <thrust/sequence.h>
 
 namespace cudf::groupby::detail {
 
@@ -91,6 +98,49 @@ std::unique_ptr<column> group_histogram(column_view const& values,
   return build_histogram(values, group_labels, std::nullopt, num_groups, stream, mr);
 }
 
+std::unique_ptr<column> make_singleton_histograms(std::unique_ptr<column> values,
+                                                  cuda::stream_ref stream,
+                                                  cudf::memory_resources mr)
+{
+  CUDF_EXPECTS(!cudf::is_nested(values->type()),
+               "Nested types are not yet supported in histogram aggregation.",
+               std::invalid_argument);
+
+  auto const num_groups = values->size();
+  auto const output_mr  = mr.get_output_mr();
+  auto offsets          = make_numeric_column(
+    data_type{type_id::INT32}, num_groups + 1, mask_state::UNALLOCATED, stream, output_mr);
+  auto counts = make_numeric_column(
+    data_type{type_id::INT64}, num_groups, mask_state::UNALLOCATED, stream, output_mr);
+  auto const initialize = cuda::tabulate_output_iterator{
+    [offsets = offsets->mutable_view().begin<int32_t>(),
+     counts  = counts->mutable_view().begin<int64_t>(),
+     num_groups] __device__(cuda::std::ptrdiff_t index, size_type value) {
+      offsets[index] = static_cast<int32_t>(value);
+      if (index < num_groups) { counts[index] = 1; }
+    }};
+  thrust::sequence(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+                   initialize,
+                   initialize + offsets->size(),
+                   size_type{0});
+
+  std::vector<std::unique_ptr<column>> children;
+  children.push_back(std::move(values));
+  children.push_back(std::move(counts));
+  auto entries =
+    make_structs_column(num_groups,
+                        std::move(children),
+                        0,
+                        cudf::create_null_mask(0, mask_state::UNALLOCATED, stream, output_mr),
+                        stream,
+                        output_mr);
+  return make_lists_column(num_groups,
+                           std::move(offsets),
+                           std::move(entries),
+                           0,
+                           cudf::create_null_mask(0, mask_state::UNALLOCATED, stream, output_mr));
+}
+
 std::unique_ptr<column> group_merge_histogram(column_view const& values,
                                               cudf::device_span<size_type const> group_offsets,
                                               size_type num_groups,
@@ -124,7 +174,8 @@ std::unique_ptr<column> group_merge_histogram(column_view const& values,
   // Concatenate the histograms corresponding to the same key values.
   // That is equivalent to creating a new lists column (view) from the input lists column
   // with new offsets gathered as below.
-  auto new_offsets = rmm::device_uvector<size_type>(num_groups + 1, stream);
+  auto new_offsets = cuda::device_buffer<size_type>(
+    stream, cudf::get_current_device_resource_ref(), num_groups + 1, cuda::no_init);
   thrust::gather(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                  group_offsets.begin(),
                  group_offsets.end(),
@@ -132,7 +183,8 @@ std::unique_ptr<column> group_merge_histogram(column_view const& values,
                  new_offsets.begin());
 
   // Generate labels for the new lists.
-  auto key_labels = rmm::device_uvector<size_type>(histogram_cv.size(), stream);
+  cuda::device_buffer<size_type> key_labels(
+    stream, cudf::get_current_device_resource_ref(), histogram_cv.size(), cuda::no_init);
   cudf::detail::label_segments(
     new_offsets.begin(), new_offsets.end(), key_labels.begin(), key_labels.end(), stream);
 

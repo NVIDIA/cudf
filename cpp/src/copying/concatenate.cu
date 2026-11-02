@@ -12,6 +12,7 @@
 #include <cudf/detail/get_value.cuh>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
@@ -74,7 +75,7 @@ auto create_device_views(host_span<column_view const> views, cuda::stream_ref st
                  [](auto const& col) { return *col; });
 
   auto d_views =
-    make_device_uvector_async(device_views, stream, cudf::get_current_device_resource_ref());
+    make_device_buffer_async(device_views, stream, cudf::get_current_device_resource_ref());
 
   // Compute the partition offsets
   auto offsets = cudf::detail::make_pinned_vector_async<size_t>(views.size() + 1, stream);
@@ -86,7 +87,7 @@ auto create_device_views(host_span<column_view const> views, cuda::stream_ref st
     [](auto const& col) { return col.size(); },
     cuda::std::plus{});
   auto d_offsets =
-    make_device_uvector_async(offsets, stream, cudf::get_current_device_resource_ref());
+    make_device_buffer_async(offsets, stream, cudf::get_current_device_resource_ref());
   auto const output_size = offsets.back();
   cudf::detail::sync_stream(stream);
 
@@ -578,9 +579,9 @@ std::unique_ptr<table> concatenate(std::span<table_view const> tables_to_concat,
   return std::make_unique<table>(std::move(concat_columns));
 }
 
-cuda::device_buffer<std::byte> concatenate_masks(std::span<column_view const> views,
-                                                 cuda::stream_ref stream,
-                                                 rmm::device_async_resource_ref mr)
+cuda::device_buffer<cudf::bitmask_type> concatenate_masks(std::span<column_view const> views,
+                                                          cuda::stream_ref stream,
+                                                          rmm::device_async_resource_ref mr)
 {
   bool const has_nulls =
     std::any_of(views.begin(), views.end(), [](column_view const col) { return col.has_nulls(); });
@@ -590,12 +591,11 @@ cuda::device_buffer<std::byte> concatenate_masks(std::span<column_view const> vi
         return accumulator + v.size();
       });
 
-    cuda::device_buffer<std::byte> null_mask =
+    cuda::device_buffer<cudf::bitmask_type> null_mask =
       cudf::detail::create_null_mask(total_element_count, mask_state::UNINITIALIZED, stream, mr);
 
-    detail::concatenate_masks(host_span<column_view const>{views.data(), views.size()},
-                              reinterpret_cast<bitmask_type*>(null_mask.data()),
-                              stream);
+    detail::concatenate_masks(
+      host_span<column_view const>{views.data(), views.size()}, null_mask.data(), stream);
 
     return null_mask;
   }
@@ -605,9 +605,9 @@ cuda::device_buffer<std::byte> concatenate_masks(std::span<column_view const> vi
 
 }  // namespace detail
 
-cuda::device_buffer<std::byte> concatenate_masks(std::span<column_view const> views,
-                                                 cuda::stream_ref stream,
-                                                 rmm::device_async_resource_ref mr)
+cuda::device_buffer<cudf::bitmask_type> concatenate_masks(std::span<column_view const> views,
+                                                          cuda::stream_ref stream,
+                                                          rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::concatenate_masks(views, stream, mr);

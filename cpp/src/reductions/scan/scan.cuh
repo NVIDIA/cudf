@@ -20,10 +20,11 @@ namespace cudf {
 namespace detail {
 
 // logical-and scan of the null mask of the input view
-std::pair<cuda::device_buffer<std::byte>, size_type> mask_scan(column_view const& input_view,
-                                                               scan_type inclusive,
-                                                               cuda::stream_ref stream,
-                                                               rmm::device_async_resource_ref mr);
+std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type> mask_scan(
+  column_view const& input_view,
+  scan_type inclusive,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr);
 
 // exponentially weighted moving average of the input
 std::unique_ptr<column> exponentially_weighted_moving_average(column_view const& input,

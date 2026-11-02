@@ -194,11 +194,11 @@ void populate_from_col(ArrowArray* arr,
     ArrowArrayBuffer(arr, 1),
     ArrowBufferDeallocator(
       [](ArrowBufferAllocator* alloc, uint8_t*, int64_t) {
-        auto buf =
-          reinterpret_cast<std::unique_ptr<cuda::device_buffer<std::byte>>*>(alloc->private_data);
+        auto buf = reinterpret_cast<std::unique_ptr<cuda::device_buffer<cudf::bitmask_type>>*>(
+          alloc->private_data);
         delete buf;
       },
-      new std::unique_ptr<cuda::device_buffer<std::byte>>(std::move(bitmask.first)))));
+      new std::unique_ptr<cuda::device_buffer<cudf::bitmask_type>>(std::move(bitmask.first)))));
   ArrowArrayBuffer(arr, 1)->size_bytes = cudf::bitmask_allocation_size_bytes(view.size());
   ArrowArrayBuffer(arr, 1)->data       = ptr;
 }
@@ -290,6 +290,7 @@ DEFINE_NANOARROW_STORAGE(int32_t, INT32);
 DEFINE_NANOARROW_STORAGE(int64_t, INT64);
 DEFINE_NANOARROW_STORAGE(uint8_t, UINT8);
 DEFINE_NANOARROW_STORAGE(uint16_t, UINT16);
+DEFINE_NANOARROW_STORAGE(uint32_t, UINT32);
 DEFINE_NANOARROW_STORAGE(uint64_t, UINT64);
 DEFINE_NANOARROW_STORAGE(bool, BOOL);
 DEFINE_NANOARROW_STORAGE(cudf::duration_D, INT32);

@@ -130,7 +130,7 @@ namespace {
  * @brief Computes the total number of row groups in input span of row group indices
  */
 [[nodiscard]] size_type compute_total_row_groups(
-  host_span<std::vector<size_type> const> row_group_indices)
+  std::span<std::vector<size_type> const> row_group_indices)
 {
   auto const total_row_groups =
     std::accumulate(row_group_indices.begin(),
@@ -597,7 +597,7 @@ text::byte_range_info metadata::page_index_byte_range() const
   return {min_offset, max_offset - min_offset};
 }
 
-void metadata::setup_page_index(cudf::host_span<uint8_t const> page_index_bytes, int64_t min_offset)
+void metadata::setup_page_index(std::span<uint8_t const> page_index_bytes, int64_t min_offset)
 {
   if (is_page_index_setup_) { return; }
 
@@ -1009,7 +1009,7 @@ aggregate_reader_metadata::aggregate_reader_metadata(std::vector<FileMetaData>&&
 }
 
 aggregate_reader_metadata::aggregate_reader_metadata(
-  host_span<std::unique_ptr<datasource> const> sources,
+  std::span<std::unique_ptr<datasource> const> sources,
   bool use_arrow_schema,
   bool has_cols_from_mismatched_srcs,
   bool read_page_indexes)
@@ -1509,10 +1509,9 @@ std::unique_ptr<table> aggregate_reader_metadata::read_column_chunk_bounds(
       schema_indices_per_source[src_idx] = schema_idx;
     }
 
-    auto [min_col, max_col, _] = cudf::type_dispatcher<dispatch_storage_type>(
-      dtype, stats_col, schema_indices_per_source, dtype, stream, mr);
-    columns.push_back(std::move(min_col));
-    columns.push_back(std::move(max_col));
+    std::ranges::move(cudf::type_dispatcher<dispatch_storage_type>(
+                        dtype, stats_col, schema_indices_per_source, dtype, stream, mr),
+                      std::back_inserter(columns));
   }
 
   return std::make_unique<table>(std::move(columns));
@@ -1620,7 +1619,7 @@ std::tuple<int64_t,
            std::vector<std::vector<size_t>>,
            std::vector<std::vector<size_t>>>
 aggregate_reader_metadata::apply_row_bounds_filter(
-  host_span<std::vector<size_type> const> input_row_group_indices,
+  std::span<std::vector<size_type> const> input_row_group_indices,
   int64_t rows_to_skip,
   int64_t rows_to_read) const
 {
@@ -1692,7 +1691,7 @@ aggregate_reader_metadata::apply_row_bounds_filter(
 }
 
 std::vector<std::vector<size_type>> aggregate_reader_metadata::apply_byte_bounds_filter(
-  host_span<std::vector<size_type> const> input_row_group_indices,
+  std::span<std::vector<size_type> const> input_row_group_indices,
   size_t bytes_to_skip,
   std::optional<size_t> const& bytes_to_read) const
 {
@@ -1746,14 +1745,14 @@ std::tuple<int64_t,
            size_type,
            surviving_row_group_metrics>
 aggregate_reader_metadata::select_row_groups(
-  host_span<std::unique_ptr<datasource> const> sources,
-  host_span<std::vector<size_type> const> row_group_indices,
+  std::span<std::unique_ptr<datasource> const> sources,
+  std::span<std::vector<size_type> const> row_group_indices,
   int64_t skip_rows_opt,
   std::optional<int64_t> const& num_rows_opt,
   size_t skip_bytes_opt,
   std::optional<size_t> const& byte_count_opt,
-  host_span<data_type const> output_dtypes,
-  host_span<int const> output_column_schemas,
+  std::span<data_type const> output_dtypes,
+  std::span<int const> output_column_schemas,
   std::optional<std::reference_wrapper<ast::expression const>> filter,
   cuda::stream_ref stream) const
 {
@@ -1795,7 +1794,7 @@ aggregate_reader_metadata::select_row_groups(
   std::vector<std::vector<size_type>> all_row_group_indices;
 
   // Span to track the current row group indices
-  host_span<std::vector<size_type> const> current_row_group_indices;
+  std::span<std::vector<size_type> const> current_row_group_indices;
 
   // If input row group indices are not specified, populate the vector of all row group indices
   if (row_group_indices.empty()) {
@@ -1808,7 +1807,7 @@ aggregate_reader_metadata::select_row_groups(
       });
 
     // Set the current span of row group indices to the vector of all row group indices
-    current_row_group_indices = host_span<std::vector<size_type> const>(all_row_group_indices);
+    current_row_group_indices = std::span<std::vector<size_type> const>(all_row_group_indices);
   }
   // Otherwise, set the current span of row group indices to the specified input row group indices
   else {
@@ -1837,7 +1836,7 @@ aggregate_reader_metadata::select_row_groups(
       apply_row_bounds_filter(current_row_group_indices, rows_to_skip, rows_to_read);
 
     // Update the current span of row group indices
-    current_row_group_indices = host_span<std::vector<size_type> const>(trimmed_row_group_indices);
+    current_row_group_indices = std::span<std::vector<size_type> const>(trimmed_row_group_indices);
   }
 
   // Flag to check if the row groups will be filtered using byte bounds
@@ -1856,7 +1855,7 @@ aggregate_reader_metadata::select_row_groups(
       apply_byte_bounds_filter(current_row_group_indices, skip_bytes_opt, byte_count_opt);
 
     // Update the current span of row group indices
-    current_row_group_indices = host_span<std::vector<size_type> const>(trimmed_row_group_indices);
+    current_row_group_indices = std::span<std::vector<size_type> const>(trimmed_row_group_indices);
   }
 
   // Compute number of input row groups after row or byte bounds trimming
@@ -1885,7 +1884,7 @@ aggregate_reader_metadata::select_row_groups(
     if (filtered_row_group_indices.has_value()) {
       // Update the current span of row group indices
       current_row_group_indices =
-        host_span<std::vector<size_type> const>(filtered_row_group_indices.value());
+        std::span<std::vector<size_type> const>(filtered_row_group_indices.value());
 
       // Only need to update the rows to skip relative to the first surviving row group
       // if row bounds were previously applied
@@ -2421,23 +2420,11 @@ aggregate_reader_metadata::select_columns(
 }
 
 std::vector<Type> aggregate_reader_metadata::get_parquet_types(
-  host_span<std::vector<size_type> const> row_group_indices,
-  host_span<int const> column_schemas) const
+  std::span<int const> column_schemas) const
 {
   std::vector<Type> parquet_types(column_schemas.size());
-  // Find a source with at least one row group
-  auto const src_iter =
-    std::ranges::find_if(row_group_indices, [](auto const& rg) { return rg.size() > 0; });
-  CUDF_EXPECTS(src_iter != row_group_indices.end(),
-               "Cannot determine Parquet types as no source has any selected row groups.",
-               std::invalid_argument);
-
-  // Source index
-  auto const src_index = std::distance(row_group_indices.begin(), src_iter);
-  // Use the first row group in this source
-  auto const first_row_group_index = row_group_indices[src_index].front();
   std::ranges::transform(column_schemas, parquet_types.begin(), [&](auto const schema_idx) {
-    return get_column_metadata(first_row_group_index, src_index, schema_idx).type;
+    return get_schema(schema_idx).type;
   });
 
   return parquet_types;

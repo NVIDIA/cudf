@@ -13,11 +13,13 @@
 #include <cudf/ast/expressions.hpp>
 #include <cudf/detail/cuco_helpers.hpp>
 #include <cudf/detail/transform.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/hashing/detail/xxhash_64.cuh>
 #include <cudf/io/parquet_io_utils.hpp>
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/logger.hpp>
 #include <cudf/reduction/bloom_filter.cuh>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
@@ -30,6 +32,7 @@
 #include <cuda/iterator>
 #include <cuda/std/bit>
 #include <cuda/std/chrono>
+#include <cuda/std/concepts>
 #include <cuda/stream>
 #include <thrust/transform.h>
 #include <thrust/uninitialized_fill.h>
@@ -227,8 +230,7 @@ struct bloom_filter_caster {
   }
 
   // BYTE_ARRAYS are probed as their bytes
-  template <typename T>
-    requires(cuda::std::is_same_v<T, cudf::string_view>)
+  template <cudf::concepts::string_view T>
   std::unique_ptr<cudf::column> operator()(cudf::size_type equality_col_idx,
                                            cudf::data_type,
                                            ast::literal const* const literal,
@@ -240,8 +242,7 @@ struct bloom_filter_caster {
   }
 
   // Floating point types are probed as their physical type
-  template <typename T>
-    requires(cudf::is_floating_point<T>())
+  template <cuda::std::floating_point T>
   std::unique_ptr<cudf::column> operator()(cudf::size_type equality_col_idx,
                                            cudf::data_type,
                                            ast::literal const* const literal,
@@ -254,7 +255,7 @@ struct bloom_filter_caster {
 
   // Integers, decimal storage types and chrono types are probed as their physical type
   template <typename T>
-    requires(cudf::is_integral_not_bool<T>() or cudf::is_chrono<T>())
+    requires(cudf::concepts::integral_not_bool<T> or cudf::concepts::chrono<T>)
   std::unique_ptr<cudf::column> operator()(cudf::size_type equality_col_idx,
                                            cudf::data_type dtype,
                                            ast::literal const* const literal,
@@ -446,9 +447,9 @@ std::optional<std::pair<int64_t, std::size_t>> parse_bloom_filter_header(
 std::pair<std::vector<cuda::device_buffer<uint8_t>>,
           std::vector<cudf::device_span<cuda::std::byte const>>>
 aggregate_reader_metadata::read_bloom_filters(
-  host_span<std::unique_ptr<datasource> const> sources,
-  host_span<std::vector<size_type> const> row_group_indices,
-  host_span<int const> column_schemas,
+  std::span<std::unique_ptr<datasource> const> sources,
+  std::span<std::vector<size_type> const> row_group_indices,
+  std::span<int const> column_schemas,
   size_type total_row_groups,
   cuda::stream_ref stream,
   rmm::device_async_resource_ref mr) const
@@ -556,23 +557,20 @@ thrust::host_vector<bool> aggregate_reader_metadata::calc_mismatched_timestamp_m
 }
 
 std::optional<std::vector<std::vector<size_type>>> aggregate_reader_metadata::apply_bloom_filters(
-  cudf::host_span<cudf::device_span<cuda::std::byte const> const> bloom_filter_data,
-  host_span<std::vector<size_type> const> input_row_group_indices,
-  host_span<std::vector<ast::literal*> const> literals,
-  host_span<std::vector<ast::ast_operator> const> operators,
+  std::span<cudf::device_span<cuda::std::byte const> const> bloom_filter_data,
+  std::span<std::vector<size_type> const> input_row_group_indices,
+  std::span<std::vector<ast::literal*> const> literals,
+  std::span<std::vector<ast::ast_operator> const> operators,
   size_type total_row_groups,
-  host_span<data_type const> output_dtypes,
-  host_span<cudf::size_type const> bloom_filter_col_schemas,
+  std::span<data_type const> output_dtypes,
+  std::span<cudf::size_type const> bloom_filter_col_schemas,
   std::reference_wrapper<ast::expression const> filter,
   cuda::stream_ref stream) const
 {
   // Convert AST to BloomfilterAST expression with reference to bloom filter membership
   // in above `bloom_filter_membership_table`
   bloom_filter_expression_converter bloom_filter_expr_converter{
-    filter.get(),
-    std::span{output_dtypes.data(), output_dtypes.size()},
-    std::span{literals.data(), literals.size()},
-    std::span{operators.data(), operators.size()}};
+    filter.get(), output_dtypes, literals, operators};
 
   // Return early if bloom filters cannot prune any row groups using the filter
   auto const bloom_filter_expr = bloom_filter_expr_converter.get_bloom_filter_expr();
@@ -582,7 +580,7 @@ std::optional<std::vector<std::vector<size_type>>> aggregate_reader_metadata::ap
   auto const num_input_columns = static_cast<cudf::size_type>(output_dtypes.size());
 
   // Get parquet types for the predicate columns
-  auto const parquet_types = get_parquet_types(input_row_group_indices, bloom_filter_col_schemas);
+  auto const parquet_types = get_parquet_types(bloom_filter_col_schemas);
 
   // Byte lengths of the FIXED_LEN_BYTE_ARRAY predicate columns
   std::vector<int32_t> parquet_type_lengths(bloom_filter_col_schemas.size());
@@ -595,7 +593,7 @@ std::optional<std::vector<std::vector<size_type>>> aggregate_reader_metadata::ap
 
   // Copy bloom filter bitset spans to device
   auto const device_bloom_filter_data =
-    cudf::detail::make_device_uvector_async(bloom_filter_data, stream, mr.get_temporary_mr());
+    cudf::detail::make_device_buffer_async(bloom_filter_data, stream, mr.get_temporary_mr());
 
   // Create a bloom filter query table caster
   bloom_filter_caster const bloom_filter_col{device_bloom_filter_data,

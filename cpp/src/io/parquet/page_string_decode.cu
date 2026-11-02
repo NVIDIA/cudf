@@ -13,8 +13,10 @@
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/stream_pool.hpp>
 #include <cudf/strings/detail/gather.cuh>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <cooperative_groups/reduce.h>
+#include <cuda/buffer>
 #include <cuda/cmath>
 #include <cuda/functional>
 #include <cuda/std/utility>
@@ -1014,7 +1016,7 @@ void compute_page_string_sizes_pass1(cudf::detail::hostdevice_span<PageInfo> pag
  */
 void compute_page_string_sizes_pass2(cudf::detail::hostdevice_span<PageInfo> pages,
                                      cudf::detail::hostdevice_span<ColumnChunkDesc const> chunks,
-                                     rmm::device_uvector<uint8_t>& temp_string_buf,
+                                     cuda::device_buffer<uint8_t>& temp_string_buf,
                                      cuda::stream_ref stream)
 {
   // check for needed temp space for DELTA_BYTE_ARRAY
@@ -1038,7 +1040,8 @@ void compute_page_string_sizes_pass2(cudf::detail::hostdevice_span<PageInfo> pag
 
     // now do an exclusive scan over the temp_string_sizes to get offsets for each
     // page's chunk of the temp buffer
-    rmm::device_uvector<int64_t> page_string_offsets(pages.size(), stream);
+    cuda::device_buffer<int64_t> page_string_offsets(
+      stream, cudf::get_current_device_resource_ref(), pages.size(), cuda::no_init);
     thrust::transform_exclusive_scan(
       rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
       pages.device_begin(),
@@ -1049,7 +1052,8 @@ void compute_page_string_sizes_pass2(cudf::detail::hostdevice_span<PageInfo> pag
       cuda::std::plus<int64_t>{});
 
     // allocate the temp space
-    temp_string_buf.resize(total_size, stream);
+    temp_string_buf = cuda::device_buffer<uint8_t>(
+      stream, temp_string_buf.memory_resource(), total_size, cuda::no_init);
 
     // now use the offsets array to set each page's temp_string_buf pointers
     thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),

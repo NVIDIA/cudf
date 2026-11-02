@@ -17,6 +17,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/stream>
@@ -43,7 +44,8 @@ std::unique_ptr<column> group_nth_element(column_view const& values,
 
   if (num_groups == 0) { return empty_like(values); }
 
-  auto nth_index = rmm::device_uvector<size_type>(num_groups, stream);
+  auto nth_index = cuda::device_buffer<size_type>(
+    stream, cudf::get_current_device_resource_ref(), num_groups, cuda::no_init);
   // TODO: replace with async version
   thrust::uninitialized_fill_n(
     rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
@@ -74,7 +76,8 @@ std::unique_ptr<column> group_nth_element(column_view const& values,
       cuda::transform_iterator(cudf::detail::make_validity_iterator(*values_view),
                                cuda::proclaim_return_type<size_type>(
                                  [] __device__(auto b) { return static_cast<size_type>(b); }));
-    rmm::device_uvector<size_type> intra_group_index(values.size(), stream);
+    cuda::device_buffer<size_type> intra_group_index(
+      stream, cudf::get_current_device_resource_ref(), values.size(), cuda::no_init);
     // intra group index for valids only.
     thrust::exclusive_scan_by_key(
       rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
@@ -83,9 +86,10 @@ std::unique_ptr<column> group_nth_element(column_view const& values,
       bitmask_iterator,
       intra_group_index.begin());
     // group_size to recalculate n if n<0
-    rmm::device_uvector<size_type> group_count = [&] {
+    cuda::device_buffer<size_type> group_count = [&] {
       if (n < 0) {
-        rmm::device_uvector<size_type> group_count(num_groups, stream);
+        cuda::device_buffer<size_type> group_count(
+          stream, cudf::get_current_device_resource_ref(), num_groups, cuda::no_init);
         cudf::detail::reduce_by_key_async(group_labels.begin(),
                                           group_labels.end(),
                                           bitmask_iterator,
@@ -95,7 +99,8 @@ std::unique_ptr<column> group_nth_element(column_view const& values,
                                           stream);
         return group_count;
       } else {
-        return rmm::device_uvector<size_type>(0, stream);
+        return cuda::device_buffer<size_type>(
+          stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init);
       }
     }();
     // gather the valid index == n

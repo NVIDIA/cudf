@@ -9,7 +9,6 @@ import dataclasses
 import functools
 import io
 import math
-import time
 from typing import TYPE_CHECKING, Any, cast
 
 import polars as pl
@@ -27,7 +26,6 @@ from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.containers import DataFrame
 from cudf_polars.dsl.ir import IR, CallbackSink, DataFrameScan, PythonScan, Sink
-from cudf_polars.dsl.tracing import Scope, log
 from cudf_polars.streaming.actor_graph.dispatch import (
     generate_ir_sub_network,
     ir_context_for_node,
@@ -598,13 +596,24 @@ async def read_chunk(
         if isinstance(task, DataFrameScan)
         else 2 * estimated_chunk_bytes
     )
-    start = time.monotonic_ns()
+    quent_state = ir_context.actor_bound_quent_ir_execution_state
+    if quent_state is not None:
+        ir_context = dataclasses.replace(
+            ir_context,
+            actor_bound_quent_ir_execution_state=dataclasses.replace(
+                quent_state,
+                sequence_number=seq_num,
+                scan_task_node_id=str(task.get_stable_id()),
+                scan_task_node_type=type(task).__name__,
+                io_bytes=estimated_chunk_bytes,
+            ),
+        )
+
     reservation = await reserve_memory(
         context,
         size=reservation_bytes,
         net_memory_delta=estimated_chunk_bytes,
     )
-    admitted = time.monotonic_ns()
     with opaque_memory_usage(reservation):
         df = await ir_context.to_thread(
             task.do_evaluate,
@@ -617,19 +626,7 @@ async def read_chunk(
             exclusive_view=True,
             br=context.br(),
         )
-    stop = time.monotonic_ns()
-    log(
-        "IO Task",
-        scope=Scope.IO_TASK.value,
-        start=start,
-        admitted=admitted,
-        stop=stop,
-        ir_id=task.get_stable_id(),
-        ir_type=type(task).__name__,
-        sequence_number=seq_num,
-        estimated_output_bytes=estimated_chunk_bytes,
-        reservation_bytes=reservation_bytes,
-    )
+
     await send_chunk(context, ch_out, chunk, seq_num, tracer=tracer)
 
 

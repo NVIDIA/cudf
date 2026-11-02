@@ -14,6 +14,8 @@
 #include <cudf/io/parquet_metadata.hpp>
 #include <cudf/utilities/error.hpp>
 
+#include <cuda/std/type_traits>
+
 #include <src/io/parquet/compact_protocol_reader.hpp>
 
 #include <format>
@@ -331,22 +333,22 @@ namespace testdata {
 // ----- most numerics. scale by 100 so all values fit in a single byte
 
 template <typename T>
-std::enable_if_t<std::is_arithmetic_v<T> && !std::is_same_v<T, bool>,
+std::enable_if_t<cuda::std::is_arithmetic_v<T> && !std::is_same_v<T, bool>,
                  cudf::test::fixed_width_column_wrapper<T>>
 ascending()
 {
-  int start = std::is_signed_v<T> ? -num_ordered_rows / 2 : 0;
+  int start = cuda::std::is_signed_v<T> ? -num_ordered_rows / 2 : 0;
   auto elements =
     cudf::detail::make_counting_transform_iterator(start, [](auto i) { return i / 100; });
   return cudf::test::fixed_width_column_wrapper<T>(elements, elements + num_ordered_rows);
 }
 
 template <typename T>
-std::enable_if_t<std::is_arithmetic_v<T> && !std::is_same_v<T, bool>,
+std::enable_if_t<cuda::std::is_arithmetic_v<T> && !std::is_same_v<T, bool>,
                  cudf::test::fixed_width_column_wrapper<T>>
 descending()
 {
-  if (std::is_signed_v<T>) {
+  if (cuda::std::is_signed_v<T>) {
     auto elements = cudf::detail::make_counting_transform_iterator(-num_ordered_rows / 2,
                                                                    [](auto i) { return -i / 100; });
     return cudf::test::fixed_width_column_wrapper<T>(elements, elements + num_ordered_rows);
@@ -358,11 +360,11 @@ descending()
 }
 
 template <typename T>
-std::enable_if_t<std::is_arithmetic_v<T> && !std::is_same_v<T, bool>,
+std::enable_if_t<cuda::std::is_arithmetic_v<T> && !std::is_same_v<T, bool>,
                  cudf::test::fixed_width_column_wrapper<T>>
 unordered()
 {
-  if (std::is_signed_v<T>) {
+  if (cuda::std::is_signed_v<T>) {
     auto elements = cudf::detail::make_counting_transform_iterator(
       -num_ordered_rows / 2, [](auto i) { return (i % 2 ? i : -i) / 100; });
     return cudf::test::fixed_width_column_wrapper<T>(elements, elements + num_ordered_rows);

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "strings/regex/regcomp.h"
+#include "strings/regex/regcomp.hpp"
 #include "strings/regex/regex.cuh"
 
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
@@ -11,9 +11,11 @@
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/strings/detail/char_tables.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/device_buffer.hpp>
 
+#include <cuda/buffer>
 #include <cuda/stream>
 
 #include <functional>
@@ -52,16 +54,19 @@ std::unique_ptr<reprog_device, std::function<void(reprog_device*)>> reprog_devic
                           std::plus<std::size_t>{},
                           [](auto& cls) { return cls.literals.size() * sizeof(reclass_range); });
   // make sure each section is aligned for the subsequent section's data type
-  auto const memsize = cudf::util::round_up_safe(insts_size, sizeof(_startinst_ids[0])) +
-                       cudf::util::round_up_safe(startids_size, sizeof(_classes[0])) +
-                       cudf::util::round_up_safe(classes_size, sizeof(char32_t));
+  auto const memsize = cudf::detail::round_up_safe(insts_size, sizeof(_startinst_ids[0])) +
+                       cudf::detail::round_up_safe(startids_size, sizeof(_classes[0])) +
+                       cudf::detail::round_up_safe(classes_size, sizeof(char32_t));
 
   // allocate memory to store all the prog data in a flat contiguous buffer
   auto h_buffer =
     cudf::detail::make_host_vector<u_char>(memsize, stream);  // copy everything into here;
   auto h_ptr    = h_buffer.data();                            // this is our running host ptr;
-  auto d_buffer = new rmm::device_uvector<u_char>(memsize, stream);  // output device memory;
-  auto d_ptr    = d_buffer->data();                                  // running device pointer
+  auto d_buffer = new cuda::device_buffer<u_char>(stream,
+                                                  cudf::get_current_device_resource_ref(),
+                                                  memsize,
+                                                  cuda::no_init);  // output device memory;
+  auto d_ptr    = d_buffer->data();                                // running device pointer
 
   // create our device object; this is managed separately and returned to the caller
   auto* d_prog = new reprog_device(h_prog);
@@ -73,7 +78,7 @@ std::unique_ptr<reprog_device, std::function<void(reprog_device*)>> reprog_devic
   d_prog->_insts = reinterpret_cast<reinst*>(d_ptr);
 
   // point to the end for the next section
-  insts_size = cudf::util::round_up_safe(insts_size, sizeof(_startinst_ids[0]));
+  insts_size = cudf::detail::round_up_safe(insts_size, sizeof(_startinst_ids[0]));
   h_ptr += insts_size;
   d_ptr += insts_size;
   // copy the startinst_ids next
@@ -81,7 +86,7 @@ std::unique_ptr<reprog_device, std::function<void(reprog_device*)>> reprog_devic
   d_prog->_startinst_ids = reinterpret_cast<int32_t*>(d_ptr);
 
   // next section; align the size for next data type
-  startids_size = cudf::util::round_up_safe(startids_size, sizeof(_classes[0]));
+  startids_size = cudf::detail::round_up_safe(startids_size, sizeof(_classes[0]));
   h_ptr += startids_size;
   d_ptr += startids_size;
   // copy classes into flat memory: [class1,class2,...][char32 arrays]

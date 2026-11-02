@@ -169,8 +169,8 @@ distribution_fn<T, Buffer> make_distribution(distribution_id dist_id, T lower_bo
                cuda::std::philox4x32& engine, size_t size) -> Buffer {
         auto result = make_distribution_buffer<T, Buffer>(size);
         thrust::tabulate(thrust::device,
-                         result.data(),
-                         result.data() + result.size(),
+                         result.begin(),
+                         result.end(),
                          value_generator{lower_bound, upper_bound, engine, dist});
         return result;
       };
@@ -179,8 +179,8 @@ distribution_fn<T, Buffer> make_distribution(distribution_id dist_id, T lower_bo
                cuda::std::philox4x32& engine, size_t size) -> Buffer {
         auto result = make_distribution_buffer<T, Buffer>(size);
         thrust::tabulate(thrust::device,
-                         result.data(),
-                         result.data() + result.size(),
+                         result.begin(),
+                         result.end(),
                          value_generator{lower_bound, upper_bound, engine, dist});
         return result;
       };

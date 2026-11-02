@@ -27,6 +27,7 @@
 #include <cuco/detail/open_addressing/kernels.cuh>
 #include <cuco/static_multiset_ref.cuh>
 #include <cuda/atomic>
+#include <cuda/buffer>
 #include <cuda/cmath>
 #include <cuda/functional>
 #include <cuda/iterator>
@@ -39,7 +40,7 @@ namespace cudf {
 namespace detail {
 namespace {
 
-std::pair<cuda::device_buffer<std::byte>, bitmask_type const*> build_row_bitmask(
+std::pair<cuda::device_buffer<cudf::bitmask_type>, bitmask_type const*> build_row_bitmask(
   table_view const& input, cuda::stream_ref stream)
 {
   auto const nullable_columns = get_nullable_columns(input);
@@ -50,7 +51,7 @@ std::pair<cuda::device_buffer<std::byte>, bitmask_type const*> build_row_bitmask
   if (nullable_columns.size() > 1) {
     auto row_bitmask =
       cudf::detail::bitmask_and(table_view{nullable_columns}, stream, temp_mr).first;
-    auto const row_bitmask_ptr = reinterpret_cast<cudf::bitmask_type const*>(row_bitmask.data());
+    auto const row_bitmask_ptr = row_bitmask.data();
     return std::pair(std::move(row_bitmask), row_bitmask_ptr);
   }
 
@@ -132,8 +133,7 @@ CUDF_KERNEL __launch_bounds__(block_size) void compact_if_kernel(OutputType* out
   auto const warp              = cg::tiled_partition<warp_size>(block);
   auto const tid               = cudf::detail::grid_1d::global_thread_id<block_size>();
   auto const stride            = cudf::detail::grid_1d::grid_stride<block_size>();
-  auto const loop_bound =
-    cudf::util::round_up_unsafe(static_cast<thread_index_type>(op.num_buckets()), stride);
+  auto const loop_bound = cuda::round_up(static_cast<thread_index_type>(op.num_buckets()), stride);
 
   constexpr int buffer_capacity_factor = 4;
   constexpr int buffer_capacity        = block_size * buffer_capacity_factor;
@@ -283,10 +283,9 @@ CUDF_KERNEL __launch_bounds__(block_size) void mark_retrieve_kernel(
   __shared__ cudf::size_type left_buffer[buffer_capacity];
   cuda::atomic_ref<cudf::size_type, cuda::thread_scope_device> global_off{*global_offset};
 
-  auto const tid    = cudf::detail::grid_1d::global_thread_id<block_size>();
-  auto const stride = cudf::detail::grid_1d::grid_stride<block_size>();
-  auto const loop_bound =
-    cudf::util::round_up_unsafe(static_cast<thread_index_type>(num_buckets), stride);
+  auto const tid        = cudf::detail::grid_1d::global_thread_id<block_size>();
+  auto const stride     = cudf::detail::grid_1d::grid_stride<block_size>();
+  auto const loop_bound = cuda::round_up(static_cast<thread_index_type>(num_buckets), stride);
 
   for (thread_index_type i = tid; i < loop_bound; i += stride) {
     bool has_match = false;
@@ -441,7 +440,8 @@ cudf::size_type mark_join::mark_probe_with_prefilter(storage_ref_type storage_re
 {
   CUDF_EXPECTS(_bloom_filter != nullptr, "Prefilter-enabled mark_join is missing bloom filter.");
 
-  auto filtered_right_rows = rmm::device_uvector<right_key_type>(num_right_rows, stream, mr);
+  auto filtered_right_rows =
+    cuda::device_buffer<right_key_type>(stream, mr, num_right_rows, cuda::no_init);
   cudf::detail::device_scalar<cudf::size_type> d_filtered_count(0, stream, mr);
 
   auto const filter_ref = _bloom_filter->ref();
@@ -483,7 +483,8 @@ std::unique_ptr<rmm::device_uvector<cudf::size_type>> mark_join::mark_probe_and_
 
   auto const temp_mr          = cudf::get_current_device_resource_ref();
   auto materialize_right_rows = [&](auto const& key_fn) {
-    rmm::device_uvector<right_key_type> right_rows(right.num_rows(), stream, temp_mr);
+    cuda::device_buffer<right_key_type> right_rows(
+      stream, temp_mr, right.num_rows(), cuda::no_init);
     cub::DeviceTransform::Transform(cuda::counting_iterator<size_type>{0},
                                     right_rows.begin(),
                                     right.num_rows(),
@@ -492,7 +493,7 @@ std::unique_ptr<rmm::device_uvector<cudf::size_type>> mark_join::mark_probe_and_
     return right_rows;
   };
 
-  rmm::device_uvector<right_key_type> right_rows(0, stream, temp_mr);
+  cuda::device_buffer<right_key_type> right_rows(stream, temp_mr, 0, cuda::no_init);
   if (is_primitive_row_op_compatible(_left)) {
     auto const d_right_hasher = primitive_row_hasher{nullate::DYNAMIC{true}, preprocessed_right};
     right_rows =
@@ -676,7 +677,8 @@ mark_join::mark_join(cudf::table_view const& left,
 
   auto do_build_and_filter = [&](auto const& d_left_hasher, auto const& d_left_comparator) {
     if (_prefilter == cudf::join_prefilter::YES) {
-      rmm::device_uvector<hash_value_type> left_hashes(_left.num_rows(), stream, temp_mr);
+      cuda::device_buffer<hash_value_type> left_hashes(
+        stream, temp_mr, _left.num_rows(), cuda::no_init);
       cub::DeviceTransform::Transform(
         cuda::counting_iterator{size_type{0}},
         left_hashes.begin(),

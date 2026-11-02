@@ -15,7 +15,7 @@ import pytest
 from cuda.bindings.driver import CUresult
 
 import polars as pl
-from polars import polars as plrs  # type: ignore[attr-defined]
+from polars import _plr as plrs
 from polars.testing import assert_frame_equal
 
 import rmm.mr
@@ -187,6 +187,33 @@ def test_allgather_polars_dataframe_empty(spmd_engine: SPMDEngine) -> None:
     assert result.shape == (0, 2)
     assert result.columns == ["a", "b"]
     assert result.dtypes == [pl.Int32, pl.Float64]
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    [pl.Categorical(), pl.Categorical("allgather")],
+    ids=["global", "named"],
+)
+def test_allgather_polars_dataframe_categorical(
+    spmd_engine: SPMDEngine, dtype: pl.DataType
+) -> None:
+    """allgather combines Categorical columns whose categories differ per rank."""
+    local = pl.DataFrame(
+        {
+            "rank": [spmd_engine.rank] * 3,
+            "cat": pl.Series(["shared", None, f"rank_{spmd_engine.rank}"], dtype=dtype),
+        }
+    )
+    with reserve_op_id() as op_id:
+        result = allgather_polars_dataframe(
+            engine=spmd_engine, local_df=local, op_id=op_id
+        )
+    assert result.schema["cat"] == dtype
+    assert result["cat"].cast(pl.String).to_list() == [
+        value
+        for r in range(spmd_engine.nranks)
+        for value in ("shared", None, f"rank_{r}")
+    ]
 
 
 def test_mr_wrapped_as_current_inside_context(comm: Communicator) -> None:

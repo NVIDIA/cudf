@@ -25,6 +25,7 @@ from cudf_polars.dsl.ir import (
     GroupBy,
     Join,
     Projection,
+    Rolling,
     Select,
     Slice,
     Sort,
@@ -137,7 +138,10 @@ def _propagated_child_requests(
     if (
         node_requests is not None
         and len(node.children) == 1
-        and isinstance(node, (Projection, Select, Filter, Slice, GroupBy))
+        and isinstance(
+            node,
+            (Projection, Select, Filter, Slice, GroupBy, Rolling),
+        )
     ):
         remapping = {
             output_name: binding.name

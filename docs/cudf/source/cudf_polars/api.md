@@ -67,6 +67,8 @@ Returned by `engine.execute()` to keep query results GPU-resident (see {doc}`exe
 .. autofunction:: cudf_polars.engine.spmd.use_gpu
 
 .. autofunction:: cudf_polars.streaming.actor_graph.collectives.common.reserve_op_id
+
+.. autofunction:: cudf_polars.streaming.actor_graph.collectives.common.collective_id_scope
 ```
 
 ## PyTorch interoperability

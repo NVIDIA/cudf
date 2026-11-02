@@ -18,6 +18,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/stream>
 
@@ -250,7 +251,7 @@ struct rsplit_ws_extract_fn {
  * Returns the same (offsets, tokens) pair as split_helper so callers are interchangeable.
  */
 template <typename CountFn, typename MakeExtractFn>
-std::pair<std::unique_ptr<column>, rmm::device_uvector<string_index_pair>> split_per_row_impl(
+std::pair<std::unique_ptr<column>, cuda::device_buffer<string_index_pair>> split_per_row_impl(
   column_device_view const& d_strings,
   CountFn count_fn,
   MakeExtractFn make_extract,
@@ -262,14 +263,14 @@ std::pair<std::unique_ptr<column>, rmm::device_uvector<string_index_pair>> split
   auto const iota_itr      = cuda::counting_iterator<size_type>{0};
   auto const policy        = rmm::exec_policy_nosync(stream, temp_mr);
 
-  auto token_counts = rmm::device_uvector<size_type>(strings_count, stream, temp_mr);
-  thrust::transform(policy, iota_itr, iota_itr + strings_count, token_counts.begin(), count_fn);
+  auto token_counts = cuda::device_buffer<size_type>(stream, temp_mr, strings_count, cuda::no_init);
+  thrust::transform(policy, iota_itr, iota_itr + strings_count, token_counts.data(), count_fn);
 
   auto [offsets, total_tokens] =
     cudf::detail::make_offsets_child_column(token_counts.begin(), token_counts.end(), stream, mr);
   auto const d_offsets = cudf::detail::offsetalator_factory::make_input_iterator(offsets->view());
 
-  auto tokens = rmm::device_uvector<string_index_pair>(total_tokens, stream, mr);
+  auto tokens = cuda::device_buffer<string_index_pair>(stream, mr, total_tokens, cuda::no_init);
   if (total_tokens > 0) {
     thrust::for_each_n(policy, iota_itr, strings_count, make_extract(d_offsets, tokens.data()));
   }
@@ -277,7 +278,7 @@ std::pair<std::unique_ptr<column>, rmm::device_uvector<string_index_pair>> split
 }
 
 template <bool Forward>
-std::pair<std::unique_ptr<column>, rmm::device_uvector<string_index_pair>> split_per_row(
+std::pair<std::unique_ptr<column>, cuda::device_buffer<string_index_pair>> split_per_row(
   column_device_view const& d_strings,
   string_view delimiter,
   size_type max_tokens,
@@ -296,7 +297,7 @@ std::pair<std::unique_ptr<column>, rmm::device_uvector<string_index_pair>> split
 }
 
 template <bool Forward>
-std::pair<std::unique_ptr<column>, rmm::device_uvector<string_index_pair>> split_ws_per_row(
+std::pair<std::unique_ptr<column>, cuda::device_buffer<string_index_pair>> split_ws_per_row(
   column_device_view const& d_strings,
   size_type max_tokens,
   cuda::stream_ref stream,
@@ -313,33 +314,33 @@ std::pair<std::unique_ptr<column>, rmm::device_uvector<string_index_pair>> split
     mr);
 }
 
-template std::pair<std::unique_ptr<column>, rmm::device_uvector<string_index_pair>>
+template std::pair<std::unique_ptr<column>, cuda::device_buffer<string_index_pair>>
 split_per_row<true>(column_device_view const&,
                     string_view,
                     size_type,
                     cuda::stream_ref,
                     rmm::device_async_resource_ref);
 
-template std::pair<std::unique_ptr<column>, rmm::device_uvector<string_index_pair>>
+template std::pair<std::unique_ptr<column>, cuda::device_buffer<string_index_pair>>
 split_per_row<false>(column_device_view const&,
                      string_view,
                      size_type,
                      cuda::stream_ref,
                      rmm::device_async_resource_ref);
 
-template std::pair<std::unique_ptr<column>, rmm::device_uvector<string_index_pair>>
+template std::pair<std::unique_ptr<column>, cuda::device_buffer<string_index_pair>>
 split_ws_per_row<true>(column_device_view const&,
                        size_type,
                        cuda::stream_ref,
                        rmm::device_async_resource_ref);
 
-template std::pair<std::unique_ptr<column>, rmm::device_uvector<string_index_pair>>
+template std::pair<std::unique_ptr<column>, cuda::device_buffer<string_index_pair>>
 split_ws_per_row<false>(column_device_view const&,
                         size_type,
                         cuda::stream_ref,
                         rmm::device_async_resource_ref);
 
-std::pair<std::unique_ptr<column>, rmm::device_uvector<string_index_pair>> split_helper(
+std::pair<std::unique_ptr<column>, cuda::device_buffer<string_index_pair>> split_helper(
   strings_column_view const& input,
   rsplit_tokenizer_fn tokenizer,
   string_delimiter_fn delimiter_fn,
@@ -350,7 +351,7 @@ std::pair<std::unique_ptr<column>, rmm::device_uvector<string_index_pair>> split
     input, tokenizer, delimiter_fn, stream, mr);
 }
 
-std::pair<std::unique_ptr<column>, rmm::device_uvector<string_index_pair>> split_helper(
+std::pair<std::unique_ptr<column>, cuda::device_buffer<string_index_pair>> split_helper(
   strings_column_view const& input,
   split_ws_tokenizer_fn tokenizer,
   whitespace_delimiter_fn delimiter_fn,
@@ -361,7 +362,7 @@ std::pair<std::unique_ptr<column>, rmm::device_uvector<string_index_pair>> split
     input, tokenizer, delimiter_fn, stream, mr);
 }
 
-std::pair<std::unique_ptr<column>, rmm::device_uvector<string_index_pair>> split_helper(
+std::pair<std::unique_ptr<column>, cuda::device_buffer<string_index_pair>> split_helper(
   strings_column_view const& input,
   rsplit_ws_tokenizer_fn tokenizer,
   whitespace_delimiter_fn delimiter_fn,

@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "group_reductions.hpp"
+
 #include <cudf/column/column_factories.hpp>
 #include <cudf/column/column_view.hpp>
 #include <cudf/detail/aggregation/aggregation.hpp>
@@ -12,9 +14,9 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/stream>
-#include <thrust/copy.h>
 #include <thrust/count.h>
 #include <thrust/execution_policy.h>
 #include <thrust/transform.h>
@@ -31,7 +33,7 @@ namespace detail {
  * @param offsets Offsets of groups' starting points
  * @param num_groups Number of groups
  * @param stream CUDA stream used for device memory operations and kernel launches.
- * @param mr Device memory resource used to allocate the returned column's device memory
+ * @param mr Memory resources used for temporary allocations and the returned columns
  * @return Pair of null-eliminated grouped values and corresponding offsets
  */
 std::pair<std::unique_ptr<column>, std::unique_ptr<column>> purge_null_entries(
@@ -39,9 +41,9 @@ std::pair<std::unique_ptr<column>, std::unique_ptr<column>> purge_null_entries(
   column_view const& offsets,
   size_type num_groups,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
-  auto values_device_view = column_device_view::create(values, stream);
+  auto values_device_view = column_device_view::create(values, stream, mr.get_temporary_mr());
 
   auto not_null_pred = [d_value = *values_device_view] __device__(auto i) -> bool {
     return d_value.is_valid_nocheck(i);
@@ -53,13 +55,14 @@ std::pair<std::unique_ptr<column>, std::unique_ptr<column>> purge_null_entries(
 
   auto null_purged_values = std::move(null_purged_entries.front());
   null_purged_values->set_null_mask(
-    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr), 0);
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr.get_output_mr()), 0);
 
   // Recalculate offsets after null entries are purged.
-  rmm::device_uvector<size_type> null_purged_sizes(num_groups, stream);
+  cuda::device_buffer<size_type> null_purged_sizes(
+    stream, mr.get_temporary_mr(), num_groups, cuda::no_init);
 
   thrust::transform(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
     cuda::counting_iterator<size_type>{0},
     cuda::counting_iterator<size_type>{num_groups},
     null_purged_sizes.begin(),
@@ -81,35 +84,49 @@ std::unique_ptr<column> group_collect(column_view const& values,
                                       size_type num_groups,
                                       null_policy null_handling,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cudf::memory_resources mr)
 {
-  auto [child_column,
-        offsets_column] = [null_handling, num_groups, &values, &group_offsets, stream, mr] {
-    auto offsets_column = make_numeric_column(
-      data_type(type_id::INT32), num_groups + 1, mask_state::UNALLOCATED, stream, mr);
-
-    thrust::copy(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                 group_offsets.begin(),
-                 group_offsets.end(),
-                 offsets_column->mutable_view().template begin<int32_t>());
-
-    // If column of grouped values contains null elements, and null_policy == EXCLUDE,
-    // those elements must be filtered out, and offsets recomputed.
-    if (null_handling == null_policy::EXCLUDE && values.has_nulls()) {
-      return cudf::groupby::detail::purge_null_entries(
-        values, offsets_column->view(), num_groups, stream, mr);
-    } else {
-      return std::pair(std::make_unique<cudf::column>(values, stream, mr),
-                       std::move(offsets_column));
-    }
-  }();
-
-  return make_lists_column(num_groups,
-                           std::move(offsets_column),
-                           std::move(child_column),
-                           0,
-                           cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr));
+  // If column of grouped values contains null elements, and null_policy == EXCLUDE,
+  // those elements must be filtered out, and offsets recomputed.
+  if (null_handling == null_policy::EXCLUDE && values.has_nulls()) {
+    auto [child_column, purged_offsets] = cudf::groupby::detail::purge_null_entries(
+      values, column_view{group_offsets}, num_groups, stream, mr);
+    return make_lists_column(
+      num_groups,
+      std::move(purged_offsets),
+      std::move(child_column),
+      0,
+      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr.get_output_mr()));
+  }
+  return group_collect(std::make_unique<cudf::column>(values, stream, mr.get_output_mr()),
+                       group_offsets,
+                       num_groups,
+                       null_handling,
+                       stream,
+                       mr);
 }
+
+std::unique_ptr<column> group_collect(std::unique_ptr<column> values,
+                                      cudf::device_span<size_type const> group_offsets,
+                                      size_type num_groups,
+                                      null_policy null_handling,
+                                      cuda::stream_ref stream,
+                                      cudf::memory_resources mr)
+{
+  if (null_handling == null_policy::EXCLUDE && values->has_nulls()) {
+    return group_collect(values->view(), group_offsets, num_groups, null_handling, stream, mr);
+  }
+  // The caller is done with the grouped values, so they become the list child without a copy.
+  auto offsets_column =
+    std::make_unique<column>(column_view{group_offsets}, stream, mr.get_output_mr());
+  return make_lists_column(
+    num_groups,
+    std::move(offsets_column),
+    std::move(values),
+    0,
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr.get_output_mr()));
+}
+
 }  // namespace detail
 }  // namespace groupby
 }  // namespace cudf

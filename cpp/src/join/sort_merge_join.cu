@@ -15,6 +15,7 @@
 #include <cudf/detail/row_operator/lexicographic.cuh>
 #include <cudf/detail/sizes_to_offsets_iterator.cuh>
 #include <cudf/detail/stream_compaction.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/join/join.hpp>
 #include <cudf/join/sort_merge_join.hpp>
 #include <cudf/lists/lists_column_view.hpp>
@@ -33,6 +34,7 @@
 #include <cub/device/device_merge.cuh>
 #include <cub/device/device_select.cuh>
 #include <cub/device/device_transform.cuh>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/algorithm>
@@ -131,8 +133,8 @@ struct is_row_null {
  * `offsets` contains one start per run followed by a trailing row-count sentinel.
  */
 struct right_run_index {
-  std::unique_ptr<rmm::device_uvector<size_type>> rows;     ///< Representative row for each run
-  std::unique_ptr<rmm::device_uvector<size_type>> offsets;  ///< Run starts and trailing sentinel
+  std::unique_ptr<cuda::device_buffer<size_type>> rows;     ///< Representative row for each run
+  std::unique_ptr<cuda::device_buffer<size_type>> offsets;  ///< Run starts and trailing sentinel
   size_type num_runs;                                       ///< Number of distinct key runs
 };
 
@@ -155,15 +157,16 @@ right_run_index build_right_run_index(SortedOrderIterator sorted_order,
 {
   auto temp_mr = cudf::get_current_device_resource_ref();
   auto env     = make_cub_env(stream);
-  auto rows    = std::make_unique<rmm::device_uvector<size_type>>(num_rows, stream, temp_mr);
-  auto offsets = std::make_unique<rmm::device_uvector<size_type>>(
-    static_cast<std::size_t>(num_rows) + 1, stream, temp_mr);
+  auto rows =
+    std::make_unique<cuda::device_buffer<size_type>>(stream, temp_mr, num_rows, cuda::no_init);
+  auto offsets = std::make_unique<cuda::device_buffer<size_type>>(
+    stream, temp_mr, static_cast<std::size_t>(num_rows) + 1, cuda::no_init);
   cudf::detail::device_scalar<size_type> num_runs{0, stream, temp_mr};
 
   // Keep the expensive row comparator confined to this transform. The subsequent CUB selection
   // kernel consumes only byte flags and integer positions, avoiding another row-operator
   // instantiation and its register pressure.
-  rmm::device_uvector<uint8_t> run_starts(num_rows, stream, temp_mr);
+  cuda::device_buffer<uint8_t> run_starts(stream, temp_mr, num_rows, cuda::no_init);
   CUDF_CUDA_TRY(cub::DeviceTransform::Transform(
     cuda::counting_iterator<size_type>{0},
     run_starts.begin(),
@@ -336,7 +339,7 @@ class merge {
 
  public:
   struct match_ranges {
-    std::unique_ptr<rmm::device_uvector<size_type>> starts;
+    std::unique_ptr<cuda::device_buffer<size_type>> starts;
     std::unique_ptr<rmm::device_uvector<size_type>> counts;
   };
 
@@ -383,7 +386,7 @@ typename merge<SmallerIterator>::match_ranges merge<SmallerIterator>::find_match
   auto const num_smaller_runs = static_cast<size_type>(unique_smaller_rows.size());
   auto match_starts =
     compute_starts == compute_match_starts::YES
-      ? std::make_unique<rmm::device_uvector<size_type>>(larger_numrows, stream, mr)
+      ? std::make_unique<cuda::device_buffer<size_type>>(stream, mr, larger_numrows, cuda::no_init)
       : nullptr;
   auto const match_starts_data = match_starts == nullptr ? nullptr : match_starts->data();
   auto match_counts            = cudf::detail::make_zeroed_device_uvector_async<size_type>(
@@ -444,7 +447,7 @@ merge<SmallerIterator>::inner(cuda::stream_ref stream, rmm::device_async_resourc
   // Use 64-bit prefix sums to handle large output sizes (> INT32_MAX rows)
   // The prefix sums can exceed INT32_MAX even though individual match counts are small
   auto match_offsets =
-    cudf::detail::make_zeroed_device_uvector_async<int64_t>(match_counts->size(), stream, temp_mr);
+    cudf::detail::make_zeroed_device_buffer_async<int64_t>(match_counts->size(), stream, temp_mr);
   // Use pinned memory as bounce buffer for efficient device-to-host transfer of the last element
   auto last_element =
     cudf::detail::device_scalar<int64_t>(0, stream, cudf::get_current_device_resource_ref());
@@ -496,7 +499,7 @@ merge<SmallerIterator>::left(cuda::stream_ref stream, rmm::device_async_resource
 
   cudf::detail::device_scalar<int64_t> total_matches(stream, temp_mr);
   auto match_offsets =
-    cudf::detail::make_zeroed_device_uvector_async<int64_t>(match_counts->size(), stream, temp_mr);
+    cudf::detail::make_zeroed_device_buffer_async<int64_t>(match_counts->size(), stream, temp_mr);
   auto const output_sizes = cuda::transform_iterator(
     cuda::counting_iterator<size_type>{0},
     [match_counts = match_counts->begin(), larger_numrows] __device__(auto idx) -> size_type {
@@ -555,8 +558,8 @@ void sort_merge_join::preprocessed_table::populate_nonnull_filter(cuda::stream_r
       auto offsets = lcv.offsets();
       auto child   = lcv.child();
 
-      rmm::device_uvector<int32_t> offsets_subset(offsets.size(), stream, temp_mr);
-      rmm::device_uvector<int32_t> child_positions(offsets.size(), stream, temp_mr);
+      cuda::device_buffer<int32_t> offsets_subset(stream, temp_mr, offsets.size(), cuda::no_init);
+      cuda::device_buffer<int32_t> child_positions(stream, temp_mr, offsets.size(), cuda::no_init);
       auto unique_end = thrust::unique_by_key_copy(
         rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
         cuda::std::reverse_iterator(lcv.offsets_end()),
@@ -578,14 +581,13 @@ void sort_merge_join::preprocessed_table::populate_nonnull_filter(cuda::stream_r
                                               stream,
                                               temp_mr);
 
-      thrust::for_each(
-        rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-        cuda::counting_iterator<cudf::size_type>{0},
-        cuda::counting_iterator<cudf::size_type>{0} + subset_size,
-        list_nonnull_filter{reinterpret_cast<bitmask_type*>(validity_mask.data()),
-                            reinterpret_cast<bitmask_type const*>(reduced_validity_mask.data()),
-                            child_positions,
-                            static_cast<size_type>(subset_offset)});
+      thrust::for_each(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                       cuda::counting_iterator<cudf::size_type>{0},
+                       cuda::counting_iterator<cudf::size_type>{0} + subset_size,
+                       list_nonnull_filter{validity_mask.data(),
+                                           reduced_validity_mask.data(),
+                                           child_positions,
+                                           static_cast<size_type>(subset_offset)});
     } else if (col.type().id() == type_id::STRUCT) {
       // Recursive lambda to traverse struct hierarchy and accumulate null information.
       // This lambda ANDs the column's null mask with the accumulated mask in-place and recursively
@@ -597,8 +599,7 @@ void sort_merge_join::preprocessed_table::populate_nonnull_filter(cuda::stream_r
         if (colview.nullable()) {
           // AND this column's null mask with the accumulated mask
           auto colmask = colview.null_mask();
-          std::vector masks{reinterpret_cast<bitmask_type const*>(colmask),
-                            reinterpret_cast<bitmask_type const*>(mask)};
+          std::vector<bitmask_type const*> masks{colmask, mask};
           std::vector<size_type> begin_bits{0, 0};
           cudf::detail::inplace_bitmask_and(
             device_span<bitmask_type>(mask, num_bitmask_words(num_rows)),
@@ -626,12 +627,11 @@ void sort_merge_join::preprocessed_table::populate_nonnull_filter(cuda::stream_r
       // Process all children of the struct column
       for (auto it = col.child_begin(); it != col.child_end(); it++) {
         auto& child = *it;
-        and_bitmasks(and_bitmasks, reinterpret_cast<bitmask_type*>(validity_mask.data()), child);
+        and_bitmasks(and_bitmasks, validity_mask.data(), child);
       }
     }
   }
-  this->_num_nulls =
-    null_count(reinterpret_cast<bitmask_type*>(validity_mask.data()), 0, table.num_rows(), stream);
+  this->_num_nulls     = null_count(validity_mask.data(), 0, table.num_rows(), stream);
   this->_validity_mask = std::move(validity_mask);
 }
 
@@ -717,20 +717,19 @@ sort_merge_join::sort_merge_join(table_view const& right,
   num_right_runs    = run_index.num_runs;
 }
 
-rmm::device_uvector<size_type> sort_merge_join::preprocessed_table::map_table_to_unprocessed(
+cuda::device_buffer<size_type> sort_merge_join::preprocessed_table::map_table_to_unprocessed(
   cuda::stream_ref stream) const
 {
   CUDF_EXPECTS(_validity_mask.has_value() && _num_nulls.has_value(), "Mapping is not possible");
   auto temp_mr                  = cudf::get_current_device_resource_ref();
   auto const table_mapping_size = _table_view.num_rows() - _num_nulls.value();
-  rmm::device_uvector<size_type> table_mapping(table_mapping_size, stream, temp_mr);
-  cudf::detail::copy_if_async(
-    cuda::counting_iterator<size_type>{0},
-    cuda::counting_iterator<size_type>{_table_view.num_rows()},
-    cuda::counting_iterator<size_type>{0},
-    table_mapping.begin(),
-    is_row_valid{reinterpret_cast<bitmask_type const*>(_validity_mask.value().data())},
-    stream);
+  cuda::device_buffer<size_type> table_mapping(stream, temp_mr, table_mapping_size, cuda::no_init);
+  cudf::detail::copy_if_async(cuda::counting_iterator<size_type>{0},
+                              cuda::counting_iterator<size_type>{_table_view.num_rows()},
+                              cuda::counting_iterator<size_type>{0},
+                              table_mapping.begin(),
+                              is_row_valid{_validity_mask.value().data()},
+                              stream);
   return table_mapping;
 }
 
@@ -866,11 +865,11 @@ sort_merge_join::left_join(table_view const& left,
       auto const total_output_size =
         preprocessed_left_indices->size() + static_cast<int64_t>(num_filtered_nulls);
 
-      auto const validity_mask =
-        reinterpret_cast<bitmask_type const*>(preprocessed_left._validity_mask.value().data());
-      rmm::device_uvector<size_type> null_left_indices{static_cast<std::size_t>(num_filtered_nulls),
-                                                       stream,
-                                                       cudf::get_current_device_resource_ref()};
+      auto const validity_mask = preprocessed_left._validity_mask.value().data();
+      cuda::device_buffer<size_type> null_left_indices(stream,
+                                                       cudf::get_current_device_resource_ref(),
+                                                       static_cast<std::size_t>(num_filtered_nulls),
+                                                       cuda::no_init);
       cudf::detail::copy_if_async(cuda::counting_iterator<size_type>{0},
                                   cuda::counting_iterator<size_type>{left.num_rows()},
                                   cuda::counting_iterator<size_type>{0},

@@ -5,6 +5,7 @@ import datetime
 import decimal
 import glob
 import hashlib
+import json
 import math
 import os
 import pathlib
@@ -1704,6 +1705,28 @@ def test_parquet_writer_int96_timestamps(tmp_path, pdf, gdf):
 
     # verify INT96 timestamps were converted back to the same data.
     assert_eq(expect, got, check_categorical=False, check_dtype=False)
+
+
+@pytest.mark.parametrize(
+    "kwargs, expected", [({}, True), ({"utc_timestamps": False}, False)]
+)
+def test_parquet_writer_chunked_utc_timestamps(tmp_path, kwargs, expected):
+    gdf = cudf.DataFrame(
+        {"ts": cudf.Series([0, 1_000_000, None], dtype="datetime64[us]")}
+    )
+    fname = tmp_path / "gdf.parquet"
+
+    with ParquetWriter(fname, **kwargs) as writer:
+        writer.write_table(gdf)
+        writer.write_table(gdf)
+
+    logical_type = json.loads(
+        pq.ParquetFile(fname).schema.column(0).logical_type.to_json()
+    )
+    assert logical_type["isAdjustedToUTC"] is expected
+    assert_eq(
+        cudf.read_parquet(fname), cudf.concat([gdf, gdf], ignore_index=True)
+    )
 
 
 def test_multifile_parquet_folder(tmp_path):

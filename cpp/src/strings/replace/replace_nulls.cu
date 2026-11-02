@@ -63,8 +63,11 @@ std::unique_ptr<column> replace_nulls(strings_column_view const& input,
                        memcpy(d_chars + d_offsets[idx], d_str.data(), d_str.size_bytes());
                      });
 
-  return make_strings_column(
-    strings_count, std::move(offsets_column), chars.release(), 0, rmm::device_buffer{});
+  return make_strings_column(strings_count,
+                             std::move(offsets_column),
+                             chars.release(),
+                             0,
+                             cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }
 
 }  // namespace detail

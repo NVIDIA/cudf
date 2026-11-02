@@ -27,7 +27,6 @@
 
 #include <cuda/iterator>
 #include <cuda/stream>
-#include <thrust/count.h>
 #include <thrust/scatter.h>
 #include <thrust/sequence.h>
 #include <thrust/uninitialized_fill.h>
@@ -197,7 +196,7 @@ struct column_scatterer_impl<dictionary32> {
                                      rmm::device_async_resource_ref mr) const
   {
     if (target_in.is_empty())  // empty begets empty
-      return make_empty_column(type_id::DICTIONARY32);
+      return empty_like(target_in);
     if (source_in.is_empty())  // no input, just make a copy
       return std::make_unique<column>(target_in, stream, mr);
 
@@ -306,12 +305,13 @@ struct column_scatterer_impl<struct_view> {
 
     // Need to put the result column in a vector to call `gather_bitmask`.
     std::vector<std::unique_ptr<column>> result;
-    result.emplace_back(cudf::make_structs_column(target.size(),
-                                                  std::move(output_struct_members),
-                                                  0,
-                                                  rmm::device_buffer{0, stream, mr},
-                                                  stream,
-                                                  mr));
+    result.emplace_back(cudf::make_structs_column(
+      target.size(),
+      std::move(output_struct_members),
+      0,
+      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
+      stream,
+      mr));
 
     // Only gather bitmask from the target column for the rows that have not been scattered onto
     // The bitmask from the source column will be gathered at the top level `scatter()` call.

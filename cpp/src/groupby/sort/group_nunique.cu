@@ -13,6 +13,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/stream>
 
@@ -82,9 +83,10 @@ std::unique_ptr<column> group_nunique(column_view const& values,
   auto const comparator =
     cudf::detail::row::equality::self_comparator{values_view, stream, temp_mr};
 
-  auto const d_values_view = column_device_view::create(values, stream);
+  auto const d_values_view = column_device_view::create(values, stream, temp_mr);
 
-  auto d_result = rmm::device_uvector<size_type>(group_labels.size(), stream);
+  auto d_result =
+    cuda::device_buffer<size_type>(stream, temp_mr, group_labels.size(), cuda::no_init);
 
   auto const comparator_helper = [&](auto const d_equal) {
     auto fn = is_unique_iterator_fn{nullate::DYNAMIC{values.has_nulls()},

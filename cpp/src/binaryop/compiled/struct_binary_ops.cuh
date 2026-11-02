@@ -150,7 +150,7 @@ void apply_struct_equality_op(mutable_column_view& out,
   auto table_comparator =
     cudf::detail::row::equality::two_table_comparator{tlhs, trhs, stream, temp_mr};
 
-  auto outd = column_device_view::create(out, stream);
+  auto outd = column_device_view::create(out, stream, temp_mr);
   auto optional_iter =
     cudf::detail::make_optional_iterator<bool>(*outd, nullate::DYNAMIC{out.has_nulls()});
 

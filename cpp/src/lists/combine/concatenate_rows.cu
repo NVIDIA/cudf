@@ -10,6 +10,7 @@
 #include <cudf/detail/gather.cuh>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/sizes_to_offsets_iterator.cuh>
 #include <cudf/lists/combine.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
@@ -18,10 +19,10 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/stream>
-#include <thrust/scan.h>
 
 namespace cudf {
 namespace lists {
@@ -58,7 +59,7 @@ namespace {
  * We can do this by recomputing a new offsets column that does this regrouping.
  *
  */
-std::tuple<std::unique_ptr<column>, rmm::device_buffer, size_type>
+std::tuple<std::unique_ptr<column>, cuda::device_buffer<cudf::bitmask_type>, size_type>
 generate_regrouped_offsets_and_null_mask(table_device_view const& input,
                                          bool build_null_mask,
                                          concatenate_null_policy null_policy,
@@ -109,17 +110,23 @@ generate_regrouped_offsets_and_null_mask(table_device_view const& input,
                                     stream);
 
   // convert to offsets
-  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                         offsets->view().begin<int32_t>(),
-                         offsets->view().begin<int32_t>() + input.num_rows() + 1,
-                         offsets->mutable_view().begin<int32_t>(),
-                         0);
+  auto total_size =
+    cudf::detail::sizes_to_offsets(offsets->view().begin<size_type>(),
+                                   offsets->view().begin<size_type>() + input.num_rows() + 1,
+                                   offsets->mutable_view().begin<size_type>(),
+                                   0,
+                                   stream,
+                                   mr);
+  CUDF_EXPECTS(total_size <= static_cast<decltype(total_size)>(std::numeric_limits<int32_t>::max()),
+               "Size of offsets exceeds maximum int32 limit",
+               std::overflow_error);
 
   // generate appropriate null mask
   auto [null_mask, null_count] = [&]() {
     // if the input doesn't contain nulls, no work to do
     if (!build_null_mask) {
-      return std::pair<rmm::device_buffer, size_type>{rmm::device_buffer{}, 0};
+      return std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type>{
+        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0};
     }
 
     // row is null if -all- input rows are null
@@ -146,10 +153,11 @@ generate_regrouped_offsets_and_null_mask(table_device_view const& input,
   return {std::move(offsets), std::move(null_mask), null_count};
 }
 
-rmm::device_uvector<size_type> generate_null_counts(table_device_view const& input,
+cuda::device_buffer<size_type> generate_null_counts(table_device_view const& input,
                                                     cuda::stream_ref stream)
 {
-  rmm::device_uvector<size_type> null_counts(input.num_rows(), stream);
+  cuda::device_buffer<size_type> null_counts(
+    stream, cudf::get_current_device_resource_ref(), input.num_rows(), cuda::no_init);
 
   auto keys =
     cuda::transform_iterator(cuda::counting_iterator<std::size_t>{0},
@@ -219,8 +227,10 @@ std::unique_ptr<column> concatenate_rows(table_view const& input,
 
   // if the output needs a null mask, generate a vector of null counts per row of input, where the
   // count is the number of columns that contain a null for a given row.
-  auto row_null_counts = build_null_mask ? generate_null_counts(*input_dv, stream)
-                                         : rmm::device_uvector<size_type>{0, stream};
+  auto row_null_counts = build_null_mask
+                           ? generate_null_counts(*input_dv, stream)
+                           : cuda::device_buffer<size_type>{
+                               stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init};
 
   // if we have nulls, overlay an appropriate null mask onto the
   // concatenated column so that gather() sanitizes out the child data of rows that will ultimately

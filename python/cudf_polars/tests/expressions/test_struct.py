@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -121,3 +121,20 @@ def test_value_counts_with_nulls(engine: pl.GPUEngine, ldf):
     ldf_with_nulls = ldf.select(c=pl.Series(["x", None, "y", "x", None, "x"]))
     q = ldf_with_nulls.select(pl.col("c").value_counts(sort=True))
     assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("literal", [pl.lit(value=False), pl.lit(7)])
+def test_struct_literal_field_is_broadcast(
+    engine: pl.GPUEngine, literal: pl.Expr
+) -> None:
+    df = pl.LazyFrame(
+        {"a": [1, 2, 3], "b": ["dogs", "cats", None], "c": ["play", "swim", "walk"]}
+    )
+    q = df.select(pl.struct("a", x="c", y=literal).alias("struct").struct.field("y"))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_group_by_struct_of_literals_empty_frame(engine: pl.GPUEngine) -> None:
+    df = pl.LazyFrame({"g": [10, 10, 20], "n": [1, 2, 3]}).head(0)
+    q = df.group_by("g").agg(pl.struct(pl.lit(7).alias("lhs"), pl.lit(7).alias("rhs")))
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)

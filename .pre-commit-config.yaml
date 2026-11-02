@@ -10,7 +10,7 @@ ci:
   # Lychee's hook script runs `git rev-parse` at run time, which exits 128 in
   # pre-commit.ci's differently-owned clone. Lychee still runs in rapids `checks`
   # CI via `pre-commit run --all-files` in ci/check_style.sh.
-  skip: ["mypy", "verify-alpha-spec", "lychee"]
+  skip: ["mypy", "verify-alpha-spec", "verify-dependencies", "lychee"]
   submodules: false
 
 # Agent skill artifacts are validated and signed by the NVIDIA skills pipeline.
@@ -34,21 +34,22 @@ repos:
           )
       - id: check-xml
   - repo: https://github.com/MarcoGorelli/cython-lint
-    rev: v0.21.0
+    rev: v0.21.1
     hooks:
       - id: cython-lint
+        additional_dependencies: ["cython>=3.2.2,<3.3.0a0"]
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: 'v2.3.0'
     hooks:
       - id: mypy
         additional_dependencies: [
-          "polars>=1.35,<1.43",
+          "polars>=2.0,<2.2",
           "numpy>=1.26",
           "pyarrow-stubs>=19.0",
           "pyarrow>=19.0.0,<24.0.0",  # https://github.com/NVIDIA/cudf/issues/22229
           "pytest>=8.0.0,<9.1.0",
           "types-cachetools>=5.5.0",
-          "rmm-cu12==26.10.*,>=0.0.0a0; sys_platform=='linux'",
+          "rmm-cu12==26.12.*,>=0.0.0a0; sys_platform=='linux'",
           "--extra-index-url=https://pypi.anaconda.org/rapidsai-wheels-nightly/simple/"
         ]
         args: ["--config-file=pyproject.toml",
@@ -118,6 +119,14 @@ repos:
         entry: 'thrust::(?:make_)?(?:constant|counting|discard|permutation|reverse|strided|tabulate_output|transform|transform_input_output|transform_output|zip)_iterator'
         language: pygrep
         types_or: [c, c++, cuda]
+      - id: use-cuda-std-integral-traits
+        name: use-cuda-std-integral-traits
+        description: 'Enforce that cuda::std integral, signedness and arithmetic traits and concepts are used instead of the std ones, which disagree on __int128_t across compilers and language modes'
+        entry: '(?<![\w:])std::(?:is_(?:integral|signed|unsigned|arithmetic)(?:_v)?\b|(?:signed_|unsigned_)?integral\b|make_(?:un)?signed(?:_t)?\b)'
+        language: pygrep
+        types_or: [c, c++, cuda]
+        files: '^cpp/'
+        exclude: '^cpp/include/cudf_test/cxxopts[.]hpp$'
       - id: exec-policy-nosync-memory-resource
         name: exec-policy-nosync-memory-resource
         description: 'Enforce that rmm::exec_policy_nosync is always passed a memory resource as its second argument'
@@ -233,10 +242,18 @@ repos:
     hooks:
       - id: ruff
         args: ["--fix"]
+        exclude: ^python/cudf_polars/quent/bridge/cudf_polars_quent[.]pyi$
       - id: ruff-format
-  - repo: https://github.com/rapidsai/pre-commit-hooks
-    rev: v1.6.0
+        exclude: ^python/cudf_polars/quent/bridge/cudf_polars_quent[.]pyi$
+  - repo: https://github.com/numpy/numpydoc
+    rev: v1.10.0
     hooks:
+      - id: numpydoc-validation
+        files: ^python/cudf/cudf/
+  - repo: https://github.com/rapidsai/pre-commit-hooks
+    rev: v1.7.0
+    hooks:
+      - id: verify-dependencies
       - id: verify-copyright
         name: verify-copyright-cudf
         args: [--fix, --spdx]
@@ -334,7 +351,7 @@ repos:
           (?x)
             ^pyproject[.]toml$
   - repo: https://github.com/rapidsai/dependency-file-generator
-    rev: v1.21.0
+    rev: v1.22.0
     hooks:
       - id: rapids-dependency-file-generator
         args: ["--clean", "--warn-all", "--strict"]

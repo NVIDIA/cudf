@@ -98,7 +98,11 @@ struct empty_column_constructor {
 
     if constexpr (k == aggregation::Kind::COLLECT_LIST || k == aggregation::Kind::COLLECT_SET ||
                   k == aggregation::Kind::TOP_K) {
-      return make_lists_column(0, make_empty_column(type_id::INT32), empty_like(values), 0, {});
+      return make_lists_column(0,
+                               make_empty_column(type_id::INT32),
+                               empty_like(values),
+                               0,
+                               cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
     }
 
     if constexpr (k == aggregation::Kind::HISTOGRAM) {
@@ -106,7 +110,7 @@ struct empty_column_constructor {
                                make_empty_column(type_id::INT32),
                                cudf::reduction::detail::make_empty_histogram_like(values),
                                0,
-                               {});
+                               cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
     }
     if constexpr (k == aggregation::Kind::MERGE_HISTOGRAM) { return empty_like(values); }
 
@@ -116,7 +120,12 @@ struct empty_column_constructor {
       std::vector<std::unique_ptr<cudf::column>> children;
       children.push_back(make_empty_column(values.type()));
       children.push_back(make_empty_column(cudf::data_type{cudf::type_id::BOOL8}));
-      return make_structs_column(0, std::move(children), 0, {}, stream, mr);
+      return make_structs_column(0,
+                                 std::move(children),
+                                 0,
+                                 cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                 stream,
+                                 mr);
     }
 
     if constexpr (k == aggregation::Kind::RANK) {

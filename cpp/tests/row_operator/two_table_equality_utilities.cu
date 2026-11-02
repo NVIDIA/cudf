@@ -8,9 +8,9 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/column/column_view.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 template <typename PhysicalElementComparator>
@@ -18,7 +18,7 @@ std::unique_ptr<cudf::column> two_table_equality(cudf::table_view lhs,
                                                  cudf::table_view rhs,
                                                  std::vector<cudf::order> const& column_order,
                                                  PhysicalElementComparator comparator,
-                                                 rmm::cuda_stream_view stream,
+                                                 cuda::stream_ref stream,
                                                  cudf::memory_resources mr)
 {
   auto const table_comparator =
@@ -62,12 +62,12 @@ template std::unique_ptr<cudf::column> two_table_equality<physical_equality_t>(
   cudf::table_view rhs,
   std::vector<cudf::order> const& column_order,
   physical_equality_t comparator,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   cudf::memory_resources mr);
 template std::unique_ptr<cudf::column> two_table_equality<nan_equality_t>(
   cudf::table_view lhs,
   cudf::table_view rhs,
   std::vector<cudf::order> const& column_order,
   nan_equality_t comparator,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   cudf::memory_resources mr);

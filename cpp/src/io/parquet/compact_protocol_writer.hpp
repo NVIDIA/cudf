@@ -32,7 +32,9 @@ class CompactProtocolWriter {
   size_t write(TimeType const&);
   size_t write(TimestampType const&);
   size_t write(IntType const&);
-  size_t write(LogicalType const&);
+  size_t write(VariantType const&);
+  size_t write(GeographyType const&);
+  size_t write(LogicalType const&, LogicalTypePayload const&);
   size_t write(SchemaElement const&);
   size_t write(RowGroup const&);
   size_t write(KeyValue const&);
@@ -96,8 +98,8 @@ class CompactProtocolFieldWriter {
   template <typename Enum>
   inline void field_int_list(int field, std::vector<Enum> const& val);
 
-  template <typename T>
-  inline void field_struct(int field, T const& val);
+  template <typename T, typename... Args>
+  inline void field_struct(int field, T const& val, Args const&... args);
 
   inline void field_empty_struct(int field);
 

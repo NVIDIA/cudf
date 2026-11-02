@@ -29,6 +29,7 @@ auto constexpr bucket_size =
   1;  ///< Number of concurrent slots (set for best performance) handled by each thread.
 auto constexpr occupancy_factor = 1.43f;  ///< cuCollections suggests using a hash map of size
                                           ///< N * (1/0.7) = 1.43 to target a 70% occupancy factor.
+auto constexpr dict_encode_block_size = 256;  ///< Thread block size of hash map kernels.
 
 auto constexpr KEY_SENTINEL   = key_type{-1};
 auto constexpr VALUE_SENTINEL = mapped_type{-1};

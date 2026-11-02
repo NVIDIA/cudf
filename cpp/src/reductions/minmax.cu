@@ -17,13 +17,14 @@
 #include <cudf/scalar/scalar_factories.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
+#include <cudf/utilities/traits.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/functional>
 #include <cuda/std/iterator>
 #include <cuda/std/utility>
 #include <cuda/stream>
-#include <thrust/transform_reduce.h>
 
 #include <type_traits>
 
@@ -74,8 +75,8 @@ auto reduce_device(InputIterator d_in, size_type num_items, Op binary_op, cuda::
   size_t storage_bytes = 0;
   cub::DeviceReduce::Reduce(
     nullptr, storage_bytes, d_in, result.data(), num_items, binary_op, identity, stream.get());
-  auto temp_storage =
-    rmm::device_buffer{storage_bytes, stream, cudf::get_current_device_resource_ref()};
+  auto temp_storage = cuda::device_buffer<std::byte>{
+    stream, cudf::get_current_device_resource_ref(), storage_bytes, cuda::no_init};
 
   // Run reduction
   cub::DeviceReduce::Reduce(temp_storage.data(),
@@ -144,6 +145,18 @@ struct assign_min_max {
   T* max_data;
 };
 
+template <typename T>
+std::unique_ptr<cudf::scalar_type_t<T>> make_minmax_scalar(cudf::data_type type,
+                                                           cuda::stream_ref stream,
+                                                           rmm::device_async_resource_ref mr)
+{
+  if constexpr (cudf::is_fixed_point<T>()) {
+    return std::make_unique<cudf::scalar_type_t<T>>(
+      device_storage_type_t<T>{}, numeric::scale_type{type.scale()}, true, stream, mr);
+  }
+  return std::make_unique<cudf::scalar_type_t<T>>(T{}, true, stream, mr);
+}
+
 /**
  * @brief Computes a minmax_pair<T> reduction directly over a dictionary column's decoded key
  * values, i.e. `keys[indices[i]]` for each row `i`.
@@ -185,10 +198,9 @@ struct minmax_dictionary_functor {
   {
     using storage_type  = device_storage_type_t<T>;
     auto dev_result     = reduce_dictionary<storage_type>(col, stream);
-    using ScalarType    = cudf::scalar_type_t<T>;
     auto const key_type = dictionary_column_view(col).keys().type();
-    auto minimum        = std::make_unique<ScalarType>(T{}, true, stream, mr);
-    auto maximum        = std::make_unique<ScalarType>(T{}, true, stream, mr);
+    auto minimum        = make_minmax_scalar<T>(key_type, stream, mr);
+    auto maximum        = make_minmax_scalar<T>(key_type, stream, mr);
     cudf::detail::device_single_thread(
       assign_min_max<storage_type>{dev_result.data(), minimum->data(), maximum->data()}, stream);
     return {std::move(minimum), std::move(maximum)};
@@ -255,13 +267,12 @@ struct minmax_functor {
     // compute minimum and maximum values
     auto dev_result = reduce<storage_type>(col, stream);
     // create output scalars
-    using ScalarType = cudf::scalar_type_t<T>;
-    auto minimum     = new ScalarType(T{}, true, stream, mr);
-    auto maximum     = new ScalarType(T{}, true, stream, mr);
+    auto minimum = make_minmax_scalar<T>(col.type(), stream, mr);
+    auto maximum = make_minmax_scalar<T>(col.type(), stream, mr);
     // copy dev_result to the output scalars
     cudf::detail::device_single_thread(
       assign_min_max<storage_type>{dev_result.data(), minimum->data(), maximum->data()}, stream);
-    return {std::unique_ptr<scalar>(minimum), std::unique_ptr<scalar>(maximum)};
+    return {std::move(minimum), std::move(maximum)};
   }
 
   /**

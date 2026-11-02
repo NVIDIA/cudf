@@ -14,6 +14,8 @@
 #include <cudf/io/parquet_metadata.hpp>
 #include <cudf/utilities/error.hpp>
 
+#include <cuda/std/type_traits>
+
 #include <src/io/parquet/compact_protocol_reader.hpp>
 
 #include <format>
@@ -181,16 +183,22 @@ std::unique_ptr<cudf::column> make_parquet_list_list_col(
                           child_values.begin(), child_values.begin() + child_value_count);
 
   int child_offsets_size = static_cast<cudf::column_view>(child_offsets).size() - 1;
-  auto child             = cudf::make_lists_column(
-    child_offsets_size, child_offsets.release(), child_data.release(), 0, rmm::device_buffer{});
+  auto child             = cudf::make_lists_column(child_offsets_size,
+                                       child_offsets.release(),
+                                       child_data.release(),
+                                       0,
+                                       cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   int offsets_size             = static_cast<cudf::column_view>(offsets).size() - 1;
   auto [null_mask, null_count] = cudf::test::detail::make_null_mask(valids, valids + offsets_size);
   return include_validity
            ? cudf::make_lists_column(
                offsets_size, offsets.release(), std::move(child), null_count, std::move(null_mask))
-           : cudf::make_lists_column(
-               offsets_size, offsets.release(), std::move(child), 0, rmm::device_buffer{});
+           : cudf::make_lists_column(offsets_size,
+                                     offsets.release(),
+                                     std::move(child),
+                                     0,
+                                     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }
 
 template std::unique_ptr<cudf::column> make_parquet_list_list_col<int>(
@@ -240,9 +248,8 @@ void read_footer(std::unique_ptr<cudf::io::datasource> const& source,
   // parquet files end with 4-byte footer_length and 4-byte magic == "PAR1"
   // seek backwards from the end of the file (footer_length + 8 bytes of ender)
   auto const footer_buffer = cudf::io::parquet::fetch_footer_to_host(*source);
-  cudf::io::parquet::detail::CompactProtocolReader cp(footer_buffer->data(), footer_buffer->size());
-
-  cp.read(file_meta_data);
+  cudf::io::parquet::detail::decode_footer_bytes({footer_buffer->data(), footer_buffer->size()},
+                                                 file_meta_data);
 }
 
 // returns the number of bits used for dictionary encoding data at the given page location.
@@ -326,22 +333,22 @@ namespace testdata {
 // ----- most numerics. scale by 100 so all values fit in a single byte
 
 template <typename T>
-std::enable_if_t<std::is_arithmetic_v<T> && !std::is_same_v<T, bool>,
+std::enable_if_t<cuda::std::is_arithmetic_v<T> && !std::is_same_v<T, bool>,
                  cudf::test::fixed_width_column_wrapper<T>>
 ascending()
 {
-  int start = std::is_signed_v<T> ? -num_ordered_rows / 2 : 0;
+  int start = cuda::std::is_signed_v<T> ? -num_ordered_rows / 2 : 0;
   auto elements =
     cudf::detail::make_counting_transform_iterator(start, [](auto i) { return i / 100; });
   return cudf::test::fixed_width_column_wrapper<T>(elements, elements + num_ordered_rows);
 }
 
 template <typename T>
-std::enable_if_t<std::is_arithmetic_v<T> && !std::is_same_v<T, bool>,
+std::enable_if_t<cuda::std::is_arithmetic_v<T> && !std::is_same_v<T, bool>,
                  cudf::test::fixed_width_column_wrapper<T>>
 descending()
 {
-  if (std::is_signed_v<T>) {
+  if (cuda::std::is_signed_v<T>) {
     auto elements = cudf::detail::make_counting_transform_iterator(-num_ordered_rows / 2,
                                                                    [](auto i) { return -i / 100; });
     return cudf::test::fixed_width_column_wrapper<T>(elements, elements + num_ordered_rows);
@@ -353,11 +360,11 @@ descending()
 }
 
 template <typename T>
-std::enable_if_t<std::is_arithmetic_v<T> && !std::is_same_v<T, bool>,
+std::enable_if_t<cuda::std::is_arithmetic_v<T> && !std::is_same_v<T, bool>,
                  cudf::test::fixed_width_column_wrapper<T>>
 unordered()
 {
-  if (std::is_signed_v<T>) {
+  if (cuda::std::is_signed_v<T>) {
     auto elements = cudf::detail::make_counting_transform_iterator(
       -num_ordered_rows / 2, [](auto i) { return (i % 2 ? i : -i) / 100; });
     return cudf::test::fixed_width_column_wrapper<T>(elements, elements + num_ordered_rows);

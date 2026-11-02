@@ -20,9 +20,9 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/std/functional>
 #include <cuda/std/iterator>
 #include <cuda/stream>
@@ -80,10 +80,12 @@ std::unique_ptr<column> have_overlap(lists_column_view const& lhs,
   auto const num_rows = lhs.size();
 
   // This stores the unique label values, used as scatter map.
-  auto list_indices = rmm::device_uvector<size_type>(num_rows, stream);
+  auto list_indices = cuda::device_buffer<size_type>(
+    stream, cudf::get_current_device_resource_ref(), num_rows, cuda::no_init);
 
   // Stores the result of checking overlap for non-empty lists.
-  auto overlap_results = rmm::device_uvector<bool>(num_rows, stream);
+  auto overlap_results = cuda::device_buffer<bool>(
+    stream, cudf::get_current_device_resource_ref(), num_rows, cuda::no_init);
 
   auto const labels_begin = rhs_labels->view().begin<size_type>();
   auto const end          = cudf::detail::reduce_by_key(labels_begin,  // keys

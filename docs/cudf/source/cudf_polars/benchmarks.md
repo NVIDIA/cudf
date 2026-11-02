@@ -9,7 +9,7 @@ The steps below reproduce the PDS-H benchmark results using the Polars GPU engin
 ### Setup
 
 Install `cudf-polars` following the
-[RAPIDS installation guide](https://docs.rapids.ai/install/). For nightly wheels, install with
+[NVIDIA CUDA-X installation guide](https://docs.nvidia.com/datascience/install/#install-rapids). For nightly wheels, install with
 the `ray` extra (required for multi-GPU benchmarking):
 
 ```bash
@@ -23,7 +23,7 @@ the highest Polars version the GPU engine currently supports, which may not be t
 Polars release.
 
 <!-- TODO: consider adding a [benchmark] pip extra to cudf-polars that includes tpchgen-cli
-     (and possibly structlog) so benchmark dependencies can be installed in one step:
+     so benchmark dependencies can be installed in one step:
      pip install "cudf-polars-cu${CUDA_MAJOR}[ray,benchmark]>=0.0.0a0"
      Requires changes to pyproject.toml and dependencies.yaml. -->
 

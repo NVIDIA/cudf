@@ -27,7 +27,7 @@ void run_test(std::string const& host_input,
 {
   auto stream_view  = cudf::test::get_default_stream();
   auto device_input = rmm::device_buffer(host_input.c_str(), host_input.size(), stream_view);
-  stream_view.synchronize();
+  stream_view.sync();
 
   // Preprocessing FST
   cudf::io::datasource::owning_buffer<rmm::device_buffer> device_data(std::move(device_input));
@@ -39,8 +39,8 @@ void run_test(std::string const& host_input,
                                 device_data.data(),
                                 preprocessed_host_output.size(),
                                 cudaMemcpyDefault,
-                                stream_view.value()))
-  stream_view.synchronize();
+                                stream_view.get()))
+  stream_view.sync();
   CUDF_TEST_EXPECT_VECTOR_EQUAL(
     preprocessed_host_output, expected_host_output, preprocessed_host_output.size());
 }

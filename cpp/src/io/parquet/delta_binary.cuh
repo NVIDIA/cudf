@@ -314,6 +314,11 @@ struct delta_binary_decoder {
       rolling_index<delta_rolling_buf_size>(current_value_idx + warp_size * pass + lane_id);
     value[value_idx] = delta;
 
+    // lanes can reach this point at different times (the bit-unpacking loop above has a
+    // lane-dependent trip count), so make sure every lane's read of last_value above has
+    // happened before lane 31 overwrites it below.
+    warp.sync();
+
     // save value from last lane in warp. this will become the 'first value' added to the
     // deltas calculated in the next pass (or invocation).
     if (lane_id == warp_size - 1) { last_value = delta; }

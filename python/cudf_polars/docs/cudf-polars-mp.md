@@ -779,6 +779,6 @@ argument; user-supplied keys are merged with reserved entries set by `SPMDEngine
 [spmd-wiki]: https://en.wikipedia.org/wiki/Single_program,_multiple_data
 [ray-docs]: https://docs.ray.io/en/latest/
 [ray-actors]: https://docs.ray.io/en/latest/ray-core/actors.html
-[rapidsmpf-communicator]: https://docs.rapids.ai/api/rapidsmpf/stable/glossary/#term-Communicator
-[rapidsmpf-context]: https://docs.rapids.ai/api/rapidsmpf/stable/glossary/#term-Context
+[rapidsmpf-communicator]: https://docs.nvidia.com/rapidsmpf/latest/glossary/#term-Communicator
+[rapidsmpf-context]: https://docs.nvidia.com/rapidsmpf/latest/glossary/#term-Context
 [polars-gpuengine]: https://docs.pola.rs/api/python/stable/reference/api/polars.GPUEngine.html

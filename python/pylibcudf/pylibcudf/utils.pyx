@@ -3,8 +3,27 @@
 
 from cython.operator import dereference
 
+from cuda.bindings import runtime
+
+from cuda.bindings.cydriver cimport (
+    CUDA_ERROR_NOT_INITIALIZED,
+    CUDA_SUCCESS,
+    CUcontext,
+    CUresult,
+    cuCtxGetCurrent,
+)
+from cuda.bindings.cyruntime cimport (
+    cudaError_t,
+    cudaFree,
+    cudaStream_t,
+    cudaSuccess,
+)
+
+from libc.stdint cimport uint32_t, uintptr_t
 from libcpp.functional cimport reference_wrapper
+from libcpp.optional cimport make_optional, nullopt, optional
 from libcpp.vector cimport vector
+from pylibcudf.libcudf.utilities.config_utils cimport set_up_kvikio as cpp_set_up_kvikio
 
 from pylibcudf.libcudf.scalar.scalar cimport scalar
 
@@ -18,12 +37,16 @@ from rmm.pylibrmm.memory_resource cimport (
 
 from rmm.pylibrmm.stream import DEFAULT_STREAM, PER_THREAD_DEFAULT_STREAM, Stream
 
+from pylibcudf.typing import CudaStreamLike, HasCudaStream
+
 
 import os
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from pylibcudf.typing import CudaStreamLike
+
+__all__ = [
+    "CudaStreamLike",
+    "HasCudaStream",
+]
 
 
 # Check the environment for the variable CUDF_PER_THREAD_STREAM. If it is set,
@@ -51,11 +74,30 @@ cdef vector[reference_wrapper[const scalar]] _as_vector(list source):
     return c_scalars
 
 
+cdef inline int _ensure_cuda_context() except -1:
+    cdef CUcontext context = NULL
+    cdef CUresult status = cuCtxGetCurrent(&context)
+    cdef cudaError_t runtime_status
+    if status != CUDA_SUCCESS and status != CUDA_ERROR_NOT_INITIALIZED:
+        raise RuntimeError(f"Failed to get current CUDA context: {status}")
+    if status == CUDA_ERROR_NOT_INITIALIZED or context == NULL:
+        with nogil:
+            runtime_status = cudaFree(NULL)
+        if runtime_status != cudaSuccess:
+            raise RuntimeError(f"Failed to initialize CUDA context: {runtime_status}")
+    return 0
+
+
 cpdef Stream _get_stream(object stream: CudaStreamLike | None = None):
+    _ensure_cuda_context()
     if stream is None:
         return CUDF_DEFAULT_STREAM
     if isinstance(stream, Stream):
         return <Stream>stream
+    if isinstance(stream, runtime.cudaStream_t):
+        return Stream._from_cudaStream_t(
+            <cudaStream_t><uintptr_t>int(stream), owner=stream
+        )
     return Stream(stream)  # Handles __cuda_stream__ protocol
 
 
@@ -63,3 +105,11 @@ cdef DeviceMemoryResource _get_memory_resource(DeviceMemoryResource mr = None):
     if mr is None:
         return get_current_device_resource()
     return mr
+
+
+cpdef void _set_up_kvikio(object nthreads=None):
+    cdef optional[uint32_t] c_nthreads = nullopt
+    if nthreads is not None:
+        c_nthreads = make_optional[uint32_t](<uint32_t>nthreads)
+    with nogil:
+        cpp_set_up_kvikio(c_nthreads)

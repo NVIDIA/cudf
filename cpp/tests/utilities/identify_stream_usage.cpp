@@ -4,10 +4,9 @@
  */
 
 #include <cudf/detail/utilities/stream_pool.hpp>
+#include <cudf/utilities/error.hpp>
 
-#include <rmm/cuda_stream.hpp>
-#include <rmm/cuda_stream_view.hpp>
-
+#include <cuda/stream>
 #include <cuda_runtime.h>
 
 #include <dlfcn.h>
@@ -48,10 +47,14 @@ namespace cudf {
 namespace test {
 #endif
 
-rmm::cuda_stream_view const get_default_stream()
+cuda::stream_ref const get_default_stream()
 {
-  static rmm::cuda_stream stream{};
-  return stream;
+  static auto* stream = new cuda::stream{[] {
+    int device{};
+    CUDF_CUDA_TRY(cudaGetDevice(&device));
+    return cuda::device_ref{device};
+  }()};
+  return *stream;
 }
 
 #ifdef STREAM_MODE_TESTING
@@ -67,21 +70,15 @@ namespace detail {
  */
 class test_cuda_stream_pool : public cuda_stream_pool {
  public:
-  rmm::cuda_stream_view get_stream() override { return cudf::test::get_default_stream(); }
-  [[maybe_unused]] rmm::cuda_stream_view get_stream(stream_id_type stream_id) override
-  {
-    return cudf::test::get_default_stream();
-  }
+  cuda::stream_ref get_stream() override { return cudf::test::get_default_stream(); }
 
-  std::vector<rmm::cuda_stream_view> get_streams(std::size_t count) override
+  std::vector<cuda::stream_ref> get_streams(std::size_t count) override
   {
-    return std::vector<rmm::cuda_stream_view>(count, cudf::test::get_default_stream());
+    return std::vector<cuda::stream_ref>(count, cudf::test::get_default_stream());
   }
-
-  [[nodiscard]] std::size_t get_stream_pool_size() const override { return 1UL; }
 };
 
-cuda_stream_pool* create_global_cuda_stream_pool() { return new test_cuda_stream_pool(); }
+cuda_stream_pool* create_cuda_stream_pool() { return new test_cuda_stream_pool(); }
 
 }  // namespace detail
 #endif
@@ -92,12 +89,12 @@ bool stream_is_invalid(cudaStream_t stream)
 {
 #ifdef STREAM_MODE_TESTING
   // In this mode the _only_ valid stream is the one returned by cudf::test::get_default_stream.
-  return (stream != cudf::test::get_default_stream().value());
+  return (stream != cudf::test::get_default_stream().get());
 #else
   // We explicitly list the possibilities rather than using
-  // `cudf::get_default_stream().value()` because there is no guarantee that
+  // `cudf::get_default_stream().get()` because there is no guarantee that
   // `thrust::device` and the default value of
-  // `cudf::get_default_stream().value()` are actually the same. At present, the
+  // `cudf::get_default_stream().get()` are actually the same. At present, the
   // former is `cudaStreamLegacy` while the latter is 0.
   return (stream == cudaStreamDefault) || (stream == cudaStreamLegacy) ||
          (stream == cudaStreamPerThread);

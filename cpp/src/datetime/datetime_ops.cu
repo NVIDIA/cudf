@@ -23,10 +23,10 @@
 #include <cudf/utilities/type_dispatcher.hpp>
 #include <cudf/wrappers/durations.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 namespace cudf {
@@ -105,6 +105,13 @@ struct RoundFunctor {
   }
 };
 
+// The minutes, hours, and days since the epoch of a 64-bit timestamp may not fit in the
+// int32_t-based duration_m, duration_h, and duration_D types, so round through 64-bit durations.
+// The cuda::std::chrono minutes and hours are 64-bit but its days are only 32-bit.
+static_assert(sizeof(cuda::std::chrono::minutes::rep) == sizeof(int64_t));
+static_assert(sizeof(cuda::std::chrono::hours::rep) == sizeof(int64_t));
+using days64 = cuda::std::chrono::duration<int64_t, cuda::std::chrono::days::period>;
+
 struct RoundingDispatcher {
   rounding_function round_kind;
   rounding_frequency component;
@@ -120,13 +127,13 @@ struct RoundingDispatcher {
     switch (component) {
       case rounding_frequency::DAY:
         return time_point_cast<typename Timestamp::duration>(
-          RoundFunctor<duration_D>{}(round_kind, ts));
+          RoundFunctor<days64>{}(round_kind, ts));
       case rounding_frequency::HOUR:
         return time_point_cast<typename Timestamp::duration>(
-          RoundFunctor<duration_h>{}(round_kind, ts));
+          RoundFunctor<cuda::std::chrono::hours>{}(round_kind, ts));
       case rounding_frequency::MINUTE:
         return time_point_cast<typename Timestamp::duration>(
-          RoundFunctor<duration_m>{}(round_kind, ts));
+          RoundFunctor<cuda::std::chrono::minutes>{}(round_kind, ts));
       case rounding_frequency::SECOND:
         return time_point_cast<typename Timestamp::duration>(
           RoundFunctor<duration_s>{}(round_kind, ts));
@@ -228,7 +235,7 @@ struct dispatch_round {
   std::unique_ptr<cudf::column> operator()(rounding_function round_kind,
                                            rounding_frequency component,
                                            cudf::column_view const& column,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr) const
     requires(cudf::is_timestamp<Timestamp>())
   {
@@ -273,14 +280,14 @@ struct launch_functor {
   launch_functor(column_view inp, mutable_column_view out) : input(inp), output(out) {}
 
   template <typename Element>
-  void operator()(rmm::cuda_stream_view stream) const
+  void operator()(cuda::stream_ref stream) const
     requires(!cudf::is_timestamp_t<Element>::value)
   {
     CUDF_FAIL("Cannot extract datetime component from non-timestamp column.");
   }
 
   template <typename Timestamp>
-  void operator()(rmm::cuda_stream_view stream) const
+  void operator()(cuda::stream_ref stream) const
     requires(cudf::is_timestamp_t<Timestamp>::value)
   {
     thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
@@ -294,7 +301,7 @@ struct launch_functor {
 // Create an output column by applying the functor to every element from the input column
 template <typename TransformFunctor, cudf::type_id OutputColCudfT>
 std::unique_ptr<column> apply_datetime_op(column_view const& column,
-                                          rmm::cuda_stream_view stream,
+                                          cuda::stream_ref stream,
                                           rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(is_timestamp(column.type()), "Column type should be timestamp");
@@ -329,7 +336,7 @@ struct add_calendrical_months_functor {
   template <typename Timestamp, typename MonthIterator>
   std::unique_ptr<column> operator()(column_view timestamp_column,
                                      MonthIterator months_begin,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr) const
     requires(cudf::is_timestamp_t<Timestamp>::value)
   {
@@ -361,7 +368,7 @@ struct add_calendrical_months_functor {
 
 std::unique_ptr<column> add_calendrical_months(column_view const& timestamp_column,
                                                column_view const& months_column,
-                                               rmm::cuda_stream_view stream,
+                                               cuda::stream_ref stream,
                                                rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(is_timestamp(timestamp_column.type()), "Column type should be timestamp");
@@ -388,7 +395,7 @@ std::unique_ptr<column> add_calendrical_months(column_view const& timestamp_colu
 
 std::unique_ptr<column> add_calendrical_months(column_view const& timestamp_column,
                                                scalar const& months,
-                                               rmm::cuda_stream_view stream,
+                                               cuda::stream_ref stream,
                                                rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(is_timestamp(timestamp_column.type()), "Column type should be timestamp");
@@ -417,7 +424,7 @@ std::unique_ptr<column> add_calendrical_months(column_view const& timestamp_colu
 std::unique_ptr<column> round_general(rounding_function round_kind,
                                       rounding_frequency component,
                                       column_view const& column,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
 {
   return cudf::type_dispatcher(
@@ -425,7 +432,7 @@ std::unique_ptr<column> round_general(rounding_function round_kind,
 }
 
 std::unique_ptr<column> last_day_of_month(column_view const& column,
-                                          rmm::cuda_stream_view stream,
+                                          cuda::stream_ref stream,
                                           rmm::device_async_resource_ref mr)
 {
   return detail::apply_datetime_op<detail::extract_last_day_of_month,
@@ -433,7 +440,7 @@ std::unique_ptr<column> last_day_of_month(column_view const& column,
 }
 
 std::unique_ptr<column> day_of_year(column_view const& column,
-                                    rmm::cuda_stream_view stream,
+                                    cuda::stream_ref stream,
                                     rmm::device_async_resource_ref mr)
 {
   return detail::apply_datetime_op<detail::extract_day_num_of_year, cudf::type_id::INT16>(
@@ -441,21 +448,21 @@ std::unique_ptr<column> day_of_year(column_view const& column,
 }
 
 std::unique_ptr<column> is_leap_year(column_view const& column,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
 {
   return apply_datetime_op<is_leap_year_op, type_id::BOOL8>(column, stream, mr);
 }
 
 std::unique_ptr<column> days_in_month(column_view const& column,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
 {
   return apply_datetime_op<days_in_month_op, type_id::INT16>(column, stream, mr);
 }
 
 std::unique_ptr<column> extract_quarter(column_view const& column,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
 {
   return apply_datetime_op<extract_quarter_op, type_id::INT16>(column, stream, mr);
@@ -463,7 +470,7 @@ std::unique_ptr<column> extract_quarter(column_view const& column,
 
 std::unique_ptr<cudf::column> extract_datetime_component(cudf::column_view const& column,
                                                          datetime_component component,
-                                                         rmm::cuda_stream_view stream,
+                                                         cuda::stream_ref stream,
                                                          rmm::device_async_resource_ref mr)
 {
 #define extract(field)                                                                 \
@@ -491,7 +498,7 @@ std::unique_ptr<cudf::column> extract_datetime_component(cudf::column_view const
 
 std::unique_ptr<column> ceil_datetimes(column_view const& column,
                                        rounding_frequency freq,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -500,7 +507,7 @@ std::unique_ptr<column> ceil_datetimes(column_view const& column,
 
 std::unique_ptr<column> floor_datetimes(column_view const& column,
                                         rounding_frequency freq,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -509,7 +516,7 @@ std::unique_ptr<column> floor_datetimes(column_view const& column,
 
 std::unique_ptr<column> round_datetimes(column_view const& column,
                                         rounding_frequency freq,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -518,7 +525,7 @@ std::unique_ptr<column> round_datetimes(column_view const& column,
 
 std::unique_ptr<cudf::column> extract_datetime_component(cudf::column_view const& column,
                                                          datetime_component component,
-                                                         rmm::cuda_stream_view stream,
+                                                         cuda::stream_ref stream,
                                                          rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -526,7 +533,7 @@ std::unique_ptr<cudf::column> extract_datetime_component(cudf::column_view const
 }
 
 std::unique_ptr<column> last_day_of_month(column_view const& column,
-                                          rmm::cuda_stream_view stream,
+                                          cuda::stream_ref stream,
                                           rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -534,7 +541,7 @@ std::unique_ptr<column> last_day_of_month(column_view const& column,
 }
 
 std::unique_ptr<column> day_of_year(column_view const& column,
-                                    rmm::cuda_stream_view stream,
+                                    cuda::stream_ref stream,
                                     rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -543,7 +550,7 @@ std::unique_ptr<column> day_of_year(column_view const& column,
 
 std::unique_ptr<cudf::column> add_calendrical_months(cudf::column_view const& timestamp_column,
                                                      cudf::column_view const& months_column,
-                                                     rmm::cuda_stream_view stream,
+                                                     cuda::stream_ref stream,
                                                      rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -552,7 +559,7 @@ std::unique_ptr<cudf::column> add_calendrical_months(cudf::column_view const& ti
 
 std::unique_ptr<cudf::column> add_calendrical_months(cudf::column_view const& timestamp_column,
                                                      cudf::scalar const& months,
-                                                     rmm::cuda_stream_view stream,
+                                                     cuda::stream_ref stream,
                                                      rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -560,7 +567,7 @@ std::unique_ptr<cudf::column> add_calendrical_months(cudf::column_view const& ti
 }
 
 std::unique_ptr<column> is_leap_year(column_view const& column,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -568,7 +575,7 @@ std::unique_ptr<column> is_leap_year(column_view const& column,
 }
 
 std::unique_ptr<column> days_in_month(column_view const& column,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -576,7 +583,7 @@ std::unique_ptr<column> days_in_month(column_view const& column,
 }
 
 std::unique_ptr<column> extract_quarter(column_view const& column,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

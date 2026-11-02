@@ -33,8 +33,9 @@ def lines(request):
     return request.param
 
 
-@pytest.fixture(params=[0, 10])
+@pytest.fixture(scope="module", params=[0, 10])
 def pdf(request):
+    # JSON tests share this immutable source dataframe.
     rng = np.random.default_rng(seed=0)
     types = NUMERIC_TYPES + DATETIME_TYPES + ["bool"]
     nrows = request.param
@@ -50,12 +51,12 @@ def pdf(request):
     return test_pdf
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def gdf(pdf):
     return cudf.DataFrame(pdf)
 
 
-@pytest.fixture(params=[0, 10])
+@pytest.fixture(scope="module", params=[0, 10])
 def gdf_writer_types(request):
     # datetime64[us], datetime64[ns] are unsupported due to a bug in parser
     types = [
@@ -175,6 +176,7 @@ def test_json_writer(tmp_path, pdf, gdf):
 
 def test_cudf_json_writer(pdf, lines):
     # removing datetime column because pandas doesn't support it
+    pdf = pdf.copy()
     for col_name in pdf.columns:
         if "datetime" in col_name:
             pdf.drop(col_name, axis=1, inplace=True)
@@ -329,14 +331,29 @@ def test_cudf_json_writer_sinks(sink, tmp_path):
             assert f.read() == '[{"a":1,"b":4},{"a":2,"b":5},{"a":3,"b":6}]'
 
 
-def test_cudf_json_writer_fsspec(tmp_path):
-    path = f"memory://{tmp_path.name}/test_df.json"
+@pytest.mark.parametrize("pass_filesystem", [False, True])
+def test_cudf_json_writer_fsspec(tmp_path, pass_filesystem):
     df = cudf.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
+    expected = '[{"a":1,"b":4},{"a":2,"b":5},{"a":3,"b":6}]'
 
-    df.to_json(path, engine="cudf")
+    if pass_filesystem:
+        # No protocol in the path: the filesystem object alone must resolve it.
+        path = f"/{tmp_path.name}/test_df_fs.json"
+        kwargs = {"filesystem": fsspec.filesystem("memory")}
+    else:
+        path = f"memory://{tmp_path.name}/test_df.json"
+        kwargs = {}
 
-    with fsspec.open(path, mode="rt") as file_obj:
-        assert file_obj.read() == '[{"a":1,"b":4},{"a":2,"b":5},{"a":3,"b":6}]'
+    df.to_json(path, engine="cudf", **kwargs)
+
+    with fsspec.open(f"memory://{path.split('://')[-1]}", mode="rt") as f:
+        assert f.read() == expected
+
+    # Round-trip through the reader with the same filesystem object
+    got = cudf.read_json(
+        path, engine="cudf", orient="records", lines=False, **kwargs
+    )
+    assert_eq(df, got)
 
 
 @pytest.fixture(params=["filepath", "pathobj", "bytes_io", "string_io", "url"])

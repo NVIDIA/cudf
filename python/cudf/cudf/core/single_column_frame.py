@@ -465,7 +465,7 @@ class SingleColumnFrame(Frame, NotIterable):
                     raise IndexError(
                         f"Boolean mask has wrong length: {bn} not {n}"
                     )
-                return self._column.apply_boolean_mask(arg)
+                return self._column.apply_retention_mask(arg)
             raise NotImplementedError(f"Unknown indexer {type(arg)}")
 
     @_performance_tracking

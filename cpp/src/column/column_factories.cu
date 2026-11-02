@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "cudf/utilities/default_stream.hpp"
+
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/fill.hpp>
 #include <cudf/detail/gather.cuh>
@@ -12,6 +14,7 @@
 #include <cudf/strings/detail/strings_column_factories.cuh>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <thrust/uninitialized_fill.h>
 
@@ -32,7 +35,9 @@ struct column_from_scalar_dispatch {
     auto output_column =
       make_fixed_width_column(value.type(), size, mask_state::UNALLOCATED, stream, mr);
     auto view = output_column->mutable_view();
-    detail::fill_in_place(view, 0, size, value, stream);
+    // TODO: route through the caller's memory resources once make_column_from_scalar is migrated
+    auto const temp_mr = cudf::get_current_device_resource_ref();
+    detail::fill_in_place(view, 0, size, value, stream, cudf::memory_resources{temp_mr, temp_mr});
     return output_column;
   }
 };
@@ -63,7 +68,8 @@ std::unique_ptr<cudf::column> column_from_scalar_dispatch::operator()<cudf::stri
   auto const d_str = ss.value(stream);  // no actual data is copied
 
   // fill the column with the scalar
-  rmm::device_uvector<cudf::strings::detail::string_index_pair> indices(size, stream);
+  cuda::device_buffer<cudf::strings::detail::string_index_pair> indices(
+    stream, cudf::get_current_device_resource_ref(), size, cuda::no_init);
   auto const row_value =
     d_str.empty() ? cudf::strings::detail::string_index_pair{"", 0}
                   : cudf::strings::detail::string_index_pair{d_str.data(), d_str.size_bytes()};
@@ -72,7 +78,7 @@ std::unique_ptr<cudf::column> column_from_scalar_dispatch::operator()<cudf::stri
     indices.begin(),
     indices.end(),
     row_value);
-  return cudf::strings::detail::make_strings_column(indices.begin(), indices.end(), stream, mr);
+  return cudf::make_strings_column(indices, stream, mr);
 }
 
 template <>
@@ -100,7 +106,6 @@ std::unique_ptr<cudf::column> column_from_scalar_dispatch::operator()<cudf::stru
   cuda::stream_ref stream,
   rmm::device_async_resource_ref mr) const
 {
-  CUDF_EXPECTS(size != 0, "0-length struct column is unsupported.");
   auto& ss  = static_cast<scalar_type_t<cudf::struct_view> const&>(value);
   auto iter = cuda::make_constant_iterator(0);
 
@@ -111,7 +116,7 @@ std::unique_ptr<cudf::column> column_from_scalar_dispatch::operator()<cudf::stru
                              std::move(children->release()),
                              is_valid ? 0 : size,
                              is_valid
-                               ? rmm::device_buffer{}
+                               ? cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED)
                                : detail::create_null_mask(size, mask_state::ALL_NULL, stream, mr),
                              stream,
                              mr);

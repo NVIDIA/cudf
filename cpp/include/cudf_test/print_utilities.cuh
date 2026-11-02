@@ -9,9 +9,9 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/iterator>
+#include <cuda/std/type_traits>
+#include <cuda/stream>
 
 #include <iterator>
 #include <type_traits>
@@ -59,13 +59,13 @@ auto hex(InItT it)
   return cuda::transform_iterator(it, ToTaggedType<tagged_t>{});
 }
 
-template <typename T, CUDF_ENABLE_IF(std::is_integral_v<T>&& std::is_signed_v<T>)>
+template <typename T, CUDF_ENABLE_IF(cuda::std::is_integral_v<T>&& cuda::std::is_signed_v<T>)>
 CUDF_HOST_DEVICE void print_value(int32_t width, T arg)
 {
   printf("%*d", width, arg);
 }
 
-template <typename T, CUDF_ENABLE_IF(std::is_integral_v<T>&& std::is_unsigned_v<T>)>
+template <typename T, CUDF_ENABLE_IF(cuda::std::is_integral_v<T>&& cuda::std::is_unsigned_v<T>)>
 CUDF_HOST_DEVICE void print_value(int32_t width, T arg)
 {
   printf("%*d", width, arg);
@@ -115,7 +115,7 @@ CUDF_KERNEL void print_array_kernel(std::size_t count, int32_t width, char delim
  * @param args List of iterators to be printed
  */
 template <typename... Ts>
-void print_array(std::size_t count, rmm::cuda_stream_view stream, Ts... args)
+void print_array(std::size_t count, cuda::stream_ref stream, Ts... args)
 {
   // The width to pad printed numbers to
   constexpr int32_t width = 6;
@@ -125,7 +125,7 @@ void print_array(std::size_t count, rmm::cuda_stream_view stream, Ts... args)
 
   // TODO we want this to compile to nothing dependnig on compiler flag, rather than runtime
   if (std::getenv("CUDA_DBG_DUMP") != nullptr) {
-    detail::print_array_kernel<<<1, 1, 0, stream.value()>>>(count, width, delimiter, args...);
+    detail::print_array_kernel<<<1, 1, 0, stream.get()>>>(count, width, delimiter, args...);
   }
 }
 

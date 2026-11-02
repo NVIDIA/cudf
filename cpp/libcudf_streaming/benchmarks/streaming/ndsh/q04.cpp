@@ -148,7 +148,7 @@ rapidsmpf::streaming::Actor filter_lineitem(std::shared_ptr<rapidsmpf::streaming
                                        chunk_stream,
                                        mr);
     auto filtered_table =
-      cudf::apply_boolean_mask(table.select({2}), mask->view(), chunk_stream, mr);
+      cudf::apply_retention_mask(table.select({2}), mask->view(), chunk_stream, mr);
     co_await ch_out->send(cudf_streaming::to_message(
       msg.sequence_number(),
       std::make_unique<cudf_streaming::table_chunk>(std::move(filtered_table), chunk_stream)));
@@ -238,8 +238,6 @@ int main(int argc, char** argv)
 {
   rapidsmpf::ndsh::FinalizeMPI finalize{};
   CUDF_CUDA_TRY(cudaFree(nullptr));
-  // work around https://github.com/NVIDIA/cudf/issues/20849
-  cudf::initialize();
   auto mr                 = rmm::mr::cuda_async_memory_resource{};
   auto arguments          = rapidsmpf::ndsh::parse_arguments(argc, argv);
   auto [ctx, comm]        = rapidsmpf::ndsh::create_context(arguments, std::move(mr));

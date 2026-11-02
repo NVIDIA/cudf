@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,10 +10,11 @@
 #include <cudf/table/equality.hpp>
 #include <cudf/table/table_view.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/mr/cuda_async_memory_resource.hpp>
 #include <rmm/mr/cuda_memory_resource.hpp>
 #include <rmm/mr/pool_memory_resource.hpp>
+
+#include <cuda/stream>
 
 #include <chrono>
 #include <iomanip>
@@ -85,7 +86,7 @@ bool get_boolean(std::string input)
 
 void check_tables_equal(cudf::table_view const& lhs_table,
                         cudf::table_view const& rhs_table,
-                        rmm::cuda_stream_view stream)
+                        cuda::stream_ref stream)
 {
   auto const tables_equal =
     cudf::tables_equal(lhs_table, rhs_table, cudf::null_equality::EQUAL, stream);
@@ -94,7 +95,7 @@ void check_tables_equal(cudf::table_view const& lhs_table,
 }
 
 std::unique_ptr<cudf::table> concatenate_tables(std::vector<std::unique_ptr<cudf::table>> tables,
-                                                rmm::cuda_stream_view stream)
+                                                cuda::stream_ref stream)
 {
   if (tables.size() == 1) { return std::move(tables[0]); }
 

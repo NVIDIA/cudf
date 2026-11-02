@@ -63,7 +63,7 @@ std::unique_ptr<cudf::column> copy_if_else(StringIterLeft lhs_begin,
     },
     stream,
     mr);
-  if (null_count == 0) { null_mask = rmm::device_buffer{}; }
+  if (null_count == 0) { null_mask = cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED); }
 
   // build vector of strings
   rmm::device_uvector<string_index_pair> indices(strings_count, stream);
@@ -78,7 +78,7 @@ std::unique_ptr<cudf::column> copy_if_else(StringIterLeft lhs_begin,
                     });
 
   // convert vector into strings column
-  auto result = make_strings_column(indices.begin(), indices.end(), stream, mr);
+  auto result = cudf::make_strings_column(indices, stream, mr);
   result->set_null_mask(std::move(null_mask), null_count);
   return result;
 }

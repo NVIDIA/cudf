@@ -11,9 +11,9 @@
 #include <cudf/detail/utilities/device_operators.cuh>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/stream>
 #include <thrust/scan.h>
@@ -33,7 +33,8 @@ std::unique_ptr<column> scan_inclusive(column_view const& input,
                                        rmm::device_async_resource_ref mr)
 {
   // Create a gather map containing indices of the prefix min/max elements.
-  auto gather_map = rmm::device_uvector<size_type>(input.size(), stream);
+  cuda::device_buffer<size_type> gather_map(
+    stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
   auto const binop_generator =
     cudf::reduction::detail::arg_minmax_binop_generator::create<Op>(input, stream);
   thrust::inclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
@@ -63,8 +64,12 @@ std::unique_ptr<column> scan_inclusive(column_view const& input,
                             ->release();
 
   // Don't need to set a null mask because that will be handled at the caller.
-  return make_structs_column(
-    input.size(), std::move(scanned_children), 0, rmm::device_buffer{0, stream, mr}, stream, mr);
+  return make_structs_column(input.size(),
+                             std::move(scanned_children),
+                             0,
+                             cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
+                             stream,
+                             mr);
 }
 
 template std::unique_ptr<column> scan_inclusive<DeviceMin>(column_view const& input_view,

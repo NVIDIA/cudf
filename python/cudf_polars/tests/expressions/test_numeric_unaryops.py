@@ -186,6 +186,15 @@ def test_round(engine: pl.GPUEngine, ldf: pl.LazyFrame, mode: RoundMethod) -> No
     assert_gpu_result_equal(q, engine=engine)
 
 
+@pytest.mark.parametrize("decimals", [0, 1, 2])
+def test_round_decimal(engine: pl.GPUEngine, decimals: int) -> None:
+    ldf = pl.LazyFrame(
+        {"a": pl.Series([1.25, 2.5, -3.75, None], dtype=pl.Decimal(10, 2))}
+    )
+    q = ldf.select(pl.col("a").round(decimals))
+    assert_gpu_result_equal(q, engine=engine)
+
+
 @pytest.mark.parametrize(
     "dtype",
     [
@@ -217,18 +226,15 @@ def test_to_physical_nested_logical_unsupported(
     assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
-@pytest.mark.parametrize(
-    "seeds",
-    [(0,), (10, 20, 30, 40)],
-)
-def test_hash(engine: pl.GPUEngine, seeds: tuple[int, ...]) -> None:
+def test_hash(engine: pl.GPUEngine) -> None:
+    seed = 0
     df = pl.LazyFrame(
         {
             "a": pl.Series([1, 2, None], dtype=pl.Int64),
             "b": pl.Series(["x", None, "z"], dtype=pl.String),
         }
     )
-    q = df.select(pl.col("a").hash(*seeds), pl.col("b").hash(*seeds))
+    q = df.select(pl.col("a").hash(seed), pl.col("b").hash(seed))
     # CPU vs GPU hash implementations not guaranteed to be the same
     # Check alignment of result type, stability across GPU collect calls
     result = q.collect(engine=engine)
@@ -240,16 +246,28 @@ def test_hash(engine: pl.GPUEngine, seeds: tuple[int, ...]) -> None:
 def test_hash_seed_sensitivity(engine: pl.GPUEngine) -> None:
     df = pl.LazyFrame({"a": pl.Series([1, 2, 3, None], dtype=pl.Int64)})
     q = df.select(
-        same_a=pl.col("a").hash(0, 1, 2, 3),
-        same_b=pl.col("a").hash(0, 1, 2, 3),
-        diff_tail=pl.col("a").hash(0, 4, 5, 6),
+        same_a=pl.col("a").hash(1),
+        same_b=pl.col("a").hash(1),
+        diff_seed=pl.col("a").hash(2),
     )
     result = q.collect(engine=engine)
     assert result["same_a"].equals(result["same_b"])
-    assert not result["same_a"].equals(result["diff_tail"])
+    assert not result["same_a"].equals(result["diff_seed"])
 
 
 def test_atan2_unsupported(engine: pl.GPUEngine) -> None:
     df = pl.LazyFrame({"y": [1.0, 2.0, 3.0], "x": [4.0, 5.0, 6.0]})
     q = df.select(pl.arctan2("y", "x"))
+    assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+@pytest.mark.parametrize("op", ["sqrt", "cbrt", "sin", "degrees", "pct_change"])
+def test_math_op_on_struct_unsupported(engine: pl.GPUEngine, op: str) -> None:
+    # https://github.com/pola-rs/polars/issues/28563: polars doesn't reject all
+    # of these at the schema level, so libcudf would otherwise crash on the
+    # struct input instead of cleanly falling back to CPU.
+    df = pl.LazyFrame(
+        {"a": pl.Series([{"x": 1}, {"x": 2}], dtype=pl.Struct({"x": pl.Int64}))}
+    )
+    q = df.select(getattr(pl.col("a"), op)())
     assert_ir_translation_raises(q, engine, NotImplementedError)

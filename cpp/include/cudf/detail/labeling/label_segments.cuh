@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,11 +9,11 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/for_each.h>
 #include <thrust/scan.h>
 #include <thrust/scatter.h>
@@ -57,7 +57,7 @@ void label_segments(InputIterator offsets_begin,
                     InputIterator offsets_end,
                     OutputIterator label_begin,
                     OutputIterator label_end,
-                    rmm::cuda_stream_view stream)
+                    cuda::stream_ref stream)
 {
   auto const num_labels = cuda::std::distance(label_begin, label_end);
 
@@ -139,7 +139,7 @@ void labels_to_offsets(InputIterator labels_begin,
                        InputIterator labels_end,
                        OutputIterator offsets_begin,
                        OutputIterator offsets_end,
-                       rmm::cuda_stream_view stream)
+                       cuda::stream_ref stream)
 {
   // Always fill the entire output array with `0` value regardless of the input.
   using OutputType = cuda::std::iter_value_t<OutputIterator>;

@@ -9,18 +9,23 @@ import cudf
 from cudf.testing import assert_eq, assert_groupby_results_equal
 
 
-@pytest.fixture(params=[False, True], ids=["no-null-keys", "null-keys"])
+@pytest.fixture(
+    scope="module", params=[False, True], ids=["no-null-keys", "null-keys"]
+)
 def keys_null(request):
     return request.param
 
 
-@pytest.fixture(params=[False, True], ids=["no-null-values", "null-values"])
+@pytest.fixture(
+    scope="module", params=[False, True], ids=["no-null-values", "null-values"]
+)
 def values_null(request):
     return request.param
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def df(keys_null, values_null):
+    # The transform tests only read these inputs across aggregation variants.
     keys = ["a", "b", "a", "c", "b", "b", "c", "a"]
     r = range(len(keys))
     if keys_null:
@@ -28,14 +33,15 @@ def df(keys_null, values_null):
     values = list(range(len(keys)))
     if values_null:
         values[1::3] = itertools.repeat(None, len(r[1::3]))
-    return cudf.DataFrame({"key": keys, "values": values})
+    gdf = cudf.DataFrame({"key": keys, "values": values})
+    return gdf, gdf.to_pandas()
 
 
 @pytest.mark.parametrize("agg", ["cumsum", "cumprod", "max", "sum", "prod"])
 def test_transform_broadcast(agg, df):
-    pf = df.to_pandas()
-    got = df.groupby("key").transform(agg)
-    expect = pf.groupby("key").transform(agg)
+    gdf, pdf = df
+    got = gdf.groupby("key").transform(agg)
+    expect = pdf.groupby("key").transform(agg)
     assert_eq(got, expect, check_dtype=False)
 
 

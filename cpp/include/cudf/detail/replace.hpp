@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -9,7 +9,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <memory>
 
@@ -17,47 +17,47 @@ namespace cudf {
 namespace detail {
 /**
  * @copydoc cudf::replace_nulls(column_view const&, column_view const&,
- * rmm::cuda_stream_view, rmm::device_async_resource_ref)
+ * cuda::stream_ref, rmm::device_async_resource_ref)
  */
 std::unique_ptr<column> replace_nulls(column_view const& input,
                                       cudf::column_view const& replacement,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr);
 
 /**
  * @copydoc cudf::replace_nulls(column_view const&, scalar const&,
- * rmm::cuda_stream_view, rmm::device_async_resource_ref)
+ * cuda::stream_ref, rmm::device_async_resource_ref)
  */
 std::unique_ptr<column> replace_nulls(column_view const& input,
                                       scalar const& replacement,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr);
 
 /**
  * @copydoc cudf::replace_nulls(column_view const&, replace_policy const&,
- * rmm::cuda_stream_view, rmm::device_async_resource_ref)
+ * cuda::stream_ref, rmm::device_async_resource_ref)
  */
 std::unique_ptr<column> replace_nulls(column_view const& input,
                                       replace_policy const& replace_policy,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr);
 
 /**
  * @copydoc cudf::replace_nans(column_view const&, column_view const&,
- * rmm::cuda_stream_view, rmm::device_async_resource_ref)
+ * cuda::stream_ref, rmm::device_async_resource_ref)
  */
 std::unique_ptr<column> replace_nans(column_view const& input,
                                      column_view const& replacement,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr);
 
 /**
  * @copydoc cudf::replace_nans(column_view const&, scalar const&,
- * rmm::cuda_stream_view, rmm::device_async_resource_ref)
+ * cuda::stream_ref, rmm::device_async_resource_ref)
  */
 std::unique_ptr<column> replace_nans(column_view const& input,
                                      scalar const& replacement,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr);
 
 /**
@@ -66,14 +66,14 @@ std::unique_ptr<column> replace_nans(column_view const& input,
 std::unique_ptr<column> find_and_replace_all(column_view const& input_col,
                                              column_view const& values_to_replace,
                                              column_view const& replacement_values,
-                                             rmm::cuda_stream_view stream,
+                                             cuda::stream_ref stream,
                                              rmm::device_async_resource_ref mr);
 
 /**
  * @copydoc cudf::normalize_nans_and_zeros
  */
 std::unique_ptr<column> normalize_nans_and_zeros(column_view const& input,
-                                                 rmm::cuda_stream_view stream,
+                                                 cuda::stream_ref stream,
                                                  rmm::device_async_resource_ref mr);
 
 }  // namespace detail

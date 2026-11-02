@@ -156,6 +156,7 @@ add_library(
   cudfjni
   src/Aggregation128UtilsJni.cpp
   src/AggregationJni.cpp
+  src/AstJitProgram.cpp
   src/ChunkedPackJni.cpp
   src/ChunkedReaderJni.cpp
   src/CudfJni.cpp
@@ -167,6 +168,8 @@ add_library(
   src/ContiguousTableJni.cpp
   src/DataSourceHelperJni.cpp
   src/DeletionVectorJni.cpp
+  src/DistinctHashJoinJni.cpp
+  src/FilteredJoinJni.cpp
   src/HashJoinJni.cpp
   src/HostMemoryBufferNativeUtilsJni.cpp
   src/HybridScanReaderJni.cpp
@@ -247,7 +250,7 @@ target_compile_definitions(
 target_link_options(cudfjni PRIVATE "-Wl,--no-undefined")
 
 set(CUDF_ENABLE_ARROW_PARQUET ON)
-include(../../../../cpp/cmake/thirdparty/get_arrow.cmake)
+include(cmake/thirdparty/get_arrow.cmake)
 target_link_libraries(cudfjni PRIVATE ${ARROW_LIBRARIES})
 
 if(USE_GDS)

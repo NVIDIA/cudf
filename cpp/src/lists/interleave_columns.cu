@@ -16,16 +16,15 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/stream>
 #include <thrust/copy.h>
 #include <thrust/execution_policy.h>
 #include <thrust/for_each.h>
-#include <thrust/scan.h>
 #include <thrust/transform.h>
 
 namespace cudf {
@@ -36,7 +35,7 @@ namespace {
  * @brief Generate list offsets and list validities for the output lists column from the table_view
  * of the input lists columns.
  */
-std::pair<std::unique_ptr<column>, rmm::device_uvector<int8_t>>
+std::pair<std::unique_ptr<column>, cuda::device_buffer<int8_t>>
 generate_list_offsets_and_validities(table_view const& input,
                                      bool has_null_mask,
                                      cuda::stream_ref stream,
@@ -53,7 +52,10 @@ generate_list_offsets_and_validities(table_view const& input,
   auto const d_offsets = list_offsets->mutable_view().template begin<int32_t>();
 
   // The array of int8_t to store validities for list elements.
-  auto validities = rmm::device_uvector<int8_t>(has_null_mask ? num_output_lists : 0, stream);
+  cuda::device_buffer<int8_t> validities(stream,
+                                         cudf::get_current_device_resource_ref(),
+                                         has_null_mask ? num_output_lists : 0,
+                                         cuda::no_init);
 
   // Compute list sizes and validities.
   thrust::transform(
@@ -76,10 +78,11 @@ generate_list_offsets_and_validities(table_view const& input,
     }));
 
   // Compute offsets from sizes.
-  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                         d_offsets,
-                         d_offsets + num_output_lists + 1,
-                         d_offsets);
+  auto total_size = cudf::detail::sizes_to_offsets(
+    d_offsets, d_offsets + num_output_lists + 1, d_offsets, 0, stream, mr);
+  CUDF_EXPECTS(total_size <= static_cast<decltype(total_size)>(std::numeric_limits<int32_t>::max()),
+               "Size of offsets exceeds maximum int32 limit",
+               std::overflow_error);
 
   return {std::move(list_offsets), std::move(validities)};
 }
@@ -194,15 +197,15 @@ struct interleave_list_entries_impl<T, std::enable_if_t<std::is_same_v<T, cudf::
     auto const table_dv_ptr   = table_device_view::create(input, stream);
     auto const d_list_offsets = output_list_offsets.template begin<int32_t>();
 
-    rmm::device_uvector<cudf::strings::detail::string_index_pair> indices(num_output_entries,
-                                                                          stream);
+    cuda::device_buffer<cudf::strings::detail::string_index_pair> indices(
+      stream, cudf::get_current_device_resource_ref(), num_output_entries, cuda::no_init);
     auto comp_fn =
       compute_string_sizes_and_interleave_lists_fn{*table_dv_ptr, d_list_offsets, indices.data()};
     thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                        cuda::counting_iterator<size_type>{0},
                        num_output_lists,
                        comp_fn);
-    return cudf::strings::detail::make_strings_column(indices.begin(), indices.end(), stream, mr);
+    return cudf::make_strings_column(indices, stream, mr);
   }
 };
 
@@ -228,8 +231,10 @@ struct interleave_list_entries_impl<T, std::enable_if_t<cudf::is_fixed_width<T>(
     auto output_dv_ptr = mutable_column_device_view::create(*output, stream);
 
     // The array of int8_t to store entry validities.
-    auto validities =
-      rmm::device_uvector<int8_t>(data_has_null_mask ? num_output_entries : 0, stream);
+    auto validities = cuda::device_buffer<int8_t>(stream,
+                                                  cudf::get_current_device_resource_ref(),
+                                                  data_has_null_mask ? num_output_entries : 0,
+                                                  cuda::no_init);
 
     thrust::for_each_n(
       rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
@@ -362,17 +367,21 @@ std::unique_ptr<column> interleave_columns(table_view const& input,
                                                              mr);
 
   if (not has_null_mask) {
-    return make_lists_column(
-      num_output_lists, std::move(list_offsets), std::move(list_entries), 0, rmm::device_buffer{});
+    return make_lists_column(num_output_lists,
+                             std::move(list_offsets),
+                             std::move(list_entries),
+                             0,
+                             cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }
 
   auto [null_mask, null_count] = cudf::detail::valid_if(
     list_validities.begin(), list_validities.end(), cuda::std::identity{}, stream, mr);
-  return make_lists_column(num_output_lists,
-                           std::move(list_offsets),
-                           std::move(list_entries),
-                           null_count,
-                           null_count ? std::move(null_mask) : rmm::device_buffer{});
+  return make_lists_column(
+    num_output_lists,
+    std::move(list_offsets),
+    std::move(list_entries),
+    null_count,
+    null_count ? std::move(null_mask) : cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }
 
 }  // namespace detail

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -40,7 +40,7 @@ static void nvbench_reduction_histogram(nvbench::state& state, nvbench::type_lis
   auto agg                    = cudf::make_histogram_aggregation<cudf::reduce_aggregation>();
   auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
-    rmm::cuda_stream_view stream_view{launch.get_stream()};
+    cuda::stream_ref stream_view{launch.get_stream()};
     auto result = cudf::reduce(*input, *agg, input->type(), stream_view);
   });
   state.add_buffer_size(

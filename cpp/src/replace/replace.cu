@@ -3,7 +3,7 @@
  * SPDX-FileCopyrightText: Copyright 2018 BlazingDB, Inc.
  * SPDX-FileCopyrightText: Copyright 2018 Cristhian Alberto Gonzales Castillo <cristhian@blazingdb.com>
  * SPDX-FileCopyrightText: Copyright 2018 Alexander Ocsa <alexander@blazingdb.com>
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 // clang-format on
@@ -48,10 +48,9 @@
 #include <cudf/utilities/type_checks.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/std/iterator>
 #include <cuda/std/utility>
+#include <cuda/stream>
 #include <thrust/execution_policy.h>
 #include <thrust/find.h>
 #include <thrust/tuple.h>
@@ -169,7 +168,7 @@ struct replace_kernel_forwarder {
   std::unique_ptr<cudf::column> operator()(cudf::column_view const& input_col,
                                            cudf::column_view const& values_to_replace,
                                            cudf::column_view const& replacement_values,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
   {
     cudf::detail::device_scalar<cudf::size_type> valid_counter(
@@ -201,12 +200,12 @@ struct replace_kernel_forwarder {
     auto device_values_to_replace  = cudf::column_device_view::create(values_to_replace, stream);
     auto device_replacement_values = cudf::column_device_view::create(replacement_values, stream);
 
-    replace<<<grid.num_blocks, BLOCK_SIZE, 0, stream.value()>>>(*device_in,
-                                                                *device_out,
-                                                                valid_count,
-                                                                output_view.size(),
-                                                                *device_values_to_replace,
-                                                                *device_replacement_values);
+    replace<<<grid.num_blocks, BLOCK_SIZE, 0, stream.get()>>>(*device_in,
+                                                              *device_out,
+                                                              valid_count,
+                                                              output_view.size(),
+                                                              *device_values_to_replace,
+                                                              *device_replacement_values);
     CUDF_CUDA_TRY(cudaGetLastError());
 
     if (output_view.nullable()) {
@@ -219,7 +218,7 @@ struct replace_kernel_forwarder {
   std::unique_ptr<cudf::column> operator()(cudf::column_view const&,
                                            cudf::column_view const&,
                                            cudf::column_view const&,
-                                           rmm::cuda_stream_view,
+                                           cuda::stream_ref,
                                            rmm::device_async_resource_ref)
   {
     CUDF_FAIL("No specialization exists for this type");
@@ -231,7 +230,7 @@ std::unique_ptr<cudf::column> replace_kernel_forwarder::operator()<cudf::string_
   cudf::column_view const& input_col,
   cudf::column_view const& values_to_replace,
   cudf::column_view const& replacement_values,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   return cudf::strings::detail::find_and_replace_all(
@@ -243,7 +242,7 @@ std::unique_ptr<cudf::column> replace_kernel_forwarder::operator()<cudf::diction
   cudf::column_view const& input_col,
   cudf::column_view const& values_to_replace,
   cudf::column_view const& replacement_values,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   auto input        = cudf::dictionary_column_view(input_col);
@@ -285,7 +284,7 @@ namespace detail {
 std::unique_ptr<cudf::column> find_and_replace_all(cudf::column_view const& input_col,
                                                    cudf::column_view const& values_to_replace,
                                                    cudf::column_view const& replacement_values,
-                                                   rmm::cuda_stream_view stream,
+                                                   cuda::stream_ref stream,
                                                    rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(values_to_replace.size() == replacement_values.size(),
@@ -328,7 +327,7 @@ std::unique_ptr<cudf::column> find_and_replace_all(cudf::column_view const& inpu
 std::unique_ptr<cudf::column> find_and_replace_all(cudf::column_view const& input_col,
                                                    cudf::column_view const& values_to_replace,
                                                    cudf::column_view const& replacement_values,
-                                                   rmm::cuda_stream_view stream,
+                                                   cuda::stream_ref stream,
                                                    rmm::device_async_resource_ref mr)
 {
   return detail::find_and_replace_all(input_col, values_to_replace, replacement_values, stream, mr);

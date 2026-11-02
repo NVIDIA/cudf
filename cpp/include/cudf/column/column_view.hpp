@@ -494,6 +494,7 @@ class mutable_column_view : public detail::column_view_base {
  public:
   mutable_column_view() = default;
 
+  /// @brief Destroy the mutable column view object
   ~mutable_column_view() override {
     // Needed so that the first instance of the implicit destructor for any TU isn't 'constructed'
     // from a host+device function marking the implicit version also as host+device

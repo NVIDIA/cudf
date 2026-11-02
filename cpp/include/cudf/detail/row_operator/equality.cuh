@@ -387,11 +387,11 @@ class device_row_comparator {
     PhysicalEqualityComparator const comparator;
   };
 
-  table_device_view const lhs;
-  table_device_view const rhs;
-  Nullate const check_nulls;
-  null_equality const nulls_are_equal;
-  PhysicalEqualityComparator const comparator;
+  table_device_view lhs;
+  table_device_view rhs;
+  Nullate check_nulls;
+  null_equality nulls_are_equal;
+  PhysicalEqualityComparator comparator;
 };
 
 /**
@@ -410,7 +410,7 @@ class self_comparator {
    * @param temp_mr Device memory resource used for temporary allocations
    */
   self_comparator(table_view const& t,
-                  rmm::cuda_stream_view stream,
+                  cuda::stream_ref stream,
                   rmm::device_async_resource_ref temp_mr)
     : d_t(preprocessed_table::create(t, stream, temp_mr))
   {
@@ -522,7 +522,7 @@ class two_table_comparator {
    */
   two_table_comparator(table_view const& left,
                        table_view const& right,
-                       rmm::cuda_stream_view stream,
+                       cuda::stream_ref stream,
                        rmm::device_async_resource_ref temp_mr);
 
   /**

@@ -319,8 +319,16 @@ class Column:
         elif plc.traits.is_integral_not_bool(
             self.obj.type()
         ) and plc.traits.is_timestamp(plc_dtype):
+            # The target's physical type: TIMESTAMP_DAYS is stored as int32,
+            # every other timestamp as int64.
             upcasted = plc.unary.cast(
-                self.obj, plc.DataType(plc.TypeId.INT64), stream=stream
+                self.obj,
+                plc.DataType(
+                    plc.TypeId.INT32
+                    if plc_dtype.id() == plc.TypeId.TIMESTAMP_DAYS
+                    else plc.TypeId.INT64
+                ),
+                stream=stream,
             )
             plc_col = plc.column.Column(
                 plc_dtype,
@@ -376,6 +384,30 @@ class Column:
             if rep.id() != plc_dtype.id():
                 plc_col = plc.unary.cast(plc_col, plc_dtype, stream=stream)
             return Column(plc_col, dtype=dtype, name=self.name).sorted_like(self)
+        elif plc.traits.is_floating_point(plc_dtype) and (
+            plc.traits.is_timestamp(self.obj.type())
+            or plc.traits.is_duration(self.obj.type())
+        ):
+            phys = plc.DataType(
+                plc.TypeId.INT32
+                if self.obj.type().id()
+                in {plc.TypeId.TIMESTAMP_DAYS, plc.TypeId.DURATION_DAYS}
+                else plc.TypeId.INT64
+            )
+            plc_col = plc.column.Column(
+                phys,
+                self.obj.size(),
+                self.obj.data(),
+                self.obj.null_mask(),
+                self.obj.null_count(),
+                self.obj.offset(),
+                self.obj.children(),
+            )
+            return Column(
+                plc.unary.cast(plc_col, plc_dtype, stream=stream),
+                dtype=dtype,
+                name=self.name,
+            ).sorted_like(self)
         elif plc.traits.is_floating_point(
             self.obj.type()
         ) and plc.traits.is_fixed_point(plc_dtype):
@@ -553,12 +585,12 @@ class Column:
         )
 
     def mask_nans(self, stream: Stream) -> Self:
-        """Return a shallow copy of self with nans masked out."""
+        """Return a copy of self with nans masked out."""
         if plc.traits.is_floating_point(self.obj.type()):
             old_count = self.null_count
-            mask, new_count = plc.transform.nans_to_nulls(self.obj, stream=stream)
-            result = type(self)(self.obj.with_mask(mask, new_count), self.dtype)
-            if old_count == new_count:
+            obj = plc.transform.column_nans_to_nulls(self.obj, stream=stream)
+            result = type(self)(obj, self.dtype)
+            if old_count == obj.null_count():
                 return result.sorted_like(self)
             return result
         return self.copy()

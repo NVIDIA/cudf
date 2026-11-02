@@ -12,6 +12,7 @@
 #include <cudf/detail/utilities/cuda.cuh>
 
 #include <cooperative_groups.h>
+#include <cuda/cmath>
 #include <cuda/std/bit>
 #include <cuda/std/iterator>
 
@@ -301,16 +302,16 @@ __device__ inline void decode_fixed_width_split_values(
         case Type::INT64: gpuOutputByteStreamSplit<int64_t>(dst, src, num_values); break;
         case Type::FIXED_LEN_BYTE_ARRAY:
           if (s->output_cvt.dtype_len_in <= sizeof(int32_t)) {
-            gpuOutputSplitFixedLenByteArrayAsInt(
-              reinterpret_cast<int32_t*>(dst), src, num_values, s->output_cvt.dtype_len_in);
+            *reinterpret_cast<int32_t*>(dst) =
+              decode_big_endian_decimal<int32_t>(src, s->output_cvt.dtype_len_in, num_values);
             break;
           } else if (s->output_cvt.dtype_len_in <= sizeof(int64_t)) {
-            gpuOutputSplitFixedLenByteArrayAsInt(
-              reinterpret_cast<int64_t*>(dst), src, num_values, s->output_cvt.dtype_len_in);
+            *reinterpret_cast<int64_t*>(dst) =
+              decode_big_endian_decimal<int64_t>(src, s->output_cvt.dtype_len_in, num_values);
             break;
           } else if (s->output_cvt.dtype_len_in <= sizeof(__int128_t)) {
-            gpuOutputSplitFixedLenByteArrayAsInt(
-              reinterpret_cast<__int128_t*>(dst), src, num_values, s->output_cvt.dtype_len_in);
+            *reinterpret_cast<__int128_t*>(dst) =
+              decode_big_endian_decimal<__int128_t>(src, s->output_cvt.dtype_len_in, num_values);
             break;
           }
           // unsupported decimal precision
@@ -379,6 +380,10 @@ __device__ int skip_validity_and_row_indices_nonlist(
 
     value_count += batch_size;
     max_depth_valid_count += block_valid_count;
+
+    // Required before the next iteration reuses `scan_storage`: CUB needs a barrier between the
+    // last read of a collective's TempStorage and its reuse.
+    __syncthreads();
   }  // end loop
 
   return max_depth_valid_count;
@@ -488,6 +493,10 @@ __device__ int update_validity_and_row_indices_nested(
         max_depth_valid_count += block_valid_count;
       }
 
+      // Required before `scan_storage` is reused: CUB needs a barrier between the last read of a
+      // collective's TempStorage and its reuse. At the end of the depth loop it also covers the
+      // enclosing value loop's back edge, since the depth loop always runs at least once.
+      __syncthreads();
     }  // end depth loop
 
     value_count += block_value_count;
@@ -601,6 +610,10 @@ __device__ int update_validity_and_row_indices_flat(
     // update stuff
     value_count += block_value_count;
     valid_count += block_valid_count;
+
+    // Required before the next iteration reuses `scan_storage`: CUB needs a barrier between the
+    // last read of a collective's TempStorage and its reuse.
+    __syncthreads();
   }
 
   if (t == 0) {
@@ -1138,7 +1151,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size_t, 8)
 
   // shared buffer. all shared memory is suballocated out of here
   constexpr int rle_run_buffer_bytes =
-    cudf::util::round_up_unsafe(rle_run_buffer_size * sizeof(rle_run), size_t{16});
+    cuda::round_up(rle_run_buffer_size * sizeof(rle_run), size_t{16});
   constexpr int shared_buf_size = cuda::std::max(
     1, rle_run_buffer_bytes * (static_cast<int>(has_dict_t) + static_cast<int>(has_bools_t)));
   __shared__ __align__(16) uint8_t shared_buf[shared_buf_size];

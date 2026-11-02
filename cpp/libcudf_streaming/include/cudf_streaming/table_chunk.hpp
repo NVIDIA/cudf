@@ -9,7 +9,7 @@
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <coro/task.hpp>
 #include <rapidsmpf/memory/content_description.hpp>
@@ -62,7 +62,7 @@ class table_chunk {
    * @param table Device-resident table.
    * @param stream The CUDA stream on which the table was created.
    */
-  table_chunk(std::unique_ptr<cudf::table> table, rmm::cuda_stream_view stream);
+  table_chunk(std::unique_ptr<cudf::table> table, cuda::stream_ref stream);
 
   /**
    * @brief Construct a table_chunk from a device table view.
@@ -91,7 +91,7 @@ class table_chunk {
    *     is therefore not spillable.
    */
   table_chunk(cudf::table_view table_view,
-              rmm::cuda_stream_view stream,
+              cuda::stream_ref stream,
               rapidsmpf::OwningWrapper&& owner,
               exclusive_view exclusive_view);
 
@@ -130,7 +130,7 @@ class table_chunk {
    *
    * @return The CUDA stream view.
    */
-  [[nodiscard]] rmm::cuda_stream_view stream() const noexcept;
+  [[nodiscard]] cuda::stream_ref stream() const noexcept;
 
   /**
    * @brief Number of bytes allocated for the data in the specified memory type.
@@ -236,10 +236,8 @@ class table_chunk {
    * In contrast, chunks constructed from non-exclusive `cudf::table_view` instances are
    * non-owning views of externally managed memory and therefore not spillable.
    *
-   * To spill a table chunk from device to host memory, first call `copy()` to create a
-   * host-side copy, then delete or overwrite the original device chunk. If
-   * `is_spillable() == true`, destroying the original device chunk will release the
-   * associated device memory.
+   * To spill a table chunk from device to host memory, call `move()`. If
+   * `is_spillable() == true`, this releases the associated device memory.
    *
    * @return `true` if the table chunk owns its memory and can be spilled; otherwise
    * `false`.
@@ -264,28 +262,57 @@ class table_chunk {
   [[nodiscard]] table_chunk copy(rapidsmpf::MemoryReservation& reservation) const;
 
   /**
+   * @brief Move the table chunk into the memory of a reservation.
+   *
+   * Like `copy()`, but consumes this chunk, so the memory it held is released unless it
+   * already resides in the reservation's memory type. Leaving device memory is recorded
+   * as a spill.
+   *
+   * @param reservation Memory reservation used to track and limit allocations.
+   * @return A new `table_chunk` holding the data in the reservation's memory type.
+   *
+   * @throws std::invalid_argument If `is_spillable() == false`, in which case this chunk
+   * is left untouched.
+   * @throws rapidsmpf::reservation_error If the total allocation size exceeds the
+   * available reservation.
+   *
+   * @note After this call, this object is in a moved-from state, even if the move
+   * throws for any reason other than `is_spillable() == false`. Only reassignment,
+   * movement, or destruction are valid.
+   */
+  [[nodiscard]] table_chunk move(rapidsmpf::MemoryReservation& reservation);
+
+  /**
    * @brief Convert this table chunk to a `PackedData`, avoiding unnecessary copies.
    *
    * If the chunk's data is already in packed form (e.g., it arrived over the network
    * or was constructed from a `PackedData`), the packed data is moved out directly
-   * with no copy. Otherwise the table is serialized via `cudf::pack()`.
+   * with no copy. Otherwise the table is serialized via `cudf::pack()`, taking
+   * `into_packed_data_cost()` bytes from @p reservation.
    *
-   * @param br Buffer resource used for the device memory resource when packing
-   * is required.
+   * @param reservation Memory reservation covering the pack. Must be device memory.
    * @return A unique pointer to the resulting `PackedData`.
    *
    * @throws std::invalid_argument If the data is not already packed and
    * `is_available() == false`.
+   * @throws rapidsmpf::reservation_error If @p reservation is smaller than
+   * `into_packed_data_cost()`.
    *
    * @note After this call, this object is in a moved-from state; only reassignment,
    * movement, or destruction are valid.
-   *
-   * @note No memory reservation is required. If the data is already in packed form,
-   * no allocation occurs. If packing is required, `cudf::pack()` allocates device
-   * memory that is not tracked via a reservation.
    */
   [[nodiscard]] std::unique_ptr<rapidsmpf::PackedData> into_packed_data(
-    rapidsmpf::BufferResource* br) &&;
+    rapidsmpf::MemoryReservation& reservation) &&;
+
+  /**
+   * @brief Return the device memory `into_packed_data()` allocates.
+   *
+   * Zero when the data is already in packed form, since it is then moved out
+   * rather than serialized.
+   *
+   * @return The cost in bytes.
+   */
+  [[nodiscard]] std::size_t into_packed_data_cost() const noexcept;
 
   /**
    * @brief Return the shape of the table stored by the table chunk.
@@ -312,7 +339,7 @@ class table_chunk {
   std::array<std::size_t, rapidsmpf::MEMORY_TYPES.size()> data_alloc_size_ = {};
   std::size_t make_available_cost_;  // For now, only device memory cost is tracked.
 
-  rmm::cuda_stream_view stream_;
+  cuda::stream_ref stream_{cudaStream_t{cudaStreamDefault}};
   bool is_spillable_;
 };
 

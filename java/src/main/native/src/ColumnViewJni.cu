@@ -33,7 +33,7 @@
 namespace cudf::jni {
 
 std::unique_ptr<cudf::column> generate_list_offsets(cudf::column_view const& list_length,
-                                                    rmm::cuda_stream_view stream)
+                                                    cuda::stream_ref stream)
 {
   CUDF_EXPECTS(list_length.type().id() == cudf::type_id::INT32,
                "Input column does not have type INT32.");
@@ -47,7 +47,7 @@ std::unique_ptr<cudf::column> generate_list_offsets(cudf::column_view const& lis
   auto d_offsets    = offsets_view.template begin<int32_t>();
 
   thrust::inclusive_scan(rmm::exec_policy_nosync(stream), begin_iter, end_iter, d_offsets + 1);
-  CUDF_CUDA_TRY(cudaMemsetAsync(d_offsets, 0, sizeof(int32_t), stream));
+  CUDF_CUDA_TRY(cudaMemsetAsync(d_offsets, 0, sizeof(int32_t), stream.get()));
 
   return offsets_column;
 }
@@ -73,7 +73,7 @@ __device__ bool list_has_nulls(list_device_view list)
 void post_process_list_overlap(cudf::column_view const& lhs,
                                cudf::column_view const& rhs,
                                std::unique_ptr<cudf::column> const& overlap_result,
-                               rmm::cuda_stream_view stream)
+                               cuda::stream_ref stream)
 {
   // If both of the input columns do not have nulls, we don't need to do anything here.
   if (!lists_column_view{lhs}.child().has_nulls() && !lists_column_view{rhs}.child().has_nulls()) {
@@ -128,8 +128,7 @@ void post_process_list_overlap(cudf::column_view const& lhs,
     // new nullmask.
     if (overlap_cv.nullable()) {
       auto [null_mask, null_count] = cudf::bitmask_and(
-        std::vector<bitmask_type const*>{overlap_cv.null_mask(),
-                                         static_cast<bitmask_type const*>(new_null_mask->data())},
+        std::vector<bitmask_type const*>{overlap_cv.null_mask(), new_null_mask->data()},
         std::vector<cudf::size_type>{0, 0},
         overlap_cv.size(),
         stream,
@@ -143,7 +142,7 @@ void post_process_list_overlap(cudf::column_view const& lhs,
 }
 
 std::unique_ptr<cudf::column> lists_distinct_by_key(cudf::lists_column_view const& input,
-                                                    rmm::cuda_stream_view stream)
+                                                    cuda::stream_ref stream)
 {
   if (input.is_empty()) { return empty_like(input.parent()); }
 
@@ -175,7 +174,10 @@ std::unique_ptr<cudf::column> lists_distinct_by_key(cudf::lists_column_view cons
   out_structs_members.emplace_back(std::move(out_columns[1]));
   out_structs_members.emplace_back(std::move(out_columns[2]));
   auto out_structs =
-    cudf::make_structs_column(out_labels.size(), std::move(out_structs_members), 0, {});
+    cudf::make_structs_column(out_labels.size(),
+                              std::move(out_structs_members),
+                              0,
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   // Assemble a lists column of structs<out_keys, out_vals>.
   auto out_offsets = make_numeric_column(

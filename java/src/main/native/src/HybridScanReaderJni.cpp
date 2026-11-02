@@ -20,6 +20,7 @@
 #include <cudf/utilities/span.hpp>
 
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -40,8 +41,9 @@ Java_ai_rapids_cudf_HybridScanReader_createFromFooter(JNIEnv* env,
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    auto const len         = checked_size_t(env, footer_length, "footerLength");
-    auto opts              = build_options(env, j_column_names, j_binary_as_str, time_unit_type_id);
+    auto const len = checked_size_t(env, footer_length, "footerLength");
+    (void)j_binary_as_str;
+    auto opts              = build_options(env, j_column_names, time_unit_type_id);
     auto const* footer_ptr = reinterpret_cast<uint8_t const*>(footer_address);
     cudf::host_span<uint8_t const> footer_bytes{footer_ptr, len};
     auto wrapper = std::make_unique<hybrid_scan_reader_wrapper>(footer_bytes, std::move(opts));
@@ -57,7 +59,7 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_HybridScanReader_destroy(JNIEnv* env,
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    delete reinterpret_cast<hybrid_scan_reader_wrapper*>(handle);
+    cudf::jni::safe_delete<hybrid_scan_reader_wrapper>(handle);
   }
   JNI_CATCH(env, );
 }
@@ -185,7 +187,7 @@ JNIEXPORT jintArray JNICALL Java_ai_rapids_cudf_HybridScanReader_filterRowGroups
   JNI_CATCH(env, nullptr);
 }
 
-JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_HybridScanReader_secondaryFiltersByteRanges(
+JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_HybridScanReader_bloomFiltersByteRanges(
   JNIEnv* env, jclass, jlong handle, jintArray j_row_groups)
 {
   JNI_NULL_CHECK(env, handle, "handle is null", nullptr);
@@ -195,24 +197,80 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_HybridScanReader_secondaryFilte
     cudf::jni::auto_set_device(env);
     auto* wrapper = reinterpret_cast<hybrid_scan_reader_wrapper*>(handle);
     auto holder   = make_row_group_span(env, j_row_groups);
-    auto [bloom, dict] =
-      wrapper->reader->secondary_filters_byte_ranges(holder.span(), wrapper->options);
-    // Pack as [numBloom, bloom_o0, bloom_s0, ..., dict_o0, dict_s0, ...]
-    auto const total_len = 1 + (bloom.size() + dict.size()) * 2;
-    auto result          = env->NewLongArray(total_len);
+    auto ranges   = wrapper->reader->bloom_filters_byte_ranges(holder.span(), wrapper->options);
+    return ranges_to_jlong_array(env, ranges);
+  }
+  JNI_CATCH(env, nullptr);
+}
+
+JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_HybridScanReader_dictionaryPagesByteRanges(
+  JNIEnv* env, jclass, jlong handle, jintArray j_row_groups)
+{
+  JNI_NULL_CHECK(env, handle, "handle is null", nullptr);
+  JNI_NULL_CHECK(env, j_row_groups, "row groups is null", nullptr);
+  JNI_TRY
+  {
+    cudf::jni::auto_set_device(env);
+    auto* wrapper = reinterpret_cast<hybrid_scan_reader_wrapper*>(handle);
+    auto holder   = make_row_group_span(env, j_row_groups);
+    auto ranges   = wrapper->reader->dictionary_pages_byte_ranges(holder.span(), wrapper->options);
+    return ranges_to_jlong_array(env, ranges);
+  }
+  JNI_CATCH(env, nullptr);
+}
+
+// Like dictionaryPagesByteRanges, but also returns a range for a column chunk whose footer does not
+// pin its dictionary page down exactly. Each range is packed as three longs [offset, size, extent].
+JNIEXPORT jlongArray JNICALL
+Java_ai_rapids_cudf_HybridScanReader_dictionaryPagesByteRangesIncludeUnbounded(
+  JNIEnv* env, jclass, jlong handle, jintArray j_row_groups)
+{
+  JNI_NULL_CHECK(env, handle, "handle is null", nullptr);
+  JNI_NULL_CHECK(env, j_row_groups, "row groups is null", nullptr);
+  JNI_TRY
+  {
+    cudf::jni::auto_set_device(env);
+    auto* wrapper = reinterpret_cast<hybrid_scan_reader_wrapper*>(handle);
+    auto holder   = make_row_group_span(env, j_row_groups);
+    auto ranges   = wrapper->reader->dictionary_pages_byte_ranges_include_unbounded(holder.span(),
+                                                                                  wrapper->options);
+    return ranges_to_jlong_array(env, ranges);
+  }
+  JNI_CATCH(env, nullptr);
+}
+
+// Host-side: measure the dictionary page at the front of each buffer with cudf's page-header parse.
+// Returns the page length per buffer, or 0 for a buffer that does not begin with a whole dictionary
+// page. Nothing here touches the GPU.
+JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_HybridScanReader_dictionaryPageLengths(
+  JNIEnv* env, jclass, jlongArray j_addrs, jlongArray j_lens)
+{
+  JNI_NULL_CHECK(env, j_addrs, "page addresses are null", nullptr);
+  JNI_NULL_CHECK(env, j_lens, "page lengths are null", nullptr);
+  JNI_TRY
+  {
+    cudf::jni::native_jlongArray addrs(env, j_addrs);
+    cudf::jni::native_jlongArray lens(env, j_lens);
+    CUDF_EXPECTS(addrs.size() == lens.size(), "addrs and lens arrays must have the same length");
+    std::vector<jlong> page_lengths;
+    page_lengths.reserve(addrs.size());
+    for (int i = 0; i < addrs.size(); ++i) {
+      auto const* page_ptr = reinterpret_cast<uint8_t const*>(addrs[i]);
+      auto const len       = checked_size_t(env, lens[i], "page length");
+      auto page_length     = std::optional<int64_t>{};
+      if (page_ptr != nullptr and len > 0) {
+        page_length = cudf::io::parquet::experimental::dictionary_page_length({page_ptr, len});
+      }
+      page_lengths.push_back(static_cast<jlong>(page_length.value_or(0)));
+    }
+    addrs.cancel();
+    lens.cancel();
+    auto result = env->NewLongArray(static_cast<jsize>(page_lengths.size()));
     if (result == nullptr) { return nullptr; }
-    std::vector<jlong> data;
-    data.reserve(total_len);
-    data.push_back(static_cast<jlong>(bloom.size()));
-    for (auto const& r : bloom) {
-      data.push_back(static_cast<jlong>(r.offset()));
-      data.push_back(static_cast<jlong>(r.size()));
+    if (not page_lengths.empty()) {
+      env->SetLongArrayRegion(
+        result, 0, static_cast<jsize>(page_lengths.size()), page_lengths.data());
     }
-    for (auto const& r : dict) {
-      data.push_back(static_cast<jlong>(r.offset()));
-      data.push_back(static_cast<jlong>(r.size()));
-    }
-    env->SetLongArrayRegion(result, 0, data.size(), data.data());
     return result;
   }
   JNI_CATCH(env, nullptr);

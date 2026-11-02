@@ -56,7 +56,8 @@ rapids-pip-retry install \
     --prefer-binary \
     --constraint "${PIP_CONSTRAINT}" \
     -r polars/py-polars/requirements-dev.txt \
-    -r polars/py-polars/requirements-ci.txt
+    -r polars/py-polars/requirements-ci.txt \
+    "polars-iceberg>=0.1.0,<1.0.0"
 
 # shellcheck disable=SC2317
 function set_exitcode()
@@ -68,7 +69,7 @@ trap set_exitcode ERR
 set +e
 
 rapids-logger "Run polars tests"
-./ci/run_cudf_polars_polars_tests.sh
+./ci/run_cudf_polars_polars_tests.sh "$@"
 
 trap ERR
 set -e

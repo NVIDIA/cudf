@@ -23,6 +23,7 @@
 #include <rmm/resource_ref.hpp>
 
 #include <cub/device/device_segmented_reduce.cuh>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/stream>
 
@@ -58,7 +59,8 @@ rmm::device_uvector<cudf::size_type> nulls_per_group(column_view const& orderby,
                                   offsets.begin(),
                                   offsets.begin() + 1,
                                   stream.get());
-  auto tmp = rmm::device_buffer(bytes, stream);
+  auto tmp = cuda::device_buffer<std::byte>(
+    stream, cudf::get_current_device_resource_ref(), bytes, cuda::no_init);
   cub::DeviceSegmentedReduce::Sum(tmp.data(),
                                   bytes,
                                   is_null_it,
@@ -86,15 +88,17 @@ std::unique_ptr<column> make_range_window(
 
   return std::visit(
     [&](auto const& window_bound) -> std::unique_ptr<column> {
-      return dispatch_range_window(window_bound,
-                                   orderby,
-                                   direction,
-                                   order,
-                                   grouping,
-                                   nulls_at_start,
-                                   window_bound.delta(),
-                                   stream,
-                                   mr);
+      auto const delta = normalize_delta(window_bound);
+      // Type-independent invariants for a per-row delta column are enforced once here, regardless
+      // of the orderby type. The orderby-type-specific type relationship is checked per-type in
+      // range_window_clamper::operator().
+      if (auto const* delta_col = std::get_if<column_view>(&delta)) {
+        CUDF_EXPECTS(delta_col->size() == orderby.size(),
+                     "Delta column must have the same number of rows as the orderby column.");
+        CUDF_EXPECTS(!delta_col->has_nulls(), "Delta column must not contain nulls.");
+      }
+      return dispatch_range_window(
+        window_bound, orderby, direction, order, grouping, nulls_at_start, delta, stream, mr);
     },
     window);
 }

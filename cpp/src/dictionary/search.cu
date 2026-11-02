@@ -8,14 +8,15 @@
 #include <cudf/dictionary/detail/search.hpp>
 #include <cudf/dictionary/search.hpp>
 #include <cudf/scalar/scalar_device_view.cuh>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-#include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_checks.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <cub/device/device_find.cuh>
+#include <cuda/buffer>
 #include <cuda/stream>
 
 namespace cudf {
@@ -37,8 +38,7 @@ struct find_index_fn {
                                      scalar const& key,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr) const
-    requires(not std::is_same_v<Element, dictionary32> and
-             not std::is_same_v<Element, list_view> and not std::is_same_v<Element, struct_view>)
+    requires(not cudf::concepts::dictionary<Element> and not cudf::concepts::nested<Element>)
   {
     auto const num_keys = input.keys_size();
     if (!key.is_valid(stream) || num_keys == 0) {
@@ -60,7 +60,8 @@ struct find_index_fn {
     auto tmp_size = std::size_t{0};
     CUDF_CUDA_TRY(cub::DeviceFind::FindIf(
       nullptr, tmp_size, keys, result->data(), find_fn, num_keys, stream.get()));
-    auto tmp = rmm::device_buffer(tmp_size, stream);
+    auto tmp = cuda::device_buffer<std::byte>(
+      stream, cudf::get_current_device_resource_ref(), tmp_size, cuda::no_init);
     CUDF_CUDA_TRY(cub::DeviceFind::FindIf(
       tmp.data(), tmp_size, keys, result->data(), find_fn, num_keys, stream.get()));
     if (result->value(stream) == num_keys) { result->set_valid_async(false, stream); }
@@ -72,8 +73,7 @@ struct find_index_fn {
                                      scalar const&,
                                      cuda::stream_ref,
                                      rmm::device_async_resource_ref) const
-    requires(std::is_same_v<Element, dictionary32> or std::is_same_v<Element, list_view> or
-             std::is_same_v<Element, struct_view>)
+    requires(cudf::concepts::dictionary<Element> or cudf::concepts::nested<Element>)
   {
     CUDF_FAIL(
       "dictionary, list_view, and struct_view columns cannot be the keys column of a dictionary");

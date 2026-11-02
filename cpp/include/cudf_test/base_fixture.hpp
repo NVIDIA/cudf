@@ -14,10 +14,10 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/resource_ref.hpp>
 
 #include <cuda/memory_resource>
+#include <cuda/stream>
 
 namespace CUDF_EXPORT cudf {
 namespace test {
@@ -56,9 +56,9 @@ struct BaseFixtureWithHarness : public BaseFixture {
 
   /**
    * @brief Return the default stream used by tests inheriting from this fixture.
-   * @return CUDA stream view
+   * @return CUDA stream reference
    */
-  [[nodiscard]] rmm::cuda_stream_view stream() const { return cudf::test::get_default_stream(); }
+  [[nodiscard]] cuda::stream_ref stream() const { return cudf::test::get_default_stream(); }
 
   /**
    * @brief Return the harness output and temporary memory resources.
@@ -66,7 +66,11 @@ struct BaseFixtureWithHarness : public BaseFixture {
    */
   cudf::memory_resources resources() { return _harness.resources(); }
 
- protected:
+  /**
+   * @brief Return the memory-resource harness used by this fixture.
+   */
+  [[nodiscard]] memory_resource_test_harness& harness() noexcept { return _harness; }
+
   memory_resource_test_harness _harness{mr()};
 };
 

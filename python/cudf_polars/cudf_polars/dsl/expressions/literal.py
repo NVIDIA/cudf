@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # TODO: remove need for this
 # ruff: noqa: D101
@@ -21,6 +21,20 @@ if TYPE_CHECKING:
     from cudf_polars.containers import DataFrame
 
 __all__ = ["Literal", "LiteralColumn"]
+
+
+def _freeze_for_hash(value: Any) -> Hashable:
+    """
+    Convert ``value`` into a process-independent hashable form.
+
+    Nested ``list`` / ``dict`` values (e.g. list/struct literals) are frozen
+    into tuples so they can appear in :meth:`Node.get_hashable` results.
+    """
+    if isinstance(value, dict):
+        return tuple(sorted((k, _freeze_for_hash(v)) for k, v in value.items()))
+    if isinstance(value, list):
+        return tuple(_freeze_for_hash(v) for v in value)
+    return value
 
 
 class Literal(Expr):
@@ -57,9 +71,8 @@ class Literal(Expr):
             "Not expecting to require agg request of literal"
         )  # pragma: no cover
 
-    def get_hashable(self) -> Hashable:
-        """Get the hash of the literal."""
-        return (type(self), self.dtype.plc_type, id(self.value))
+    def get_hashable(self) -> Hashable:  # noqa: D102
+        return (type(self), self.dtype.plc_type, _freeze_for_hash(self.value))
 
     def astype(self, dtype: DataType) -> Literal:
         """Cast self to dtype."""

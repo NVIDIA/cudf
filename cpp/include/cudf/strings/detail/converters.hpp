@@ -34,6 +34,16 @@ std::unique_ptr<column> from_integers(column_view const& integers,
                                       rmm::device_async_resource_ref mr);
 
 /**
+ * @copydoc hex_to_integers
+ *
+ * @param stream CUDA stream used for device memory operations and kernel launches.
+ */
+std::unique_ptr<column> hex_to_integers(strings_column_view const& input,
+                                        data_type output_type,
+                                        cuda::stream_ref stream,
+                                        rmm::device_async_resource_ref mr);
+
+/**
  * @copydoc to_floats(strings_column_view const&,data_type,rmm::device_async_resource_ref)
  *
  * @param stream CUDA stream used for device memory operations and kernel launches.

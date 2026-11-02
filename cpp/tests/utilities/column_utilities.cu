@@ -25,6 +25,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/cmath>
@@ -117,7 +118,7 @@ std::unique_ptr<column> generate_child_row_indices(lists_column_view const& c,
     0,
     cuda::proclaim_return_type<size_type>([row_indices = row_indices.begin<size_type>(),
                                            validity    = c.null_mask(),
-                                           offsets     = c.offsets().begin<size_type>(),
+                                           offsets     = c.offsets().begin<int32_t>(),
                                            offset      = c.offset()] __device__(int index) {
       // both null mask and offsets data are not pre-sliced. so we need to add the column offset to
       // every incoming index.
@@ -165,11 +166,11 @@ std::unique_ptr<column> generate_child_row_indices(lists_column_view const& c,
   auto output_row_iter = cudf::detail::make_counting_transform_iterator(
     0,
     cuda::proclaim_return_type<size_type>(
-      [row_indices  = row_indices.begin<size_type>(),
-       offsets      = c.offsets().begin<size_type>(),
-       offset       = c.offset(),
-       first_offset = cudf::detail::get_value<size_type>(
-         c.offsets(), c.offset(), stream)] __device__(int index) {
+      [row_indices = row_indices.begin<size_type>(),
+       offsets     = c.offsets().begin<int32_t>(),
+       offset      = c.offset(),
+       first_offset =
+         cudf::detail::get_value<int32_t>(c.offsets(), c.offset(), stream)] __device__(int index) {
         auto const true_index = row_indices[index] + offset;
         return offsets[true_index] - first_offset;
       }));
@@ -552,14 +553,16 @@ struct column_comparator_impl {
                          corresponding_rows_unequal<decltype(device_comparator)>,
                          corresponding_rows_not_equivalent<decltype(device_comparator)>>;
 
-    auto differences =
-      rmm::device_uvector<int>(lhs_row_indices.size(),
-                               stream,
-                               mr.get_temporary_mr());  // worst case: everything different
-    auto input_iter = cuda::counting_iterator<cudf::size_type>{0};
+    auto differences_storage =
+      cuda::device_buffer<int>(stream,
+                               mr.get_temporary_mr(),
+                               lhs_row_indices.size(),
+                               cuda::no_init);  // worst case: everything different
+    cudf::device_span<int> differences = differences_storage;
+    auto input_iter                    = cuda::counting_iterator<cudf::size_type>{0};
 
-    auto diff_map =
-      rmm::device_uvector<bool>(lhs_row_indices.size(), stream, mr.get_temporary_mr());
+    auto diff_map = cuda::device_buffer<bool>(
+      stream, mr.get_temporary_mr(), lhs_row_indices.size(), cuda::no_init);
 
     thrust::transform(
       rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
@@ -576,10 +579,10 @@ struct column_comparator_impl {
                                      differences.begin(),
                                      cuda::std::identity{});
 
-    differences.resize(cuda::std::distance(differences.begin(), diff_iter),
-                       stream);  // shrink back down
+    // TODO: Use resize() once https://github.com/NVIDIA/cccl/issues/12051 is resolved.
+    differences = differences.first(cuda::std::distance(differences.begin(), diff_iter));
 
-    if (not differences.is_empty()) {
+    if (not differences.empty()) {
       if (verbosity != debug_output_level::QUIET) {
         // GTEST_FAIL() does a return that conflicts with our return type. so hide it in a lambda.
         [&]() {
@@ -617,15 +620,16 @@ struct column_comparator_impl<list_view, check_exact_equality> {
     if (lhs_row_indices.is_empty()) { return true; }
 
     // worst case - everything is different
-    rmm::device_uvector<int> differences(lhs_row_indices.size(), stream, mr.get_temporary_mr());
+    cuda::device_buffer<int> differences_storage(
+      stream, mr.get_temporary_mr(), lhs_row_indices.size(), cuda::no_init);
+    cudf::device_span<int> differences = differences_storage;
 
     // compare offsets, taking slicing into account
 
     // left side
-    size_type lhs_shift =
-      cudf::detail::get_value<size_type>(lhs_l.offsets(), lhs_l.offset(), stream);
-    auto lhs_offsets = cuda::transform_iterator(
-      lhs_l.offsets().begin<size_type>() + lhs_l.offset(),
+    size_type lhs_shift = cudf::detail::get_value<int32_t>(lhs_l.offsets(), lhs_l.offset(), stream);
+    auto lhs_offsets    = cuda::transform_iterator(
+      lhs_l.offsets().begin<int32_t>() + lhs_l.offset(),
       cuda::proclaim_return_type<size_type>(
         [lhs_shift] __device__(size_type offset) { return offset - lhs_shift; }));
     auto lhs_valids = cuda::transform_iterator(
@@ -636,10 +640,9 @@ struct column_comparator_impl<list_view, check_exact_equality> {
         }));
 
     // right side
-    size_type rhs_shift =
-      cudf::detail::get_value<size_type>(rhs_l.offsets(), rhs_l.offset(), stream);
-    auto rhs_offsets = cuda::transform_iterator(
-      rhs_l.offsets().begin<size_type>() + rhs_l.offset(),
+    size_type rhs_shift = cudf::detail::get_value<int32_t>(rhs_l.offsets(), rhs_l.offset(), stream);
+    auto rhs_offsets    = cuda::transform_iterator(
+      rhs_l.offsets().begin<int32_t>() + rhs_l.offset(),
       cuda::proclaim_return_type<size_type>(
         [rhs_shift] __device__(size_type offset) { return offset - rhs_shift; }));
     auto rhs_valids = cuda::transform_iterator(
@@ -702,10 +705,10 @@ struct column_comparator_impl<list_view, check_exact_equality> {
         return false;
       });
 
-    differences.resize(cuda::std::distance(differences.begin(), diff_iter),
-                       stream);  // shrink back down
+    // TODO: Use resize() once https://github.com/NVIDIA/cccl/issues/12051 is resolved.
+    differences = differences.first(cuda::std::distance(differences.begin(), diff_iter));
 
-    if (not differences.is_empty()) {
+    if (not differences.empty()) {
       if (verbosity != debug_output_level::QUIET) {
         // GTEST_FAIL() does a return that conflicts with our return type. so hide it in a lambda.
         [&]() {
@@ -882,9 +885,9 @@ bool expect_columns_equal(cudf::column_view const& lhs,
                           cuda::stream_ref stream,
                           cudf::memory_resources mr)
 {
-  // TODO: equality row preprocessing (two_table_comparator / preprocessed_table::create) still
-  // allocates from the current device resource; pass `mr` through once that path accepts
-  // memory_resources so callers need not disable failing current-resource scopes.
+  // TODO: check_non_empty_nulls (via has_nonempty_nulls) still allocates temporaries from the
+  // current device resource. Once it accepts a memory resource, callers can guard comparisons
+  // with fail_on_current_device_resource_use().
   check_non_empty_nulls(lhs, rhs, stream);
   auto lhs_indices = generate_all_row_indices(lhs.size(), stream, mr);
   auto rhs_indices = generate_all_row_indices(rhs.size(), stream, mr);
@@ -969,14 +972,16 @@ std::vector<bitmask_type> bitmask_to_host(cudf::column_view const& c,
     auto num_bitmasks      = num_bitmask_words(c.size());
     auto [bitmask_span, _] = [&] {
       if (c.offset() == 0) {
-        return std::pair{cudf::device_span<bitmask_type const>(c.null_mask(), num_bitmasks),
-                         rmm::device_buffer{}};
+        return std::pair<cudf::device_span<bitmask_type const>,
+                         cuda::device_buffer<cudf::bitmask_type>>{
+          cudf::device_span<bitmask_type const>(c.null_mask(), num_bitmasks),
+          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED)};
       }
       auto mask = copy_bitmask(
         c.null_mask(), c.offset(), c.offset() + c.size(), stream, mr.get_temporary_mr());
-      return std::pair{cudf::device_span<bitmask_type const>(
-                         static_cast<bitmask_type*>(mask.data()), num_bitmasks),
-                       std::move(mask)};
+      return std::pair<cudf::device_span<bitmask_type const>,
+                       cuda::device_buffer<cudf::bitmask_type>>{
+        cudf::device_span<bitmask_type const>(mask.data(), num_bitmasks), std::move(mask)};
     }();
     return cudf::detail::make_std_vector(bitmask_span, stream);
   } else {

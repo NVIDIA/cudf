@@ -10,9 +10,9 @@
 #include <cudf/detail/row_operator/equality.cuh>
 #include <cudf/detail/row_operator/lexicographic.cuh>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/stream>
 #include <thrust/sequence.h>
 #include <thrust/sort.h>
 #include <thrust/transform.h>
@@ -22,7 +22,7 @@ std::unique_ptr<cudf::column> two_table_comparison(cudf::table_view lhs,
                                                    cudf::table_view rhs,
                                                    std::vector<cudf::order> const& column_order,
                                                    PhysicalElementComparator comparator,
-                                                   rmm::cuda_stream_view stream,
+                                                   cuda::stream_ref stream,
                                                    cudf::memory_resources mr)
 {
   // TODO: lexicographic::two_table_comparator still allocates from the current device resource.
@@ -60,14 +60,14 @@ template std::unique_ptr<cudf::column> two_table_comparison<physical_comparator_
   cudf::table_view rhs,
   std::vector<cudf::order> const& column_order,
   physical_comparator_t comparator,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   cudf::memory_resources mr);
 template std::unique_ptr<cudf::column> two_table_comparison<sorting_comparator_t>(
   cudf::table_view lhs,
   cudf::table_view rhs,
   std::vector<cudf::order> const& column_order,
   sorting_comparator_t comparator,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   cudf::memory_resources mr);
 
 template <typename PhysicalElementComparator>
@@ -76,7 +76,7 @@ std::unique_ptr<cudf::column> sorted_order(
   cudf::size_type num_rows,
   bool has_nested,
   PhysicalElementComparator comparator,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   cudf::memory_resources mr)
 {
   auto output = cudf::make_numeric_column(cudf::data_type(cudf::type_to_id<cudf::size_type>()),
@@ -112,12 +112,12 @@ template std::unique_ptr<cudf::column> sorted_order<physical_comparator_t>(
   cudf::size_type num_rows,
   bool has_nested,
   physical_comparator_t comparator,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   cudf::memory_resources mr);
 template std::unique_ptr<cudf::column> sorted_order<sorting_comparator_t>(
   std::shared_ptr<cudf::detail::row::lexicographic::preprocessed_table> preprocessed_input,
   cudf::size_type num_rows,
   bool has_nested,
   sorting_comparator_t comparator,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   cudf::memory_resources mr);

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from libcpp.memory cimport unique_ptr
 from pylibcudf.exception_handler cimport libcudf_exception_handler
@@ -12,6 +12,13 @@ from rmm.librmm.memory_resource cimport device_async_resource_ref
 
 cdef extern from "cudf/lists/stream_compaction.hpp" \
         namespace "cudf::lists" nogil:
+    cdef unique_ptr[column] apply_retention_mask(
+        const lists_column_view& lists_column,
+        const lists_column_view& retention_mask,
+        cudaStream_t stream,
+        device_async_resource_ref mr
+    ) except +libcudf_exception_handler
+
     cdef unique_ptr[column] apply_boolean_mask(
         const lists_column_view& lists_column,
         const lists_column_view& boolean_mask,

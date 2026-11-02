@@ -10,13 +10,13 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 #include <rmm/resource_ref.hpp>
 
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/iterator>
+#include <cuda/stream>
 #include <thrust/uninitialized_fill.h>
 
 namespace cudf::detail {
@@ -24,7 +24,7 @@ namespace cudf::detail {
 void initialize_reduction_results(size_type* results,
                                   size_type num_rows,
                                   duplicate_keep_option keep,
-                                  rmm::cuda_stream_view stream)
+                                  cuda::stream_ref stream)
 {
   thrust::uninitialized_fill(
     rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
@@ -37,7 +37,7 @@ size_type copy_reduction_results(size_type const* results,
                                  size_type num_rows,
                                  size_type* output,
                                  duplicate_keep_option keep,
-                                 rmm::cuda_stream_view stream)
+                                 cuda::stream_ref stream)
 {
   auto const output_end = [&] {
     if (keep == duplicate_keep_option::KEEP_NONE) {

@@ -14,10 +14,13 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <rmm/exec_policy.hpp>
+
 #include <cuda/functional>
 #include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
+#include <thrust/transform.h>
 
 namespace cudf {
 namespace lists {
@@ -89,12 +92,26 @@ std::unique_ptr<column> segmented_gather(lists_column_view const& value_column,
   auto output_offset = cudf::detail::allocate_like(
     gather_map.offsets(), gather_map.size() + 1, mask_allocation_policy::RETAIN, stream, mr);
   auto output_offset_view = output_offset->mutable_view();
+  // TODO: route through the caller's memory resources once segmented_gather is migrated
+  auto const temp_mr = cudf::get_current_device_resource_ref();
   cudf::detail::copy_range_in_place(gather_map.offsets(),
                                     output_offset_view,
                                     gather_map.offset(),
                                     gather_map.offset() + output_offset_view.size(),
                                     0,
-                                    stream);
+                                    stream,
+                                    cudf::memory_resources{temp_mr, temp_mr});
+  // When gather_map is a sliced view, the copied offsets start at a nonzero base.
+  // Subtract it so that output_offset[0] == 0.
+  if (gather_map.offset() > 0) {
+    auto* output_data    = output_offset_view.data<int32_t>();
+    auto const* base_ptr = gather_map.offsets_begin();
+    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                      output_data,
+                      output_data + output_offset_view.size(),
+                      output_data,
+                      [base_ptr] __device__(int32_t val) { return val - *base_ptr; });
+  }
   // Assemble list column & return
   auto null_mask       = cudf::detail::copy_bitmask(value_column.parent(), stream, mr);
   size_type null_count = value_column.null_count();

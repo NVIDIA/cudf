@@ -59,7 +59,8 @@ TYPED_TEST(groupby_sum_overflow_test, Basic)
     std::vector<std::unique_ptr<cudf::column>> children;
     children.push_back(sum_col.release());
     children.push_back(overflow_col.release());
-    auto expect_vals = cudf::create_structs_hierarchy(3, std::move(children), 0, {});
+    auto expect_vals = cudf::create_structs_hierarchy(
+      3, std::move(children), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     auto agg = cudf::make_sum_overflow_aggregation<cudf::groupby_aggregation>();
     test_single_agg(keys, vals, expect_keys, *expect_vals, std::move(agg));
@@ -78,7 +79,8 @@ TYPED_TEST(groupby_sum_overflow_test, Basic)
     std::vector<std::unique_ptr<cudf::column>> children;
     children.push_back(sum_col.release());
     children.push_back(overflow_col.release());
-    auto expect_vals = cudf::create_structs_hierarchy(3, std::move(children), 0, {});
+    auto expect_vals = cudf::create_structs_hierarchy(
+      3, std::move(children), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     auto agg = cudf::make_sum_overflow_aggregation<cudf::groupby_aggregation>();
     test_single_agg(keys, vals, expect_keys, *expect_vals, std::move(agg));
@@ -127,7 +129,8 @@ TYPED_TEST(groupby_sum_overflow_test, SortPathWithTdigest)
     std::vector<std::unique_ptr<cudf::column>> children;
     children.push_back(sum_col.release());
     children.push_back(overflow_col.release());
-    auto expect_vals = cudf::create_structs_hierarchy(3, std::move(children), 0, {});
+    auto expect_vals = cudf::create_structs_hierarchy(
+      3, std::move(children), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
     run_and_check(vals, *expect_vals);
   } else {
     cudf::test::fixed_width_column_wrapper<V> vals{0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
@@ -136,7 +139,8 @@ TYPED_TEST(groupby_sum_overflow_test, SortPathWithTdigest)
     std::vector<std::unique_ptr<cudf::column>> children;
     children.push_back(sum_col.release());
     children.push_back(overflow_col.release());
-    auto expect_vals = cudf::create_structs_hierarchy(3, std::move(children), 0, {});
+    auto expect_vals = cudf::create_structs_hierarchy(
+      3, std::move(children), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
     run_and_check(vals, *expect_vals);
   }
 }
@@ -158,7 +162,8 @@ TYPED_TEST(groupby_sum_overflow_test, EmptyCols)
   std::vector<std::unique_ptr<cudf::column>> children;
   children.push_back(sum_col.release());
   children.push_back(overflow_col.release());
-  auto expect_vals = cudf::create_structs_hierarchy(0, std::move(children), 0, {});
+  auto expect_vals = cudf::create_structs_hierarchy(
+    0, std::move(children), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   auto agg = cudf::make_sum_overflow_aggregation<cudf::groupby_aggregation>();
   test_single_agg(keys, vals, expect_keys, *expect_vals, std::move(agg));
@@ -181,7 +186,8 @@ TYPED_TEST(groupby_sum_overflow_test, ZeroValidKeys)
   std::vector<std::unique_ptr<cudf::column>> children;
   children.push_back(sum_col.release());
   children.push_back(overflow_col.release());
-  auto expect_vals = cudf::create_structs_hierarchy(0, std::move(children), 0, {});
+  auto expect_vals = cudf::create_structs_hierarchy(
+    0, std::move(children), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   auto agg = cudf::make_sum_overflow_aggregation<cudf::groupby_aggregation>();
   test_single_agg(keys, vals, expect_keys, *expect_vals, std::move(agg));
@@ -398,7 +404,8 @@ TYPED_TEST(groupby_sum_overflow_test, SlicedInput)
     std::vector<std::unique_ptr<cudf::column>> children;
     children.push_back(sum_col.release());
     children.push_back(overflow_col.release());
-    auto expect_vals = cudf::create_structs_hierarchy(3, std::move(children), 0, {});
+    auto expect_vals = cudf::create_structs_hierarchy(
+      3, std::move(children), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     auto const keys = cudf::slice(keys_full, {1, 11}).front();
     auto const vals = cudf::slice(vals_full, {1, 11}).front();
@@ -419,7 +426,8 @@ TYPED_TEST(groupby_sum_overflow_test, SlicedInput)
     std::vector<std::unique_ptr<cudf::column>> children;
     children.push_back(sum_col.release());
     children.push_back(overflow_col.release());
-    auto expect_vals = cudf::create_structs_hierarchy(3, std::move(children), 0, {});
+    auto expect_vals = cudf::create_structs_hierarchy(
+      3, std::move(children), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     auto const keys = cudf::slice(keys_full, {1, 11}).front();
     auto const vals = cudf::slice(vals_full, {1, 11}).front();
@@ -470,7 +478,8 @@ TYPED_TEST(groupby_sum_overflow_test, MultiBlock)
       cudf::test::fixed_point_column_wrapper<RepType>(sum_it, sum_it + num_groups, scale);
     children.push_back(sum_col.release());
     children.push_back(overflow_col.release());
-    auto expect_vals = cudf::create_structs_hierarchy(num_groups, std::move(children), 0, {});
+    auto expect_vals = cudf::create_structs_hierarchy(
+      num_groups, std::move(children), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
     test_single_agg(keys,
                     vals,
                     expect_keys,
@@ -483,7 +492,8 @@ TYPED_TEST(groupby_sum_overflow_test, MultiBlock)
     auto sum_col      = cudf::test::fixed_width_column_wrapper<V>(sum_it, sum_it + num_groups);
     children.push_back(sum_col.release());
     children.push_back(overflow_col.release());
-    auto expect_vals = cudf::create_structs_hierarchy(num_groups, std::move(children), 0, {});
+    auto expect_vals = cudf::create_structs_hierarchy(
+      num_groups, std::move(children), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
     test_single_agg(keys,
                     vals,
                     expect_keys,

@@ -68,7 +68,7 @@ cdef class BoundedClosed:
     delta
         Offset from current row, must be valid. If floating point must not be inf/nan.
     """
-    def __cinit__(self, Scalar delta not None):
+    def __cinit__(self, Scalar delta not None) -> None:
         self.delta = delta
         self.c_obj = move(
             make_unique[cpp_rolling.bounded_closed](dereference(delta.get()))
@@ -85,7 +85,7 @@ cdef class BoundedOpen:
     delta
         Offset from current row, must be valid. If floating point must not be inf/nan.
     """
-    def __cinit__(self, Scalar delta not None):
+    def __cinit__(self, Scalar delta not None) -> None:
         self.delta = delta
         self.c_obj = move(
             make_unique[cpp_rolling.bounded_open](dereference(delta.get()))
@@ -172,7 +172,7 @@ cpdef Table grouped_range_rolling_window(
         crequests.push_back(move((<RollingRequest?>req).view()))
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef table_view c_group_keys = group_keys.view()
@@ -235,7 +235,7 @@ cpdef Column rolling_window(
     cdef const rolling_aggregation *c_agg = agg.view_underlying_as_rolling()
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef column_view c_source = source.view()
@@ -287,7 +287,7 @@ cpdef bool is_valid_rolling_aggregation(DataType source, Aggregation agg):
     return cpp_rolling.is_valid_rolling_aggregation(source.c_obj, agg.kind())
 
 
-cpdef tuple make_range_windows(
+cpdef tuple[Column, Column] make_range_windows(
     Table group_keys,
     Column orderby,
     order order,
@@ -325,7 +325,7 @@ cpdef tuple make_range_windows(
     cdef pair[unique_ptr[column], unique_ptr[column]] result
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef table_view c_group_keys = group_keys.view()

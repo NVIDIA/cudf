@@ -14,9 +14,14 @@ namespace cudf {
 namespace lists::detail {
 
 /**
- * @copydoc cudf::lists::apply_boolean_mask
+ * @brief Filters elements in each row of @p input using @p boolean_mask.
  *
+ * @param input The input lists column to filter
+ * @param boolean_mask A nullable lists-of-bools column used to filter @p input
  * @param mask_kind Specifies how the boolean mask is treated (retentions or deletions)
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource used to allocate the returned column's device memory
+ * @return A lists column containing the elements selected by @p boolean_mask and @p mask_kind
  */
 std::unique_ptr<column> apply_mask(lists_column_view const& input,
                                    lists_column_view const& boolean_mask,

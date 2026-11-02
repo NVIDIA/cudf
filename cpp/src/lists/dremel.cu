@@ -7,6 +7,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/algorithms/copy_if.cuh>
 #include <cudf/detail/iterator.cuh>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/lists/detail/dremel.hpp>
@@ -16,13 +17,13 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/tuple>
 #include <thrust/execution_policy.h>
 #include <thrust/for_each.h>
 #include <thrust/gather.h>
-#include <thrust/host_vector.h>
 
 #include <functional>
 
@@ -80,8 +81,10 @@ dremel_data get_encoding(column_view h_col,
 
   auto get_empties = [&](column_view col, size_type start, size_type end) {
     auto lcv = lists_column_view(get_list_level(col));
-    rmm::device_uvector<size_type> empties_idx(lcv.size(), stream);
-    rmm::device_uvector<size_type> empties(lcv.size(), stream);
+    cuda::device_buffer<size_type> empties_idx(
+      stream, cudf::get_current_device_resource_ref(), lcv.size(), cuda::no_init);
+    cuda::device_buffer<size_type> empties(
+      stream, cudf::get_current_device_resource_ref(), lcv.size(), cuda::no_init);
     auto d_off = lcv.offsets().data<int32_t>();
 
     auto empties_idx_end = cudf::detail::copy_if(
@@ -218,8 +221,10 @@ dremel_data get_encoding(column_view h_col,
   max_def_level += def_at_level.back();
 
   // Sliced list column views only have offsets applied to top level. Get offsets for each level.
-  rmm::device_uvector<size_type> d_column_offsets(nesting_levels.size(), stream);
-  rmm::device_uvector<size_type> d_column_ends(nesting_levels.size(), stream);
+  cuda::device_buffer<size_type> d_column_offsets(
+    stream, cudf::get_current_device_resource_ref(), nesting_levels.size(), cuda::no_init);
+  cuda::device_buffer<size_type> d_column_ends(
+    stream, cudf::get_current_device_resource_ref(), nesting_levels.size(), cuda::no_init);
 
   auto d_col = column_device_view::create(h_col, stream);
   cudf::detail::device_single_thread(
@@ -262,14 +267,16 @@ dremel_data get_encoding(column_view h_col,
     max_vals_size += column_ends[l] - column_offsets[l];
   }
 
-  auto d_nullability = cudf::detail::make_device_uvector_async(
+  auto d_nullability = cudf::detail::make_device_buffer_async(
     nullability, stream, cudf::get_current_device_resource_ref());
 
   rmm::device_uvector<uint8_t> rep_level(max_vals_size, stream);
   rmm::device_uvector<uint8_t> def_level(max_vals_size, stream);
 
-  rmm::device_uvector<uint8_t> temp_rep_vals(max_vals_size, stream);
-  rmm::device_uvector<uint8_t> temp_def_vals(max_vals_size, stream);
+  // Use max_vals_size only for nested lists; otherwise no temporary values are needed.
+  auto const temp_vals_size = nesting_levels.size() > 2 ? max_vals_size : size_t{0};
+  rmm::device_uvector<uint8_t> temp_rep_vals(temp_vals_size, stream);
+  rmm::device_uvector<uint8_t> temp_def_vals(temp_vals_size, stream);
   rmm::device_uvector<size_type> new_offsets(0, stream);
   size_type curr_rep_values_size = 0;
   {
@@ -338,7 +345,8 @@ dremel_data get_encoding(column_view h_col,
                                        size = lcv.offsets().size()] __device__(auto i) -> int {
         return (i + 1 < size) && (off[i] == off[i + 1]);
       }));
-    rmm::device_uvector<size_type> scan_out(offset_size_at_level, stream);
+    cuda::device_buffer<size_type> scan_out(
+      stream, cudf::get_current_device_resource_ref(), offset_size_at_level, cuda::no_init);
     thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                            scan_it,
                            scan_it + offset_size_at_level,
@@ -428,7 +436,8 @@ dremel_data get_encoding(column_view h_col,
                                        size = lcv.offsets().size()] __device__(auto i) -> int {
         return (i + 1 < size) && (off[i] == off[i + 1]);
       }));
-    rmm::device_uvector<size_type> scan_out(offset_size_at_level, stream);
+    cuda::device_buffer<size_type> scan_out(
+      stream, cudf::get_current_device_resource_ref(), offset_size_at_level, cuda::no_init);
     thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                            scan_it,
                            scan_it + offset_size_at_level,

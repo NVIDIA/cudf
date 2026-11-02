@@ -10,6 +10,7 @@
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
 import datetime
+import os
 
 import dask_cudf
 from packaging.version import Version
@@ -31,12 +32,16 @@ language = "en"
 extensions = [
     "sphinx.ext.intersphinx",
     "sphinx.ext.autodoc",
+    "sphinx.ext.autosectionlabel",
     "sphinx_copybutton",
     "numpydoc",
     "IPython.sphinxext.ipython_console_highlighting",
     "IPython.sphinxext.ipython_directive",
     "myst_nb",
 ]
+
+# Disambiguate section anchors across documents
+autosectionlabel_prefix_document = True
 
 templates_path = ["_templates"]
 exclude_patterns = []
@@ -54,30 +59,42 @@ html_theme = "nvidia_sphinx_theme"
 htmlhelp_basename = "dask-cudfdoc"
 html_use_modindex = True
 
-html_static_path = ["_static"]
+html_static_path = []
 
 pygments_style = "sphinx"
 
 html_theme_options = {
+    "public_docs_features": os.environ.get("CI") == "true",
     "external_links": [],
     "github_url": "https://github.com/NVIDIA/cudf",
     "show_toc_level": 1,
     "navbar_align": "right",
     "navbar_center": "navbar-nav, version-switcher, navbar-external-links",
     "navigation_with_keys": True,
+    "switcher": {
+        "json_url": "https://docs.nvidia.com/dask-cudf/versions.json",
+        "version_match": version,
+    },
 }
 include_pandas_compat = True
+
+with open("../../../RAPIDS_BRANCH", "r") as f:
+    branch = f.read().strip()
+intersphinx_version = "latest" if branch == "main" else version
 
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3/", None),
     "cupy": ("https://docs.cupy.dev/en/stable/", None),
     "numpy": ("https://numpy.org/doc/stable/", None),
     "pyarrow": ("https://arrow.apache.org/docs/", None),
-    "cudf": ("https://docs.rapids.ai/api/cudf/stable/", None),
+    "cudf": (f"https://docs.nvidia.com/cudf/{intersphinx_version}/", None),
     "dask": ("https://docs.dask.org/en/stable/", None),
-    # Temporarily disable pandas intersphinx: https://github.com/pandas-dev/pandas/issues/64584
-    # "pandas": ("https://pandas.pydata.org/docs/", None),
-    "dask-cuda": ("https://docs.rapids.ai/api/dask-cuda/stable/", None),
+    "pandas": ("https://pandas.pydata.org/docs/", None),
+    "dask-cuda": (
+        f"https://docs.nvidia.com/dask-cuda/{intersphinx_version}/",
+        None,
+    ),
+    "rmm": (f"https://docs.nvidia.com/rmm/{intersphinx_version}/", None),
 }
 
 numpydoc_show_inherited_class_members = True

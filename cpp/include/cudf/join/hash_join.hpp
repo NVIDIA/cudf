@@ -52,16 +52,6 @@ class hash_join;
 }  // namespace detail
 
 /**
- * @brief The enum class to specify if any of the input join tables (`right` table and any later
- * `left` table) has nulls.
- *
- * This is used upon hash_join object construction to specify the existence of nulls in all the
- * possible input tables. If such null existence is unknown, `YES` should be used as the default
- * option.
- */
-enum class nullable_join : bool { YES, NO };
-
-/**
  * @brief Hash join that builds a hash table with the right table on construction and probes
  * results in subsequent `*_join` member functions.
  *
@@ -127,14 +117,18 @@ class hash_join {
 
   /**
    * Returns the row indices that can be used to construct the result of performing
-   * an inner join between two tables. @see cudf::inner_join(). Behavior is undefined if the
-   * provided `output_size` is smaller than the actual output size.
+   * an inner join between two tables. @see cudf::inner_join().
    *
    * @throw std::invalid_argument If the input left table has nulls while this hash_join object was
    * not constructed with null check.
+   * @throw cudf::logic_error If `output_size` is provided and does not equal the actual output
+   * size.
    *
    * @param left The left table, from which the tuples are probed
-   * @param output_size Optional value which allows users to specify the exact output size
+   * @param output_size Optional value which allows users to specify the exact output size.
+   * Supplying it no longer avoids any work: the output size is always computed internally and
+   * the supplied value is only validated against it.  Prefer omitting it; it will be deprecated
+   * and removed in a future release.
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @param mr Device memory resource used to allocate the returned table and columns' device
    * memory.
@@ -152,14 +146,18 @@ class hash_join {
 
   /**
    * Returns the row indices that can be used to construct the result of performing
-   * a left join between two tables. @see cudf::left_join(). Behavior is undefined if the
-   * provided `output_size` is smaller than the actual output size.
+   * a left join between two tables. @see cudf::left_join().
    *
    * @throw std::invalid_argument If the input left table has nulls while this hash_join object was
    * not constructed with null check.
+   * @throw cudf::logic_error If `output_size` is provided and does not equal the actual output
+   * size.
    *
    * @param left The left table, from which the tuples are probed
-   * @param output_size Optional value which allows users to specify the exact output size
+   * @param output_size Optional value which allows users to specify the exact output size.
+   * Supplying it no longer avoids any work: the output size is always computed internally and
+   * the supplied value is only validated against it.  Prefer omitting it; it will be deprecated
+   * and removed in a future release.
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @param mr Device memory resource used to allocate the returned table and columns' device
    * memory.
@@ -177,14 +175,18 @@ class hash_join {
 
   /**
    * Returns the row indices that can be used to construct the result of performing
-   * a full join between two tables. @see cudf::full_join(). Behavior is undefined if the
-   * provided `output_size` is smaller than the actual output size.
+   * a full join between two tables. @see cudf::full_join().
    *
    * @throw std::invalid_argument If the input left table has nulls while this hash_join object was
    * not constructed with null check.
+   * @throw cudf::logic_error If `output_size` is provided and does not equal the actual output
+   * size.
    *
    * @param left The left table, from which the tuples are probed
-   * @param output_size Optional value which allows users to specify the exact output size
+   * @param output_size Optional value which allows users to specify the exact output size.
+   * Supplying it no longer avoids any work: the output size is always computed internally and
+   * the supplied value is only validated against it.  Prefer omitting it; it will be deprecated
+   * and removed in a future release.
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @param mr Device memory resource used to allocate the returned table and columns' device
    * memory.

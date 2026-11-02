@@ -17,6 +17,9 @@ from cudf.testing._utils import (
 )
 from cudf.utils.dtypes import find_common_type
 
+PANDAS_MERGE_HOWS = ("left", "inner", "outer", "right")
+PANDAS_MERGE_HOWS_WITH_CROSS = (*PANDAS_MERGE_HOWS, "cross")
+
 
 @pytest.fixture(
     params=(
@@ -219,9 +222,8 @@ def test_dataframe_merge_order():
         ("a", "a"),
     ],
 )
+@pytest.mark.parametrize("how", PANDAS_MERGE_HOWS_WITH_CROSS)
 def test_dataframe_pairs_of_triples(pairs, how):
-    if how in {"leftsemi", "leftanti"}:
-        pytest.skip(f"{how} not implemented in pandas")
     rng = np.random.default_rng(seed=0)
 
     pdf_left = pd.DataFrame()
@@ -232,17 +234,10 @@ def test_dataframe_pairs_of_triples(pairs, how):
         pdf_right[right_column] = rng.integers(0, 10, 10)
     gdf_left = cudf.from_pandas(pdf_left)
     gdf_right = cudf.from_pandas(pdf_right)
-    if not set(pdf_left.columns).intersection(pdf_right.columns):
-        with pytest.raises(
-            pd.errors.MergeError,
-            match="No common columns to perform merge on",
-        ):
-            pdf_left.merge(pdf_right)
-        with pytest.raises(
-            ValueError, match="No common columns to perform merge on"
-        ):
-            gdf_left.merge(gdf_right)
-    elif not [value for value in pdf_left if value in pdf_right]:
+    if (
+        not set(pdf_left.columns).intersection(pdf_right.columns)
+        and how != "cross"
+    ):
         with pytest.raises(
             pd.errors.MergeError,
             match="No common columns to perform merge on",
@@ -287,9 +282,8 @@ def test_safe_merging_with_left_empty():
 
 @pytest.mark.parametrize("left_empty", [True, False])
 @pytest.mark.parametrize("right_empty", [True, False])
+@pytest.mark.parametrize("how", PANDAS_MERGE_HOWS_WITH_CROSS)
 def test_empty_joins(how, left_empty, right_empty):
-    if how in {"leftsemi", "leftanti"}:
-        pytest.skip(f"{how} not implemented in pandas")
 
     pdf = pd.DataFrame({"x": [1, 2, 3]})
 
@@ -450,15 +444,46 @@ def test_merge_numeric_vs_string_key_raises():
 
 
 def test_merge_unmatched_rows_upcast_int_to_float():
-    # Unmatched rows introduce NaN, upcasting a numpy integer column to
-    # float64 (matching pandas).
+    # In pandas-compatible mode, unmatched rows introduce NaN, upcasting a
+    # numpy integer column to float64 (matching pandas).
     left = cudf.DataFrame({"key": [1, 2, 3], "a": [1, 2, 3]})
     right = cudf.DataFrame({"key": [1, 2], "b": [4, 5]})
-    got = left.merge(right, on="key", how="left")
+    with cudf.option_context("mode.pandas_compatible", True):
+        got = left.merge(right, on="key", how="left")
     assert got["b"].dtype == np.dtype("float64")
     assert_eq(
         left.to_pandas().merge(right.to_pandas(), on="key", how="left"), got
     )
+
+
+@pytest.mark.parametrize("dtype", ["int64", "uint64", "int32"])
+def test_merge_unmatched_rows_keep_int(dtype):
+    # Outside pandas-compatible mode, unmatched rows become nulls in the
+    # integer column, so values that float64 cannot represent survive.
+    big = np.iinfo(dtype).max
+    left = cudf.DataFrame({"key": [1, 2]})
+    right = cudf.DataFrame({"key": [1], "b": cudf.Series([big], dtype=dtype)})
+    got = left.merge(right, on="key", how="left")
+    expect = cudf.DataFrame(
+        {"key": [1, 2], "b": cudf.Series([big, None], dtype=dtype)}
+    )
+    assert_eq(expect, got)
+
+
+@pytest.mark.parametrize("pandas_compatible", [False, True])
+def test_merge_left_on_right_index_mapped_index_dtype(pandas_compatible):
+    # The mapped index of a single-flag mixed merge is upcast to float64 in
+    # pandas-compatible mode, and otherwise keeps its integer dtype and
+    # values; 2**62 + 1 is not representable in float64.
+    left = cudf.DataFrame({"key": [0, 9]}, index=[2**62 + 1, 2**62 + 3])
+    right = cudf.DataFrame({"b": [1, 2]})
+    with cudf.option_context("mode.pandas_compatible", pandas_compatible):
+        got = left.merge(right, left_on="key", right_index=True, how="right")
+    if pandas_compatible:
+        assert got.index.dtype == np.dtype("float64")
+    else:
+        assert got.index.dtype == np.dtype("int64")
+        assert got.index.to_arrow().to_pylist() == [2**62 + 1, None]
 
 
 def test_merge_differently_named_keys_keep_own_dtype():
@@ -819,55 +844,6 @@ def test_typecast_on_join_float_to_float(
     assert_join_results_equal(expect, got, how="inner")
 
 
-@pytest.fixture
-def numeric_types_as_str2(numeric_types_as_str):
-    return numeric_types_as_str
-
-
-def test_typecast_on_join_mixed_int_float(
-    numeric_types_as_str, numeric_types_as_str2
-):
-    if (
-        ("int" in numeric_types_as_str or "long" in numeric_types_as_str)
-        and ("int" in numeric_types_as_str2 or "long" in numeric_types_as_str2)
-    ) or (
-        "float" in numeric_types_as_str and "float" in numeric_types_as_str2
-    ):
-        pytest.skip("like types not tested in this function")
-
-    other_data = ["a", "b", "c", "d", "e", "f"]
-
-    join_data_l = cudf.Series(
-        [1, 2, 3, 0.9, 4.5, 6], dtype=numeric_types_as_str
-    )
-    join_data_r = cudf.Series(
-        [1, 2, 3, 0.9, 4.5, 7], dtype=numeric_types_as_str2
-    )
-
-    gdf_l = cudf.DataFrame({"join_col": join_data_l, "B": other_data})
-    gdf_r = cudf.DataFrame({"join_col": join_data_r, "B": other_data})
-
-    exp_dtype = find_common_type(
-        (np.dtype(numeric_types_as_str), np.dtype(numeric_types_as_str2))
-    )
-
-    exp_join_data = [1, 2, 3]
-    exp_other_data = ["a", "b", "c"]
-    exp_join_col = cudf.Series(exp_join_data, dtype=exp_dtype)
-
-    expect = cudf.DataFrame(
-        {
-            "join_col": exp_join_col,
-            "B_x": exp_other_data,
-            "B_y": exp_other_data,
-        }
-    )
-
-    got = gdf_l.merge(gdf_r, on="join_col", how="inner")
-
-    assert_join_results_equal(expect, got, how="inner")
-
-
 def test_typecast_on_join_no_float_round():
     other_data = ["a", "b", "c", "d", "e"]
 
@@ -1121,14 +1097,12 @@ def test_typecast_on_join_dt_to_dt(
     assert_join_results_equal(expect, got, how="inner")
 
 
-@pytest.mark.parametrize("dtype_l", ["category", "str", "int32", "float32"])
-@pytest.mark.parametrize("dtype_r", ["category", "str", "int32", "float32"])
+@pytest.mark.parametrize(
+    "dtype_l,dtype_r",
+    [("category", dtype) for dtype in ["str", "int32", "float32"]]
+    + [(dtype, "category") for dtype in ["str", "int32", "float32"]],
+)
 def test_typecast_on_join_categorical(dtype_l, dtype_r):
-    if not (dtype_l == "category" or dtype_r == "category"):
-        pytest.skip("at least one side must be category for this set of tests")
-    if dtype_l == "category" and dtype_r == "category":
-        pytest.skip("Can't determine which categorical to use")
-
     other_data = ["a", "b", "c", "d", "e"]
     join_data_l = cudf.Series([1, 2, 3, 4, 5], dtype=dtype_l)
     join_data_r = cudf.Series([1, 2, 3, 4, 6], dtype=dtype_r)
@@ -1449,9 +1423,8 @@ def test_merge_datetime_timedelta_error(temporal_types_as_str):
         df1.merge(df2)
 
 
+@pytest.mark.parametrize("how", PANDAS_MERGE_HOWS)
 def test_join_ordering_pandas_compat(request, sort, how):
-    if how in ["leftanti", "leftsemi", "cross"]:
-        pytest.skip(f"Test not applicable for {how}")
     left_key = [1, 3, 2, 1, 1, 2, 5, 1, 4, 5, 8, 12, 12312, 1] * 100
     left_val = range(len(left_key))
     left = cudf.DataFrame({"key": left_key, "val": left_val})
@@ -1473,6 +1446,7 @@ def test_join_ordering_pandas_compat(request, sort, how):
 @pytest.mark.parametrize("left_monotonic", [True, False])
 @pytest.mark.parametrize("right_unique", [True, False])
 @pytest.mark.parametrize("right_monotonic", [True, False])
+@pytest.mark.parametrize("how", PANDAS_MERGE_HOWS)
 def test_merge_combinations(
     request,
     how,
@@ -1483,8 +1457,6 @@ def test_merge_combinations(
     right_unique,
     right_monotonic,
 ):
-    if how in ["leftanti", "leftsemi", "cross"]:
-        pytest.skip(f"Test not applicable for {how}")
     request.applymarker(
         pytest.mark.xfail(
             condition=how == "outer"

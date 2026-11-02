@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from enum import IntEnum
@@ -6,7 +6,6 @@ from enum import IntEnum
 from rmm.pylibrmm.memory_resource import DeviceMemoryResource
 
 from pylibcudf.column import Column
-from pylibcudf.expressions import Expression
 from pylibcudf.table import Table
 from pylibcudf.types import NanEquality, NullEquality
 from pylibcudf.utils import CudaStreamLike
@@ -28,6 +27,12 @@ def drop_nans(
     source_table: Table,
     keys: list[int],
     keep_threshold: int,
+    stream: CudaStreamLike | None = None,
+    mr: DeviceMemoryResource | None = None,
+) -> Table: ...
+def apply_retention_mask(
+    source_table: Table,
+    retention_mask: Column,
     stream: CudaStreamLike | None = None,
     mr: DeviceMemoryResource | None = None,
 ) -> Table: ...
@@ -74,13 +79,6 @@ def stable_distinct(
     keep: DuplicateKeepOption,
     nulls_equal: NullEquality,
     nans_equal: NanEquality,
-    stream: CudaStreamLike | None = None,
-    mr: DeviceMemoryResource | None = None,
-) -> Table: ...
-def filter(
-    predicate_table: Table,
-    predicate_expr: Expression,
-    filter_table: Table,
     stream: CudaStreamLike | None = None,
     mr: DeviceMemoryResource | None = None,
 ) -> Table: ...

@@ -12,8 +12,9 @@
 #include <cudf_streaming/channel_metadata.hpp>
 #include <cudf_streaming/table_chunk.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
+
+#include <cuda/stream>
 
 #include <rapidsmpf/memory/buffer_resource.hpp>
 
@@ -36,6 +37,21 @@ TEST_F(StreamingChannelMetadata, HashScheme)
   EXPECT_EQ(h, (hash_scheme{{0, 1}, 16}));
   EXPECT_NE(h, (hash_scheme{{0, 1}, 32}));
   EXPECT_NE(h, (hash_scheme{{2}, 16}));
+}
+
+TEST_F(StreamingChannelMetadata, RowOrdering)
+{
+  order_key key{1, cudf::order::ASCENDING, cudf::null_order::BEFORE};
+  row_ordering ordering{{key}, row_ordering_scope::RANK_LOCAL, {0}};
+
+  EXPECT_EQ(ordering.order_keys, (std::vector<order_key>{key}));
+  EXPECT_EQ(ordering.scope, row_ordering_scope::RANK_LOCAL);
+  EXPECT_EQ(ordering.group_keys, (std::vector<cudf::size_type>{0}));
+  EXPECT_EQ(ordering, (row_ordering{{key}, row_ordering_scope::RANK_LOCAL, {0}}));
+  EXPECT_THROW(static_cast<void>(row_ordering{{}, row_ordering_scope::GLOBAL}),
+               std::invalid_argument);
+  EXPECT_THROW(static_cast<void>(row_ordering{{key}, row_ordering_scope::GLOBAL, {1}}),
+               std::invalid_argument);
 }
 
 TEST_F(StreamingChannelMetadata, OrderSchemeCtorRejectsEmptyKeys)
@@ -125,6 +141,7 @@ TEST_F(StreamingChannelMetadata, ChannelMetadata)
   channel_metadata m_minimal{4};
   EXPECT_EQ(m_minimal.local_count, 4);
   EXPECT_FALSE(m_minimal.duplicated);
+  EXPECT_TRUE(m_minimal.partitioning.row_orderings.empty());
 
   // Equality - create fresh partitionings and move them
   channel_metadata m_same{
@@ -144,9 +161,11 @@ TEST_F(StreamingChannelMetadata, ChannelMetadata)
 
 TEST_F(StreamingChannelMetadata, MessageRoundTrip)
 {
+  order_key key{1, cudf::order::ASCENDING, cudf::null_order::BEFORE};
+  row_ordering expected{{key}, row_ordering_scope::RANK_LOCAL, {0}};
   // channel_metadata round-trip
-  partitioning part{partitioning_spec::from_hash(hash_scheme{{0}, 16}),
-                    partitioning_spec::inherit()};
+  partitioning part{
+    partitioning_spec::from_hash(hash_scheme{{0}, 16}), partitioning_spec::inherit(), {expected}};
   auto m     = std::make_unique<channel_metadata>(4, std::move(part), false);
   auto msg_m = to_message(99, std::move(m));
   EXPECT_EQ(msg_m.sequence_number(), 99);
@@ -155,24 +174,27 @@ TEST_F(StreamingChannelMetadata, MessageRoundTrip)
   EXPECT_EQ(released.local_count, 4);
   EXPECT_FALSE(released.duplicated);
   EXPECT_EQ(released.partitioning.inter_rank.hash->modulus, 16);
+  ASSERT_EQ(released.partitioning.row_orderings.size(), 1);
+  EXPECT_EQ(released.partitioning.row_orderings.front(), expected);
   EXPECT_TRUE(msg_m.empty());
 }
 
 class StreamingChannelMetadataGPU : public ::testing::Test {
  protected:
-  rmm::cuda_stream_view stream{cudf::get_default_stream()};
+  cuda::stream_ref stream{cudf::get_default_stream()};
   std::shared_ptr<rapidsmpf::BufferResource> br =
     rapidsmpf::BufferResource::create(cudf::get_current_device_resource_ref());
 
   std::shared_ptr<table_chunk> make_chunk(std::vector<int32_t> vals)
   {
     rmm::device_buffer buf(vals.data(), vals.size() * sizeof(int32_t), stream);
-    stream.synchronize();
-    auto col = std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::INT32},
-                                              static_cast<cudf::size_type>(vals.size()),
-                                              std::move(buf),
-                                              rmm::device_buffer{},
-                                              0);
+    stream.sync();
+    auto col =
+      std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::INT32},
+                                     static_cast<cudf::size_type>(vals.size()),
+                                     std::move(buf),
+                                     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                     0);
     std::vector<std::unique_ptr<cudf::column>> cols;
     cols.push_back(std::move(col));
     return std::make_shared<table_chunk>(std::make_unique<cudf::table>(std::move(cols)), stream);
@@ -196,6 +218,19 @@ TEST_F(StreamingChannelMetadataGPU, OrderingReplaceKeys)
   EXPECT_NE(o1.keys[0].column_index, o2.keys[0].column_index);
 
   EXPECT_THROW(static_cast<void>(o1.with_keys({k0, k5})), std::invalid_argument);
+}
+
+TEST_F(StreamingChannelMetadataGPU, OrderingAsStrict)
+{
+  order_key k0{0, cudf::order::ASCENDING, cudf::null_order::BEFORE};
+  ordering input({k0}, make_chunk({100, 100, 200}), /*strict_boundaries=*/false);
+  ordering expected({k0}, make_chunk({100, 200}), /*strict_boundaries=*/true);
+
+  auto result = input.as_strict(*br);
+
+  EXPECT_EQ(result.keys, input.keys);
+  EXPECT_TRUE(result.strict_boundaries);
+  EXPECT_TRUE(result.boundaries_aligned_with(expected, *br));
 }
 
 TEST_F(StreamingChannelMetadataGPU, OrderSchemeMultipleOrderings)

@@ -28,9 +28,7 @@
 #include <cuda/std/limits>
 #include <cuda/std/utility>
 #include <cuda/stream>
-#include <thrust/binary_search.h>
 #include <thrust/fill.h>
-#include <thrust/for_each.h>
 #include <thrust/transform.h>
 
 namespace cudf {
@@ -263,8 +261,12 @@ std::unique_ptr<column> find(strings_column_view const& input,
   CUDF_EXPECTS(input.size() == target.size(), "input and target columns must be the same size");
 
   // create output column
-  auto results = make_numeric_column(
-    data_type{type_to_id<size_type>()}, input.size(), rmm::device_buffer{}, 0, stream, mr);
+  auto results = make_numeric_column(data_type{type_to_id<size_type>()},
+                                     input.size(),
+                                     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                     0,
+                                     stream,
+                                     mr);
   // if input is empty or all-null then we are done
   if (input.size() == input.null_count()) { return results; }
 

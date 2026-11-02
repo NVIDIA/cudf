@@ -56,11 +56,12 @@ from pylibcudf.types cimport DataType
 from pylibcudf.variant cimport get_if, holds_alternative
 
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING, TypeVar
 
 if TYPE_CHECKING:
     from pylibcudf.typing import CudaStreamLike
 
+T = TypeVar("T")
 
 __all__ = [
     "OrcColumnStatistics",
@@ -90,13 +91,13 @@ cdef class OrcColumnStatistics:
     __hash__ = None
 
     @property
-    def number_of_values(self):
+    def number_of_values(self) -> int | None:
         if self.number_of_values_c.has_value():
             return self.number_of_values_c.value()
         return None
 
     @property
-    def has_null(self):
+    def has_null(self) -> bool | None:
         if self.has_null_c.has_value():
             return self.has_null_c.value()
         return None
@@ -212,13 +213,13 @@ cdef class OrcColumnStatistics:
         else:
             raise ValueError("Unsupported statistics type")
 
-    def __getitem__(self, item):
+    def __getitem__(self, item: str) -> Any:
         return self.column_stats[item]
 
-    def __contains__(self, item):
+    def __contains__(self, item: str) -> bool:
         return item in self.column_stats
 
-    def get(self, item, default=None):
+    def get(self, item: str, default: None | T = None) -> T | None:
         return self.column_stats.get(item, default)
 
     @staticmethod
@@ -241,18 +242,18 @@ cdef class ParsedOrcStatistics:
     __hash__ = None
 
     @property
-    def column_names(self):
+    def column_names(self) -> list[str]:
         return [name.decode() for name in self.c_obj.column_names]
 
     @property
-    def file_stats(self):
+    def file_stats(self) -> list[OrcColumnStatistics]:
         return [
             OrcColumnStatistics.from_libcudf(self.c_obj.file_stats[i])
             for i in range(self.c_obj.file_stats.size())
         ]
 
     @property
-    def stripes_stats(self):
+    def stripes_stats(self) -> list[list[OrcColumnStatistics]]:
         return [
             [
                 OrcColumnStatistics.from_libcudf(stripe_stats_c[i])
@@ -473,7 +474,7 @@ cpdef TableWithMetadata read_orc(
     """
     cdef table_with_metadata c_result
     cdef Stream s = _get_stream(stream)
-    cdef cudaStream_t _cs = s.view().value()
+    cdef cudaStream_t _cs = s.view().get()
     mr = _get_memory_resource(mr)
     with nogil:
         c_result = move(cpp_read_orc(options.c_obj, _cs, mr.get_mr()))
@@ -502,7 +503,7 @@ cpdef ParsedOrcStatistics read_parsed_orc_statistics(
     """
     cdef Stream s = _get_stream(stream)
     cdef parsed_orc_statistics parsed
-    cdef cudaStream_t _cs = s.view().value()
+    cdef cudaStream_t _cs = s.view().get()
     with nogil:
         parsed = cpp_read_parsed_orc_statistics(source_info.c_obj, _cs)
     return ParsedOrcStatistics.from_libcudf(parsed)
@@ -701,7 +702,7 @@ cpdef void write_orc(OrcWriterOptions options, object stream: CudaStreamLike | N
     None
     """
     cdef Stream s = _get_stream(stream)
-    cdef cudaStream_t _cs = s.view().value()
+    cdef cudaStream_t _cs = s.view().get()
     with nogil:
         cpp_write_orc(move(options.c_obj), _cs)
 
@@ -758,7 +759,7 @@ cdef class OrcChunkedWriter:
             OrcChunkedWriter
         )
         cdef Stream s = _get_stream(stream)
-        cdef cudaStream_t _cs = s.view().value()
+        cdef cudaStream_t _cs = s.view().get()
         orc_writer.c_obj.reset(new orc_chunked_writer(options.c_obj, _cs))
         return orc_writer
 

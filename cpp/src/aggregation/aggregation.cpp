@@ -5,7 +5,9 @@
 
 #include <cudf/aggregation.hpp>
 #include <cudf/detail/aggregation/aggregation.hpp>
+#include <cudf/types.hpp>
 #include <cudf/utilities/export.hpp>
+#include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <memory>
@@ -427,23 +429,6 @@ template CUDF_EXPORT std::unique_ptr<aggregation> make_lead_aggregation<aggregat
   size_type offset);
 template CUDF_EXPORT std::unique_ptr<rolling_aggregation>
 make_lead_aggregation<rolling_aggregation>(size_type offset);
-
-/// Factory to create a UDF aggregation
-template <typename Base>
-std::unique_ptr<Base> make_udf_aggregation(udf_source_type type,
-                                           std::string const& user_defined_aggregator,
-                                           data_type output_type)
-{
-  auto* a =
-    new detail::udf_aggregation{type == udf_source_type::PTX ? aggregation::PTX : aggregation::CUDA,
-                                user_defined_aggregator,
-                                output_type};
-  return std::unique_ptr<detail::udf_aggregation>(a);
-}
-template CUDF_EXPORT std::unique_ptr<aggregation> make_udf_aggregation<aggregation>(
-  udf_source_type type, std::string const& user_defined_aggregator, data_type output_type);
-template CUDF_EXPORT std::unique_ptr<rolling_aggregation> make_udf_aggregation<rolling_aggregation>(
-  udf_source_type type, std::string const& user_defined_aggregator, data_type output_type);
 
 /// Factory to create a MERGE_LISTS aggregation
 template <typename Base>

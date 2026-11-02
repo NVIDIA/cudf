@@ -48,7 +48,7 @@ TEST_F(ByteCastTest, int16ValuesWithNulls)
   auto [null_mask, null_count] = cudf::test::detail::make_null_mask(odd_validity, odd_validity + 5);
   auto int16_expected          = cudf::make_lists_column(
     5,
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 0, 2, 2, 4, 4}.release(),
+    cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 2, 2, 4, 4}.release(),
     int16_data.release(),
     null_count,
     std::move(null_mask));
@@ -95,7 +95,7 @@ TEST_F(ByteCastTest, int32ValuesWithNulls)
 
   auto int32_expected = cudf::make_lists_column(
     5,
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 4, 4, 8, 8, 12}.release(),
+    cudf::test::fixed_width_column_wrapper<int32_t>{0, 4, 4, 8, 8, 12}.release(),
     int32_data.release(),
     null_count,
     std::move(null_mask));
@@ -148,7 +148,7 @@ TEST_F(ByteCastTest, int64ValuesWithNulls)
   auto [null_mask, null_count] = cudf::test::detail::make_null_mask(odd_validity, odd_validity + 5);
   auto int64_expected          = cudf::make_lists_column(
     5,
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 0, 8, 8, 16, 16}.release(),
+    cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 8, 8, 16, 16}.release(),
     int64_data.release(),
     null_count,
     std::move(null_mask));
@@ -209,7 +209,7 @@ TEST_F(ByteCastTest, fp32ValuesWithNulls)
     cudf::test::detail::make_null_mask(even_validity, even_validity + 5);
   auto fp32_expected = cudf::make_lists_column(
     5,
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 4, 4, 8, 8, 12}.release(),
+    cudf::test::fixed_width_column_wrapper<int32_t>{0, 4, 4, 8, 8, 12}.release(),
     fp32_data.release(),
     null_count,
     std::move(null_mask));
@@ -279,7 +279,7 @@ TEST_F(ByteCastTest, fp64ValuesWithNulls)
   auto [null_mask, null_count] = cudf::test::detail::make_null_mask(odd_validity, odd_validity + 5);
   auto fp64_expected           = cudf::make_lists_column(
     5,
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 0, 8, 8, 16, 16}.release(),
+    cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 8, 8, 16, 16}.release(),
     fp64_data.release(),
     null_count,
     std::move(null_mask));

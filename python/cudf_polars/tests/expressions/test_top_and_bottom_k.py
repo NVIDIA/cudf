@@ -12,6 +12,10 @@ from cudf_polars.testing.asserts import (
     assert_ir_translation_raises,
 )
 
+# One partial result exercises selection; full and overfull requests cover the
+# separate "all rows" behavior without repeating intermediate result lengths.
+K_CASES = [0, 1, 4, 5]
+
 
 @pytest.fixture
 def df():
@@ -27,21 +31,21 @@ def df():
 
 
 @pytest.mark.parametrize("col", ["test", "bool_val", "str_value", "col_with_nulls"])
-@pytest.mark.parametrize("k", [0, 1, 2, 3, 4])
+@pytest.mark.parametrize("k", K_CASES)
 def test_top_k(engine: pl.GPUEngine, df, col, k):
     q = df.select(pl.col(col).top_k(k))
     assert_gpu_result_equal(q, engine=engine, check_row_order=False)
 
 
 @pytest.mark.parametrize("col", ["test", "bool_val", "str_value", "col_with_nulls"])
-@pytest.mark.parametrize("k", [0, 1, 2, 3, 4])
+@pytest.mark.parametrize("k", K_CASES)
 def test_bottom_k(engine: pl.GPUEngine, df, col, k):
     q = df.select(pl.col(col).bottom_k(k))
     assert_gpu_result_equal(q, engine=engine, check_row_order=False)
 
 
 @pytest.mark.parametrize("by", ["val", "str_value", "col_with_nulls"])
-@pytest.mark.parametrize("k", [0, 1, 2, 3, 4, 5])
+@pytest.mark.parametrize("k", K_CASES)
 @pytest.mark.parametrize("reverse", [False, True])
 def test_top_k_by(engine: pl.GPUEngine, df, by, k, reverse):
     q = df.select(pl.col("test").top_k_by(by, k, reverse=reverse))
@@ -49,16 +53,16 @@ def test_top_k_by(engine: pl.GPUEngine, df, by, k, reverse):
 
 
 @pytest.mark.parametrize("by", ["val", "str_value", "col_with_nulls"])
-@pytest.mark.parametrize("k", [0, 1, 2, 3, 4, 5])
+@pytest.mark.parametrize("k", K_CASES)
 @pytest.mark.parametrize("reverse", [False, True])
 def test_bottom_k_by(engine: pl.GPUEngine, df, by, k, reverse):
     q = df.select(pl.col("test").bottom_k_by(by, k, reverse=reverse))
     assert_gpu_result_equal(q, engine=engine, check_row_order=False)
 
 
-def test_top_k_by_multiple_by_unsupported(engine: pl.GPUEngine, df):
+def test_top_k_by_multiple_by_unsupported(in_memory_engine, df):
     q = df.select(pl.col("test").top_k_by(["val", "str_value"], 2))
-    assert_ir_translation_raises(q, engine, NotImplementedError)
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 
 
 @pytest.mark.parametrize(
@@ -99,3 +103,32 @@ def test_bottom_k_expr_k(engine: pl.GPUEngine, df, k_expr):
 def test_top_k_by_expr_k(engine: pl.GPUEngine, df, k_expr, reverse):
     q = df.select(pl.col("val").top_k_by("col_with_nulls", k_expr, reverse=reverse))
     assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
+@pytest.mark.parametrize("k_expr", [pl.col("test").max(), pl.lit(2.0)])
+def test_top_k_by_scalar_key(engine: pl.GPUEngine, df, k_expr):
+    # With only scalar keys every row ties, so only the row count is defined.
+    q = df.select(pl.col("val").top_k_by(pl.col("test").max(), k_expr))
+    got = q.collect(engine=engine)["val"]
+    expect = q.collect()["val"]
+    assert got.len() == expect.len()
+    assert set(got) <= set(df.collect()["val"])
+
+
+@pytest.mark.parametrize(
+    "k_expr",
+    [
+        pl.lit(None, dtype=pl.Int64),
+        pl.lit(-1),
+        pl.lit(float("nan")),
+        pl.lit("a"),
+        pl.lit(pl.Series([], dtype=pl.Int64)),
+        pl.lit(pl.Series([1, 2])),
+    ],
+)
+@pytest.mark.parametrize("method", ["top_k", "top_k_by"])
+def test_top_k_invalid_k_raises(in_memory_engine, df, k_expr, method):
+    col = pl.col("val")
+    expr = col.top_k(k_expr) if method == "top_k" else col.top_k_by("test", k_expr)
+    with pytest.raises(pl.exceptions.PolarsError):
+        df.select(expr).collect(engine=in_memory_engine)

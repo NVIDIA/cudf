@@ -6,6 +6,9 @@
 
 #include <cudf/utilities/export.hpp>
 
+#include <cstdint>
+#include <optional>
+
 /**
  * @file
  * @brief APIs for configuring KvikIO-based I/O behavior.
@@ -27,10 +30,12 @@ namespace kvikio_integration {
  * Parameters include:
  * - Compatibility mode, according to the environment variable KVIKIO_COMPAT_MODE. If
  *   KVIKIO_COMPAT_MODE is not set, enable it by default, which enforces the use of POSIX I/O.
- * - Thread pool size, according to the environment variable KVIKIO_NTHREADS. If KVIKIO_NTHREADS is
- *   not set, use 4 threads by default.
+ * - Thread pool size. If @p nthreads is provided, it is used directly. Otherwise, the value is
+ *   read from the environment variable KVIKIO_NTHREADS, defaulting to 4 if unset.
+ *
+ * @param nthreads Optional thread pool size override. If provided, supersedes KVIKIO_NTHREADS.
  */
-void set_up_kvikio();
+void set_up_kvikio(std::optional<uint32_t> nthreads = std::nullopt);
 
 }  // namespace kvikio_integration
 

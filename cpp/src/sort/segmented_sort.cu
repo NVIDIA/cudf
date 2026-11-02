@@ -11,20 +11,21 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <thrust/binary_search.h>
 
 namespace cudf {
 namespace detail {
 
-rmm::device_uvector<size_type> get_segment_indices(size_type num_rows,
+cuda::device_buffer<size_type> get_segment_indices(size_type num_rows,
                                                    column_view const& offsets,
                                                    cuda::stream_ref stream)
 {
-  rmm::device_uvector<size_type> segment_ids(num_rows, stream);
+  cuda::device_buffer<size_type> segment_ids(
+    stream, cudf::get_current_device_resource_ref(), num_rows, cuda::no_init);
 
   auto offset_begin  = offsets.begin<size_type>();
   auto offset_end    = offsets.end<size_type>();
@@ -65,6 +66,30 @@ std::unique_ptr<table> segmented_sort_by_key(table_view const& values,
     values, keys, segment_offsets, column_order, null_precedence, stream, mr);
 }
 
+std::unique_ptr<column> stable_segmented_sorted_order(
+  table_view const& keys,
+  column_view const& segment_offsets,
+  std::vector<order> const& column_order,
+  std::vector<null_order> const& null_precedence,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr)
+{
+  return segmented_sorted_order_common<sort_method::STABLE>(
+    keys, segment_offsets, column_order, null_precedence, stream, mr);
+}
+
+std::unique_ptr<table> stable_segmented_sort_by_key(table_view const& values,
+                                                    table_view const& keys,
+                                                    column_view const& segment_offsets,
+                                                    std::vector<order> const& column_order,
+                                                    std::vector<null_order> const& null_precedence,
+                                                    cuda::stream_ref stream,
+                                                    rmm::device_async_resource_ref mr)
+{
+  return segmented_sort_by_key_common<sort_method::STABLE>(
+    values, keys, segment_offsets, column_order, null_precedence, stream, mr);
+}
+
 }  // namespace detail
 
 std::unique_ptr<column> segmented_sorted_order(table_view const& keys,
@@ -89,6 +114,32 @@ std::unique_ptr<table> segmented_sort_by_key(table_view const& values,
 {
   CUDF_FUNC_RANGE();
   return detail::segmented_sort_by_key(
+    values, keys, segment_offsets, column_order, null_precedence, stream, mr);
+}
+
+std::unique_ptr<column> stable_segmented_sorted_order(
+  table_view const& keys,
+  column_view const& segment_offsets,
+  std::vector<order> const& column_order,
+  std::vector<null_order> const& null_precedence,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr)
+{
+  CUDF_FUNC_RANGE();
+  return detail::stable_segmented_sorted_order(
+    keys, segment_offsets, column_order, null_precedence, stream, mr);
+}
+
+std::unique_ptr<table> stable_segmented_sort_by_key(table_view const& values,
+                                                    table_view const& keys,
+                                                    column_view const& segment_offsets,
+                                                    std::vector<order> const& column_order,
+                                                    std::vector<null_order> const& null_precedence,
+                                                    cuda::stream_ref stream,
+                                                    rmm::device_async_resource_ref mr)
+{
+  CUDF_FUNC_RANGE();
+  return detail::stable_segmented_sort_by_key(
     values, keys, segment_offsets, column_order, null_precedence, stream, mr);
 }
 

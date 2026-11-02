@@ -14,9 +14,8 @@
 #include <cudf/detail/sorting.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_uvector.hpp>
-
 #include <cub/device/device_segmented_sort.cuh>
+#include <cuda/buffer>
 #include <cuda/stream>
 
 namespace cudf {
@@ -74,19 +73,22 @@ struct column_fast_sort_fn {
 
     // DeviceSegmentedSort is faster than DeviceSegmentedRadixSort at this time
     auto fast_sort_impl = [stream](bool ascending, [[maybe_unused]] auto&&... args) {
-      rmm::device_buffer d_temp_storage;
+      cuda::device_buffer<std::byte> d_temp_storage{stream,
+                                                    cudf::get_current_device_resource_ref()};
       size_t temp_storage_bytes = 0;
       if (ascending) {
         if constexpr (method == sort_method::STABLE) {
           cub::DeviceSegmentedSort::StableSortPairs(
             d_temp_storage.data(), temp_storage_bytes, std::forward<decltype(args)>(args)...);
-          d_temp_storage = rmm::device_buffer{temp_storage_bytes, stream};
+          d_temp_storage = cuda::device_buffer<std::byte>{
+            stream, cudf::get_current_device_resource_ref(), temp_storage_bytes, cuda::no_init};
           cub::DeviceSegmentedSort::StableSortPairs(
             d_temp_storage.data(), temp_storage_bytes, std::forward<decltype(args)>(args)...);
         } else {
           cub::DeviceSegmentedSort::SortPairs(
             d_temp_storage.data(), temp_storage_bytes, std::forward<decltype(args)>(args)...);
-          d_temp_storage = rmm::device_buffer{temp_storage_bytes, stream};
+          d_temp_storage = cuda::device_buffer<std::byte>{
+            stream, cudf::get_current_device_resource_ref(), temp_storage_bytes, cuda::no_init};
           cub::DeviceSegmentedSort::SortPairs(
             d_temp_storage.data(), temp_storage_bytes, std::forward<decltype(args)>(args)...);
         }
@@ -94,13 +96,15 @@ struct column_fast_sort_fn {
         if constexpr (method == sort_method::STABLE) {
           cub::DeviceSegmentedSort::StableSortPairsDescending(
             d_temp_storage.data(), temp_storage_bytes, std::forward<decltype(args)>(args)...);
-          d_temp_storage = rmm::device_buffer{temp_storage_bytes, stream};
+          d_temp_storage = cuda::device_buffer<std::byte>{
+            stream, cudf::get_current_device_resource_ref(), temp_storage_bytes, cuda::no_init};
           cub::DeviceSegmentedSort::StableSortPairsDescending(
             d_temp_storage.data(), temp_storage_bytes, std::forward<decltype(args)>(args)...);
         } else {
           cub::DeviceSegmentedSort::SortPairsDescending(
             d_temp_storage.data(), temp_storage_bytes, std::forward<decltype(args)>(args)...);
-          d_temp_storage = rmm::device_buffer{temp_storage_bytes, stream};
+          d_temp_storage = cuda::device_buffer<std::byte>{
+            stream, cudf::get_current_device_resource_ref(), temp_storage_bytes, cuda::no_init};
           cub::DeviceSegmentedSort::SortPairsDescending(
             d_temp_storage.data(), temp_storage_bytes, std::forward<decltype(args)>(args)...);
         }
@@ -198,7 +202,7 @@ std::unique_ptr<column> fast_segmented_sorted_order(column_view const& input,
  * @param offsets The offsets identifying the segments
  * @param stream CUDA stream used for device memory operations and kernel launches
  */
-rmm::device_uvector<size_type> get_segment_indices(size_type num_rows,
+cuda::device_buffer<size_type> get_segment_indices(size_type num_rows,
                                                    column_view const& offsets,
                                                    cuda::stream_ref stream);
 

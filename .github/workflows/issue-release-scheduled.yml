@@ -7,6 +7,7 @@ on:
 
 jobs:
   sync-release-fields:
+    if: github.repository == 'NVIDIA/cudf'
     runs-on: ubuntu-latest
     permissions:
       issues: write

@@ -9,8 +9,6 @@ import ai.rapids.cudf.ast.CompiledExpression;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.Arrays;
-
 /**
  * Experimental Parquet hybrid-scan reader.
  *
@@ -39,10 +37,15 @@ import java.util.Arrays;
  * chunked reader pipeline.
  *
  * <p>The filter and payload materialization paths accept a boolean that toggles
- * page-level pruning: skips decode of pages the filter (or row mask) proves empty, in
- * exchange for a per-page stats scan and a carried row-mask column. Enable when the
- * workload prunes many pages; requires prior {@link #setupPageIndex(HostMemoryBuffer)} to
- * prune filter column pages using page-level statistics.
+ * page-level pruning: skips decode of pages the filter (or row mask) proves empty. Enable when the
+ * workload prunes many pages. Pruning requirements for the two column materializations differ:
+ * <ul>
+ *   <li>With page-level pruning enabled, filter columns require
+ *       {@link #setupPageIndex(HostMemoryBuffer)} to seed the row mask from page-index
+ *       statistics.</li>
+ *   <li>Once a row mask exists, filter and payload columns use page row boundaries from the
+ *       {@code OffsetIndex} when available, otherwise from decoded page headers.</li>
+ * </ul>
  *
  * <p>The reader is created with no filter expression installed. Filter-related APIs
  * behave as though nothing has been filtered out unless a filter is first supplied via
@@ -56,24 +59,68 @@ public class HybridScanReader implements AutoCloseable {
     NativeDepsLoader.loadNativeDeps();
   }
 
+  /** Column selection used when constructing row-group passes. */
+  public enum ReadColumnsMode {
+    /** Only the filter columns. */
+    FILTER_COLUMNS(0),
+    /** Only the payload columns. */
+    PAYLOAD_COLUMNS(1),
+    /** All selected columns. */
+    ALL_COLUMNS(2);
+
+    private final int nativeId;
+
+    ReadColumnsMode(int nativeId) {
+      this.nativeId = nativeId;
+    }
+  }
+
+  /**
+   * A materialized {@link Table} and the names of its columns, in the same order. The table is
+   * owned by this object; close via try-with-resources to release it.
+   */
+  public static final class TableWithColumnNames implements AutoCloseable {
+    private final Table table;
+    private final String[] columnNames;
+    private boolean closed = false;
+
+    TableWithColumnNames(Table table, String[] columnNames) {
+      this.table = table;
+      this.columnNames = columnNames;
+    }
+
+    /** @return the materialized table. */
+    public Table table() { return table; }
+
+    /** @return the names of the columns of {@link #table()}, in the same order. */
+    public String[] columnNames() { return columnNames; }
+
+    @Override
+    public synchronized void close() {
+      if (closed) return;
+      try { table.close(); } finally { closed = true; }
+    }
+  }
+
   /**
    * The result of a combined row-mask-build + filter-column-materialization call.
    *
-   * <p>Both the filter {@link Table} and the mutated row {@link ColumnVector} mask are
-   * owned by this object. Close via try-with-resources to release both.
+   * <p>Both the filter {@link TableWithColumnNames} and the mutated row {@link ColumnVector}
+   * mask are owned by this object. Close via try-with-resources to release both.
    */
   public static final class FilterMaterializationResult implements AutoCloseable {
-    private final Table table;
+    private final TableWithColumnNames tableWithColumnNames;
     private final ColumnVector rowMask;
     private boolean closed = false;
 
-    FilterMaterializationResult(Table table, ColumnVector rowMask) {
-      this.table = table;
+    FilterMaterializationResult(TableWithColumnNames tableWithColumnNames,
+                                ColumnVector rowMask) {
+      this.tableWithColumnNames = tableWithColumnNames;
       this.rowMask = rowMask;
     }
 
-    /** @return the materialized filter column table. */
-    public Table table() { return table; }
+    /** @return the materialized filter column table with its column names. */
+    public TableWithColumnNames tableWithColumnNames() { return tableWithColumnNames; }
 
     /** @return the (mutated) row mask after the filter expression was applied. */
     public ColumnVector rowMask() { return rowMask; }
@@ -81,7 +128,7 @@ public class HybridScanReader implements AutoCloseable {
     @Override
     public synchronized void close() {
       if (closed) return;
-      try { table.close(); } finally {
+      try { tableWithColumnNames.close(); } finally {
         try { rowMask.close(); } finally { closed = true; }
       }
     }
@@ -197,8 +244,8 @@ public class HybridScanReader implements AutoCloseable {
 
   /**
    * Materialize the {@code ColumnIndex} / {@code OffsetIndex} structs (collectively, the page
-   * index) from the supplied bytes. Required before any filter or payload column materialization
-   * call with {@code usePageLevelPruning == true}.
+   * index) from the supplied bytes. Required before any filter column materialization with
+   * {@code usePageLevelPruning == true}.
    *
    * @param pageIndexBuffer host-resident page index bytes
    */
@@ -241,29 +288,98 @@ public class HybridScanReader implements AutoCloseable {
   }
 
   /**
-   * Get the byte ranges in the source file that hold the bloom filter and dictionary page
-   * data needed for the next round of row-group pruning.
+   * Get the byte ranges in the source file that hold the column-chunk bloom filter data
+   * needed for the next round of row-group pruning.
+   *
+   * <p>The ordering follows the C++ reader's ordering and is meaningful: the i-th entry
+   * corresponds to the i-th column chunk needing a bloom filter. The result may be empty.
+   *
+   * <p>Device buffers for these ranges must be allocated using a 32-byte aligned memory
+   * resource.
    */
-  public SecondaryFilterRanges secondaryFiltersByteRanges(int[] rowGroupIndices) {
+  public ByteRange[] bloomFiltersByteRanges(int[] rowGroupIndices) {
     assertNotClosed();
     requireNonNullRowGroups(rowGroupIndices);
-    long[] packed = secondaryFiltersByteRanges(cleaner.nativeHandle, rowGroupIndices);
-    // Layout: [numBloomRanges, bloom_o0, bloom_s0, ..., dict_o0, dict_s0, ...]
-    int numBloom = (int) packed[0];
-    int totalRanges = (packed.length - 1) / 2;
-    int numDict = totalRanges - numBloom;
-    ByteRange[] bloom = new ByteRange[numBloom];
-    ByteRange[] dict = new ByteRange[numDict];
-    int idx = 1;
-    for (int i = 0; i < numBloom; i++) {
-      bloom[i] = new ByteRange(packed[idx], packed[idx + 1]);
-      idx += 2;
+    return decodeRanges(bloomFiltersByteRanges(cleaner.nativeHandle, rowGroupIndices));
+  }
+
+  /**
+   * Get the byte ranges in the source file that hold the column-chunk dictionary page
+   * data used for row-group pruning of (in)equality predicates.
+   *
+   * <p>The ordering follows the C++ reader's ordering and is meaningful: the i-th entry
+   * corresponds to the i-th column chunk needing a dictionary page. The result may be empty.
+   */
+  public ByteRange[] dictionaryPagesByteRanges(int[] rowGroupIndices) {
+    assertNotClosed();
+    requireNonNullRowGroups(rowGroupIndices);
+    return decodeRanges(dictionaryPagesByteRanges(cleaner.nativeHandle, rowGroupIndices));
+  }
+
+  /**
+   * Like {@link #dictionaryPagesByteRanges(int[])} but also returns a range for a column chunk
+   * whose footer does not pin its dictionary page down exactly.
+   *
+   * <p>Such a range only bounds a page that may not be there: some writers omit
+   * {@code dictionary_page_offset} even with a dictionary page present. A caller that opts into
+   * these ranges caps how much of each it reads with
+   * {@link DictionaryByteRange#byteRangeToRead(long)}, cuts what it read down to the one page with
+   * {@link #dictionaryPageLengths(HostMemoryBuffer[])}, and passes an empty buffer for a chunk whose
+   * page turns out not to be there.
+   *
+   * <p>The ordering follows the C++ reader's ordering and is meaningful: the i-th entry corresponds
+   * to the i-th column chunk needing a dictionary page. The result may be empty.
+   */
+  public DictionaryByteRange[] dictionaryPagesByteRangesIncludeUnbounded(int[] rowGroupIndices) {
+    assertNotClosed();
+    requireNonNullRowGroups(rowGroupIndices);
+    long[] packed =
+        dictionaryPagesByteRangesIncludeUnbounded(cleaner.nativeHandle, rowGroupIndices);
+    if (packed == null || packed.length == 0) {
+      return new DictionaryByteRange[0];
     }
-    for (int i = 0; i < numDict; i++) {
-      dict[i] = new ByteRange(packed[idx], packed[idx + 1]);
-      idx += 2;
+    // Layout: [off0, size0, isExact0, off1, size1, isExact1, ...]
+    if (packed.length % 3 != 0) {
+      throw new IllegalStateException(
+          "Expected dictionary page ranges packed in threes, got " + packed.length + " longs");
     }
-    return new SecondaryFilterRanges(bloom, dict);
+    int n = packed.length / 3;
+    DictionaryByteRange[] out = new DictionaryByteRange[n];
+    for (int i = 0; i < n; i++) {
+      out[i] = new DictionaryByteRange(new ByteRange(packed[3 * i], packed[3 * i + 1]),
+          packed[3 * i + 2] != 0);
+    }
+    return out;
+  }
+
+  /**
+   * The length of the dictionary page at the front of each buffer, its page header included, or 0
+   * for a buffer that does not begin with a whole dictionary page.
+   *
+   * <p>What was read of a range that only bounds its dictionary page begins at that page and runs
+   * past it, so it has to be cut down to the page before
+   * {@link #filterRowGroupsWithDictionaryPages} is given it. The page's own header says how long
+   * the page is, and this reads that header off the front of each buffer. A 0 means the chunk
+   * cannot be pruned with what was read, either because a writer claimed dictionary encoding and
+   * wrote no dictionary page, or because the page is longer than what was read; such a chunk is
+   * passed on as an empty buffer.
+   *
+   * <p>The buffers are read on the host, and nothing here touches the GPU.
+   *
+   * @param pageData one buffer per dictionary page range, read from the start of the range
+   * @return the length of the page in each buffer, in the order the buffers were given
+   */
+  public static long[] dictionaryPageLengths(HostMemoryBuffer[] pageData) {
+    if (pageData == null) {
+      throw new IllegalArgumentException("pageData must not be null");
+    }
+    try {
+      return dictionaryPageLengths(bufferAddrs(pageData), bufferLens(pageData));
+    } finally {
+      synchronized (pageData) {
+        // The monitor operation is a Java 8 reachability fence.
+      }
+    }
   }
 
   // TODO: add filterRowGroupsWithBloomFilters(int[] rowGroups) once the Java Parquet
@@ -305,13 +421,10 @@ public class HybridScanReader implements AutoCloseable {
   /**
    * @return byte ranges for the column chunks of <em>payload</em> columns.
    *
-   * <p>This result is order-dependent. If filter columns have already been processed on this
-   * reader (e.g. via {@link #filterColumnChunksByteRanges(int[])} or
-   * {@link #materializeFilterColumns(int[], DeviceMemoryBuffer[], boolean)}),
-   * the filter columns are excluded and only the payload columns are returned. If filter columns
-   * have not yet been processed, nothing is excluded and the ranges cover the full set of columns
-   * that would be read i.e. the columns projected via {@link ParquetOptions}, or all columns in
-   * the file when no projection was set.
+   * <p>If a filter is set, the columns referenced by the filter are always excluded, regardless
+   * of whether any filter column methods have been called on this reader. Without a filter,
+   * the ranges cover the full set of columns that would be read i.e. the columns projected via
+   * {@link ParquetOptions}, or all columns in the file when no projection was set.
    */
   public ByteRange[] payloadColumnChunksByteRanges(int[] rowGroupIndices) {
     assertNotClosed();
@@ -359,13 +472,34 @@ public class HybridScanReader implements AutoCloseable {
     long[] lens = bufferLens(columnChunkData);
     long[] handles = materializeFilterColumns(cleaner.nativeHandle, rowGroupIndices,
         addrs, lens, usePageLevelPruning);
-    ColumnVector rowMask = new ColumnVector(handles[0]);
+    TableWithColumnNames tableWithColumnNames;
     try {
-      long[] tableHandles = Arrays.copyOfRange(handles, 1, handles.length);
-      Table table = new Table(tableHandles);
-      return new FilterMaterializationResult(table, rowMask);
+      tableWithColumnNames = toTableWithColumnNames(handles[1]);
     } catch (Throwable t) {
-      rowMask.close();
+      try {
+        ColumnVector.deleteCudfColumn(handles[0]);
+      } catch (Throwable s) {
+        t.addSuppressed(s);
+      }
+      throw t;
+    }
+    ColumnVector rowMask = null;
+    try {
+      rowMask = new ColumnVector(handles[0]);
+      return new FilterMaterializationResult(tableWithColumnNames, rowMask);
+    } catch (Throwable t) {
+      try {
+        tableWithColumnNames.close();
+      } catch (Throwable s) {
+        t.addSuppressed(s);
+      }
+      if (rowMask != null) {
+        try {
+          rowMask.close();
+        } catch (Throwable s) {
+          t.addSuppressed(s);
+        }
+      }
       throw t;
     }
   }
@@ -382,22 +516,39 @@ public class HybridScanReader implements AutoCloseable {
    *                         returned by {@link #payloadColumnChunksByteRanges(int[])}
    * @param rowMask          row mask (read-only)
    * @param usePageLevelPruning  enable the data page mask to skip decode of pages the row
-   *                             mask proves empty; requires prior
-   *                             {@link #setupPageIndex(HostMemoryBuffer)} to avoid fall back path
-   * @return the materialized payload column table
+   *                             mask proves empty
+   * @return the materialized payload column table with its column names; caller must close
    */
-  public Table materializePayloadColumns(int[] rowGroupIndices,
-                                         DeviceMemoryBuffer[] columnChunkData,
-                                         ColumnVector rowMask,
-                                         boolean usePageLevelPruning) {
+  public TableWithColumnNames materializePayloadColumns(int[] rowGroupIndices,
+                                                        DeviceMemoryBuffer[] columnChunkData,
+                                                        ColumnVector rowMask,
+                                                        boolean usePageLevelPruning) {
     assertNotClosed();
     requireNonNullRowGroups(rowGroupIndices);
     requireNonNullRowMask(rowMask);
     long[] addrs = bufferAddrs(columnChunkData);
     long[] lens = bufferLens(columnChunkData);
-    long[] handles = materializePayloadColumns(cleaner.nativeHandle, rowGroupIndices,
-        addrs, lens, rowMask.getNativeView(), usePageLevelPruning);
-    return new Table(handles);
+    return toTableWithColumnNames(materializePayloadColumns(cleaner.nativeHandle,
+        rowGroupIndices, addrs, lens, rowMask.getNativeView(), usePageLevelPruning));
+  }
+
+  /** Takes ownership of a native {@code table_with_metadata} handle. */
+  private static TableWithColumnNames toTableWithColumnNames(long tableWithMetaHandle) {
+    Table table = null;
+    try (TableWithMeta tableWithMeta = new TableWithMeta(tableWithMetaHandle)) {
+      String[] columnNames = tableWithMeta.getColumnNames();
+      table = tableWithMeta.releaseTable();
+      return new TableWithColumnNames(table, columnNames);
+    } catch (Throwable t) {
+      if (table != null) {
+        try {
+          table.close();
+        } catch (Throwable s) {
+          t.addSuppressed(s);
+        }
+      }
+      throw t;
+    }
   }
 
   // ----------------------------------------------------------------------
@@ -453,8 +604,9 @@ public class HybridScanReader implements AutoCloseable {
    *                               parameter only bounds the subpass (decode) working set;
    *                               it does not repartition row groups. To split row groups
    *                               across multiple passes up front, call
-   *                               {@link #constructRowGroupPasses(int[], long)} first and
-   *                               issue a separate chunked run per returned partition.
+   *                               {@link #constructRowGroupPasses(ReadColumnsMode, int[], long)}
+   *                               with {@link ReadColumnsMode#FILTER_COLUMNS} first and issue a
+   *                               separate chunked run per returned partition.
    * @param rowGroupIndices        row groups to read
    * @param usePageLevelPruning    seed the row mask from page-index stats and enable the
    *                               data page mask; requires prior
@@ -524,13 +676,13 @@ public class HybridScanReader implements AutoCloseable {
    *                         number of row-group passes to 1, so this parameter only bounds
    *                         the subpass (decode) working set; it does not repartition row
    *                         groups. To split row groups across multiple passes up front,
-   *                         call {@link #constructRowGroupPasses(int[], long)} first and
-   *                         issue a separate chunked run per returned partition.
+   *                         call {@link #constructRowGroupPasses(ReadColumnsMode, int[], long)}
+   *                         with {@link ReadColumnsMode#PAYLOAD_COLUMNS} first and issue a
+   *                         separate chunked run per returned partition.
    * @param rowGroupIndices  row groups to read
    * @param rowMask          row mask (read-only)
    * @param usePageLevelPruning  enable the data page mask to skip decode of pages the row
-   *                             mask proves empty; requires prior
-   *                             {@link #setupPageIndex(HostMemoryBuffer)} to avoid fall back path
+   *                             mask proves empty
    * @param columnChunkData  device buffers holding the payload column chunks, in the order
    *                         returned by {@link #payloadColumnChunksByteRanges(int[])}
    */
@@ -573,8 +725,9 @@ public class HybridScanReader implements AutoCloseable {
    *                         number of row-group passes to 1, so this parameter only bounds
    *                         the subpass (decode) working set; it does not repartition row
    *                         groups. To split row groups across multiple passes up front,
-   *                         call {@link #constructRowGroupPasses(int[], long)} first and
-   *                         issue a separate chunked run per returned partition.
+   *                         call {@link #constructRowGroupPasses(ReadColumnsMode, int[], long)}
+   *                         with {@link ReadColumnsMode#ALL_COLUMNS} first
+   *                         and issue a separate chunked run per returned partition.
    * @param rowGroupIndices  row groups to read
    * @param columnChunkData  device buffers holding all column chunks, in the order returned
    *                         by {@link #allColumnChunksByteRanges(int[])}
@@ -605,21 +758,28 @@ public class HybridScanReader implements AutoCloseable {
   }
 
   /**
-   * Partition the supplied row groups into passes whose total uncompressed size respects the
-   * given limit. The returned array contains one inner array per pass.
+   * Partition the supplied row groups into passes whose estimated uncompressed size over the
+   * selected columns is bounded by the given limit. The limit is a hint, not a strict memory
+   * bound: a pass always contains whole row groups, so a single row group larger than the limit
+   * still constitutes its own pass. The returned array contains one inner array per pass.
    *
+   * @param columnsMode     columns selection to use for pass memory estimation
    * @param rowGroupIndices row groups to partition
    * @param passReadLimit   limit on the memory used by a single pass, or 0 for no limit.
    *                        Each returned pass can then be fed to a
-   *                        {@code setupChunkingFor*} call, which will further stream that
-   *                        pass in subpass-sized chunks bounded by its own
+   *                        {@code setupChunkingFor*} call, which will further stream that pass in
+   *                        subpass-sized chunks bounded by its own
    *                        {@code passReadLimit} argument.
    * @return an array of arrays of row group indices, one per pass
    */
-  public int[][] constructRowGroupPasses(int[] rowGroupIndices, long passReadLimit) {
+  public int[][] constructRowGroupPasses(ReadColumnsMode columnsMode,
+                                         int[] rowGroupIndices,
+                                         long passReadLimit) {
     assertNotClosed();
+    requireNonNullColumnsMode(columnsMode);
     requireNonNullRowGroups(rowGroupIndices);
-    return constructRowGroupPasses(cleaner.nativeHandle, rowGroupIndices, passReadLimit);
+    return constructRowGroupPasses(
+        cleaner.nativeHandle, columnsMode.nativeId, rowGroupIndices, passReadLimit);
   }
 
   // ----------------------------------------------------------------------
@@ -652,13 +812,19 @@ public class HybridScanReader implements AutoCloseable {
     }
   }
 
+  private static void requireNonNullColumnsMode(ReadColumnsMode columnsMode) {
+    if (columnsMode == null) {
+      throw new IllegalArgumentException("columnsMode must not be null");
+    }
+  }
+
   private static void requireNonNullRowMask(ColumnVector rowMask) {
     if (rowMask == null) {
       throw new IllegalArgumentException("rowMask must not be null");
     }
   }
 
-  private static long[] bufferAddrs(DeviceMemoryBuffer[] buffers) {
+  private static long[] bufferAddrs(MemoryBuffer[] buffers) {
     if (buffers == null) {
       throw new IllegalArgumentException("buffers must not be null");
     }
@@ -672,7 +838,7 @@ public class HybridScanReader implements AutoCloseable {
     return addrs;
   }
 
-  private static long[] bufferLens(DeviceMemoryBuffer[] buffers) {
+  private static long[] bufferLens(MemoryBuffer[] buffers) {
     if (buffers == null) {
       throw new IllegalArgumentException("buffers must not be null");
     }
@@ -722,7 +888,11 @@ public class HybridScanReader implements AutoCloseable {
 
   // Filtering
   private static native int[] filterRowGroupsWithStats(long handle, int[] rowGroupIndices);
-  private static native long[] secondaryFiltersByteRanges(long handle, int[] rowGroupIndices);
+  private static native long[] bloomFiltersByteRanges(long handle, int[] rowGroupIndices);
+  private static native long[] dictionaryPagesByteRanges(long handle, int[] rowGroupIndices);
+  private static native long[] dictionaryPagesByteRangesIncludeUnbounded(long handle,
+                                                                          int[] rowGroupIndices);
+  private static native long[] dictionaryPageLengths(long[] bufferAddresses, long[] bufferLengths);
   private static native int[] filterRowGroupsWithDictionaryPages(long handle,
                                                                  long[] bufferAddresses,
                                                                  long[] bufferLengths,
@@ -734,18 +904,19 @@ public class HybridScanReader implements AutoCloseable {
   private static native long[] allColumnChunksByteRanges(long handle, int[] rowGroupIndices);
 
   // Two-step materialize (filter + payload)
-  // Returns: [row_mask_col_handle, table_col0_handle, ..., table_colN_handle]
+  // Returns: [row_mask_col_handle, table_with_metadata_handle]
   private static native long[] materializeFilterColumns(long handle,
                                                         int[] rowGroupIndices,
                                                         long[] bufferAddresses,
                                                         long[] bufferLengths,
                                                         boolean usePageLevelPruning);
-  private static native long[] materializePayloadColumns(long handle,
-                                                         int[] rowGroupIndices,
-                                                         long[] bufferAddresses,
-                                                         long[] bufferLengths,
-                                                         long rowMaskViewHandle,
-                                                         boolean usePageLevelPruning);
+  // Returns: table_with_metadata_handle
+  private static native long materializePayloadColumns(long handle,
+                                                       int[] rowGroupIndices,
+                                                       long[] bufferAddresses,
+                                                       long[] bufferLengths,
+                                                       long rowMaskViewHandle,
+                                                       boolean usePageLevelPruning);
 
   // One-shot materialize (all columns)
   private static native long[] materializeAllColumns(long handle,
@@ -785,6 +956,7 @@ public class HybridScanReader implements AutoCloseable {
   private static native long[] materializeAllColumnsChunk(long handle);
   private static native boolean hasNextTableChunk(long handle);
   private static native int[][] constructRowGroupPasses(long handle,
+                                                        int columnsMode,
                                                         int[] rowGroupIndices,
                                                         long passReadLimit);
 }

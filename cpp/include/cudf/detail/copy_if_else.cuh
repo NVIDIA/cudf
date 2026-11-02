@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -140,14 +140,14 @@ std::unique_ptr<column> copy_if_else(bool nullable,
                                      RightIter rhs,
                                      FilterFn filter,
                                      cudf::data_type output_type,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
 {
   // This is the type of the cuda::std::optional element in the passed iterators
   using Element = typename cuda::std::iter_value_t<LeftIter>::value_type;
 
   size_type size           = std::distance(lhs_begin, lhs_end);
-  size_type num_els        = cudf::util::round_up_safe(size, cudf::detail::warp_size);
+  size_type num_els        = cudf::detail::round_up_safe(size, cudf::detail::warp_size);
   constexpr int block_size = 256;
   cudf::detail::grid_1d grid{num_els, block_size, 1};
 
@@ -163,14 +163,14 @@ std::unique_ptr<column> copy_if_else(bool nullable,
 
     // call the kernel
     copy_if_else_kernel<block_size, Element, LeftIter, RightIter, FilterFn, true>
-      <<<grid.num_blocks, block_size, 0, stream.value()>>>(
+      <<<grid.num_blocks, block_size, 0, stream.get()>>>(
         lhs_begin, rhs, filter, *out_v, valid_count.data());
 
     out->set_null_count(size - valid_count.value(stream));
   } else {
     // call the kernel
     copy_if_else_kernel<block_size, Element, LeftIter, RightIter, FilterFn, false>
-      <<<grid.num_blocks, block_size, 0, stream.value()>>>(lhs_begin, rhs, filter, *out_v, nullptr);
+      <<<grid.num_blocks, block_size, 0, stream.get()>>>(lhs_begin, rhs, filter, *out_v, nullptr);
   }
 
   return out;

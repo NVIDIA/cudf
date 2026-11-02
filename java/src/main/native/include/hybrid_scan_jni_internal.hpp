@@ -74,7 +74,6 @@ struct row_group_span_holder {
  */
 cudf::io::parquet_reader_options build_options(JNIEnv* env,
                                                jobjectArray j_column_names,
-                                               jbooleanArray j_read_binary_as_string,
                                                jint time_unit_type_id);
 
 row_group_span_holder make_row_group_span(JNIEnv* env, jintArray j_row_groups);
@@ -84,6 +83,14 @@ row_group_span_holder make_row_group_span(JNIEnv* env, jintArray j_row_groups);
  *        [off0, len0, off1, len1, ...].
  */
 jlongArray ranges_to_jlong_array(JNIEnv* env, std::vector<byte_range_info> const& ranges);
+
+/**
+ * @brief Convert a vector<dictionary_byte_range> into a packed jlongArray laid out as
+ *        [off0, len0, extent0, off1, len1, extent1, ...], where each extent is a
+ *        DictionaryByteRange.Extent ordinal.
+ */
+jlongArray ranges_to_jlong_array(JNIEnv* env,
+                                 std::vector<exp_pq::dictionary_byte_range> const& ranges);
 
 jintArray sizes_to_jint_array(JNIEnv* env, std::vector<cudf::size_type> const& vals);
 

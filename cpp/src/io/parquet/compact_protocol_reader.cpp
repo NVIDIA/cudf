@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -14,12 +14,20 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <exception>
 #include <functional>
 #include <future>
+#include <optional>
 #include <tuple>
+#include <utility>
 
 namespace cudf::io::parquet::detail {
 namespace {
+
+// Shared overread/schema-init diagnostics for the decode helpers below.
+constexpr char const* overread_message =
+  "Parquet footer is truncated or corrupt (read past end of buffer)";
+constexpr char const* cannot_init_schema_message = "Cannot initialize schema";
 
 std::string field_type_string(FieldType type)
 {
@@ -138,19 +146,25 @@ class parquet_field_list : public parquet_field {
   parquet_field_list(int f, std::vector<T>& v) : parquet_field(f), val(v) {}
 
  public:
-  inline void operator()(CompactProtocolReader* cpr, int field_type)
+  inline bool operator()(CompactProtocolReader* cpr, int field_type)
   {
-    assert_field_type(field_type, FieldType::LIST);
+    if (not cpr->check_field_type(field_type, FieldType::LIST)) { return false; }
     auto const [t, n] = cpr->get_listh();
-    if constexpr (cuda::std::is_same_v<T, bool>) {
-      assert_bool_field_type(t);
-    } else {
-      assert_field_type(t, EXPECTED_ELEM_TYPE);
+    // An empty list has no elements, so its wire element-type nibble is immaterial (some writers,
+    // e.g. fastparquet, stamp 0); accept without validating the element type, matching Thrift.
+    if (n == 0) {
+      val.clear();
+      return true;
     }
+    // Fail before any per-element work on a count that cannot fit the remaining bytes.
+    CUDF_EXPECTS(std::cmp_less_equal(n, cpr->m_end - cpr->m_cur),
+                 "Parquet footer list size exceeds remaining buffer");
+    if (not cpr->check_list_element_type(t, EXPECTED_ELEM_TYPE, n)) { return false; }
     val.resize(n);
     for (uint32_t i = 0; i < n; i++) {
       _read_value(i, cpr);
     }
+    return true;
   }
 };
 
@@ -159,7 +173,7 @@ class parquet_field_list : public parquet_field {
  *
  * bool doesn't actually encode a value, we just use the field type to indicate true/false
  *
- * @return True if field type is not bool
+ * @return true if the field was read, false if skipped on a type mismatch
  */
 class parquet_field_bool : public parquet_field {
   bool& val;
@@ -167,18 +181,23 @@ class parquet_field_bool : public parquet_field {
  public:
   parquet_field_bool(int f, bool& v) : parquet_field(f), val(v) {}
 
-  inline void operator()(CompactProtocolReader* cpr, int field_type)
+  inline bool operator()(CompactProtocolReader* cpr, int field_type)
   {
-    assert_bool_field_type(field_type);
-    val = field_type == static_cast<int>(FieldType::BOOLEAN_TRUE);
+    auto const wire_type = static_cast<FieldType>(field_type);
+    if (wire_type != FieldType::BOOLEAN_TRUE && wire_type != FieldType::BOOLEAN_FALSE) {
+      if (cpr->should_throw_on_type_mismatch()) { assert_bool_field_type(field_type); }
+      cpr->skip_struct_field(field_type);
+      return false;
+    }
+    val = wire_type == FieldType::BOOLEAN_TRUE;
+    return true;
   }
 };
 
 /**
  * @brief Functor to read a vector of booleans from CompactProtocolReader
  *
- * @return True if field types mismatch or if the process of reading a
- * bool fails
+ * @return true if the field was read, false if skipped on a type mismatch
  */
 struct parquet_field_bool_list : public parquet_field_list<bool, FieldType::BOOLEAN_TRUE> {
   parquet_field_bool_list(int f, std::vector<bool>& v) : parquet_field_list(f, v)
@@ -198,7 +217,7 @@ struct parquet_field_bool_list : public parquet_field_list<bool, FieldType::BOOL
  *
  * Assuming signed ints since the parquet spec does not use unsigned ints anywhere.
  *
- * @return True if there is a type mismatch
+ * @return true if the field was read, false if skipped on a type mismatch
  */
 template <typename T, FieldType EXPECTED_TYPE>
 class parquet_field_int : public parquet_field {
@@ -209,14 +228,15 @@ class parquet_field_int : public parquet_field {
  public:
   parquet_field_int(int f, T& v) : parquet_field(f), val(v) {}
 
-  inline void operator()(CompactProtocolReader* cpr, int field_type)
+  inline bool operator()(CompactProtocolReader* cpr, int field_type)
   {
-    assert_field_type(field_type, EXPECTED_TYPE);
+    if (not cpr->check_field_type(field_type, EXPECTED_TYPE)) { return false; }
     if constexpr (is_byte) {
       val = cpr->getb();
     } else {
       val = cpr->get_zigzag<T>();
     }
+    return true;
   }
 };
 
@@ -228,8 +248,7 @@ using parquet_field_int64 = parquet_field_int<int64_t, FieldType::I64>;
 /**
  * @brief Functor to read a vector of integers from CompactProtocolReader
  *
- * @return True if field types mismatch or if the process of reading an
- * integer fails
+ * @return true if the field was read, false if skipped on a type mismatch
  */
 template <typename T, FieldType EXPECTED_TYPE>
 struct parquet_field_int_list : public parquet_field_list<T, EXPECTED_TYPE> {
@@ -248,8 +267,7 @@ using parquet_field_int64_list = parquet_field_int_list<int64_t, FieldType::I64>
 /**
  * @brief Functor to read a string from CompactProtocolReader
  *
- * @return True if field type mismatches or if size of string exceeds bounds
- * of the CompactProtocolReader
+ * @return true if the field was read, false if skipped on a type mismatch
  */
 class parquet_field_string : public parquet_field {
   std::string& val;
@@ -257,22 +275,22 @@ class parquet_field_string : public parquet_field {
  public:
   parquet_field_string(int f, std::string& v) : parquet_field(f), val(v) {}
 
-  inline void operator()(CompactProtocolReader* cpr, int field_type)
+  inline bool operator()(CompactProtocolReader* cpr, int field_type)
   {
-    assert_field_type(field_type, FieldType::BINARY);
+    if (not cpr->check_field_type(field_type, FieldType::BINARY)) { return false; }
     auto const n = cpr->get_u32();
-    CUDF_EXPECTS(std::cmp_less(n, cpr->m_end - cpr->m_cur), "string length mismatch");
+    CUDF_EXPECTS(std::cmp_less_equal(n, cpr->m_end - cpr->m_cur), "string length mismatch");
 
     val.assign(reinterpret_cast<char const*>(cpr->m_cur), n);
     cpr->m_cur += n;
+    return true;
   }
 };
 
 /**
  * @brief Functor to read a vector of strings from CompactProtocolReader
  *
- * @return True if field types mismatch or if the process of reading a
- * string fails
+ * @return true if the field was read, false if skipped on a type mismatch
  */
 class parquet_field_string_list : public parquet_field_list<std::string, FieldType::BINARY> {
  public:
@@ -280,7 +298,7 @@ class parquet_field_string_list : public parquet_field_list<std::string, FieldTy
   {
     auto const read_value = [&val = v](uint32_t i, CompactProtocolReader* cpr) {
       auto const l = cpr->get_u32();
-      CUDF_EXPECTS(std::cmp_less(l, cpr->m_end - cpr->m_cur), "string length mismatch");
+      CUDF_EXPECTS(std::cmp_less_equal(l, cpr->m_end - cpr->m_cur), "string length mismatch");
       CUDF_EXPECTS(i < val.size(), "Index out of bounds");
 
       val[i].assign(reinterpret_cast<char const*>(cpr->m_cur), l);
@@ -293,7 +311,7 @@ class parquet_field_string_list : public parquet_field_list<std::string, FieldTy
 /**
  * @brief Functor to set value to enum read from CompactProtocolReader
  *
- * @return True if field type is not int32
+ * @return true if the field was read, false if skipped on a type mismatch
  */
 template <typename Enum>
 class parquet_field_enum : public parquet_field {
@@ -301,18 +319,18 @@ class parquet_field_enum : public parquet_field {
 
  public:
   parquet_field_enum(int f, Enum& v) : parquet_field(f), val(v) {}
-  inline void operator()(CompactProtocolReader* cpr, int field_type)
+  inline bool operator()(CompactProtocolReader* cpr, int field_type)
   {
-    assert_field_type(field_type, FieldType::I32);
+    if (not cpr->check_field_type(field_type, FieldType::I32)) { return false; }
     val = static_cast<Enum>(cpr->get_i32());
+    return true;
   }
 };
 
 /**
  * @brief Functor to read a vector of enums from CompactProtocolReader
  *
- * @return True if field types mismatch or if the process of reading an
- * enum fails
+ * @return true if the field was read, false if skipped on a type mismatch
  */
 template <typename Enum>
 struct parquet_field_enum_list : public parquet_field_list<Enum, FieldType::I32> {
@@ -330,8 +348,7 @@ struct parquet_field_enum_list : public parquet_field_list<Enum, FieldType::I32>
 /**
  * @brief Functor to read a structure from CompactProtocolReader
  *
- * @return True if field types mismatch or if the process of reading a
- * struct fails
+ * @return true if the field was read, false if skipped on a type mismatch
  */
 template <typename T>
 class parquet_field_struct : public parquet_field {
@@ -340,17 +357,43 @@ class parquet_field_struct : public parquet_field {
  public:
   parquet_field_struct(int f, T& v) : parquet_field(f), val(v) {}
 
-  inline void operator()(CompactProtocolReader* cpr, int field_type)
+  inline bool operator()(CompactProtocolReader* cpr, int field_type)
   {
-    assert_field_type(field_type, FieldType::STRUCT);
+    if (not cpr->check_field_type(field_type, FieldType::STRUCT)) { return false; }
     cpr->read(&val);
+    return true;
+  }
+};
+
+/**
+ * @brief Functor to read a LogicalType and its payload from CompactProtocolReader
+ *
+ * @return true if the field was read, false if skipped on a type mismatch
+ */
+class parquet_field_logical_type : public parquet_field {
+  cuda::std::optional<LogicalType>& val;
+  LogicalTypePayload& payload;
+
+ public:
+  parquet_field_logical_type(int f, cuda::std::optional<LogicalType>& v, LogicalTypePayload& p)
+    : parquet_field(f), val(v), payload(p)
+  {
+  }
+
+  inline bool operator()(CompactProtocolReader* cpr, int field_type)
+  {
+    if (not cpr->check_field_type(field_type, FieldType::STRUCT)) { return false; }
+    LogicalType v;
+    cpr->read(&v, &payload);
+    val = v;
+    return true;
   }
 };
 
 /**
  * @brief Functor to read optional structures in unions
  *
- * @return True if field types mismatch
+ * @return true if the field was read, false if skipped on a type mismatch
  */
 template <typename E, typename T>
 class parquet_field_union_struct : public parquet_field {
@@ -363,12 +406,13 @@ class parquet_field_union_struct : public parquet_field {
   {
   }
 
-  inline void operator()(CompactProtocolReader* cpr, int field_type)
+  inline bool operator()(CompactProtocolReader* cpr, int field_type)
   {
     T v;
-    parquet_field_struct<T>{field(), v}(cpr, field_type);
+    if (not parquet_field_struct<T>{field(), v}(cpr, field_type)) { return false; }
     val      = v;
     enum_val = static_cast<E>(field());
+    return true;
   }
 };
 
@@ -377,7 +421,7 @@ class parquet_field_union_struct : public parquet_field {
  *
  * Added to avoid having to define read() functions for empty structs contained in unions.
  *
- * @return True if field types mismatch
+ * @return true if the field was read, false if skipped on a type mismatch
  */
 template <typename E>
 class parquet_field_union_enumerator : public parquet_field {
@@ -386,11 +430,16 @@ class parquet_field_union_enumerator : public parquet_field {
  public:
   parquet_field_union_enumerator(int f, E& v) : parquet_field(f), val(v) {}
 
-  inline void operator()(CompactProtocolReader* cpr, int field_type)
+  inline bool operator()(CompactProtocolReader* cpr, int field_type)
   {
-    assert_field_type(field_type, FieldType::STRUCT);
+    // Union members are structs; a non-struct wire type means this arm is absent, so skip it.
+    bool const matched = field_type == static_cast<int>(FieldType::STRUCT);
+    if (not matched && cpr->should_throw_on_type_mismatch()) {
+      assert_field_type(field_type, FieldType::STRUCT);
+    }
     cpr->skip_struct_field(field_type);
-    val = static_cast<E>(field());
+    if (matched) { val = static_cast<E>(field()); }
+    return matched;
   }
 };
 
@@ -399,8 +448,7 @@ class parquet_field_union_enumerator : public parquet_field {
  *
  * Uses parallel processing when there are more than 512 elements
  *
- * @return True if field types mismatch or if the process of reading a
- * struct fails
+ * @return true if the field was read, false if skipped on a type mismatch
  */
 template <typename T>
 class parquet_field_struct_list : public parquet_field {
@@ -409,15 +457,26 @@ class parquet_field_struct_list : public parquet_field {
  public:
   parquet_field_struct_list(int f, std::vector<T>& v) : parquet_field(f), val(v) {}
 
-  inline void operator()(CompactProtocolReader* cpr, int field_type)
+  inline bool operator()(CompactProtocolReader* cpr, int field_type)
   {
-    assert_field_type(field_type, FieldType::LIST);
+    if (not cpr->check_field_type(field_type, FieldType::LIST)) { return false; }
     auto const [t, n] = cpr->get_listh();
-    assert_field_type(t, FieldType::STRUCT);
+    // An empty list has no elements, so its wire element-type nibble is immaterial (some writers,
+    // e.g. fastparquet, stamp 0); accept without validating the element type, matching Thrift.
+    if (n == 0) {
+      val.clear();
+      return true;
+    }
+    // Fail before any per-element work on a count that cannot fit the remaining bytes.
+    CUDF_EXPECTS(std::cmp_less_equal(n, cpr->m_end - cpr->m_cur),
+                 "Parquet footer list size exceeds remaining buffer");
+    if (not cpr->check_list_element_type(t, FieldType::STRUCT, n)) { return false; }
     val.resize(n);
 
     constexpr uint32_t parallel_threshold = 512;
     if (n >= parallel_threshold) {
+      // Propagate the reader's strict/lenient mode to the parallel per-struct sub-readers below.
+      auto const mode = cpr->m_mismatch_policy;
       auto const num_tasks =
         std::min<uint32_t>(n, cudf::detail::host_worker_pool().get_thread_count() * 2);
       auto const items_per_task = n / num_tasks;
@@ -426,53 +485,75 @@ class parquet_field_struct_list : public parquet_field {
       std::vector<std::future<void>> tasks;
       tasks.reserve(num_tasks);
 
+      // Size once up front, then fill by index below: workers read already-filled slots while the
+      // main thread fills later ones, so a size-mutating emplace_back would be a data race.
       std::vector<cudf::host_span<uint8_t const>> all_ranges;
-      all_ranges.reserve(n);
+      all_ranges.resize(n);
 
-      uint32_t struct_idx = 0;
-      for (uint32_t task_id = 0; task_id < num_tasks; ++task_id) {
-        auto const task_size = items_per_task + (task_id < remainder ? 1 : 0);
-        auto const start_idx = std::min(n, struct_idx);
-        auto const end_idx   = std::min(n, start_idx + task_size);
+      // Wait for every task before all_ranges/val die on any exit path: a throw during collection
+      // must not let a worker read freed memory (host-pool futures do not block on destruction).
+      try {
+        uint32_t struct_idx = 0;
+        for (uint32_t task_id = 0; task_id < num_tasks; ++task_id) {
+          auto const task_size = items_per_task + (task_id < remainder ? 1 : 0);
+          auto const start_idx = std::min(n, struct_idx);
+          auto const end_idx   = std::min(n, start_idx + task_size);
 
-        if (start_idx >= end_idx) { break; }
+          if (start_idx >= end_idx) { break; }
 
-        // Collect struct ranges for the next task
-        for (auto i = start_idx; i < end_idx; ++i) {
-          uint8_t const* const start = cpr->m_cur;
-          cpr->skip_struct_field(static_cast<int>(FieldType::STRUCT));
-          all_ranges.emplace_back(start, static_cast<size_t>(cpr->m_cur - start));
+          // Collect struct ranges for the next task
+          for (auto i = start_idx; i < end_idx; ++i) {
+            uint8_t const* const start = cpr->m_cur;
+            cpr->skip_struct_field(static_cast<int>(FieldType::STRUCT));
+            all_ranges[i] =
+              cudf::host_span<uint8_t const>{start, static_cast<size_t>(cpr->m_cur - start)};
+          }
+
+          // Launch task immediately to parse the structs in parallel while the main thread collects
+          // the remaining ranges
+          tasks.emplace_back(cudf::detail::host_worker_pool().submit_task(
+            [&val = this->val, &all_ranges, start_idx, end_idx, mode]() {
+              CompactProtocolReader local_cpr{nullptr, 0, mode};
+              // end_idx alone bounds the loop: all_ranges[start_idx, end_idx) is fully populated
+              // before this task launches, so no concurrent read of all_ranges.size() is needed.
+              for (size_t i = start_idx; i < end_idx; ++i) {
+                local_cpr.init(all_ranges[i].data(), all_ranges[i].size());
+                local_cpr.read(&val[i]);
+              }
+            }));
+
+          struct_idx = end_idx;
         }
-
-        // Launch task immediately to parse the structs in parallel while the main thread collects
-        // the remaining ranges
-        tasks.emplace_back(cudf::detail::host_worker_pool().submit_task(
-          [&val = this->val, &all_ranges, start_idx, end_idx]() {
-            CompactProtocolReader local_cpr;
-            for (size_t i = start_idx; i < end_idx && i < all_ranges.size(); ++i) {
-              local_cpr.init(all_ranges[i].data(), all_ranges[i].size());
-              local_cpr.read(&val[i]);
-            }
-          }));
-
-        struct_idx = end_idx;
+      } catch (...) {
+        for (auto& task : tasks) {
+          task.wait();
+        }
+        throw;
       }
-
+      // Join EVERY task before leaving, then rethrow the first failure: task.get() throws on a
+      // strict-mode mismatch, and bailing out of this loop mid-way would abandon the remaining
+      // un-joined tasks, whose lambdas still reference all_ranges/val (use-after-free at exit).
+      std::exception_ptr first_error;
       for (auto& task : tasks) {
-        task.get();
+        try {
+          task.get();
+        } catch (...) {
+          if (!first_error) { first_error = std::current_exception(); }
+        }
       }
+      if (first_error) { std::rethrow_exception(first_error); }
     } else {
       // For small numbers of elements, use sequential processing to avoid overhead
       std::for_each(val.begin(), val.end(), [&cpr](auto& elem) { cpr->read(&elem); });
     }
+    return true;
   }
 };
 
 /**
  * @brief Functor to read a binary from CompactProtocolReader
  *
- * @return True if field type mismatches or if size of binary exceeds bounds
- * of the CompactProtocolReader
+ * @return true if the field was read, false if skipped on a type mismatch
  */
 class parquet_field_binary : public parquet_field {
   std::vector<uint8_t>& val;
@@ -480,22 +561,22 @@ class parquet_field_binary : public parquet_field {
  public:
   parquet_field_binary(int f, std::vector<uint8_t>& v) : parquet_field(f), val(v) {}
 
-  inline void operator()(CompactProtocolReader* cpr, int field_type)
+  inline bool operator()(CompactProtocolReader* cpr, int field_type)
   {
-    assert_field_type(field_type, FieldType::BINARY);
+    if (not cpr->check_field_type(field_type, FieldType::BINARY)) { return false; }
     auto const n = cpr->get_u32();
     CUDF_EXPECTS(std::cmp_less_equal(n, cpr->m_end - cpr->m_cur), "binary length mismatch");
 
     val.assign(cpr->m_cur, cpr->m_cur + n);
     cpr->m_cur += n;
+    return true;
   }
 };
 
 /**
  * @brief Functor to read a vector of binaries from CompactProtocolReader
  *
- * @return True if field types mismatch or if the process of reading a
- * binary fails
+ * @return true if the field was read, false if skipped on a type mismatch
  */
 class parquet_field_binary_list
   : public parquet_field_list<std::vector<uint8_t>, FieldType::BINARY> {
@@ -517,19 +598,20 @@ class parquet_field_binary_list
 /**
  * @brief Functor to read a struct from CompactProtocolReader
  *
- * @return True if field type mismatches
+ * @return true if the field was read, false if skipped on a type mismatch
  */
 class parquet_field_struct_blob : public parquet_field {
   std::vector<uint8_t>& val;
 
  public:
   parquet_field_struct_blob(int f, std::vector<uint8_t>& v) : parquet_field(f), val(v) {}
-  inline void operator()(CompactProtocolReader* cpr, int field_type)
+  inline bool operator()(CompactProtocolReader* cpr, int field_type)
   {
-    assert_field_type(field_type, FieldType::STRUCT);
+    if (not cpr->check_field_type(field_type, FieldType::STRUCT)) { return false; }
     uint8_t const* const start = cpr->m_cur;
     cpr->skip_struct_field(field_type);
     if (cpr->m_cur > start) { val.assign(start, cpr->m_cur - 1); }
+    return true;
   }
 };
 
@@ -543,54 +625,127 @@ class parquet_field_optional : public parquet_field {
  public:
   parquet_field_optional(int f, OptionalType& v) : parquet_field(f), val(v) {}
 
-  inline void operator()(CompactProtocolReader* cpr, int field_type)
+  inline bool operator()(CompactProtocolReader* cpr, int field_type)
   {
     T v;
-    FieldFunctor{field(), v}(cpr, field_type);
+    if (not FieldFunctor{field(), v}(cpr, field_type)) { return false; }
     val = v;
+    return true;
   }
 };
 
 /**
- * @brief Skips the number of bytes according to the specified struct type
+ * @brief Skips a single value of the given wire type, matching Thrift TCompactProtocol::skip
  *
- * @param[in] t Struct type enumeration
- * @param[in] depth Level of struct nesting
- *
- * @return True if the struct type is recognized, false otherwise
+ * @param[in] t Compact-protocol field type of the value to skip
+ * @param[in] depth Current struct/container nesting level
  */
 void CompactProtocolReader::skip_struct_field(int t, int depth)
 {
   auto const t_enum = static_cast<FieldType>(t);
   switch (t_enum) {
     case FieldType::BOOLEAN_TRUE:
-    case FieldType::BOOLEAN_FALSE: break;
+    case FieldType::BOOLEAN_FALSE: break;  // a bool struct-field value lives in the type nibble
     case FieldType::I16:
     case FieldType::I32:
     case FieldType::I64: get_u64(); break;
     case FieldType::I8: skip_bytes(1); break;
     case FieldType::DOUBLE: skip_bytes(8); break;
     case FieldType::BINARY: skip_bytes(get_u32()); break;
+    case FieldType::UUID: skip_bytes(16); break;
     case FieldType::LIST:
     case FieldType::SET: {
-      auto const [t, n] = get_listh();
+      auto const [element_type, n] = get_listh();
+      // Reject a count that cannot fit the remaining bytes (each element >= 1 byte), bounding the
+      // skip loop against a malformed size prefix.
+      CUDF_EXPECTS(std::cmp_less_equal(n, m_end - m_cur),
+                   "Parquet footer list size exceeds remaining buffer");
       CUDF_EXPECTS(depth <= 10, "struct nesting too deep");
-      for (uint32_t i = 0; i < n; i++) {
-        skip_struct_field(t, depth + 1);
+      auto const et = static_cast<FieldType>(element_type);
+      if (et == FieldType::BOOLEAN_TRUE || et == FieldType::BOOLEAN_FALSE) {
+        // Bool list/set elements are one byte each (unlike a bool struct field, whose value is in
+        // the type nibble), so skip them directly instead of recursing to the zero-byte bool case.
+        skip_bytes(n);
+      } else {
+        for (uint32_t i = 0; i < n; i++) {
+          skip_struct_field(element_type, depth + 1);
+        }
+      }
+    } break;
+    case FieldType::MAP: {
+      // Compact map: a varint size, then (only when non-empty) one byte packing the key type (high
+      // nibble) and value type (low nibble), followed by size key/value pairs.
+      auto const n = get_u32();
+      if (n != 0) {
+        CUDF_EXPECTS(std::cmp_less_equal(n, m_end - m_cur),
+                     "Parquet footer map size exceeds remaining buffer");
+        CUDF_EXPECTS(depth <= 10, "struct nesting too deep");
+        int const kv_types = getb();
+        int const key_type = kv_types >> 4;
+        int const val_type = kv_types & 0xf;
+        // A bool map key/value is one byte each (unlike a bool struct field, whose value is in the
+        // type nibble), so skip it directly instead of recursing to the zero-byte bool case.
+        auto const skip_map_elem = [&](int elem_type) {
+          auto const e = static_cast<FieldType>(elem_type);
+          if (e == FieldType::BOOLEAN_TRUE || e == FieldType::BOOLEAN_FALSE) {
+            skip_bytes(1);
+          } else {
+            skip_struct_field(elem_type, depth + 1);
+          }
+        };
+        for (uint32_t i = 0; i < n; i++) {
+          skip_map_elem(key_type);
+          skip_map_elem(val_type);
+        }
       }
     } break;
     case FieldType::STRUCT:
       for (;;) {
-        int const c = getb();
-        t           = c & 0xf;
+        int const c          = getb();
+        int const field_type = c & 0xf;
         if (c == 0) { break; }               // end of struct
         if ((c & 0xf0) == 0) { get_i16(); }  // field id is not a delta
         CUDF_EXPECTS(depth <= 10, "struct nesting too deep");
-        skip_struct_field(t, depth + 1);
+        skip_struct_field(field_type, depth + 1);
       }
       break;
-    default: break;
+    default: CUDF_FAIL("Unsupported Parquet Thrift field type encountered while skipping");
   }
+}
+
+bool CompactProtocolReader::check_field_type(int type, FieldType expected)
+{
+  if (type == static_cast<int>(expected)) { return true; }
+  if (should_throw_on_type_mismatch()) { assert_field_type(type, expected); }
+  skip_struct_field(type);
+  return false;
+}
+
+bool CompactProtocolReader::check_list_element_type(int type, FieldType expected, uint32_t count)
+{
+  auto const is_bool = [](FieldType t) {
+    return t == FieldType::BOOLEAN_TRUE || t == FieldType::BOOLEAN_FALSE;
+  };
+  auto const et = static_cast<FieldType>(type);
+  // A bool list may carry either nibble (true/false); both are valid element types.
+  if (type == static_cast<int>(expected) || (is_bool(expected) && is_bool(et))) { return true; }
+  if (should_throw_on_type_mismatch()) {
+    if (is_bool(expected)) {
+      assert_bool_field_type(type);
+    } else {
+      assert_field_type(type, expected);
+    }
+  }
+  // Discard the element payloads so the walk resumes at the next field. Bool elements are one
+  // byte each (the value lives in the type nibble); callers bound `count` against the buffer.
+  if (is_bool(et)) {
+    skip_bytes(count);
+  } else {
+    for (uint32_t i = 0; i < count; ++i) {
+      skip_struct_field(type);
+    }
+  }
+  return false;
 }
 
 void CompactProtocolReader::read(FileMetaData* f)
@@ -605,31 +760,33 @@ void CompactProtocolReader::read(FileMetaData* f)
                             parquet_field_string(6, f->created_by),
                             optional_list_column_order(7, f->column_orders));
   function_builder(this, op);
+  // Callers can check overread() after schema-init so a footer with no schema reports the
+  // specific "Cannot initialize schema", not this generic error.
 }
 
 void CompactProtocolReader::read(SchemaElement* s)
 {
   using optional_converted_type =
     parquet_field_optional<ConvertedType, parquet_field_enum<ConvertedType>>;
-  using optional_logical_type = parquet_field_optional<LogicalType,
-                                                       parquet_field_struct<LogicalType>,
-                                                       cuda::std::optional<LogicalType>>;
-  auto op                     = std::make_tuple(parquet_field_enum<Type>(1, s->type),
-                            parquet_field_int32(2, s->type_length),
-                            parquet_field_enum<FieldRepetitionType>(3, s->repetition_type),
-                            parquet_field_string(4, s->name),
-                            parquet_field_int32(5, s->num_children),
-                            optional_converted_type(6, s->converted_type),
-                            parquet_field_int32(7, s->decimal_scale),
-                            parquet_field_int32(8, s->decimal_precision),
-                            parquet_field_optional<int32_t, parquet_field_int32>(9, s->field_id),
-                            optional_logical_type(10, s->logical_type));
+  auto op =
+    std::make_tuple(parquet_field_enum<Type>(1, s->type),
+                    parquet_field_int32(2, s->type_length),
+                    parquet_field_enum<FieldRepetitionType>(3, s->repetition_type),
+                    parquet_field_string(4, s->name),
+                    parquet_field_int32(5, s->num_children),
+                    optional_converted_type(6, s->converted_type),
+                    parquet_field_int32(7, s->decimal_scale),
+                    parquet_field_int32(8, s->decimal_precision),
+                    parquet_field_optional<int32_t, parquet_field_int32>(9, s->field_id),
+                    parquet_field_logical_type(10, s->logical_type, s->logical_type_payload));
   function_builder(this, op);
 }
 
-void CompactProtocolReader::read(LogicalType* l)
+void CompactProtocolReader::read(LogicalType* l, LogicalTypePayload* payload)
 {
-  auto op = std::make_tuple(
+  // Clear the destination so only the parsed union member is engaged.
+  *payload = LogicalTypePayload{};
+  auto op  = std::make_tuple(
     parquet_field_union_enumerator(1, l->type),
     parquet_field_union_enumerator(2, l->type),
     parquet_field_union_enumerator(3, l->type),
@@ -642,8 +799,44 @@ void CompactProtocolReader::read(LogicalType* l)
     parquet_field_union_enumerator(11, l->type),
     parquet_field_union_enumerator(12, l->type),
     parquet_field_union_enumerator(13, l->type),
-    parquet_field_union_enumerator(16, l->type));
+    parquet_field_union_enumerator(14, l->type),  // UUID
+    parquet_field_union_enumerator(15, l->type),  // FLOAT16
+    parquet_field_union_struct<LogicalType::Type, VariantType>(16, l->type, payload->variant_type),
+    parquet_field_union_struct<LogicalType::Type, GeometryType>(
+      17, l->type, payload->geometry_type),
+    parquet_field_union_struct<LogicalType::Type, GeographyType>(
+      18, l->type, payload->geography_type),
+    parquet_field_union_enumerator(19, l->type));  // FILE
   function_builder(this, op);
+}
+
+void CompactProtocolReader::read(GeometryType* g)
+{
+  // Thrift field 1 is the `crs` string; only its PRESENCE is recorded, mirroring GeographyType.
+  std::optional<std::string> crs;
+  auto op = std::make_tuple(parquet_field_optional<std::string, parquet_field_string>(1, crs));
+  function_builder(this, op);
+  g->has_crs = crs.has_value();
+}
+
+void CompactProtocolReader::read(VariantType* v)
+{
+  using optional_version = parquet_field_optional<int8_t, parquet_field_int8>;
+  auto op                = std::make_tuple(optional_version(1, v->specification_version));
+  function_builder(this, op);
+}
+
+void CompactProtocolReader::read(GeographyType* g)
+{
+  using optional_algorithm = parquet_field_optional<EdgeInterpolationAlgorithm,
+                                                    parquet_field_enum<EdgeInterpolationAlgorithm>>;
+  // Thrift field 1 is the `crs` string; only its PRESENCE is recorded while `algorithm` (id 2)
+  // round-trips.
+  std::optional<std::string> crs;
+  auto op = std::make_tuple(parquet_field_optional<std::string, parquet_field_string>(1, crs),
+                            optional_algorithm(2, g->algorithm));
+  function_builder(this, op);
+  g->has_crs = crs.has_value();
 }
 
 void CompactProtocolReader::read(DecimalType* d)
@@ -804,7 +997,8 @@ void CompactProtocolReader::read(DataPageHeaderV2* d)
 
 void CompactProtocolReader::read(KeyValue* k)
 {
-  auto op = std::make_tuple(parquet_field_string(1, k->key), parquet_field_string(2, k->value));
+  auto op = std::make_tuple(parquet_field_string(1, k->key),
+                            parquet_field_optional<std::string, parquet_field_string>(2, k->value));
   function_builder(this, op);
 }
 
@@ -846,7 +1040,8 @@ void CompactProtocolReader::read(ColumnIndex* c)
                             parquet_field_enum<BoundaryOrder>(4, c->boundary_order),
                             optional_list_i64(5, c->null_counts),
                             optional_list_i64(6, c->repetition_level_histogram),
-                            optional_list_i64(7, c->definition_level_histogram));
+                            optional_list_i64(7, c->definition_level_histogram),
+                            optional_list_i64(8, c->nan_counts));
   function_builder(this, op);
 }
 
@@ -863,13 +1058,16 @@ void CompactProtocolReader::read(Statistics* s)
                             optional_binary(5, s->max_value),
                             optional_binary(6, s->min_value),
                             optional_bool(7, s->is_max_value_exact),
-                            optional_bool(8, s->is_min_value_exact));
+                            optional_bool(8, s->is_min_value_exact),
+                            optional_int64(9, s->nan_count));
   function_builder(this, op);
 }
 
 void CompactProtocolReader::read(ColumnOrder* c)
 {
-  auto op = std::make_tuple(parquet_field_union_enumerator<ColumnOrder::Type>(1, c->type));
+  auto op = std::make_tuple(parquet_field_union_enumerator(1, c->type),
+                            parquet_field_union_enumerator(2, c->type),
+                            parquet_field_union_enumerator(3, c->type));
   function_builder(this, op);
 }
 
@@ -973,6 +1171,25 @@ int CompactProtocolReader::WalkSchema(
     // Error
     return -1;
   }
+}
+
+void decode_footer_bytes(std::span<uint8_t const> footer_bytes,
+                         FileMetaData* metadata,
+                         experimental::thrift_mismatch_policy mode)
+{
+  CompactProtocolReader reader{footer_bytes.data(), footer_bytes.size(), mode};
+  reader.read(metadata);
+  CUDF_EXPECTS(not reader.overread(), overread_message);
+}
+
+void decode_footer_and_init_schema(std::span<uint8_t const> footer_bytes, FileMetaData* metadata)
+{
+  CompactProtocolReader reader{footer_bytes.data(), footer_bytes.size()};
+  reader.read(metadata);
+  // Schema-init failure (e.g. empty input) reports the specific message, not generic overread.
+  auto const is_schema_initialized = reader.InitSchema(metadata);
+  CUDF_EXPECTS(is_schema_initialized, cannot_init_schema_message);
+  CUDF_EXPECTS(not reader.overread(), overread_message);
 }
 
 }  // namespace cudf::io::parquet::detail

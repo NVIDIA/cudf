@@ -70,7 +70,7 @@ namespace cudf::jni {
 std::unique_ptr<cudf::column> extract_chunk32(cudf::column_view const& in_col,
                                               cudf::data_type type,
                                               int chunk_idx,
-                                              rmm::cuda_stream_view stream)
+                                              cuda::stream_ref stream)
 {
   CUDF_EXPECTS(in_col.type().id() == cudf::type_id::DECIMAL128, "not a 128-bit type");
   CUDF_EXPECTS(chunk_idx >= 0 && chunk_idx < 4, "invalid chunk index");
@@ -95,7 +95,7 @@ std::unique_ptr<cudf::column> extract_chunk32(cudf::column_view const& in_col,
 // Reassemble a column of 128-bit values from four 64-bit integer columns with overflow detection.
 std::unique_ptr<cudf::table> assemble128_from_sum(cudf::table_view const& chunks_table,
                                                   cudf::data_type output_type,
-                                                  rmm::cuda_stream_view stream)
+                                                  cuda::stream_ref stream)
 {
   CUDF_EXPECTS(output_type.id() == cudf::type_id::DECIMAL128, "not a 128-bit type");
   CUDF_EXPECTS(chunks_table.num_columns() == 4, "must be 4 column table");

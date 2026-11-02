@@ -10,6 +10,9 @@
 #include <cudf/io/types.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/export.hpp>
+#include <cudf/utilities/memory_resource.hpp>
+
+#include <cuda/buffer>
 
 #include <map>
 #include <unordered_set>
@@ -27,11 +30,11 @@ namespace json {
  * @brief Struct that encapsulate all information of a columnar tree representation.
  */
 struct tree_meta_t {
-  rmm::device_uvector<NodeT> node_categories;
-  rmm::device_uvector<NodeIndexT> parent_node_ids;
-  rmm::device_uvector<TreeDepthT> node_levels;
-  rmm::device_uvector<SymbolOffsetT> node_range_begin;
-  rmm::device_uvector<SymbolOffsetT> node_range_end;
+  cuda::device_buffer<NodeT> node_categories;
+  cuda::device_buffer<NodeIndexT> parent_node_ids;
+  cuda::device_buffer<TreeDepthT> node_levels;
+  cuda::device_buffer<SymbolOffsetT> node_range_begin;
+  cuda::device_buffer<SymbolOffsetT> node_range_end;
 };
 
 /**
@@ -152,7 +155,8 @@ struct device_json_column {
   rmm::device_uvector<int32_t> child_offsets;
 
   // Validity bitmap
-  rmm::device_buffer validity;
+  cuda::device_buffer<cudf::bitmask_type> validity =
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED);
 
   // Map of child columns, if applicable.
   // Following "element" as the default child column's name of a list column
@@ -189,7 +193,7 @@ struct device_json_column {
     : string_offsets(0, stream),
       string_lengths(0, stream),
       child_offsets(0, stream, mr),
-      validity(0, stream, mr)
+      validity(stream, mr)
   {
   }
 };
@@ -199,8 +203,8 @@ namespace experimental {
  * @brief Sparse graph adjacency matrix stored in Compressed Sparse Row (CSR) format.
  */
 struct compressed_sparse_row {
-  rmm::device_uvector<NodeIndexT> row_idx;
-  rmm::device_uvector<NodeIndexT> col_idx;
+  cuda::device_buffer<NodeIndexT> row_idx;
+  cuda::device_buffer<NodeIndexT> col_idx;
 };
 
 /*
@@ -208,9 +212,9 @@ struct compressed_sparse_row {
  * column subtree, but not required for the final cudf column construction.
  */
 struct column_tree_properties {
-  rmm::device_uvector<NodeT> categories;
-  rmm::device_uvector<size_type> max_row_offsets;
-  rmm::device_uvector<NodeIndexT> mapped_ids;
+  cuda::device_buffer<NodeT> categories;
+  cuda::device_buffer<size_type> max_row_offsets;
+  cuda::device_buffer<NodeIndexT> mapped_ids;
 };
 
 namespace detail {
@@ -333,7 +337,7 @@ tree_meta_t get_tree_representation(device_span<PdaTokenT const> tokens,
  * @return A tuple of the output column indices and the row offsets within each column for each node
  */
 CUDF_EXPORT
-std::tuple<rmm::device_uvector<NodeIndexT>, rmm::device_uvector<size_type>>
+std::tuple<cuda::device_buffer<NodeIndexT>, cuda::device_buffer<size_type>>
 records_orient_tree_traversal(device_span<SymbolT const> d_input,
                               tree_meta_t const& d_tree,
                               bool is_array_of_arrays,
@@ -353,10 +357,10 @@ records_orient_tree_traversal(device_span<SymbolT const> d_input,
  * @param node_levels Levels of each node in the tree
  * @param parent_node_ids Parent node ids of each node in the tree
  * @param stream The CUDA stream to which kernels are dispatched
- * @return A pair of device_uvector containing the original node indices and their corresponding
+ * @return A pair of device_buffer containing the original node indices and their corresponding
  * child index
  */
-std::pair<rmm::device_uvector<NodeIndexT>, rmm::device_uvector<NodeIndexT>>
+std::pair<cuda::device_buffer<NodeIndexT>, cuda::device_buffer<NodeIndexT>>
 get_array_children_indices(TreeDepthT row_array_children_level,
                            device_span<TreeDepthT const> node_levels,
                            device_span<NodeIndexT const> parent_node_ids,
@@ -377,7 +381,7 @@ get_array_children_indices(TreeDepthT row_array_children_level,
  * max row offsets of columns
  */
 CUDF_EXPORT
-std::tuple<tree_meta_t, rmm::device_uvector<NodeIndexT>, rmm::device_uvector<size_type>>
+std::tuple<tree_meta_t, cuda::device_buffer<NodeIndexT>, cuda::device_buffer<size_type>>
 reduce_to_column_tree(tree_meta_t const& tree,
                       device_span<NodeIndexT const> original_col_ids,
                       device_span<NodeIndexT const> sorted_col_ids,

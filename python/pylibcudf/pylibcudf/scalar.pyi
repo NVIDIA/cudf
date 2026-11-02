@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from typing import Any
@@ -15,11 +15,7 @@ PaScalar = type[Any]
 class Scalar:
     def __init__(self): ...
     def type(self) -> DataType: ...
-    def is_valid(self, stream: CudaStreamLike) -> bool: ...
-    @staticmethod
-    def empty_like(
-        column: Column, stream: CudaStreamLike | None = None
-    ) -> Scalar: ...
+    def is_valid(self, stream: CudaStreamLike | None = None) -> bool: ...
     def to_arrow(
         self,
         metadata: ColumnMetadata | str | None = None,

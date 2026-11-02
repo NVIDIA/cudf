@@ -6,20 +6,22 @@
 from __future__ import annotations
 
 from functools import partial, reduce, singledispatch
-from typing import TYPE_CHECKING, TypeAlias, TypedDict, cast
+from typing import TYPE_CHECKING, NamedTuple, TypedDict, cast
 
-import polars as pl  # noqa: TC002 (used at runtime for pl.datatypes, pl.Series etc.)
+import polars as pl
 
 import pylibcudf as plc
 from pylibcudf import expressions as plc_expr
 
 from cudf_polars.containers import DataType
 from cudf_polars.dsl import expr
-from cudf_polars.dsl.traversal import CachingVisitor, reuse_if_unchanged
+from cudf_polars.dsl.traversal import CachingVisitor, reuse_if_unchanged, traversal
+from cudf_polars.dsl.utils.naming import unique_names
+from cudf_polars.dsl.utils.replace import replace
 from cudf_polars.typing import GenericTransformer
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Generator, Mapping, Sequence
 
     from rmm.pylibrmm.stream import Stream
 
@@ -112,11 +114,35 @@ class ExprTransformerState(TypedDict):
     table_ref: plc.expressions.TableReference
 
 
-Transformer: TypeAlias = GenericTransformer[expr.Expr, plc_expr.Expression, ASTState]
-ExprTransformer: TypeAlias = GenericTransformer[
-    expr.Expr, expr.Expr, ExprTransformerState
-]
+class JoinPredicateState(TypedDict):
+    """
+    State used for splitting the extra condition of a join.
+
+    Parameters
+    ----------
+    columns
+        For each output column of the join, the table it comes from and its
+        name there.
+    indices
+        For each table, the index of each of its columns.
+    names
+        For each table, a generator of names for columns to append to it.
+    extras
+        For each table, the expressions to append to it and their names.
+    """
+
+    columns: Mapping[str, tuple[plc_expr.TableReference, str]]
+    indices: Mapping[plc_expr.TableReference, Mapping[str, int]]
+    names: Mapping[plc_expr.TableReference, Generator[str, None, None]]
+    extras: Mapping[plc_expr.TableReference, dict[expr.Expr, str]]
+
+
+type Transformer = GenericTransformer[expr.Expr, plc_expr.Expression, ASTState]
+type ExprTransformer = GenericTransformer[expr.Expr, expr.Expr, ExprTransformerState]
 """Protocol for transformation of Expr nodes."""
+type JoinPredicateTransformer = GenericTransformer[
+    expr.Expr, expr.Expr, JoinPredicateState
+]
 
 
 @singledispatch
@@ -182,7 +208,7 @@ def _(node: expr.BinOp, self: Transformer) -> plc_expr.Expression:
     if c1.dtype != c2.dtype:
         if isinstance(c1, expr.Literal):  # pragma: no cover
             c1 = c1.astype(c2.dtype)
-        elif isinstance(c2, expr.Literal):
+        elif isinstance(c2, expr.Literal):  # pragma: no cover
             c2 = c2.astype(c1.dtype)
         elif (
             isinstance(c1, (expr.Col, expr.ColRef)) and c1.dtype.id() in _DECIMAL_IDS
@@ -204,33 +230,41 @@ def _(node: expr.BinOp, self: Transformer) -> plc_expr.Expression:
 def _(node: expr.BooleanFunction, self: Transformer) -> plc_expr.Expression:
     if node.name is expr.BooleanFunction.Name.IsIn:
         needles, haystack = node.children
-        if isinstance(haystack, expr.LiteralColumn) and len(haystack.value) < 16:
-            # 16 is an arbitrary limit
-            needle_ref = self(needles)
-            if haystack.dtype.id() == plc.TypeId.LIST:
-                # Because we originally translated pl_expr.Literal with a list scalar
-                # to a expr.LiteralColumn, so the actual type is in the inner type
-                # .inner returns DataTypeClass | DataType, need to cast to DataType
-                plc_dtype = DataType(
-                    cast(
-                        "pl.DataType", cast("pl.List", haystack.dtype.polars_type).inner
+        if isinstance(haystack, expr.LiteralColumn):
+            haystack_values = haystack.value
+            if haystack_values.dtype == pl.List:
+                # An imploded literal is a one-row list column, use the inner values
+                haystack_values = haystack_values.explode()
+            if 0 < len(haystack_values) < 16:
+                # 16 is an arbitrary limit
+                needle_ref = self(needles)
+                if haystack.dtype.id() == plc.TypeId.LIST:
+                    # Because we originally translated pl_expr.Literal with a list scalar
+                    # to a expr.LiteralColumn, so the actual type is in the inner type
+                    # .inner returns DataTypeClass | DataType, need to cast to DataType
+                    plc_dtype = DataType(
+                        cast(
+                            "pl.DataType",
+                            cast("pl.List", haystack.dtype.polars_type).inner,
+                        )
+                    ).plc_type
+                else:
+                    plc_dtype = haystack.dtype.plc_type  # pragma: no cover
+                values = (
+                    plc_expr.Literal(
+                        plc.Scalar.from_py(val, plc_dtype, stream=self.state["stream"])
                     )
-                ).plc_type
-            else:
-                plc_dtype = haystack.dtype.plc_type  # pragma: no cover
-            values = (
-                plc_expr.Literal(
-                    plc.Scalar.from_py(val, plc_dtype, stream=self.state["stream"])
+                    for val in haystack_values
                 )
-                for val in haystack.value
-            )
-            return reduce(
-                partial(plc_expr.Operation, plc_expr.ASTOperator.LOGICAL_OR),
-                (
-                    plc_expr.Operation(plc_expr.ASTOperator.EQUAL, needle_ref, value)
-                    for value in values
-                ),
-            )
+                return reduce(
+                    partial(plc_expr.Operation, plc_expr.ASTOperator.LOGICAL_OR),
+                    (
+                        plc_expr.Operation(
+                            plc_expr.ASTOperator.EQUAL, needle_ref, value
+                        )
+                        for value in values
+                    ),
+                )
     if self.state["for_parquet"] and isinstance(node.children[0], expr.Col):
         if node.name not in (
             expr.BooleanFunction.Name.IsNull,
@@ -277,8 +311,13 @@ def _extract_conjuncts(node: expr.Expr) -> list[expr.Expr]:
 
 
 def _to_parquet_filter(
-    node: expr.Expr, mapper: Transformer
+    node: expr.Expr, mapper: Transformer, unreadable_columns: frozenset[str]
 ) -> plc_expr.Expression | None:
+    if unreadable_columns and any(
+        isinstance(child, expr.Col) and child.name in unreadable_columns
+        for child in traversal([node])
+    ):
+        return None
     # Converts a boolean column reference (e.g., filter(pl.col("foo")))
     # to an explicit comparison for parquet filters (e.g., filter(pl.col("foo") == True)).
     # TODO: Have polars pass us the comparison instead
@@ -296,7 +335,9 @@ def _to_parquet_filter(
 
 
 def to_parquet_filter(
-    node: expr.Expr, stream: Stream
+    node: expr.Expr,
+    stream: Stream,
+    unreadable_columns: frozenset[str] = frozenset(),
 ) -> tuple[plc_expr.Expression | None, expr.Expr | None]:
     """
     Convert an expression to libcudf AST nodes suitable for parquet filtering.
@@ -307,6 +348,11 @@ def to_parquet_filter(
         Expression to convert.
     stream
         CUDA stream used for device memory operations and kernel launches.
+    unreadable_columns
+        Names of columns that are part of the scan's schema but are not stored
+        in the files, such as hive partition keys. Conjuncts referencing them
+        are left to the residual so they can be applied once those columns have
+        been materialized.
 
     Returns
     -------
@@ -321,13 +367,13 @@ def to_parquet_filter(
     mapper: Transformer = CachingVisitor(
         _to_ast, state={"for_parquet": True, "stream": stream}
     )
-    whole = _to_parquet_filter(node, mapper)
+    whole = _to_parquet_filter(node, mapper, unreadable_columns)
     if whole is not None:
         return whole, None
     can_handle_filters = []
     cant_handle_exprs = []
     for conjunct in _extract_conjuncts(node):
-        f = _to_parquet_filter(conjunct, mapper)
+        f = _to_parquet_filter(conjunct, mapper, unreadable_columns)
         if f is not None:
             can_handle_filters.append(f)
         else:
@@ -423,3 +469,109 @@ def insert_colrefs(
         state={"name_to_index": name_to_index, "table_ref": table_ref},
     )
     return mapper(node)
+
+
+class JoinPredicate(NamedTuple):
+    """
+    An extra condition of an equi join, split for libcudf's mixed join.
+
+    Parts of the condition that use columns of one input only are evaluated
+    on that input before the join. Only the remaining comparison between the
+    inputs is left to the AST.
+    """
+
+    predicate: expr.Expr
+    """Expression with column references into the left and right tables."""
+    left_exprs: tuple[expr.NamedExpr, ...]
+    """Columns appended to the left table, evaluated on the left input."""
+    right_exprs: tuple[expr.NamedExpr, ...]
+    """Columns appended to the right table, evaluated on the right input."""
+
+
+def _split_join_predicate(node: expr.Expr, rec: JoinPredicateTransformer) -> expr.Expr:
+    state = rec.state
+    if isinstance(node, expr.Col):
+        table_ref, name = state["columns"][node.name]
+        return expr.ColRef(
+            node.dtype,
+            state["indices"][table_ref][name],
+            table_ref,
+            expr.Col(node.dtype, name),
+        )
+    sides = {
+        state["columns"][col.name][0]
+        for col in traversal([node])
+        if isinstance(col, expr.Col)
+    }
+    if len(sides) == 1:
+        (table_ref,) = sides
+        if not node.all_pointwise():
+            raise NotImplementedError("Join predicate with a non-pointwise expression")
+        renames: dict[expr.Expr, expr.Expr] = {
+            col: expr.Col(col.dtype, state["columns"][col.name][1])
+            for col in traversal([node])
+            if isinstance(col, expr.Col)
+        }
+        (local,) = replace([node], renames)
+        extras = state["extras"][table_ref]
+        if local not in extras:
+            extras[local] = next(state["names"][table_ref])
+        index = len(state["indices"][table_ref]) + list(extras).index(local)
+        return expr.ColRef(
+            node.dtype, index, table_ref, expr.Col(node.dtype, extras[local])
+        )
+    return reuse_if_unchanged(node, rec)
+
+
+def split_join_predicate(
+    node: expr.Expr,
+    *,
+    columns: Mapping[str, tuple[plc_expr.TableReference, str]],
+    left_names: Sequence[str],
+    right_names: Sequence[str],
+) -> JoinPredicate:
+    """
+    Split an equi join's extra condition for libcudf's mixed join.
+
+    Parameters
+    ----------
+    node
+        Condition over the columns of the join's output.
+    columns
+        For each output column, the table it comes from and its name there.
+    left_names, right_names
+        Column names of the left and right inputs.
+
+    Returns
+    -------
+    The condition with column references inserted, and the columns to add
+    to each input so that every comparison in the condition is between
+    columns of the two inputs.
+
+    Raises
+    ------
+    NotImplementedError
+        If a part of the condition that uses one input cannot be evaluated
+        on that input.
+    """
+    left = plc_expr.TableReference.LEFT
+    right = plc_expr.TableReference.RIGHT
+    extras: dict[plc_expr.TableReference, dict[expr.Expr, str]] = {left: {}, right: {}}
+    mapper: JoinPredicateTransformer = CachingVisitor(
+        _split_join_predicate,
+        state={
+            "columns": columns,
+            "indices": {
+                left: {name: i for i, name in enumerate(left_names)},
+                right: {name: i for i, name in enumerate(right_names)},
+            },
+            "names": {left: unique_names(left_names), right: unique_names(right_names)},
+            "extras": extras,
+        },
+    )
+    predicate = mapper(node)
+    return JoinPredicate(
+        predicate,
+        tuple(expr.NamedExpr(name, e) for e, name in extras[left].items()),
+        tuple(expr.NamedExpr(name, e) for e, name in extras[right].items()),
+    )

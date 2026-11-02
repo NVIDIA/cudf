@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -29,7 +29,7 @@ column_view make_lists(column_view const& lists_child, lists_column_view const& 
 }  // namespace
 
 maps_column_view::maps_column_view(lists_column_view const& lists_of_structs,
-                                   rmm::cuda_stream_view stream)
+                                   cuda::stream_ref stream)
   : keys_{make_lists(lists_of_structs.child().child(0), lists_of_structs)},
     values_{make_lists(lists_of_structs.child().child(1), lists_of_structs)}
 {
@@ -43,7 +43,7 @@ maps_column_view::maps_column_view(lists_column_view const& lists_of_structs,
 template <typename KeyT>
 std::unique_ptr<column> get_values_for_impl(maps_column_view const& maps_view,
                                             KeyT const& lookup_keys,
-                                            rmm::cuda_stream_view stream,
+                                            cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr)
 {
   auto const keys_   = maps_view.keys();
@@ -66,7 +66,7 @@ std::unique_ptr<column> get_values_for_impl(maps_column_view const& maps_view,
 }
 
 std::unique_ptr<column> maps_column_view::get_values_for(column_view const& lookup_keys,
-                                                         rmm::cuda_stream_view stream,
+                                                         cuda::stream_ref stream,
                                                          rmm::device_async_resource_ref mr) const
 {
   CUDF_EXPECTS(lookup_keys.size() == size(),
@@ -76,7 +76,7 @@ std::unique_ptr<column> maps_column_view::get_values_for(column_view const& look
 }
 
 std::unique_ptr<column> maps_column_view::get_values_for(cudf::scalar const& lookup_key,
-                                                         rmm::cuda_stream_view stream,
+                                                         cuda::stream_ref stream,
                                                          rmm::device_async_resource_ref mr) const
 {
   return get_values_for_impl(*this, lookup_key, stream, mr);
@@ -85,7 +85,7 @@ std::unique_ptr<column> maps_column_view::get_values_for(cudf::scalar const& loo
 template <typename KeyT>
 std::unique_ptr<column> contains_impl(maps_column_view const& maps_view,
                                       KeyT const& lookup_keys,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
 {
   auto const keys = maps_view.keys();
@@ -99,7 +99,7 @@ std::unique_ptr<column> contains_impl(maps_column_view const& maps_view,
 }
 
 std::unique_ptr<column> maps_column_view::contains(column_view const& lookup_keys,
-                                                   rmm::cuda_stream_view stream,
+                                                   cuda::stream_ref stream,
                                                    rmm::device_async_resource_ref mr) const
 {
   CUDF_EXPECTS(lookup_keys.size() == size(),
@@ -109,7 +109,7 @@ std::unique_ptr<column> maps_column_view::contains(column_view const& lookup_key
 }
 
 std::unique_ptr<column> maps_column_view::contains(cudf::scalar const& lookup_key,
-                                                   rmm::cuda_stream_view stream,
+                                                   cuda::stream_ref stream,
                                                    rmm::device_async_resource_ref mr) const
 {
   return contains_impl(*this, lookup_key, stream, mr);

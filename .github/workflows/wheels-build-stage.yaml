@@ -4,7 +4,6 @@ on:
   workflow_call:
     inputs:
       matrix_type:
-        default: "auto"
         required: false
         type: string
       build-datetime:

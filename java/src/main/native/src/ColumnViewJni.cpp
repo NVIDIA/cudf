@@ -132,10 +132,9 @@ std::size_t calc_device_memory_size(cudf::column_view const& view, bool const pa
     total += pad_size(scv.chars_size(cudf::get_default_stream()), pad_for_cpu);
   }
   if (dtype.id() == cudf::type_id::DICTIONARY32 && view.num_children() > 0) {
-    return total +
-           calc_device_memory_size(dictionary_indices_for_parent(view), pad_for_cpu) +
-           calc_device_memory_size(
-             view.child(cudf::dictionary_column_view::keys_column_index), pad_for_cpu);
+    return total + calc_device_memory_size(dictionary_indices_for_parent(view), pad_for_cpu) +
+           calc_device_memory_size(view.child(cudf::dictionary_column_view::keys_column_index),
+                                   pad_for_cpu);
   }
 
   return std::accumulate(view.child_begin(),

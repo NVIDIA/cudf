@@ -205,12 +205,12 @@ Java_ai_rapids_cudf_DeletionVector_readParquet(JNIEnv* env,
                                                : cudf::io::source_info(filenames.as_cpp_vector());
 
     cudf::io::parquet_reader_options opts = make_parquet_reader_options(env,
-                                                                         filter_col_names,
-                                                                         col_binary_read,
-                                                                         row_groups,
-                                                                         std::move(source),
-                                                                         unit,
-                                                                         output_dict_columns);
+                                                                        filter_col_names,
+                                                                        col_binary_read,
+                                                                        row_groups,
+                                                                        std::move(source),
+                                                                        unit,
+                                                                        output_dict_columns);
 
     auto dv_info = make_deletion_vector_info(env,
                                              serialized_roaring64,
@@ -307,12 +307,12 @@ Java_ai_rapids_cudf_DeletionVector_createParquetChunkedReader(JNIEnv* env,
                                                : cudf::io::source_info(filenames.as_cpp_vector());
 
     cudf::io::parquet_reader_options opts = make_parquet_reader_options(env,
-                                                                         filter_col_names,
-                                                                         col_binary_read,
-                                                                         row_groups,
-                                                                         std::move(source),
-                                                                         unit,
-                                                                         output_dict_columns);
+                                                                        filter_col_names,
+                                                                        col_binary_read,
+                                                                        row_groups,
+                                                                        std::move(source),
+                                                                        unit,
+                                                                        output_dict_columns);
 
     auto dv_info = make_deletion_vector_info(env,
                                              serialized_roaring64,

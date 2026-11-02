@@ -492,7 +492,7 @@ template <typename hash_value_type>
 CUDF_HOST_DEVICE constexpr cudf::size_type max_param_groups(cudf::size_type param_count)
 {
   constexpr auto ppt = fused_params_per_thread<hash_value_type>;
-  return cuda::std::min(cudf::util::div_rounding_up_safe(param_count, ppt),
+  return cuda::std::min(cudf::detail::div_rounding_up_safe(param_count, ppt),
                         static_cast<cudf::size_type>(block_size));
 }
 
@@ -604,13 +604,13 @@ CUDF_KERNEL void __launch_bounds__(block_size, fused_min_blocks<hash_value_type>
 
   // iterating on the chunk index (rather than the position) avoids overflow
   auto const chunk_size = max_groups * ppt;
-  auto const num_chunks = cudf::util::div_rounding_up_safe(param_count, chunk_size);
+  auto const num_chunks = cudf::detail::div_rounding_up_safe(param_count, chunk_size);
   for (cudf::size_type chunk_idx = 0; chunk_idx < num_chunks; ++chunk_idx) {
     auto const chunk       = chunk_idx * chunk_size;
     auto const chunk_count = cuda::std::min(param_count - chunk, chunk_size);
     // each thread is assigned a group of parameters and a hash lane;
     // all the threads in a hash lane read the same hash values
-    auto const groups    = cudf::util::div_rounding_up_safe(chunk_count, ppt);
+    auto const groups    = cudf::detail::div_rounding_up_safe(chunk_count, ppt);
     auto const lanes     = static_cast<cudf::size_type>(block_size) / groups;
     auto const group_idx = lane_idx % groups;
     auto const hash_lane = lane_idx / groups;
@@ -789,7 +789,7 @@ std::unique_ptr<cudf::column> minhash_fn(cudf::strings_column_view const& input,
       // the value for the last element (idx == num_rows) is ignored by the exclusive scan
       if (idx == num_rows || d_strings.is_null(idx)) { return 1; }
       auto const size = d_strings.element<cudf::string_view>(idx).size_bytes();
-      return cuda::std::max(cudf::util::div_rounding_up_safe(size, section_bytes), 1);
+      return cuda::std::max(cudf::detail::div_rounding_up_safe(size, section_bytes), 1);
     });
   auto const sections_itr =
     cuda::transform_iterator(cuda::counting_iterator<cudf::size_type>{0}, sections_fn);

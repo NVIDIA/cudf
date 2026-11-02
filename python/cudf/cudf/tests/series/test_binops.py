@@ -3341,10 +3341,10 @@ def test_arrow_backed_unsigned_subtract_overflow():
 
 
 @pytest.mark.parametrize("divisor", [float("inf"), float("-inf"), -1e18, 1e18])
-@pytest.mark.parametrize("val", [1.0, -1.0, 2.5, 0.0, -0.0])
-def test_float_pymod_edge_cases(divisor, val):
-    psr = pd.Series([val])
-    gsr = cudf.Series([val])
+def test_float_pymod_edge_cases(divisor):
+    val = [1.0, -1.0, 2.5, 0.0, -0.0]
+    psr = pd.Series(val)
+    gsr = cudf.Series(val)
     res_p = psr % divisor
     res_g = gsr % divisor
     assert_eq(res_p, res_g)

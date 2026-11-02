@@ -1296,10 +1296,24 @@ dependencies:
           # Used by ci/timeout_with_stack.py utility
           - psutil
           - *pandas
+          # cudf-polars unit tests for iceberg/delta IO
+          - deltalake>=1.6.0
+          - pyiceberg>=0.12.0
+          - sqlalchemy>=2.0.18
+          - pyarrow>=19.0.0
+      - output_types: [requirements, pyproject]
+        packages:
+          - polars[iceberg]
+      - output_types: constraints
+        packages:
+          - polars
       - output_types: conda
         packages:
           # Used by timeout_with_stack.py utility
           - gdb
+          # TODO: Use the conda-forge package once polars-iceberg is available there
+          - pip:
+              - polars-iceberg>=0.1.0
   test_cudf_polars_tpch:
     common:
       - output_types: [conda, requirements, pyproject]

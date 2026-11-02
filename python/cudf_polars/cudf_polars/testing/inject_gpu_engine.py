@@ -422,6 +422,18 @@ def pytest_report_header(config: pytest.Config) -> str:
 
 
 EXPECTED_FAILURES: dict[str, str] = {
+    "tests/unit/io/test_delta.py::test_scan_delta_nanosecond_timestamp": "The test asserts on the verbose log of the polars reader, which the GPU engine does not emit",
+    "tests/unit/io/test_iceberg.py::test_scan_iceberg_parquet_prefilter_with_column_mapping[True]": "The test asserts on the verbose log of the polars reader, which the GPU engine does not emit",
+    "tests/unit/io/test_iceberg.py::test_iceberg_filter_bool_26474": "The GPU engine pushes a boolean XOR into the parquet filter, which libcudf's AST does not support. Plain scan_parquet fails the same way",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_iceberg_filter_bool_26474": "The GPU engine pushes a boolean XOR into the parquet filter, which libcudf's AST does not support. Plain scan_parquet fails the same way",
+    "tests/unit/io/test_iceberg.py::test_scan_iceberg_nan_comparisons[predicate0-<lambda>-Float32-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
+    "tests/unit/io/test_iceberg.py::test_scan_iceberg_nan_comparisons[predicate0-<lambda>-Float64-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
+    "tests/unit/io/test_iceberg.py::test_scan_iceberg_nan_comparisons[predicate1-<lambda>-Float32-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
+    "tests/unit/io/test_iceberg.py::test_scan_iceberg_nan_comparisons[predicate1-<lambda>-Float64-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
+    "tests/unit/io/test_iceberg.py::test_scan_iceberg_nan_comparisons[predicate2-<lambda>-Float32-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
+    "tests/unit/io/test_iceberg.py::test_scan_iceberg_nan_comparisons[predicate2-<lambda>-Float64-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
+    "tests/unit/io/test_iceberg.py::test_scan_iceberg_nan_comparisons[predicate3-<lambda>-Float32-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
+    "tests/unit/io/test_iceberg.py::test_scan_iceberg_nan_comparisons[predicate3-<lambda>-Float64-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
     "tests/unit/io/test_io_plugin.py::test_datetime_io_predicate_pushdown_21790": "cudf-polars validates the IO source schema exactly and does not coerce datetime time units (us vs ns)",
     "tests/unit/io/test_lazy_count_star.py::test_count_parquet[small.parquet-4]": "Debug output on stderr doesn't match",
     "tests/unit/io/test_lazy_count_star.py::test_count_parquet[foods*.parquet-54]": "Debug output on stderr doesn't match",
@@ -695,6 +707,7 @@ if packaging.version.parse(sqlite3.sqlite_version) <= packaging.version.parse("3
 
 
 STREAMING_ENGINE_TESTS_TO_SKIP: Mapping[str, str] = {
+    "tests/unit/io/test_delta.py::test_scan_delta_nanosecond_timestamp": "Passes under the streaming engine but fails under the in-memory engine, which xfails it",
     "tests/unit/operations/aggregation/test_aggregations.py::test_boolean_aggs": "float difference in std/var in the unit of least precision",
     # Crashes the worker instead of raising cleanly; skip rather than xfail
     # since a crashed worker never reports a result. See

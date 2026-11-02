@@ -258,8 +258,8 @@ def test_adjust_ordering_rejects_invalid_orderings(
 @pytest.mark.parametrize(
     "target_boundary,expected",
     [
-        (3, {0: {0: [0, 1, 2]}, 1: {1: [3, 4, 5, 6, 7]}}),
-        (5, {0: {0: [0, 1, 2, 3, 4]}, 1: {1: [5, 6, 7]}}),
+        (3, {0: {0: [0, 1, 2, 3]}, 1: {1: [4, 5, 6, 7]}}),
+        (5, {0: {0: [0, 1, 2, 3, 4, 5]}, 1: {1: [6, 7]}}),
     ],
 )
 @pytest.mark.parametrize("input_strict", [True, False])
@@ -279,7 +279,7 @@ def test_adjust_ordering_sparse_boundary_shift(
     # Input sorted on (key, val) is also sorted on the target key prefix.
     input_ordering = _make_ordering(
         context,
-        (4, 4),
+        (3, 31) if input_strict else (4, 41),
         key_indices=(0, 1),
         strict=input_strict,
         stream=stream,
@@ -302,6 +302,79 @@ def test_adjust_ordering_sparse_boundary_shift(
 
 
 @pytest.mark.spmd
+@pytest.mark.parametrize(
+    "target_boundaries,expected",
+    [
+        (3, {0: {0: [1, 3, 3]}, 1: {1: [4]}}),
+        ([3, 3], {0: {0: [1, 3, 3], 1: []}, 1: {2: [4]}}),
+    ],
+)
+def test_adjust_ordering_moves_equal_keys_down(
+    spmd_engine: SPMDEngine,
+    target_boundaries: _Boundary | list[_Boundary],
+    expected: _ExpectedByRank,
+) -> None:
+    context = spmd_engine.context
+    comm = spmd_engine.comm
+    if comm.nranks != 2:
+        pytest.skip("This test expects exactly two ranks.")
+
+    stream = context.br().stream_pool.get_stream()
+    input_ordering = _make_ordering(context, 3, strict=False, stream=stream)
+    output_ordering = _make_ordering(context, target_boundaries, stream=stream)
+    with reserve_op_id() as op_id:
+        output = asyncio.run(
+            _adjust_and_collect(
+                context,
+                comm,
+                _frame([1, 3] if comm.rank == 0 else [3, 4]),
+                input_ordering,
+                output_ordering,
+                collective_id=op_id,
+            )
+        )
+
+    _assert_partition_output(output, expected[comm.rank])
+
+
+@pytest.mark.spmd
+def test_adjust_ordering_prefix_boundary_moves_equal_keys_down(
+    spmd_engine: SPMDEngine,
+) -> None:
+    context = spmd_engine.context
+    comm = spmd_engine.comm
+    if comm.nranks != 2:
+        pytest.skip("This test expects exactly two ranks.")
+
+    stream = context.br().stream_pool.get_stream()
+    input_ordering = _make_ordering(context, (1, 1), key_indices=(0, 1), stream=stream)
+    output_ordering = _make_ordering(context, 1, stream=stream)
+    frame = pl.DataFrame(
+        {
+            "key": pl.Series([1], dtype=pl.Int32()),
+            "val": pl.Series([comm.rank + 1], dtype=pl.Int32()),
+        }
+    )
+    with reserve_op_id() as op_id:
+        output = asyncio.run(
+            _adjust_and_collect(
+                context,
+                comm,
+                frame,
+                input_ordering,
+                output_ordering,
+                collective_id=op_id,
+            )
+        )
+
+    if comm.rank == 0:
+        assert output[0]["key"].to_list() == [1, 1]
+        assert output[0]["val"].to_list() == [1, 2]
+    else:
+        assert output[1].is_empty()
+
+
+@pytest.mark.spmd
 def test_adjust_ordering_descending_sparse_boundary_shift(
     spmd_engine: SPMDEngine,
 ) -> None:
@@ -314,7 +387,7 @@ def test_adjust_ordering_descending_sparse_boundary_shift(
     stream = context.br().stream_pool.get_stream()
     input_ordering = _make_ordering(
         context,
-        3,
+        4,
         order=plc.types.Order.DESCENDING,
         stream=stream,
     )
@@ -338,8 +411,8 @@ def test_adjust_ordering_descending_sparse_boundary_shift(
         )
 
     expected = {
-        0: {0: [7, 6]},
-        1: {1: [5, 4, 3, 2, 1, 0]},
+        0: {0: [7, 6, 5]},
+        1: {1: [4, 3, 2, 1, 0]},
     }[comm.rank]
     _assert_partition_output(output, expected)
 
@@ -355,7 +428,7 @@ def test_adjust_ordering_emits_empty_owned_partitions(
 
     keys = [0, 1, 2] if comm.rank == 0 else [5, 8]
     stream = context.br().stream_pool.get_stream()
-    input_ordering = _make_ordering(context, 5, stream=stream)
+    input_ordering = _make_ordering(context, 2, stream=stream)
     output_ordering = _make_ordering(context, [3, 5, 7], stream=stream)
 
     with reserve_op_id() as op_id:
@@ -371,8 +444,8 @@ def test_adjust_ordering_emits_empty_owned_partitions(
         )
 
     expected = {
-        0: {0: [0, 1, 2], 1: []},
-        1: {2: [5], 3: [8]},
+        0: {0: [0, 1, 2], 1: [5]},
+        1: {2: [], 3: [8]},
     }[comm.rank]
     _assert_partition_output(output, expected)
 
@@ -392,7 +465,7 @@ def test_adjust_ordering_middle_rank_buffers_only_as_needed(
         2: [20, 25],
     }[comm.rank]
     stream = context.br().stream_pool.get_stream()
-    input_ordering = _make_ordering(context, [10, 20], stream=stream)
+    input_ordering = _make_ordering(context, [9, 19], stream=stream)
     output_ordering = _make_ordering(context, [5, 15], stream=stream)
 
     with reserve_op_id() as op_id:
@@ -408,9 +481,9 @@ def test_adjust_ordering_middle_rank_buffers_only_as_needed(
         )
 
     expected = {
-        0: {0: [0]},
-        1: {1: [5, 9, 10]},
-        2: {2: [15, 19, 20, 25]},
+        0: {0: [0, 5]},
+        1: {1: [9, 10, 15]},
+        2: {2: [19, 20, 25]},
     }[comm.rank]
     _assert_partition_output(output, expected)
 
@@ -424,7 +497,7 @@ def test_adjust_ordering_empty_rank_window(spmd_engine: SPMDEngine) -> None:
 
     keys = {0: [0, 1], 1: [5, 6], 2: [9, 10]}[comm.rank]
     stream = context.br().stream_pool.get_stream()
-    input_ordering = _make_ordering(context, [5, 9], stream=stream)
+    input_ordering = _make_ordering(context, [1, 6], stream=stream)
     output_ordering = _make_ordering(context, 5, stream=stream)
 
     with reserve_op_id() as op_id:
@@ -440,8 +513,8 @@ def test_adjust_ordering_empty_rank_window(spmd_engine: SPMDEngine) -> None:
         )
 
     expected = {
-        0: {0: [0, 1]},
-        1: {1: [5, 6, 9, 10]},
+        0: {0: [0, 1, 5]},
+        1: {1: [6, 9, 10]},
         2: {},
     }[comm.rank]
     _assert_partition_output(output, expected)
@@ -480,8 +553,8 @@ def test_adjust_ordering_all_empty_input(spmd_engine: SPMDEngine) -> None:
 @pytest.mark.parametrize(
     "target_boundary,expected",
     [
-        (3, {0: [0, 1, 2], 1: [3, 4, 5, 6, 7]}),
-        (0, {0: [], 1: list(range(8))}),
+        (3, {0: [0, 1, 2, 3], 1: [4, 5, 6, 7]}),
+        (0, {0: [0], 1: list(range(1, 8))}),
     ],
 )
 def test_adjust_ordering_single_rank(
@@ -534,7 +607,7 @@ def test_adjust_ordering_multi_chunk_input(spmd_engine: SPMDEngine) -> None:
             )
         )
 
-    _assert_partition_output(output, {0: [0, 1, 2, 3], 1: [4, 5, 6, 7]})
+    _assert_partition_output(output, {0: [0, 1, 2, 3, 4], 1: [5, 6, 7]})
 
 
 @pytest.mark.spmd
@@ -566,7 +639,7 @@ def test_adjust_ordering_locally_sorts_unordered_input(
             )
         )
 
-    _assert_partition_output(output, {0: [0, 1, 2, 3], 1: [4, 5, 6, 7]})
+    _assert_partition_output(output, {0: [0, 1, 2, 3, 4], 1: [5, 6, 7]})
 
 
 @pytest.mark.spmd
@@ -598,7 +671,7 @@ def test_adjust_ordering_concatenates_locally_unordered_chunks(
             )
         )
 
-    _assert_partition_output(output, {0: [0, 1, 2, 3], 1: [4, 5, 6, 7]})
+    _assert_partition_output(output, {0: [0, 1, 2, 3, 4], 1: [5, 6, 7]})
 
 
 @pytest.mark.spmd
@@ -609,13 +682,13 @@ def test_adjust_ordering_concatenates_locally_unordered_chunks(
             plc.types.Order.DESCENDING,
             plc.types.NullOrder.BEFORE,
             list(range(7, -1, -1)),
-            {0: [7, 6, 5], 1: [4, 3, 2, 1, 0]},
+            {0: [7, 6, 5, 4], 1: [3, 2, 1, 0]},
         ),
         (
             plc.types.Order.ASCENDING,
             plc.types.NullOrder.AFTER,
             list(range(8)),
-            {0: [0, 1, 2, 3], 1: [4, 5, 6, 7]},
+            {0: [0, 1, 2, 3, 4], 1: [5, 6, 7]},
         ),
     ],
 )

@@ -119,9 +119,9 @@ struct row_ordering {
  * This type describes partition boundaries only. Row-order guarantees are
  * stored separately in `partitioning::row_orderings`.
  * For N partitions, there are N-1 boundary rows:
- * - Partition 0: values < boundaries[0]
- * - Partition i (0 < i < N-1): boundaries[i-1] <= values < boundaries[i]
- * - Partition N-1: values >= boundaries[N-2]
+ * - Partition 0: values <= boundaries[0]
+ * - Partition i (0 < i < N-1): boundaries[i-1] < values <= boundaries[i]
+ * - Partition N-1: values > boundaries[N-2]
  *
  * `keys[i]` is the i-th sort column; partition boundaries are compared
  * lexicographically by `keys[0]`, then `keys[1]`, and so on. This does not

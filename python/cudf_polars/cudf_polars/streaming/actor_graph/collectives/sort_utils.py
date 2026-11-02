@@ -65,19 +65,15 @@ def boundary_schema(by: list[str], by_dtypes: list[DataType]) -> Schema:
 def find_sort_splits(
     tbl: plc.Table,
     sort_boundaries: plc.Table,
-    my_part_id: int,
     column_order: Sequence[plc.types.Order],
     null_order: Sequence[plc.types.NullOrder],
     stream: Stream,
-    *,
-    chunk_relative: bool = False,
 ) -> list[int]:
     """
     Find local sort splits given all (global) split candidates.
 
-    When multiple rows share a boundary value, they go to the later partition.
-    The ``part_id`` and ``local_row`` columns in ``sort_boundaries`` are used
-    for tiebreaking when ``chunk_relative=False``.
+    When multiple rows share a boundary value, they go to the earlier partition.
+    The candidate-identification columns are ignored when splitting.
 
     Parameters
     ----------
@@ -86,8 +82,6 @@ def find_sort_splits(
     sort_boundaries
         Sorted table containing the global sort/split boundaries.  Compared to `tbl`
         must contain additional partition_id and local_row_number columns.
-    my_part_id
-        The partition id of the local node (as the `split_candidates` column).
     column_order
         The order in which tbl is sorted.
     null_order
@@ -96,11 +90,6 @@ def find_sort_splits(
         CUDA stream used for device memory operations and kernel launches.
         The values in both ``tbl`` and ``sort_boundaries`` must be valid on
         ``stream``.
-    chunk_relative
-        If True, when the boundary belongs to this partition (part_id == my_part_id)
-        use the position of the boundary value in ``tbl`` (``first``) instead of
-        ``local_row``. Use True when ``tbl`` is a chunk of the partition (e.g.
-        multiple chunks per rank); False when ``tbl`` is the full partition.
 
     Returns
     -------
@@ -109,9 +98,9 @@ def find_sort_splits(
     column_order = list(column_order)
     null_order = list(null_order)
 
-    *boundary_cols, split_part_id, split_local_row = sort_boundaries.columns()
+    *boundary_cols, _, _ = sort_boundaries.columns()
     sort_boundaries = plc.Table(boundary_cols)
-    split_first_col = plc.search.lower_bound(
+    split_first_col = plc.search.upper_bound(
         tbl,
         sort_boundaries,
         column_order,
@@ -119,23 +108,16 @@ def find_sort_splits(
         stream=stream,
     )
     # Use DataFrame.to_polars() for a stream-aware D→H transfer.
-    # lower_bound returns size_type (INT32); part_id/local_row are UInt32.
-    _u32 = DataType(pl.UInt32())
-    df = DataFrame.from_table(
-        plc.Table([split_first_col, split_part_id, split_local_row]),
-        ["first", "part_id", "local_row"],
-        [DataType(pl.Int32()), _u32, _u32],
-        stream=stream,
-    ).to_polars()
-    out = (
-        pl.col("first")
-        if chunk_relative
-        else pl.when(pl.col("part_id") == my_part_id)
-        .then(pl.col("local_row"))
-        .otherwise(pl.col("first"))
+    return (
+        DataFrame.from_table(
+            plc.Table([split_first_col]),
+            ["split"],
+            [DataType(pl.Int32())],
+            stream=stream,
+        )
+        .to_polars()["split"]
+        .to_list()
     )
-    cap = tbl.num_rows()
-    return df.select(out.clip(0, cap).sort()).to_series().to_list()
 
 
 def select_local_split_candidates(

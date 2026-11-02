@@ -1193,31 +1193,7 @@ size_type resolve_map_locality_tile_cols(sampled_map_locality const& sampled,
 // in 64 bits.
 // ---------------------------------------------------------------------------
 
-// Row-length gate (bytes) between the warp-cooperative and the block-cooperative copy. A
-// 32-byte row spans at most two 16-byte vectors, so one warp's uint4 span copies it without
-// idle lanes; a longer row serialises across the warp's lanes and the whole block copies it.
-// The 32-byte boundary matches the short/long strategy split of `strings::detail::gather`.
-constexpr int64_t kBlockRowCopyThreshold{32};
-
-// Row-count gate (rows) above which the CUB batched-memcpy engine runs instead of the payload
-// kernel's chars phase. Mirrors `strings::detail::gather`'s engine split: stock measured
-// `cub::DeviceMemcpy::Batched` as the winning short-string strategy at >= 524288 rows on H100,
-// and the tall-cell profile shows the payload kernel's per-group barrier walk costing the same
-// regime ~7x its CUB counterpart. Below the gate the payload kernel keeps its 65536-row wins.
-constexpr int64_t kBatchMemcpyRowThreshold{524'288};
-
-// Row-count gate (rows) between the N3 scan+payload string fast path and the stock per-column
-// string path (run_fallback -> column_gatherer<string_view> -> strings::detail::gather). The
-// payload's group-walk cost scales with the call's row count: measured A/B on tall cells shows
-// every string shape at >= 262144 rows losing to the stock path (up to ~1.9x) while 65536 rows
-// wins ~1.7x, and the loss persists even when every column's chars route to CUB — so the
-// discriminator is the call's row count, not bytes-per-row. The composed A/B of the fused
-// short-string engine confirmed the band exclusion stays: the engine wins the band cell when
-// admitted (262144x100 −69.5%, engine-vs-stock falsifier-confirmed) but the band route costs
-// the tall regime — above kBatchMemcpyRowThreshold the routed-metadata path (tall-str1)
-// replaces the group walk and is the measured tall win (round-10, +26.7% headline) the
-// engine cannot serve. The band exclusion trades the band win for the tall-str1 route.
-constexpr size_type kStringFallbackRowThreshold{262'144};
+// `kStringFallbackRowThreshold` lives in `batch_gather_common.cuh` (shared with the strings TU).
 
 // Preset-mask staging bands pay off only above this many preset destination masks in one call:
 // a band memset costs ~24 µs (nsys-captured band-fill attribution) while a per-mask memset

@@ -8,6 +8,7 @@
 #include <cudf/detail/indexalator.cuh>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/utilities/assert.cuh>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -584,10 +585,10 @@ void gather_bitmask(table_view const& source,
   std::transform(target.begin(), target.end(), target_masks.begin(), [](auto const& col) {
     return col->mutable_view().null_mask();
   });
-  auto d_target_masks = make_device_uvector_async(target_masks, stream, temp_mr);
+  auto d_target_masks = make_device_buffer_async(target_masks, stream, temp_mr);
 
   auto const device_source = table_device_view::create(source, stream, temp_mr);
-  auto d_valid_counts = make_zeroed_device_uvector_async<size_type>(target.size(), stream, temp_mr);
+  auto d_valid_counts = make_zeroed_device_buffer_async<size_type>(target.size(), stream, temp_mr);
 
   // Dispatch operation enum to get implementation
   auto const impl = [op]() {

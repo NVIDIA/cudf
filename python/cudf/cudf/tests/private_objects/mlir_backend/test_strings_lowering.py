@@ -1395,6 +1395,111 @@ def test_replace_empty_old():
     assert got == [True] * n
 
 
+def test_masked_upper_propagates_validity():
+    """``Masked(str).upper()`` carries validity: null rows stay null."""
+    strings = ["abc", None, "h\u00e9llo", None, "x\U0001f600y"]
+    valid = [s is not None for s in strings]
+    expected = ["" if s is None else s.upper() for s in strings]
+    n = len(strings)
+    arr, _k = _make_mlir_string_array(strings)
+    out, _ok = _make_output_mlir_string_array(n)
+    out_valid = cp.zeros(n, dtype=np.bool_)
+
+    with nrt_enabled(), MLIRNumbaCudaConfig():
+
+        @cuda.jit(
+            types.void(
+                types.CPointer(mlir_string),
+                types.boolean[::1],
+                types.CPointer(mlir_string),
+                types.boolean[::1],
+            ),
+            extensions=[mlir_string_arg_handler],
+        )
+        def produce(o, ov, s, sv):
+            i = cuda.grid(1)
+            if i < ov.size:
+                r = Masked(s[i], sv[i]).upper()
+                o[i] = r.value
+                ov[i] = r.valid
+
+        produce[1, n](out, out_valid, arr, cp.array(valid, dtype=np.bool_))
+        got = _verify_strings(out, expected)
+
+    assert out_valid.get().tolist() == valid
+    assert got == [True] * n
+
+
+def test_masked_replace_propagates_validity():
+    """``Masked(str).replace(old, new)`` carries validity: null rows stay null."""
+    strings = ["hello", None, "h\u00e9llo"]
+    valid = [s is not None for s in strings]
+    expected = ["" if s is None else s.replace("l", "L") for s in strings]
+    n = len(strings)
+    arr, _k = _make_mlir_string_array(strings)
+    out, _ok = _make_output_mlir_string_array(n)
+    out_valid = cp.zeros(n, dtype=np.bool_)
+
+    with nrt_enabled(), MLIRNumbaCudaConfig():
+
+        @cuda.jit(
+            types.void(
+                types.CPointer(mlir_string),
+                types.boolean[::1],
+                types.CPointer(mlir_string),
+                types.boolean[::1],
+            ),
+            extensions=[mlir_string_arg_handler],
+        )
+        def produce(o, ov, s, sv):
+            i = cuda.grid(1)
+            if i < ov.size:
+                r = Masked(s[i], sv[i]).replace("l", "L")
+                o[i] = r.value
+                ov[i] = r.valid
+
+        produce[1, n](out, out_valid, arr, cp.array(valid, dtype=np.bool_))
+        got = _verify_strings(out, expected)
+
+    assert out_valid.get().tolist() == valid
+    assert got == [True] * n
+
+
+def test_masked_getitem_propagates_validity():
+    """``Masked(str)[i]`` carries validity: null rows stay null."""
+    strings = ["abc", None, "h\u00e9llo"]
+    valid = [s is not None for s in strings]
+    expected = ["" if s is None else s[0] for s in strings]
+    n = len(strings)
+    arr, _k = _make_mlir_string_array(strings)
+    out, _ok = _make_output_mlir_string_array(n)
+    out_valid = cp.zeros(n, dtype=np.bool_)
+
+    with nrt_enabled(), MLIRNumbaCudaConfig():
+
+        @cuda.jit(
+            types.void(
+                types.CPointer(mlir_string),
+                types.boolean[::1],
+                types.CPointer(mlir_string),
+                types.boolean[::1],
+            ),
+            extensions=[mlir_string_arg_handler],
+        )
+        def produce(o, ov, s, sv):
+            i = cuda.grid(1)
+            if i < ov.size:
+                r = Masked(s[i], sv[i])[0]
+                o[i] = r.value
+                ov[i] = r.valid
+
+        produce[1, n](out, out_valid, arr, cp.array(valid, dtype=np.bool_))
+        got = _verify_strings(out, expected)
+
+    assert out_valid.get().tolist() == valid
+    assert got == [True] * n
+
+
 def test_replace_multichar_nonoverlapping():
     """``s.replace("aa", "b")`` replaces non-overlapping multi-byte targets."""
     vals = ["aaa", "aaaa", "aXa", "aa", "", "baab"]

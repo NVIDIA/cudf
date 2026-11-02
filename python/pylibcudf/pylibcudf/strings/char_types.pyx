@@ -28,9 +28,9 @@ __all__ = [
     "StringCharacterTypes",
     "all_characters_of_type",
     "filter_characters_of_type",
-    "get_character_cases_table_ptr",
+    "get_character_cases_table",
     "get_character_flags_table_ptr",
-    "get_special_case_mapping_table_ptr",
+    "get_special_case_mapping_table",
 ]
 
 cpdef get_character_flags_table_ptr(
@@ -59,7 +59,7 @@ cpdef get_character_flags_table_ptr(
     cdef const uint8_t* tbl = cpp_char_types.get_character_flags_table(_cs)
     return int(<uintptr_t>tbl)
 
-cpdef get_character_cases_table_ptr(
+cpdef get_character_cases_table(
     object stream: CudaStreamLike | None = None,
 ):
     """
@@ -84,7 +84,7 @@ cpdef get_character_cases_table_ptr(
     cdef const uint16_t* tbl = cpp_char_types.get_character_cases_table(_cs)
     return int(<uintptr_t>tbl)
 
-cpdef get_special_case_mapping_table_ptr(
+cpdef get_special_case_mapping_table(
     object stream: CudaStreamLike | None = None,
 ):
     """

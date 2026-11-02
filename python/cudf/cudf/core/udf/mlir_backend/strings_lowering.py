@@ -38,9 +38,9 @@ from numba_cuda_mlir.numba_cuda.typing.templates import (
 from numba_cuda_mlir.typing import signature as nb_signature
 
 from pylibcudf.strings.char_types import (
-    get_character_cases_table_ptr,
+    get_character_cases_table,
     get_character_flags_table_ptr,
-    get_special_case_mapping_table_ptr,
+    get_special_case_mapping_table,
 )
 
 from cudf.core.udf.mlir_backend import string_lowering_impl as _impl
@@ -799,12 +799,12 @@ def _flags_table_ptr_const() -> ir.Value:
 
 def _cases_table_ptr_const() -> ir.Value:
     """MLIR pointer constant for the libcudf character-cases device table."""
-    return _table_ptr_const(int(get_character_cases_table_ptr()))
+    return _table_ptr_const(int(get_character_cases_table()))
 
 
 def _special_table_ptr_const() -> ir.Value:
     """MLIR pointer constant for the libcudf special-case mapping device table."""
-    return _table_ptr_const(int(get_special_case_mapping_table_ptr()))
+    return _table_ptr_const(int(get_special_case_mapping_table()))
 
 
 def _make_lower_is(impl_fn: object) -> object:

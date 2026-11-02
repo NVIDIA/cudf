@@ -10,6 +10,7 @@ import pytest
 import polars as pl
 
 from cudf_polars import execute_with_cudf
+from cudf_polars.dsl.translate import Translator
 from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
@@ -241,6 +242,11 @@ def test_slice_column(engine: pl.GPUEngine, slice_column_data):
     else:
         q = slice_column_data.select(pl.col("a").str.slice(pl.col("start")))
     assert_ir_translation_raises(q, engine, NotImplementedError)
+    translator = Translator(q._ldf.visit(), engine)
+    translator.translate_ir()
+    assert any(
+        "only supports literal start and stop" in str(e) for e in translator.errors
+    )
 
 
 @pytest.mark.parametrize("name", ["head", "tail"])

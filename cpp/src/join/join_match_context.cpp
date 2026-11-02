@@ -10,16 +10,19 @@
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 
 namespace cudf {
-join_match_context::join_match_context(table_view const& left_table,
-                                       std::unique_ptr<rmm::device_uvector<size_type>> match_counts)
+join_match_context::join_match_context(
+  table_view const& left_table,  // NOLINT(modernize-pass-by-value)
+  std::unique_ptr<rmm::device_uvector<size_type>> match_counts)
   : _left_table{left_table}, _match_counts{std::move(match_counts)}
 {
 }
 
-join_match_context::join_match_context(table_view const& left_table,
+join_match_context::join_match_context(table_view left_table,
                                        std::unique_ptr<rmm::device_uvector<size_type>> match_counts,
                                        std::unique_ptr<detail::join_match_state> state)
-  : _left_table{left_table}, _match_counts{std::move(match_counts)}, _state{std::move(state)}
+  : _left_table{std::move(left_table)},
+    _match_counts{std::move(match_counts)},
+    _state{std::move(state)}
 {
 }
 

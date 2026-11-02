@@ -156,7 +156,7 @@ struct join_match_context {
  private:
   friend struct detail::join_match_state;
 
-  join_match_context(table_view const& left_table,
+  join_match_context(table_view left_table,
                      std::unique_ptr<rmm::device_uvector<size_type>> match_counts,
                      std::unique_ptr<detail::join_match_state> state);
 

@@ -28,6 +28,8 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
 
+#include <rmm/mr/statistics_resource_adaptor.hpp>
+
 #include <algorithm>
 #include <memory>
 #include <numeric>
@@ -1109,6 +1111,49 @@ TEST_F(BatchGatherMixedTest, MixedNullableFixedWidthWithNullFreeLists)
   CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
 }
 
+// The b3 deferred counts readback: nullable string sources (~1% nulls at the
+// default datagen profile, here seeded deterministically) take the
+// kernel-written mask path, whose per-column null count is read back AFTER the
+// assembly loop instead of blocking the host on the payload kernel. The counts
+// reach their consumer via the post-hoc set_null_count patch, so this pins the
+// patched result (values AND null masks) against the stock gather — a deferral
+// that loses or mis-times the readback produces wrong null counts here.
+TEST_F(BatchGatherMixedTest, DeferredStringCountsReadbackMatchesReference)
+{
+  constexpr cudf::size_type num_rows{65536};
+  std::mt19937 rng(7);
+  auto valid_of = [&rng](cudf::size_type) {
+    return std::uniform_real_distribution<double>(0.0, 1.0)(rng) >= 0.01;  // ~1% nulls
+  };
+  auto value_of = [&rng](cudf::size_type) {
+    return std::uniform_int_distribution<int64_t>(-1000, 1000)(rng);
+  };
+  auto col_i32 = make_fixed_column<int32_t>(num_rows, value_of, valid_of);
+
+  std::vector<std::string> strings;
+  strings.reserve(num_rows);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    strings.push_back(std::string(1 + i % 24, static_cast<char>('a' + i % 26)));
+  }
+  auto validity = cudf::detail::make_counting_transform_iterator(0, valid_of);
+  cudf::test::strings_column_wrapper col_str(strings.begin(), strings.end(), validity);
+
+  cudf::table_view source_table({col_i32->view(), col_str});
+
+  auto const host_map = shuffled_iota(num_rows, 7);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
+
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+  // The patch must leave the kernel-masked string column's null count exact
+  // (not the placeholder 0 the assembly loop constructs with).
+  EXPECT_EQ(result->view().column(1).null_count(), reference->view().column(1).null_count());
+  EXPECT_GT(reference->view().column(1).null_count(), 0);  // ~1% of 65536 ⇒ ~650
+}
+
 // ============================================================================
 // §5.6b String fallback seam: the per-call row gate at kStringFallbackRowThreshold hands tall
 // string columns to the stock per-column path. The fallback IS the stock path, so every test
@@ -1395,6 +1440,55 @@ TEST_F(BatchGatherTallSeamTest, SlicedStringsAtThreshold)
   auto result    = run_batch_gather(source_table, gather_map);
   auto reference = run_reference(source_table, gather_map);
   CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// The N3 fast path's destination offsets children and chars buffers are carved from ONE
+// call-wide arena resource. The carve resource must stay correct when the call's locals die:
+// each returned column owns value copies of the shared resource, so the arena lives exactly
+// as long as the columns do. This test runs the gather with a tracking output resource whose
+// ONLY reference dies before the result is inspected — if a carved buffer still referenced
+// the call-scope arena instead of a shared copy, arena teardown would free live column
+// memory (or an ownership gap would leak the block) and the readback/comparison below would
+// catch it.
+TEST_F(BatchGatherTallSeamTest, CarvedStringsOutliveCallScopeArena)
+{
+  constexpr cudf::size_type num_rows{65'536};
+  auto const strings = periodic_strings(num_rows, 23);
+  auto validity =
+    cudf::detail::make_counting_transform_iterator(0, [](cudf::size_type i) { return i % 4 != 0; });
+  cudf::test::strings_column_wrapper col_str(strings.begin(), strings.end(), validity);
+  // An all-short column routes its chars through the carve arena on the fast path; the
+  // kernel-masked mask (nullable source) is planned separately and stays a stock allocation.
+  auto col_i32 = make_fixed_column<int32_t>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type i) { return i % 2 == 0; });
+
+  cudf::table_view source_table({col_i32->view(), col_str});
+  auto const host_map = shuffled_iota(num_rows, 5);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  // The tracking resource is a block-scope local: it is destroyed at the end of this loop
+  // iteration, well before the column comparison runs. Its counters also prove the fast path
+  // actually allocated (the carve arena + masks) — a 0-allocation result would mean the test
+  // never exercised the carved path.
+  auto const result = [&] {
+    auto output_mr = rmm::mr::statistics_resource_adaptor{cudf::get_current_device_resource_ref()};
+    auto const reference = run_reference(source_table, gather_map);  // stock path, default resource
+    auto gathered =
+      cudf::detail::batch_gather(source_table,
+                                 gather_map,
+                                 cudf::out_of_bounds_policy::DONT_CHECK,
+                                 cudf::negative_index_policy::NOT_ALLOWED,
+                                 cudf::get_default_stream(),
+                                 cudf::memory_resources{rmm::device_async_resource_ref{output_mr}});
+    CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), gathered->view());
+    auto const arena_allocations = output_mr.get_allocations_counter().value;
+    EXPECT_GT(arena_allocations, 0);
+    return gathered;
+  }();
+
+  // The arena resource is gone here; the carved columns must still read back correctly.
+  CUDF_TEST_EXPECT_TABLES_EQUAL(run_reference(source_table, gather_map)->view(), result->view());
 }
 
 // ============================================================================

@@ -39,9 +39,11 @@
 
 #include <cub/device/device_memcpy.cuh>
 #include <cuda/atomic>
+#include <cuda/buffer>
 #include <cuda/cmath>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/bit>
 #include <cuda/std/execution>
 #include <cuda/std/iterator>
@@ -506,8 +508,12 @@ size_type resolve_map_locality_tile_cols(sampled_map_locality const& sampled,
 //      scan and synchronized just before the payload launch — the sampler's
 //      enqueue-early/resolve-late pattern, and the only synchronization this
 //      path adds. The totals size each column's chars buffer and select its
-//      offsets child width (`create_offsets_child_column`, which also
-//      enforces the column size limit).
+//      offsets child width (the same selection `create_offsets_child_column`
+//      makes, including the column size limit), and every live column's
+//      offsets child + chars buffer is carved from ONE call-wide arena
+//      (`carve_memory_resource`): a single upstream allocate/free pair serves
+//      all destination string allocations, while each column keeps owning its
+//      slices through the shared resource copy.
 //   3. ONE batched payload kernel for ALL string columns, phased over
 //      disjoint outputs (no ordering between phases): characters with
 //      warp-cooperative uint4 spans per row, except rows above the block-copy
@@ -1096,6 +1102,183 @@ std::optional<size_type> unsampled_tile_width(size_type num_map_rows,
 
 }  // namespace
 
+// These carve-layout helpers sit at `cudf::detail` scope, NOT the anonymous namespace:
+// their concept-conformance members are odr-used only inside type-erased vtables built in
+// librmm, and at internal linkage nvcc flags them "#177-D declared but never referenced"
+// (same reason `column_descriptor` sits at this scope).
+
+// Byte needs and slice positions of one destination strings column: the offsets child
+// (whose width `create_offsets_child_column` selects — 4 or 8 bytes per element) plus the
+// chars buffer. Every carve requests its bytes rounded up to the carve granularity and
+// starts 256-aligned, so the running total tracks the bump allocator's position exactly and
+// each slice start is 256-aligned. The offsets child and chars slice of one column must be
+// carved in THAT order, and columns in `live` order, matching `carve_strings_buffers`.
+struct strings_destination_layout {
+  static constexpr std::size_t slice_alignment{256};  // CUDA's allocation granularity
+
+  std::size_t total_bytes{0};
+
+  struct slice_offsets {
+    std::size_t offsets;
+    std::size_t chars;
+  };
+
+  // Reserves one column's slices: offsets child (INT32 or INT64 per `chars_bytes`'s
+  // threshold, mirroring `create_offsets_child_column`'s width selection) then chars;
+  // `chars_bytes == 0` still round-ups the chars region so the reservation mirrors the bump
+  // sequence (a zero-byte chars buffer is still constructed).
+  slice_offsets carve(int64_t chars_bytes, size_type num_rows)
+  {
+    auto const threshold     = cudf::strings::detail::get_offset64_threshold();
+    auto const offsets_elem  = chars_bytes < threshold ? sizeof(int32_t) : sizeof(int64_t);
+    auto const offsets_bytes = static_cast<std::size_t>(num_rows + 1) * offsets_elem;
+    slice_offsets offsets;
+    offsets.offsets = cudf::util::round_up_safe(total_bytes, slice_alignment);
+    total_bytes     = offsets.offsets + offsets_bytes;
+    offsets.chars   = cudf::util::round_up_safe(total_bytes, slice_alignment);
+    total_bytes = cudf::util::round_up_safe(offsets.chars + static_cast<std::size_t>(chars_bytes),
+                                            slice_alignment);
+    return offsets;
+  }
+};
+
+// Stream-ordered resource handing out successive aligned slices of ONE pre-allocated device
+// buffer, so a call's destination string columns draw from a single upstream allocate/free
+// pair instead of one pair per buffer. Allocation bumps a pointer; deallocation is a no-op —
+// the arena block is freed stream-ordered when the resource itself dies. Every destination
+// column keeps its slices alive independently: each buffer stores a value copy of the
+// `cuda::mr::shared_resource` wrapper created for the call, and all copies share the one
+// payload (bump pointer included), so the block outlives the last column. The upstream
+// reference is captured as an owning `any_resource` deep copy, so a payload that outlives the
+// call still deallocates through a live resource object, matching how stock columns capture
+// their allocation resource. Because allocation never frees, every slice must be carved
+// exactly once, in `strings_destination_layout` reservation order (offsets child, then chars,
+// per column, columns in live order).
+class carve_memory_resource {
+ public:
+  static constexpr std::size_t slice_alignment{strings_destination_layout::slice_alignment};
+
+  carve_memory_resource(rmm::device_async_resource_ref upstream,
+                        cuda::stream_ref stream,
+                        std::size_t total_bytes)
+    : _upstream{upstream},  // deep copy: the payload may outlive the call's resource refs
+      _stream{stream},
+      _size{total_bytes},
+      _arena{total_bytes > 0 ? _upstream.allocate(stream, total_bytes, slice_alignment) : nullptr}
+  {
+  }
+
+  // A zero-sized carve never allocated (`_arena == nullptr`); deallocating it would still
+  // trip instrumented adaptors' counters (e.g. statistics_resource_adaptor), so skip it.
+  ~carve_memory_resource()
+  {
+    if (_size > 0) { _upstream.deallocate(_stream, _arena, _size, slice_alignment); }
+  }
+
+  carve_memory_resource(carve_memory_resource const&)            = delete;
+  carve_memory_resource& operator=(carve_memory_resource const&) = delete;
+
+  bool operator==(carve_memory_resource const& other) const noexcept
+  {
+    return this == std::addressof(other);
+  }
+  bool operator!=(carve_memory_resource const& other) const noexcept { return !(*this == other); }
+
+  // Tag introspection only: CCCL queries this property in unevaluated concept checks, so the
+  // function body never runs (precedent: `host_memory.cpp`'s pool resource).
+  [[maybe_unused]] friend void get_property(carve_memory_resource const&,
+                                            cuda::mr::device_accessible) noexcept
+  {
+  }
+
+  // Buffer constructions request the full carve granularity (via the allocation-alignment
+  // property or the explicit alignment argument), so the bump sequence matches the layout
+  // reservation exactly and every slice keeps 256-byte alignment for its widest element.
+  [[nodiscard]] void* allocate_sync(std::size_t bytes, std::size_t alignment)
+  {
+    CUDF_EXPECTS(alignment <= slice_alignment, "Alignment exceeds the carve granularity");
+    auto const offset = cudf::util::round_up_safe(_used, alignment);
+    CUDF_EXPECTS(offset + bytes <= _size, "Destination arena exhausted");
+    _used = offset + bytes;
+    return static_cast<std::byte*>(_arena) + offset;
+  }
+
+  void deallocate_sync(void*, std::size_t, std::size_t) noexcept {}
+
+  [[nodiscard]] void* allocate(cuda::stream_ref, std::size_t bytes, std::size_t alignment)
+  {
+    return allocate_sync(bytes, alignment);
+  }
+
+  void deallocate(cuda::stream_ref, void*, std::size_t, std::size_t) noexcept {}
+
+ private:
+  cuda::mr::any_resource<cuda::mr::device_accessible> _upstream;  // owns a deep copy
+  cuda::stream_ref _stream;  // the arena block's stream-ordered free stream
+  std::size_t _size;
+  void* _arena;
+  std::size_t _used{0};
+};
+
+// The buffers below type-erase through `cuda::mr::resource_with` — the concept surface is the
+// contract, checked here so an interface drift fails at compile time, not at the erase point.
+static_assert(cuda::mr::resource_with<carve_memory_resource, cuda::mr::device_accessible>,
+              "carve_memory_resource must satisfy the stream-ordered device resource concepts");
+
+// Builds ONE destination strings column's carved buffers: the offsets child (a full column
+// whose data buffer is a carve slice) and the chars buffer (a carve slice). Both store a value
+// copy of the shared carve resource, so the column keeps its slices alive independently and
+// the arena block is freed stream-ordered when the last shared copy dies. The offsets child is
+// carved FIRST (matching `strings_destination_layout::carve`'s order), then chars. A zero-byte
+// chars buffer constructs to a null data pointer exactly as stock does (RMM skips zero-size
+// allocations) — pass `chars_bytes == 0` and `chars` is the empty-chars form. The destination
+// mask is NOT carved: `plan_destination_mask` already allocated it from the output MR as an
+// independent buffer, and keeping that untouched preserves stock-parity mask accounting while
+// keeping this diff minimal.
+struct carved_strings_buffers {
+  std::unique_ptr<column> offsets;  // offsets child column, data carved (INT32 or INT64)
+  rmm::device_buffer chars;         // chars slice; empty (null data) when chars_bytes == 0
+};
+
+carved_strings_buffers carve_strings_buffers(
+  size_type num_rows,
+  int64_t chars_bytes,
+  cuda::mr::shared_resource<carve_memory_resource> const& carve_mr,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref output_mr)
+{
+  auto const threshold = cudf::strings::detail::get_offset64_threshold();
+  if (!cudf::strings::detail::is_large_strings_enabled()) {
+    // Stock `create_offsets_child_column` parity: the same overflow contract.
+    CUDF_EXPECTS(
+      chars_bytes < threshold, "Size of output exceeds the column size limit", std::overflow_error);
+  }
+  auto const offsets_type =
+    chars_bytes < threshold ? data_type{type_id::INT32} : data_type{type_id::INT64};
+  auto const offsets_bytes = (static_cast<std::size_t>(num_rows) + 1) *
+                             (chars_bytes < threshold ? sizeof(int32_t) : sizeof(int64_t));
+
+  // Construction order = reservation order: offsets child first, then chars. Each buffer
+  // stores a value copy of the one shared carve resource and asks it for its slice (the
+  // resource bumps once per buffer at the full carve granularity), so the carve sequence
+  // matches the reservation exactly. `rmm::device_buffer`'s alignment-argument form carries
+  // the carve granularity; `column`'s generic ctor forwards it into `_data`, so the child
+  // keeps genuine `rmm::device_buffer` ownership of its slice.
+  auto offsets_col = std::make_unique<column>(
+    offsets_type,
+    static_cast<size_type>(num_rows) + 1,
+    rmm::device_buffer{offsets_bytes, carve_memory_resource::slice_alignment, stream, carve_mr},
+    cudf::detail::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, output_mr),
+    0,
+    std::vector<std::unique_ptr<column>>{});
+  auto chars = rmm::device_buffer{static_cast<std::size_t>(chars_bytes),
+                                  carve_memory_resource::slice_alignment,
+                                  stream,
+                                  carve_mr};
+
+  return carved_strings_buffers{std::move(offsets_col), std::move(chars)};
+}
+
 size_type select_gather_map_tile_cols(table_view const& source_table,
                                       column_view const& gather_map,
                                       size_type num_fused_cols,
@@ -1319,7 +1502,10 @@ struct descriptor_path_builder {
   // so the launch block can finish their destinations (allocate chars from the
   // totals, build the offsets children) after the virtual scan's readback. A
   // record owns every device allocation its destination needs; `dst_slot`
-  // points into `destination`, which is never resized after construction.
+  // points into `destination`, which is never resized after construction. On
+  // the carve path (`assemble_strings`'s live loop) the offsets child and chars
+  // are slices of ONE shared call-wide arena; the buffers' stored copies of the
+  // carve resource keep the arena alive for as long as any column needs it.
   struct staged_string {
     column_view src;                  // full source view (offset applied by the offsets iterator)
     std::unique_ptr<column> offsets;  // destination offsets child (INT32 or INT64, allocated late)
@@ -1329,8 +1515,9 @@ struct descriptor_path_builder {
     std::unique_ptr<column>* dst_slot{};
     // True when the payload kernel writes this column's mask: the kernel then
     // needs the mask pointer and the per-column atomic counter, and assembly
-    // takes the count from string_counts (never kernel_masked_columns — the
-    // descriptor readback's slots must stay descriptor-only).
+    // takes the count from the deferred string_counts readback (never
+    // kernel_masked_columns — the descriptor readback's slots must stay
+    // descriptor-only).
     bool kernel_mask_written{false};
   };
   std::vector<staged_string> pending_strings;
@@ -1799,23 +1986,45 @@ struct descriptor_path_builder {
       cudf::detail::sync_stream(stream);
     }
 
-    // Destination allocation from the totals: each column gets its own chars
-    // buffer (column-owning allocations; no shared pool — every destination
-    // column must own its buffers) and its offsets child at the width
-    // `create_offsets_child_column` picks.
+    auto any_kernel_masked = false;
+    for (size_t k = 0; k < live.size(); ++k) {
+      if (pending_strings[live[k]].kernel_mask_written) { any_kernel_masked = true; }
+    }
+    // Landing buffer for the deferred counts readback (b3): allocated HERE,
+    // right after the totals sync with an idle stream, because every
+    // host_vector construction synchronizes on allocate. Allocating it after
+    // the payload launch would block the host on the whole payload kernel.
+    auto h_string_counts = cudf::detail::make_pinned_vector_async<size_type>(
+      any_kernel_masked ? static_cast<std::size_t>(live.size()) : 0u, stream);
+
+    // Destination allocation from the totals: ONE carve arena covers every live column's
+    // offsets child and chars buffer — the allocation class b0 attributed ~783 µs/call to —
+    // so the per-buffer `cudaMallocFromPoolAsync`/`cudaFreeAsync` storm collapses to a single
+    // upstream allocate/free pair. Each column keeps owning its slices: the carve resource,
+    // shared through every buffer's stored value copy, is the transferable part. Non-live
+    // staged entries (empty SOURCE columns) and the all-null/empty-map completions below stay
+    // on the stock `create_offsets_child_column` path: at most one small column per call, not
+    // part of the measured allocation storm. The destination masks stay stock too (allocated
+    // by `plan_destination_mask` at planning time).
+    strings_destination_layout dst_layout;
+    for (size_t k = 0; k < live.size(); ++k) {
+      dst_layout.carve(h_col_totals[k], num_rows);
+    }
+    auto carve_mr = cuda::mr::make_shared_resource<carve_memory_resource>(
+      output_mr, stream, dst_layout.total_bytes);
+
     std::vector<cudf::device_span<int64_t>> scratch_spans(live.size());
     std::vector<cudf::device_span<char>> chars_spans(live.size());
     for (size_t k = 0; k < live.size(); ++k) {
-      auto& staged     = pending_strings[live[k]];
-      auto const bytes = h_col_totals[k];
-      auto offsets_col =
-        cudf::strings::detail::create_offsets_child_column(bytes, num_rows + 1, stream, output_mr);
+      auto& staged = pending_strings[live[k]];
+      auto carved  = carve_strings_buffers(num_rows, h_col_totals[k], carve_mr, stream, output_mr);
+      staged.offsets   = std::move(carved.offsets);
+      staged.chars     = std::move(carved.chars);
       scratch_spans[k] = cudf::device_span<int64_t>{
         reinterpret_cast<int64_t*>(scratch.data()) + static_cast<std::ptrdiff_t>(k) * rows_per_col,
         static_cast<std::size_t>(rows_per_col)};
-      staged.offsets = std::move(offsets_col);
+      auto const bytes = h_col_totals[k];
       if (bytes > 0) {
-        staged.chars   = rmm::device_buffer{static_cast<std::size_t>(bytes), stream, output_mr};
         chars_spans[k] = cudf::device_span<char>{static_cast<char*>(staged.chars.data()),
                                                  static_cast<std::size_t>(bytes)};
       }
@@ -1854,10 +2063,7 @@ struct descriptor_path_builder {
     }
 
     // Wire the payload work items (num_rows > 0 guaranteed for live columns).
-    auto any_kernel_masked = false;
-    for (size_t k = 0; k < live.size(); ++k) {
-      if (pending_strings[live[k]].kernel_mask_written) { any_kernel_masked = true; }
-    }
+    // any_kernel_masked was computed above the landing-buffer allocation.
     rmm::device_uvector<size_type> string_counts(0, stream, temp_mr);
     if (any_kernel_masked) {
       string_counts =
@@ -2024,10 +2230,21 @@ struct descriptor_path_builder {
     }
 
     std::vector<size_type> h_string_counts(live.size(), 0);
+
+    // Deferred counts readback (b3): the D2H is only enqueued here — the
+    // blocking sync moved below the assembly loops, so the host builds the
+    // destination columns while the payload kernel is still running. The
+    // counts' sole consumer is the per-column null count, applied after the
+    // sync via set_null_count (the same post-hoc patch the descriptor path
+    // uses); every other assembly input comes from the totals readback.
+    // The destination must be the pinned landing buffer allocated above: a
+    // pageable destination would make this copy complete synchronously at
+    // enqueue, re-blocking the host on the payload kernel.
     if (any_kernel_masked) {
-      // make_host_vector synchronizes; the payload kernel's atomics are done.
-      auto const read_back = cudf::detail::make_host_vector(string_counts, stream);
-      std::copy(read_back.begin(), read_back.end(), h_string_counts.begin());
+      cudf::detail::cuda_memcpy_async<size_type>(
+        host_span<size_type>{h_string_counts.data(), static_cast<std::size_t>(live.size())},
+        device_span<size_type const>{string_counts.data(), static_cast<std::size_t>(live.size())},
+        stream);
     }
 
     // Assemble the destination columns: chars, offsets, mask, null count.
@@ -2036,20 +2253,33 @@ struct descriptor_path_builder {
     // the same plan (all-null was handled in build_string; NULLIFY/all-valid
     // arrive here kernel-masked or pre-set).
     for (size_t k = 0; k < live.size(); ++k) {
-      auto& staged         = pending_strings[live[k]];
-      size_type null_count = staged.null_count;
-      if (staged.kernel_mask_written) { null_count = num_rows - h_string_counts[k]; }
-      auto null_mask = staged.dst_mask.has_value()
-                         ? cuda::device_buffer<bitmask_type>{std::move(*staged.dst_mask)}
-                         : cuda::device_buffer<bitmask_type>{stream, output_mr};
-      auto col       = make_strings_column(num_rows,
+      auto& staged = pending_strings[live[k]];
+      // The kernel-written mask is already correct on device; the host-visible
+      // null count is patched in after the deferred readback's sync below.
+      size_type null_count = staged.kernel_mask_written ? 0 : staged.null_count;
+      auto null_mask       = staged.dst_mask.has_value()
+                               ? cuda::device_buffer<bitmask_type>{std::move(*staged.dst_mask)}
+                               : cuda::device_buffer<bitmask_type>{stream, output_mr};
+      auto col             = make_strings_column(num_rows,
                                      std::move(staged.offsets),
                                      std::move(staged.chars),
                                      null_count,
                                      std::move(null_mask));
-      // The count is applied inline above; nothing to patch into
-      // kernel_masked_columns (descriptor slots stay descriptor-only).
+      // The count is patched in below (deferred readback); nothing to patch
+      // into kernel_masked_columns (descriptor slots stay descriptor-only).
       *staged.dst_slot = std::move(col);
+    }
+    // The deferred counts readback is only now synchronized: everything above
+    // enqueued without waiting on the payload kernel. The null count is the
+    // counts' sole host consumer, so the post-hoc set_null_count patch (the
+    // pattern the descriptor path already uses for fixed-width columns)
+    // applies it after the fact.
+    if (any_kernel_masked) {
+      cudf::detail::sync_stream(stream);
+      for (size_t k = 0; k < live.size(); ++k) {
+        if (not pending_strings[live[k]].kernel_mask_written) { continue; }
+        pending_strings[live[k]].dst_slot->get()->set_null_count(num_rows - h_string_counts[k]);
+      }
     }
     // Empty-source completions: offsets only, no kernel slot (no mask work is
     // possible on a zero-row source beyond ALL_VALID/ALL_NULL pre-sets, and a

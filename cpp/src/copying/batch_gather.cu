@@ -62,6 +62,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <functional>
 #include <iterator>
 #include <limits>
 #include <memory>
@@ -1798,17 +1799,20 @@ struct strings_destination_layout {
 };
 
 // Stream-ordered resource handing out successive aligned slices of ONE pre-allocated device
-// buffer, so a call's destination string columns draw from a single upstream allocate/free
-// pair instead of one pair per buffer. Allocation bumps a pointer; deallocation is a no-op —
-// the arena block is freed stream-ordered when the resource itself dies. Every destination
-// column keeps its slices alive independently: each buffer stores a value copy of the
-// `cuda::mr::shared_resource` wrapper created for the call, and all copies share the one
-// payload (bump pointer included), so the block outlives the last column. The upstream
-// reference is captured as an owning `any_resource` deep copy, so a payload that outlives the
-// call still deallocates through a live resource object, matching how stock columns capture
-// their allocation resource. Because allocation never frees, every slice must be carved
-// exactly once, in `strings_destination_layout` reservation order (offsets child, then chars,
-// per column, columns in live order).
+// buffer, so a call's destination columns (string offsets/chars through
+// `strings_destination_layout`, fixed-width masks/data through `fixed_width_destination_layout`)
+// draw from a single upstream allocate/free pair instead of one pair per buffer. Allocation
+// bumps a pointer; deallocation is a no-op — the arena block is freed stream-ordered when the
+// resource itself dies. Every destination column keeps its slices alive independently: each
+// buffer stores a value copy of the `cuda::mr::shared_resource` wrapper created for the call,
+// and all copies share the one payload (bump pointer included), so the block outlives the last
+// column. The upstream reference is captured as an owning `any_resource` deep copy, so a
+// payload that outlives the call still deallocates through a live resource object, matching
+// how stock columns capture their allocation resource. Because allocation never frees, every
+// slice must be carved exactly once, in the reserving layout's order (strings: offsets child,
+// then chars, per column, columns in live order; fixed-width: mask before data per column,
+// struct node mask before its children, in `fused_indices` pre-order — see
+// `fixed_width_destination_layout`).
 class carve_memory_resource {
  public:
   static constexpr std::size_t slice_alignment{strings_destination_layout::slice_alignment};
@@ -1880,6 +1884,32 @@ class carve_memory_resource {
 static_assert(cuda::mr::resource_with<carve_memory_resource, cuda::mr::device_accessible>,
               "carve_memory_resource must satisfy the stream-ordered device resource concepts");
 
+// Byte needs of one destination fixed-width column: the Arrow-padded mask words (the sizing
+// `create_null_mask` itself uses) plus the data payload. The reservation pass and the carve
+// sites MUST visit columns in the same pre-order (top-level columns in `fused_indices` order;
+// within a column: mask before data, struct node mask before its children recurse, dictionary
+// mask before its indices) and consume the same round-up steps, so the summed total equals the
+// bump pointer's final position exactly — a divergence trips the carve resource's loud
+// `arena exhausted` expect rather than corrupting memory.
+struct fixed_width_destination_layout {
+  static constexpr std::size_t slice_alignment{256};  // CUDA's allocation granularity
+
+  std::size_t total_bytes{0};
+
+  // Reserves one column's mask region (`num_rows` words at the Arrow 64-word padding, zero
+  // when the column carries no mask) and data region (`num_rows` fixed-width elements); each
+  // region is rounded up to the carve granularity, mirroring the bump steps the constructions
+  // will take.
+  void carve(size_type num_rows, std::size_t data_bytes, bool with_mask)
+  {
+    auto const mask_words =
+      with_mask ? cudf::bitmask_allocation_size_words(num_rows) : std::size_t{0};
+    total_bytes =
+      cudf::util::round_up_safe(total_bytes + mask_words * sizeof(bitmask_type), slice_alignment);
+    total_bytes = cudf::util::round_up_safe(total_bytes + data_bytes, slice_alignment);
+  }
+};
+
 // Builds ONE destination strings column's carved buffers: the offsets child (a full column
 // whose data buffer is a carve slice) and the chars buffer (a carve slice). Both store a value
 // copy of the shared carve resource, so the column keeps its slices alive independently and
@@ -1887,9 +1917,8 @@ static_assert(cuda::mr::resource_with<carve_memory_resource, cuda::mr::device_ac
 // carved FIRST (matching `strings_destination_layout::carve`'s order), then chars. A zero-byte
 // chars buffer constructs to a null data pointer exactly as stock does (RMM skips zero-size
 // allocations) — pass `chars_bytes == 0` and `chars` is the empty-chars form. The destination
-// mask is NOT carved: `plan_destination_mask` already allocated it from the output MR as an
-// independent buffer, and keeping that untouched preserves stock-parity mask accounting while
-// keeping this diff minimal.
+// mask is NOT carved: string masks keep the stock regime (allocated in `build_string`), since
+// the strings carve arena only exists after the scan readback that sizes the chars.
 struct carved_strings_buffers {
   std::unique_ptr<column> offsets;  // offsets child column, data carved (INT32 or INT64)
   rmm::device_buffer chars;         // chars slice; empty (null data) when chars_bytes == 0
@@ -2075,15 +2104,20 @@ std::unique_ptr<table> batch_gather(table_view const& source_table,
 
 namespace {
 
-// Destination mask plan shared by every node on the descriptor path. A mask is allocated iff
-// the source is all-null (ALL_NULL pre-set), any gathered row can be null (NULLIFY policy or a
-// null-bearing source — the fused kernel then writes it and reports the valid count), or the
-// source is nullable with zero nulls (ALL_VALID pre-set). The policy inputs are host-side view
-// accessors only — the unsliced null counts are cached values, never a device readback.
+// Destination mask plan shared by every node on the descriptor path. A destination mask is
+// needed iff the source is all-null (ALL_NULL pre-set), any gathered row can be null (NULLIFY
+// policy or a null-bearing source — the fused kernel then writes it and reports the valid
+// count), or the source is nullable with zero nulls (ALL_VALID pre-set). The plan carries the
+// state and fill semantics only; the mask BUFFER is created by the caller through whichever
+// allocation regime the column rides (the carve arenas or stock `create_null_mask`), so
+// planning never allocates and the builder's carve reservations can be summed before the
+// build walk starts. The policy inputs are host-side view accessors only — the unsliced null
+// counts are cached values, never a device readback.
 struct dst_mask_plan {
-  // Engaged iff a destination mask was allocated; `cuda::device_buffer` has no default
-  // constructor, so "no mask" is the disengaged state.
-  std::optional<cuda::device_buffer<bitmask_type>> buffer;
+  mask_state state{mask_state::UNALLOCATED};
+  // True when the mask must be memset here (ALL_VALID/ALL_NULL); kernel-written
+  // (UNINITIALIZED) masks are left for the kernel, which writes every word.
+  bool preset{};
   bitmask_type* kernel_mask{};  // non-null iff the fused kernel writes the mask
   size_type null_count{};       // host-visible count; 0 placeholder when kernel-masked
   bool skip_data{};             // all-null source: mask pre-set ALL_NULL, no descriptor pushed
@@ -2133,27 +2167,91 @@ descriptor_counts estimate_descriptor_counts(column_view const& src, bool nullif
   return {1, masked};
 }
 
-dst_mask_plan plan_destination_mask(column_view const& src,
-                                    bool nullify,
-                                    size_type num_rows,
-                                    cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr)
+// The mask plan is evaluated against the DESTINATION row count (`num_rows`,
+// i.e. `gather_map.size()`), not `src.size()`: a sliced source has
+// `src.size() < num_rows`, so an all-null sliced source must still mark all
+// `num_rows` destination rows null. Callers must therefore pass the call's
+// `num_rows` even though only `null_count` consumes it.
+dst_mask_plan plan_destination_mask(column_view const& src, bool nullify, size_type num_rows)
 {
   dst_mask_plan plan;
   bool const all_null = src.size() > 0 and src.null_count() == src.size();
   if (all_null) {
     // Every row is null regardless of the map: pre-set ALL_NULL.
-    plan.buffer     = cudf::detail::create_null_mask(num_rows, mask_state::ALL_NULL, stream, mr);
+    plan.state      = mask_state::ALL_NULL;
+    plan.preset     = true;
     plan.null_count = num_rows;
     plan.skip_data  = true;
   } else if (nullify or src.null_count() > 0) {
-    plan.buffer = cudf::detail::create_null_mask(num_rows, mask_state::UNINITIALIZED, stream, mr);
-    plan.kernel_mask = plan.buffer->data();
+    // The kernel writes this mask; the caller assigns `kernel_mask` from whichever mask
+    // buffer it constructs (carved or stock).
+    plan.state = mask_state::UNINITIALIZED;
   } else if (src.nullable()) {
     // Nullable source with zero nulls: ALL_VALID fast path, no kernel mask work.
-    plan.buffer = cudf::detail::create_null_mask(num_rows, mask_state::ALL_VALID, stream, mr);
+    plan.state  = mask_state::ALL_VALID;
+    plan.preset = true;
   }
   return plan;
+}
+
+// Applies `plan`'s fill semantics to a freshly created destination mask: the constant states
+// are memset here (the same fill `create_null_mask` would have done), a kernel-written
+// UNINITIALIZED mask is left untouched, and UNALLOCATED must never reach this helper. The
+// caller assigns `plan.kernel_mask` from the returned buffer before pushing any descriptor.
+void fill_destination_mask(dst_mask_plan& plan,
+                           cuda::device_buffer<bitmask_type>& mask,
+                           cuda::stream_ref stream)
+{
+  if (plan.state == mask_state::UNALLOCATED) { return; }
+  plan.kernel_mask = plan.state == mask_state::UNINITIALIZED ? mask.data() : nullptr;
+  if (plan.preset) {
+    CUDF_CUDA_TRY(cudaMemsetAsync(mask.data(),
+                                  plan.state == mask_state::ALL_VALID ? 0xff : 0x00,
+                                  mask.size() * sizeof(bitmask_type),
+                                  stream.get()));
+  }
+}
+
+// Builds ONE destination fixed-width column whose mask and data buffers are slices of the
+// call-wide carve arena. The mask is created FIRST (matching `fixed_width_destination_layout::
+// carve`'s mask-then-data order), filled per `plan`'s semantics, then the data slice is carved;
+// `plan.kernel_mask` is assigned from the mask buffer so the caller can push its descriptor
+// with it. Both buffers store a value copy of the shared carve resource, so the column keeps
+// its slices alive independently and the arena block is freed stream-ordered when the last
+// shared copy dies. A zero-size data slice (num_rows == 0) constructs to a null data pointer
+// exactly as stock does (RMM skips zero-size allocations).
+std::unique_ptr<column> make_carved_fixed_width(
+  column_view const& src,
+  size_type num_rows,
+  dst_mask_plan& plan,
+  cuda::mr::shared_resource<carve_memory_resource> const& carve_mr,
+  cuda::stream_ref stream)
+{
+  auto const data_bytes = static_cast<std::size_t>(num_rows) * cudf::size_of(src.type());
+
+  // Construction order = reservation order: mask first, then data. The env property pins the
+  // mask buffer's allocation alignment to the carve granularity (the default would be the
+  // element's natural 4-byte alignment); `rmm::device_buffer`'s alignment-argument form carries
+  // it for the data slice, and `column`'s generic ctor forwards both into their owned members.
+  auto const mask_env =
+    cuda::std::execution::prop{cuda::allocation_alignment, carve_memory_resource::slice_alignment};
+  auto mask_slice = cuda::device_buffer<bitmask_type>{
+    stream,
+    carve_mr,
+    plan.state == mask_state::UNALLOCATED ? 0 : cudf::bitmask_allocation_size_words(num_rows),
+    cuda::no_init,
+    mask_env};
+  fill_destination_mask(plan, mask_slice, stream);
+  auto data_slice =
+    rmm::device_buffer{data_bytes, carve_memory_resource::slice_alignment, stream, carve_mr};
+
+  auto dst = std::make_unique<column>(src.type(),
+                                      num_rows,
+                                      std::move(data_slice),
+                                      std::move(mask_slice),
+                                      plan.state == mask_state::ALL_NULL ? num_rows : 0,
+                                      std::vector<std::unique_ptr<column>>{});
+  return dst;
 }
 
 // Plans the descriptor-path columns of one gather call and builds their destination columns.
@@ -2191,6 +2289,10 @@ struct descriptor_path_builder {
   cuda::stream_ref stream;
   rmm::device_async_resource_ref output_mr;
   rmm::device_async_resource_ref temp_mr;
+  fixed_width_destination_layout fw_layout;  // reservation, advanced during the build walk
+  // Set once the fw arena exists (after the build walk); the fw carve class checks it so a
+  // misordered construction that would carve after teardown fails loudly.
+  cuda::mr::shared_resource<carve_memory_resource>* fw_carve_mr{};
 
   // String-keyed dictionary columns defer their whole assembly to `assemble_staged_keys`:
   // one batched D2H copy of every catalog's offsets plus a single synchronization replaces
@@ -2202,7 +2304,10 @@ struct descriptor_path_builder {
     column_view keys;                 // full keys view, including the parent's offset
     std::unique_ptr<column> offsets;  // deep copy of the full offsets child, unadjusted
     std::unique_ptr<column> indices;  // gathered indices; moves into the deferred factory call
-    std::optional<cuda::device_buffer<bitmask_type>> dst_mask;  // parent's destination mask
+    // The parent's destination mask, created and filled in `build_dictionary` (its pointer
+    // already rides the pushed descriptor) and moved through here into the deferred factory
+    // call. An empty buffer means the plan was UNALLOCATED.
+    std::optional<cuda::device_buffer<bitmask_type>> dst_mask;  // when allocated
     size_type null_count{};  // host-visible parent null count (0 placeholder when kernel-masked)
     size_type keys_offset;   // keys view's own offset
     size_type keys_size;     // keys view's own size
@@ -2350,10 +2455,11 @@ struct descriptor_path_builder {
                                   std::move(chars_buffer),
                                   staged.keys.null_count(),
                                   cuda::device_buffer<cudf::bitmask_type>{std::move(keys_mask)});
-      *staged.dst_slot = make_dictionary_column(std::move(keys_col),
-                                                std::move(staged.indices),
-                                                std::move(*staged.dst_mask),
-                                                staged.null_count);
+      *staged.dst_slot =
+        make_dictionary_column(std::move(keys_col),
+                               std::move(staged.indices),
+                               cuda::device_buffer<cudf::bitmask_type>{std::move(*staged.dst_mask)},
+                               staged.null_count);
       if (staged.kernel_slot.has_value()) {
         kernel_masked_columns[*staged.kernel_slot] = staged.dst_slot->get();
       }
@@ -2362,20 +2468,23 @@ struct descriptor_path_builder {
   }
 
   // Fixed-width leaf (a top-level column or a struct descendant): payload plus the leaf's own
-  // mask. `ancestor_offset` is the accumulated offset of the struct views above the leaf —
-  // rows for the mask bit offset, elements for the data base.
+  // mask, both carved from the call-wide fw arena. `ancestor_offset` is the accumulated offset
+  // of the struct views above the leaf — rows for the mask bit offset, elements for the data
+  // base.
   std::unique_ptr<column> emit_fixed_width(column_view const& src, size_type ancestor_offset)
   {
-    auto dst = cudf::detail::allocate_like(
-      src, num_rows, cudf::mask_allocation_policy::NEVER, stream, output_mr);
-    auto plan = plan_destination_mask(src, nullify, num_rows, stream, output_mr);
-    if (plan.buffer.has_value()) { dst->set_null_mask(std::move(*plan.buffer), plan.null_count); }
+    CUDF_EXPECTS(fw_carve_mr != nullptr, "fw carve arena missing at leaf emission");
+    auto plan               = plan_destination_mask(src, nullify, num_rows);
+    auto const element_size = static_cast<int32_t>(cudf::size_of(src.type()));
+    // The reservation for this leaf was already added by the pre-walk pass; the arena replay
+    // below consumes it (mask first, then data — matching `fixed_width_destination_layout::
+    // carve`'s per-column regions).
+    auto dst = make_carved_fixed_width(src, num_rows, plan, *fw_carve_mr, stream);
     if (plan.skip_data) {
       // Every destination row is null: pre-set ALL_NULL mask, undefined payload (stock parity),
       // and no descriptor — the kernel would only re-read the source mask per row.
       return dst;
     }
-    auto const element_size = static_cast<int32_t>(cudf::size_of(src.type()));
     auto const src_data =
       static_cast<char const*>(
         cudf::type_dispatcher<dispatch_storage_type>(src.type(), data_ptr_functor{}, src)) +
@@ -2401,7 +2510,25 @@ struct descriptor_path_builder {
   // the assembled destination struct column.
   std::unique_ptr<column> build_struct(column_view const& node, size_type ancestor_offset)
   {
+    CUDF_EXPECTS(fw_carve_mr != nullptr, "fw carve arena missing at struct build");
     auto const base_offset = ancestor_offset + node.offset();
+    auto plan              = plan_destination_mask(node, nullify, num_rows);
+    // The node's own destination mask is carved BEFORE the children recurse: the fw arena is
+    // a single bump allocator replaying the reservation's pre-order (node mask first, then
+    // each child's regions), so any other construction order could out-consume the reserved
+    // advance and falsely trip `arena exhausted` on a later column. The mask is filled here
+    // and moves into the column at the end; the MASK-ONLY descriptor (when pushed) takes the
+    // carved pointer, which the move preserves.
+    auto node_mask_env = cuda::std::execution::prop{cuda::allocation_alignment,
+                                                    carve_memory_resource::slice_alignment};
+    auto node_mask     = cuda::device_buffer<bitmask_type>{
+      stream,
+      *fw_carve_mr,
+      plan.state == mask_state::UNALLOCATED ? 0 : cudf::bitmask_allocation_size_words(num_rows),
+      cuda::no_init,
+      node_mask_env};
+    fill_destination_mask(plan, node_mask, stream);
+
     std::vector<std::unique_ptr<column>> children;
     children.reserve(node.num_children());
     for (size_type i = 0; i < node.num_children(); ++i) {
@@ -2413,7 +2540,6 @@ struct descriptor_path_builder {
       }
     }
 
-    auto plan        = plan_destination_mask(node, nullify, num_rows, stream, output_mr);
     size_t mask_slot = 0;
     if (plan.kernel_mask != nullptr) {
       // MASK-ONLY descriptor: no payload; the kernel gathers the node's own mask.
@@ -2429,11 +2555,8 @@ struct descriptor_path_builder {
     // The mask buffer (when allocated) moves into the column; its data pointer captured in the
     // descriptor stays valid across the move. With no mask allocated, pass the same zero-size
     // mask stock's struct assembly uses.
-    auto dst_mask = plan.buffer.has_value() ? std::move(*plan.buffer)
-                                            : cudf::detail::create_null_mask(
-                                                0, mask_state::UNALLOCATED, stream, output_mr);
-    auto col      = create_structs_hierarchy(
-      num_rows, std::move(children), plan.null_count, std::move(dst_mask), stream, output_mr);
+    auto col = create_structs_hierarchy(
+      num_rows, std::move(children), plan.null_count, std::move(node_mask), stream, output_mr);
     if (plan.kernel_mask != nullptr) { set_target(mask_slot, col.get()); }
     return col;
   }
@@ -2463,15 +2586,41 @@ struct descriptor_path_builder {
   {
     auto const dict     = dictionary_column_view{src};
     auto const& indices = dict.indices();
-    auto indices_dst    = cudf::detail::allocate_like(
-      indices, num_rows, cudf::mask_allocation_policy::NEVER, stream, output_mr);
-    auto plan = plan_destination_mask(src, nullify, num_rows, stream, output_mr);
+    CUDF_EXPECTS(fw_carve_mr != nullptr, "fw carve arena missing at dictionary build");
+    auto plan = plan_destination_mask(src, nullify, num_rows);
+    // The indices payload and the parent mask are carved (their reservations were added by
+    // the pre-walk pass). The mask must exist before the descriptor is pushed: the kernel
+    // writes through the descriptor's pointer, and even the deferred string-keyed assembly
+    // runs BEFORE the launch, so creating it here for every path is safe and keeps one
+    // upstream pair for the whole class. The carve order mirrors the reservation's per-column
+    // mask-then-data: mask first, then the indices data.
+    auto parent_mask_env = cuda::std::execution::prop{cuda::allocation_alignment,
+                                                      carve_memory_resource::slice_alignment};
+    auto parent_mask     = cuda::device_buffer<bitmask_type>{
+      stream,
+      *fw_carve_mr,
+      plan.state == mask_state::UNALLOCATED ? 0 : cudf::bitmask_allocation_size_words(num_rows),
+      cuda::no_init,
+      parent_mask_env};
+    fill_destination_mask(plan, parent_mask, stream);
+    auto indices_dst = rmm::device_buffer{
+      static_cast<std::size_t>(num_rows) * static_cast<std::size_t>(cudf::size_of(indices.type())),
+      carve_memory_resource::slice_alignment,
+      stream,
+      *fw_carve_mr};
+    auto indices_col = std::make_unique<column>(
+      indices.type(),
+      num_rows,
+      std::move(indices_dst),
+      cudf::detail::create_null_mask(0, mask_state::UNALLOCATED, stream, output_mr),
+      0,
+      std::vector<std::unique_ptr<column>>{});
     if (plan.skip_data) {
       // Every destination row is null: pre-set ALL_NULL parent mask (stock parity), undefined
       // index payload, no descriptor, and keys still owned-copied.
       auto keys_copy = std::make_unique<column>(dict.keys(), stream, output_mr);
       return make_dictionary_column(
-        std::move(keys_copy), std::move(indices_dst), std::move(*plan.buffer), plan.null_count);
+        std::move(keys_copy), std::move(indices_col), std::move(parent_mask), plan.null_count);
     }
     auto const element_size = static_cast<int32_t>(cudf::size_of(indices.type()));
     auto const src_data =
@@ -2480,7 +2629,7 @@ struct descriptor_path_builder {
       static_cast<std::size_t>(src.offset()) * static_cast<std::size_t>(element_size);
     auto const position =
       push_descriptor(column_descriptor{src_data,
-                                        indices_dst->mutable_view().data<std::byte>(),
+                                        indices_col->mutable_view().data<std::byte>(),
                                         src.null_mask(),
                                         plan.kernel_mask,
                                         static_cast<int64_t>(src.offset()),
@@ -2488,16 +2637,14 @@ struct descriptor_path_builder {
                                         false});
     size_t mask_slot = 0;
     if (plan.kernel_mask != nullptr) { mask_slot = record_kernel_masked(position); }
-    auto dst_mask = plan.buffer.has_value() ? std::move(*plan.buffer)
-                                            : cudf::detail::create_null_mask(
-                                                0, mask_state::UNALLOCATED, stream, output_mr);
 
     if (dict.keys().type().id() == type_id::STRING) {
       // DEFERRED assembly: the stock column copy of a string catalog reads two offset values
       // back with a stream synchronization each, so this path records everything the deferred
       // factory call needs and lets `assemble_staged_keys` build the column after ONE batched
       // offsets read for all string-keyed catalogs in the call. The destination slot stays
-      // null until then; the kernel-masked bookkeeping is patched there too.
+      // null until then; the kernel-masked bookkeeping is patched there too. The carved
+      // parent mask moves into the staged record (its pointer already rides the descriptor).
       staged_keys staged;
       staged.keys               = dict.keys();
       staged.keys_offset        = dict.keys().offset();
@@ -2505,8 +2652,8 @@ struct descriptor_path_builder {
       staged.null_count         = plan.null_count;
       auto const& offsets_child = dict.keys().child(strings_column_view::offsets_column_index);
       staged.offsets            = std::make_unique<column>(offsets_child, stream, output_mr);
-      staged.indices            = std::move(indices_dst);
-      staged.dst_mask.emplace(std::move(dst_mask));
+      staged.indices            = std::move(indices_col);
+      staged.dst_mask.emplace(std::move(parent_mask));
       staged.dst_slot = dst_slot;
       if (plan.kernel_mask != nullptr) { staged.kernel_slot = mask_slot; }
       pending_dictionaries.push_back(std::move(staged));
@@ -2519,7 +2666,7 @@ struct descriptor_path_builder {
     // readbacks per catalog only to discard it.
     auto keys_copy = std::make_unique<column>(dict.keys(), stream, output_mr);
     auto col       = make_dictionary_column(
-      std::move(keys_copy), std::move(indices_dst), std::move(dst_mask), plan.null_count);
+      std::move(keys_copy), std::move(indices_col), std::move(parent_mask), plan.null_count);
     if (plan.kernel_mask != nullptr) { set_target(mask_slot, col.get()); }
     return col;
   }
@@ -2540,7 +2687,9 @@ struct descriptor_path_builder {
   // unsliced base through the sliced offsets exactly as stock does.
   std::unique_ptr<column> build_string(column_view const& src, std::unique_ptr<column>* dst_slot)
   {
-    auto plan = plan_destination_mask(src, nullify, num_rows, stream, output_mr);
+    auto plan = plan_destination_mask(src, nullify, num_rows);
+    // Strings are NOT carved (chars bytes unknowable until the scan readback); their
+    // destination masks keep the stock allocation regime.
     if (plan.skip_data) {
       // All-null source: ALL_NULL mask, undefined payload, no scan entry. The
       // destination must still be a full strings column (full-size offsets
@@ -2554,18 +2703,22 @@ struct descriptor_path_builder {
                                     0,
                                     offsets_col->size() * sizeof(int32_t),
                                     stream.get()));
-      return make_strings_column(num_rows,
-                                 std::move(offsets_col),
-                                 rmm::device_buffer{},
-                                 plan.null_count,
-                                 std::move(*plan.buffer));
+      return make_strings_column(
+        num_rows,
+        std::move(offsets_col),
+        rmm::device_buffer{},
+        plan.null_count,
+        cudf::detail::create_null_mask(num_rows, mask_state::ALL_NULL, stream, output_mr));
     }
     staged_string staged;
     staged.src        = src;
     staged.null_count = plan.null_count;
     staged.dst_slot   = dst_slot;
-    if (plan.buffer.has_value()) { staged.dst_mask.emplace(std::move(*plan.buffer)); }
-    if (plan.kernel_mask != nullptr) {
+    if (plan.state != mask_state::UNALLOCATED) {
+      staged.dst_mask.emplace(
+        cudf::detail::create_null_mask(num_rows, plan.state, stream, output_mr));
+    }
+    if (plan.state == mask_state::UNINITIALIZED) {
       // A string's mask is kernel-written but never rides kernel_masked_columns
       // (the descriptor readback's slots): its null count comes from the
       // payload kernel's own string_counts readback at assembly time.
@@ -2719,8 +2872,8 @@ struct descriptor_path_builder {
     // shared through every buffer's stored value copy, is the transferable part. Non-live
     // staged entries (empty SOURCE columns) and the all-null/empty-map completions below stay
     // on the stock `create_offsets_child_column` path: at most one small column per call, not
-    // part of the measured allocation storm. The destination masks stay stock too (allocated
-    // by `plan_destination_mask` at planning time).
+    // part of the measured allocation storm. String destination masks stay stock too (allocated
+    // in `build_string`); the fixed-width destination class draws from its own arena.
     strings_destination_layout dst_layout;
     for (size_t k = 0; k < live.size(); ++k) {
       dst_layout.carve(h_col_totals[k], num_rows);
@@ -2943,8 +3096,6 @@ struct descriptor_path_builder {
                                                      map_begin);
       CUDF_CUDA_TRY(cudaGetLastError());
     }
-
-    std::vector<size_type> h_string_counts(live.size(), 0);
 
     // Deferred counts readback (b3): the D2H is only enqueued here — the
     // blocking sync moved below the assembly loops, so the host builds the
@@ -3195,6 +3346,56 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
                                   output_mr,
                                   temp_mr};
   if (not fused_indices.empty()) {
+    // Pre-walk reservation for the fixed-width carve: sum every fw destination's mask+data
+    // bytes (dry planning — no allocation) so ONE arena covers the whole class with a single
+    // upstream allocate/free pair. The reservation visits columns in the SAME pre-order the
+    // build walk will carve them (see `fixed_width_destination_layout`), so the total equals
+    // the bump pointer's final position exactly; a divergence trips the carve resource's loud
+    // `arena exhausted` expect. The fw arena is created BEFORE the build walk because the fw
+    // columns construct hierarchically during it (leaves, struct nodes, dictionaries);
+    // strings stay outside it (chars bytes unknowable until the post-walk scan readback) and
+    // keep their own carve in `assemble_strings`. The mirror must include every buffer the
+    // build walk creates: an all-null destination still owns a full-size (uninitialized) data
+    // buffer and a pre-set ALL_NULL mask.
+    auto fw_mask_exists = [](column_view const& src, bool nullify_flag) {
+      bool const all_null = src.size() > 0 and src.null_count() == src.size();
+      return all_null or nullify_flag or src.null_count() > 0 or src.nullable();
+    };
+    // std::function, not `auto`: the reservation mirrors the build walk's STRUCT recursion,
+    // so the lambda must call itself from its own initializer (an `auto` initializer cannot
+    // self-reference). One host-side allocation per call, outside the carve path.
+    std::function<void(column_view const&, bool)> fw_reserve = [&](column_view const& src,
+                                                                   bool nullify_flag) {
+      if (src.type().id() == type_id::STRING) { return; }
+      if (src.type().id() == type_id::STRUCT) {
+        if (fw_mask_exists(src, nullify_flag)) { builder.fw_layout.carve(num_rows, 0, true); }
+        for (size_type i = 0; i < src.num_children(); ++i) {
+          fw_reserve(src.child(i), nullify_flag);
+        }
+        return;
+      }
+      if (src.type().id() == type_id::DICTIONARY32) {
+        auto const indices = dictionary_column_view{src}.indices();
+        builder.fw_layout.carve(num_rows,
+                                static_cast<std::size_t>(num_rows) *
+                                  static_cast<std::size_t>(cudf::size_of(indices.type())),
+                                fw_mask_exists(src, nullify_flag));
+        return;
+      }
+      builder.fw_layout.carve(
+        num_rows,
+        static_cast<std::size_t>(num_rows) * static_cast<std::size_t>(cudf::size_of(src.type())),
+        fw_mask_exists(src, nullify_flag));
+    };
+    for (size_type pos = 0; pos < static_cast<size_type>(fused_indices.size()); ++pos) {
+      auto const& src = source_table.column(fused_indices[pos]);
+      if (num_rows == 0 and not cudf::is_fixed_width(src.type())) { continue; }
+      fw_reserve(src, bounds_policy == out_of_bounds_policy::NULLIFY);
+    }
+    auto fw_carve_mr = cuda::mr::make_shared_resource<carve_memory_resource>(
+      output_mr, stream, builder.fw_layout.total_bytes);
+    builder.fw_carve_mr = &fw_carve_mr;
+
     descriptors.reserve(estimated_descriptors);
     kernel_masked_positions.reserve(estimated_kernel_masked);
     kernel_masked_columns.reserve(estimated_kernel_masked);

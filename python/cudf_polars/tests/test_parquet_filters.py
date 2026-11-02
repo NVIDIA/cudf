@@ -126,7 +126,11 @@ def test_parquet_filter_is_in_empty_list_literal(
 
 @pytest.mark.parametrize("negate", [False, True])
 @pytest.mark.parametrize("nulls_equal", [False, True])
-@pytest.mark.parametrize("values", [["a"], ["a", None]])
+@pytest.mark.parametrize(
+    "values",
+    [["a"], ["a", None], pl.Series([None, None], dtype=pl.String).implode()],
+    ids=["value", "value-and-null", "only-nulls"],
+)
 def test_parquet_filter_is_in_nulls_equal(
     engine: pl.GPUEngine, tmp_path, negate, nulls_equal, values
 ):

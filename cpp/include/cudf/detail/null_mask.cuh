@@ -5,6 +5,7 @@
 #pragma once
 
 #include <cudf/detail/device_scalar.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
@@ -313,7 +314,7 @@ segmented_bitmask_binop(Binop op,
     h_destination_masks_ptrs.push_back(h_destination_masks.back()->data());
   }
   auto destination_masks =
-    cudf::detail::make_device_uvector_async(h_destination_masks_ptrs, stream, temp_mr);
+    cudf::detail::make_device_buffer_async(h_destination_masks_ptrs, stream, temp_mr);
 
   // for destination size, pass number of words in each destination buffer instead of number of bits
   auto null_counts = inplace_segmented_bitmask_binop(op,
@@ -363,8 +364,8 @@ size_type inplace_bitmask_binop(Binop op,
   auto const temp_mr = mr.get_temporary_mr();
   cudf::detail::device_scalar<size_type> d_counter{0, stream, temp_mr};
 
-  auto d_masks      = cudf::detail::make_device_uvector_async(masks, stream, temp_mr);
-  auto d_begin_bits = cudf::detail::make_device_uvector_async(masks_begin_bits, stream, temp_mr);
+  auto d_masks      = cudf::detail::make_device_buffer_async(masks, stream, temp_mr);
+  auto d_begin_bits = cudf::detail::make_device_buffer_async(masks_begin_bits, stream, temp_mr);
 
   auto constexpr block_size = 256;
   cudf::detail::grid_1d config(dest_mask.size(), block_size);
@@ -427,10 +428,9 @@ rmm::device_uvector<size_type> inplace_segmented_bitmask_binop(
   auto d_null_counts = cudf::detail::make_zeroed_device_uvector_async<size_type>(
     num_segments, stream, mr.get_output_mr());
   auto const temp_mr = mr.get_temporary_mr();
-  auto d_masks       = cudf::detail::make_device_uvector_async(masks, stream, temp_mr);
-  auto d_begin_bits  = cudf::detail::make_device_uvector_async(masks_begin_bits, stream, temp_mr);
-  auto d_segment_offsets =
-    cudf::detail::make_device_uvector_async(segment_offsets, stream, temp_mr);
+  auto d_masks       = cudf::detail::make_device_buffer_async(masks, stream, temp_mr);
+  auto d_begin_bits  = cudf::detail::make_device_buffer_async(masks_begin_bits, stream, temp_mr);
+  auto d_segment_offsets = cudf::detail::make_device_buffer_async(segment_offsets, stream, temp_mr);
 
   auto constexpr block_size = 256;
 
@@ -702,7 +702,7 @@ std::vector<size_type> segmented_count_bits(bitmask_type const* bitmask,
     std::distance(indices_begin, indices_end), stream);
   std::copy(indices_begin, indices_end, std::back_inserter(h_indices));
   auto const temp_mr   = cudf::get_current_device_resource_ref();
-  auto const d_indices = make_device_uvector_async(h_indices, stream, temp_mr);
+  auto const d_indices = make_device_buffer_async(h_indices, stream, temp_mr);
 
   // Compute the bit counts over each segment.
   auto first_bit_indices_begin = cuda::transform_iterator(

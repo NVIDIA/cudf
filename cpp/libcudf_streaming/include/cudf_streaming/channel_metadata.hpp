@@ -118,7 +118,8 @@ struct row_ordering {
  * Data is partitioned by value ranges based on predetermined boundaries.
  * This type describes partition boundaries only. Row-order guarantees are
  * stored separately in `partitioning::row_orderings`.
- * For N partitions, there are N-1 boundary rows:
+ * For N partitions, there are N-1 boundary rows. With strict boundaries,
+ * the partition ranges in the declared sort order are:
  * - Partition 0: values <= boundaries[0]
  * - Partition i (0 < i < N-1): boundaries[i-1] < values <= boundaries[i]
  * - Partition N-1: values > boundaries[N-2]
@@ -130,9 +131,9 @@ struct row_ordering {
  * When `boundaries` is set, its columns must align with `keys`
  * (same count and compatible dtypes). Mismatched dtypes are a usage error.
  *
- * `strict_boundaries`: when true, every row in a chunk belongs to a single partition's
- * half-open key range (partition keys do not straddle chunk interiors). When false,
- * a chunk may contain keys spanning multiple partitions.
+ * Every row in partition i sorts at or before boundaries[i] when i < N-1.
+ * When i > 0, rows also sort at or after boundaries[i-1]. If
+ * `strict_boundaries` is true, they sort strictly after that boundary.
  */
 struct ordering {
   std::vector<order_key> keys;              ///< Sort keys (column, order, null_order per entry).

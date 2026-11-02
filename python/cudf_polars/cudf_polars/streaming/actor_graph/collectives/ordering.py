@@ -626,7 +626,7 @@ def _source_output_range(
     input_npartitions = input_ordering.num_boundaries + 1
     output_npartitions = output_ordering.num_boundaries + 1
     output_prefix_only = len(output_ordering.keys) < len(input_ordering.keys)
-    # Prefix/non-strict boundaries can overlap the equal-boundary run on either side.
+    # Prefix/non-strict boundaries may have equal keys on the following rank.
     include_boundary = output_prefix_only or not input_ordering.strict_boundaries
     input_start, input_stop = partition_range(source_rank, nranks, input_npartitions)
     if input_start == input_stop:
@@ -640,14 +640,12 @@ def _source_output_range(
             else upper_positions[input_start - 1]
         )
     )
+    # The input boundary is an upper bound even when it is non-strict or
+    # projected onto a prefix. Equal values belong to the lower output partition.
     output_stop = (
         output_npartitions
         if input_stop == input_npartitions
-        else (
-            upper_positions[input_stop - 1] + 1
-            if include_boundary
-            else lower_positions[input_stop - 1] + 1
-        )
+        else lower_positions[input_stop - 1] + 1
     )
     return output_start, output_stop
 

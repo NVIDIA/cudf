@@ -1641,6 +1641,78 @@ TEST_F(BatchGatherTallSeamTest, CarvedMixedColumnsOutliveCallScopeArena)
 // against a run_reference gather.
 // ============================================================================
 
+// The staging carve arenas (device landing buffers for the string path's H2D uploads and the
+// descriptor upload) are temp-scoped: every carved buffer must be finished by the launch block
+// that enqueued it BEFORE the arena's stream-ordered free fires. Sources are SLICED (the
+// staging sizes derive from the sliced views' sizes, not the parent's) and one string source is
+// EMPTY (zero rows: its upload is skipped by the live filter, so the carve must still size
+// correctly) — the envelope's parity requirements for the carve-bound scratch. The call runs
+// under a block-scoped tracked output resource and compares against the stock gather both
+// in-scope and after the tracking resource dies.
+TEST_F(BatchGatherTallSeamTest, StagingCarveSlicedSourceParity)
+{
+  constexpr cudf::size_type parent_size{1000};
+  constexpr cudf::size_type slice_begin{100};
+  constexpr cudf::size_type slice_end{600};
+  constexpr cudf::size_type num_rows{500};
+
+  auto strings_parent = periodic_strings(parent_size, 23);
+  auto str_validity =
+    cudf::detail::make_counting_transform_iterator(0, [](cudf::size_type i) { return i % 4 != 0; });
+  cudf::test::strings_column_wrapper str_parent(
+    strings_parent.begin(), strings_parent.end(), str_validity);
+  auto sliced_str = cudf::slice(str_parent, {slice_begin, slice_end});
+  ASSERT_EQ(sliced_str.size(), 1);
+  // A column of EMPTY strings exercises the zero-size trap: every row's byte total is 0, so
+  // the routing walk sends it to the unrouted cohort and no chars copy exists for it — the
+  // carve must still size correctly (a zero-length column contributes only its staging item).
+  std::vector<std::string> const empty_strings(num_rows, "");
+  cudf::test::strings_column_wrapper empty_str(empty_strings.begin(), empty_strings.end());
+  auto col_i32 = make_fixed_column<int32_t>(
+    slice_end - slice_begin,
+    [](cudf::size_type i) { return i; },
+    [](cudf::size_type i) { return i % 2 == 0; });
+  auto col_i64 = make_fixed_column<int64_t>(
+    slice_end - slice_begin,
+    [](cudf::size_type i) { return 2 * i; },
+    [](cudf::size_type i) { return i % 3 != 0; });
+  std::vector<std::unique_ptr<cudf::column>> struct_children;
+  struct_children.push_back(std::move(col_i64));
+  cudf::test::structs_column_wrapper col_struct{std::move(struct_children)};
+
+  std::vector<std::string> dict_values(slice_end - slice_begin);
+  std::generate(dict_values.begin(), dict_values.end(), [n = 0]() mutable {
+    return std::string(1, static_cast<char>('a' + (n++) % 3));
+  });
+  auto dict_validity =
+    cudf::detail::make_counting_transform_iterator(0, [](cudf::size_type i) { return i % 5 != 0; });
+  cudf::test::dictionary_column_wrapper<std::string> col_dict(
+    dict_values.begin(), dict_values.end(), dict_validity);
+
+  cudf::table_view source_table({sliced_str[0], empty_str, col_i32->view(), col_struct, col_dict});
+  auto const host_map = shuffled_iota(num_rows, 5);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto const result = [&] {
+    auto output_mr = rmm::mr::statistics_resource_adaptor{cudf::get_current_device_resource_ref()};
+    auto const reference = run_reference(source_table, gather_map);  // stock path, default resource
+    auto gathered =
+      cudf::detail::batch_gather(source_table,
+                                 gather_map,
+                                 cudf::out_of_bounds_policy::DONT_CHECK,
+                                 cudf::negative_index_policy::NOT_ALLOWED,
+                                 cudf::get_default_stream(),
+                                 cudf::memory_resources{rmm::device_async_resource_ref{output_mr}});
+    CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), gathered->view());
+    auto const arena_allocations = output_mr.get_allocations_counter().value;
+    EXPECT_GT(arena_allocations, 0);
+    return gathered;
+  }();
+
+  CUDF_TEST_EXPECT_TABLES_EQUAL(run_reference(source_table, gather_map)->view(), result->view());
+}
+
 class StringRoutedMetadataParity : public cudf::test::BaseFixture {};
 
 // Tall single column: the whole table routes (average gathered row 16 B <= 32 B), the

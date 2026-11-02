@@ -1309,6 +1309,24 @@ carved_strings_buffers carve_strings_buffers(
   return carved_strings_buffers{std::move(offsets_col), std::move(chars)};
 }
 
+// One device staging upload drawn from the staging carve arena: a fresh `rmm::device_uvector`
+// allocation against the arena's bump allocator (its deallocation is a no-op — the single
+// upstream pair frees stream-ordered when the arena dies). Sizing the arena is a closed-form
+// computation at worst case, so the caller's only obligation is that the reservation covers
+// every carve it makes; any shortfall trips the carve resource's loud `arena exhausted` expect.
+template <typename T>
+rmm::device_uvector<std::remove_cv_t<T>> carve_device_vector(
+  host_span<T> source_data,
+  cuda::stream_ref stream,
+  cuda::mr::shared_resource<carve_memory_resource> const& carve_mr)
+{
+  rmm::device_uvector<std::remove_cv_t<T>> ret(source_data.size(), stream, carve_mr);
+  if (source_data.size() > 0) {
+    cudf::detail::cuda_memcpy_async<std::remove_cv_t<T>>(ret, source_data, stream);
+  }
+  return ret;
+}
+
 size_type select_gather_map_tile_cols(table_view const& source_table,
                                       column_view const& gather_map,
                                       size_type num_fused_cols,
@@ -2058,6 +2076,32 @@ struct descriptor_path_builder {
         cudf::detail::offsetalator_factory::make_input_iterator(offsets_child, staged.src.offset());
     }
 
+    // Staging-arena sizing, BEFORE the arena is created: a carve never frees, so the arena is
+    // sized once, up front, at worst case — every upload cohort is bounded by live.size()
+    // (the routing walk only SPLITS the live columns between the routed and unrouted lists),
+    // so the arena covers the per-class maximum of all five segments and the actual carve
+    // sequence always consumes at most the reservation. The bound is the per-segment
+    // aligned sum, NOT the raw byte sum: `string_work_item` is 16-aligned (its offsetalator
+    // members carry `alignas(16)`) while its 104 B size is not a multiple of 16, so each
+    // carve request bumps the arena pointer by up to 8 bytes; `size_type` requests shift it
+    // by up to 4. Reserving the aligned segment sizes covers every round-up the sequence
+    // can make (the all-routed path d_items + d_payload_items + d_memcpy_live +
+    // d_routed_items is the worst case); a shortfall trips the carve resource's loud
+    // `arena exhausted` expect rather than corrupting memory. Each segment's bump
+    // round-up is bounded by (alignment − 1) over an arbitrary start, so the reservation
+    // is the raw byte sum plus that slack per segment slot.
+    auto const staging_total =
+      3 * (items.size() * sizeof(string_work_item) + (std::alignment_of_v<string_work_item> - 1)) +
+      2 * (items.size() * sizeof(size_type) + (std::alignment_of_v<size_type> - 1));
+    // The staging arena is created HERE — sized from the exact reservation, before the first
+    // carve — and dies with this call scope. Its buffers must NOT outlive the call (the
+    // design's own lifetime constraint): every consumer is a launch enqueued on `stream` while
+    // the arena is alive, and the shared resource's stream-ordered free is enqueued when the
+    // last buffer copy dies at this scope's exit, AFTER every consuming enqueue. The
+    // destination carve classes keep the opposite lifetime (call-outliving).
+    auto staging_carve_mr =
+      cuda::mr::make_shared_resource<carve_memory_resource>(temp_mr, stream, staging_total);
+
     auto const rows_per_col = static_cast<int64_t>(num_rows) + 1;
     auto const flat_size    = static_cast<int64_t>(live.size()) * rows_per_col;
     // The 32-bit precomputed divisors are valid only while every flat index fits uint32_t;
@@ -2080,8 +2124,8 @@ struct descriptor_path_builder {
     auto staging_items =
       cudf::detail::make_pinned_vector_async<string_work_item>(items.size(), stream);
     std::copy(items.begin(), items.end(), staging_items.begin());
-    auto d_items = cudf::detail::make_device_uvector_async(
-      host_span<string_work_item const>{staging_items}, stream, temp_mr);
+    auto d_items = carve_device_vector(
+      host_span<string_work_item const>{staging_items}, stream, staging_carve_mr);
 
     auto const map_begin = indexalator_factory::make_input_iterator(gather_map);
     {
@@ -2233,8 +2277,8 @@ struct descriptor_path_builder {
       items[k].dst_mask    = staged.kernel_mask_written ? staged.dst_mask->data() : nullptr;
       items[k].valid_count = staged.kernel_mask_written ? string_counts.data() + k : nullptr;
     }
-    auto d_payload_items = cudf::detail::make_device_uvector_async(
-      host_span<string_work_item const>{items}, stream, temp_mr);
+    auto d_payload_items =
+      carve_device_vector(host_span<string_work_item const>{items}, stream, staging_carve_mr);
 
     if (any_batched_memcpy) {
       // (source ptr, destination ptr, byte size) per row over the routed columns' flat
@@ -2244,8 +2288,8 @@ struct descriptor_path_builder {
       // lambda replicates the kernel chars-phase gate verbatim (resolve/validity/size>0),
       // nullptr/0 for dead rows; the routed-column table is `d_memcpy_live` (device copy of
       // the host list), and the buffer count is the flat routed row count.
-      auto const d_memcpy_live = cudf::detail::make_device_uvector_async(
-        host_span<size_type const>{memcpy_live}, stream, temp_mr);
+      auto const d_memcpy_live =
+        carve_device_vector(host_span<size_type const>{memcpy_live}, stream, staging_carve_mr);
       // Hoist the member `num_rows` into a local: a `__device__` lambda inside this member
       // function cannot capture `this`, so the unqualified member name would be ill-formed
       // in the capture lists below.
@@ -2339,8 +2383,8 @@ struct descriptor_path_builder {
     auto const unrouted_rows =
       static_cast<int64_t>(memcpy_unrouted.size()) * static_cast<int64_t>(num_rows);
     if (unrouted_rows > 0) {
-      auto const d_unrouted = cudf::detail::make_device_uvector_async(
-        host_span<size_type const>{memcpy_unrouted}, stream, temp_mr);
+      auto const d_unrouted =
+        carve_device_vector(host_span<size_type const>{memcpy_unrouted}, stream, staging_carve_mr);
       auto const grid = static_cast<unsigned>(std::min<int64_t>(
         util::div_rounding_up_safe(unrouted_rows, static_cast<int64_t>(block_size)),
         static_cast<int64_t>(65535)));
@@ -2366,8 +2410,8 @@ struct descriptor_path_builder {
       for (size_t r = 0; r < memcpy_live.size(); ++r) {
         routed_items[r] = items[memcpy_live[r]];
       }
-      auto d_routed_items = cudf::detail::make_device_uvector_async(
-        host_span<string_work_item const>{routed_items}, stream, temp_mr);
+      auto d_routed_items = carve_device_vector(
+        host_span<string_work_item const>{routed_items}, stream, staging_carve_mr);
       auto const routed_rows = static_cast<int64_t>(memcpy_live.size()) * num_rows;
       auto const meta_grid   = static_cast<unsigned>(
         std::min<int64_t>(util::div_rounding_up_safe(routed_rows, static_cast<int64_t>(block_size)),
@@ -2734,15 +2778,17 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
     // GPU work the gather could have overlapped with.
     builder.assemble_staged_keys();
 
-    // Pinned staging: stream-ordered deallocation, so the H2D needs no host sync.
+    // Pinned staging: stream-ordered deallocation, so the H2D needs no host sync. The device
+    // landing buffer is carved from a descriptor-staging arena (ONE upstream pair instead of
+    // one malloc/free per call); its scope is this launch block, and `batch_gather_kernel` —
+    // the buffer's only consumer — is enqueued inside it before the stream-ordered free.
     auto staging =
       cudf::detail::make_pinned_vector_async<column_descriptor>(descriptors.size(), stream);
     std::copy(descriptors.begin(), descriptors.end(), staging.begin());
-    auto d_descriptors =
-      rmm::device_uvector<column_descriptor>(descriptors.size(), stream, temp_mr);
-    cudf::detail::cuda_memcpy_async(device_span<column_descriptor>{d_descriptors},
-                                    host_span<column_descriptor const>{staging},
-                                    stream);
+    auto desc_staging_carve_mr = cuda::mr::make_shared_resource<carve_memory_resource>(
+      temp_mr, stream, descriptors.size() * sizeof(column_descriptor));
+    auto d_descriptors = carve_device_vector(
+      host_span<column_descriptor const>{staging}, stream, desc_staging_carve_mr);
 
     rmm::device_uvector<size_type> valid_counts(0, stream, temp_mr);
     if (any_kernel_masks) {

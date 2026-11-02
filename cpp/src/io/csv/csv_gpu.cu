@@ -196,13 +196,15 @@ CUDF_KERNEL void __launch_bounds__(csvparse_block_dim)
     // Checking if this is a column that the user wants --- user can filter columns
     if (column_flags[col] & column_parse::inferred) {
       // points to last character in the field
-      auto const field_len = static_cast<size_t>(next_delimiter - field_start);
+      auto const field_len      = static_cast<size_t>(next_delimiter - field_start);
+      auto const unquoted_field = trim_quotes(field_start, next_delimiter, opts.quotechar);
+      auto const unquoted_len   = static_cast<size_t>(unquoted_field.second - unquoted_field.first);
       if (serialized_trie_contains(opts.trie_na, {field_start, field_len})) {
         atomicAdd(&d_column_data[actual_col].null_count, 1);
-      } else if (serialized_trie_contains(opts.trie_true, {field_start, field_len}) ||
-                 serialized_trie_contains(opts.trie_false, {field_start, field_len})) {
+      } else if (serialized_trie_contains(opts.trie_true, {unquoted_field.first, unquoted_len}) ||
+                 serialized_trie_contains(opts.trie_false, {unquoted_field.first, unquoted_len})) {
         atomicAdd(&d_column_data[actual_col].bool_count, 1);
-      } else if (cudf::io::is_infinity(field_start, next_delimiter)) {
+      } else if (cudf::io::is_infinity(unquoted_field.first, unquoted_field.second)) {
         atomicAdd(&d_column_data[actual_col].float_count, 1);
       } else {
         long count_number    = 0;
@@ -217,8 +219,13 @@ CUDF_KERNEL void __launch_bounds__(csvparse_block_dim)
 
         // Modify field_start & end to ignore whitespace and quotechars
         // This could possibly result in additional empty fields
-        auto const trimmed_field_range = trim_whitespaces_quotes(field_start, next_delimiter);
-        auto const trimmed_field_len   = trimmed_field_range.second - trimmed_field_range.first;
+        // As in seek_field_end, a quote only counts if it opens the field: 5" is not a number
+        auto trimmed_field_range = trim_whitespaces(field_start, next_delimiter);
+        if (trimmed_field_range.first == field_start) {
+          trimmed_field_range =
+            trim_quotes(trimmed_field_range.first, trimmed_field_range.second, opts.quotechar);
+        }
+        auto const trimmed_field_len = trimmed_field_range.second - trimmed_field_range.first;
 
         if (trimmed_field_len == 0) {
           cuda::atomic_ref<cudf::size_type, cuda::thread_scope_device> ref{

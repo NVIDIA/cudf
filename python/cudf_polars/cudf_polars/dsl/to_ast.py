@@ -270,10 +270,7 @@ def _(node: expr.BooleanFunction, self: Transformer) -> plc_expr.Expression:
                 )
                 return reduce(
                     partial(plc_expr.Operation, plc_expr.ASTOperator.LOGICAL_OR),
-                    (
-                        plc_expr.Operation(equal, needle_ref, value)
-                        for value in values
-                    ),
+                    (plc_expr.Operation(equal, needle_ref, value) for value in values),
                 )
     if self.state["for_parquet"] and isinstance(node.children[0], expr.Col):
         if node.name not in (

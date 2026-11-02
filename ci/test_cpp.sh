@@ -32,7 +32,7 @@ SUITEERROR=0
 
 if [[ "${RUN_LIBCUDF_TESTS}" == "true" ]]; then
     rapids-logger "Run libcudf gtests"
-    timeout 30m ./ci/run_cudf_ctests.sh -j20
+    timeout 90m python ci/scheduling_measurement/run.py
     SUITEERROR=$?
 fi
 

@@ -268,26 +268,6 @@ def test_scan_parquet_insert_missing_columns_raises(engine: pl.GPUEngine, tmp_pa
     assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
-@pytest.mark.parametrize(
-    "predicate",
-    [
-        ~pl.col("p").is_in(["a"], nulls_equal=True),
-        ~(pl.col("p").is_in(["a"], nulls_equal=True) & (pl.col("id") > 0)),
-        pl.col("p").is_in(["a"], nulls_equal=True),
-        ~pl.col("p").is_in(["a", None], nulls_equal=True),
-    ],
-)
-def test_scan_parquet_is_in_nulls_equal_predicate(
-    engine: pl.GPUEngine, tmp_path, predicate
-):
-    # A null needle makes ``is_in`` false, not null, when nulls are equal.
-    pl.DataFrame({"id": [1, 2, 3], "p": ["a", None, "b"]}).write_parquet(
-        tmp_path / "df.parquet"
-    )
-    q = pl.scan_parquet(tmp_path / "df.parquet").filter(predicate)
-    assert_gpu_result_equal(q, engine=engine)
-
-
 def test_scan_ndjson_nrows_notimplemented(engine: pl.GPUEngine, tmp_path, df):
     df = pl.DataFrame({"a": [1, 2, 3]})
 

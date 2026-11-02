@@ -274,6 +274,7 @@ def test_scan_parquet_insert_missing_columns_raises(engine: pl.GPUEngine, tmp_pa
         ~pl.col("p").is_in(["a"], nulls_equal=True),
         ~(pl.col("p").is_in(["a"], nulls_equal=True) & (pl.col("id") > 0)),
         pl.col("p").is_in(["a"], nulls_equal=True),
+        ~pl.col("p").is_in(["a", None], nulls_equal=True),
     ],
 )
 def test_scan_parquet_is_in_nulls_equal_predicate(

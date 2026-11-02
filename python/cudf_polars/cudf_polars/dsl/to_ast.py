@@ -232,9 +232,15 @@ def _(node: expr.BooleanFunction, self: Transformer) -> plc_expr.Expression:
         needles, haystack = node.children
         (nulls_equal,) = node.options
         # EQUAL gives null for a null needle, which is only what ``is_in`` does
-        # when nulls are not equal. Otherwise it is false, which matters when
-        # the result is negated.
-        if not nulls_equal and isinstance(haystack, expr.LiteralColumn):
+        # when nulls are not equal. Otherwise it is false (or true if the
+        # haystack contains a null), which matters when the result is negated.
+        # NULL_EQUAL gives that result.
+        eq_op = (
+            plc_expr.ASTOperator.NULL_EQUAL
+            if nulls_equal
+            else plc_expr.ASTOperator.EQUAL
+        )
+        if isinstance(haystack, expr.LiteralColumn):
             haystack_values = haystack.value
             if haystack_values.dtype == pl.List:
                 # An imploded literal is a one-row list column, use the inner values
@@ -262,12 +268,7 @@ def _(node: expr.BooleanFunction, self: Transformer) -> plc_expr.Expression:
                 )
                 return reduce(
                     partial(plc_expr.Operation, plc_expr.ASTOperator.LOGICAL_OR),
-                    (
-                        plc_expr.Operation(
-                            plc_expr.ASTOperator.EQUAL, needle_ref, value
-                        )
-                        for value in values
-                    ),
+                    (plc_expr.Operation(eq_op, needle_ref, value) for value in values),
                 )
     if self.state["for_parquet"] and isinstance(node.children[0], expr.Col):
         if node.name not in (

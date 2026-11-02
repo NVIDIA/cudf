@@ -238,14 +238,14 @@ void set_null_masks(cudf::host_span<bitmask_type*> bitmasks,
   average_nullmask_words +=
     cudf::util::div_rounding_up_safe<size_t>(cumulative_null_mask_words, num_bitmasks);
 
-  // Create device vectors from host spans
+  // Create device buffers from host spans
   auto const mr           = cudf::get_current_device_resource_ref();
-  auto destinations       = cudf::detail::make_device_uvector_async(bitmasks, stream, mr);
-  auto const d_begin_bits = cudf::detail::make_device_uvector_async(begin_bits, stream, mr);
-  auto const d_end_bits   = cudf::detail::make_device_uvector_async(end_bits, stream, mr);
-  auto const d_valids     = cudf::detail::make_device_uvector_async(valids, stream, mr);
+  auto destinations       = cudf::detail::make_device_buffer_async(bitmasks, stream, mr);
+  auto const d_begin_bits = cudf::detail::make_device_buffer_async(begin_bits, stream, mr);
+  auto const d_end_bits   = cudf::detail::make_device_buffer_async(end_bits, stream, mr);
+  auto const d_valids     = cudf::detail::make_device_buffer_async(valids, stream, mr);
   auto const number_of_mask_words =
-    cudf::detail::make_device_uvector_async(h_number_of_mask_words, stream, mr);
+    cudf::detail::make_device_buffer_async(h_number_of_mask_words, stream, mr);
 
   // Compute block size using heuristic and launch kernel
   constexpr size_t max_words_per_thread  = 64;
@@ -499,7 +499,7 @@ std::vector<size_type> batch_count_set_bits(host_span<bitmask_type const* const>
   if (!has_bitmask) { return output; }
 
   auto const tmp_mr     = cudf::get_current_device_resource_ref();
-  auto const d_bitmasks = cudf::detail::make_device_uvector_async(bitmasks, stream, tmp_mr);
+  auto const d_bitmasks = cudf::detail::make_device_buffer_async(bitmasks, stream, tmp_mr);
   auto const num_words  = num_bitmask_words(num_bits_to_count);
   auto d_non_zero_count =
     cudf::detail::make_zeroed_device_buffer_async<size_type>(num_bitmasks, stream, tmp_mr);

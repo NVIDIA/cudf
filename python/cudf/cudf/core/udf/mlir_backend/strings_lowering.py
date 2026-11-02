@@ -985,8 +985,15 @@ def _lower_getitem_int_op(
     valid_ty = builder.get_mlir_type(types.boolean)
     true_val = arith.constant(valid_ty, 1)
     view, valid = _view_and_valid(builder, args[0], true_val)
+    # Preserve the index's signedness when widening to i64: an unsigned index
+    # must be zero-extended, not sign-extended, so large unsigned values are
+    # not reinterpreted as negative.
+    idx_ty = builder.get_numba_type(args[1].name)
+    idx_signed = getattr(idx_ty, "signed", True)
     idx_i64 = convert(
-        builder.load_var(args[1]), ir.IntegerType.get_signless(64)
+        builder.load_var(args[1]),
+        ir.IntegerType.get_signless(64),
+        signed=idx_signed,
     )
     result = _impl.lower_getitem_int(builder.mlir_gpu_module, view, idx_i64)
     _store_maybe_masked(builder, target, result, valid)
@@ -1123,11 +1130,6 @@ def _register() -> None:
         case_getattr = _make_lower_case(case_impl)
         lowering_registry.lower_getattr(mlir_string, name)(case_getattr)
         lowering_registry.lower_getattr(_masked_string, name)(case_getattr)
-
-    # replace(old, new) -> (masked) mlir_string
-    replace_getattr = _make_lower_replace()
-    lowering_registry.lower_getattr(mlir_string, "replace")(replace_getattr)
-    lowering_registry.lower_getattr(_masked_string, "replace")(replace_getattr)
 
 
 _register()

@@ -1364,6 +1364,37 @@ def test_replace_single_char():
     assert got == [True] * n
 
 
+def test_replace_empty_old():
+    """``s.replace("", new)`` inserts ``new`` around each character.
+
+    For multibyte sources the insertion must land on UTF-8 character
+    boundaries (start bytes) so the result stays valid UTF-8, matching libcudf.
+    """
+    vals = ["abc", "h\u00e9llo", "\U0001f600x", "", "z"]
+    expected = [v.replace("", "-") for v in vals]
+    n = len(vals)
+    arr, _keep = _make_mlir_string_array(vals)
+    out, _out_keep = _make_output_mlir_string_array(n)
+
+    with nrt_enabled(), MLIRNumbaCudaConfig():
+
+        @cuda.jit(
+            types.void(
+                types.CPointer(mlir_string), types.CPointer(mlir_string)
+            ),
+            extensions=[mlir_string_arg_handler],
+        )
+        def produce(o, a):
+            i = cuda.grid(1)
+            if i < n:
+                o[i] = a[i].replace("", "-")
+
+        produce[1, n](out, arr)
+        got = _verify_strings(out, expected)
+
+    assert got == [True] * n
+
+
 def test_replace_multichar_nonoverlapping():
     """``s.replace("aa", "b")`` replaces non-overlapping multi-byte targets."""
     vals = ["aaa", "aaaa", "aXa", "aa", "", "baab"]
@@ -1420,8 +1451,17 @@ def test_replace_removal():
 
 # --- upper / lower (string-producing; cases tables + NRT) -------------------
 def test_upper():
-    """``s.upper()`` over ASCII and Latin-1 accented characters."""
-    vals = ["hello", "Hello", "ABC", "h\u00e9llo", "mix3D", ""]
+    """``s.upper()`` over ASCII, Latin-1, non-BMP, and special-case inputs."""
+    vals = [
+        "hello",
+        "Hello",
+        "ABC",
+        "h\u00e9llo",
+        "mix3D",
+        "",
+        "x\U0001f600y",  # non-BMP (cp > 0xFFFF): must not index past the table
+        "\u0130",  # dotted capital I (special-case fold)
+    ]
     expected = [v.upper() for v in vals]
     n = len(vals)
     arr, _keep = _make_mlir_string_array(vals)
@@ -1447,8 +1487,17 @@ def test_upper():
 
 
 def test_lower():
-    """``s.lower()`` over ASCII and Latin-1 accented characters."""
-    vals = ["HELLO", "Hello", "abc", "H\u00c9LLO", "MIX3d", ""]
+    """``s.lower()`` over ASCII, Latin-1, non-BMP, and special-case inputs."""
+    vals = [
+        "HELLO",
+        "Hello",
+        "abc",
+        "H\u00c9LLO",
+        "MIX3d",
+        "",
+        "x\U0001f600y",  # non-BMP (cp > 0xFFFF): must not index past the table
+        "\u0130",  # dotted capital I
+    ]
     expected = [v.lower() for v in vals]
     n = len(vals)
     arr, _keep = _make_mlir_string_array(vals)

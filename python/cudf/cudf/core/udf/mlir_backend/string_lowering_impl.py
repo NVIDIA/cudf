@@ -456,7 +456,12 @@ def lower_replace(
         c_new_skip = arith.select(c_valid, arith.addi(ci, o_nb), c_skip)
         scf.YieldOp([c_new_count, c_new_skip])
 
-    occ_count = count_loop.results[0]
+    # For an empty target, libcudf inserts ``new`` before each *character*
+    # (UTF-8 start byte) and once more at the end; counting bytes would split
+    # multibyte characters and produce invalid UTF-8. Use the character count
+    # (+1 for the trailing insertion) as the occurrence count in that case.
+    empty_occ = arith.addi(_count_chars(s_data, s_nb), one)
+    occ_count = arith.select(target_empty, empty_occ, count_loop.results[0])
 
     # result_len = s_nb - occ_count * o_nb + occ_count * n_nb
     result_len = arith.addi(
@@ -498,8 +503,12 @@ def lower_replace(
         nonempty_match = arith.andi(
             b_match_valid, arith.cmpi(eq, target_empty, false_val)
         )
+        # Empty target: insert ``new`` only before UTF-8 start bytes so
+        # multibyte characters are not split (matches libcudf).
+        is_start_byte = _is_begin_utf8_char(_byte_at(s_data, si))
         write_repl = arith.ori(
-            arith.andi(target_empty, active), nonempty_match
+            arith.andi(arith.andi(target_empty, active), is_start_byte),
+            nonempty_match,
         )
         write_byte = arith.ori(
             arith.andi(target_empty, active),
@@ -1450,7 +1459,11 @@ def _case_convert_char_loop(
         in_range = arith.cmpi(
             arith.CmpIPredicate.ule, cp, arith.constant(i32, 0xFFFF)
         )
-        flag_raw = llvm.load(T.i8(), _gep_byte_offset(flags_ptr, cp_i64))
+        # Clamp the table index: a non-BMP code point (cp > 0xFFFF) must not
+        # index past the 64K flags/cases tables; the load must stay in bounds
+        # even though in_range masks the result below.
+        safe_cp_i64 = arith.select(in_range, cp_i64, zero)
+        flag_raw = llvm.load(T.i8(), _gep_byte_offset(flags_ptr, safe_cp_i64))
         flag = arith.select(in_range, flag_raw, _i8(0))
 
         matches_case = arith.cmpi(
@@ -1472,7 +1485,7 @@ def _case_convert_char_loop(
 
         # non-special path: cases_table[cp] (u16 entries)
         case_cp_i16 = llvm.load(
-            i16, _gep_byte_offset(cases_ptr, arith.shli(cp_i64, one))
+            i16, _gep_byte_offset(cases_ptr, arith.shli(safe_cp_i64, one))
         )
         case_cp_i32 = arith.extui(i32, case_cp_i16)
         normal_out_bytes = _codepoint_to_utf8_bytes(case_cp_i32)

@@ -34,12 +34,14 @@
 #include <cub/device/device_scan.cuh>
 #include <cub/device/device_transform.cuh>
 #include <cuda/atomic>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/bit>
 #include <cuda/std/limits>
 #include <cuda/stream>
 #include <thrust/execution_policy.h>
+#include <thrust/fill.h>
 #include <thrust/find.h>
 #include <thrust/for_each.h>
 
@@ -713,7 +715,8 @@ void encode_segments(char const* d_input_chars,
     cuda::proclaim_return_type<IndexType>([] __device__(int8_t v) -> IndexType { return v; }));
   auto const num_segments = cudf::detail::reduce(
     d_flags, d_flags + chars_size, IndexType{0}, cuda::std::plus<IndexType>{}, stream);
-  auto d_segments = rmm::device_uvector<IndexType>(num_segments + 1, stream, temp_mr);
+  auto d_segments =
+    cuda::device_buffer<IndexType>(stream, temp_mr, num_segments + 1, cuda::no_init);
   cudf::detail::copy_if(cuda::counting_iterator<IndexType>{0},
                         cuda::counting_iterator<IndexType>{static_cast<IndexType>(chars_size)},
                         d_spaces,
@@ -721,8 +724,10 @@ void encode_segments(char const* d_input_chars,
                         cuda::std::identity{},
                         stream,
                         mr.as_temporary());
-  auto const end_offset = static_cast<IndexType>(chars_size);
-  d_segments.set_element_async(num_segments, end_offset, stream);
+  thrust::fill_n(rmm::exec_policy_nosync(stream, temp_mr),
+                 d_segments.begin() + num_segments,
+                 1,
+                 static_cast<IndexType>(chars_size));
 
   // de-duplicate the segments so only distinct segments are encoded;
   // the slot table size is bounded so collisions are encoded as well
@@ -730,7 +735,7 @@ void encode_segments(char const* d_input_chars,
     std::clamp(static_cast<IndexType>(std::bit_ceil(static_cast<uint64_t>(num_segments / 4 + 1))),
                IndexType{1024},
                IndexType{1} << 22);
-  auto d_slots = rmm::device_uvector<IndexType>(num_slots, stream, temp_mr);
+  auto d_slots = cuda::device_buffer<IndexType>(stream, temp_mr, num_slots, cuda::no_init);
   CUDF_CUDA_TRY(cudaMemsetAsync(d_slots.data(), 0xFF, num_slots * sizeof(IndexType), stream.get()));
   auto const dedup =
     bpe_dedup_fn<IndexType>{d_input_chars, d_segments.data(), d_slots.data(), num_slots - 1};
@@ -758,7 +763,7 @@ void encode_segments(char const* d_input_chars,
                                }));
   auto const num_encode = cudf::detail::reduce(
     d_encode, d_encode + num_segments, IndexType{0}, cuda::std::plus<IndexType>{}, stream);
-  auto d_encode_ids = rmm::device_uvector<IndexType>(num_encode, stream, temp_mr);
+  auto d_encode_ids = cuda::device_buffer<IndexType>(stream, temp_mr, num_encode, cuda::no_init);
   cudf::detail::copy_if(cuda::counting_iterator<IndexType>{0},
                         cuda::counting_iterator<IndexType>{num_segments},
                         d_encode,
@@ -795,7 +800,7 @@ void encode_segments(char const* d_input_chars,
   auto const num_long = cudf::detail::reduce(
     d_is_long, d_is_long + num_segments, IndexType{0}, cuda::std::plus<IndexType>{}, stream);
   if (num_long > 0) {
-    auto d_long_ids = rmm::device_uvector<IndexType>(num_long, stream, temp_mr);
+    auto d_long_ids = cuda::device_buffer<IndexType>(stream, temp_mr, num_long, cuda::no_init);
     cudf::detail::copy_if(cuda::counting_iterator<IndexType>{0},
                           cuda::counting_iterator<IndexType>{num_segments},
                           d_seg_sizes,
@@ -804,7 +809,8 @@ void encode_segments(char const* d_input_chars,
                           stream,
                           mr.as_temporary());
     // working memory is only needed for the long segments
-    auto d_scratch_offsets  = rmm::device_uvector<IndexType>(num_long + 1, stream, temp_mr);
+    auto d_scratch_offsets =
+      cuda::device_buffer<IndexType>(stream, temp_mr, num_long + 1, cuda::no_init);
     auto const d_long_sizes = cuda::transform_iterator(
       cuda::counting_iterator<IndexType>{0},
       cuda::proclaim_return_type<IndexType>(
@@ -817,8 +823,8 @@ void encode_segments(char const* d_input_chars,
                                                              0,
                                                              stream,
                                                              mr.as_temporary());
-    rmm::device_uvector<int8_t> d_rerank(scratch_size, stream, temp_mr);
-    rmm::device_uvector<cudf::size_type> d_ranks(scratch_size, stream, temp_mr);
+    cuda::device_buffer<int8_t> d_rerank(stream, temp_mr, scratch_size, cuda::no_init);
+    cuda::device_buffer<cudf::size_type> d_ranks(stream, temp_mr, scratch_size, cuda::no_init);
     auto const long_grid = static_cast<int>(std::min<int64_t>(num_long, int64_t{1} << 20));
     bpe_parallel_fn<decltype(finder), IndexType>
       <<<long_grid, long_block_size, 0, stream.get()>>>(d_input_chars,
@@ -892,7 +898,7 @@ std::unique_ptr<cudf::column> byte_pair_encoding(cudf::strings_column_view const
   auto const chars_begin = cuda::counting_iterator<int64_t>{0};
 
   // identifies non-merged pairs; also used to identify segment boundaries before encoding
-  rmm::device_uvector<int8_t> d_spaces(chars_size, stream, temp_mr);
+  cuda::device_buffer<int8_t> d_spaces(stream, temp_mr, chars_size, cuda::no_init);
 
   {
     // locate unpairable boundaries to create artificial segments that can be encoded

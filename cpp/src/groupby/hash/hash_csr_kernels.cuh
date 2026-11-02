@@ -16,6 +16,8 @@
 
 #include <cooperative_groups.h>
 #include <cuda/atomic>
+#include <cuda/cmath>
+#include <cuda/std/bit>
 #include <cuda/std/cstdint>
 #include <cuda/std/limits>
 #include <cuda/std/utility>
@@ -71,7 +73,7 @@ struct hash_set_ref {
   {
     representative = cudf::detail::CUDF_SIZE_TYPE_SENTINEL;
     // Multiply-high reduces the hash to any capacity without division or modulo.
-    auto slot = __umulhi(__brev(hash_value), capacity);
+    auto slot = cuda::mul_hi(cuda::std::bit_reverse(hash_value), capacity);
     for (cuda::std::uint32_t step = 0; step < max_probes; ++step) {
       auto slot_ref = cuda::atomic_ref<slot_type, cuda::thread_scope_device>{slots[slot]};
       auto current  = slot_ref.load(cuda::memory_order_relaxed);

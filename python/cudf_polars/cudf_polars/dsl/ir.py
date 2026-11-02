@@ -50,6 +50,9 @@ from cudf_polars.dsl.expressions.base import ExecutionContext
 from cudf_polars.dsl.nodebase import Node
 from cudf_polars.dsl.to_ast import _DECIMAL_IDS, to_ast, to_parquet_filter
 from cudf_polars.dsl.tracing import log_do_evaluate, nvtx_annotate_cudf_polars
+from cudf_polars.dsl.traversal import traversal
+from cudf_polars.dsl.utils.deletions import apply_deletions
+from cudf_polars.dsl.utils.lake import read_lake_files
 from cudf_polars.dsl.utils.naming import unique_names
 from cudf_polars.dsl.utils.per_path import PerPathValues
 from cudf_polars.dsl.utils.reshape import broadcast
@@ -80,7 +83,9 @@ if TYPE_CHECKING:
     from rmm.pylibrmm.stream import Stream
 
     from cudf_polars.containers.dataframe import NamedColumn
+    from cudf_polars.dsl.to_ast import JoinPredicate
     from cudf_polars.dsl.utils.io import CachedParquetInfo
+    from cudf_polars.dsl.utils.lake import LakehouseScanOptions
     from cudf_polars.quent._context import (
         ActorBoundQuentIRExecutionState,
         UnboundQuentIRExecutionState,
@@ -679,6 +684,7 @@ class Scan(IR):
         "cloud_options",
         "hive_parts",
         "include_file_paths",
+        "lake_options",
         "n_rows",
         "parquet_options",
         "paths",
@@ -703,8 +709,9 @@ class Scan(IR):
         "predicate",
         "parquet_options",
         "hive_parts",
+        "lake_options",
     )
-    _n_non_child_args = 13
+    _n_non_child_args = 14
     typ: str
     """What type of file are we reading? Parquet, CSV, etc..."""
     reader_options: dict[str, Any]
@@ -731,6 +738,8 @@ class Scan(IR):
     """Hive partition values, one per path."""
     cached_parquet_info: list[CachedParquetInfo] | None
     """Cached parquet file metadata."""
+    lake_options: LakehouseScanOptions | None
+    """Iceberg and Delta Lake specific options, if this is a lake scan."""
 
     PARQUET_DEFAULT_CHUNK_SIZE: int = 0  # unlimited
     PARQUET_DEFAULT_PASS_LIMIT: int = 16 * 1024**3  # 16GiB
@@ -752,6 +761,7 @@ class Scan(IR):
         predicate: expr.NamedExpr | None,
         parquet_options: ParquetOptions,
         hive_parts: PerPathValues | None = None,
+        lake_options: LakehouseScanOptions | None = None,
         cached_parquet_info: list[CachedParquetInfo] | None = None,
     ):
         self.schema = schema
@@ -779,14 +789,22 @@ class Scan(IR):
             parquet_options,
             hive_parts,
             cached_parquet_info,
+            lake_options,
         )
         self.children = ()
         self.parquet_options = parquet_options
         self.hive_parts = hive_parts
         self.cached_parquet_info = cached_parquet_info
+        self.lake_options = lake_options
 
         Scan._validate_cached_parquet_info(self.paths, self.cached_parquet_info)
         Scan._validate_hive_parts_info(self.paths, self.hive_parts)
+        if (
+            self.lake_options is not None and include_file_paths is not None
+        ):  # pragma: no cover; polars lake scans never include file paths
+            raise NotImplementedError(
+                "Including file paths in an Iceberg or Delta scan"
+            )
 
         if self.typ not in ("csv", "parquet", "ndjson"):  # pragma: no cover
             # This line is unhittable ATM since IPC/Anonymous scan raise
@@ -895,6 +913,44 @@ class Scan(IR):
             )
 
     @staticmethod
+    def _lake_partition_values(
+        lake_options: LakehouseScanOptions,
+        schema: Schema,
+        with_columns: list[str] | None,
+    ) -> PerPathValues | None:
+        """
+        Collect the partition fields of an Iceberg scan.
+
+        Parameters
+        ----------
+        lake_options
+            Options of the scan, holding one partition value per path for
+            each identity-partitioned field.
+        schema
+            Schema the scan must produce. Partition fields outside it are
+            skipped.
+        with_columns
+            Columns to project, or ``None`` for all of them. Partition fields
+            outside the projection are skipped.
+
+        Returns
+        -------
+        The value each path takes for each partition field in the schema and
+        projection, or ``None`` when there are no such fields.
+        """
+        assert lake_options.columns is not None
+        names = {column.physical_id: column.name for column in lake_options.columns}
+        frame = pl.DataFrame(
+            {
+                names[physical_id]: series
+                for physical_id, series in lake_options.partition_values.items()
+                if names[physical_id] in schema
+                and (with_columns is None or names[physical_id] in with_columns)
+            }
+        )
+        return None if frame.width == 0 else PerPathValues(frame)
+
+    @staticmethod
     def _validate_hive_parts_info(
         paths: list[str],
         hive_parts: PerPathValues | None,
@@ -929,6 +985,7 @@ class Scan(IR):
             self.predicate,
             self.parquet_options,
             self.hive_parts,
+            self.lake_options,
         )
 
     def slice_hive_parts(self, start: int, stop: int) -> PerPathValues | None:
@@ -949,6 +1006,25 @@ class Scan(IR):
         if self.hive_parts is None:
             return None
         return self.hive_parts.slice(start, stop)
+
+    def slice_lake_options(self, start: int, stop: int) -> LakehouseScanOptions | None:
+        """
+        Iceberg and Delta options for ``self.paths[start:stop]``.
+
+        Parameters
+        ----------
+        start
+            Index of the first path in the range.
+        stop
+            Index one past the last path in the range.
+
+        Returns
+        -------
+        Options for that range of paths, or None if this is not a lake scan.
+        """
+        if self.lake_options is None:
+            return None
+        return self.lake_options.slice(start, stop)
 
     @staticmethod
     def add_file_paths(
@@ -1132,11 +1208,15 @@ class Scan(IR):
         parquet_options: ParquetOptions,
         hive_parts: PerPathValues | None,
         cached_parquet_info: list[CachedParquetInfo] | None,
+        lake_options: LakehouseScanOptions | None,
         *,
         context: IRExecutionContext,
     ) -> DataFrame:
         """Evaluate and return a dataframe."""
         stream = context.get_cuda_stream()
+        # The predicate to apply after files are read.
+        # e.g. scan_parquet vs scan_delta/iceberg can apply the
+        # predicate differently to the read.
         effective_predicate = predicate
         if typ == "csv":
 
@@ -1283,6 +1363,69 @@ class Scan(IR):
                     df,
                     rows_per_path=[t.num_rows() for t in tables],
                 )
+        elif typ == "parquet" and lake_options is not None:
+            hive_names = (
+                frozenset(hive_parts.names) if hive_parts is not None else frozenset()
+            )
+            output_names = [
+                name for name in schema if row_index is None or name != row_index[0]
+            ]
+            file_schema = {
+                name: schema[name] for name in output_names if name not in hive_names
+            }
+            Scan._validate_cached_parquet_info(paths, cached_parquet_info)
+            # The predicate cannot filter the read when a later step needs the
+            # unfiltered rows. The row index numbers the rows before the
+            # predicate. Deletions are physical row positions within each data
+            # file. Polars applies the slice before the predicate, and the
+            # slice is taken after the files are concatenated.
+            push_predicate = (
+                predicate is not None
+                and row_index is None
+                and skip_rows == 0
+                and n_rows == -1
+                and not lake_options.has_deletions
+            )
+            per_path_parts = [
+                parts
+                for parts in (
+                    Scan._lake_partition_values(lake_options, file_schema, with_columns)
+                    if lake_options.partition_values
+                    else None,
+                    hive_parts,
+                )
+                if parts is not None
+            ]
+            rows_per_path: list[int] | None
+            df, rows_per_path, source_index, exact = read_lake_files(
+                paths,
+                lake_options,
+                file_schema,
+                with_columns,
+                cached_parquet_info,
+                predicate.value if push_predicate and predicate is not None else None,
+                with_source_index=any(not parts.is_uniform for parts in per_path_parts),
+                stream=stream,
+            )
+            if push_predicate and exact:
+                effective_predicate = None
+            for parts in per_path_parts:
+                if source_index is not None:
+                    per_path_columns = parts.gather(source_index, stream=stream)
+                elif parts.is_uniform:
+                    per_path_columns = parts.broadcast(df.num_rows, stream=stream)
+                else:
+                    per_path_columns = parts.repeat(rows_per_path, stream=stream)
+                df = df.with_columns(per_path_columns, stream=stream)
+            if lake_options.has_deletions:
+                df = apply_deletions(
+                    df, paths, rows_per_path, lake_options, stream=stream
+                )
+            df = df.select(output_names)
+            if skip_rows != 0 or n_rows != -1:
+                df = df.slice(
+                    (skip_rows, n_rows if n_rows != -1 else df.num_rows - skip_rows)
+                )
         elif typ == "parquet":
             if cached_parquet_info is not None:
                 Scan._validate_cached_parquet_info(paths, cached_parquet_info)
@@ -1306,7 +1449,7 @@ class Scan(IR):
                 if with_columns is None or not hive_names
                 else [name for name in with_columns if name not in hive_names]
             )
-            rows_per_path: list[int] | None = None
+            rows_per_path = None
             if hive_parts is not None and file_columns == []:
                 rows_per_path = cls._parquet_rows_per_path(
                     paths, skip_rows, n_rows, cached_parquet_info
@@ -2145,6 +2288,32 @@ class Select(IR):
         return all(e.all_pointwise() for e in self.exprs)
 
     @staticmethod
+    def _count_parquet_rows(
+        scan: Scan, parquet_options: ParquetOptions
+    ) -> int | None:  # pragma: no cover
+        """
+        Rows a parquet scan produces, or ``None`` if a read is needed.
+
+        Polars passes on deleted row counts for Iceberg and Delta scans.
+        """
+        lake_options = scan.lake_options
+        if lake_options is not None and lake_options.row_count is not None:
+            physical, deleted = lake_options.row_count
+            num_rows = physical - deleted - scan.skip_rows
+            if scan.n_rows != -1:
+                num_rows = min(num_rows, scan.n_rows)
+            return max(num_rows, 0)
+        if lake_options is not None and lake_options.has_deletions:
+            return None
+        return Scan._get_parquet_row_count_from_metadata(
+            scan.paths,
+            scan.skip_rows,
+            scan.n_rows,
+            parquet_options,
+            None,
+        )
+
+    @staticmethod
     def _is_len_expr(exprs: tuple[expr.NamedExpr, ...]) -> bool:  # pragma: no cover
         if len(exprs) == 1:
             expr0 = exprs[0].value
@@ -2203,16 +2372,16 @@ class Select(IR):
             and Select._is_len_expr(self.exprs)
             and self.children[0].typ == "parquet"
             and self.children[0].predicate is None
+            and (
+                (
+                    effective_rows := Select._count_parquet_rows(
+                        self.children[0], self.children[0].parquet_options
+                    )
+                )
+                is not None
+            )
         ):  # pragma: no cover
             stream = context.get_cuda_stream()
-            scan = self.children[0]
-            effective_rows = Scan._get_parquet_row_count_from_metadata(
-                scan.paths,
-                scan.skip_rows,
-                scan.n_rows,
-                scan.parquet_options,
-                None,
-            )
             dtype = DataType(pl.UInt32())
             col = Column(
                 plc.Column.from_scalar(
@@ -2979,6 +3148,37 @@ def _collect_decimal_binop_casts(
     return left_casts, right_casts
 
 
+def _check_ast_operand_types(predicate: expr.Expr) -> None:
+    """
+    Check that libcudf's AST can evaluate a predicate.
+
+    The AST requires both operands of a binary operation to share a type id,
+    and it only fails once the join runs, so reject a predicate whose operands
+    differ in type (after the decimal and float casts) when translating.
+    """
+    left_casts, right_casts = _collect_decimal_binop_casts(predicate)
+
+    def type_id(node: expr.Expr) -> plc.TypeId:
+        if isinstance(node, expr.ColRef):
+            (col,) = node.children
+            assert isinstance(col, expr.Col)
+            casts = (
+                left_casts
+                if node.table_ref == plc_expr.TableReference.LEFT
+                else right_casts
+            )
+            if col.name in casts:
+                return casts[col.name].plc_type.id()
+        return node.dtype.plc_type.id()
+
+    for node in traversal([predicate]):
+        if (
+            isinstance(node, expr.BinOp)
+            and len({type_id(c) for c in node.children}) > 1
+        ):
+            raise NotImplementedError("Join predicate with operands of different types")
+
+
 def _apply_casts(df: DataFrame, casts: dict[str, DataType]) -> DataFrame:
     if not casts:
         return df
@@ -3127,18 +3327,24 @@ class ConditionalJoin(IR):
 class Join(IR):
     """A join of two dataframes."""
 
-    __slots__ = ("left_on", "options", "right_on")
+    __slots__ = ("left_on", "options", "predicate", "right_on")
     _non_child: ClassVar[tuple[str, ...]] = (
         "schema",
         "left_on",
         "right_on",
         "options",
+        "predicate",
     )
-    _n_non_child_args = 3
+    _n_non_child_args = 4
     left_on: tuple[expr.NamedExpr, ...]
     """List of expressions used as keys in the left frame."""
     right_on: tuple[expr.NamedExpr, ...]
     """List of expressions used as keys in the right frame."""
+    predicate: JoinPredicate | None
+    """
+    Optional extra condition (inner joins only) that a pair of rows must
+    satisfy to match, evaluated while joining.
+    """
     options: tuple[
         Literal["Inner", "Left", "Right", "Full", "Semi", "Anti", "Cross"],
         bool,
@@ -3176,6 +3382,7 @@ class Join(IR):
         left_on: Sequence[expr.NamedExpr],
         right_on: Sequence[expr.NamedExpr],
         options: Any,
+        predicate: JoinPredicate | None,
         left: IR,
         right: IR,
     ):
@@ -3184,7 +3391,24 @@ class Join(IR):
         self.right_on = tuple(right_on)
         self.options = options
         self.children = (left, right)
-        self._non_child_args = (self.left_on, self.right_on, self.options)
+        predicate_args = None
+        if predicate is not None:
+            if options[0] != "Inner":
+                raise NotImplementedError(f"Join predicate with join type {options[0]}")
+            ast_predicate = _strip_predicate_casts(predicate.predicate)
+            _check_ast_operand_types(ast_predicate)
+            predicate_args = (
+                ConditionalJoin.Predicate(ast_predicate),
+                predicate.left_exprs,
+                predicate.right_exprs,
+            )
+        self.predicate = predicate
+        self._non_child_args = (
+            self.left_on,
+            self.right_on,
+            self.options,
+            predicate_args,
+        )
 
     @staticmethod
     @cache
@@ -3333,9 +3557,7 @@ class Join(IR):
         if empty:
             return [
                 Column(
-                    plc.column_factories.make_empty_column(
-                        col.dtype.plc_type, stream=stream
-                    ),
+                    dtypes.make_empty_column(col.dtype, stream),
                     col.dtype,
                     name=rename(col.name),
                 )
@@ -3370,6 +3592,12 @@ class Join(IR):
             bool,
             Literal["none", "left", "right", "left_right", "right_left"],
         ],
+        predicate_args: tuple[
+            ConditionalJoin.Predicate,
+            tuple[expr.NamedExpr, ...],
+            tuple[expr.NamedExpr, ...],
+        ]
+        | None,
         left: DataFrame,
         right: DataFrame,
         *,
@@ -3442,6 +3670,19 @@ class Join(IR):
                 ),
                 stream=right.stream,
             )
+            if predicate_args is not None:
+                predicate_wrapper, left_exprs, right_exprs = predicate_args
+                left_casts, right_casts = _collect_decimal_binop_casts(
+                    predicate_wrapper.predicate
+                )
+                left_conditional = _apply_casts(
+                    HStack.do_evaluate(left_exprs, True, left, context=context),  # noqa: FBT003
+                    left_casts,
+                )
+                right_conditional = _apply_casts(
+                    HStack.do_evaluate(right_exprs, True, right, context=context),  # noqa: FBT003
+                    right_casts,
+                )
             with context.stream_ordered_after(left, right) as stream:
                 null_equality = (
                     plc.types.NullEquality.EQUAL
@@ -3464,9 +3705,20 @@ class Join(IR):
                         left, right = right, left
                         left_on, right_on = right_on, left_on
                         maintain_order = Join.SWAPPED_ORDER[maintain_order]
-                    lg, rg = join_fn(
-                        left_on.table, right_on.table, null_equality, stream=stream
-                    )
+                    if predicate_args is None:
+                        lg, rg = join_fn(
+                            left_on.table, right_on.table, null_equality, stream=stream
+                        )
+                    else:
+                        lg, rg = plc.join.mixed_inner_join(
+                            left_on.table,
+                            right_on.table,
+                            left_conditional.table,
+                            right_conditional.table,
+                            predicate_wrapper.ast,
+                            null_equality,
+                            stream=stream,
+                        )
                     if (
                         how in ("Inner", "Left", "Right", "Full")
                         and maintain_order != "none"
@@ -4238,7 +4490,11 @@ class HConcat(IR):
 
     @staticmethod
     def _extend_with_nulls(
-        table: plc.Table, *, nrows: int, stream: Stream
+        table: plc.Table,
+        column_dtypes: Sequence[DataType],
+        *,
+        nrows: int,
+        stream: Stream,
     ) -> plc.Table:
         """
         Extend a table with nulls.
@@ -4247,6 +4503,8 @@ class HConcat(IR):
         ----------
         table
             Table to extend
+        column_dtypes
+            DataTypes of the columns of ``table``
         nrows
             Number of additional rows
         stream
@@ -4261,8 +4519,8 @@ class HConcat(IR):
                 table,
                 plc.Table(
                     [
-                        plc.Column.all_null_like(column, nrows, stream=stream)
-                        for column in table.columns()
+                        dtypes.make_all_null_column(dtype, nrows, stream)
+                        for dtype in column_dtypes
                     ]
                 ),
             ],
@@ -4311,6 +4569,7 @@ class HConcat(IR):
                             else DataFrame.from_table(
                                 cls._extend_with_nulls(
                                     df.table,
+                                    df.dtypes,
                                     nrows=max_rows - df.num_rows,
                                     stream=stream,
                                 ),
@@ -4344,10 +4603,15 @@ class Empty(IR):
     @nvtx_annotate_cudf_polars(message="Empty")
     def do_evaluate(cls, schema: Schema, *, context: IRExecutionContext) -> DataFrame:
         """Evaluate and return a dataframe."""
-        # libcudf cannot make an empty column of a nested type directly.
-        return DataFrame.from_polars(
-            pl.DataFrame(
-                schema={name: dtype.polars_type for name, dtype in schema.items()}
-            ),
-            stream=context.get_cuda_stream(),
+        stream = context.get_cuda_stream()
+        return DataFrame(
+            [
+                Column(
+                    dtypes.make_empty_column(dtype, stream),
+                    dtype=dtype,
+                    name=name,
+                )
+                for name, dtype in schema.items()
+            ],
+            stream=stream,
         )

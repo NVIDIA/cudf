@@ -531,8 +531,11 @@ async def sort_actor(
         ):
             if tracer is not None:
                 tracer.decision = "already_row_ordered"
+                tracer.set_duplicated(duplicated=metadata_in.duplicated)
             await send_metadata(ch_out, context, metadata_in)
             while (msg := await ch_in.recv(context)) is not None:
+                if tracer is not None:
+                    tracer.add_chunk()
                 await ch_out.send(context, msg)
             await ch_out.drain(context)
             return

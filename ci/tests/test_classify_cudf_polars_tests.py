@@ -24,14 +24,11 @@ def _load_classifier() -> ModuleType:
     return module
 
 
-def _coverage(
-    module: ModuleType, nodeid: str, *, unique: int = 0, strict: int = 1
-):
+def _coverage(module: ModuleType, nodeid: str, *, unique: int = 0):
     return module.TestCoverage(
         nodeid=nodeid,
         total_lines=1,
         local_only_lines=unique,
-        strict_lines=strict,
     )
 
 
@@ -78,21 +75,12 @@ def test_classification_precedence() -> None:
         classifier._classification(
             _coverage(classifier, "tests/test_filter.py::test_query"), set()
         )
-        == "deletion_review_candidate"
-    )
-    assert (
-        classifier._classification(
-            _coverage(
-                classifier, "tests/test_filter.py::test_query", strict=0
-            ),
-            set(),
-        )
-        == "retain_not_strictly_covered"
+        == "review_upstream_overlap"
     )
     assert (
         classifier._classification(
             _coverage(classifier, "tests/test_distinct.py::test_distinct"),
             set(),
         )
-        == "deletion_review_candidate"
+        == "review_upstream_overlap"
     )

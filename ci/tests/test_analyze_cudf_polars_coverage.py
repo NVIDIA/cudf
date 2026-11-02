@@ -71,7 +71,7 @@ def test_build_report_emits_focused_upstream_unit_candidates() -> None:
         "local_only": 1,
         "upstream_only": 1,
     }
-    assert report["strict_candidates"] == [
+    assert report["review_candidates"] == [
         {
             "nodeid": "tests/unit/lazyframe/test_lazy.py::test_translate",
             "sampled_shared_line_count": 1,
@@ -94,15 +94,15 @@ def test_build_report_emits_focused_upstream_unit_candidates() -> None:
 def test_candidate_context_filter_excludes_non_ordinary_behavior() -> None:
     analyzer = _load_analyzer()
 
-    assert analyzer._is_strict_candidate_context(
+    assert analyzer._is_review_context(
         "tests/unit/operations/test_filter.py::test_filter|run"
     )
-    assert not analyzer._is_strict_candidate_context(
+    assert not analyzer._is_review_context(
         "tests/unit/datatypes/test_decimal.py::test_decimal_aggregations|run"
     )
-    assert not analyzer._is_strict_candidate_context(
+    assert not analyzer._is_review_context(
         "tests/unit/lazyframe/test_cse.py::test_cse_10452|run"
     )
-    assert not analyzer._is_strict_candidate_context(
+    assert not analyzer._is_review_context(
         "tests/unit/operations/test_group_by.py::test_group_by_skew_kurtosis|run"
     )

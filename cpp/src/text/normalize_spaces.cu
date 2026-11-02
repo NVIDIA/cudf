@@ -85,12 +85,11 @@ struct spaces_input {
 /**
  * @brief Marks the whitespace bytes in each row that are not replaced with a space
  *
- * Repeated whitespace (code-point <= ' ') is replaced with a single space and
- * whitespace is trimmed from the beginning and end of each row.
- * The output space for each run of whitespace comes from the run's first byte
- * when it follows a non-whitespace byte. The exceptions are a run that begins
- * a row (the previous byte belongs to the previous row) and a run that ends a row.
- * These are marked here so the remaining checks only need the adjacent byte.
+ * Repeated whitespace is replaced with a single space and trimmed from the beginning and end of
+ * each row. The output space for each run of whitespace comes from the run's first byte when it
+ * follows a non-whitespace byte. The exceptions are a run that begins a row (the previous byte
+ * belongs to the previous row) and a run that ends a row. These are marked here so the remaining
+ * checks only need the adjacent byte.
  *
  * Launched as a thread per row.
  *

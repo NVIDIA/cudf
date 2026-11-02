@@ -1123,6 +1123,22 @@ cdef class ChunkedParquetWriterOptionsBuilder:
         self.c_obj.max_dictionary_size(val)
         return self
 
+    cpdef ChunkedParquetWriterOptionsBuilder utc_timestamps(self, bool enabled):
+        """
+        Set to true if timestamps are to be written as UTC.
+
+        Parameters
+        ----------
+        enabled : bool
+            Boolean value to enable/disable writing of timestamps as UTC.
+
+        Returns
+        -------
+        ChunkedParquetWriterOptionsBuilder
+        """
+        self.c_obj.utc_timestamps(enabled)
+        return self
+
     cpdef ChunkedParquetWriterOptionsBuilder write_arrow_schema(self, bool enabled):
         """
         Set to true if arrow schema is to be written.

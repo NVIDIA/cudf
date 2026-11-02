@@ -247,8 +247,7 @@ void approx_distinct_count<Hasher>::add(table_view const& input, cuda::stream_re
         ref.add_async(hash_iter, hash_iter + num_rows, stream);
       } else {
         auto const row_bitmask = cudf::detail::bitmask_and(input, stream, temp_mr).first;
-        auto const pred =
-          row_is_valid{reinterpret_cast<cudf::bitmask_type const*>(row_bitmask.data())};
+        auto const pred        = row_is_valid{row_bitmask.data()};
         ref.add_if_async(hash_iter, hash_iter + num_rows, stencil, pred, stream);
       }
     } else {
@@ -258,7 +257,7 @@ void approx_distinct_count<Hasher>::add(table_view const& input, cuda::stream_re
         ref.add_if_async(hash_iter, hash_iter + num_rows, stencil, pred, stream);
       } else {
         auto const row_bitmask = cudf::detail::bitmask_and(input, stream, temp_mr).first;
-        auto const bitmask_ptr = reinterpret_cast<cudf::bitmask_type const*>(row_bitmask.data());
+        auto const bitmask_ptr = row_bitmask.data();
         auto const pred        = check_nans_predicate{*d_table, bitmask_ptr};
         ref.add_if_async(hash_iter, hash_iter + num_rows, stencil, pred, stream);
       }

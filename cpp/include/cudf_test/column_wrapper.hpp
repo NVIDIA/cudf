@@ -30,6 +30,7 @@
 #include <rmm/device_buffer.hpp>
 
 #include <cuda/iterator>
+#include <cuda/std/concepts>
 #include <cuda/std/functional>
 #include <cuda/stream>
 #include <thrust/copy.h>
@@ -131,7 +132,7 @@ struct fixed_width_type_converter {
    */
   template <typename FromT>
   constexpr To operator()(FromT element) const
-    requires(std::integral<FromT> && cudf::is_timestamp<To>())
+    requires(cuda::std::integral<FromT> && cudf::is_timestamp<To>())
   {
     return To{typename To::duration{element}};
   }
@@ -258,7 +259,7 @@ std::pair<std::vector<bitmask_type>, cudf::size_type> make_null_mask_vector(Vali
                                                                             ValidityIterator end)
 {
   auto const size      = cudf::distance(begin, end);
-  auto const num_words = cudf::bitmask_allocation_size_bytes(size) / sizeof(bitmask_type);
+  auto const num_words = cudf::bitmask_allocation_size_words(size);
 
   auto null_mask  = std::vector<bitmask_type>(num_words, 0);
   auto null_count = cudf::size_type{0};
@@ -285,23 +286,23 @@ std::pair<std::vector<bitmask_type>, cudf::size_type> make_null_mask_vector(Vali
  * @param end The end of the validity indicator sequence
  * @param stream CUDA stream used for device memory operations
  * @param mr Memory resources used to allocate the returned buffer
- * @return cuda::device_buffer<std::byte> Contains a bitmask where bits are set for every
+ * @return cuda::device_buffer<cudf::bitmask_type> Contains a bitmask where bits are set for every
  * element in `[begin,end)` that evaluated to `true`.
  */
 template <typename ValidityIterator>
-std::pair<cuda::device_buffer<std::byte>, cudf::size_type> make_null_mask(
+std::pair<cuda::device_buffer<cudf::bitmask_type>, cudf::size_type> make_null_mask(
   ValidityIterator begin,
   ValidityIterator end,
   cuda::stream_ref stream   = cudf::test::get_default_stream(),
   cudf::memory_resources mr = cudf::get_current_device_resource_ref())
 {
   auto [null_mask, null_count] = make_null_mask_vector(begin, end);
-  auto const* data             = reinterpret_cast<uint8_t const*>(null_mask.data());
-  cuda::device_buffer<std::byte> d_mask{
+  auto const* data             = null_mask.data();
+  cuda::device_buffer<cudf::bitmask_type> d_mask{
     stream,
     mr.get_output_mr(),
     data,
-    data + cudf::bitmask_allocation_size_bytes(cudf::distance(begin, end))};
+    data + cudf::bitmask_allocation_size_words(cudf::distance(begin, end))};
   stream.sync();  // wait for async H2D before host source is destroyed
   return {std::move(d_mask), null_count};
 }
@@ -1878,7 +1879,7 @@ class lists_column_wrapper : public detail::column_wrapper {
                        std::unique_ptr<cudf::column>&& offsets,
                        std::unique_ptr<cudf::column>&& values,
                        size_type null_count,
-                       cuda::device_buffer<std::byte>&& null_mask)
+                       cuda::device_buffer<cudf::bitmask_type>&& null_mask)
   {
     // construct the list column
     wrapped = make_lists_column(

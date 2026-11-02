@@ -37,10 +37,12 @@ from cudf_polars.dsl.utils.io import (
     prefetch_parquet_file_metadata_for_ir,
 )
 from cudf_polars.quent._plan import build_quent_operator_map, emit_plan
-from cudf_polars.streaming.actor_graph.collectives import ReserveOpIDs
+from cudf_polars.streaming.actor_graph.collectives import (
+    ReserveOpIDs,
+    collective_id_scope,
+)
 from cudf_polars.streaming.actor_graph.collectives.common import reserve_op_id
 from cudf_polars.streaming.actor_graph.core import generate_network
-from cudf_polars.streaming.actor_graph.tracing import log_query_plan
 from cudf_polars.streaming.actor_graph.utils import empty_table_chunk
 from cudf_polars.streaming.base import StatsCollector
 from cudf_polars.streaming.parallel import lower_ir_graph_with_node_map
@@ -69,18 +71,6 @@ if TYPE_CHECKING:
 
 
 T = TypeVar("T")
-
-
-def _run_cleanup_steps(message: str, *steps: Callable[[], object]) -> None:
-    """Run every cleanup step and group any failures."""
-    exceptions: list[Exception] = []
-    for step in steps:
-        try:
-            step()
-        except Exception as error:
-            exceptions.append(error)
-    if exceptions:
-        raise ExceptionGroup(message, exceptions)
 
 
 def reset_statistics_from_options(
@@ -328,9 +318,8 @@ class StreamingEngine(pl.GPUEngine):
     environment variable to control the thread count. Under ``MULTI_POLL``,
     cudf-polars does not resolve a thread-pool size at all (kvikio itself may
     still honor ``KVIKIO_NTHREADS`` via its own deferred default); remote I/O
-    concurrency is instead controlled by the ``kvikio_reactor_count``,
-    ``kvikio_reactor_dispatch``, and ``kvikio_request_ceiling`` executor
-    options.
+    concurrency is instead controlled by the ``kvikio_reactor_count`` and
+    ``kvikio_request_ceiling`` executor options.
 
     Parameters
     ----------
@@ -549,12 +538,6 @@ class StreamingEngine(pl.GPUEngine):
         existing_executor_options = self.config.get("executor_options", {})
         if not isinstance(existing_executor_options, dict):
             existing_executor_options = {}
-        existing_quent_context = existing_executor_options.get("quent_context")
-        if (
-            "quent_context" in executor_options
-            and executor_options["quent_context"] != existing_quent_context
-        ):
-            raise ValueError("quent_context cannot be changed during reset")
 
         _disallowed_exec = {"num_py_executors"} & executor_options.keys()
         if _disallowed_exec:
@@ -598,6 +581,27 @@ class StreamingEngine(pl.GPUEngine):
     def __exit__(self, *_: object) -> None:
         """Exit the context manager, calling :meth:`shutdown`."""
         self.shutdown()
+
+    def _set_quent(self, quent_context: QuentConfig | None) -> QuentConfig | None:
+        """
+        Replace this engine's Quent runtimes.
+
+        Closes any running Quent runtimes (on all ranks), then starts new ones for
+        ``quent_context`` unless it is ``None``.
+
+        Parameters
+        ----------
+        quent_context
+            Quent configuration to start, or ``None`` to only close.
+
+        Returns
+        -------
+        The effective Quent configuration, which may differ from
+        ``quent_context``, or ``None`` if Quent is disabled.
+        """
+        raise NotImplementedError(  # pragma: no cover
+            f"{type(self).__name__} does not implement _set_quent"
+        )
 
     def _run(self, func: Callable[..., T], *args: Any, **kwargs: Any) -> list[T]:
         """
@@ -921,6 +925,31 @@ def evaluate_on_rank(
     metadata
         Collected channel metadata.
     """
+    # Each query reserves its collective IDs from its own pool, so that the
+    # IDs agree across ranks even if this process concurrently takes part in
+    # other queries (possibly on other communicators).
+    with collective_id_scope():
+        return _evaluate_on_rank(
+            ctx,
+            comm,
+            py_executor,
+            ir,
+            config_options,
+            quent_query_worker_state=quent_query_worker_state,
+            query_id=query_id,
+        )
+
+
+def _evaluate_on_rank(
+    ctx: Context,
+    comm: Communicator,
+    py_executor: ThreadPoolExecutor,
+    ir: IR,
+    config_options: ConfigOptions[StreamingExecutor],
+    *,
+    quent_query_worker_state: QuentQueryWorkerState | None,
+    query_id: uuid.UUID,
+) -> tuple[DataFrame, list[ChannelMetadata]]:
     stats = allgather_stats(comm, ctx.br(), ir, config_options, py_executor)
     # ``get_stable_plan_id`` is a deterministic function of the IR
     # structure, so every rank derives the same logical plan ID for a
@@ -948,18 +977,15 @@ def evaluate_on_rank(
         logical_op_by_id = emit_plan(
             quent_query_worker_state.runtime.session,
             optimized,
-            config_options,
             query_id=quent_query_worker_state.query_id,
             plan_id=logical_plan_id,
             worker_id=quent_query_worker_state.runtime.worker_resources.worker_id,
             instance_name="logical",
             parent_plan_id=None,
             parent_operators_by_node_id=None,
+            plan_metadata=lowering.plan_metadata,
             emit=comm.rank == 0,
         )
-
-    if comm.rank == 0:
-        log_query_plan(ir, config_options)
 
     if config_options.executor.quent_context is not None:
         assert quent_query_worker_state is not None
@@ -967,7 +993,6 @@ def evaluate_on_rank(
         physical_op_by_id = quent_query_worker_state.runtime.emit_physical_plan(
             quent_query_worker_state,
             ir,
-            config_options,
             plan_id=physical_plan_id,
             parent_plan_id=logical_plan_id,
             node_map=node_map,

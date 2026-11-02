@@ -73,8 +73,39 @@ size_t CompactProtocolWriter::write(IntType const& integer)
   return c.value();
 }
 
-size_t CompactProtocolWriter::write(LogicalType const& logical_type)
+size_t CompactProtocolWriter::write(VariantType const& variant)
 {
+  CompactProtocolFieldWriter c(*this);
+  if (variant.specification_version.has_value()) {
+    c.field_int8(1, variant.specification_version.value());
+  }
+  return c.value();
+}
+
+size_t CompactProtocolWriter::write(GeographyType const& geography)
+{
+  CompactProtocolFieldWriter c(*this);
+  // The `crs` value is not retained, so silently rewriting the footer would flip the CRS
+  // semantics (absent means OGC:CRS84); refuse instead.
+  CUDF_EXPECTS(not geography.has_crs, "Cannot write a GeographyType whose crs was dropped on read");
+  // Thrift field 1 (`crs`) is not emitted; `algorithm` (thrift id 2) is written when engaged.
+  if (geography.algorithm.has_value()) {
+    c.field_int(2, static_cast<int32_t>(geography.algorithm.value()));
+  }
+  return c.value();
+}
+
+size_t CompactProtocolWriter::write(LogicalType const& logical_type,
+                                    LogicalTypePayload const& payload)
+{
+  // A payload member engaged for a different union field would be dropped silently, so reject it.
+  CUDF_EXPECTS(logical_type.type == LogicalType::VARIANT or not payload.variant_type.has_value(),
+               "LogicalTypePayload carries a Variant payload for a non-VARIANT logical type");
+  CUDF_EXPECTS(logical_type.type == LogicalType::GEOMETRY or not payload.geometry_type.has_value(),
+               "LogicalTypePayload carries a Geometry payload for a non-GEOMETRY logical type");
+  CUDF_EXPECTS(
+    logical_type.type == LogicalType::GEOGRAPHY or not payload.geography_type.has_value(),
+    "LogicalTypePayload carries a Geography payload for a non-GEOGRAPHY logical type");
   CompactProtocolFieldWriter c(*this);
   switch (logical_type.type) {
     case LogicalType::STRING:
@@ -84,7 +115,10 @@ size_t CompactProtocolWriter::write(LogicalType const& logical_type)
     case LogicalType::DATE:
     case LogicalType::UNKNOWN:
     case LogicalType::JSON:
-    case LogicalType::BSON: c.field_empty_struct(static_cast<int>(logical_type.type)); break;
+    case LogicalType::BSON:
+    case LogicalType::UUID:
+    case LogicalType::FLOAT16:
+    case LogicalType::FILE: c.field_empty_struct(static_cast<int>(logical_type.type)); break;
     case LogicalType::DECIMAL:
       c.field_struct(static_cast<int>(LogicalType::DECIMAL), logical_type.decimal_type.value());
       break;
@@ -96,6 +130,32 @@ size_t CompactProtocolWriter::write(LogicalType const& logical_type)
       break;
     case LogicalType::INTEGER:
       c.field_struct(static_cast<int>(LogicalType::INTEGER), logical_type.int_type.value());
+      break;
+    case LogicalType::VARIANT:
+      // A disengaged payload is a valid thrift value (all fields optional), so it writes an empty
+      // struct rather than throwing bad_optional_access.
+      if (payload.variant_type.has_value()) {
+        c.field_struct(static_cast<int>(LogicalType::VARIANT), payload.variant_type.value());
+      } else {
+        c.field_empty_struct(static_cast<int>(LogicalType::VARIANT));
+      }
+      break;
+    case LogicalType::GEOGRAPHY:
+      // Same as VARIANT: a disengaged payload writes an empty struct, not `.value()`.
+      if (payload.geography_type.has_value()) {
+        c.field_struct(static_cast<int>(LogicalType::GEOGRAPHY), payload.geography_type.value());
+      } else {
+        c.field_empty_struct(static_cast<int>(LogicalType::GEOGRAPHY));
+      }
+      break;
+    case LogicalType::GEOMETRY:
+      // Refuse to silently rewrite a footer whose `crs` value was dropped (mirrors GEOGRAPHY);
+      // the wire shape is always the empty struct.
+      if (payload.geometry_type.has_value()) {
+        CUDF_EXPECTS(not payload.geometry_type.value().has_crs,
+                     "Cannot write a GeometryType whose crs was dropped on read");
+      }
+      c.field_empty_struct(static_cast<int>(LogicalType::GEOMETRY));
       break;
     default:
       CUDF_FAIL("Trying to write an invalid LogicalType " + std::to_string(logical_type.type));
@@ -124,7 +184,9 @@ size_t CompactProtocolWriter::write(SchemaElement const& s)
     }
   }
   if (s.field_id.has_value()) { c.field_int(9, s.field_id.value()); }
-  if (s.logical_type.has_value()) { c.field_struct(10, s.logical_type.value()); }
+  if (s.logical_type.has_value()) {
+    c.field_struct(10, s.logical_type.value(), s.logical_type_payload);
+  }
   return c.value();
 }
 
@@ -145,7 +207,7 @@ size_t CompactProtocolWriter::write(KeyValue const& k)
 {
   CompactProtocolFieldWriter c(*this);
   c.field_string(1, k.key);
-  if (not k.value.empty()) { c.field_string(2, k.value); }
+  if (k.value.has_value()) { c.field_string(2, k.value.value()); }
   return c.value();
 }
 
@@ -196,6 +258,7 @@ size_t CompactProtocolWriter::write(Statistics const& s)
   if (s.min_value.has_value()) { c.field_binary(6, s.min_value.value()); }
   if (s.is_max_value_exact.has_value()) { c.field_bool(7, s.is_max_value_exact.value()); }
   if (s.is_min_value_exact.has_value()) { c.field_bool(8, s.is_min_value_exact.value()); }
+  if (s.nan_count.has_value()) { c.field_int(9, s.nan_count.value()); }
   return c.value();
 }
 
@@ -237,7 +300,9 @@ size_t CompactProtocolWriter::write(ColumnOrder const& co)
 {
   CompactProtocolFieldWriter c(*this);
   switch (co.type) {
-    case ColumnOrder::TYPE_ORDER: c.field_empty_struct(static_cast<int>(co.type)); break;
+    case ColumnOrder::TYPE_ORDER:
+    case ColumnOrder::IEEE_754_TOTAL_ORDER:
+    case ColumnOrder::INT96_TIMESTAMP_ORDER: c.field_empty_struct(static_cast<int>(co.type)); break;
     default:
       CUDF_FAIL("Trying to write an invalid ColumnOrder " +
                 std::to_string(static_cast<int>(co.type)));
@@ -409,12 +474,12 @@ inline void CompactProtocolFieldWriter::field_int_list(int field, std::vector<En
   current_field_value = field;
 }
 
-template <typename T>
-inline void CompactProtocolFieldWriter::field_struct(int field, T const& val)
+template <typename T, typename... Args>
+inline void CompactProtocolFieldWriter::field_struct(int field, T const& val, Args const&... args)
 {
   put_field_header(field, current_field_value, FieldType::STRUCT);
   if constexpr (not std::is_empty_v<T>) {
-    writer.write(val);  // write the struct if it's not empty
+    writer.write(val, args...);  // write the struct if it's not empty
   } else {
     put_byte(0);  // otherwise, add a stop field
   }

@@ -104,7 +104,7 @@ compute_page_row_offsets_and_colchunk_page_offsets(
  * @param total_rows Total number of rows
  * @param stats_expression AST expression to evaluate on page statistics
  * @param stream CUDA stream
- * @param mr Device memory resource for the output device vector
+ * @param mr Memory resources used to allocate temporary and returned column device memory
  * @return Row mask column
  */
 [[nodiscard]] std::unique_ptr<column> compute_row_mask_from_page_stats(
@@ -113,6 +113,6 @@ compute_page_row_offsets_and_colchunk_page_offsets(
   size_type total_rows,
   std::reference_wrapper<ast::expression const> stats_expression,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cudf::memory_resources mr);
 
 }  // namespace cudf::io::parquet::experimental::detail

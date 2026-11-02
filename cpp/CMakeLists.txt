@@ -513,7 +513,7 @@ function(precompile_fixed_width_kernel_fragments)
     )
     set(VARIANT_NAME transform_kernel_${FILE_INDEX})
     set(INSTANCE
-        "cudf::jit::transform_kernel<false, false, cudf::jit::type_list<cudf::jit::column_accessor<0ULL, cudf::column_device_view_core, ${TYPE}, false, 0>>, cudf::jit::type_list<cudf::jit::column_accessor<0ULL, cudf::mutable_column_device_view_core, ${TYPE}, false, 0>>>"
+        "cudf::jit::transform_kernel<false, false, cudf::jit::type_list<cudf::jit::column_accessor<0, cudf::column_device_view_core, ${TYPE}, false, 0>>, cudf::jit::type_list<cudf::jit::column_accessor<0, cudf::mutable_column_device_view_core, ${TYPE}, false, 0>>>"
     )
     add_fragment(
       cudf_fragments
@@ -548,7 +548,7 @@ function(precompile_fixed_width_kernel_fragments)
       )
       set(VARIANT_NAME transform_kernel_${FILE_INDEX})
       set(INSTANCE
-          "cudf::jit::transform_kernel<false, false, cudf::jit::type_list<cudf::jit::column_accessor<0ULL, cudf::column_device_view_core, ${TYPE}, false, 0>, cudf::jit::column_accessor<1ULL, cudf::column_device_view_core, ${TYPE}, ${RHS_IS_SCALAR}, 0>>, cudf::jit::type_list<cudf::jit::column_accessor<0ULL, cudf::mutable_column_device_view_core, ${TYPE}, false, 0>>>"
+          "cudf::jit::transform_kernel<false, false, cudf::jit::type_list<cudf::jit::column_accessor<0, cudf::column_device_view_core, ${TYPE}, false, 0>, cudf::jit::column_accessor<1, cudf::column_device_view_core, ${TYPE}, ${RHS_IS_SCALAR}, 0>>, cudf::jit::type_list<cudf::jit::column_accessor<0, cudf::mutable_column_device_view_core, ${TYPE}, false, 0>>>"
       )
       add_fragment(
         cudf_fragments
@@ -609,14 +609,14 @@ function(precompile_string_kernel_fragments)
         list(
           APPEND
           OUTPUT_ACCESSORS
-          "cudf::jit::column_accessor<${OUTPUT_INDEX}ULL, ${OUTPUT_COLUMN_TYPE}, ${OUTPUT_TYPE}, false, 0>"
+          "cudf::jit::column_accessor<${OUTPUT_INDEX}, ${OUTPUT_COLUMN_TYPE}, ${OUTPUT_TYPE}, false, 0>"
         )
         list(APPEND OUTPUT_POINTERS "${OUTPUT_TYPE} *")
       endforeach()
       list(JOIN OUTPUT_ACCESSORS " ," OUTPUT_ACCESSORS_STR)
       list(JOIN OUTPUT_POINTERS " ," OUTPUT_POINTERS_STR)
       set(INSTANCE
-          "cudf::jit::transform_kernel<false, false, cudf::jit::type_list<cudf::jit::column_accessor<0ULL, cudf::column_device_view_core, cudf::string_view, false, 0>>, cudf::jit::type_list<${OUTPUT_ACCESSORS_STR}>>"
+          "cudf::jit::transform_kernel<false, false, cudf::jit::type_list<cudf::jit::column_accessor<0, cudf::column_device_view_core, cudf::string_view, false, 0>>, cudf::jit::type_list<${OUTPUT_ACCESSORS_STR}>>"
       )
       add_fragment(
         cudf_fragments
@@ -733,18 +733,21 @@ add_library(
   src/filling/fill.cu
   src/filling/repeat.cu
   src/filling/sequence.cu
+  src/groupby/common/group_struct_minmax_scan.cu
   src/groupby/common/m2_var_std.cu
   src/groupby/common/null_mask.cu
   src/groupby/common/utils.cpp
   src/groupby/groupby.cu
-  src/groupby/hash/compute_groupby.cu
+  src/groupby/hash/compute_groupby.cpp
   src/groupby/hash/compute_single_pass_aggs.cpp
   src/groupby/hash/compute_single_pass_aggs.cu
   src/groupby/hash/extract_single_pass_aggs.cpp
+  src/groupby/hash/group_keys.cu
   src/groupby/hash/groupby.cu
   src/groupby/hash/hash_compound_agg_finalizer.cu
   src/groupby/hash/output_utils.cu
   src/groupby/hash/single_pass_argminmax.cu
+  src/groupby/hash/single_pass_fused_minmax_sum.cu
   src/groupby/hash/single_pass_minmax.cu
   src/groupby/hash/single_pass_product.cu
   src/groupby/hash/single_pass_sum_overflow.cu
@@ -787,12 +790,9 @@ add_library(
   src/groupby/streaming_groupby/aggregate.cu
   src/groupby/streaming_groupby/impl.cu
   src/groupby/streaming_groupby/insert.cu
-  src/groupby/streaming_groupby/insert_first.cu
-  src/groupby/streaming_groupby/insert_first_nested.cu
   src/groupby/streaming_groupby/insert_nested.cu
-  src/groupby/streaming_groupby/insert_subsequent.cu
-  src/groupby/streaming_groupby/insert_subsequent_nested.cu
   src/groupby/streaming_groupby/merge.cu
+  src/groupby/streaming_groupby/warp_aggregate.cu
   src/hash/md5_hash.cu
   src/hash/murmurhash3_x86_32.cu
   src/hash/murmurhash3_x64_128.cu
@@ -922,6 +922,7 @@ add_library(
   src/jit/cache.cpp
   src/jit/helpers.cpp
   src/jit/parser.cpp
+  src/jit/reflect.cpp
   src/jit/row_ir.cpp
   src/jit/util.cpp
   src/join/conditional_join.cu
@@ -1103,7 +1104,6 @@ add_library(
   src/stream_compaction/distinct_helpers_nested_nan_unequal_ordered.cu
   src/stream_compaction/drop_nans.cu
   src/stream_compaction/drop_nulls.cu
-  src/stream_compaction/filter/filter.cu
   src/stream_compaction/stable_distinct.cu
   src/stream_compaction/unique.cu
   src/strings/attributes.cu
@@ -1488,18 +1488,6 @@ if(TARGET conda_env)
 endif()
 
 rapids_cuda_set_runtime(cudf USE_STATIC ON)
-
-file(
-  WRITE "${CUDF_BINARY_DIR}/fatbin.ld"
-  [=[
-SECTIONS
-{
-  .nvFatBinSegment : { *(.nvFatBinSegment) }
-  .nv_fatbin : { *(.nv_fatbin) }
-}
-]=]
-)
-target_link_options(cudf PRIVATE "$<HOST_LINK:${CUDF_BINARY_DIR}/fatbin.ld>")
 
 add_library(cudf::cudf ALIAS cudf)
 

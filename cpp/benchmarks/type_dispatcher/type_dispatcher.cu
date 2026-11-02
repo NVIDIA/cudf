@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <benchmarks/common/memory_stats.hpp>
+
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_view.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
@@ -208,9 +210,12 @@ void type_dispatcher_benchmark(nvbench::state& state)
   launch_kernel<functor_type, dispatching_type>(source_table, d_vec.data(), work_per_thread);
   CUDF_CUDA_TRY(cudaDeviceSynchronize());
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
     launch_kernel<functor_type, dispatching_type>(source_table, d_vec.data(), work_per_thread);
   });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 void bench_fp64_bandwidth_host(nvbench::state& state)

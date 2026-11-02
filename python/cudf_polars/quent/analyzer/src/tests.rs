@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use quent_analyzer::AnalyzerError;
-use quent_dynamic_attributes::DynamicAttributes;
+use quent_dynamic_attributes::{DynamicAttributes, DynamicValue};
 use quent_events::{EntityRef, Event, EventModel};
 use quent_query_engine_analyzer::ui::{QuentViewer, UiAnalyzer};
 use quent_query_engine_ui::{OperatorFilter, QueryFilter};
@@ -18,9 +18,10 @@ use uuid::Uuid;
 use crate::{
     CudfPolarsUiAnalyzer, Viewer,
     generated::{
-        ActorEvent, CudfPolars, CudfPolarsEvent, EngineEvent, EvaluateEvent, Implementation,
-        OperatorEvent, OperatorStatistics, PlanEvent, ProcessorEvent, QueryEvent, QueryGroupEvent,
-        ThreadPoolEvent, WorkerEvent,
+        ActorEvent, ColumnSchema, CudfPolars, CudfPolarsEvent, DataFrameSchema, EngineEvent,
+        EvaluateEvent, Implementation, JoinFilterPushdownDetails, OperatorEvent, OperatorSchemas,
+        OperatorStatistics, PlanEvent, ProcessorEvent, QueryEvent, QueryGroupEvent,
+        RuntimePrefilterStatistics, ThreadPoolEvent, WorkerEvent,
     },
     resource::{EVALUATE_ENTITY_TYPE, PROCESSOR_RESOURCE_TYPE},
 };
@@ -185,6 +186,38 @@ fn builds_query_bundle_from_generated_events() {
                 instance_name: "scan".to_owned(),
                 type_name: "Scan".to_owned(),
                 node_id: "0".to_owned(),
+                schemas: OperatorSchemas {
+                    input_schemas: vec![],
+                    output_schema: DataFrameSchema {
+                        columns: vec![ColumnSchema {
+                            name: "a".to_owned(),
+                            dtype: "INT64".to_owned(),
+                        }],
+                    },
+                },
+            }),
+        ),
+        Event::new(
+            operator_id,
+            8,
+            CudfPolarsEvent::Operator(OperatorEvent::JoinFilterPushdownDetails {
+                values: JoinFilterPushdownDetails {
+                    threshold: 0.5,
+                    reason: "applied".to_owned(),
+                    mode: Some("simple".to_owned()),
+                    target_side: Some("right".to_owned()),
+                    target_key: Some("a".to_owned()),
+                    domain_key: Some("a".to_owned()),
+                    estimated_target_rows: Some(100),
+                    estimated_domain_rows: Some(10),
+                    estimated_target_cost: Some(100),
+                    estimated_domain_cost: Some(10),
+                    target_node_type: Some("DataFrameScan".to_owned()),
+                    domain_node_type: Some("DataFrameScan".to_owned()),
+                    constraint_key: None,
+                    estimated_constraint_rows: None,
+                    estimated_constraint_cost: None,
+                },
             }),
         ),
         Event::new(
@@ -224,6 +257,7 @@ fn builds_query_bundle_from_generated_events() {
                 seq: 0,
                 instance_name: "Scan-evaluate".to_owned(),
                 actor: EntityRef::new(actor_id, ()),
+                task: None,
             }),
         ),
         Event::new(
@@ -233,6 +267,12 @@ fn builds_query_bundle_from_generated_events() {
                 seq: 1,
                 io: false,
                 input_bytes: 10,
+                input: crate::generated::EvaluateInput {
+                    dataframes: vec![],
+                    sequence_number: None,
+                    content_sizes: None,
+                    spillable: None,
+                },
                 processor: EntityRef::new(processor_id, crate::generated::ProcessorUsage {}),
                 channel: None,
             }),
@@ -243,6 +283,31 @@ fn builds_query_bundle_from_generated_events() {
             CudfPolarsEvent::Evaluate(EvaluateEvent::Completed {
                 seq: 2,
                 output_bytes: 20,
+                output_dataframe: crate::generated::DataFrameStatistics { shape: vec![1, 1] },
+            }),
+        ),
+        Event::new(
+            operator_id,
+            19,
+            CudfPolarsEvent::Operator(OperatorEvent::RuntimePrefilterStatistics {
+                actor: EntityRef::new(actor_id, ()),
+                values: RuntimePrefilterStatistics {
+                    placement: "standalone".to_owned(),
+                    method: "bloom".to_owned(),
+                    reason: "bloom_fits".to_owned(),
+                    target_side: None,
+                    domain_side: None,
+                    domain: None,
+                    target_on: vec!["target_key".to_owned()],
+                    domain_on: vec!["domain_key".to_owned()],
+                    target_bytes: 1024,
+                    domain_rows: Some(10),
+                    estimated_cardinality: Some(5),
+                    bloom_bytes: Some(32),
+                    exact_bytes: Some(80),
+                    input_rows: Some(100),
+                    output_rows: Some(20),
+                },
             }),
         ),
         Event::new(
@@ -290,6 +355,7 @@ fn builds_query_bundle_from_generated_events() {
                 seq: 0,
                 instance_name: "incomplete-evaluate".to_owned(),
                 actor: EntityRef::new(incomplete_actor_id, ()),
+                task: None,
             }),
         ),
         Event::new(
@@ -321,9 +387,16 @@ fn builds_query_bundle_from_generated_events() {
         bundle.entities.query.instance_name.as_deref(),
         Some("iteration-1")
     );
-    assert_eq!(
-        bundle.entities.query_group.instance_name.as_deref(),
-        Some("group")
+    assert!(
+        bundle
+            .entities
+            .query
+            .custom_attributes
+            .iter()
+            .any(|attribute| {
+                attribute.key == "query_group"
+                    && attribute.value == Some(DynamicValue::String("group".to_owned()))
+            })
     );
     assert_eq!(bundle.entities.plans.len(), 2);
     assert!(bundle.entities.workers.contains_key(&idle_worker_id));
@@ -343,24 +416,48 @@ fn builds_query_bundle_from_generated_events() {
             .active_span
             .is_some()
     );
+    let operator_attributes = &bundle.entities.operators[&operator_id].custom_attributes;
+    assert!(
+        operator_attributes
+            .iter()
+            .any(|attribute| attribute.key == "output_schema" && attribute.value.is_some())
+    );
+    assert!(operator_attributes.iter().any(|attribute| {
+        attribute.key == "join_filter_pushdown_details" && attribute.value.is_some()
+    }));
+    assert!(operator_attributes.iter().any(|attribute| {
+        attribute.key == "runtime_prefilter_statistics" && attribute.value.is_some()
+    }));
     let statistics = bundle.entities.operators[&operator_id]
         .statistics
         .as_ref()
         .expect("operator statistics should be present");
     assert_eq!(
-        statistics.custom_statistics["input_bytes"]
+        statistics
+            .custom_statistics
+            .iter()
+            .find(|statistic| statistic.value.key == "input_bytes")
+            .unwrap()
             .quantity
             .as_deref(),
         Some("bytes")
     );
     assert_eq!(
-        statistics.custom_statistics["output_bytes"]
+        statistics
+            .custom_statistics
+            .iter()
+            .find(|statistic| statistic.value.key == "output_bytes")
+            .unwrap()
             .quantity
             .as_deref(),
         Some("bytes")
     );
     assert!(
-        statistics.custom_statistics["chunk_count"]
+        statistics
+            .custom_statistics
+            .iter()
+            .find(|statistic| statistic.value.key == "chunk_count")
+            .unwrap()
             .quantity
             .is_none()
     );

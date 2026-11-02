@@ -24,14 +24,15 @@ from cudf_polars.dsl.ir import (
     Filter,
     GroupBy,
     Join,
-    MapFunction,
     Projection,
+    Rolling,
     Select,
     Slice,
     Sort,
 )
 from cudf_polars.dsl.traversal import post_traversal
 from cudf_polars.dsl.utils.column_domain import column_domain_bindings
+from cudf_polars.streaming.hint_sorted import HintSorted
 from cudf_polars.utils.sorting import sort_order
 
 if TYPE_CHECKING:
@@ -102,7 +103,7 @@ def _direct_child_requests(ir: IR) -> list[tuple[IR, PartitioningRequest]]:
         if names is not None:
             return [(ir.children[0], _order_request(names, ir.order, ir.null_order))]
 
-    if isinstance(ir, MapFunction) and ir.name == "hint_sorted":
+    if isinstance(ir, HintSorted):
         column_names, descending, nulls_last = ir.options
         order, null_order = sort_order(
             descending, nulls_last=nulls_last, num_keys=len(column_names)
@@ -137,7 +138,10 @@ def _propagated_child_requests(
     if (
         node_requests is not None
         and len(node.children) == 1
-        and isinstance(node, (Projection, Select, Filter, Slice, GroupBy))
+        and isinstance(
+            node,
+            (Projection, Select, Filter, Slice, GroupBy, Rolling),
+        )
     ):
         remapping = {
             output_name: binding.name

@@ -12,6 +12,7 @@
 #include <cub/block/block_reduce.cuh>
 #include <cub/warp/warp_reduce.cuh>
 #include <cuda/functional>
+#include <cuda/std/type_traits>
 #include <cuda/stream>
 
 #include <limits>
@@ -912,7 +913,7 @@ static __device__ uint32_t integer_rlev2(orc_bytestream_s* bs,
               bytestream_readbe(bs, pos * 8, bw * 8, baseval);
               uint32_t const mask = (1u << (bw * 8 - 1)) - 1;
               // Negative values are represented with the highest bit set to 1
-              rle->baseval.u32[r] = (std::is_signed_v<T> and baseval > mask)
+              rle->baseval.u32[r] = (cuda::std::is_signed_v<T> and baseval > mask)
                                       ? -static_cast<int32_t>(baseval & mask)
                                       : baseval;
             } else {
@@ -920,7 +921,7 @@ static __device__ uint32_t integer_rlev2(orc_bytestream_s* bs,
               bytestream_readbe(bs, pos * 8, bw * 8, baseval);
               uint64_t const mask = (1ul << (bw * 8 - 1)) - 1;
               // Negative values are represented with the highest bit set to 1
-              rle->baseval.u64[r] = (std::is_signed_v<T> and baseval > mask)
+              rle->baseval.u64[r] = (cuda::std::is_signed_v<T> and baseval > mask)
                                       ? -static_cast<int64_t>(baseval & mask)
                                       : baseval;
             }

@@ -21,6 +21,7 @@
 #include <cuco/operator.hpp>
 #include <cuco/static_set.cuh>
 #include <cuda/atomic>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/tuple>
@@ -138,7 +139,7 @@ compute_row_frequencies(table_view const& input,
   std::size_t const num_rows = input.num_rows();
 
   // Construct a vector to store reduced counts and init to zero
-  rmm::device_uvector<histogram_count_type> reduction_results(num_rows, stream, mr);
+  cuda::device_buffer<histogram_count_type> reduction_results(stream, mr, num_rows, cuda::no_init);
   thrust::uninitialized_fill(rmm::exec_policy_nosync(stream, temp_mr),
                              reduction_results.begin(),
                              reduction_results.end(),

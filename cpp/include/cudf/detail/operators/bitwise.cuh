@@ -19,7 +19,7 @@ namespace ops {
  * @param a Left operand.
  * @param b Right operand.
  */
-template <integer A, integer B>
+template <concepts::integral_not_bool A, concepts::integral_not_bool B>
 __device__ auto bitwise_and(A a, B b) -> decltype(a & b)
 {
   return a & b;
@@ -31,7 +31,7 @@ __device__ auto bitwise_and(A a, B b) -> decltype(a & b)
  * @tparam T Value type.
  * @param a Input value.
  */
-template <integer T>
+template <concepts::integral_not_bool T>
 __device__ auto bitwise_invert(T a) -> decltype(~a)
 {
   return ~a;
@@ -45,7 +45,7 @@ __device__ auto bitwise_invert(T a) -> decltype(~a)
  * @param a Left operand.
  * @param b Right operand.
  */
-template <integer A, integer B>
+template <concepts::integral_not_bool A, concepts::integral_not_bool B>
 __device__ auto bitwise_or(A a, B b) -> decltype(a | b)
 {
   return a | b;
@@ -59,7 +59,7 @@ __device__ auto bitwise_or(A a, B b) -> decltype(a | b)
  * @param a Left operand.
  * @param b Right operand.
  */
-template <integer A, integer B>
+template <concepts::integral_not_bool A, concepts::integral_not_bool B>
 __device__ auto bitwise_xor(A a, B b) -> decltype(a ^ b)
 {
   return a ^ b;
@@ -73,7 +73,7 @@ __device__ auto bitwise_xor(A a, B b) -> decltype(a ^ b)
  * @param a Input value.
  * @param b Shift count.
  */
-template <integer A, integer B>
+template <concepts::integral_not_bool A, concepts::integral_not_bool B>
 __device__ auto bitwise_shift_left(A a, B b) -> decltype(a << b)
 {
   return a << b;
@@ -87,7 +87,7 @@ __device__ auto bitwise_shift_left(A a, B b) -> decltype(a << b)
  * @param a Input value.
  * @param b Shift count.
  */
-template <integer A, integer B>
+template <concepts::integral_not_bool A, concepts::integral_not_bool B>
 __device__ auto bitwise_shift_right(A a, B b) -> decltype(a >> b)
 {
   return a >> b;

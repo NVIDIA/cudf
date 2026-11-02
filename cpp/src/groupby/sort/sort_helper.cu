@@ -7,6 +7,7 @@
 
 #include <cudf/column/column_factories.hpp>
 #include <cudf/copying.hpp>
+#include <cudf/detail/algorithms/copy_if.cuh>
 #include <cudf/detail/copy.hpp>
 #include <cudf/detail/gather.hpp>
 #include <cudf/detail/groupby/sort_helper.hpp>
@@ -23,6 +24,9 @@
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
+#include <cuda/iterator>
+#include <cuda/std/functional>
 #include <cuda/stream>
 #include <thrust/transform.h>
 
@@ -34,6 +38,18 @@ namespace cudf {
 namespace groupby {
 namespace detail {
 namespace sort {
+
+size_type compact_group_offsets(bool* flags,
+                                size_type size,
+                                size_type* offsets,
+                                cuda::stream_ref stream,
+                                cudf::memory_resources mr)
+{
+  auto const begin = cuda::counting_iterator<size_type>{0};
+  auto const end =
+    cudf::detail::copy_if(begin, begin + size, flags, offsets, cuda::std::identity{}, stream, mr);
+  return static_cast<size_type>(end - offsets);
+}
 
 sort_groupby_helper::sort_groupby_helper(table_view const& keys,
                                          null_policy include_null_keys,
@@ -252,8 +268,9 @@ std::unique_ptr<table> sort_groupby_helper::unique_keys(cuda::stream_ref stream,
                                                         rmm::device_async_resource_ref mr)
 {
   auto const num_unique_keys = num_groups(stream);
-  auto gather_map            = rmm::device_uvector<size_type>(num_unique_keys, stream);
-  auto const idx_data        = key_sort_order(stream).data<size_type>();
+  auto gather_map            = cuda::device_buffer<size_type>(
+    stream, cudf::get_current_device_resource_ref(), num_unique_keys, cuda::no_init);
+  auto const idx_data = key_sort_order(stream).data<size_type>();
   thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                     group_offsets(stream).begin(),
                     group_offsets(stream).begin() + num_unique_keys,

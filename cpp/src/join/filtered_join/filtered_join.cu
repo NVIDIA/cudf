@@ -16,6 +16,7 @@
 #include <cudf/null_mask.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
 #include <rmm/device_uvector.hpp>
@@ -24,6 +25,7 @@
 #include <rmm/resource_ref.hpp>
 
 #include <cuco/extent.cuh>
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/stream>
 #include <thrust/copy.h>
@@ -39,8 +41,10 @@ namespace detail {
 /**
  * @brief Returns a validity mask for rows without nulls at any nested level, or null when unused.
  */
-std::pair<cuda::device_buffer<std::byte>, bitmask_type const*> make_filtered_join_row_bitmask(
-  table_view const& input, null_equality nulls_equal, cuda::stream_ref stream)
+std::pair<cuda::device_buffer<cudf::bitmask_type>, bitmask_type const*>
+make_filtered_join_row_bitmask(table_view const& input,
+                               null_equality nulls_equal,
+                               cuda::stream_ref stream)
 {
   if (nulls_equal == null_equality::EQUAL || !has_nested_nulls(input)) {
     return std::pair(cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream), nullptr);
@@ -54,7 +58,7 @@ std::pair<cuda::device_buffer<std::byte>, bitmask_type const*> make_filtered_joi
       cudf::detail::bitmask_and(
         table_view{nullable_columns}, stream, cudf::get_current_device_resource_ref())
         .first;
-    auto const row_bitmask_ptr = reinterpret_cast<cudf::bitmask_type const*>(row_bitmask.data());
+    auto const row_bitmask_ptr = row_bitmask.data();
     return std::pair(std::move(row_bitmask), row_bitmask_ptr);
   }
 
@@ -137,7 +141,7 @@ std::unique_ptr<rmm::device_uvector<cudf::size_type>> filtered_join::semi_anti_j
     return cudf::detail::row::equality::preprocessed_table::create(left, stream, temp_mr);
   }();
 
-  auto contains_map            = rmm::device_uvector<bool>(left.num_rows(), stream, temp_mr);
+  auto contains_map = cuda::device_buffer<bool>(stream, temp_mr, left.num_rows(), cuda::no_init);
   auto const contains_map_span = cudf::device_span<bool>{contains_map.data(), contains_map.size()};
   if (_right_mode == row_operator_mode::PRIMITIVE) {
     query_right_table_primitive(left, preprocessed_left, contains_map_span, stream);

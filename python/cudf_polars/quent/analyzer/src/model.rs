@@ -12,11 +12,11 @@ use quent_analyzer::{
     },
     resource::{Usage, Using},
 };
-use quent_dynamic_attributes::{DynamicAttributes, DynamicValue};
+use quent_dynamic_attributes::{DynamicAttribute, DynamicAttributes, DynamicValue};
 use quent_events::Event;
 use quent_query_engine_analyzer::{
     EngineEntity, OperatorEntity, OperatorEntityMut, PlanEntity, PortEntity, QueryEngineModel,
-    QueryEngineModelMut, QueryEntity, QueryGroupEntity, WorkerEntity, plan_tree::PlanTree,
+    QueryEngineModelMut, QueryEntity, WorkerEntity, plan_tree::PlanTree,
 };
 use quent_query_engine_ui::{self as ui, EntityRef};
 use quent_time::{TimeUnixNanoSec, Timestamp, span::SpanUnixNanoSec, try_to_secs_relative};
@@ -24,7 +24,7 @@ use uuid::Uuid;
 
 use crate::generated::{
     EngineEvent, OperatorEvent, OperatorStatistics, PlanEvent, PortEvent, QueryEvent,
-    QueryGroupEvent, WorkerEvent,
+    QueryGroupEvent, RuntimePrefilterStatistics, WorkerEvent,
 };
 
 macro_rules! entity_impl {
@@ -87,6 +87,7 @@ impl EngineEntity for Engine {
                 .then(|| try_to_secs_relative(self.latest_timestamp(), start))
                 .transpose()?,
             instance_name: data.instance_name.clone(),
+            custom_attributes: Vec::new(),
             implementation: data.implementation.as_ref().map(|implementation| {
                 ui::EngineImplementationAttributes {
                     name: Some(implementation.name.clone()),
@@ -163,14 +164,9 @@ impl EntityEventAccumulator for QueryGroupData {
 pub struct QueryGroup(AnalyzedEntity<QueryGroupData>);
 entity_impl!(QueryGroup);
 
-impl QueryGroupEntity for QueryGroup {
-    fn to_ui(&self) -> ui::QueryGroup {
-        let data = self.0.accumulator();
-        ui::QueryGroup {
-            id: self.id(),
-            instance_name: data.instance_name.clone(),
-            engine_id: data.engine_id,
-        }
+impl QueryGroup {
+    fn instance_name(&self) -> Option<&str> {
+        self.0.accumulator().instance_name.as_deref()
     }
 }
 
@@ -218,11 +214,14 @@ impl TransitionEvent for QueryEvent {
 type QueryBuilder = AnalyzedFsmBuilder<QueryEvent>;
 
 #[derive(Debug)]
-pub struct Query(AnalyzedFsm<QueryEvent>);
+pub struct Query {
+    fsm: AnalyzedFsm<QueryEvent>,
+    query_group_name: Option<String>,
+}
 
 impl Query {
     fn query_group_id_inner(&self) -> Option<Uuid> {
-        match &self.0.transition(0)?.data {
+        match &self.fsm.transition(0)?.data {
             QueryEvent::Initialized { query_group, .. } => Some(query_group.target),
             _ => None,
         }
@@ -231,16 +230,16 @@ impl Query {
 
 impl Entity for Query {
     fn id(&self) -> Uuid {
-        self.0.id()
+        self.fsm.id()
     }
     fn type_name(&self) -> &str {
-        self.0.type_name()
+        self.fsm.type_name()
     }
     fn earliest_timestamp(&self) -> TimeUnixNanoSec {
-        self.0.earliest_timestamp()
+        self.fsm.earliest_timestamp()
     }
     fn latest_timestamp(&self) -> TimeUnixNanoSec {
-        self.0.latest_timestamp()
+        self.fsm.latest_timestamp()
     }
 }
 
@@ -248,33 +247,29 @@ impl Fsm for Query {
     type TransitionType = AnalyzedTransition<QueryEvent>;
 
     fn len(&self) -> usize {
-        self.0.len()
+        self.fsm.len()
     }
 
     fn transition(&self, index: usize) -> Option<&Self::TransitionType> {
-        self.0.transition(index)
+        self.fsm.transition(index)
     }
 }
 
 impl<'a> FsmUsages<'a> for Query {
     fn usages_with_state_names(&'a self) -> impl Iterator<Item = (&'a str, impl Usage<'a>)> {
-        self.0.usages_with_state_names()
+        self.fsm.usages_with_state_names()
     }
 }
 
 impl Using for Query {
     fn usages(&self) -> impl Iterator<Item = impl Usage<'_>> {
-        self.0.usages()
+        self.fsm.usages()
     }
 }
 
 impl QueryEntity for Query {
-    fn query_group_id(&self) -> Option<Uuid> {
-        self.query_group_id_inner()
-    }
-
     fn to_ui(&self) -> AnalyzerResult<ui::Query> {
-        let transitions = self.0.transitions();
+        let transitions = self.fsm.transitions();
         let epoch = transitions.first().map(Timestamp::timestamp);
         let mut planning_s = None;
         let mut executing_s = None;
@@ -297,13 +292,18 @@ impl QueryEntity for Query {
         }
         Ok(ui::Query {
             id: self.id(),
-            query_group_id: self.query_group_id_inner().unwrap_or_default(),
             instance_name: transitions
                 .first()
                 .and_then(|transition| match &transition.data {
                     QueryEvent::Initialized { instance_name, .. } => Some(instance_name.clone()),
                     _ => None,
                 }),
+            custom_attributes: self
+                .query_group_name
+                .as_ref()
+                .map(|name| DynamicAttribute::string("query_group", name))
+                .into_iter()
+                .collect(),
             start_unix_ns: epoch,
             planning_s,
             executing_s,
@@ -389,6 +389,13 @@ struct OperatorData {
     type_name: Option<String>,
     custom_attributes: DynamicAttributes,
     statistics: Option<OperatorStatistics>,
+    runtime_prefilter_statistics: Vec<RuntimePrefilterData>,
+}
+
+#[derive(serde::Serialize)]
+struct RuntimePrefilterData {
+    actor_id: Uuid,
+    values: RuntimePrefilterStatistics,
 }
 
 impl OperatorData {
@@ -410,6 +417,7 @@ impl EntityEventAccumulator for OperatorData {
                 instance_name,
                 type_name,
                 node_id,
+                schemas,
             } => {
                 self.plan_id = Some(plan.target);
                 self.parent_operator_ids = parent_operators
@@ -419,6 +427,8 @@ impl EntityEventAccumulator for OperatorData {
                 self.instance_name = Some(instance_name);
                 self.type_name = Some(type_name);
                 self.custom_attributes.add("node_id", node_id);
+                self.add_serialized_attribute("input_schemas", &schemas.input_schemas);
+                self.add_serialized_attribute("output_schema", &schemas.output_schema);
             }
             OperatorEvent::Statistics { values } => self.statistics = Some(values),
             OperatorEvent::ScanDetails { values } => {
@@ -429,6 +439,9 @@ impl EntityEventAccumulator for OperatorData {
             }
             OperatorEvent::JoinDetails { values } => {
                 self.add_serialized_attribute("join_details", &values);
+            }
+            OperatorEvent::JoinFilterPushdownDetails { values } => {
+                self.add_serialized_attribute("join_filter_pushdown_details", &values);
             }
             OperatorEvent::JoinWithPrefilterDetails { values } => {
                 self.add_serialized_attribute("join_with_prefilter_details", &values);
@@ -454,41 +467,41 @@ impl EntityEventAccumulator for OperatorData {
             OperatorEvent::HstackDetails { values } => {
                 self.add_serialized_attribute("hstack_details", &values);
             }
+            OperatorEvent::RuntimePrefilterStatistics { actor, values } => {
+                self.runtime_prefilter_statistics
+                    .push(RuntimePrefilterData {
+                        actor_id: actor.target,
+                        values,
+                    });
+            }
         }
     }
 }
 
 fn to_ui_operator_statistics(statistics: &OperatorStatistics) -> ui::OperatorStatistics {
-    let statistic = |value: DynamicValue, quantity: Option<&str>| ui::OperatorStatistic {
-        value: Some(value),
-        quantity: quantity.map(str::to_owned),
-    };
-    let mut custom_statistics = HashMap::from([
-        (
-            "input_bytes".to_owned(),
-            statistic(statistics.input_bytes.into(), Some("bytes")),
+    let statistic =
+        |key: &str, value: DynamicValue, quantity: Option<&str>| ui::OperatorStatistic {
+            value: DynamicAttribute {
+                key: key.to_owned(),
+                value: Some(value),
+            },
+            quantity: quantity.map(str::to_owned),
+        };
+    let mut custom_statistics = vec![
+        statistic("input_bytes", statistics.input_bytes.into(), Some("bytes")),
+        statistic(
+            "output_bytes",
+            statistics.output_bytes.into(),
+            Some("bytes"),
         ),
-        (
-            "output_bytes".to_owned(),
-            statistic(statistics.output_bytes.into(), Some("bytes")),
-        ),
-        (
-            "chunk_count".to_owned(),
-            statistic(statistics.chunk_count.into(), None),
-        ),
-        (
-            "duplicated".to_owned(),
-            statistic(statistics.duplicated.into(), None),
-        ),
-    ]);
+        statistic("chunk_count", statistics.chunk_count.into(), None),
+        statistic("duplicated", statistics.duplicated.into(), None),
+    ];
     if let Some(value) = statistics.output_rows {
-        custom_statistics.insert("output_rows".to_owned(), statistic(value.into(), None));
+        custom_statistics.push(statistic("output_rows", value.into(), None));
     }
     if let Some(value) = &statistics.decision {
-        custom_statistics.insert(
-            "decision".to_owned(),
-            statistic(value.as_str().into(), None),
-        );
+        custom_statistics.push(statistic("decision", value.as_str().into(), None));
     }
     ui::OperatorStatistics { custom_statistics }
 }
@@ -533,17 +546,22 @@ impl OperatorEntity for Operator {
     }
     fn to_ui(&self, epoch: TimeUnixNanoSec) -> ui::Operator {
         let data = self.entity.accumulator();
+        let mut custom_attributes = data.custom_attributes.0.clone();
+        if !data.runtime_prefilter_statistics.is_empty()
+            && let Ok(value) = serde_json::to_string(&data.runtime_prefilter_statistics)
+        {
+            custom_attributes.push(DynamicAttribute::string(
+                "runtime_prefilter_statistics",
+                value,
+            ));
+        }
         ui::Operator {
             id: self.id(),
             plan_id: data.plan_id,
             parent_operator_ids: data.parent_operator_ids.clone(),
             instance_name: data.instance_name.clone(),
             operator_type_name: data.type_name.clone(),
-            custom_attributes: data
-                .custom_attributes
-                .iter()
-                .map(|attribute| (attribute.key.clone(), attribute.value.clone()))
-                .collect(),
+            custom_attributes,
             statistics: data.statistics.as_ref().map(to_ui_operator_statistics),
             active_span: self
                 .active_span
@@ -601,7 +619,6 @@ impl PortEntity for Port {
 pub struct CudfPolarsModel {
     engine: Engine,
     workers: HashMap<Uuid, Worker>,
-    query_groups: HashMap<Uuid, QueryGroup>,
     queries: HashMap<Uuid, Query>,
     plans: HashMap<Uuid, Plan>,
     operators: HashMap<Uuid, Operator>,
@@ -616,8 +633,6 @@ impl Model for CudfPolarsModel {
             Ok(EntityRef::Engine(id))
         } else if self.workers.contains_key(&id) {
             Ok(EntityRef::Worker(id))
-        } else if self.query_groups.contains_key(&id) {
-            Ok(EntityRef::QueryGroup(id))
         } else if self.queries.contains_key(&id) {
             Ok(EntityRef::Query(id))
         } else if self.plans.contains_key(&id) {
@@ -635,7 +650,6 @@ impl Model for CudfPolarsModel {
 impl QueryEngineModel for CudfPolarsModel {
     type Engine = Engine;
     type Query = Query;
-    type QueryGroup = QueryGroup;
     type Worker = Worker;
     type Plan = Plan;
     type Operator = Operator;
@@ -646,11 +660,6 @@ impl QueryEngineModel for CudfPolarsModel {
     }
     fn query(&self, id: Uuid) -> AnalyzerResult<&Query> {
         self.queries.get(&id).ok_or(AnalyzerError::InvalidId(id))
-    }
-    fn query_group(&self, id: Uuid) -> AnalyzerResult<&QueryGroup> {
-        self.query_groups
-            .get(&id)
-            .ok_or(AnalyzerError::InvalidId(id))
     }
     fn worker(&self, id: Uuid) -> AnalyzerResult<&Worker> {
         self.workers.get(&id).ok_or(AnalyzerError::InvalidId(id))
@@ -666,9 +675,6 @@ impl QueryEngineModel for CudfPolarsModel {
     }
     fn queries(&self) -> impl Iterator<Item = &Query> {
         self.queries.values()
-    }
-    fn query_groups(&self) -> impl Iterator<Item = &QueryGroup> {
-        self.query_groups.values()
     }
     fn workers(&self) -> impl Iterator<Item = &Worker> {
         self.workers.values()
@@ -698,7 +704,6 @@ impl QueryEngineModelMut for CudfPolarsModel {
 pub struct QueryView<'a> {
     engine: &'a Engine,
     query: &'a Query,
-    group: &'a QueryGroup,
     workers: HashMap<Uuid, &'a Worker>,
     plans: HashMap<Uuid, &'a Plan>,
     operators: HashMap<Uuid, &'a Operator>,
@@ -708,7 +713,6 @@ pub struct QueryView<'a> {
 impl CudfPolarsModel {
     pub fn query_view(&self, query_id: Uuid) -> AnalyzerResult<QueryView<'_>> {
         let query = self.query(query_id)?;
-        let group = self.query_group(query.query_group_id().unwrap_or_default())?;
         let plans: HashMap<_, _> = self
             .query_plans(query_id)?
             .map(|plan| (plan.id(), plan))
@@ -729,7 +733,6 @@ impl CudfPolarsModel {
         Ok(QueryView {
             engine: &self.engine,
             query,
-            group,
             workers,
             plans,
             operators,
@@ -745,8 +748,6 @@ impl Model for QueryView<'_> {
             Ok(EntityRef::Engine(id))
         } else if self.query.id() == id {
             Ok(EntityRef::Query(id))
-        } else if self.group.id() == id {
-            Ok(EntityRef::QueryGroup(id))
         } else if self.workers.contains_key(&id) {
             Ok(EntityRef::Worker(id))
         } else if self.plans.contains_key(&id) {
@@ -764,7 +765,6 @@ impl Model for QueryView<'_> {
 impl QueryEngineModel for QueryView<'_> {
     type Engine = Engine;
     type Query = Query;
-    type QueryGroup = QueryGroup;
     type Worker = Worker;
     type Plan = Plan;
     type Operator = Operator;
@@ -776,11 +776,6 @@ impl QueryEngineModel for QueryView<'_> {
     fn query(&self, id: Uuid) -> AnalyzerResult<&Query> {
         (self.query.id() == id)
             .then_some(self.query)
-            .ok_or(AnalyzerError::InvalidId(id))
-    }
-    fn query_group(&self, id: Uuid) -> AnalyzerResult<&QueryGroup> {
-        (self.group.id() == id)
-            .then_some(self.group)
             .ok_or(AnalyzerError::InvalidId(id))
     }
     fn worker(&self, id: Uuid) -> AnalyzerResult<&Worker> {
@@ -809,9 +804,6 @@ impl QueryEngineModel for QueryView<'_> {
     }
     fn queries(&self) -> impl Iterator<Item = &Query> {
         std::iter::once(self.query)
-    }
-    fn query_groups(&self) -> impl Iterator<Item = &QueryGroup> {
-        std::iter::once(self.group)
     }
     fn workers(&self) -> impl Iterator<Item = &Worker> {
         self.workers.values().copied()
@@ -940,16 +932,35 @@ impl CudfPolarsModelBuilder {
     }
 
     pub fn try_build(self) -> AnalyzerResult<CudfPolarsModel> {
+        let groups = self.groups;
         Ok(CudfPolarsModel {
             engine: self.engine.ok_or_else(|| {
                 AnalyzerError::IncompleteEntity(format!("engine {} has no events", self.engine_id))
             })?,
             workers: self.workers,
-            query_groups: self.groups,
             queries: self
                 .queries
                 .into_iter()
-                .map(|(id, builder)| builder.try_build().map(Query).map(|query| (id, query)))
+                .map(|(id, builder)| {
+                    builder.try_build().map(|fsm| {
+                        let query = Query {
+                            fsm,
+                            query_group_name: None,
+                        };
+                        let query_group_name = query
+                            .query_group_id_inner()
+                            .and_then(|group_id| groups.get(&group_id))
+                            .and_then(QueryGroup::instance_name)
+                            .map(str::to_owned);
+                        (
+                            id,
+                            Query {
+                                query_group_name,
+                                ..query
+                            },
+                        )
+                    })
+                })
                 .collect::<AnalyzerResult<_>>()?,
             plans: self.plans,
             operators: self.operators,

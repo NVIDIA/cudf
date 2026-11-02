@@ -13,9 +13,11 @@ import pyarrow.parquet as pq
 import pytest
 from pyarrow.parquet import read_table, write_table
 from utils import (
+    BLOOM_FILTER_OPTIONS,
     assert_table_and_meta_eq,
     get_bytes_from_source,
     make_source,
+    requires_pyarrow_bloom_filters,
     synchronize_stream,
 )
 
@@ -190,6 +192,42 @@ def test_read_parquet_filters_metadata(tmp_path, if_prune_rowgroup, result):
     assert plc_table_w_meta.num_row_groups_after_stats_filter == result
 
 
+@pytest.mark.parametrize("chunked", [True, False])
+@pytest.mark.parametrize("use_builder", [True, False])
+def test_read_parquet_filter_outlives_expression_reference(
+    tmp_path, use_builder, chunked
+):
+    tbl = pa.Table.from_pydict({"a": list(range(10))})
+    path = tmp_path / "tbl.parquet"
+    write_table(tbl, path)
+
+    def make_filter():
+        return Operation(
+            ASTOperator.GREATER_EQUAL,
+            ColumnNameReference("a"),
+            Literal(plc.Scalar.from_arrow(pa.scalar(5))),
+        )
+
+    builder = plc.io.parquet.ParquetReaderOptions.builder(
+        plc.io.SourceInfo([path])
+    )
+    # The filter is a temporary, so only pylibcudf objects can keep it alive
+    if use_builder:
+        options = builder.filter(make_filter()).build()
+    else:
+        options = builder.build()
+        options.set_filter(make_filter())
+    del builder
+
+    if chunked:
+        reader = plc.io.parquet.ChunkedParquetReader(options)
+        del options
+        result = reader.read_chunk()
+    else:
+        result = plc.io.parquet.read_parquet(options)
+    assert_table_and_meta_eq(tbl.filter(pc.field("a") >= 5), result)
+
+
 @pytest.mark.parametrize(
     "pa_filters,plc_filters",
     [
@@ -261,15 +299,6 @@ def _read_parquet_equal_to(path, column, value, and_expr=None):
         expr = Operation(ASTOperator.LOGICAL_AND, expr, and_expr)
     options.set_filter(expr)
     return plc.io.parquet.read_parquet(options)
-
-
-requires_pyarrow_bloom_filters = pytest.mark.skipif(
-    int(pa.__version__.split(".", 1)[0]) < 24,
-    reason="pyarrow writes Parquet bloom filters from 24.0",
-)
-
-# Sized so that absent values are practically never false positives
-_BLOOM_FILTER = {"ndv": 1000, "fpp": 0.0001}
 
 
 # The default 28-digit context would round 38-digit decimals
@@ -368,7 +397,7 @@ def test_read_parquet_bloom_filter_physical_types(
         ),
         path,
         row_group_size=len(evens),
-        bloom_filter_options={"c": _BLOOM_FILTER},
+        bloom_filter_options={"c": BLOOM_FILTER_OPTIONS},
         **write_kwargs,
     )
 
@@ -401,7 +430,7 @@ def test_read_parquet_bloom_filter_decimal_scale_mismatch(tmp_path):
         pa.table({"c": pa.array(with_five + evens, pa.decimal128(5, 2))}),
         path,
         row_group_size=len(evens),
-        bloom_filter_options={"c": _BLOOM_FILTER},
+        bloom_filter_options={"c": BLOOM_FILTER_OPTIONS},
     )
 
     for value, num_rows in [(5, 20), (7, 0)]:
@@ -426,7 +455,7 @@ def test_read_parquet_bloom_filter_signed_zero(
         pa.table({"c": pa.array(with_zero + odds, arrow_type)}),
         path,
         row_group_size=len(odds),
-        bloom_filter_options={"c": _BLOOM_FILTER},
+        bloom_filter_options={"c": BLOOM_FILTER_OPTIONS},
     )
 
     result = _read_parquet_equal_to(path, "c", pa.scalar(literal, arrow_type))
@@ -1690,6 +1719,76 @@ def test_read_parquet_prepend_source_index_column_with_filter(
     )
     assert_table_and_meta_eq(
         expect,
+        plc.io.parquet.read_parquet(options),
+        check_field_nullability=False,
+    )
+
+
+@pytest.mark.parametrize("use_builder", [True, False])
+def test_read_parquet_output_dict_columns(tmp_path, use_builder):
+    path = tmp_path / "strings.parquet"
+    pq.write_table(
+        pa.table({"a": ["x", None, "y", "x"], "b": [1, 2, 3, 4]}), path
+    )
+    builder = plc.io.parquet.ParquetReaderOptions.builder(
+        plc.io.SourceInfo([str(path)])
+    )
+    if use_builder:
+        options = builder.output_dict_columns(True).build()
+    else:
+        options = builder.build()
+        options.enable_output_dict_columns(True)
+
+    result = plc.io.parquet.read_parquet(options)
+
+    assert options.is_enabled_output_dict_columns()
+    strings, ints = result.tbl.columns()
+    assert strings.type().id() == plc.TypeId.DICTIONARY32
+    assert ints.type().id() == plc.TypeId.INT64
+    assert strings.to_arrow().dictionary_decode().to_pylist() == [
+        "x",
+        None,
+        "y",
+        "x",
+    ]
+
+
+@pytest.mark.parametrize(
+    "decimal_width,pa_decimal",
+    [
+        (plc.TypeId.DECIMAL64, pa.decimal64(18, 2)),
+        (plc.TypeId.DECIMAL128, pa.decimal128(38, 2)),
+    ],
+)
+def test_read_parquet_nested_decimal_width(
+    tmp_path, decimal_width, pa_decimal
+):
+    def make_table(dec):
+        values = [decimal.Decimal("1.00"), None, decimal.Decimal("3.00")]
+        structs = [{"a": v} for v in values]
+        struct_type = pa.struct([("a", dec)])
+        return pa.table(
+            {
+                "list": pa.array([values, [], values], pa.list_(dec)),
+                "struct": pa.array(structs, struct_type),
+                "list_struct": pa.array(
+                    [structs, [], structs], pa.list_(struct_type)
+                ),
+            }
+        )
+
+    # Precision 5 decimals are read as DECIMAL32 unless cast
+    path = tmp_path / "cast_decimals.parquet"
+    write_table(make_table(pa.decimal128(5, 2)), path)
+    options = (
+        plc.io.parquet.ParquetReaderOptions.builder(
+            plc.io.SourceInfo([str(path)])
+        )
+        .decimal_width(decimal_width)
+        .build()
+    )
+    assert_table_and_meta_eq(
+        make_table(pa_decimal),
         plc.io.parquet.read_parquet(options),
         check_field_nullability=False,
     )

@@ -50,11 +50,11 @@ memory_resource_test_harness::memory_resource_test_harness(rmm::device_async_res
   : _setup_mr{upstream},
     _output_mr{upstream},
     _temporary_mr{upstream},
-    _failing_mr{[](std::size_t, cuda::stream_ref, void*) -> void* {
+    _failing_mr{[](cuda::stream_ref, std::size_t, std::size_t, void*) -> void* {
                   print_allocation_stacktrace();
                   throw rmm::bad_alloc{"Unexpected allocation from the current device resource"};
                 },
-                [](void*, std::size_t, cuda::stream_ref, void*) {}}
+                [](cuda::stream_ref, void*, std::size_t, std::size_t, void*) {}}
 {
 }
 

@@ -14,6 +14,8 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 
+#include <cuda/std/type_traits>
+
 #include <limits>
 #include <type_traits>
 #include <vector>
@@ -97,7 +99,7 @@ TYPED_TEST(StableSort, SingleColumnNoNull)
   auto expected =
     std::is_same_v<T, bool>
       ? cudf::test::fixed_width_column_wrapper<int32_t>{{8, 5, 0, 1, 2, 3, 4, 6, 7, 9}}
-    : std::is_unsigned_v<T>
+    : cuda::std::is_unsigned_v<T>
       ? cudf::test::fixed_width_column_wrapper<int32_t>{{5, 8, 1, 4, 6, 3, 9, 0, 2, 7}}
       : cudf::test::fixed_width_column_wrapper<int32_t>{{2, 7, 5, 8, 1, 4, 6, 3, 9, 0}};
   run_stable_sort_test(input, expected, column_order, {}, false);
@@ -116,7 +118,7 @@ TYPED_TEST(StableSort, SingleColumnWithNull)
   auto expected =
     std::is_same_v<T, bool>
       ? cudf::test::fixed_width_column_wrapper<int32_t>{{5, 2, 3, 7, 9, 8, 0, 1, 4, 6}}
-    : std::is_unsigned_v<T>
+    : cuda::std::is_unsigned_v<T>
       ? cudf::test::fixed_width_column_wrapper<int32_t>{{5, 3, 9, 2, 7, 8, 1, 4, 6, 0}}
       : cudf::test::fixed_width_column_wrapper<int32_t>{{2, 7, 5, 3, 9, 8, 1, 4, 6, 0}};
   run_stable_sort_test(input, expected, column_order, {}, false);

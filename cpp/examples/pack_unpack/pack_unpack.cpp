@@ -15,12 +15,10 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_device.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
-#include <rmm/mr/cuda_memory_resource.hpp>
+#include <rmm/mr/cuda_async_memory_resource.hpp>
 #include <rmm/mr/pinned_host_memory_resource.hpp>
-#include <rmm/mr/pool_memory_resource.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -160,9 +158,7 @@ int main(int argc, char** argv)
 {
   std::string const mode = argc > 1 ? argv[1] : "device";
 
-  // A device memory pool speeds up the small allocations used to build the table.
-  rmm::mr::cuda_memory_resource cuda_mr{};
-  rmm::mr::pool_memory_resource mr{cuda_mr, rmm::percent_of_free_device_memory(50)};
+  rmm::mr::cuda_async_memory_resource mr{};
   cudf::set_current_device_resource(mr);
 
   auto input_table = make_table(5, 2);

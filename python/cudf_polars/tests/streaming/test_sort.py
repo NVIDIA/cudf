@@ -19,7 +19,7 @@ from cudf_polars.containers import DataFrame, DataType
 from cudf_polars.dsl.ir import Empty, IRExecutionContext
 from cudf_polars.engine.options import StreamingOptions
 from cudf_polars.streaming.actor_graph.collectives.common import reserve_op_id
-from cudf_polars.streaming.actor_graph.collectives.sort import (
+from cudf_polars.streaming.actor_graph.collectives.ordering import (
     extract_orderscheme_partitioning,
 )
 from cudf_polars.streaming.actor_graph.utils import gather_in_task_group

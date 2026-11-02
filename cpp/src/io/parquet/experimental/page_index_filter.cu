@@ -390,7 +390,7 @@ thrust::host_vector<bool> aggregate_reader_metadata::compute_data_page_mask(
     auto constexpr max_tasks         = 2;
     using task_page_row_offsets_type = std::vector<std::pair<std::vector<size_type>, size_type>>;
     auto const cols_per_thread =
-      cudf::util::div_rounding_up_safe<std::size_t>(num_columns, max_tasks);
+      cudf::detail::div_rounding_up_safe<std::size_t>(num_columns, max_tasks);
     std::vector<std::future<task_page_row_offsets_type>> page_row_offset_tasks{};
     cudf::detail::futures_wait_guard page_row_offset_tasks_guard{page_row_offset_tasks};
     page_row_offset_tasks.reserve(max_tasks);

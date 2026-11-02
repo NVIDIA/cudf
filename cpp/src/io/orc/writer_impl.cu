@@ -32,7 +32,6 @@
 
 #include <rmm/aligned.hpp>
 #include <rmm/device_buffer.hpp>
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
 
@@ -2479,8 +2478,8 @@ stripe_dictionaries build_dictionaries(orc_table_view& orc_table,
         string_rows_less{orc_table.d_columns, sd.column_idx});
 
       // Create the inverse permutation - i.e. the mapping from the original order to the sorted
-      auto order_copy = cudf::detail::make_device_uvector_async<uint32_t>(
-        sd.data_order, current_stream, cudf::get_current_device_resource_ref());
+      auto order_copy = cuda::device_buffer<uint32_t>(
+        current_stream, cudf::get_current_device_resource_ref(), sd.data_order);
       thrust::scatter(
         rmm::exec_policy_nosync(current_stream, cudf::get_current_device_resource_ref()),
         cuda::counting_iterator<uint32_t>{0},

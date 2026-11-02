@@ -16,6 +16,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_segmented_reduce.cuh>
+#include <cuda/buffer>
 #include <cuda/execution>
 #include <cuda/iterator>
 #include <cuda/std/execution>
@@ -130,8 +131,10 @@ void segmented_reduce(InputIterator d_in,
   auto const initial_value = op.template get_identity<IntermediateType>();
   auto const binary_op     = cudf::detail::cast_functor<IntermediateType>(op.get_binary_op());
 
-  rmm::device_uvector<IntermediateType> intermediate_result{static_cast<std::size_t>(num_segments),
-                                                            stream};
+  cuda::device_buffer<IntermediateType> intermediate_result{stream,
+                                                            cudf::get_current_device_resource_ref(),
+                                                            static_cast<std::size_t>(num_segments),
+                                                            cuda::no_init};
 
   auto const env = [&] {
     if constexpr (std::is_same_v<Op, op::variance> || std::is_same_v<Op, op::standard_deviation>) {

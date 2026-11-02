@@ -25,11 +25,12 @@ from cudf_polars.containers import DataType
 from cudf_polars.containers.datatype import _contains_dtype
 from cudf_polars.dsl import expr, ir
 from cudf_polars.dsl.expressions.base import ExecutionContext
-from cudf_polars.dsl.to_ast import insert_colrefs
+from cudf_polars.dsl.to_ast import insert_colrefs, split_join_predicate
 from cudf_polars.dsl.traversal import traversal
 from cudf_polars.dsl.utils.aggregations import decompose_single_agg
 from cudf_polars.dsl.utils.groupby import rewrite_groupby
 from cudf_polars.dsl.utils.groupby_dynamic import rewrite_groupby_dynamic
+from cudf_polars.dsl.utils.lake import LakehouseScanOptions
 from cudf_polars.dsl.utils.naming import unique_names
 from cudf_polars.dsl.utils.per_path import PerPathValues
 from cudf_polars.dsl.utils.replace import replace
@@ -96,18 +97,6 @@ def _contains_categorical_key(keys: Sequence[expr.NamedExpr]) -> bool:
         _contains_dtype(k.value.dtype.polars_type, (pl.Categorical, pl.Enum))
         for k in keys
     )
-
-
-def _supports_categorical(config_options: config.ConfigOptions) -> bool:
-    # TODO: Support multi-rank execution of Categorical columns.
-    executor = config_options.executor
-    if executor.name == "in-memory":
-        return True
-    if executor.ray_context is not None or executor.dask_context is not None:
-        return False
-    if executor.spmd_context is not None:
-        return executor.spmd_context.comm.nranks == 1
-    return executor.cluster == config.Cluster.DEFAULT_SINGLETON
 
 
 def _strip_file_uri(path: str) -> str:
@@ -309,17 +298,6 @@ class Translator:
             ):
                 error = NotImplementedError(
                     f"No GPU support for {result} with Null column dtype."
-                )
-                self.errors.append(error)
-                return ir.ErrorNode(schema, str(error))
-            if not _supports_categorical(self.config_options) and any(
-                isinstance(dtype, pl.Categorical)
-                for dtype in pl.datatypes.unpack_dtypes(*polars_schema.values())
-            ):
-                error = NotImplementedError(
-                    "Categorical columns are only supported on the in-memory "
-                    "executor and single-rank streaming engines; use pl.Enum "
-                    "for multi-rank execution"
                 )
                 self.errors.append(error)
                 return ir.ErrorNode(schema, str(error))
@@ -632,23 +610,14 @@ def _(node: plrs._ir_nodes.Scan, translator: Translator, schema: Schema) -> ir.I
     with_columns = file_options.with_columns
     row_index = file_options.row_index
     include_file_paths = file_options.include_file_paths
-    deletion_files = file_options.deletion_files
-    if (
-        deletion_files
-        or file_options.column_mapping is not None
-        or file_options.default_values is not None
-    ):  # pragma: no cover
-        raise NotImplementedError(
-            "Iceberg format is not supported in cudf-polars. Furthermore, "
-            "row-level deletions, column mapping and default values are not supported."
-        )  # pragma: no cover
-    if file_options.missing_columns_policy != "raise":
-        raise NotImplementedError("Inserting missing columns is not supported.")
     hive_parts = (
         None
         if node.hive_parts is None
         else PerPathValues.from_polars(pl.DataFrame._from_pydf(node.hive_parts))
     )
+    lake_options = LakehouseScanOptions.from_file_options(file_options, node.paths)
+    if lake_options is not None:
+        lake_options.check_field_ids(paths)
     config_options = translator.config_options
     parquet_options = config_options.parquet_options
 
@@ -661,6 +630,10 @@ def _(node: plrs._ir_nodes.Scan, translator: Translator, schema: Schema) -> ir.I
         if (n_rows == 2**32 - 1) or (n_rows == 2**64 - 1):
             # Polars translates slice(10, None) -> (10, u32/64max)
             n_rows = -1
+        if lake_options is not None and lake_options.partition_errors:
+            raise NotImplementedError(
+                "Sliced Iceberg scan with partition values polars cannot supply"
+            )
 
     # TODO: Get compression info from Polars plan
     if typ in ("csv", "ndjson"):
@@ -698,6 +671,7 @@ def _(node: plrs._ir_nodes.Scan, translator: Translator, schema: Schema) -> ir.I
         parquet_options,
         hive_parts=hive_parts,
         cached_parquet_info=None,
+        lake_options=lake_options,
     )
 
 
@@ -815,6 +789,7 @@ def _(node: plrs._ir_nodes.Join, translator: Translator, schema: Schema) -> ir.I
             left_on,
             right_on,
             node.options,
+            None,
             inp_left,
             inp_right,
         )
@@ -898,10 +873,55 @@ def _translate_fused_predicate(
     Translate an equi join that Polars plans with an extra, fused predicate.
 
     The join type is ``(<how>, "fused_predicate")``, ``left_on`` and ``right_on`` are
-    the equality keys and ``node.predicate`` is the extra condition. Not supported
-    yet, so it falls back to the CPU.
+    the equality keys and ``node.predicate`` is the extra condition. For an inner
+    join the predicate is evaluated while matching rows, so rows it rejects are
+    never materialized.
     """
-    raise NotImplementedError(f"Unsupported join type {node.options[0]}")
+    how, nulls_equal, zlice, suffix, coalesce, maintain_order = node.options
+    if (
+        how[0] != "Inner"
+    ):  # pragma: no cover; polars only fuses a predicate into an inner join
+        raise NotImplementedError(f"Unsupported join type {how}")
+    if (
+        zlice is not None
+    ):  # pragma: no cover; polars does not push a slice into this join
+        raise NotImplementedError("Slice in a join with a fused predicate")
+    mask = translate_predicate(
+        translator,
+        n=node.predicate.node,
+        output_name=node.predicate.output_name,
+        schema=schema,
+    )
+    # polars does not put dynamic predicate hints in a join predicate
+    assert mask is not None
+    # The predicate is over the output schema, so find which input each
+    # column comes from. A right column that clashes with a left column
+    # is suffixed in the output.
+    columns: dict[str, tuple[plc.expressions.TableReference, str]] = {
+        (f"{name}{suffix}" if name in inp_left.schema else name): (
+            plc.expressions.TableReference.RIGHT,
+            name,
+        )
+        for name in inp_right.schema
+    }
+    columns |= {
+        name: (plc.expressions.TableReference.LEFT, name) for name in inp_left.schema
+    }
+    predicate = split_join_predicate(
+        mask.value,
+        columns=columns,
+        left_names=list(inp_left.schema),
+        right_names=list(inp_right.schema),
+    )
+    return ir.Join(
+        schema,
+        left_on,
+        right_on,
+        ("Inner", nulls_equal, None, suffix, coalesce, maintain_order),
+        predicate,
+        inp_left,
+        inp_right,
+    )
 
 
 @_translate_ir.register

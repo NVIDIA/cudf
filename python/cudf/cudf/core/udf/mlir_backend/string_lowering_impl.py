@@ -394,7 +394,8 @@ def lower_replace(
     Byte-level substring matching (equivalent to character matching for
     well-formed UTF-8). Two passes: count occurrences to size the result, then
     scan-and-copy emitting replacement or source bytes. An empty ``old`` inserts
-    ``new`` around every byte, matching libcudf's replace.
+    ``new`` before every character and at the end, matching Python's
+    ``str.replace`` (libcudf's ``replace`` rejects an empty target).
 
     Parameters
     ----------
@@ -456,7 +457,7 @@ def lower_replace(
         c_new_skip = arith.select(c_valid, arith.addi(ci, o_nb), c_skip)
         scf.YieldOp([c_new_count, c_new_skip])
 
-    # For an empty target, libcudf inserts ``new`` before each *character*
+    # For an empty target, Python inserts ``new`` before each *character*
     # (UTF-8 start byte) and once more at the end; counting bytes would split
     # multibyte characters and produce invalid UTF-8. Use the character count
     # (+1 for the trailing insertion) as the occurrence count in that case.
@@ -504,7 +505,7 @@ def lower_replace(
             b_match_valid, arith.cmpi(eq, target_empty, false_val)
         )
         # Empty target: insert ``new`` only before UTF-8 start bytes so
-        # multibyte characters are not split (matches libcudf).
+        # multibyte characters are not split (matches Python's str.replace).
         is_start_byte = _is_begin_utf8_char(_byte_at(s_data, si))
         write_repl = arith.ori(
             arith.andi(arith.andi(target_empty, active), is_start_byte),

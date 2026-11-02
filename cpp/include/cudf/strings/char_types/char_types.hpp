@@ -148,6 +148,18 @@ std::uint16_t const* get_character_cases_table(
  * call the table is copied into device memory and cached; subsequent calls return the
  * cached pointer. This call is thread-safe.
  *
+ * The pointer is returned as `void const*` because the entry type lives in a detail
+ * header. The layout is part of this public contract: it is an array of fixed
+ * 16-byte entries matching `cudf::strings::detail::special_case_mapping`, i.e. for a
+ * little-endian `uint16_t` view of an entry `e`:
+ *   - `e[0]`      : number of upper-case code points (0..3), at byte offset 0
+ *   - `e[1..3]`   : up to 3 upper-case code points,         at byte offset 2
+ *   - `e[4]`      : number of lower-case code points (0..3), at byte offset 8
+ *   - `e[5..7]`   : up to 3 lower-case code points,         at byte offset 10
+ * A code point is looked up at entry index `code_point % 499`
+ * (`cudf::strings::detail::get_special_case_hash_index`). Changing either the
+ * `special_case_mapping` layout or the hash prime is a change to this public API.
+ *
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @return Device memory pointer to the special-case mapping table
  */

@@ -1368,7 +1368,7 @@ def test_replace_empty_old():
     """``s.replace("", new)`` inserts ``new`` around each character.
 
     For multibyte sources the insertion must land on UTF-8 character
-    boundaries (start bytes) so the result stays valid UTF-8, matching libcudf.
+    boundaries (start bytes) so the result stays valid UTF-8, matching Python.
     """
     vals = ["abc", "h\u00e9llo", "\U0001f600x", "", "z"]
     expected = [v.replace("", "-") for v in vals]

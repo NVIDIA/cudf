@@ -382,7 +382,7 @@ std::unique_ptr<column> binary_operation(column_view const& lhs,
                                           {2, cudf::type_to_name(rhs.type())}});
 
   std::array<transform_input, 2> inputs{lhs, rhs};
-  std::array<transform_output, 1> outputs{{.type = output_type}};
+  std::array<transform_output, 1> outputs{transform_output{.type = output_type}};
 
   auto result = cudf::transform(cuda_source,
                                 udf_source_type::CUDA,

@@ -4,6 +4,7 @@
 """Temporary matched measurements; removed before the production matrix."""
 
 import os
+import socket
 import subprocess
 import sys
 import tempfile
@@ -11,7 +12,10 @@ from pathlib import Path
 
 tools = Path(__file__).resolve().parent
 test_dir = Path(os.environ["CONDA_PREFIX"]) / "bin/gtests/libcudf"
-output = Path(os.environ["RAPIDS_ARTIFACTS_DIR"]) / "libcudf-scheduling"
+output = Path(os.environ["RAPIDS_ARTIFACTS_DIR"]) / (
+    f"libcudf-scheduling-{os.environ.get('GITHUB_RUN_ID', 'local')}-"
+    f"{os.environ.get('GITHUB_RUN_ATTEMPT', '1')}-{socket.gethostname()}"
+)
 output.mkdir(parents=True, exist_ok=False)
 with tempfile.TemporaryDirectory(
     prefix="cudf-scheduling-metadata-"

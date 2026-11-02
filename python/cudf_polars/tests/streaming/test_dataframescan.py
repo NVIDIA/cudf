@@ -137,9 +137,10 @@ def test_dataframescan_fanout_self_join(df, streaming_engine_factory):
 def test_dataframescan_fanout_bounded(df, spmd_engine_factory, monkeypatch):
     # Horizontal concat of two pointwise transforms of one scan. No Join,
     # Union, Over or broadcast consumes the scan, so its fanout is bounded.
-    # Uses the in-process SPMD engine so the spy sees the planning call.
+    # Uses the in-process SPMD engine so the spy sees the planning call, and a
+    # single partition because HConcat falls back for multiple partitions.
     streaming_engine = spmd_engine_factory(
-        StreamingOptions(max_rows_per_partition=1_000),
+        StreamingOptions(max_rows_per_partition=10_000),
     )
     seen = []
     orig = core.determine_fanout_nodes

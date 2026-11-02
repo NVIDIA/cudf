@@ -902,13 +902,11 @@ sampled_map_locality enqueue_map_locality_sample(column_view const& gather_map,
   return sampled_map_locality{std::move(staging), gather_map.type().id(), elem_size};
 }
 
-// Synchronizes the stream (the sample copies plus whatever was enqueued before them — never a
-// kernel of ours) and classifies the staged windows.
-size_type resolve_map_locality_tile_cols(sampled_map_locality const& sampled,
-                                         cuda::stream_ref stream)
+// Classifies the staged windows. Requires the stream to already be synchronized: the caller's
+// pre-launch synchronization doubles as the sample resolve.
+size_type classify_map_locality(sampled_map_locality const& sampled)
 {
   if (sampled.staging.empty()) { return kRandomTileCols; }
-  cudf::detail::sync_stream(stream);
   auto const elem_size    = sampled.elem_size;
   auto const read_element = [&](std::byte const* p) -> int64_t {
     switch (sampled.map_type) {
@@ -1000,6 +998,16 @@ size_type resolve_map_locality_tile_cols(sampled_map_locality const& sampled,
   return kCoalescedTileCols;
 }
 
+// Standalone resolve for callers that need the tile width before the launch body: synchronize
+// the stream (the sample copies plus whatever was enqueued before them — never a kernel of
+// ours) and classify the staged windows.
+size_type resolve_map_locality_tile_cols(sampled_map_locality const& sampled,
+                                         cuda::stream_ref stream)
+{
+  cudf::detail::sync_stream(stream);
+  return classify_map_locality(sampled);
+}
+
 // Tile width for regimes where sampling is skipped; nullopt means "sample the map". Zero/one
 // fused columns keep K1; otherwise the unsampled choice is K2 while the two-column working set
 // plus the map fit half of L2 (a failed L2 query reports 0 bytes and takes the safe K1).
@@ -1045,7 +1053,8 @@ size_type select_gather_map_tile_cols(table_view const& source_table,
 }
 
 // Shared body of the routed and explicit entry points; the routed entry enqueues the sampler
-// before its allocation work and leaves the tile width unresolved until just before the launch.
+// before its allocation work and leaves the tile width unresolved until the body's pre-launch
+// synchronization.
 // `explicit_tile_cols` nullopt means "resolve from the sample"; block_size must be one of
 // {128, 256, 512} and applies to every kernel instantiation this body can launch.
 std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
@@ -1067,8 +1076,9 @@ std::unique_ptr<table> batch_gather(table_view const& source_table,
                                     memory_resources mr)
 {
   // Routed entry: one host-side type pass gathers the fused-column count and the widest fused
-  // element for the gate; when sampling is warranted it is ENQUEUED here and RESOLVED inside
-  // the body just before the kernel launch, hiding its latency behind the allocation work.
+  // element for the gate; when sampling is warranted its copies are ENQUEUED here and RESOLVED
+  // inside the body after the destination allocations, so they hide behind that work and the
+  // body's single pre-launch synchronization.
   size_type num_fused_cols      = 0;
   size_type max_fused_elem_size = 0;
   for (size_type i = 0; i < source_table.num_columns(); ++i) {
@@ -1396,6 +1406,12 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
   }
 
   if (not descriptors.empty() and num_rows > 0) {
+    // THE single pre-launch synchronization: it resolves the enqueued locality sample (when the
+    // routed entry took one) and drains the stream, which is also what makes the pinned staging
+    // below safe to write from the host.
+    cudf::detail::sync_stream(stream);
+    auto const effective_tile_cols =
+      explicit_tile_cols.has_value() ? *explicit_tile_cols : classify_map_locality(sampled);
     auto const num_descs = static_cast<size_type>(descriptors.size());
     // Small tables ride in the kernel parameters instead of the device array. The by-value
     // tiers instantiate the tile widths the router can return (1, 2, 8) only, so the
@@ -1417,29 +1433,36 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
     // sync and the copy's source stays valid past this scope) plus the device buffer the kernel
     // reads. Built only for the device path. The staging bytes — descriptors and, when folded,
     // the zeroed counts tail — are written from the HOST before the launch, into pinned-pool
-    // memory handed out by the ASYNC factory: this is the gate-certified shape of this tree
-    // (the pool's stream-ordered allocation plus the write-before-enqueue ordering); it differs
-    // deliberately from the SYNCING-factory form another tree used. The receive-only buffers
-    // below and the sampler staging have no host writes at all: their writers are
-    // stream-ordered copies, and their readers wait on the stream.
-    std::optional<cudf::detail::host_vector<std::byte>> staging;
+    // memory handed out by the ASYNC factory: the pool can return a block whose previous
+    // stream-ordered copy is still in flight, so the host writes are safe only AFTER the
+    // pre-launch sync above. The receive-only buffers below and the sampler staging have no
+    // host writes at all: their writers are stream-ordered copies, and their readers wait on
+    // the stream.
+    std::optional<cuda::host_buffer<std::byte>> staging;
     std::optional<rmm::device_uvector<std::byte>> d_descriptors;
     // Masked device-array calls fold the kernel's per-descriptor valid counts into the staging
     // tail: one allocation and one H2D carry descriptors + zeroed counts, replacing the
     // separate zeroed `valid_counts` uvector and its `cudaMemsetAsync`. The buffer is BYTE-typed
     // because the tail (4 B per count) is not a whole number of 48 B descriptors; the tail
     // offset num_descs * 48 is a multiple of 4, so the size_type tail is aligned. The tail is
-    // zeroed HOST-side (host_vector value-initializes its bytes), so the device counts arrive
-    // zeroed in the same H2D. The tier paths keep the separate buffer — their descriptors ride
-    // the read-only `__grid_constant__` kernel parameter, which cannot carry a mutable counts
-    // output.
+    // zeroed HOST-side (the async factory hands out uninitialized memory, so the bytes must be
+    // written here), so the device counts arrive zeroed in the same H2D. The tier paths keep
+    // the separate buffer — their descriptors ride the read-only `__grid_constant__` kernel
+    // parameter, which cannot carry a mutable counts output.
     size_type const counts_size  = any_kernel_masks ? num_descs : 0;
     std::size_t const head_bytes = descriptors.size() * sizeof(column_descriptor);
     std::size_t const total_bytes =
       head_bytes + static_cast<std::size_t>(counts_size) * sizeof(size_type);
     if (by_value_tier == 0) {
-      staging.emplace(cudf::detail::make_pinned_vector_async<std::byte>(total_bytes, stream));
+      staging.emplace(cudf::detail::make_pinned_buffer_async<std::byte>(total_bytes, stream));
       std::memcpy(staging->data(), descriptors.data(), head_bytes);
+      if (any_kernel_masks) {
+        // The kernel accumulates with relaxed device-scope atomics, so the counters start at
+        // zero.
+        std::memset(staging->data() + head_bytes,
+                    0,
+                    static_cast<std::size_t>(counts_size) * sizeof(size_type));
+      }
       d_descriptors.emplace(total_bytes, stream, temp_mr);
       // Ordered upload: the batched copy's overlap-with-compute hint lets the driver run it
       // concurrently with the consumer kernel, which would read pre-staging descriptor bytes.
@@ -1627,11 +1650,6 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
         launch(std::false_type{});
       }
     };
-    // Resolve the routed tile width only now: the sync waits for the enqueued sample copies
-    // AND for the allocation/descriptor work above, hiding the sampler latency behind it.
-    auto const effective_tile_cols = explicit_tile_cols.has_value()
-                                       ? *explicit_tile_cols
-                                       : resolve_map_locality_tile_cols(sampled, stream);
     // Evict-first streaming hints ride the classifier verdict only: the sampled coalesced
     // route (which resolves to kCoalescedTileCols and nothing else). Unsampled regimes,
     // random verdicts, and test-forced geometries keep the default-cached accesses.

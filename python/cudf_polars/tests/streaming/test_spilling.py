@@ -109,6 +109,8 @@ def test_make_spill_function(
 
     # Register spill function
     spill_func = make_spill_function(buffers, context)
+    # Only device memory can be spilled from, other memory types spill nothing.
+    assert spill_func(MemoryType.HOST, 1 * 1024 * 1024) == 0
     func_id = context.br().spill_manager.add_spill_function(spill_func, priority=0)
 
     try:

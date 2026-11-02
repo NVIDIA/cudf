@@ -1176,8 +1176,10 @@ size_type resolve_map_locality_tile_cols(sampled_map_locality const& sampled,
 //      post-kernel readback. On tall calls (>= `kBatchMemcpyRowThreshold`)
 //      each all-short column's chars runs through one
 //      `cub::DeviceMemcpy::Batched` over the routed columns' rows (per-column
-//      routing via `chars_via_batched_memcpy`); the kernel keeps masks/offsets
-//      for every column and the chars of any UNROUTED column.
+//      routing via `chars_via_batched_memcpy`); the routed columns also leave
+//      the kernel entirely — their offsets/masks/counts are written by
+//      `string_routed_metadata_kernel` — and the launch grid covers only the
+//      unrouted cohort's rows.
 //
 // Trap compliance: chars are addressed from the unsliced base with the sliced
 // offsets (the offsets iterator carries the view offset); null rows have zero
@@ -1367,7 +1369,8 @@ __device__ void copy_string_span(
   }
 }
 
-// Batched payload kernel for ALL string columns (one launch per call).
+// Batched payload kernel for the UNROUTED string columns (one launch per call; the routed
+// cohort's metadata rides string_routed_metadata_kernel).
 //
 // Grid-stride phases over disjoint outputs, no ordering required between
 // them:
@@ -1387,26 +1390,28 @@ __device__ void copy_string_span(
 //             already-scanned offsets, which removes the rows-per-warp
 //             starvation on tall short-row tables. EVERY group first runs a
 //             common boundary stage that stages the group's row boundaries and
-//             (from the same scratch reads) publishes the offsets values. When
-//             a column's `chars_via_batched_memcpy` flag is set (the host
-//             routed that column's chars to `cub::DeviceMemcpy::Batched`), the
-//             kernel's chars machinery leaves that column untouched: its rows
-//             publish empty slots, its groups never take the fan, and the CUB
-//             call owns its bytes.
+//             (from the same scratch reads) publishes the offsets values. The
+//             launch grid covers ONLY the unrouted cohort's flat rows: a
+//             column routed to `cub::DeviceMemcpy::Batched`
+//             (`chars_via_batched_memcpy`) contributes no group visits at all
+//             — CUB owns its bytes, and `string_routed_metadata_kernel` owns
+//             its offsets/masks/counts.
 //   masks   — one thread per (column, 32-row window): the thread re-resolves
 //             each row of its window and packs the gathered validity into one
 //             destination mask word, popping the count into the column's
-//             atomic valid counter. Pre-set masks (ALL_NULL/ALL_VALID) skip
-//             the phase entirely (`dst_mask` nullptr).
-//   offsets — the group loop's boundary stage publishes every flat row's offsets
-//             value (the group's first warp, adjacent lanes on adjacent flat
-//             rows, from the staged shared-memory boundaries) plus each
-//             column's N+1 sentinel; the per-entry flat copy loop of the
-//             original design is deleted, removing the second full scratch
-//             traversal and its per-entry 64-bit div/mod.
+//             atomic valid counter. Routed columns are excluded entirely
+//             (their words/counts ride the routed kernel); pre-set masks
+//             (ALL_NULL/ALL_VALID) skip the phase (`dst_mask` nullptr).
+//   offsets — for unrouted columns, the group loop's boundary stage publishes every flat
+//             row's offsets value (the group's first warp, adjacent lanes on adjacent flat
+//             rows, from the staged shared-memory boundaries) plus each column's N+1
+//             sentinel; the per-entry flat copy loop of the original design is deleted,
+//             removing the second full scratch traversal and its per-entry 64-bit div/mod.
+//             Routed columns' offsets children are written by the routed kernel instead.
 template <size_type BlockSize>
 CUDF_KERNEL void string_payload_kernel(string_work_item const* items,
-                                       int64_t num_items,
+                                       size_type const* unrouted,  // unrouted cohort -> items
+                                       int64_t num_unrouted,
                                        string_flat_layout layout,  // uint32 rows_per_col, num_rows
                                        size_type num_source_rows,
                                        bool check_bounds,
@@ -1435,7 +1440,7 @@ CUDF_KERNEL void string_payload_kernel(string_work_item const* items,
   __shared__ size_type pub_base_row;  // ...and the first flat row's position inside it
 
   auto const num_rows   = layout.num_rows;
-  auto const total_rows = num_items * static_cast<int64_t>(num_rows);
+  auto const total_rows = num_unrouted * static_cast<int64_t>(num_rows);
   for (int64_t group = static_cast<int64_t>(blockIdx.x); group * warps_per_block < total_rows;
        group += static_cast<int64_t>(gridDim.x)) {
     auto const flat = group * warps_per_block + warp_in_block;
@@ -1446,21 +1451,19 @@ CUDF_KERNEL void string_payload_kernel(string_work_item const* items,
     char* dst_ptr                    = nullptr;
     int64_t size                     = 0;
     if (flat < total_rows) {
-      item_ptr = &items[static_cast<uint32_t>(flat) / num_rows];
+      // The flat domain is the UNROUTED cohort's (column, row) space: the cohort table maps
+      // the local column index back to the items slot. Every visited column is kernel-owned
+      // by construction (the host built the cohort), so no per-item route flag is consulted.
+      item_ptr = &items[unrouted[static_cast<uint32_t>(flat) / num_rows]];
       row      = static_cast<size_type>(static_cast<uint32_t>(flat) % num_rows);
-      // CUB owns this column's chars (the host routed it): leave src/dst/size null so the
-      // common publish below stores the empty (no-work) slot — the block machinery can then
-      // never rewrite CUB's bytes, and the barriers stay reachable for every warp.
-      if (not item_ptr->chars_via_batched_memcpy) {
-        auto const src =
-          resolve_gathered_row(gather_map, row, num_source_rows, check_bounds, negative_allowed);
-        if (src >= 0 and string_row_valid(*item_ptr, src)) {
-          auto const s = static_cast<size_type>(src);
-          size         = item_ptr->src_offsets[s + 1] - item_ptr->src_offsets[s];
-          if (size > 0) {
-            src_ptr = item_ptr->src_chars + item_ptr->src_offsets[s];
-            dst_ptr = item_ptr->dst_chars + item_ptr->dst_scratch[row];
-          }
+      auto const src =
+        resolve_gathered_row(gather_map, row, num_source_rows, check_bounds, negative_allowed);
+      if (src >= 0 and string_row_valid(*item_ptr, src)) {
+        auto const s = static_cast<size_type>(src);
+        size         = item_ptr->src_offsets[s + 1] - item_ptr->src_offsets[s];
+        if (size > 0) {
+          src_ptr = item_ptr->src_chars + item_ptr->src_offsets[s];
+          dst_ptr = item_ptr->dst_chars + item_ptr->dst_scratch[row];
         }
       }
     }
@@ -1492,7 +1495,7 @@ CUDF_KERNEL void string_payload_kernel(string_work_item const* items,
     if (thread_in_block == 0) {
       auto const last_row = static_cast<size_type>(static_cast<uint32_t>(group_end - 1) % num_rows);
       group_offsets[warps_per_block] =
-        items[static_cast<size_type>(static_cast<uint32_t>(group_end - 1) / num_rows)]
+        items[unrouted[static_cast<size_type>(static_cast<uint32_t>(group_end - 1) / num_rows)]]
           .dst_scratch[last_row + 1];
     }
     // Hoist the window's column geometry for warp 0's offsets publish: ONE div/mod pair per
@@ -1500,7 +1503,7 @@ CUDF_KERNEL void string_payload_kernel(string_work_item const* items,
     // broadcast by shuffle — its lanes diverge on the lane_flat bound — so the values ride
     // the boundary-stage shared memory instead.
     if (thread_in_block == 0) {
-      pub_col      = static_cast<size_type>(static_cast<uint32_t>(group_start) / num_rows);
+      pub_col = unrouted[static_cast<size_type>(static_cast<uint32_t>(group_start) / num_rows)];
       pub_base_row = static_cast<size_type>(static_cast<uint32_t>(group_start) % num_rows);
     }
     __syncthreads();
@@ -1533,10 +1536,10 @@ CUDF_KERNEL void string_payload_kernel(string_work_item const* items,
             *(pub_item.dst_offsets + num_rows) = pub_item.dst_scratch[pub_row + 1];
           }
         } else {
-          // Cross-column window (num_rows < warp_size): rows span two columns, so the
-          // general per-lane div/mod path applies.
+          // Cross-column window (num_rows < warp_size): rows span two unrouted columns, so
+          // the general per-lane div/mod path applies (mapped through the cohort table).
           auto const& pub_item =
-            items[static_cast<size_type>(static_cast<uint32_t>(lane_flat) / num_rows)];
+            items[unrouted[static_cast<size_type>(static_cast<uint32_t>(lane_flat) / num_rows)]];
           auto const pub_row = static_cast<size_type>(static_cast<uint32_t>(lane_flat) % num_rows);
           *(pub_item.dst_offsets + pub_row) = group_offsets[lane];
           if (pub_row + 1 == num_rows) {
@@ -1552,16 +1555,14 @@ CUDF_KERNEL void string_payload_kernel(string_work_item const* items,
     auto const single_column = (static_cast<uint32_t>(group_start) / num_rows) ==
                                (static_cast<uint32_t>(group_end - 1) / num_rows);
     // The fan writes every live byte of the group's span by binary search over the staged
-    // boundaries — it cannot honor a per-item engine split, so it runs only when the owning
-    // column still owns its chars on the kernel path. Block-uniform like single_column.
-    auto const group_kernel_owned =
-      not items[static_cast<size_type>(group_start) / num_rows].chars_via_batched_memcpy;
+    // boundaries; every cohort column owns its chars on the kernel path, so the vote needs
+    // no route predicate.
     auto const any_long = thread_in_block < warps_per_block
                             ? block_rows[thread_in_block].size > kBlockRowCopyThreshold
                             : false;
     // __syncthreads_or is barrier-safe here: every thread participates (the predicate is
     // computed unconditionally), only the VALUE differs.
-    if (__syncthreads_or(any_long or not single_column or not group_kernel_owned)) {
+    if (__syncthreads_or(any_long or not single_column)) {
       // Block-cooperative rows, one at a time; rows above the gate are rare, so the serial
       // walk over the block's slots costs nothing on short-row data.
       for (int64_t slot = 0; slot < warps_per_block; ++slot) {
@@ -1573,8 +1574,7 @@ CUDF_KERNEL void string_payload_kernel(string_work_item const* items,
                          thread_in_block,
                          static_cast<int64_t>(BlockSize));
       }
-      // The short rows of a mixed group keep the warp copy (the fan did not run). Routed
-      // rows resolve to no payload (size 0, dst nullptr) so their copy call is a no-op.
+      // The short rows of a mixed group keep the warp copy (the fan did not run).
       if (not publishable) {
         copy_string_span(
           dst_ptr, src_ptr, size, static_cast<int64_t>(lane), static_cast<int64_t>(warp_size));
@@ -1582,26 +1582,29 @@ CUDF_KERNEL void string_payload_kernel(string_work_item const* items,
     } else {
       // The group is all-short, single-column, and kernel-owned: fan every live byte across
       // all BlockSize threads over the boundaries staged above. Offsets were already published.
-      copy_group_chars_char_parallel(items[static_cast<uint32_t>(group_start) / num_rows],
-                                     layout,
-                                     group_start,
-                                     group_end,
-                                     group_offsets,
-                                     warps_per_block,
-                                     gather_map,
-                                     num_source_rows,
-                                     check_bounds,
-                                     negative_allowed);
+      copy_group_chars_char_parallel(
+        items[unrouted[static_cast<size_type>(static_cast<uint32_t>(group_start) / num_rows)]],
+        layout,
+        group_start,
+        group_end,
+        group_offsets,
+        warps_per_block,
+        gather_map,
+        num_source_rows,
+        check_bounds,
+        negative_allowed);
     }
     __syncthreads();  // the next group rewrites the slots
   }
 
   // ---- masks + valid counts: one thread per (column, 32-row window) ----
+  // Routed columns are outside the cohort domain: string_routed_metadata_kernel owns their
+  // masks and counts entirely.
   auto const words_per_col =
     util::div_rounding_up_safe(static_cast<int64_t>(num_rows), static_cast<int64_t>(warp_size));
-  auto const total_windows = num_items * words_per_col;
+  auto const total_windows = num_unrouted * words_per_col;
   for (int64_t w = global_tid; w < total_windows; w += grid_stride) {
-    auto const& item = items[static_cast<size_type>(w / words_per_col)];
+    auto const& item = items[unrouted[static_cast<size_type>(w / words_per_col)]];
     if (item.dst_mask == nullptr) { continue; }
     auto const word = static_cast<size_type>(w % words_per_col);
     auto const row0 = static_cast<int64_t>(word) * warp_size;
@@ -1623,14 +1626,103 @@ CUDF_KERNEL void string_payload_kernel(string_work_item const* items,
     }
   }
 
-  // ---- offsets children: fully covered by the group loop's boundary stage ----
+  // ---- offsets children: unrouted columns fully covered by the group loop's boundary
+  // stage; routed columns by string_routed_metadata_kernel ----
   //
-  // Every flat row's offsets value was published by its group's first warp — adjacent lanes
-  // taking adjacent flat rows — from the staged boundaries in shared memory (covering
-  // dead/empty rows and long/mixed groups alike), and every column's N+1 sentinel rode the
-  // lane whose row ends its column (its row-0 sentinel is the row-0 publish itself). No
-  // separate pass remains: deleting the old per-entry flat loop removed the second full
-  // scratch traversal and its per-entry 64-bit div/mod.
+  // Every unrouted flat row's offsets value was published by its group's first warp —
+  // adjacent lanes taking adjacent flat rows — from the staged boundaries in shared memory
+  // (covering dead/empty rows and long/mixed groups alike), and every column's N+1 sentinel
+  // rode the lane whose row ends its column (its row-0 sentinel is the row-0 publish
+  // itself). No separate pass remains: deleting the old per-entry flat loop removed the
+  // second full scratch traversal and its per-entry 64-bit div/mod.
+}
+
+// Row-parallel metadata for the columns routed to cub::DeviceMemcpy::Batched (the group walk
+// above does no metadata work for them). One block owns ONE column's BlockSize-row tile per
+// iteration; the scan has already written the final exclusive prefix into `dst_scratch`, so
+// the kernel only transports it:
+//   offsets — every live lane narrows one scratch entry (row or the N+1 sentinel) into the
+//             child's width directly from global memory. Tiles never straddle a column
+//             boundary (the loop is indexed per column tile), so the tile holding the last
+//             row has the unique N+1 writer.
+//   masks   — each warp ballots its 32 gathered validities into one word and writes it; the
+//             ballot runs unconditionally so every warp lane participates, and warps fully
+//             past the column's words store nothing (their ballot is all-zero anyway). No
+//             partial OR into uninitialized storage.
+//   counts  — each warp pops its word into shared memory, the CTA sums the block total over
+//             one barrier, and thread 0 adds it to the column's atomic counter once per
+//             block-tile (replacing the per-word device atomics of the generic mask phase).
+// A second barrier closes each iteration so the next tile's shared-count writes cannot race
+// the just-finished reduction. Offsets publication needs no barrier: the stores are
+// independent global writes, stream-ordered before any consumer of the child.
+template <size_type BlockSize>
+CUDF_KERNEL void string_routed_metadata_kernel(string_work_item const* routed_items,
+                                               size_type num_routed,
+                                               size_type num_rows,
+                                               size_type num_source_rows,
+                                               bool check_bounds,
+                                               bool negative_allowed,
+                                               input_indexalator gather_map)
+{
+  static_assert(BlockSize % warp_size == 0);
+  auto const lane            = static_cast<size_type>(threadIdx.x % warp_size);
+  auto const warp            = static_cast<size_type>(threadIdx.x / warp_size);
+  auto const warps_per_block = static_cast<size_type>(BlockSize / warp_size);
+  __shared__ size_type warp_counts[BlockSize / warp_size];
+
+  auto const tiles_per_col = static_cast<int64_t>(
+    util::div_rounding_up_safe(static_cast<int64_t>(num_rows), static_cast<int64_t>(BlockSize)));
+  auto const total_tiles = static_cast<int64_t>(num_routed) * tiles_per_col;
+  for (int64_t t = static_cast<int64_t>(blockIdx.x); t < total_tiles;
+       t += static_cast<int64_t>(gridDim.x)) {
+    auto const col       = static_cast<size_type>(t / tiles_per_col);
+    auto const col_row0  = (t % tiles_per_col) * static_cast<int64_t>(BlockSize);
+    auto const tile_rows = static_cast<int64_t>(
+      cuda::std::min<int64_t>(BlockSize, static_cast<int64_t>(num_rows) - col_row0));
+    auto const& item = routed_items[col];
+    auto const row   = col_row0 + static_cast<int64_t>(threadIdx.x);
+    auto const live  = static_cast<int64_t>(threadIdx.x) < tile_rows;
+
+    // offsets: one narrowed store per lane; the lane holding the last row owns the sentinel.
+    if (live) {
+      *(item.dst_offsets + row) = item.dst_scratch[row];
+      if (row + 1 == num_rows) { *(item.dst_offsets + num_rows) = item.dst_scratch[num_rows]; }
+    }
+
+    // masks + counts: warp ballots then one CTA reduction. A warp fully past the tile
+    // contributes no mask bits and a zero count (its dead lanes all vote false).
+    auto const word_row0 = col_row0 + static_cast<int64_t>(warp) * warp_size;
+    auto const src       = live ? resolve_gathered_row(gather_map,
+                                                 static_cast<size_type>(row),
+                                                 num_source_rows,
+                                                 check_bounds,
+                                                 negative_allowed)
+                                : int64_t{-1};
+    // Dead rows (src < 0) are invalid — the guard must precede the mask read or the bit
+    // index would underflow on NULLIFY calls.
+    auto const valid =
+      src >= 0 and (item.src_mask == nullptr or
+                    bit_is_set(item.src_mask, static_cast<size_type>(item.mask_bit_offset + src)));
+    auto const word_bits = __ballot_sync(0xffffffffu, valid);
+    if (lane == 0) {
+      // Dead-lane ballot bits are already 0, so the packed word is exact for tail words too
+      // (rows past num_rows stay clear).
+      if (item.dst_mask != nullptr and word_row0 < static_cast<int64_t>(num_rows)) {
+        item.dst_mask[static_cast<size_type>(word_row0 / warp_size)] = word_bits;
+      }
+      warp_counts[warp] = cuda::std::popcount(word_bits);
+    }
+    __syncthreads();
+    size_type block_valid = 0;
+    for (size_type w = 0; w < warps_per_block; ++w) {
+      block_valid += warp_counts[w];
+    }
+    if (threadIdx.x == 0 and item.valid_count != nullptr) {
+      cuda::atomic_ref<size_type, cuda::thread_scope_device> ref{*item.valid_count};
+      ref.fetch_add(block_valid, cuda::std::memory_order_relaxed);
+    }
+    __syncthreads();  // the next tile rewrites warp_counts; the reads above must finish first
+  }
 }
 
 // Tile width for regimes where sampling is skipped; nullopt means "sample the map". Zero/one
@@ -2455,7 +2547,8 @@ struct descriptor_path_builder {
     // kernel path, and every output region is written by exactly one engine. The items
     // upload below must stay AFTER this block: the flag is part of the staged struct.
     auto any_batched_memcpy = false;
-    std::vector<size_type> memcpy_live;  // live indices routed to cub::DeviceMemcpy::Batched
+    std::vector<size_type> memcpy_live;      // live indices routed to cub::DeviceMemcpy::Batched
+    std::vector<size_type> memcpy_unrouted;  // live indices keeping the kernel chars+metadata
     if (chars_routing_active) {
       for (size_t k = 0; k < live.size(); ++k) {
         auto const bytes = h_col_totals[k];
@@ -2463,7 +2556,16 @@ struct descriptor_path_builder {
           memcpy_live.push_back(static_cast<size_type>(k));
           items[k].chars_via_batched_memcpy = true;
           any_batched_memcpy                = true;
+        } else {
+          // Unrouted cohort: this column keeps the kernel path AND its metadata rides the
+          // payload kernel (the routed kernel covers only the routed columns).
+          memcpy_unrouted.push_back(static_cast<size_type>(k));
         }
+      }
+    } else {
+      // Below the routing gate every live column is unrouted by definition.
+      for (size_t k = 0; k < live.size(); ++k) {
+        memcpy_unrouted.push_back(static_cast<size_type>(k));
       }
     }
 
@@ -2586,19 +2688,54 @@ struct descriptor_path_builder {
         src_addrs_it, dst_addrs_it, copy_sizes_it, num_buffers, cub_env));
     }
 
-    // ---- the ONE batched payload launch (routed columns' chars excluded per item) ----
-    if (flat_size > 0) {
-      auto const grid = static_cast<unsigned>(
-        std::min<int64_t>(util::div_rounding_up_safe(flat_size, static_cast<int64_t>(block_size)),
-                          static_cast<int64_t>(65535)));
+    // ---- the ONE batched payload launch (unrouted cohort only) ----
+    // The grid covers only the UNROUTED cohort's flat rows: a routed column contributes no
+    // group visits at all (its warps' flat slots are out of the launched domain), so the
+    // group walk's barriers/visits disappear for it — the routed kernel owns its metadata.
+    auto const unrouted_rows =
+      static_cast<int64_t>(memcpy_unrouted.size()) * static_cast<int64_t>(num_rows);
+    if (unrouted_rows > 0) {
+      auto const d_unrouted = cudf::detail::make_device_uvector_async(
+        host_span<size_type const>{memcpy_unrouted}, stream, temp_mr);
+      auto const grid = static_cast<unsigned>(std::min<int64_t>(
+        util::div_rounding_up_safe(unrouted_rows, static_cast<int64_t>(block_size)),
+        static_cast<int64_t>(65535)));
       string_payload_kernel<block_size>
         <<<grid, block_size, 0, stream.get()>>>(d_payload_items.data(),
-                                                static_cast<int64_t>(live.size()),
+                                                d_unrouted.data(),
+                                                static_cast<int64_t>(memcpy_unrouted.size()),
                                                 scan_layout,
                                                 num_source_rows,
                                                 check_bounds,
                                                 negative_allowed,
                                                 map_begin);
+      CUDF_CUDA_TRY(cudaGetLastError());
+    }
+
+    // ---- routed metadata: one launch over the routed cohort's per-column tiles ----
+    // The routed items reference the SAME dst buffers as the payload items (distinct output
+    // buffers stay owned by the columns; the count slot indexing rides the same live slot
+    // index), so the two kernels write disjoint metadata domains. Empty (unrouted) cohort is
+    // skipped: no launch, no allocation.
+    if (not memcpy_live.empty()) {
+      std::vector<string_work_item> routed_items(memcpy_live.size());
+      for (size_t r = 0; r < memcpy_live.size(); ++r) {
+        routed_items[r] = items[memcpy_live[r]];
+      }
+      auto d_routed_items = cudf::detail::make_device_uvector_async(
+        host_span<string_work_item const>{routed_items}, stream, temp_mr);
+      auto const routed_rows = static_cast<int64_t>(memcpy_live.size()) * num_rows;
+      auto const meta_grid   = static_cast<unsigned>(
+        std::min<int64_t>(util::div_rounding_up_safe(routed_rows, static_cast<int64_t>(block_size)),
+                          static_cast<int64_t>(65535)));
+      string_routed_metadata_kernel<block_size>
+        <<<meta_grid, block_size, 0, stream.get()>>>(d_routed_items.data(),
+                                                     static_cast<size_type>(memcpy_live.size()),
+                                                     num_rows,
+                                                     num_source_rows,
+                                                     check_bounds,
+                                                     negative_allowed,
+                                                     map_begin);
       CUDF_CUDA_TRY(cudaGetLastError());
     }
 
@@ -2699,13 +2836,19 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
   size_type estimated_kernel_masked = 0;
   for (size_type i = 0; i < source_table.num_columns(); ++i) {
     auto const& src = source_table.column(i);
-    // Tall string columns take the stock per-column path: the fused string machinery's
-    // barrier walk scales with rows and loses there (measured A/B); small/mid tables keep the
-    // N3 fast path. Gated strings land in fallback_indices below, so neither the build
-    // walk nor assemble_strings ever sees them — and the descriptor estimate below stays
-    // consistent because `estimate_descriptor_counts` already returns {0, 0} for STRING.
+    // Tall string columns ride the stock per-column fallback unless the batched-memcpy
+    // routing engine will be active for the call: the routed metadata path (tall-str1)
+    // removes the group-walk metadata work that made the fused path lose tall cells, but it
+    // only engages above `kBatchMemcpyRowThreshold` (the host routing walk keys off
+    // `chars_routing_active`). The band between the two thresholds keeps the fallback —
+    // routing can never fire there, so fusing would reintroduce the measured tall loss with
+    // no compensating engine. Gathered row sizes are unknowable before the scan, so no
+    // stronger per-column proxy is possible here; the exact post-totals routing still splits
+    // per column, and an all-long-row tall table risks regressing vs the wholesale fallback
+    // (the measured admission question this branch exists to answer).
     if (is_descriptor_path_candidate(src) and
-        not(src.type().id() == type_id::STRING and num_rows >= kStringFallbackRowThreshold)) {
+        not(src.type().id() == type_id::STRING and num_rows >= kStringFallbackRowThreshold and
+            num_rows < kBatchMemcpyRowThreshold)) {
       fused_indices.push_back(i);
       if (not(num_rows == 0 and not cudf::is_fixed_width(src.type()))) {
         // Mirror the build's skip: an empty map routes non-fixed-width columns to empty_like

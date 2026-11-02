@@ -1808,6 +1808,287 @@ TEST_F(BatchGatherTallSeamTest, SlicedStringsAtThreshold)
 }
 
 // ============================================================================
+// §5.6c String routed-metadata parity: tall short-row calls route per-column chars to
+// cub::DeviceMemcpy::Batched and their offsets/masks/counts to the row-parallel
+// string_routed_metadata_kernel. Rows above 524288 exercise the routed path while the
+// 262144-row seam keeps unrelated mid cells on the fallback. Every test compares exactly
+// against a run_reference gather.
+// ============================================================================
+
+class StringRoutedMetadataParity : public cudf::test::BaseFixture {};
+
+// Tall single column: the whole table routes (average gathered row 16 B <= 32 B), the
+// routed kernel owns every offsets/mask/count byte, and CUB owns the chars.
+TEST_F(StringRoutedMetadataParity, TallSingleColumnAllRouted)
+{
+  constexpr cudf::size_type num_rows{524'288};
+  auto const strings = periodic_strings(num_rows, 23);
+  auto validity =
+    cudf::detail::make_counting_transform_iterator(0, [](cudf::size_type i) { return i % 4 != 0; });
+  cudf::test::strings_column_wrapper col_str(strings.begin(), strings.end(), validity);
+
+  cudf::table_view source_table({col_str});
+  auto const host_map = shuffled_iota(num_rows, 5);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// A genuinely long-row generator: row i has 512 + (i % 64) bytes — the average is far
+// above the 32 B routing gate, so every column built from it stays unrouted (periodic_strings
+// alone cannot: any stride mod 32 cycles all residue classes, giving ~16 B rows).
+std::vector<std::string> long_strings(cudf::size_type num_rows)
+{
+  std::vector<std::string> strings;
+  strings.reserve(num_rows);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    strings.push_back(
+      std::string(static_cast<std::size_t>(512 + i % 64), static_cast<char>('a' + i % 26)));
+  }
+  return strings;
+}
+
+// Mixed routed + unrouted columns in both orders: one short (routed) and one long
+// (unrouted) string column, each cohort's metadata written by its own engine.
+TEST_F(StringRoutedMetadataParity, MixedRoutedUnroutedShortFirst)
+{
+  constexpr cudf::size_type num_rows{524'288};
+  auto const short_strings = periodic_strings(num_rows, 7);  // avg ~16 B -> routed
+  auto const long_column   = long_strings(num_rows);         // avg ~543 B -> unrouted
+  auto validity_short =
+    cudf::detail::make_counting_transform_iterator(0, [](cudf::size_type i) { return i % 3 != 0; });
+  auto validity_long =
+    cudf::detail::make_counting_transform_iterator(0, [](cudf::size_type i) { return i % 5 != 0; });
+  cudf::test::strings_column_wrapper col_short(
+    short_strings.begin(), short_strings.end(), validity_short);
+  cudf::test::strings_column_wrapper col_long(
+    long_column.begin(), long_column.end(), validity_long);
+
+  auto col_i32 = make_fixed_column<int32_t>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+
+  cudf::table_view source_table({col_i32->view(), col_short, col_long});
+  auto const host_map = shuffled_iota(num_rows, 11);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+TEST_F(StringRoutedMetadataParity, MixedRoutedUnroutedLongFirst)
+{
+  constexpr cudf::size_type num_rows{524'288};
+  auto const short_strings = periodic_strings(num_rows, 13);
+  auto const long_column   = long_strings(num_rows);
+  auto validity_short =
+    cudf::detail::make_counting_transform_iterator(0, [](cudf::size_type i) { return i % 7 != 0; });
+  cudf::test::strings_column_wrapper col_short(
+    short_strings.begin(), short_strings.end(), validity_short);
+  cudf::test::strings_column_wrapper col_long(long_column.begin(), long_column.end());
+
+  cudf::table_view source_table({col_long, col_short});
+  auto const host_map = shuffled_iota(num_rows, 3);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// The N+1 sentinel edge and num_rows % 256 tails: 524288 is divisible by 256, so a second
+// tall size off the tile boundary exercises the tail tile (524288 + 7 rows) and the
+// unique-sentinel ownership at the last row.
+TEST_F(StringRoutedMetadataParity, TailTileSentinelOwnership)
+{
+  constexpr cudf::size_type num_rows{524'295};
+  auto const strings = periodic_strings(num_rows, 31);
+  auto validity =
+    cudf::detail::make_counting_transform_iterator(0, [](cudf::size_type i) { return i % 6 != 0; });
+  cudf::test::strings_column_wrapper col_str(strings.begin(), strings.end(), validity);
+
+  auto col_i32 = make_fixed_column<int32_t>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+
+  cudf::table_view source_table({col_i32->view(), col_str});
+  auto const host_map = shuffled_iota(num_rows, 17);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// NULLIFY with out-of-bounds entries on a routed call: dead rows resolve to no payload and
+// must contribute zero bytes (offsets delta 0) and zero validity — the routed kernel's mask
+// ballots and count reduction must match the stock NULLIFY null_count exactly.
+TEST_F(StringRoutedMetadataParity, NullifyDeadRowsRouted)
+{
+  constexpr cudf::size_type num_rows{524'288};
+  auto const strings = periodic_strings(num_rows, 19);
+  auto validity =
+    cudf::detail::make_counting_transform_iterator(0, [](cudf::size_type i) { return i % 8 != 0; });
+  cudf::test::strings_column_wrapper col_str(strings.begin(), strings.end(), validity);
+
+  auto col_i32 = make_fixed_column<int32_t>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+
+  cudf::table_view source_table({col_i32->view(), col_str});
+
+  std::vector<cudf::size_type> host_map;
+  host_map.reserve(num_rows);
+  std::mt19937 rng(23);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    host_map.push_back(i % 32 == 0 ? num_rows + static_cast<cudf::size_type>(rng() % 4096)
+                                   : static_cast<cudf::size_type>(rng() % num_rows));
+  }
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table, gather_map, cudf::out_of_bounds_policy::NULLIFY);
+  auto reference = run_reference(source_table, gather_map, cudf::out_of_bounds_policy::NULLIFY);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// Negative-index wrap on a routed call: the routed kernel's resolve must reproduce the
+// kernel chars path's normalization exactly (the same resolve_gathered_row call).
+TEST_F(StringRoutedMetadataParity, NegativeIndexWrapRouted)
+{
+  constexpr cudf::size_type num_rows{524'288};
+  auto const strings = periodic_strings(num_rows, 37);
+  auto validity =
+    cudf::detail::make_counting_transform_iterator(0, [](cudf::size_type i) { return i % 9 != 0; });
+  cudf::test::strings_column_wrapper col_str(strings.begin(), strings.end(), validity);
+
+  auto col_i32 = make_fixed_column<int32_t>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+
+  cudf::table_view source_table({col_i32->view(), col_str});
+
+  std::vector<cudf::size_type> host_map;
+  host_map.reserve(num_rows);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    host_map.push_back(i % 8 == 0 ? -(1 + static_cast<cudf::size_type>(i / 8) % num_rows)
+                                  : static_cast<cudf::size_type>((i * 31) % num_rows));
+  }
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table,
+                                 gather_map,
+                                 cudf::out_of_bounds_policy::DONT_CHECK,
+                                 cudf::negative_index_policy::ALLOWED);
+  auto reference = run_reference(source_table,
+                                 gather_map,
+                                 cudf::out_of_bounds_policy::DONT_CHECK,
+                                 cudf::negative_index_policy::ALLOWED);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// A tall all-empty (every gathered row zero bytes but valid) column: bytes == 0, so the
+// column stays UNROUTED (routing requires bytes > 0), and the zero-total scratch path must
+// produce an all-zero offsets child with the sentinel — same behavior as before this
+// branch, pinned here because the cohort split changed the kernel's flat domain.
+TEST_F(StringRoutedMetadataParity, AllEmptyRowsZeroTotalUnrouted)
+{
+  constexpr cudf::size_type num_rows{524'288};
+  std::vector<std::string> empty_strings(num_rows, "");
+  cudf::test::strings_column_wrapper col_str(empty_strings.begin(), empty_strings.end());
+
+  auto col_i32 = make_fixed_column<int32_t>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+
+  cudf::table_view source_table({col_i32->view(), col_str});
+  auto const host_map = shuffled_iota(num_rows, 29);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// Empty SOURCE column beside a routed one: the empty column's offsets complete host-side
+// (no kernel slot) while the tall column routes; the cohort split must not disturb the
+// empty-source completion. A zero-ROW source column cannot legally share a table with
+// 524'288-row columns (table_view rejects mixed sizes), so "empty source" here is a
+// zero-BYTES source: every gathered row is empty and its total (scratch[N]) is 0.
+TEST_F(StringRoutedMetadataParity, EmptySourceBesideRouted)
+{
+  constexpr cudf::size_type num_rows{524'288};
+  auto const strings = periodic_strings(num_rows, 41);
+  auto validity =
+    cudf::detail::make_counting_transform_iterator(0, [](cudf::size_type i) { return i % 4 != 0; });
+  cudf::test::strings_column_wrapper col_str(strings.begin(), strings.end(), validity);
+  std::vector<std::string> all_empty(num_rows, "");
+  cudf::test::strings_column_wrapper col_empty(all_empty.begin(), all_empty.end());
+
+  auto col_i32 = make_fixed_column<int32_t>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+
+  cudf::table_view source_table({col_i32->view(), col_empty, col_str});
+  auto const host_map = shuffled_iota(num_rows, 33);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// Sliced tall source on a routed call: the routed kernel indexes the source through the
+// item's mask_bit_offset/offsets-view offset exactly like the CUB iterators do.
+TEST_F(StringRoutedMetadataParity, SlicedSourceRouted)
+{
+  constexpr cudf::size_type num_rows{524'288};
+  auto const strings = periodic_strings(num_rows + 1000, 43);
+  cudf::test::strings_column_wrapper full_col(strings.begin(), strings.end());
+  auto sliced       = cudf::slice(full_col, {700, 700 + num_rows});
+  auto col_i32_full = make_fixed_column<int32_t>(
+    num_rows + 1000, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+  auto col_i32 = cudf::slice(col_i32_full->view(), {700, 700 + num_rows});
+
+  cudf::table_view source_table({col_i32[0], sliced[0]});
+  auto const host_map = shuffled_iota(num_rows, 37);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// The routing gate band below the metadata engine's reach: a 300000-row short-row call
+// stays on the stock fallback (the seam's [262144, 524288) band), pinned so no later gate
+// change silently moves these cells onto the routed path unmeasured.
+TEST_F(StringRoutedMetadataParity, GateBandStaysFallback)
+{
+  constexpr cudf::size_type num_rows{300'000};
+  auto const strings = periodic_strings(num_rows, 13);
+  auto validity =
+    cudf::detail::make_counting_transform_iterator(0, [](cudf::size_type i) { return i % 5 != 0; });
+  cudf::test::strings_column_wrapper col_str(strings.begin(), strings.end(), validity);
+
+  auto col_i32 = make_fixed_column<int32_t>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+
+  cudf::table_view source_table({col_i32->view(), col_str});
+  auto const host_map = shuffled_iota(num_rows, 21);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// ============================================================================
 // §5.7 Randomized differential against the stock gather (reference oracle).
 // ============================================================================
 

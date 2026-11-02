@@ -18,6 +18,7 @@ import polars as pl
 
 from cudf_polars.containers import DataType
 from cudf_polars.dsl.ir import IRExecutionContext, Scan
+from cudf_polars.dsl.translate import Translator
 from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
@@ -179,6 +180,35 @@ def test_negative_slice_pushdown_raises(engine: pl.GPUEngine, tmp_path):
     # Take the last row
     q = q.slice(-1, 1)
     assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+def test_scan_cloud_storage_options_raises(in_memory_engine: pl.GPUEngine) -> None:
+    # libcudf/KvikIO cannot honor storage_options (endpoint, credentials, ...),
+    # so a cloud scan that sets them must fall back to the CPU.
+    q = pl.scan_parquet(
+        "s3://bucket/x.parquet",
+        schema={"a": pl.Int64},
+        storage_options={"aws_region": "us-east-1"},
+        credential_provider=None,
+    )
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
+
+
+@pytest.mark.parametrize("storage_options", [None, {}])
+def test_scan_cloud_empty_storage_options_translates(
+    in_memory_engine, storage_options
+) -> None:
+    # Polars serializes an empty provider config (e.g. ``{"Aws": []}``) even
+    # when the user passes no storage_options; that must not force a CPU fallback.
+    q = pl.scan_parquet(
+        "s3://bucket/x.parquet",
+        schema={"a": pl.Int64},
+        storage_options=storage_options,
+        credential_provider=None,
+    )
+    translator = Translator(q._ldf.visit(), in_memory_engine)
+    translator.translate_ir()
+    assert not translator.errors
 
 
 def test_scan_parquet_prefetch_file_metadata_in_memory_raises():

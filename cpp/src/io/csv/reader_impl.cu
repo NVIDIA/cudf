@@ -32,7 +32,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
@@ -673,11 +672,11 @@ void infer_column_types(parse_options const& parse_opts,
  * @return Typed buffer of `size` null string staging entries
  */
 template <typename OffsetT>
-rmm::device_uvector<string_offset_pair<OffsetT>> make_null_string_indices(size_type size,
+cuda::device_buffer<string_offset_pair<OffsetT>> make_null_string_indices(size_type size,
                                                                           cuda::stream_ref stream)
 {
-  rmm::device_uvector<string_offset_pair<OffsetT>> indices(
-    size, stream, cudf::get_current_device_resource_ref());
+  cuda::device_buffer<string_offset_pair<OffsetT>> indices(
+    stream, cudf::get_current_device_resource_ref(), size, cuda::no_init);
   // Short rows leave missing fields untouched; zero is a valid offset, not a null.
   thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                indices.begin(),
@@ -700,7 +699,7 @@ rmm::device_uvector<string_offset_pair<OffsetT>> make_null_string_indices(size_t
 template <typename OffsetT>
 std::vector<std::unique_ptr<column>> materialize_string_columns(
   device_span<char const> data,
-  std::vector<rmm::device_uvector<string_offset_pair<OffsetT>>>& staging,
+  std::vector<cuda::device_buffer<string_offset_pair<OffsetT>>>& staging,
   cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
@@ -722,7 +721,8 @@ std::vector<std::unique_ptr<column>> materialize_string_columns(
   return cudf::strings::detail::make_strings_column_batch(
     input,
     [&](std::size_t idx) {
-      staging[idx] = rmm::device_uvector<string_offset_pair<OffsetT>>{0, stream};
+      staging[idx] = cuda::device_buffer<string_offset_pair<OffsetT>>{
+        stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init};
     },
     stream,
     mr);
@@ -737,7 +737,7 @@ std::vector<std::unique_ptr<column>> materialize_string_columns(
 struct decode_result {
   template <typename OffsetT>
   using staging_vector =
-    std::vector<std::optional<rmm::device_uvector<string_offset_pair<OffsetT>>>>;
+    std::vector<std::optional<cuda::device_buffer<string_offset_pair<OffsetT>>>>;
 
   std::vector<column_buffer> buffers;
   std::variant<staging_vector<uint32_t>, staging_vector<uint64_t>> staging;
@@ -1072,7 +1072,7 @@ table_with_metadata read_csv(cudf::io::datasource* source,
     std::visit(
       [&]<typename OffsetT>(decode_result::staging_vector<OffsetT>& staging) {
         std::vector<size_t> string_col_indices;
-        std::vector<rmm::device_uvector<string_offset_pair<OffsetT>>> string_staging;
+        std::vector<cuda::device_buffer<string_offset_pair<OffsetT>>> string_staging;
         for (size_t i = 0; i < staging.size(); ++i) {
           if (!staging[i]) { continue; }
           string_col_indices.push_back(i);

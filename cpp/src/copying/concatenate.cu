@@ -12,6 +12,7 @@
 #include <cudf/detail/get_value.cuh>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
@@ -74,7 +75,7 @@ auto create_device_views(host_span<column_view const> views, cuda::stream_ref st
                  [](auto const& col) { return *col; });
 
   auto d_views =
-    make_device_uvector_async(device_views, stream, cudf::get_current_device_resource_ref());
+    make_device_buffer_async(device_views, stream, cudf::get_current_device_resource_ref());
 
   // Compute the partition offsets
   auto offsets = cudf::detail::make_pinned_vector_async<size_t>(views.size() + 1, stream);
@@ -86,7 +87,7 @@ auto create_device_views(host_span<column_view const> views, cuda::stream_ref st
     [](auto const& col) { return col.size(); },
     cuda::std::plus{});
   auto d_offsets =
-    make_device_uvector_async(offsets, stream, cudf::get_current_device_resource_ref());
+    make_device_buffer_async(offsets, stream, cudf::get_current_device_resource_ref());
   auto const output_size = offsets.back();
   cudf::detail::sync_stream(stream);
 

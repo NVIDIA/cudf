@@ -22,6 +22,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/stream>
 #include <thrust/transform.h>
 
@@ -114,7 +115,7 @@ struct contains_scalar_dispatch {
     // Using a temporary buffer for intermediate transform results from the lambda containing
     // the comparator speeds up compile-time significantly without much degradation in
     // runtime performance over using the comparator in a transform iterator with thrust::count_if.
-    auto d_results = rmm::device_uvector<bool>(haystack.size(), stream, temp_mr);
+    auto d_results = cuda::device_buffer<bool>(stream, temp_mr, haystack.size(), cuda::no_init);
     thrust::transform(
       rmm::exec_policy_nosync(stream, temp_mr),
       begin,

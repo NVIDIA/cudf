@@ -8,10 +8,9 @@
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/testing_main.hpp>
 
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
-
-#include <rmm/device_uvector.hpp>
 
 #include <cuda/stream>
 #include <cuda_runtime_api.h>
@@ -199,34 +198,24 @@ TEST_F(LogicalStackTest, GroundTruth)
                           std::back_inserter(stack_symbols),
                           std::back_inserter(stack_op_indexes));
 
-  rmm::device_uvector<SymbolT> d_stack_ops{stack_symbols.size(), stream_view};
-  rmm::device_uvector<SymbolOffsetT> d_stack_op_indexes{stack_op_indexes.size(), stream_view};
+  auto d_stack_ops = cudf::detail::make_device_buffer_async(
+    stack_symbols, stream_view, cudf::get_current_device_resource_ref());
+  auto d_stack_op_indexes = cudf::detail::make_device_buffer_async(
+    stack_op_indexes, stream_view, cudf::get_current_device_resource_ref());
   cudf::detail::hostdevice_vector<SymbolT> top_of_stack_gpu{
     string_size, stream_view, cudf::get_current_device_resource_ref()};
-  cudf::device_span<SymbolOffsetT> d_stack_op_idx_span{d_stack_op_indexes};
-
-  CUDF_CUDA_TRY(cudaMemcpyAsync(d_stack_ops.data(),
-                                stack_symbols.data(),
-                                stack_symbols.size() * sizeof(SymbolT),
-                                cudaMemcpyDefault,
-                                stream.get()));
-
-  CUDF_CUDA_TRY(cudaMemcpyAsync(d_stack_op_indexes.data(),
-                                stack_op_indexes.data(),
-                                stack_op_indexes.size() * sizeof(SymbolOffsetT),
-                                cudaMemcpyDefault,
-                                stream.get()));
-
   // Run algorithm
-  fst::sparse_stack_op_to_top_of_stack<fst::stack_op_support::NO_RESET_SUPPORT, StackLevelT>(
-    d_stack_ops.data(),
-    d_stack_op_idx_span,
-    JSONToStackOp{},
-    top_of_stack_gpu.device_ptr(),
-    empty_stack_symbol,
-    read_symbol,
-    string_size,
-    stream.get());
+  fst::sparse_stack_op_to_top_of_stack<fst::stack_op_support::NO_RESET_SUPPORT,
+                                       StackLevelT,
+                                       SymbolT*,
+                                       SymbolOffsetT>(d_stack_ops.data(),
+                                                      d_stack_op_indexes,
+                                                      JSONToStackOp{},
+                                                      top_of_stack_gpu.device_ptr(),
+                                                      empty_stack_symbol,
+                                                      read_symbol,
+                                                      string_size,
+                                                      stream.get());
 
   // Async copy results from device to host
   top_of_stack_gpu.device_to_host_async(stream_view);

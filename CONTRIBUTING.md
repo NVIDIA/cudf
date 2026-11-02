@@ -127,7 +127,7 @@ Instructions for a minimal build environment without conda are included below.
 
 ```bash
 # create the conda environment (assuming in base `cudf` directory)
-conda env create --name cudf_dev --file conda/environments/all_cuda-133_arch-$(uname -m).yaml
+conda env create --name cudf_dev --file conda/environments/all_cuda-134_arch-$(uname -m).yaml
 # activate the environment
 conda activate cudf_dev
 ```

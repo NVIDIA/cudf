@@ -148,6 +148,14 @@ def test_supported_stringfunction_expression(engine: pl.GPUEngine, ldf):
     assert_gpu_result_equal(q, engine=engine)
 
 
+def test_starts_ends_with_null_literal(engine: pl.GPUEngine):
+    q = pl.LazyFrame({"a": ["apple", None, "banana"]}).select(
+        pl.col("a").str.starts_with(pl.lit(None, dtype=pl.String)).alias("starts"),
+        pl.col("a").str.ends_with(pl.lit(None, dtype=pl.String)).alias("ends"),
+    )
+    assert_gpu_result_equal(q, engine=engine)
+
+
 def test_unsupported_stringfunction(engine: pl.GPUEngine, ldf):
     q = ldf.select(pl.col("a").str.encode("hex"))
 

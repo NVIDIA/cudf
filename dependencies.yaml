@@ -6,7 +6,7 @@ files:
   all:
     output: conda
     matrix:
-      cuda: ["12.9", "13.3"]
+      cuda: ["12.9", "13.4"]
       arch: [x86_64, aarch64]
     includes:
       - build_base
@@ -54,9 +54,13 @@ files:
       - test_python_cudf_common
       - test_python_pylibcudf
       - test_python_cudf_pandas
-      - test_cudf_pandas_pandas_tests
       - test_python_cudf_polars
       - test_python_s3
+  pandas_tests:
+    output: none
+    includes:
+      - run_common
+      - test_python_pandas_tests
   test_static_build:
     output: none
     includes:
@@ -394,7 +398,7 @@ files:
       table: project.optional-dependencies
       key: pandas-tests
     includes:
-      - test_python_pandas_cudf
+      - test_python_pandas_tests
   py_test_cudf_pandas:
     output: pyproject
     matrix:
@@ -716,7 +720,7 @@ files:
   test_cudf_pandas_compat:
     output: none
     matrix:
-      cuda: ["12.9", "13.3"]
+      cuda: ["12.9", "13.4"]
       pandas_compat_version: ["3.0"]
     includes:
       - test_cudf_pandas_compat
@@ -878,6 +882,10 @@ dependencies:
               cuda: "13.3"
             packages:
               - cuda-version=13.3
+          - matrix:
+              cuda: "13.4"
+            packages:
+              - cuda-version=13.4
       - output_types: [requirements, constraints]
         matrices:
           # if use_cuda_wheels=false is provided, do not add dependencies on any CUDA wheels
@@ -939,6 +947,11 @@ dependencies:
               use_cuda_wheels: "true"
             packages:
               - cuda-toolkit==13.3.*
+          - matrix:
+              cuda: "13.4"
+              use_cuda_wheels: "true"
+            packages:
+              - cuda-toolkit==13.4.*
   cuda:
     common:
       - output_types: [conda]
@@ -976,7 +989,7 @@ dependencies:
               use_cuda_wheels: "true"
             packages:
               - cuda-toolkit[nvrtc]==13.*
-              - &nvjitlink_cu13 nvidia-nvjitlink>=13.3,<14
+              - &nvjitlink_cu13 nvidia-nvjitlink>=13.4,<14
           # if no matching matrix selectors passed, list the CUDA 13 requirement
           # (just as a source of documentation, as this populates pyproject.toml in source control)
           - matrix:
@@ -1292,10 +1305,24 @@ dependencies:
           # Used by ci/timeout_with_stack.py utility
           - psutil
           - *pandas
+          # cudf-polars unit tests for iceberg/delta IO
+          - deltalake>=1.6.0
+          - pyiceberg>=0.12.0
+          - sqlalchemy>=2.0.18
+          - pyarrow>=19.0.0
+      - output_types: [requirements, pyproject]
+        packages:
+          - polars[iceberg]
+      - output_types: constraints
+        packages:
+          - polars
       - output_types: conda
         packages:
           # Used by timeout_with_stack.py utility
           - gdb
+          # TODO: Use the conda-forge package once polars-iceberg is available there
+          - pip:
+              - polars-iceberg>=0.1.0
   test_cudf_polars_tpch:
     common:
       - output_types: [conda, requirements, pyproject]
@@ -1764,22 +1791,56 @@ dependencies:
       - output_types: [conda, requirements, constraints, pyproject]
         packages:
           - rapids-logger==0.3.*
-  test_python_pandas_cudf:
+  test_python_pandas_tests:
     common:
-      - output_types: [requirements, constraints, pyproject]
+      - output_types: [conda, requirements, constraints, pyproject]
         packages:
-          # dependencies to run pandas tests
-          # https://github.com/pandas-dev/pandas/blob/main/environment.yml
-          # pandas[...] includes all of the required dependencies.
-          # Intentionally excluding `postgresql` because of
-          # installation issues with `psycopg2`.
-          - pandas[test, pyarrow, performance, computation, fss, excel, parquet, feather, hdf5, spss, html, xml, plot, output-formatting, clipboard, compression]
-          # Pinned until pandas 3.0.4 releases with matplotlib 3.11 compat fix
-          # (https://github.com/pandas-dev/pandas/pull/65742)
-          - matplotlib<3.11
-          - pytest-reportlog
+          # not in an extra but used in pandas tests
           - ipython
+          # Used in cudf/ci/cudf_pandas_scripts/pandas-tests/run.sh
+          - pytest-reportlog
+      - output_types: [pyproject]
+        packages:
+          - pandas[test, pyarrow, performance, computation, fss, excel, parquet, feather, hdf5, spss, html, xml, plot, output-formatting, clipboard, compression]
+      # Excludes `clipboard` from above because pip builds its PyQt5
+      # dependency from source on arm64, which fails without qmake.
+      - output_types: requirements
+        packages:
+          - pandas[test, pyarrow, performance, computation, fss, excel, parquet, feather, hdf5, spss, html, xml, plot, output-formatting, compression]
+      # constraints do not support extras
+      - output_types: constraints
+        packages:
+          - *pandas
+      # mimics pandas extras for conda
+      - output_types: [conda]
+        packages:
+          - beautifulsoup4
+          - bottleneck
+          - fsspec
+          - html5lib
           - hypothesis>=6.131.7
+          - jinja2
+          - lxml
+          - matplotlib-base
+          - *numba
+          - numexpr
+          - odfpy
+          - openpyxl
+          - pyarrow
+          - pyqt
+          - pyreadstat
+          - pytables
+          - pytest<9.1.0
+          - pytest-xdist
+          - python-calamine
+          - pyxlsb
+          - qtpy
+          - scipy
+          - tabulate
+          - xarray
+          - xlrd
+          - xlsxwriter
+          - zstandard
   test_python_cudf_pandas:
     common:
       - output_types: [conda, requirements, constraints, pyproject]
@@ -1792,23 +1853,6 @@ dependencies:
           - openpyxl
           # https://github.com/pytest-dev/pytest-rerunfailures/issues/302
           - pytest-rerunfailures!=16.0.0
-  # Additional dependencies for running the pandas test suite under cudf.pandas.
-  # Unlike test_python_pandas_cudf (which uses pip extras like pandas[excel]),
-  # conda environments need these listed explicitly.
-  test_cudf_pandas_pandas_tests:
-    common:
-      - output_types: [conda]
-        packages:
-          # Pinned until pandas 3.0.4 releases with matplotlib 3.11 compat fix
-          # (https://github.com/pandas-dev/pandas/pull/65742)
-          - matplotlib-base<3.11
-          - numexpr
-          - odfpy
-          - pyxlsb
-          - python-calamine
-          - pytables
-          - xlrd
-          - xlsxwriter
   depends_on_dask_cuda:
     common:
       - output_types: conda

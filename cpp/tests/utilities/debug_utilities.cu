@@ -14,10 +14,12 @@
 #include <cudf/utilities/bit.hpp>
 #include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/concepts>
 #include <thrust/transform.h>
@@ -159,7 +161,8 @@ std::string nested_offsets_to_string(NestedColumnView const& c,
 
   // the first offset value to normalize everything against
   size_type first = cudf::detail::get_value<size_type>(offsets, c.offset(), stream);
-  rmm::device_uvector<size_type> shifted_offsets(output_size, stream, mr.get_temporary_mr());
+  cuda::device_buffer<size_type> shifted_offsets(
+    stream, mr.get_temporary_mr(), output_size, cuda::no_init);
 
   // normalize the offset values for the column offset
   size_type const* d_offsets = offsets.head<size_type>() + c.offset();

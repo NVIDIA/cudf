@@ -70,7 +70,7 @@ OPTIONS:
 
 EXAMPLES:
     build_cudf_java_jar.sh -l /tmp/libcudf-cuda12 -o /tmp/jars -c 12.9.2
-    build_cudf_java_jar.sh -l /tmp/libcudf-cuda13 -o /tmp/jars -c 13.3.0 -A 80
+    build_cudf_java_jar.sh -l /tmp/libcudf-cuda13 -o /tmp/jars -c 13.4.3 -A 80
     # writes:
     #   /tmp/jars/cuda12/cudf-<version>-cuda12.jar
     #   /tmp/jars/cuda12/cudf-<version>.pom

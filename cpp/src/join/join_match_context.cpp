@@ -5,6 +5,7 @@
 #include "join_match_state.hpp"
 
 // The context's own members still use the deprecated fields.
+// TODO: Remove this suppression with the deprecated fields and constructor in 27.02 (#20958).
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 

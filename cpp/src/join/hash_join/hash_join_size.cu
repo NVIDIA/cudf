@@ -4,8 +4,11 @@
  */
 
 #include "common.cuh"
+#include "dispatch.cuh"
+#include "hash_csr_kernels.cuh"
 
 #include <cudf/detail/device_scalar.hpp>
+#include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -32,9 +35,34 @@ std::size_t hash_join<Hasher>::join_size(cudf::table_view const& left,
     if (_is_empty) { return left.num_rows(); }
   }
 
-  auto total_matches = cudf::detail::device_scalar<cuda::std::uint64_t>(
-    0, stream, cudf::get_current_device_resource_ref());
-  probe(Join, left, nullptr, nullptr, total_matches.data(), nullptr, nullptr, stream);
+  CUDF_EXPECTS(_has_nulls || !cudf::has_nested_nulls(left),
+               "Left table has nulls while right table was not hashed with null check.",
+               std::invalid_argument);
+
+  auto const preprocessed_left = cudf::detail::row::equality::preprocessed_table::create(
+    left, stream, cudf::get_current_device_resource_ref());
+
+  auto const temp_mr     = cudf::get_current_device_resource_ref();
+  auto total_matches     = cudf::detail::device_scalar<cuda::std::uint64_t>(0, stream, temp_mr);
+  auto const row_bitmask = cudf::detail::bitmask_and(left, stream, temp_mr).first;
+  auto const valid_rows  = _nulls_equal == null_equality::UNEQUAL ? row_bitmask.data() : nullptr;
+
+  auto count_matches = [&](auto equality, auto hasher) {
+    launch_hash_csr_probe_count_kernel<Join == join_kind::LEFT_JOIN>(left.num_rows(),
+                                                                     valid_rows,
+                                                                     nullptr,
+                                                                     nullptr,
+                                                                     total_matches.data(),
+                                                                     nullptr,
+                                                                     nullptr,
+                                                                     _impl->hash_table(),
+                                                                     _impl->csr(),
+                                                                     equality,
+                                                                     hasher,
+                                                                     stream);
+  };
+  dispatch_join_comparator(
+    _right, left, _preprocessed_right, preprocessed_left, _has_nulls, _nulls_equal, count_matches);
   return static_cast<std::size_t>(total_matches.value(stream));
 }
 
@@ -49,19 +77,36 @@ std::size_t hash_join<Hasher>::join_size(cudf::table_view const& left,
   CUDF_FUNC_RANGE();
   if (_is_empty) { return left.num_rows(); }
 
+  CUDF_EXPECTS(_has_nulls || !cudf::has_nested_nulls(left),
+               "Left table has nulls while right table was not hashed with null check.",
+               std::invalid_argument);
+
+  auto const preprocessed_left = cudf::detail::row::equality::preprocessed_table::create(
+    left, stream, cudf::get_current_device_resource_ref());
   auto const temp_mr  = cudf::get_current_device_resource_ref();
   auto total_matches  = cudf::detail::device_scalar<cuda::std::uint64_t>(0, stream, temp_mr);
   auto matched_groups = cudf::detail::make_zeroed_device_buffer_async<cuda::std::uint32_t>(
     _right.num_rows(), stream, temp_mr);
   auto matched_build_rows = cudf::detail::device_scalar<cuda::std::uint64_t>(0, stream, temp_mr);
-  probe(join_kind::FULL_JOIN,
-        left,
-        nullptr,
-        nullptr,
-        total_matches.data(),
-        matched_groups.data(),
-        matched_build_rows.data(),
-        stream);
+  auto const row_bitmask  = cudf::detail::bitmask_and(left, stream, temp_mr).first;
+  auto const valid_rows   = _nulls_equal == null_equality::UNEQUAL ? row_bitmask.data() : nullptr;
+
+  auto count_matches = [&](auto equality, auto hasher) {
+    launch_hash_csr_probe_count_kernel<true>(left.num_rows(),
+                                             valid_rows,
+                                             nullptr,
+                                             nullptr,
+                                             total_matches.data(),
+                                             matched_groups.data(),
+                                             matched_build_rows.data(),
+                                             _impl->hash_table(),
+                                             _impl->csr(),
+                                             equality,
+                                             hasher,
+                                             stream);
+  };
+  dispatch_join_comparator(
+    _right, left, _preprocessed_right, preprocessed_left, _has_nulls, _nulls_equal, count_matches);
 
   auto const left_output_size   = total_matches.value(stream);
   auto const matched_right_rows = matched_build_rows.value(stream);

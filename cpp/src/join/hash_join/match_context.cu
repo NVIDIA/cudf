@@ -25,8 +25,6 @@ void hash_join<Hasher>::probe(join_kind join,
                               size_type* groups,
                               size_type* counts,
                               cuda::std::uint64_t* total,
-                              cuda::std::uint32_t* matched_groups,
-                              cuda::std::uint64_t* matched_build_rows,
                               cuda::stream_ref stream) const
 {
   validate_hash_join_probe(_right, left, _has_nulls);
@@ -44,8 +42,8 @@ void hash_join<Hasher>::probe(join_kind join,
                                                                     groups,
                                                                     counts,
                                                                     total,
-                                                                    matched_groups,
-                                                                    matched_build_rows,
+                                                                    nullptr,
+                                                                    nullptr,
                                                                     _impl->hash_table(),
                                                                     _impl->csr(),
                                                                     equality,
@@ -79,7 +77,7 @@ cudf::join_match_context hash_join<Hasher>::make_match_context(
   } else {
     cudf::detail::device_scalar<cuda::std::uint64_t> total{
       0, stream, cudf::get_current_device_resource_ref()};
-    probe(join, left, groups.data(), match_counts->data(), total.data(), nullptr, nullptr, stream);
+    probe(join, left, groups.data(), match_counts->data(), total.data(), stream);
     output_size = total.value(stream);
   }
 
@@ -93,8 +91,6 @@ template void hash_join<hash_join_hasher>::probe(join_kind,
                                                  cudf::table_view const&,
                                                  size_type*,
                                                  size_type*,
-                                                 cuda::std::uint64_t*,
-                                                 cuda::std::uint32_t*,
                                                  cuda::std::uint64_t*,
                                                  cuda::stream_ref) const;
 

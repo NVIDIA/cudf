@@ -3549,6 +3549,7 @@ TEST_F(JoinTest, HashJoinPartitionedInnerJoin)
                std::invalid_argument);
 
   // A caller-constructed context probes each partition again
+  // TODO: Remove this case with the deprecated constructor in 27.02 (#20958).
   auto counts =
     std::make_unique<rmm::device_uvector<cudf::size_type>>(cudf::detail::make_device_uvector_async(
       part_ctx.left_table_context->match_counts(), stream, mr));

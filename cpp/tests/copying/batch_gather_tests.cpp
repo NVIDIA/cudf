@@ -1894,9 +1894,12 @@ TEST_F(BatchGatherMixedTest, DeferredStringCountsReadbackMatchesReference)
 }
 
 // ============================================================================
-// §5.6b String fallback seam: the per-call row gate at kStringFallbackRowThreshold hands tall
-// string columns to the stock per-column path. The fallback IS the stock path, so every test
-// below compares exactly (CUDF_TEST_EXPECT_TABLES_EQUAL) against a run_reference gather.
+// §5.6b String seam: tall string columns between the fused fast path and the stock per-column
+// fallback. Strings in the seam band [kStringFallbackRowThreshold, kBatchMemcpyRowThreshold)
+// take the stock path — the composed A/B of the short-string engine confirmed the band
+// exclusion (the engine's wins live below the band, and the tall-str1 routed-metadata path
+// owns ≥524288-row strings); the tests pin parity (CUDF_TEST_EXPECT_TABLES_EQUAL against a
+// run_reference gather) at every boundary.
 // ============================================================================
 
 class BatchGatherTallSeamTest : public cudf::test::BaseFixture {};
@@ -1952,8 +1955,9 @@ TEST_F(BatchGatherTallSeamTest, SmallTwoColumnFastPathPinned)
   CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
 }
 
-// Class 2: at and above the threshold strings route to the fallback path — parity with stock,
-// and the fused string machinery must not see the columns.
+// Class 2: at 262144 rows (the band's lower edge) strings take the stock fallback — the band
+// exclusion routes them out of the fused path. Parity with stock is still the contract. The
+// names stay (they pin the same row counts); only the route changed.
 TEST_F(BatchGatherTallSeamTest, AtThresholdStringsFallbackPinned)
 {
   constexpr cudf::size_type num_rows{262'144};
@@ -1963,6 +1967,34 @@ TEST_F(BatchGatherTallSeamTest, AtThresholdStringsFallbackPinned)
   cudf::test::strings_column_wrapper col_str(strings.begin(), strings.end(), validity);
 
   cudf::table_view source_table({col_str});
+  auto const host_map = shuffled_iota(num_rows, 7);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// Guard pin for the seam-band exclusion: at 262144 rows (the band's lower edge) the string
+// column is routed host-side to the stock per-column fallback (the classification walk never
+// enters it in fused_indices), so the payload kernel and the fused short-string engine are
+// both unreachable for it. Parity covers correctness; the routing is a host-side band branch
+// on kStringFallbackRowThreshold/kBatchMemcpyRowThreshold, pinned by this exact row count.
+TEST_F(BatchGatherTallSeamTest, SeamGuardExcludesBandStringFromFusedPath)
+{
+  constexpr cudf::size_type num_rows{262'144};
+  auto const strings = periodic_strings(num_rows, 17);  // short-average rows: engine-shaped
+  auto validity =
+    cudf::detail::make_counting_transform_iterator(0, [](cudf::size_type i) { return i % 6 != 0; });
+  cudf::test::strings_column_wrapper col_str(strings.begin(), strings.end(), validity);
+
+  // A short-average string column beside fixed-width siblings: only the string column's
+  // routing is in question; the fixed-width columns stay on the descriptor path either way.
+  auto col_i32 = make_fixed_column<int32_t>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+
+  cudf::table_view source_table({col_i32->view(), col_str});
   auto const host_map = shuffled_iota(num_rows, 7);
   cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
                                                                      host_map.end());
@@ -1991,8 +2023,9 @@ TEST_F(BatchGatherTallSeamTest, AboveThresholdStringsFallbackPinned)
   CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
 }
 
-// Class 3: off-by-one boundary pin — 262143 rows (fast path) and 262144 rows (fallback) must
-// BOTH match stock; the pair fails if the comparison is off by one.
+// Class 3: off-by-one boundary pin — 262143 rows (below the band, fused path) and 262144 rows
+// (the band's lower edge, stock fallback) must BOTH match stock; the pair fails if the
+// comparison is off by one.
 TEST_F(BatchGatherTallSeamTest, BoundaryBelowByOneUsesFastPath)
 {
   constexpr cudf::size_type num_rows{262'143};
@@ -2622,12 +2655,13 @@ TEST_F(StringRoutedMetadataParity, SlicedSourceRouted)
   CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
 }
 
-// The routing gate band below the metadata engine's reach: a 300000-row short-row call
-// stays on the stock fallback (the seam's [262144, 524288) band), pinned so no later gate
-// change silently moves these cells onto the routed path unmeasured.
+// The routing gate band below the metadata engine's reach: a 262143-row SHORT-average call
+// rides the fused short-string engine (below the seam band the engine replaces the group
+// walk); this parity pin stays so any future gate re-tightening that moves the cell back to
+// the stock fallback is caught against stock semantics.
 TEST_F(StringRoutedMetadataParity, GateBandStaysFallback)
 {
-  constexpr cudf::size_type num_rows{300'000};
+  constexpr cudf::size_type num_rows{262'143};
   auto const strings = periodic_strings(num_rows, 13);
   auto validity =
     cudf::detail::make_counting_transform_iterator(0, [](cudf::size_type i) { return i % 5 != 0; });
@@ -2647,10 +2681,287 @@ TEST_F(StringRoutedMetadataParity, GateBandStaysFallback)
 }
 
 // ============================================================================
-// §5.7 Randomized differential against the stock gather (reference oracle).
+// §5.6c Fused short-string engine (below-gate warp-tile path): parity against the stock
+// gather. The engine replaces the payload kernel for below-band short-average calls; the seam
+// band [262144, 524288) takes the stock fallback and ≥524288-row strings run the
+// routed-metadata path, so the engine serves calls below 262144 rows. Every test here compares
+// against `run_reference` so the engine's offsets/masks/counts/chars must match stock exactly.
 // ============================================================================
 
-class BatchGatherRandomizedTest : public cudf::test::BaseFixture {};
+class StringFusedEngineParity : public cudf::test::BaseFixture {};
+
+// The below-band tall cell (the measured win cell class): short-average rows at a large row
+// count — one warp covers 32 rows of one column; tile tails (num_rows % 32 != 0) exercise the
+// ballot's dead-lane path. 262143 is the largest below-band count (one row under the seam band).
+TEST_F(StringFusedEngineParity, SeamBandShortRowsSingleColumn)
+{
+  constexpr cudf::size_type num_rows{262'143};  // 1 mod 32: one tail tile
+  auto const strings = periodic_strings(num_rows, 17);
+  auto validity =
+    cudf::detail::make_counting_transform_iterator(0, [](cudf::size_type i) { return i % 6 != 0; });
+  cudf::test::strings_column_wrapper col_str(strings.begin(), strings.end(), validity);
+
+  cudf::table_view source_table({col_str});
+  auto const host_map = shuffled_iota(num_rows, 7);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// Multi-column: warps map flat slots across column tiles; the sentinel (N+1) writer must be
+// per-column and the masks/counts per-column too. Mixed widths across columns. Row count just
+// below the seam band so the call stays engine-admitted.
+TEST_F(StringFusedEngineParity, MultiColumnTilesAndSentinels)
+{
+  constexpr cudf::size_type num_rows{262'142};            // 262142 % 32 != 0: one tail tile
+  auto const strings_a = periodic_strings(num_rows, 7);   // avg ~16 B
+  auto const strings_b = periodic_strings(num_rows, 31);  // avg ~16 B, different stride
+  auto validity_a =
+    cudf::detail::make_counting_transform_iterator(0, [](cudf::size_type i) { return i % 3 != 0; });
+  auto validity_b =
+    cudf::detail::make_counting_transform_iterator(0, [](cudf::size_type i) { return i % 4 != 0; });
+  cudf::test::strings_column_wrapper col_a(strings_a.begin(), strings_a.end(), validity_a);
+  cudf::test::strings_column_wrapper col_b(strings_b.begin(), strings_b.end(), validity_b);
+
+  auto col_i32 = make_fixed_column<int32_t>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+
+  cudf::table_view source_table({col_i32->view(), col_a, col_b});
+  auto const host_map = shuffled_iota(num_rows, 11);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// Long-row safety inside an engine call: most rows short, a few rows far above the block-copy
+// gate — the average must stay at or under 32 B so the engine is admitted, and the long rows
+// must ride the full-warp copy path byte-exactly (the 4-lane subgroup loop skips them by the
+// row_len gate). 31 short rows (<= 12 B) plus one 300 B row average ~29 B <= 32 B per tile.
+TEST_F(StringFusedEngineParity, ShortAverageColumnWithLongOutliers)
+{
+  constexpr cudf::size_type num_rows{262'143};
+  std::vector<std::string> strings;
+  strings.reserve(num_rows);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    // Every 32nd row is 300+ B; the rest are 1-12 B. Average = (31 * 6 + 320) / 32 ~ 15 B.
+    strings.push_back(
+      std::string(i % 32 == 7 ? std::size_t{300} + (i / 32) % 50 : std::size_t{1} + (i * 7) % 12,
+                  static_cast<char>('a' + i % 26)));
+  }
+  auto validity =
+    cudf::detail::make_counting_transform_iterator(0, [](cudf::size_type i) { return i % 5 != 0; });
+  cudf::test::strings_column_wrapper col_str(strings.begin(), strings.end(), validity);
+
+  auto col_i32 = make_fixed_column<int32_t>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+
+  cudf::table_view source_table({col_i32->view(), col_str});
+  auto const host_map = shuffled_iota(num_rows, 23);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// Exact engine-shape boundary pins: every row length class the subgroup loop must handle —
+// 0 (valid+empty), 1, 3, 4, 16 (subgroup boundary), 17 (full-warp boundary), 32 (gate), 33
+// (above gate) bytes. The engine is admitted (average <= 32 B) and must be byte-exact on all.
+TEST_F(StringFusedEngineParity, RowLengthClassBoundaries)
+{
+  constexpr cudf::size_type num_rows{8 * 16};  // 128 rows: 16 of each length class
+  std::array<cudf::size_type, 8> const lengths{{0, 1, 3, 4, 16, 17, 32, 33}};
+  std::vector<std::string> strings;
+  strings.reserve(num_rows);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    strings.push_back(std::string(static_cast<std::size_t>(lengths[i % lengths.size()]),
+                                  static_cast<char>('a' + i % 26)));
+  }
+  auto validity =
+    cudf::detail::make_counting_transform_iterator(0, [](cudf::size_type i) { return i % 7 != 0; });
+  cudf::test::strings_column_wrapper col_str(strings.begin(), strings.end(), validity);
+
+  auto col_i32 = make_fixed_column<int32_t>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+
+  cudf::table_view source_table({col_i32->view(), col_str});
+  auto const host_map = shuffled_iota(num_rows, 29);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// NULLIFY with out-of-bounds entries on an engine call: dead rows contribute zero bytes and
+// zero validity through the engine's ballots exactly as the payload kernel's mask phase did.
+TEST_F(StringFusedEngineParity, NullifyDeadRowsEngine)
+{
+  constexpr cudf::size_type num_rows{262'143};
+  auto const strings = periodic_strings(num_rows, 19);
+  auto validity =
+    cudf::detail::make_counting_transform_iterator(0, [](cudf::size_type i) { return i % 8 != 0; });
+  cudf::test::strings_column_wrapper col_str(strings.begin(), strings.end(), validity);
+
+  auto col_i32 = make_fixed_column<int32_t>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+
+  cudf::table_view source_table({col_i32->view(), col_str});
+
+  std::vector<cudf::size_type> host_map;
+  host_map.reserve(num_rows);
+  std::mt19937 rng(23);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    host_map.push_back(i % 32 == 0 ? num_rows + static_cast<cudf::size_type>(rng() % 4096)
+                                   : static_cast<cudf::size_type>(rng() % num_rows));
+  }
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table, gather_map, cudf::out_of_bounds_policy::NULLIFY);
+  auto reference = run_reference(source_table, gather_map, cudf::out_of_bounds_policy::NULLIFY);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// Negative-index wrap on an engine call: the engine's resolve must reproduce the kernel
+// chars path's normalization exactly (the same resolve_gathered_row call).
+TEST_F(StringFusedEngineParity, NegativeIndexWrapEngine)
+{
+  constexpr cudf::size_type num_rows{262'143};
+  auto const strings = periodic_strings(num_rows, 37);
+  auto validity =
+    cudf::detail::make_counting_transform_iterator(0, [](cudf::size_type i) { return i % 9 != 0; });
+  cudf::test::strings_column_wrapper col_str(strings.begin(), strings.end(), validity);
+
+  auto col_i32 = make_fixed_column<int32_t>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+
+  cudf::table_view source_table({col_i32->view(), col_str});
+
+  std::vector<cudf::size_type> host_map;
+  host_map.reserve(num_rows);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    host_map.push_back(i % 8 == 0 ? -(1 + static_cast<cudf::size_type>(i / 8) % num_rows)
+                                  : static_cast<cudf::size_type>((i * 31) % num_rows));
+  }
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table,
+                                 gather_map,
+                                 cudf::out_of_bounds_policy::DONT_CHECK,
+                                 cudf::negative_index_policy::ALLOWED);
+  auto reference = run_reference(source_table,
+                                 gather_map,
+                                 cudf::out_of_bounds_policy::DONT_CHECK,
+                                 cudf::negative_index_policy::ALLOWED);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// All-empty rows: every gathered row zero bytes but valid — the engine's subgroup loop
+// skips them (len 0) while offsets must be all-zero with the sentinel, masks all-valid.
+TEST_F(StringFusedEngineParity, AllEmptyRowsEngine)
+{
+  constexpr cudf::size_type num_rows{262'143};
+  std::vector<std::string> empty_strings(num_rows, "");
+  cudf::test::strings_column_wrapper col_str(empty_strings.begin(), empty_strings.end());
+
+  auto col_i32 = make_fixed_column<int32_t>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+
+  cudf::table_view source_table({col_i32->view(), col_str});
+  auto const host_map = shuffled_iota(num_rows, 31);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// Sliced tall source on an engine call: the engine indexes the source through the item's
+// mask_bit_offset/offsets-view offset exactly like the group walk does.
+TEST_F(StringFusedEngineParity, SlicedSourceEngine)
+{
+  constexpr cudf::size_type num_rows{262'143};
+  auto const strings = periodic_strings(num_rows + 1000, 43);
+  cudf::test::strings_column_wrapper full_col(strings.begin(), strings.end());
+  auto sliced       = cudf::slice(full_col, {700, 700 + num_rows});
+  auto col_i32_full = make_fixed_column<int32_t>(
+    num_rows + 1000, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+  auto col_i32 = cudf::slice(col_i32_full->view(), {700, 700 + num_rows});
+
+  cudf::table_view source_table({col_i32[0], sliced[0]});
+  auto const host_map = shuffled_iota(num_rows, 37);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// Repeated map entries on an engine call: the same source row gathered many times — the
+// subgroup copies must not alias (each row's bytes land at its own scratch offset).
+TEST_F(StringFusedEngineParity, RepeatedSourceRowsEngine)
+{
+  constexpr cudf::size_type num_rows{262'143};
+  auto const strings = periodic_strings(num_rows, 11);
+  auto validity =
+    cudf::detail::make_counting_transform_iterator(0, [](cudf::size_type i) { return i % 4 != 0; });
+  cudf::test::strings_column_wrapper col_str(strings.begin(), strings.end(), validity);
+
+  auto col_i32 = make_fixed_column<int32_t>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+
+  cudf::table_view source_table({col_i32->view(), col_str});
+
+  // Repeat every 32nd source row at every destination row of its tile — dense aliasing.
+  std::vector<cudf::size_type> host_map;
+  host_map.reserve(num_rows);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    host_map.push_back(i % 2 == 0 ? (i / 32) * 32 % num_rows : static_cast<cudf::size_type>(i));
+  }
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// A below-band long-average column must NOT be engine-admitted (the short-average check
+// rejects it) and must still match stock — the payload kernel's group walk serves it. Below
+// the seam band the call stays fused; inside the band, the exclusion routes the call to the
+// stock fallback (pinned by BatchGatherTallSeamTest).
+TEST_F(StringFusedEngineParity, BandLongRowsKeepPayloadKernel)
+{
+  constexpr cudf::size_type num_rows{262'143};
+  auto const strings = long_strings(num_rows);  // avg ~543 B: average above the 32 B gate
+  auto validity =
+    cudf::detail::make_counting_transform_iterator(0, [](cudf::size_type i) { return i % 5 != 0; });
+  cudf::test::strings_column_wrapper col_str(strings.begin(), strings.end(), validity);
+
+  auto col_i32 = make_fixed_column<int32_t>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+
+  cudf::table_view source_table({col_i32->view(), col_str});
+  auto const host_map = shuffled_iota(num_rows, 21);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
 
 TEST_F(BatchGatherRandomizedTest, RandomizedDifferential)
 {

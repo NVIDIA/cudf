@@ -1125,12 +1125,16 @@ cdef class ChunkedParquetWriterOptionsBuilder:
 
     cpdef ChunkedParquetWriterOptionsBuilder utc_timestamps(self, bool enabled):
         """
-        Set to true if timestamps are to be written as UTC.
+        Set to true if timestamps are to be annotated as UTC
+        (``isAdjustedToUTC=true``).
+
+        Only the annotation is affected; timestamp values are written as-is
+        and are not converted.
 
         Parameters
         ----------
         enabled : bool
-            Boolean value to enable/disable writing of timestamps as UTC.
+            Boolean value to enable/disable annotating timestamps as UTC.
 
         Returns
         -------

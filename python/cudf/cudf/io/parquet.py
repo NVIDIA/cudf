@@ -1860,9 +1860,10 @@ class ParquetWriter:
         file footer's key-value metadata section for faithful round-tripping.
     utc_timestamps : bool, default True
         Value of ``isAdjustedToUTC`` in the Parquet logical type of
-        timestamp columns (and of duration columns, which are written as
-        ``TIME``). The values themselves are not shifted. Set to ``False``
-        to match ``DataFrame.to_parquet``.
+        timestamp columns, and of duration columns written as ``TIME``
+        (with ``store_schema=True``, durations other than days are written
+        as unannotated ``INT64`` and are unaffected). The values themselves
+        are not shifted. Set to ``False`` to match ``DataFrame.to_parquet``.
 
     See Also
     --------

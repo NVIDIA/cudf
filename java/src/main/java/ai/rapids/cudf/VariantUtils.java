@@ -23,7 +23,8 @@ public class VariantUtils {
       DType.DTypeEnum.STRING, DType.DTypeEnum.INT8, DType.DTypeEnum.INT16,
       DType.DTypeEnum.INT32, DType.DTypeEnum.INT64, DType.DTypeEnum.FLOAT32,
       DType.DTypeEnum.FLOAT64, DType.DTypeEnum.BOOL8, DType.DTypeEnum.DECIMAL32,
-      DType.DTypeEnum.DECIMAL64, DType.DTypeEnum.DECIMAL128);
+      DType.DTypeEnum.DECIMAL64, DType.DTypeEnum.DECIMAL128,
+      DType.DTypeEnum.TIMESTAMP_MICROSECONDS, DType.DTypeEnum.TIMESTAMP_NANOSECONDS);
 
   private VariantUtils() {}
 
@@ -61,6 +62,8 @@ public class VariantUtils {
    * the value blob is empty, or its header is unrecognized. An encoded Variant null is represented
    * by a valid {@link VariantLogicalType#NULL_VALUE} row. Only the header byte is inspected, so a
    * recognized header is classified even if the remaining payload is truncated.
+   * Timestamp logical IDs distinguish timezone-adjusted from NTZ encodings, but do not
+   * distinguish microsecond from nanosecond units.
    *
    * <p>This API mirrors an experimental libcudf API and is subject to change.
    *
@@ -76,18 +79,24 @@ public class VariantUtils {
    * Decode raw Variant-encoded value bytes into {@code targetType}. Supported target types are
    * {@link DType#STRING}, {@link DType#INT8}, {@link DType#INT16}, {@link DType#INT32},
    * {@link DType#INT64}, {@link DType#FLOAT32}, {@link DType#FLOAT64}, {@link DType#BOOL8},
+   * {@link DType#TIMESTAMP_MICROSECONDS}, {@link DType#TIMESTAMP_NANOSECONDS},
    * and decimal types created with {@link DType#create(DType.DTypeEnum, int)} using
    * {@link DType.DTypeEnum#DECIMAL32}, {@link DType.DTypeEnum#DECIMAL64}, or
-   * {@link DType.DTypeEnum#DECIMAL128}. Non-decimal decoding requires the encoded physical type
-   * to exactly match {@code targetType}; no numeric conversions are performed. Any encoded
-   * decimal width can be decoded to any supported decimal width. Decimal values are rescaled to
-   * the target scale, truncating toward zero when fractional digits are discarded. Input nulls,
+   * {@link DType.DTypeEnum#DECIMAL128}. Except for the timestamp encodings described below,
+   * non-decimal decoding requires the encoded physical type to exactly match {@code targetType};
+   * no numeric conversions are performed. Any encoded decimal width can be decoded to any
+   * supported decimal width. Decimal values are rescaled to the target scale, truncating toward
+   * zero when fractional digits are discarded. Input nulls,
    * encoded Variant nulls, physical-type mismatches, malformed values, and decimal overflows
    * produce null output rows.
    *
    * <p>The target decimal scale uses cuDF's base-10 exponent convention: scale {@code -2}
    * represents hundredths, while scale {@code 2} represents hundreds. Overflow is checked against
    * the target's integer storage width; no declared decimal precision is enforced.
+   *
+   * <p>Timestamp targets accept both timezone-adjusted and NTZ encodings of the same unit
+   * and preserve the signed 64-bit payload unchanged. No timezone or unit conversion is
+   * performed. Mismatched units and truncated timestamp payloads produce null rows.
    */
   public static ColumnVector castVariantValue(ColumnView valueBytes, DType targetType) {
     Objects.requireNonNull(valueBytes, "valueBytes");
@@ -100,11 +109,14 @@ public class VariantUtils {
    * Extract a Variant field and decode it into {@code targetType} in one native call.
    * Supported target types are {@link DType#STRING}, {@link DType#INT8}, {@link DType#INT16},
    * {@link DType#INT32}, {@link DType#INT64}, {@link DType#FLOAT32}, {@link DType#FLOAT64}, and
-   * {@link DType#BOOL8}, plus decimal types created with
+   * {@link DType#BOOL8}, {@link DType#TIMESTAMP_MICROSECONDS},
+   * {@link DType#TIMESTAMP_NANOSECONDS}, plus decimal types created with
    * {@link DType#create(DType.DTypeEnum, int)} using {@link DType.DTypeEnum#DECIMAL32},
-   * {@link DType.DTypeEnum#DECIMAL64}, or {@link DType.DTypeEnum#DECIMAL128}. Non-decimal decoding
-   * requires the encoded physical type to exactly match {@code targetType}; no numeric conversions
-   * are performed. Any encoded decimal width can be decoded to any supported decimal width.
+   * {@link DType.DTypeEnum#DECIMAL64}, or {@link DType.DTypeEnum#DECIMAL128}.
+   * Except for the timestamp encodings described below, non-decimal decoding requires the encoded
+   * physical type to exactly
+   * match {@code targetType}; no numeric conversions are performed. Any encoded decimal width can
+   * be decoded to any supported decimal width.
    * Decimal values are rescaled to the target scale, truncating toward zero when fractional digits
    * are discarded. Missing fields, input nulls, encoded Variant nulls, physical-type mismatches,
    * malformed values, and decimal overflows produce null output rows.
@@ -112,6 +124,10 @@ public class VariantUtils {
    * <p>The target decimal scale uses cuDF's base-10 exponent convention: scale {@code -2}
    * represents hundredths, while scale {@code 2} represents hundreds. Overflow is checked against
    * the target's integer storage width; no declared decimal precision is enforced.
+   *
+   * <p>Timestamp targets accept both timezone-adjusted and NTZ encodings of the same unit
+   * and preserve the signed 64-bit payload unchanged. No timezone or unit conversion is
+   * performed. Mismatched units and truncated timestamp payloads produce null rows.
    *
    * @param variantStruct Variant materialization: STRUCT(metadata LIST&lt;UINT8&gt;,
    *                      value LIST&lt;UINT8&gt;, optional shredded children...)

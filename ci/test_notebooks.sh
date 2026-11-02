@@ -26,7 +26,7 @@ rapids-dependency-file-generator \
   --prepend-channel "${PYTHON_NOARCH_CHANNEL}" \
   --matrix "cuda=${RAPIDS_CUDA_VERSION%.*};arch=$(arch);py=${RAPIDS_PY_VERSION}" | tee "${ENV_YAML_DIR}/env.yaml"
 
-rapids-mamba-retry env create --yes -f "${ENV_YAML_DIR}/env.yaml" -n test
+./ci/create_conda_env.sh "${ENV_YAML_DIR}/env.yaml" -n test
 
 # Conda activation hooks can read optional variables before defining them.
 set +u

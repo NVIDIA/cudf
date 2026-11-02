@@ -4,7 +4,8 @@
 
 set -euo pipefail
 
-source rapids-init-pip
+# shellcheck source=ci/init_uv.sh
+source ./ci/init_uv.sh
 
 rapids-logger "Download wheels"
 
@@ -60,7 +61,7 @@ for version in "${VERSIONS[@]}"; do
         > "${polars_requirements_txt}"
 
     env_name="venv_polars_${version}"
-    python -m venv --clear "${env_name}"
+    uv venv --python "$(command -v python)" --clear "${env_name}"
     # shellcheck disable=SC1090
     source "${env_name}/bin/activate"
 
@@ -68,13 +69,12 @@ for version in "${VERSIONS[@]}"; do
 
     # notes:
     #
-    #   * echo to expand wildcard before adding `[test]` requires for pip
+    #   * echo to expand wildcard before adding `[test]` requires for the installer
     #   * just providing --constraint="${PIP_CONSTRAINT}" to be explicit, and because
     #     that environment variable is ignored if any other --constraint are passed via the CLI
     #
-    rapids-pip-retry install \
+    uv pip install --python "$(command -v python)" \
         -v \
-        --prefer-binary \
         --constraint "${PIP_CONSTRAINT}" \
         "$(echo "${CUDF_POLARS_WHEELHOUSE}"/cudf_polars_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)[test,dask,ray]" \
         "$(echo "${LIBCUDF_WHEELHOUSE}"/libcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)" \

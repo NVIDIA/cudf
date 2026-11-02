@@ -4,7 +4,8 @@
 
 set -euo pipefail
 
-source rapids-init-pip
+# shellcheck source=ci/init_uv.sh
+source ./ci/init_uv.sh
 
 RAPIDS_PY_CUDA_SUFFIX="$(rapids-wheel-ctk-name-gen "${RAPIDS_CUDA_VERSION}")"
 DASK_CUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python dask-cudf cudf --pure --arch any --cuda "$RAPIDS_CUDA_VERSION")")
@@ -21,13 +22,12 @@ rapids-generate-pip-constraints py_test_dask_cudf "${PIP_CONSTRAINT}"
 
 # notes:
 #
-#   * echo to expand wildcard before adding `[test]` requires for pip
+#   * echo to expand wildcard before adding `[test]` requires for the installer
 #   * just providing --constraint="${PIP_CONSTRAINT}" to be explicit, and because
 #     that environment variable is ignored if any other --constraint are passed via the CLI
 #
-rapids-pip-retry install \
+uv pip install --python "$(command -v python)" \
   -v \
-  --prefer-binary \
   --constraint "${PIP_CONSTRAINT}" \
   "$(echo "${CUDF_WHEELHOUSE}"/cudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)" \
   "$(echo "${DASK_CUDF_WHEELHOUSE}"/dask_cudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)[test]" \

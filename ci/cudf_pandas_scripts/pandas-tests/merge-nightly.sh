@@ -19,7 +19,6 @@
 
 set -euo pipefail
 
-source rapids-init-pip
 # shellcheck source=ci/cudf_pandas_scripts/pandas-tests/shard-results.sh
 source ci/cudf_pandas_scripts/pandas-tests/shard-results.sh
 

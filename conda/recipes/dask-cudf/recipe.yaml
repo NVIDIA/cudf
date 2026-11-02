@@ -27,7 +27,7 @@ build:
 requirements:
   host:
     - python >=3.12
-    - pip
+    - uv >=0.12.0
     - rapids-build-backend >=0.4.0,<0.5.0
     - setuptools>=77.0.0
   run:

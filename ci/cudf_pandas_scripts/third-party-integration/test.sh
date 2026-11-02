@@ -28,8 +28,7 @@ prepare_environment() {
         --config "$dependencies_yaml" --output conda "${file_keys[@]}" \
         --matrix "cuda=${RAPIDS_CUDA_VERSION%.*};arch=$(arch);py=${RAPIDS_PY_VERSION}" \
         "${channels[@]}" | tee "${environment}.yaml" || return
-    rapids-mamba-retry env create --yes \
-        -f "${environment}.yaml" --prefix "$environment"
+    ./ci/create_conda_env.sh "${environment}.yaml" --prefix "$environment"
 }
 
 main() {

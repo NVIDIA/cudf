@@ -295,7 +295,7 @@ if buildAll || hasArg pylibcudf; then
 
     cd "${REPODIR}/python/pylibcudf"
     SKBUILD_CMAKE_ARGS="-DCMAKE_PREFIX_PATH=${INSTALL_PREFIX};-DCMAKE_LIBRARY_PATH=${LIBCUDF_BUILD_DIR};-DCMAKE_CUDA_ARCHITECTURES=${CUDF_CMAKE_CUDA_ARCHITECTURES};${EXTRA_CMAKE_ARGS[*]}" \
-        python -m pip install \
+        uv pip install --python "$(command -v python)" \
             "${PYTHON_ARGS_FOR_INSTALL[@]}" \
             "${PY_API_ARGS[@]}" \
             .
@@ -306,7 +306,7 @@ if buildAll || hasArg cudf; then
 
     cd "${REPODIR}/python/cudf"
     SKBUILD_CMAKE_ARGS="-DCMAKE_PREFIX_PATH=${INSTALL_PREFIX};-DCMAKE_LIBRARY_PATH=${LIBCUDF_BUILD_DIR};-DCMAKE_CUDA_ARCHITECTURES=${CUDF_CMAKE_CUDA_ARCHITECTURES};${EXTRA_CMAKE_ARGS[*]}" \
-        python -m pip install \
+        uv pip install --python "$(command -v python)" \
             "${PYTHON_ARGS_FOR_INSTALL[@]}" \
             "${PY_API_ARGS[@]}" \
             .
@@ -335,7 +335,7 @@ fi
 if buildAll || hasArg cudf_streaming; then
     cd "${REPODIR}/python/cudf_streaming"
     SKBUILD_CMAKE_ARGS="-DCMAKE_PREFIX_PATH=${INSTALL_PREFIX};-DCMAKE_LIBRARY_PATH=${STREAMING_LIB_BUILD_DIR};${EXTRA_CMAKE_ARGS[*]}" \
-        python -m pip install \
+        uv pip install --python "$(command -v python)" \
             "${PYTHON_ARGS_FOR_INSTALL[@]}" \
             "${PY_API_ARGS[@]}" \
             .
@@ -345,7 +345,7 @@ fi
 if buildAll || hasArg cudf_polars; then
 
     cd "${REPODIR}/python/cudf_polars"
-    python -m pip install "${PYTHON_ARGS_FOR_INSTALL[@]}" .
+    uv pip install --python "$(command -v python)" "${PYTHON_ARGS_FOR_INSTALL[@]}" .
 fi
 
 # Build and install the cudf-polars Quent bridge and update its stub
@@ -353,7 +353,7 @@ if hasArg cudf_polars_quent; then
     cd "${REPODIR}/python/cudf_polars/quent/bridge"
 
     cargo clean -p cudf-polars-quent
-    python -m maturin develop
+    python -m maturin develop --uv
 
     shopt -s nullglob
     generated_stubs=(target/*/build/cudf-polars-quent-*/out/cudf_polars_quent.pyi)
@@ -377,7 +377,7 @@ fi
 if buildAll || hasArg dask_cudf; then
 
     cd "${REPODIR}/python/dask_cudf"
-    python -m pip install "${PYTHON_ARGS_FOR_INSTALL[@]}" .
+    uv pip install --python "$(command -v python)" "${PYTHON_ARGS_FOR_INSTALL[@]}" .
 fi
 
 # Build libcudf_kafka library
@@ -402,7 +402,7 @@ if hasArg cudf_kafka; then
     cd "${REPODIR}/python/cudf_kafka"
     # shellcheck disable=2034
     SKBUILD_CMAKE_ARGS="-DCMAKE_PREFIX_PATH=${INSTALL_PREFIX};-DCMAKE_LIBRARY_PATH=${LIBCUDF_BUILD_DIR};${EXTRA_CMAKE_ARGS[*]}"
-        python -m pip install \
+        uv pip install --python "$(command -v python)" \
             "${PYTHON_ARGS_FOR_INSTALL[@]}" \
             "${PY_API_ARGS[@]}" \
             .
@@ -411,5 +411,5 @@ fi
 # build custreamz Python package
 if hasArg custreamz; then
     cd "${REPODIR}/python/custreamz"
-    python -m pip install "${PYTHON_ARGS_FOR_INSTALL[@]}" .
+    uv pip install --python "$(command -v python)" "${PYTHON_ARGS_FOR_INSTALL[@]}" .
 fi

@@ -4,7 +4,8 @@
 
 set -euo pipefail
 
-source rapids-init-pip
+# shellcheck source=ci/init_uv.sh
+source ./ci/init_uv.sh
 
 rapids-logger "Download wheels"
 
@@ -22,11 +23,11 @@ rapids-logger "Install libcudf, pylibcudf and cudf_polars"
 
 # notes:
 #
-#   * echo to expand wildcard before adding `[test]` requires for pip
+#   * echo to expand wildcard before adding `[test]` requires for the installer
 #   * just providing --constraint="${PIP_CONSTRAINT}" to be explicit, and because
 #     that environment variable is ignored if any other --constraint are passed via the CLI
 #
-rapids-pip-retry install \
+uv pip install --python "$(command -v python)" \
     -v \
     --constraint "${PIP_CONSTRAINT}" \
     "$(echo "${CUDF_POLARS_WHEELHOUSE}"/cudf_polars_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)[test]" \
@@ -51,9 +52,8 @@ sed -i 's/^pyarrow$/pyarrow<25/' polars/py-polars/requirements-dev.txt
 #   * just providing --constraint="${PIP_CONSTRAINT}" to be explicit, and because
 #     that environment variable is ignored if any other --constraint are passed via the CLI
 #
-rapids-pip-retry install \
+uv pip install --python "$(command -v python)" \
     -v \
-    --prefer-binary \
     --constraint "${PIP_CONSTRAINT}" \
     -r polars/py-polars/requirements-dev.txt \
     -r polars/py-polars/requirements-ci.txt \

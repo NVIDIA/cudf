@@ -19,7 +19,8 @@
 # every fallible command is guarded explicitly and the script always exits 0.
 set -uo pipefail
 
-source rapids-init-pip
+# shellcheck source=ci/init_uv.sh
+source ./ci/init_uv.sh
 # shellcheck source=ci/cudf_pandas_scripts/pandas-tests/shard-results.sh
 source ci/cudf_pandas_scripts/pandas-tests/shard-results.sh
 
@@ -29,7 +30,7 @@ RAPIDS_FULL_VERSION=$(<./VERSION)
 rapids-logger "Aggregating pandas-tests results from ${NUM_SHARDS} shards"
 
 # job-summary.py renders markdown tables with pandas; tabulate backs to_markdown.
-if ! rapids-pip-retry install pandas tabulate; then
+if ! uv pip install --python "$(command -v python)" pandas tabulate; then
     rapids-logger "Could not install summary dependencies; skipping summary."
     exit 0
 fi

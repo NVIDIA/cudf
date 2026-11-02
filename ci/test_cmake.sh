@@ -20,7 +20,7 @@ rapids-dependency-file-generator \
   --file-key test_cmake \
   --matrix "cuda=${RAPIDS_CUDA_VERSION%.*};arch=$(arch);py=${RAPIDS_PY_VERSION}" | tee "${ENV_YAML_DIR}/env.yaml"
 
-rapids-mamba-retry env create --yes -f "${ENV_YAML_DIR}/env.yaml" -n cmake_tests
+./ci/create_conda_env.sh "${ENV_YAML_DIR}/env.yaml" -n cmake_tests
 
 # Temporarily allow unbound variables for conda activation.
 set +u

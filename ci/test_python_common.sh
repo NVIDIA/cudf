@@ -40,7 +40,7 @@ CMD="${CMD} \
 
 eval ${CMD} | tee "${ENV_YAML_DIR}/env.yaml"
 
-rapids-mamba-retry env create --yes -f "${ENV_YAML_DIR}/env.yaml" -n test
+./ci/create_conda_env.sh "${ENV_YAML_DIR}/env.yaml" -n test
 
 # Temporarily allow unbound variables for conda activation.
 set +u

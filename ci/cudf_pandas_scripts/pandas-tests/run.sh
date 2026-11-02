@@ -4,7 +4,8 @@
 
 set -euo pipefail
 
-source rapids-init-pip
+# shellcheck source=ci/init_uv.sh
+source ./ci/init_uv.sh
 
 EXITCODE=0
 trap "EXITCODE=1" ERR
@@ -38,8 +39,8 @@ LIBCUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_c
 PYLIBCUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python pylibcudf cudf --stable --cuda "$RAPIDS_CUDA_VERSION")")
 CUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python cudf cudf --stable --cuda "$RAPIDS_CUDA_VERSION")")
 
-# echo to expand wildcard before adding `[extra]` requires for pip
-rapids-pip-retry install \
+# echo to expand wildcard before adding `[extra]` requires for the installer
+uv pip install --python "$(command -v python)" \
   "$(echo "${CUDF_WHEELHOUSE}"/cudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)[test,pandas-tests]" \
   "$(echo "${LIBCUDF_WHEELHOUSE}"/libcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)" \
   "$(echo "${PYLIBCUDF_WHEELHOUSE}"/pylibcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)"

@@ -10,7 +10,6 @@ repo_root="$(dirname "$(realpath "${BASH_SOURCE[0]}")")/.."
 output_dir="${1:-${repo_root}/coverage-results/cudf-polars-comparison}"
 config="${repo_root}/ci/cudf_polars_coverage_analysis.toml"
 polars_dir="${POLARS_DIR:-${repo_root}/polars}"
-strict_data="${output_dir}/.coverage.strict"
 
 if [[ ! -d "${polars_dir}/py-polars/tests" ]]; then
     echo "Missing ${polars_dir}/py-polars/tests. Run ci/test_cudf_polars_polars_tests.sh first." >&2
@@ -18,7 +17,7 @@ if [[ ! -d "${polars_dir}/py-polars/tests" ]]; then
 fi
 
 mkdir -p "${output_dir}"
-rm -f "${output_dir}/.coverage.local" "${output_dir}/.coverage.upstream" "${strict_data}"
+rm -f "${output_dir}/.coverage.local" "${output_dir}/.coverage.upstream"
 
 COVERAGE_FILE="${output_dir}/.coverage.local" \
     "${repo_root}/ci/run_cudf_polars_pytests.sh" \
@@ -36,30 +35,6 @@ POLARS_DIR="${polars_dir}" COVERAGE_FILE="${output_dir}/.coverage.upstream" \
 COVERAGE_FILE="${output_dir}/.coverage.upstream" \
     python -m coverage combine --keep "${output_dir}"
 
-# Keep strict-policy coverage separate for review. Listed fallback exceptions
-# still run on the CPU, so this file alone cannot establish GPU coverage.
-(
-    cd "${polars_dir}"
-    COVERAGE_FILE="${strict_data}" python -m pytest \
-        --import-mode=importlib \
-        -p cudf_polars.testing.inject_gpu_engine \
-        --inject-gpu-engine in-memory \
-        --inject-gpu-engine-raise-on-fail \
-        --cov=cudf_polars --cov-context=test --cov-config="${config}" --cov-report= \
-        py-polars/tests
-    CUDF_POLARS__EXECUTOR__TARGET_PARTITION_SIZE=805306368 \
-    CUDF_POLARS__EXECUTOR__FALLBACK_MODE=silent \
-    COVERAGE_FILE="${strict_data}" python -m pytest \
-        --import-mode=importlib \
-        -p cudf_polars.testing.inject_gpu_engine \
-        --inject-gpu-engine spmd \
-        --inject-gpu-engine-blocksize small \
-        --inject-gpu-engine-raise-on-fail \
-        --cov=cudf_polars --cov-context=test --cov-config="${config}" --cov-report= \
-        --cov-append py-polars/tests
-)
-COVERAGE_FILE="${strict_data}" python -m coverage combine --keep "${output_dir}"
-
 python -m pytest --import-mode=importlib --collect-only -q \
     "${repo_root}/python/cudf_polars/tests" > "${output_dir}/local-test-nodeids.txt"
 
@@ -70,9 +45,8 @@ python "${repo_root}/ci/analyze_cudf_polars_coverage.py" \
 python "${repo_root}/ci/classify_cudf_polars_tests.py" \
     --local-data "${output_dir}/.coverage.local" \
     --broad-data "${output_dir}/.coverage.upstream" \
-    --strict-data "${strict_data}" \
     --tests-root "${repo_root}/python/cudf_polars/tests" \
     --collected-nodeids "${output_dir}/local-test-nodeids.txt" \
     --output-dir "${output_dir}"
 
-echo "Wrote coverage comparison, strict GPU candidates, and local-test classification reports to ${output_dir}"
+echo "Wrote local/upstream coverage comparison and local-test classification reports to ${output_dir}"

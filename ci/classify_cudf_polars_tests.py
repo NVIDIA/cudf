@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Classify local cudf-polars tests using broad and strict upstream coverage."""
+"""Classify local cudf-polars tests using upstream coverage overlap."""
 
 from __future__ import annotations
 
@@ -64,10 +64,9 @@ RANK_AWARE_SOURCE_TEST = "tests/test_rank_aware_source.py"
 
 NEXT_ACTION = {
     "defer_scan_io": "defer_until_upstream_scan_io_is_practical",
-    "deletion_review_candidate": "manually_compare_public_contract_then_delete_or_retain",
+    "review_upstream_overlap": "compare_public_contract_and_GPU_execution",
     "retain_internal_contract": "retain",
     "retain_no_source_coverage": "inspect_if_a_future_pruning_batch_targets_this_module",
-    "retain_not_strictly_covered": "seek_strict_upstream_coverage_before_pruning",
     "retain_numeric_or_dtype": "retain",
     "retain_streaming_or_engine": "retain",
     "retain_unique_local_coverage": "retain_or_upstream_missing_behavior",
@@ -83,7 +82,6 @@ class TestCoverage:
     nodeid: str
     total_lines: int = 0
     local_only_lines: int = 0
-    strict_lines: int = 0
     source_files: set[str] = field(default_factory=set)
 
 
@@ -169,21 +167,17 @@ def _classification(
         return "retain_numeric_or_dtype"
     if coverage.local_only_lines:
         return "retain_unique_local_coverage"
-    if coverage.total_lines and coverage.strict_lines == coverage.total_lines:
-        return "deletion_review_candidate"
-    return "retain_not_strictly_covered"
+    return "review_upstream_overlap"
 
 
 def classify(
     local_data: Path,
     broad_data: Path,
-    strict_data: Path,
     tests_root: Path,
     collected_nodeids: set[str] | None = None,
 ) -> dict[str, Any]:
     """Classify every local pytest context that executes cudf-polars source."""
     broad_lines = _source_lines(_read_data(broad_data))
-    strict_lines = _source_lines(_read_data(strict_data))
     test_coverage: dict[str, TestCoverage] = {}
     connection = sqlite3.connect(local_data)
     rows = connection.execute(
@@ -206,7 +200,6 @@ def classify(
         record.local_only_lines += len(
             covered - broad_lines.get(filename, set())
         )
-        record.strict_lines += len(covered & strict_lines.get(filename, set()))
         record.source_files.add(filename)
     connection.close()
 
@@ -221,7 +214,6 @@ def classify(
                 "next_action": NEXT_ACTION[classification],
                 "covered_line_count": record.total_lines,
                 "local_only_line_count": record.local_only_lines,
-                "strict_line_count": record.strict_lines,
                 "source_files": sorted(record.source_files),
             }
         )
@@ -233,7 +225,6 @@ def classify(
                 "next_action": NEXT_ACTION["retain_no_source_coverage"],
                 "covered_line_count": 0,
                 "local_only_line_count": 0,
-                "strict_line_count": 0,
                 "source_files": [],
             }
         )
@@ -256,7 +247,6 @@ def _write_html(report: dict[str, Any], output: Path) -> None:
             f"<td><code>{html.escape(test['nodeid'])}</code></td>"
             f"<td>{test['covered_line_count']}</td>"
             f"<td>{test['local_only_line_count']}</td>"
-            f"<td>{test['strict_line_count']}</td>"
             f"<td>{source_files}</td></tr>"
         )
     summary = " ".join(
@@ -268,12 +258,10 @@ def _write_html(report: dict[str, Any], output: Path) -> None:
         "<title>cudf-polars local-test classification</title>"
         "<h1>cudf-polars local-test classification</h1>"
         f"<p>{summary}</p>"
-        "<p>Deletion-review candidates have no local-only covered lines and "
-        "all their covered lines are exercised by the strict-policy "
-        "upstream run. Listed CPU fallbacks are still permitted; candidates "
-        "require GPU execution diagnostics and semantic review.</p>"
+        "<p>Coverage overlap is a review signal, not proof that an upstream "
+        "test exercised the GPU or asserted the same behavior.</p>"
         "<table><thead><tr><th>Classification</th><th>Next action</th><th>Local node</th>"
-        "<th>Covered lines</th><th>Local-only</th><th>Strict</th>"
+        "<th>Covered lines</th><th>Local-only</th>"
         "<th>Source files</th></tr></thead><tbody>"
         + "".join(rows)
         + "</tbody></table>"
@@ -284,7 +272,6 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--local-data", type=Path, required=True)
     parser.add_argument("--broad-data", type=Path, required=True)
-    parser.add_argument("--strict-data", type=Path, required=True)
     parser.add_argument("--tests-root", type=Path, required=True)
     parser.add_argument(
         "--collected-nodeids",
@@ -304,7 +291,6 @@ def main() -> None:
     report = classify(
         args.local_data,
         args.broad_data,
-        args.strict_data,
         args.tests_root,
         collected_nodeids,
     )

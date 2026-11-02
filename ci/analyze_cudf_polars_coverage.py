@@ -21,26 +21,26 @@ MAX_CANDIDATE_CONTEXTS_PER_LINE = 5
 
 # Candidate discovery deliberately focuses on ordinary, non-streaming public
 # behavior. The report is a review aid, not an automatic admission mechanism.
-STRICT_CANDIDATE_SOURCE_SUFFIXES = (
+REVIEW_SOURCE_SUFFIXES = (
     "/dsl/translate.py",
     "/dsl/expressions/aggregation.py",
     "/dsl/expressions/boolean.py",
     "/containers/column.py",
 )
-STRICT_CANDIDATE_EXCLUDED_PATHS = (
+REVIEW_EXCLUDED_PATHS = (
     "/datatypes/",
     "/io/",
     "/streaming/",
     "/testing/",
 )
-STRICT_CANDIDATE_EXCLUDED_TESTS = (
+REVIEW_EXCLUDED_TESTS = (
     "test_describe.py",
     "test_null_count.py",
     "test_cse.py",
     "test_optimizations.py",
     "test_statistics.py",
 )
-STRICT_CANDIDATE_EXCLUDED_TERMS = (
+REVIEW_EXCLUDED_TERMS = (
     "decimal",
     "dtype",
     "kurtosis",
@@ -60,21 +60,19 @@ def _nodeid(context: str) -> str:
     return context.rsplit("|", 1)[0]
 
 
-def _is_strict_candidate_source(filename: str) -> bool:
+def _is_review_source(filename: str) -> bool:
     normalized = filename.replace("\\", "/")
-    return normalized.endswith(STRICT_CANDIDATE_SOURCE_SUFFIXES)
+    return normalized.endswith(REVIEW_SOURCE_SUFFIXES)
 
 
-def _is_strict_candidate_context(context: str) -> bool:
+def _is_review_context(context: str) -> bool:
     """Whether a context belongs in the focused upstream-unit review pool."""
     nodeid = _nodeid(context)
     return (
         nodeid.startswith("tests/unit/")
-        and not any(path in nodeid for path in STRICT_CANDIDATE_EXCLUDED_PATHS)
-        and not any(test in nodeid for test in STRICT_CANDIDATE_EXCLUDED_TESTS)
-        and not any(
-            term in nodeid.lower() for term in STRICT_CANDIDATE_EXCLUDED_TERMS
-        )
+        and not any(path in nodeid for path in REVIEW_EXCLUDED_PATHS)
+        and not any(test in nodeid for test in REVIEW_EXCLUDED_TESTS)
+        and not any(term in nodeid.lower() for term in REVIEW_EXCLUDED_TERMS)
     )
 
 
@@ -91,7 +89,7 @@ def build_report(
     result: dict[str, Any] = {
         "files": {},
         "summary": {},
-        "strict_candidates": [],
+        "review_candidates": [],
     }
     totals = {"local_only": 0, "upstream_only": 0, "both": 0}
     candidates: dict[str, dict[str, Any]] = {}
@@ -125,11 +123,11 @@ def build_report(
             }
             if line in local_lines and line in upstream_lines:
                 classifications["both"].append(entry)
-                if _is_strict_candidate_source(filename):
+                if _is_review_source(filename):
                     candidate_contexts = (
                         context
                         for context in upstream_line_contexts
-                        if _is_strict_candidate_context(context)
+                        if _is_review_context(context)
                     )
                     for context in islice(
                         candidate_contexts, MAX_CANDIDATE_CONTEXTS_PER_LINE
@@ -168,7 +166,7 @@ def build_report(
     result["summary"] = {**totals, "files": len(result["files"])}
     for candidate in candidates.values():
         source_modules = sorted(candidate["source_modules"])
-        result["strict_candidates"].append(
+        result["review_candidates"].append(
             {
                 "nodeid": candidate["nodeid"],
                 "sampled_shared_line_count": len(candidate["shared_lines"]),
@@ -180,7 +178,7 @@ def build_report(
                 "representative_contexts": candidate["examples"],
             }
         )
-    result["strict_candidates"].sort(
+    result["review_candidates"].sort(
         key=lambda candidate: (
             -candidate["sampled_shared_line_count"],
             candidate["nodeid"],
@@ -216,9 +214,9 @@ def _write_html(report: dict[str, Any], output: Path) -> None:
 
 
 def _write_candidate_html(report: dict[str, Any], output: Path) -> None:
-    """Write a compact review table for prospective strict GPU nodes."""
+    """Write a compact table of upstream nodes for behavioral review."""
     rows = []
-    for candidate in report["strict_candidates"]:
+    for candidate in report["review_candidates"]:
         modules = "<br>".join(
             html.escape(module.rsplit("/cudf_polars/", 1)[-1])
             for module in candidate["source_modules"]
@@ -240,10 +238,10 @@ def _write_candidate_html(report: dict[str, Any], output: Path) -> None:
         )
     output.write_text(
         "<!doctype html><meta charset=utf-8>"
-        "<title>cudf-polars strict GPU candidates</title>"
-        "<h1>cudf-polars strict GPU candidate review</h1>"
-        "<p>These nodes are coverage-discovery candidates only. Admit a node "
-        "only after strict in-memory and SPMD runs pass.</p>"
+        "<title>cudf-polars upstream review candidates</title>"
+        "<h1>cudf-polars upstream review candidates</h1>"
+        "<p>Coverage overlap is a review signal, not proof that upstream "
+        "tests assert the same behavior or execute on the GPU.</p>"
         "<table><thead><tr><th>Upstream node</th><th>Sampled shared lines</th>"
         "<th>Local-only lines in modules</th><th>Source modules</th>"
         "<th>Representative upstream contexts</th></tr></thead><tbody>"
@@ -267,7 +265,7 @@ def main() -> None:
     )
     _write_html(report, args.output_dir / "index.html")
     _write_candidate_html(
-        report, args.output_dir / "strict-gpu-candidates.html"
+        report, args.output_dir / "upstream-review-candidates.html"
     )
 
 

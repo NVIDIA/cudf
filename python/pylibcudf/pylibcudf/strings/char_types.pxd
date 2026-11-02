@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from pylibcudf.column cimport Column
@@ -23,3 +23,5 @@ cpdef Column filter_characters_of_type(
     object stream = *,
     DeviceMemoryResource mr=*
 )
+
+cpdef get_character_flags_table_ptr(object stream = *)

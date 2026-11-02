@@ -318,9 +318,8 @@ class StreamingEngine(pl.GPUEngine):
     environment variable to control the thread count. Under ``MULTI_POLL``,
     cudf-polars does not resolve a thread-pool size at all (kvikio itself may
     still honor ``KVIKIO_NTHREADS`` via its own deferred default); remote I/O
-    concurrency is instead controlled by the ``kvikio_reactor_count``,
-    ``kvikio_reactor_dispatch``, and ``kvikio_request_ceiling`` executor
-    options.
+    concurrency is instead controlled by the ``kvikio_reactor_count`` and
+    ``kvikio_request_ceiling`` executor options.
 
     Parameters
     ----------
@@ -539,12 +538,6 @@ class StreamingEngine(pl.GPUEngine):
         existing_executor_options = self.config.get("executor_options", {})
         if not isinstance(existing_executor_options, dict):
             existing_executor_options = {}
-        existing_quent_context = existing_executor_options.get("quent_context")
-        if (
-            "quent_context" in executor_options
-            and executor_options["quent_context"] != existing_quent_context
-        ):
-            raise ValueError("quent_context cannot be changed during reset")
 
         _disallowed_exec = {"num_py_executors"} & executor_options.keys()
         if _disallowed_exec:
@@ -588,6 +581,27 @@ class StreamingEngine(pl.GPUEngine):
     def __exit__(self, *_: object) -> None:
         """Exit the context manager, calling :meth:`shutdown`."""
         self.shutdown()
+
+    def _set_quent(self, quent_context: QuentConfig | None) -> QuentConfig | None:
+        """
+        Replace this engine's Quent runtimes.
+
+        Closes any running Quent runtimes (on all ranks), then starts new ones for
+        ``quent_context`` unless it is ``None``.
+
+        Parameters
+        ----------
+        quent_context
+            Quent configuration to start, or ``None`` to only close.
+
+        Returns
+        -------
+        The effective Quent configuration, which may differ from
+        ``quent_context``, or ``None`` if Quent is disabled.
+        """
+        raise NotImplementedError(  # pragma: no cover
+            f"{type(self).__name__} does not implement _set_quent"
+        )
 
     def _run(self, func: Callable[..., T], *args: Any, **kwargs: Any) -> list[T]:
         """

@@ -72,6 +72,7 @@ class JoinWithPrefilter(Join):
         self.left_on = tuple(left_on)
         self.right_on = tuple(right_on)
         self.options = options
+        self.predicate = None
         self.prefilters = tuple(prefilters)
         self.children = (left, right, *external_domains)
         self._non_child_args = (
@@ -111,6 +112,7 @@ class JoinWithPrefilter(Join):
             left_on,
             right_on,
             options,
+            None,
             left,
             right,
             context=context,

@@ -11,10 +11,25 @@
 #include <cudf/column/column_view.hpp>
 #include <cudf/reduction.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/traits.hpp>
 
 #include <nvbench/nvbench.cuh>
 
 #include <memory>
+
+template <typename T>
+struct representation_type {
+  using type = T;
+};
+
+template <typename T>
+  requires(cudf::is_chrono<T>())
+struct representation_type<T> {
+  using type = typename T::rep;
+};
+
+template <typename T>
+using representation_type_t = typename representation_type<T>::type;
 
 template <cudf::reduce_aggregation::Kind kind>
 static std::unique_ptr<cudf::reduce_aggregation> make_reduce_aggregation()
@@ -49,9 +64,16 @@ static void reduction(nvbench::state& state, nvbench::type_list<DataType, nvbenc
   auto const size      = static_cast<cudf::size_type>(state.get_int64("size"));
   auto const max_value = static_cast<cudf::size_type>(state.get_int64("max_value"));
 
-  auto const input_type      = cudf::type_to_id<DataType>();
+  auto const input_type = cudf::type_to_id<DataType>();
+  using RepType         = representation_type_t<DataType>;
+  // Cast to the rep type is needed for the data profile builder otherwise the integral
+  // bounds select the wrong overload and thence ignore the request for UNIFORM
+  // distribution for float types.
   data_profile const profile = data_profile_builder().no_validity().distribution(
-    input_type, distribution_id::UNIFORM, 0, max_value > 0 ? max_value : 100);
+    input_type,
+    distribution_id::UNIFORM,
+    static_cast<RepType>(0),
+    static_cast<RepType>(max_value > 0 ? max_value : 100));
   auto const input_column = create_random_column(input_type, row_count{size}, profile);
 
   auto const output_type = [&] {

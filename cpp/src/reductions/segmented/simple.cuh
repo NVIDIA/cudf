@@ -24,6 +24,7 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/std/type_traits>
 #include <cuda/stream>
 #include <thrust/reduce.h>
 
@@ -408,7 +409,7 @@ struct column_type_dispatcher {
                                          std::optional<std::reference_wrapper<scalar const>> init,
                                          cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
-    requires(std::is_integral<ElementType>::value)
+    requires(cuda::std::is_integral<ElementType>::value)
   {
     // Integers are computed in int64 precision and then cast to the output type.
     auto result = simple_segmented_reduction<ElementType, int64_t, Op>(

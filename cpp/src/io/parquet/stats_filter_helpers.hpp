@@ -5,12 +5,14 @@
 
 #pragma once
 
+#include "decimal_decode_utils.cuh"
 #include "expression_transform_helpers.hpp"
 #include "timestamp_utils.cuh"
 
 #include <cudf/ast/detail/expression_transformer.hpp>
 #include <cudf/ast/expressions.hpp>
 #include <cudf/column/column_factories.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -22,9 +24,11 @@
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 
+#include <cuda/buffer>
 #include <cuda/std/concepts>
 
 #include <bit>
+#include <cmath>
 #include <numeric>
 #include <span>
 #include <string_view>
@@ -59,25 +63,7 @@ class stats_caster_base {
     CUDF_EXPECTS(stats_size <= sizeof(T),
                  "Parquet reader encountered a statistics vector larger than the type's size");
 
-    // Use std::type_identity to defer and avoid instantiating std::make_unsigned<__int128_t>::type
-    // which is not a standard integer type
-    // NOLINTNEXTLINE(modernize-type-traits)
-    using UnsignedT    = std::conditional_t<std::is_same_v<T, __int128_t>,
-                                            std::type_identity<unsigned __int128>,
-                                            std::make_unsigned<T>>::type;
-    auto const payload = std::span{stats_val, stats_size};
-    auto value         = std::accumulate(
-      payload.begin(), payload.end(), UnsignedT{0}, [](UnsignedT acc, uint8_t byte) {
-        return static_cast<UnsignedT>((acc << CHAR_BIT) | static_cast<UnsignedT>(byte));
-      });
-
-    // Check the sign of the first byte to determine if the value is negative
-    auto const is_negative_value = std::bit_cast<int8_t>(stats_val[0]) < 0;
-    // Sign-extension if negative value and the payload is smaller than the storage type
-    if (stats_size < sizeof(T) and is_negative_value) {
-      value = static_cast<UnsignedT>(value | (~UnsignedT{0} << (stats_size * CHAR_BIT)));
-    }
-    return std::bit_cast<T>(value);
+    return decode_big_endian_decimal<T>(stats_val, static_cast<int32_t>(stats_size));
   }
 
   template <typename T>
@@ -219,9 +205,7 @@ class stats_caster_base {
     host_column(size_type total_row_groups, cuda::stream_ref stream)
       : val{cudf::detail::make_host_vector<T>(total_row_groups, stream)},
         chars{cudf::detail::make_empty_host_vector<char>(initial_chars_capacity, stream)},
-        null_mask(cudf::util::div_rounding_up_safe<cudf::size_type>(
-                    cudf::bitmask_allocation_size_bytes(total_row_groups), sizeof(bitmask_type)),
-                  ~bitmask_type{0})
+        null_mask(cudf::bitmask_allocation_size_words(total_row_groups), ~bitmask_type{0})
     {
     }
 
@@ -230,33 +214,48 @@ class stats_caster_base {
                           Type const type,
                           int32_t ts_scale = 0)
     {
-      if (binary_value.has_value()) {
-        // For strings, also insert the characters
-        if constexpr (std::is_same_v<T, string_view>) {
-          // Create a temporary string view from the binary value
-          std::string_view input_value{reinterpret_cast<char const*>(binary_value.value().data()),
-                                       binary_value.value().size()};
-          // Current offset into the chars vector
-          auto const current_chars_offset = chars.size();
-          chars.insert(chars.end(), input_value.begin(), input_value.end());
-          // Convert to the target type
-          val[index] = stats_caster_base::convert<T>(
-            reinterpret_cast<uint8_t const*>(chars.data()) + current_chars_offset,
-            binary_value.value().size(),
-            type);
-        } else {
-          val[index] = stats_caster_base::convert<T>(
-            binary_value.value().data(), binary_value.value().size(), type, ts_scale);
-        }
-      } else {
+      // Helper to set the stat value to null (ignore)
+      auto const set_to_null = [&] {
         clear_bit_unsafe(null_mask.data(), index);
         null_count++;
+      };
+
+      // Return early if the binary value isn't set
+      if (not binary_value.has_value()) {
+        set_to_null();
+        return;
+      }
+
+      // For strings, also insert the characters
+      if constexpr (std::is_same_v<T, string_view>) {
+        // Create a temporary string view from the binary value
+        std::string_view input_value{reinterpret_cast<char const*>(binary_value.value().data()),
+                                     binary_value.value().size()};
+        // Current offset into the chars vector
+        auto const current_chars_offset = chars.size();
+        chars.insert(chars.end(), input_value.begin(), input_value.end());
+        // Convert to the target type
+        val[index] = stats_caster_base::convert<T>(
+          reinterpret_cast<uint8_t const*>(chars.data()) + current_chars_offset,
+          binary_value.value().size(),
+          type);
+      } else {
+        val[index] = stats_caster_base::convert<T>(
+          binary_value.value().data(), binary_value.value().size(), type, ts_scale);
+        // Per Parquet spec, a `NaN` stats value must be ignored (set to null)
+        if constexpr (cudf::is_floating_point<T>()) {
+          if (std::isnan(val[index])) {
+            val[index] = T{};  // No non-empty nulls
+            set_to_null();
+            return;
+          }
+        }
       }
     }
 
     static inline std::tuple<rmm::device_uvector<char>,
                              rmm::device_uvector<size_type>,
-                             rmm::device_uvector<size_type>>
+                             cuda::device_buffer<size_type>>
     make_strings_children(cudf::host_span<cudf::string_view const> host_strings,
                           cudf::host_span<char const> host_chars,
                           cuda::stream_ref stream,
@@ -273,7 +272,7 @@ class stats_caster_base {
       }
       auto d_chars   = cudf::detail::make_device_uvector_async(host_chars, stream, mr);
       auto d_offsets = cudf::detail::make_device_uvector_async(offsets, stream, mr);
-      auto d_sizes   = cudf::detail::make_device_uvector_async(sizes, stream, mr);
+      auto d_sizes   = cudf::detail::make_device_buffer_async(sizes, stream, mr);
       stream.sync();  // ensures the vectors are not destroyed before the copy is completed
       return {std::move(d_chars), std::move(d_offsets), std::move(d_sizes)};
     }

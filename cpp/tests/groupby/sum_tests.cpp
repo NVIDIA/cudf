@@ -16,6 +16,8 @@
 #include <cudf/sorting.hpp>
 #include <cudf/table/table_view.hpp>
 
+#include <cuda/std/type_traits>
+
 using namespace cudf::test::iterators;
 
 namespace {
@@ -68,7 +70,7 @@ TYPED_TEST_SUITE(groupby_sum_test, supported_types);
 TYPED_TEST(groupby_sum_test, basic)
 {
   using V = TypeParam;
-  using R = std::conditional_t<std::is_integral_v<V>, int64_t, V>;
+  using R = std::conditional_t<cuda::std::is_integral_v<V>, int64_t, V>;
 
   cudf::test::fixed_width_column_wrapper<K> keys{1, 2, 3, 1, 2, 2, 1, 3, 3, 2};
   cudf::test::fixed_width_column_wrapper<V> vals{0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
@@ -82,7 +84,7 @@ TYPED_TEST(groupby_sum_test, basic)
 TYPED_TEST(groupby_sum_test, empty_cols)
 {
   using V = TypeParam;
-  using R = std::conditional_t<std::is_integral_v<V>, int64_t, V>;
+  using R = std::conditional_t<cuda::std::is_integral_v<V>, int64_t, V>;
 
   cudf::test::fixed_width_column_wrapper<K> keys{};
   cudf::test::fixed_width_column_wrapper<V> vals{};
@@ -96,7 +98,7 @@ TYPED_TEST(groupby_sum_test, empty_cols)
 TYPED_TEST(groupby_sum_test, zero_valid_keys)
 {
   using V = TypeParam;
-  using R = std::conditional_t<std::is_integral_v<V>, int64_t, V>;
+  using R = std::conditional_t<cuda::std::is_integral_v<V>, int64_t, V>;
 
   cudf::test::fixed_width_column_wrapper<K> keys({1, 2, 3}, cudf::test::iterators::all_nulls());
   cudf::test::fixed_width_column_wrapper<V> vals{3, 4, 5};
@@ -110,7 +112,7 @@ TYPED_TEST(groupby_sum_test, zero_valid_keys)
 TYPED_TEST(groupby_sum_test, zero_valid_values)
 {
   using V = TypeParam;
-  using R = std::conditional_t<std::is_integral_v<V>, int64_t, V>;
+  using R = std::conditional_t<cuda::std::is_integral_v<V>, int64_t, V>;
 
   cudf::test::fixed_width_column_wrapper<K> keys{1, 1, 1};
   cudf::test::fixed_width_column_wrapper<V> vals({3, 4, 5}, cudf::test::iterators::all_nulls());
@@ -124,7 +126,7 @@ TYPED_TEST(groupby_sum_test, zero_valid_values)
 TYPED_TEST(groupby_sum_test, null_keys_and_values)
 {
   using V = TypeParam;
-  using R = std::conditional_t<std::is_integral_v<V>, int64_t, V>;
+  using R = std::conditional_t<cuda::std::is_integral_v<V>, int64_t, V>;
 
   cudf::test::fixed_width_column_wrapper<K> keys(
     {1, 2, 3, 1, 2, 2, 1, 3, 3, 2, 4},
@@ -146,7 +148,7 @@ TYPED_TEST(groupby_sum_test, null_keys_and_values)
 TYPED_TEST(groupby_sum_test, dictionary)
 {
   using V = TypeParam;
-  using R = std::conditional_t<std::is_integral_v<V>, int64_t, V>;
+  using R = std::conditional_t<cuda::std::is_integral_v<V>, int64_t, V>;
 
   cudf::test::fixed_width_column_wrapper<K> keys{1, 2, 3, 1, 2, 2, 1, 3, 3, 2};
   cudf::test::dictionary_column_wrapper<V> vals{0, 1, 2, 3, 4, 5, 6, 7, 8, 9};

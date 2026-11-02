@@ -14,6 +14,8 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 
+#include <cuda/std/type_traits>
+
 #include <vector>
 
 namespace testdata {
@@ -21,9 +23,9 @@ namespace testdata {
 
 template <typename T>
 cudf::test::fixed_width_column_wrapper<T> ascending()
-  requires(std::is_arithmetic_v<T> && !std::is_same_v<T, bool>)
+  requires(cuda::std::is_arithmetic_v<T> && !std::is_same_v<T, bool>)
 {
-  return std::is_signed_v<T>
+  return cuda::std::is_signed_v<T>
            ? cudf::test::fixed_width_column_wrapper<T>({std::numeric_limits<T>::lowest(),
                                                         T(-100),
                                                         T(-10),
@@ -43,9 +45,9 @@ cudf::test::fixed_width_column_wrapper<T> ascending()
 
 template <typename T>
 cudf::test::fixed_width_column_wrapper<T> descending()
-  requires(std::is_arithmetic_v<T> && !std::is_same_v<T, bool>)
+  requires(cuda::std::is_arithmetic_v<T> && !std::is_same_v<T, bool>)
 {
-  return std::is_signed_v<T>
+  return cuda::std::is_signed_v<T>
            ? cudf::test::fixed_width_column_wrapper<T>({std::numeric_limits<T>::max(),
                                                         T(100),
                                                         T(10),

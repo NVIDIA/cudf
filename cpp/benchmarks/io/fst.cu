@@ -7,6 +7,7 @@
 #include "io/utilities/hostdevice_vector.hpp"  //TODO find better replacement
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 #include <tests/io/fst/common.hpp>
 
 #include <cudf/scalar/scalar_factories.hpp>
@@ -83,9 +84,12 @@ void BM_FST_JSON(nvbench::state& state)
   state.add_element_count(d_input.size());
 
   // Prepare input & output buffers
-  cudf::detail::hostdevice_vector<SymbolT> output_gpu(d_input.size(), stream_view);
-  cudf::detail::hostdevice_vector<SymbolOffsetT> output_gpu_size(single_item, stream_view);
-  cudf::detail::hostdevice_vector<SymbolOffsetT> out_indexes_gpu(d_input.size(), stream_view);
+  cudf::detail::hostdevice_vector<SymbolT> output_gpu(
+    d_input.size(), stream_view, cudf::get_current_device_resource_ref());
+  cudf::detail::hostdevice_vector<SymbolOffsetT> output_gpu_size(
+    single_item, stream_view, cudf::get_current_device_resource_ref());
+  cudf::detail::hostdevice_vector<SymbolOffsetT> out_indexes_gpu(
+    d_input.size(), stream_view, cudf::get_current_device_resource_ref());
 
   // Run algorithm
   auto parser = cudf::io::fst::detail::make_fst(
@@ -97,6 +101,7 @@ void BM_FST_JSON(nvbench::state& state)
     stream);
 
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
+  auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     // Allocate device-side temporary storage & run algorithm
     parser.Transduce(d_input.data(),
@@ -107,6 +112,8 @@ void BM_FST_JSON(nvbench::state& state)
                      start_state,
                      stream.get());
   });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 void BM_FST_JSON_no_outidx(nvbench::state& state)
@@ -124,9 +131,12 @@ void BM_FST_JSON_no_outidx(nvbench::state& state)
   state.add_element_count(d_input.size());
 
   // Prepare input & output buffers
-  cudf::detail::hostdevice_vector<SymbolT> output_gpu(d_input.size(), stream_view);
-  cudf::detail::hostdevice_vector<SymbolOffsetT> output_gpu_size(single_item, stream_view);
-  cudf::detail::hostdevice_vector<SymbolOffsetT> out_indexes_gpu(d_input.size(), stream_view);
+  cudf::detail::hostdevice_vector<SymbolT> output_gpu(
+    d_input.size(), stream_view, cudf::get_current_device_resource_ref());
+  cudf::detail::hostdevice_vector<SymbolOffsetT> output_gpu_size(
+    single_item, stream_view, cudf::get_current_device_resource_ref());
+  cudf::detail::hostdevice_vector<SymbolOffsetT> out_indexes_gpu(
+    d_input.size(), stream_view, cudf::get_current_device_resource_ref());
 
   // Run algorithm
   auto parser = cudf::io::fst::detail::make_fst(
@@ -138,6 +148,7 @@ void BM_FST_JSON_no_outidx(nvbench::state& state)
     stream);
 
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
+  auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     // Allocate device-side temporary storage & run algorithm
     parser.Transduce(d_input.data(),
@@ -148,6 +159,8 @@ void BM_FST_JSON_no_outidx(nvbench::state& state)
                      start_state,
                      stream.get());
   });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 void BM_FST_JSON_no_out(nvbench::state& state)
@@ -165,7 +178,8 @@ void BM_FST_JSON_no_out(nvbench::state& state)
   state.add_element_count(d_input.size());
 
   // Prepare input & output buffers
-  cudf::detail::hostdevice_vector<SymbolOffsetT> output_gpu_size(single_item, stream_view);
+  cudf::detail::hostdevice_vector<SymbolOffsetT> output_gpu_size(
+    single_item, stream_view, cudf::get_current_device_resource_ref());
 
   // Run algorithm
   auto parser = cudf::io::fst::detail::make_fst(
@@ -177,6 +191,7 @@ void BM_FST_JSON_no_out(nvbench::state& state)
     stream);
 
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
+  auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     // Allocate device-side temporary storage & run algorithm
     parser.Transduce(d_input.data(),
@@ -187,6 +202,8 @@ void BM_FST_JSON_no_out(nvbench::state& state)
                      start_state,
                      stream.get());
   });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 void BM_FST_JSON_no_str(nvbench::state& state)
@@ -204,8 +221,10 @@ void BM_FST_JSON_no_str(nvbench::state& state)
   state.add_element_count(d_input.size());
 
   // Prepare input & output buffers
-  cudf::detail::hostdevice_vector<SymbolOffsetT> output_gpu_size(single_item, stream_view);
-  cudf::detail::hostdevice_vector<SymbolOffsetT> out_indexes_gpu(d_input.size(), stream_view);
+  cudf::detail::hostdevice_vector<SymbolOffsetT> output_gpu_size(
+    single_item, stream_view, cudf::get_current_device_resource_ref());
+  cudf::detail::hostdevice_vector<SymbolOffsetT> out_indexes_gpu(
+    d_input.size(), stream_view, cudf::get_current_device_resource_ref());
 
   // Run algorithm
   auto parser = cudf::io::fst::detail::make_fst(
@@ -217,6 +236,7 @@ void BM_FST_JSON_no_str(nvbench::state& state)
     stream);
 
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
+  auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     // Allocate device-side temporary storage & run algorithm
     parser.Transduce(d_input.data(),
@@ -227,6 +247,8 @@ void BM_FST_JSON_no_str(nvbench::state& state)
                      start_state,
                      stream.get());
   });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 NVBENCH_BENCH(BM_FST_JSON)

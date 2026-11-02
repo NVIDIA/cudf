@@ -25,6 +25,7 @@
 #include <cub/block/block_reduce.cuh>
 #include <cub/block/block_scan.cuh>
 #include <cub/warp/warp_scan.cuh>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/iterator>
@@ -528,7 +529,7 @@ CUDF_KERNEL void parse_fn_string_parallel(str_tuple_it str_tuples,
     // 0-31, 32-63, ... i*32-n.
     // entire warp executes but with mask.
     for (thread_index_type char_index = lane;
-         char_index < cudf::util::round_up_safe(in_end - in_begin, static_cast<long>(BLOCK_SIZE));
+         char_index < cudf::detail::round_up_safe(in_end - in_begin, static_cast<long>(BLOCK_SIZE));
          char_index += BLOCK_SIZE) {
       bool const is_within_bounds = char_index < (in_end - in_begin);
       auto const c                = is_within_bounds ? in_begin[char_index] : '\0';
@@ -809,7 +810,8 @@ static std::unique_ptr<column> parse_string(string_view_pair_it str_tuples,
     size_type{0},
     cuda::maximum<size_type>{});
 
-  auto sizes           = rmm::device_uvector<size_type>(col_size, stream);
+  cuda::device_buffer<size_type> sizes(
+    stream, cudf::get_current_device_resource_ref(), col_size, cuda::no_init);
   auto d_sizes         = sizes.data();
   auto null_count_data = d_null_count.data();
 
@@ -822,7 +824,7 @@ static std::unique_ptr<column> parse_string(string_view_pair_it str_tuples,
 
   constexpr auto warps_per_block  = 8;
   constexpr int threads_per_block = cudf::detail::warp_size * warps_per_block;
-  auto num_blocks                 = cudf::util::div_rounding_up_safe(col_size, warps_per_block);
+  auto num_blocks                 = cudf::detail::div_rounding_up_safe(col_size, warps_per_block);
   auto str_counter =
     cudf::numeric_scalar(size_type{0}, true, stream, cudf::get_current_device_resource_ref());
 

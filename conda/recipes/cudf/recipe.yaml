@@ -6,9 +6,9 @@ context:
   version: ${{ env.get("RAPIDS_PACKAGE_VERSION") }}
   minor_version: ${{ (version | split("."))[:2] | join(".") }}
   cuda_version: ${{ (env.get("RAPIDS_CUDA_VERSION") | split("."))[:2] | join(".") }}
-  cuda_major: '${{ (env.get("RAPIDS_CUDA_VERSION") | split("."))[0] }}'
-  datetime_string: '${{ env.get("RAPIDS_DATETIME_STRING") }}'
-  head_rev: '${{ git.head_rev(".")[:8] }}'
+  cuda_major: ${{ (env.get("RAPIDS_CUDA_VERSION") | split("."))[0] }}
+  datetime_string: ${{ env.get("RAPIDS_DATETIME_STRING") }}
+  head_rev: ${{ git.head_rev(".")[:8] }}
   py_abi_min: ${{ env.get("RAPIDS_PY_VERSION") }}
   py_buildstring: ${{ py_abi_min | version_to_buildstring }}
 
@@ -106,7 +106,7 @@ requirements:
     - numba-cuda-mlir >=0.3.0
     - numba >=0.60.0,<0.65.0
     - numpy >=2.0,<3.0
-    - pyarrow>=19.0.0,<26.0.0
+    - pyarrow>=19.0.0
     - libcudf =${{ version }}
     - pylibcudf =${{ version }}
     - ${{ pin_compatible("rmm", upper_bound="x.x") }}

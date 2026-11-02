@@ -18,6 +18,17 @@ tests/unit/operations/test_join.py::test_join_4_columns_with_validity
 # Fails in Rocky Linux 8 due to SSL CA issues.
 tests/unit/io/test_csv.py::test_read_web_file
 
+# These tests do not exercise cudf-polars GPU execution. They use eager APIs or
+# fail in cloud I/O handling before GPU materialization.
+tests/unit/operations/test_join_asof.py::test_asof_join_nearest_reference
+tests/unit/io/test_parquet.py::test_roundtrip_parametric
+tests/unit/io/test_parquet.py::test_delta_encoding_roundtrip
+tests/unit/io/test_parquet.py::test_byte_stream_split_encoding_roundtrip
+tests/unit/io/test_ipc.py::test_ipc_roundtrip_pyarrow_parametric
+tests/unit/io/test_ipc.py::test_ipc_roundtrip_stream_parametric
+tests/unit/io/cloud/test_credential_provider.py::test_credential_provider_rebuild_clears_cache
+tests/unit/io/cloud/test_credential_provider.py::test_credential_provider_aws_endpoint_url_passed_in_storage_options
+
 # TODO: Debug and re-enable the following tests.
 # SQLite in CI does not support FULL OUTER JOIN.
 tests/unit/sql/test_distinct.py::test_distinct_with_full_outer_join

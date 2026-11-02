@@ -6,11 +6,15 @@
 #include <cudf/column/column_device_view_base.cuh>
 #include <cudf/detail/row_ir/opcode.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
+#include <cudf/errc.hpp>
 #include <cudf/types.hpp>
 
+#include <cuda/atomic>
+#include <cuda/std/algorithm>
 #include <cuda/std/cstddef>
 #include <cuda/std/limits>
 #include <cuda/std/tuple>
+#include <cuda/std/type_traits>
 
 #include <jit/column_accessor.cuh>
 #include <jit/type_list.cuh>
@@ -33,15 +37,24 @@ namespace cudf::join::jit {
 constexpr cudf::size_type JoinNoMatch = cuda::std::numeric_limits<cudf::size_type>::min();
 
 template <bool has_user_data, typename... T>
-__device__ void execute_predicate_op(void* user_data,
+__device__ errc execute_predicate_op(void* user_data,
                                      size_type row_index,
                                      cuda::std::tuple<T...> args)
 {
+  auto func = [&](auto... a) {
+    if constexpr (!cuda::std::is_void_v<decltype(GENERIC_JOIN_FILTER_OP(a...))>) {
+      return static_cast<errc>(GENERIC_JOIN_FILTER_OP(a...));
+    } else {
+      (void)GENERIC_JOIN_FILTER_OP(a...);
+      return errc::SUCCESS;
+    }
+  };
+
   if constexpr (has_user_data) {
-    cuda::std::apply(
-      [&](auto&&... args) { (void)GENERIC_JOIN_FILTER_OP(user_data, row_index, args...); }, args);
+    return cuda::std::apply(func,
+                            cuda::std::tuple_cat(cuda::std::tuple{user_data, row_index}, args));
   } else {
-    cuda::std::apply([&](auto&&... args) { (void)GENERIC_JOIN_FILTER_OP(args...); }, args);
+    return cuda::std::apply(func, args);
   }
 }
 
@@ -51,10 +64,13 @@ __device__ void filter_join_kernel(cudf::size_type num_rows,
                                    cudf::size_type const* __restrict__ right_indices,
                                    cudf::column_device_view_core const* __restrict__ columns,
                                    bool* __restrict__ predicate_results,
-                                   void* __restrict__ user_data)
+                                   void* __restrict__ user_data,
+                                   int32_t* __restrict__ max_error)
 {
   auto const start  = cudf::detail::grid_1d::global_thread_id();
   auto const stride = cudf::detail::grid_1d::grid_stride();
+
+  auto thread_error = errc::SUCCESS;
 
   for (auto i = start; i < num_rows; i += stride) {
     // Skip if either index is JoinNoMatch
@@ -70,11 +86,12 @@ __device__ void filter_join_kernel(cudf::size_type num_rows,
     if constexpr (is_null_aware) {
       // Null-aware path: pass optional<T> inputs, get optional<bool> result
       cuda::std::optional<bool> result{false};
-      auto inputs = Accessors::map([&]<typename... A>() {
+      auto inputs    = Accessors::map([&]<typename... A>() {
         return cuda::std::tuple{A::nullable_element(columns, indices[A::table_index][i])...};
       });
-      execute_predicate_op<has_user_data>(
+      auto row_error = execute_predicate_op<has_user_data>(
         user_data, i, cuda::std::tuple_cat(cuda::std::tuple{&result}, inputs));
+      thread_error         = cuda::std::max(thread_error, row_error);
       predicate_results[i] = result.has_value() && result.value();
     } else {
       // Non-null-aware path: if any input is null, predicate is false
@@ -84,15 +101,21 @@ __device__ void filter_join_kernel(cudf::size_type num_rows,
         predicate_results[i] = false;
         continue;
       }
-      bool result = false;
-      auto inputs = Accessors::map([&]<typename... A>() {
+      bool result    = false;
+      auto inputs    = Accessors::map([&]<typename... A>() {
         return cuda::std::tuple{A::element(columns, indices[A::table_index][i])...};
       });
-      execute_predicate_op<has_user_data>(
+      auto row_error = execute_predicate_op<has_user_data>(
         user_data, i, cuda::std::tuple_cat(cuda::std::tuple{&result}, inputs));
+      thread_error         = cuda::std::max(thread_error, row_error);
       predicate_results[i] = result;
     }
   }
+
+  if (thread_error == errc::SUCCESS) { return; }
+
+  cuda::atomic_ref ref(*max_error);
+  ref.fetch_max(static_cast<int32_t>(thread_error), cuda::std::memory_order_relaxed);
 }
 
 }  // namespace cudf::join::jit
@@ -103,8 +126,9 @@ extern "C" __global__ void cudf_kernel_entry(
   cudf::size_type const* __restrict__ right_indices,
   cudf::column_device_view_core const* __restrict__ columns,
   bool* __restrict__ predicate_results,
-  void* __restrict__ user_data)
+  void* __restrict__ user_data,
+  int32_t* __restrict__ max_error)
 {
   CUDF_KERNEL_INSTANCE(
-    num_rows, left_indices, right_indices, columns, predicate_results, user_data);
+    num_rows, left_indices, right_indices, columns, predicate_results, user_data, max_error);
 }

@@ -240,8 +240,7 @@ std::unique_ptr<column> superimpose_nulls(bitmask_type const* null_mask,
                          null_count);
   } else {
     auto current_mask = input->mutable_view().null_mask();
-    std::vector<bitmask_type const*> masks{reinterpret_cast<bitmask_type const*>(null_mask),
-                                           reinterpret_cast<bitmask_type const*>(current_mask)};
+    std::vector<bitmask_type const*> masks{null_mask, current_mask};
     std::vector<size_type> begin_bits{0, 0};
     auto const valid_count = cudf::detail::inplace_bitmask_and(
       device_span<bitmask_type>(current_mask, num_bitmask_words(num_rows)),

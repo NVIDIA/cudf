@@ -21,6 +21,7 @@
 
 #include <cuda/buffer>
 #include <cuda/iterator>
+#include <cuda/std/type_traits>
 #include <cuda/stream>
 #include <thrust/for_each.h>
 #include <thrust/transform.h>
@@ -98,7 +99,7 @@ struct var_functor {
                                      size_type ddof,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
-    requires(std::is_arithmetic_v<T>)
+    requires(cuda::std::is_arithmetic_v<T>)
   {
     using ResultType = cudf::detail::target_type_t<T, aggregation::Kind::VARIANCE>;
 
@@ -156,7 +157,7 @@ struct var_functor {
 
   template <typename T, typename... Args>
   std::unique_ptr<column> operator()(Args&&...)
-    requires(!std::is_arithmetic_v<T>)
+    requires(!cuda::std::is_arithmetic_v<T>)
   {
     CUDF_FAIL("Only numeric types are supported in std/variance");
   }

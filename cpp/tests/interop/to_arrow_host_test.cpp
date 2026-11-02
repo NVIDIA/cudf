@@ -14,6 +14,7 @@
 #include <cudf/copying.hpp>
 #include <cudf/detail/interop.hpp>
 #include <cudf/detail/iterator.cuh>
+#include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/interop.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
@@ -342,6 +343,39 @@ TEST_F(ToArrowHostDeviceTest, EmptyDictionary)
   auto dictionary = got_arrow_host->array.children[0]->dictionary;
   ASSERT_NE(dictionary, nullptr);
   EXPECT_EQ(dictionary->n_children, 0);
+}
+
+TEST_F(ToArrowHostDeviceTest, EmptyDictionaryWithKeys)
+{
+  cudf::test::dictionary_column_wrapper<std::string> input({"a", "b"});
+  auto empty    = cudf::empty_like(input);
+  auto const tv = cudf::table_view({empty->view()});
+
+  auto schema       = cudf::to_arrow_schema(tv, cudf::interop::get_table_metadata(tv));
+  auto arrow        = cudf::to_arrow_host(tv);
+  auto roundtripped = cudf::from_arrow_host(schema.get(), arrow.get());
+  auto const after  = cudf::dictionary_column_view(roundtripped->view().column(0));
+
+  EXPECT_EQ(after.size(), 0);
+  ASSERT_EQ(after.parent().num_children(), 2);
+  EXPECT_EQ(after.keys().type().id(), cudf::type_id::STRING);
+}
+
+TEST_F(ToArrowHostDeviceTest, EmptySlicedDictionary)
+{
+  cudf::test::dictionary_column_wrapper<std::string> input({"a", "b", "c"});
+  auto const tv = cudf::table_view({cudf::slice(input, {1, 1}).front()});
+
+  auto arrow = cudf::to_arrow_host(tv);
+  ASSERT_NE(arrow->array.children[0]->dictionary, nullptr);
+  EXPECT_EQ(arrow->array.children[0]->length, 0);
+  EXPECT_EQ(arrow->array.children[0]->dictionary->length, 0);
+
+  auto schema       = cudf::to_arrow_schema(tv, cudf::interop::get_table_metadata(tv));
+  auto roundtripped = cudf::from_arrow_host(schema.get(), arrow.get());
+  auto const after  = cudf::dictionary_column_view(roundtripped->view().column(0));
+  EXPECT_EQ(after.size(), 0);
+  EXPECT_EQ(after.keys().type().id(), cudf::type_id::STRING);
 }
 
 TEST_F(ToArrowHostDeviceTest, DateTimeTable)

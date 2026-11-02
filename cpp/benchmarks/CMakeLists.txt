@@ -153,7 +153,7 @@ ConfigureNVBench(
   join/direct_join.cu
   join/distinct_join.cpp
   join/filter_join_indices.cpp
-  join/filter_join_indices_jit.cu
+  join/filter_join_indices_jit.cpp
   join/generate_input_tables.cu
   join/join.cpp
   join/join_dictionary.cpp
@@ -249,6 +249,7 @@ ConfigureNVBench(
   groupby/group_struct_keys.cpp
   groupby/group_struct_values.cpp
   groupby/group_sum.cpp
+  groupby/streaming_groupby.cpp
 )
 
 # ##################################################################################################
@@ -406,7 +407,7 @@ ConfigureNVBench(CSV_WRITER_NVBENCH io/csv/csv_writer.cpp)
 
 # ##################################################################################################
 # * ast benchmark ---------------------------------------------------------------------------------
-ConfigureNVBench(AST_NVBENCH ast/polynomials.cpp ast/transform.cpp)
+ConfigureNVBench(AST_NVBENCH ast/polynomials.cpp ast/transform.cpp ast/transform_fp64.cpp)
 
 # ##################################################################################################
 # * LTO Fragments ----------------------------------------------------------------------------

@@ -58,8 +58,7 @@ std::unique_ptr<cudf::column> create_structs_hierarchy(
   CUDF_EXPECTS(null_count <= 0 || null_mask.size() > 0,
                "Struct column with nulls must be nullable.");
 
-  CUDF_EXPECTS(null_mask.size() == 0 ||
-                 null_mask.size() * sizeof(bitmask_type) == bitmask_allocation_size_bytes(num_rows),
+  CUDF_EXPECTS(null_mask.size() == 0 || null_mask.size() == bitmask_allocation_size_words(num_rows),
                "Number of bits in null_mask should equal number of rows in input columns");
 
   CUDF_EXPECTS(std::all_of(child_columns.begin(),

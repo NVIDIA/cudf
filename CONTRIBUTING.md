@@ -93,12 +93,17 @@ Compilers:
 
 * `gcc` version 13.3+
 * `nvcc` version 12.9+
-* `cmake` version 3.29.6+
+* `cmake` version 4.0+
 
 CUDA/GPU Runtime:
 
 * CUDA 12.2+
-* Volta architecture or better ([Compute Capability](https://docs.nvidia.com/deploy/cuda-compatibility/latest/) >=7.0)
+* Volta architecture or better ([Compute Capability](https://docs.nvidia.com/deploy/cuda-compatibility/latest/) >=7.0) with CUDA 12.x
+* Turing architecture or better (Compute Capability >=7.5) with CUDA 13.x
+
+Other requirements:
+
+* `zlib` 1.2.13+
 
 You can obtain CUDA from
 [https://developer.nvidia.com/cuda-downloads](https://developer.nvidia.com/cuda-downloads).
@@ -122,7 +127,7 @@ Instructions for a minimal build environment without conda are included below.
 
 ```bash
 # create the conda environment (assuming in base `cudf` directory)
-conda env create --name cudf_dev --file conda/environments/all_cuda-133_arch-$(uname -m).yaml
+conda env create --name cudf_dev --file conda/environments/all_cuda-134_arch-$(uname -m).yaml
 # activate the environment
 conda activate cudf_dev
 ```

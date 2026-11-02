@@ -62,7 +62,7 @@ public class ColumnVectorTest extends CudfTestBase {
   //
   // @cuda.jit(device=True)
   // def op(a):
-  //         return a * a - a
+  //         return int32(a * a - a)
   //
   // # Define argument types for the function
   // arg_types = (int32, )
@@ -111,7 +111,7 @@ public class ColumnVectorTest extends CudfTestBase {
       "	cvt.s64.s32 	%rd2, %r1;\n" +
       "	mul.wide.s32 	%rd3, %r1, %r1;\n" +
       "	sub.s64 	%rd4, %rd3, %rd2;\n" +
-      "	st.u64 	[%rd1], %rd4;\n" +
+      "	st.u32 	[%rd1], %rd4;\n" +
       "	mov.u32 	%r2, 0;\n" +
       "	st.param.b32 	[func_retval0+0], %r2;\n" +
       "	ret;\n" +

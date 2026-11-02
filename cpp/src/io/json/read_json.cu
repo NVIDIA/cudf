@@ -9,6 +9,7 @@
 
 #include <cudf/concatenate.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/getenv_or.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
@@ -22,7 +23,6 @@
 #include <cudf/utilities/span.hpp>
 
 #include <rmm/cuda_stream_pool.hpp>
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
@@ -812,7 +812,7 @@ device_span<char> ingest_raw_input(device_span<char> buffer,
     static_assert(num_delimiter_chars == 1,
                   "Currently only single-character delimiters are supported");
     auto const delimiter_source = cuda::make_constant_iterator(delimiter);
-    auto const d_delimiter_map  = cudf::detail::make_device_uvector_async(
+    auto const d_delimiter_map  = cudf::detail::make_device_buffer_async(
       delimiter_map, stream, cudf::get_current_device_resource_ref());
     thrust::scatter(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                     delimiter_source,

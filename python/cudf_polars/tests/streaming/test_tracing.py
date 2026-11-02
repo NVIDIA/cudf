@@ -25,7 +25,6 @@ from cudf_polars.streaming.actor_graph.tracing import (
     record_channel_metrics,
     send_chunk,
 )
-from cudf_polars.utils.versions import POLARS_VERSION_LT_138
 
 if TYPE_CHECKING:
     import pathlib
@@ -142,9 +141,6 @@ def test_lineariser_backpressures_each_producer(spmd_engine: SPMDEngine) -> None
     assert output == list(range(6))
 
 
-@pytest.mark.skipif(
-    POLARS_VERSION_LT_138, reason="set_sorted lowers to unsupported hint ir"
-)
 def test_parquet_scan_ordering_trace_from_set_sorted(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -224,21 +220,18 @@ def test_local_join_prefilter_trace_records_decision_and_effect(
             1,
             None,
         ),
+        (
+            "ordered-skip",
+            True,
+            1,
+            32 * 1024 * 1024,
+            "ordered_aligned",
+            "skip",
+            "target_not_redistributed",
+            None,
+            None,
+        ),
     ]
-    if not POLARS_VERSION_LT_138:
-        cases.append(
-            (
-                "ordered-skip",
-                True,
-                1,
-                32 * 1024 * 1024,
-                "ordered_aligned",
-                "skip",
-                "target_not_redistributed",
-                None,
-                None,
-            )
-        )
 
     domain_path = tmp_path / "domain.parquet"
     target_path = tmp_path / "target.parquet"

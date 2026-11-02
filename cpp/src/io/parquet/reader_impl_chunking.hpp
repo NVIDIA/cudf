@@ -85,14 +85,14 @@ struct subpass_intermediate_data {
     : decomp_page_data(stream, cudf::get_current_device_resource_ref()),
       level_decode_data(stream, cudf::get_current_device_resource_ref()),
       flat_nz_map_data(stream, cudf::get_current_device_resource_ref()),
-      nz_map_buf(0, stream),
-      page_buf(0, stream),
-      page_src_index{0, stream},
-      page_string_offset_indices(0, stream),
-      string_offset_buffer(0, stream),
-      delta_temp_buf(0, stream),
-      page_nesting_info(0, stream),
-      page_nesting_decode_info(0, stream)
+      nz_map_buf(0, stream, cudf::get_current_device_resource_ref()),
+      page_buf(0, stream, cudf::get_current_device_resource_ref()),
+      page_src_index(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init),
+      page_string_offset_indices(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init),
+      string_offset_buffer(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init),
+      delta_temp_buf(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init),
+      page_nesting_info(0, stream, cudf::get_current_device_resource_ref()),
+      page_nesting_decode_info(0, stream, cudf::get_current_device_resource_ref())
   {
   }
 
@@ -111,20 +111,20 @@ struct subpass_intermediate_data {
   cudf::detail::hostdevice_vector<PageInfo> page_buf;
 
   // for each page in the subpass, the index of our source page in the pass
-  rmm::device_uvector<size_t> page_src_index;
+  cuda::device_buffer<size_t> page_src_index;
 
   // For each page, the index into the column's string offset buffer
   // Used for non-dictionary, non-FLBA string columns
-  rmm::device_uvector<size_t> page_string_offset_indices;
+  cuda::device_buffer<size_t> page_string_offset_indices;
 
   // String offset buffer for non-dictionary, non-FLBA string columns
   // Contains pre-computed offsets into the string data. Allocated once per subpass
   // in preprocess_subpass_pages() and reused across all output chunks in the subpass.
-  rmm::device_uvector<uint32_t> string_offset_buffer;
+  cuda::device_buffer<uint32_t> string_offset_buffer;
 
   // temporary space for DELTA_BYTE_ARRAY decoding. this only needs to live until
   // gpu::DecodeDeltaByteArray returns.
-  rmm::device_uvector<uint8_t> delta_temp_buf;
+  cuda::device_buffer<uint8_t> delta_temp_buf;
 
   // for each column in the file (indexed by _input_columns.size())
   // the number of associated pages for this subpass
@@ -163,14 +163,14 @@ struct pass_intermediate_data {
   pass_intermediate_data(cuda::stream_ref stream)
     : raw_page_data{},
       row_groups{},
-      chunks(0, stream),
-      pages(0, stream),
-      page_offsets{0, stream},
+      chunks(0, stream, cudf::get_current_device_resource_ref()),
+      pages(0, stream, cudf::get_current_device_resource_ref()),
+      page_offsets(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init),
       decomp_dict_data{stream, cudf::get_current_device_resource_ref()},
-      decomp_scratch_sizes{0, stream},
-      string_offset_sizes{0, stream},
-      level_decode_sizes{0, stream},
-      str_dict_index{0, stream}
+      decomp_scratch_sizes(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init),
+      string_offset_sizes(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init),
+      level_decode_sizes(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init),
+      str_dict_index(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init)
   {
   }
 
@@ -187,13 +187,13 @@ struct pass_intermediate_data {
   // 1 1 1 1 1 2 2 2
   //
   // page_offsets would be 0, 5, 8
-  rmm::device_uvector<size_type> page_offsets;
+  cuda::device_buffer<size_type> page_offsets;
 
   cuda::device_buffer<std::uint8_t> decomp_dict_data;
-  rmm::device_uvector<size_t> decomp_scratch_sizes;
-  rmm::device_uvector<size_t> string_offset_sizes;
-  rmm::device_uvector<size_t> level_decode_sizes;
-  rmm::device_uvector<string_index_pair> str_dict_index;
+  cuda::device_buffer<size_t> decomp_scratch_sizes;
+  cuda::device_buffer<size_t> string_offset_sizes;
+  cuda::device_buffer<size_t> level_decode_sizes;
+  cuda::device_buffer<string_index_pair> str_dict_index;
 
   // currently active subpass
   std::unique_ptr<subpass_intermediate_data> subpass{};

@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "group_reductions.hpp"
 #include "lists/utilities.hpp"
 
 #include <cudf/aggregation.hpp>
@@ -15,11 +16,16 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
+#include <cudf/utilities/traits.hpp>
 
 #include <rmm/device_buffer.hpp>
+#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
+#include <cuda/iterator>
+#include <cuda/std/cstddef>
 #include <thrust/gather.h>
+#include <thrust/sequence.h>
 
 namespace cudf::groupby::detail {
 
@@ -90,6 +96,49 @@ std::unique_ptr<column> group_histogram(column_view const& values,
   CUDF_EXPECTS(num_groups > 0, "Group should not be empty.", std::invalid_argument);
 
   return build_histogram(values, group_labels, std::nullopt, num_groups, stream, mr);
+}
+
+std::unique_ptr<column> make_singleton_histograms(std::unique_ptr<column> values,
+                                                  cuda::stream_ref stream,
+                                                  cudf::memory_resources mr)
+{
+  CUDF_EXPECTS(!cudf::is_nested(values->type()),
+               "Nested types are not yet supported in histogram aggregation.",
+               std::invalid_argument);
+
+  auto const num_groups = values->size();
+  auto const output_mr  = mr.get_output_mr();
+  auto offsets          = make_numeric_column(
+    data_type{type_id::INT32}, num_groups + 1, mask_state::UNALLOCATED, stream, output_mr);
+  auto counts = make_numeric_column(
+    data_type{type_id::INT64}, num_groups, mask_state::UNALLOCATED, stream, output_mr);
+  auto const initialize = cuda::tabulate_output_iterator{
+    [offsets = offsets->mutable_view().begin<int32_t>(),
+     counts  = counts->mutable_view().begin<int64_t>(),
+     num_groups] __device__(cuda::std::ptrdiff_t index, size_type value) {
+      offsets[index] = static_cast<int32_t>(value);
+      if (index < num_groups) { counts[index] = 1; }
+    }};
+  thrust::sequence(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+                   initialize,
+                   initialize + offsets->size(),
+                   size_type{0});
+
+  std::vector<std::unique_ptr<column>> children;
+  children.push_back(std::move(values));
+  children.push_back(std::move(counts));
+  auto entries =
+    make_structs_column(num_groups,
+                        std::move(children),
+                        0,
+                        cudf::create_null_mask(0, mask_state::UNALLOCATED, stream, output_mr),
+                        stream,
+                        output_mr);
+  return make_lists_column(num_groups,
+                           std::move(offsets),
+                           std::move(entries),
+                           0,
+                           cudf::create_null_mask(0, mask_state::UNALLOCATED, stream, output_mr));
 }
 
 std::unique_ptr<column> group_merge_histogram(column_view const& values,

@@ -7,15 +7,16 @@
 
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/copy.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/stream_pool.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/device_buffer.hpp>
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <thrust/count.h>
@@ -100,15 +101,16 @@ std::unique_ptr<cudf::column> compute_row_index_column(
                row_indices_iter + num_rows,
                1);
 
-  auto row_group_keys = rmm::device_uvector<size_type>(num_rows, stream);
+  auto row_group_keys = cuda::device_buffer<size_type>(
+    stream, cudf::get_current_device_resource_ref(), num_rows, cuda::no_init);
   thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                row_group_keys.begin(),
                row_group_keys.end(),
                0);
 
-  auto d_row_group_offsets = cudf::detail::make_device_uvector_async(
+  auto d_row_group_offsets = cudf::detail::make_device_buffer_async(
     row_group_offsets, stream, cudf::get_current_device_resource_ref());
-  auto d_row_group_span_offsets = cudf::detail::make_device_uvector_async(
+  auto d_row_group_span_offsets = cudf::detail::make_device_buffer_async(
     row_group_span_offsets, stream, cudf::get_current_device_resource_ref());
   auto in_iter =
     cuda::make_zip_iterator(d_row_group_offsets.begin(), cuda::counting_iterator<size_type>(0));

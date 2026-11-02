@@ -10,6 +10,7 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/stream>
 #include <thrust/execution_policy.h>
@@ -61,7 +62,8 @@ std::unique_ptr<cudf::column> find_and_replace_all(
   auto d_values_to_replace = cudf::column_device_view::create(values_to_replace.parent(), stream);
   auto d_replacements      = cudf::column_device_view::create(replacement_values.parent(), stream);
 
-  auto indices = rmm::device_uvector<string_index_pair>(input.size(), stream);
+  auto indices = cuda::device_buffer<string_index_pair>(
+    stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
 
   thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                     cuda::counting_iterator<size_type>{0},

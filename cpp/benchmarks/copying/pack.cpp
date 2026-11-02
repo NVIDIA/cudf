@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf/contiguous_split.hpp>
 #include <cudf/table/table.hpp>
@@ -52,35 +53,37 @@ void set_throughput_counters(nvbench::state& state, cudf::table const& table)
 }
 
 /**
- * @brief Shared body for the pack benchmarks. `packed_mr` selects the destination of the packed
- * buffer (device MR for device_pack, pinned host MR for host_pack).
+ * @brief Shared body for the pack benchmarks. `host_output` selects whether the packed buffer
+ * uses the pinned host MR or the current device MR.
  */
-void run_pack(nvbench::state& state, rmm::device_async_resource_ref packed_mr)
+void run_pack(nvbench::state& state, bool host_output)
 {
   auto const table      = setup_bench(state);
   auto const table_view = table->view();
   auto stream           = cudf::get_default_stream();
   set_throughput_counters(state, *table);
+
+  rmm::mr::pinned_host_memory_resource phmr;
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+  auto const output_mr =
+    host_output ? rmm::device_async_resource_ref{phmr} : cudf::get_current_device_resource_ref();
+
   state.exec(nvbench::exec_tag::sync,
-             [&](nvbench::launch&) { std::ignore = cudf::pack(table_view, stream, packed_mr); });
+             [&](nvbench::launch&) { std::ignore = cudf::pack(table_view, stream, output_mr); });
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 /**
  * @brief Packs a device table into a device-backed buffer.
  */
-void bench_device_pack(nvbench::state& state)
-{
-  run_pack(state, cudf::get_current_device_resource_ref());
-}
+void bench_device_pack(nvbench::state& state) { run_pack(state, false); }
 
 /**
  * @brief Packs a device table into a pinned-host-backed buffer.
  */
-void bench_host_pack(nvbench::state& state)
-{
-  rmm::mr::pinned_host_memory_resource phmr;
-  run_pack(state, phmr);
-}
+void bench_host_pack(nvbench::state& state) { run_pack(state, true); }
 
 }  // namespace
 

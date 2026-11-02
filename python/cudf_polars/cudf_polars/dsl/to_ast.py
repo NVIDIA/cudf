@@ -230,11 +230,18 @@ def _(node: expr.BinOp, self: Transformer) -> plc_expr.Expression:
 def _(node: expr.BooleanFunction, self: Transformer) -> plc_expr.Expression:
     if node.name is expr.BooleanFunction.Name.IsIn:
         needles, haystack = node.children
+        (nulls_equal,) = node.options
         if isinstance(haystack, expr.LiteralColumn):
             haystack_values = haystack.value
             if haystack_values.dtype == pl.List:
                 # An imploded literal is a one-row list column, use the inner values
                 haystack_values = haystack_values.explode()
+            if haystack_values.dtype.is_float() and haystack_values.is_nan().any():
+                # NaN never compares equal in an AST, but is_in matches it
+                raise NotImplementedError("is_in with NaN in the haystack")
+            if not nulls_equal:
+                # A null in the haystack never matches when nulls are not equal
+                haystack_values = haystack_values.drop_nulls()
             if 0 < len(haystack_values) < 16:
                 # 16 is an arbitrary limit
                 needle_ref = self(needles)
@@ -256,12 +263,15 @@ def _(node: expr.BooleanFunction, self: Transformer) -> plc_expr.Expression:
                     )
                     for val in haystack_values
                 )
+                equal = (
+                    plc_expr.ASTOperator.NULL_EQUAL
+                    if nulls_equal
+                    else plc_expr.ASTOperator.EQUAL
+                )
                 return reduce(
                     partial(plc_expr.Operation, plc_expr.ASTOperator.LOGICAL_OR),
                     (
-                        plc_expr.Operation(
-                            plc_expr.ASTOperator.EQUAL, needle_ref, value
-                        )
+                        plc_expr.Operation(equal, needle_ref, value)
                         for value in values
                     ),
                 )

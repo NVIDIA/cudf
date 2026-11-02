@@ -13,6 +13,7 @@ import polars as pl
 from cudf_polars import Translator
 from cudf_polars.dsl.traversal import traversal
 from cudf_polars.engine.options import StreamingOptions
+from cudf_polars.streaming.actor_graph import core
 from cudf_polars.streaming.parallel import lower_ir_graph
 from cudf_polars.streaming.statistics import collect_statistics
 from cudf_polars.testing.asserts import assert_gpu_result_equal
@@ -141,6 +142,31 @@ def test_dataframescan_fanout_self_join(df, streaming_engine_factory):
     )
     q = df.join(df, on=df.collect_schema().names()[0], how="inner")
     assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=False)
+
+
+def test_dataframescan_fanout_bounded(df, spmd_engine_factory, monkeypatch):
+    # Horizontal concat of two pointwise transforms of one scan. No Join,
+    # Union, Over or broadcast consumes the scan, so its fanout is bounded.
+    # Uses the in-process SPMD engine so the spy sees the planning call.
+    streaming_engine = spmd_engine_factory(
+        StreamingOptions(max_rows_per_partition=1_000),
+    )
+    seen = []
+    orig = core.determine_fanout_nodes
+
+    def spy(*args, **kwargs):
+        result = orig(*args, **kwargs)
+        seen.append(result)
+        return result
+
+    monkeypatch.setattr(core, "determine_fanout_nodes", spy)
+    q = pl.concat(
+        [df.select(a=pl.col("x") + 1), df.select(b=pl.col("y") * 2)],
+        how="horizontal",
+    )
+    assert_gpu_result_equal(q, engine=streaming_engine)
+    infos = [info for result in seen for info in result.values()]
+    assert any(not info.unbounded and info.num_consumers == 2 for info in infos)
 
 
 def test_join_in_memory_lazy_stable_id_pickle(

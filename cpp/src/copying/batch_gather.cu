@@ -556,9 +556,12 @@ constexpr int64_t kBatchMemcpyRowThreshold{524'288};
 // payload's group-walk cost scales with the call's row count: measured A/B on tall cells shows
 // every string shape at >= 262144 rows losing to the stock path (up to ~1.9x) while 65536 rows
 // wins ~1.7x, and the loss persists even when every column's chars route to CUB — so the
-// discriminator is the call's row count, not bytes-per-row. Above this threshold the
-// chars-routing branch below becomes unreachable through this API; keep it (the stock path
-// runs the same CUB engine there, and a lowered threshold or a1 coarsening revives the band).
+// discriminator is the call's row count, not bytes-per-row. The composed A/B of the fused
+// short-string engine confirmed the band exclusion stays: the engine wins the band cell when
+// admitted (262144x100 −69.5%, engine-vs-stock falsifier-confirmed) but the band route costs
+// the tall regime — above kBatchMemcpyRowThreshold the routed-metadata path (tall-str1)
+// replaces the group walk and is the measured tall win (round-10, +26.7% headline) the
+// engine cannot serve. The band exclusion trades the band win for the tall-str1 route.
 constexpr size_type kStringFallbackRowThreshold{262'144};
 
 // Preset-mask staging bands pay off only above this many preset destination masks in one call:
@@ -2368,6 +2371,34 @@ struct descriptor_path_builder {
         memcpy_unrouted.push_back(static_cast<size_type>(k));
       }
     }
+    // ---- fused short-string engine admission: BELOW the routing gate, the payload kernel's
+    // group walk (3 CTA barriers per 8-row group) is replaced by the warp-tile engine when
+    // every live column's average gathered row is short enough for it — the exact premise the
+    // group walk was designed for. Calls in the excluded seam band never reach the kernel
+    // (those strings take the stock fallback); at ≥524288 rows the routed-metadata path owns
+    // string metadata, so the engine serves only below-band short-row calls. Above the
+    // gate the payload kernel serves only the UNROUTED cohort (long-row columns), which the
+    // engine does NOT admit (subgroup copies serialize on long rows), so the group walk stays
+    // authoritative there. The AVERAGE does not bound the maximum: long outlier rows are safe
+    // on the engine (they ride the full-warp copy), so the short-average check alone admits.
+    auto engine_active = false;
+    std::vector<size_type> engine_cols;
+    if (not chars_routing_active and not memcpy_unrouted.empty()) {
+      auto all_short = true;
+      for (size_t k = 0; k < memcpy_unrouted.size(); ++k) {
+        auto const& idx  = memcpy_unrouted[k];
+        auto const bytes = h_col_totals[idx];
+        if (bytes / num_rows > static_cast<int64_t>(kBlockRowCopyThreshold)) {
+          all_short = false;
+          break;
+        }
+      }
+      if (all_short) {
+        engine_cols = std::move(memcpy_unrouted);
+        memcpy_unrouted.clear();
+        engine_active = true;
+      }
+    }
 
     // Wire the payload work items (num_rows > 0 guaranteed for live columns).
     // any_kernel_masked was computed above the landing-buffer allocation.
@@ -2657,12 +2688,16 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
     // routing engine will be active for the call: the routed metadata path (tall-str1)
     // removes the group-walk metadata work that made the fused path lose tall cells, but it
     // only engages above `kBatchMemcpyRowThreshold` (the host routing walk keys off
-    // `chars_routing_active`). The band between the two thresholds keeps the fallback —
-    // routing can never fire there, so fusing would reintroduce the measured tall loss with
-    // no compensating engine. Gathered row sizes are unknowable before the scan, so no
-    // stronger per-column proxy is possible here; the exact post-totals routing still splits
-    // per column, and an all-long-row tall table risks regressing vs the wholesale fallback
-    // (the measured admission question this branch exists to answer).
+    // `chars_routing_active`). The seam band between the two thresholds is EXCLUDED: the
+    // engine wins the band cell when admitted (262144x100 −69.5%, engine-vs-stock) but the
+    // band route costs the tall regime — the band exclusion trades that one-cell win for
+    // keeping ≥524288-row strings on the routed-metadata path (tall-str1), the measured tall
+    // win (round-10, +26.7% headline) a wholesale exclusion would forfeit. Gathered row sizes
+    // are unknowable before the scan, so no stronger per-column proxy is possible here; the
+    // exact post-totals routing still splits per column. Below the band `assemble_strings`
+    // picks the engine for short-row shapes; an all-long-row below-band table falls to the
+    // payload kernel's group walk (the pre-engine fused behavior) — its loss on that shape is
+    // the known admission risk the falsifier's regression checks watch.
     if (is_descriptor_path_candidate(src) and
         not(src.type().id() == type_id::STRING and num_rows >= kStringFallbackRowThreshold and
             num_rows < kBatchMemcpyRowThreshold)) {

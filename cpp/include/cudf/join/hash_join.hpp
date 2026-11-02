@@ -272,8 +272,8 @@ class hash_join {
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @param mr Device memory resource used to allocate the result device memory
    *
-   * @return A join_match_context object containing the left table view and a device vector
-   *         of match counts for each row in the left table
+   * @return A join_match_context holding the per-row match counts and output size, and caching
+   *         the matching groups that partitioned_inner_join() reuses
    */
   [[nodiscard]] cudf::join_match_context inner_join_match_context(
     cudf::table_view const& left,
@@ -297,8 +297,8 @@ class hash_join {
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @param mr Device memory resource used to allocate the result device memory
    *
-   * @return A join_match_context object containing the left table view and a device vector
-   *         of match counts for each row in the left table
+   * @return A join_match_context holding the per-row match counts and output size, and caching
+   *         the matching groups that partitioned_left_join() reuses
    */
   [[nodiscard]] cudf::join_match_context left_join_match_context(
     cudf::table_view const& left,
@@ -322,8 +322,8 @@ class hash_join {
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @param mr Device memory resource used to allocate the result device memory
    *
-   * @return A join_match_context object containing the left table view and a device vector
-   *         of match counts for each row in the left table
+   * @return A join_match_context holding the per-row match counts and output size, and caching
+   *         the matching groups that partitioned_full_join() reuses
    */
   [[nodiscard]] cudf::join_match_context full_join_match_context(
     cudf::table_view const& left,

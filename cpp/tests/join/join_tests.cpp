@@ -2678,6 +2678,8 @@ TEST_F(JoinTest, HashJoinFullMatchContext)
     auto const match_context = hash_join.full_join_match_context(t0.select({0}), stream);
 
     expect_match_counts_equal(match_context.match_counts(), {1, 1, 2, 1, 2}, stream);
+    // The output size excludes the unmatched right row
+    EXPECT_EQ(match_context.output_size(), 7);
   }
 
   // Test multi-column join
@@ -2709,18 +2711,21 @@ TEST_F(JoinTest, HashJoinMatchContextEmptyRight)
   {
     auto const match_context = hash_join.inner_join_match_context(t0, stream);
     expect_match_counts_equal(match_context.match_counts(), {0, 0, 0}, stream);
+    EXPECT_EQ(match_context.output_size(), 0);
   }
 
   // Test left join match context
   {
     auto const match_context = hash_join.left_join_match_context(t0, stream);
     expect_match_counts_equal(match_context.match_counts(), {1, 1, 1}, stream);
+    EXPECT_EQ(match_context.output_size(), 3);
   }
 
   // Test full join match context
   {
     auto const match_context = hash_join.full_join_match_context(t0, stream);
     expect_match_counts_equal(match_context.match_counts(), {1, 1, 1}, stream);
+    EXPECT_EQ(match_context.output_size(), 3);
   }
 }
 

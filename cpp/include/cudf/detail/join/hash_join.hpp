@@ -192,14 +192,17 @@ class hash_join {
     rmm::device_async_resource_ref mr) const;
 
   /**
-   * @brief Probes the hash table with `left`, writing each row's matching group and,
-   * when non-null, its match count and the total match count
+   * @brief Probes the hash table with `left`, writing each non-null output: the matching group
+   * and match count of each row, the total match count, and the matched build groups and their
+   * row count
    */
   void probe(join_kind join,
              cudf::table_view const& left,
              size_type* groups,
              size_type* counts,
              cuda::std::uint64_t* total,
+             cuda::std::uint32_t* matched_groups,
+             cuda::std::uint64_t* matched_build_rows,
              cuda::stream_ref stream) const;
 
   [[nodiscard]] std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,

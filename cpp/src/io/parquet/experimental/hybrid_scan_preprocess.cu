@@ -9,6 +9,7 @@
 #include "io/parquet/reader_impl_preprocess_utils.cuh"
 #include "io/utilities/time_utils.hpp"
 
+#include <cudf/column/column_device_view.cuh>
 #include <cudf/detail/algorithms/reduce.cuh>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
@@ -366,32 +367,31 @@ hybrid_scan_reader_impl::prepare_dictionaries(
 namespace {
 
 /**
- * @brief Computes the updated row mask value such that out_row_mask[i] = true, iff in_row_mask[i]
- * is valid and true. This is inline with the masking behavior of cudf::apply_retention_mask.
+ * @brief Checks if a row is pruned (valid and false)
  */
-struct row_mask_update_fn {
-  bool is_nullable;
-  bool const* in_row_mask;
-  bitmask_type const* in_bitmask;
+struct is_row_pruned_fn {
+  column_device_view row_mask;
 
   __device__ bool operator()(cudf::size_type row_idx) const
   {
-    if (is_nullable and not bit_is_set(in_bitmask, row_idx)) { return false; }
-    return in_row_mask[row_idx];
+    return row_mask.is_valid(row_idx) and not row_mask.element<bool>(row_idx);
   }
 };
 
 /**
- * @brief Checks if a row is pruned (valid and false)
+ * @brief Computes the updated row mask value such that a row survives iff the predicate is valid
+ * and true and the row is not already pruned in the row mask. This is inline with the masking
+ * behavior of cudf::apply_retention_mask.
  */
-struct is_row_pruned_fn {
-  bool is_nullable;
-  bool const* row_mask;
-  bitmask_type const* bitmask;
+struct row_mask_update_fn {
+  column_device_view predicate;
+  is_row_pruned_fn is_row_pruned;
+  cudf::size_type row_mask_offset;
+
   __device__ bool operator()(cudf::size_type row_idx) const
   {
-    if (is_nullable and not bit_is_set(bitmask, row_idx)) { return false; }
-    return not row_mask[row_idx];
+    return predicate.is_valid(row_idx) and predicate.element<bool>(row_idx) and
+           not is_row_pruned(row_mask_offset + row_idx);
   }
 };
 
@@ -402,11 +402,10 @@ bool hybrid_scan_reader_impl::are_all_rows_pruned(cudf::column_view const& row_m
 {
   CUDF_EXPECTS(row_mask.type().id() == type_id::BOOL8,
                "Input row mask column must be a boolean column");
-  return cudf::detail::all_of(
-    cuda::counting_iterator<cudf::size_type>{0},
-    cuda::counting_iterator{row_mask.size()},
-    is_row_pruned_fn{row_mask.nullable(), row_mask.begin<bool>(), row_mask.null_mask()},
-    stream);
+  return cudf::detail::all_of(cuda::counting_iterator<cudf::size_type>{0},
+                              cuda::counting_iterator{row_mask.size()},
+                              is_row_pruned_fn{*column_device_view::create(row_mask, stream)},
+                              stream);
 }
 
 void hybrid_scan_reader_impl::update_row_mask(cudf::column_view const& in_row_mask,
@@ -426,11 +425,14 @@ void hybrid_scan_reader_impl::update_row_mask(cudf::column_view const& in_row_ma
   CUDF_EXPECTS(in_row_mask.type().id() == type_id::BOOL8,
                "Input row mask column must be a boolean column");
 
+  // Update the output row mask in place as each row only reads and writes its own element
+  auto const d_in_row_mask  = column_device_view::create(in_row_mask, stream);
+  auto const d_out_row_mask = column_device_view::create(out_row_mask, stream);
   CUDF_CUDA_TRY(cub::DeviceTransform::Transform(
     cuda::counting_iterator<cudf::size_type>{0},
     out_row_mask.begin<bool>() + out_row_mask_offset,
     total_rows,
-    row_mask_update_fn{in_row_mask.nullable(), in_row_mask.begin<bool>(), in_row_mask.null_mask()},
+    row_mask_update_fn{*d_in_row_mask, is_row_pruned_fn{*d_out_row_mask}, out_row_mask_offset},
     stream.get()));
 
   // Make sure the null mask of the output row mask column is all valid after the update. This is
@@ -438,8 +440,8 @@ void hybrid_scan_reader_impl::update_row_mask(cudf::column_view const& in_row_ma
   // column means the corresponding data page cannot be pruned.
   if (out_row_mask.nullable()) {
     cudf::set_null_mask(out_row_mask.null_mask(),
-                        out_row_mask_offset,
-                        out_row_mask_offset + total_rows,
+                        out_row_mask.offset() + out_row_mask_offset,
+                        out_row_mask.offset() + out_row_mask_offset + total_rows,
                         true,
                         stream);
     out_row_mask.set_null_count(out_row_mask.null_count(0, out_row_mask.size(), stream));

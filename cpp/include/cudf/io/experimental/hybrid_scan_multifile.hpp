@@ -293,7 +293,8 @@ class hybrid_scan_multifile {
    * @param column_chunk_data Flattened device spans of filter column chunk data returned in the
    * same order as `filter_column_chunks_byte_ranges`
    * @param[in,out] row_mask Mutable boolean column spanning all selected rows across all sources
-   * indicating surviving rows
+   * indicating surviving rows. Rows that are valid `false` on input are excluded from the output,
+   * and null rows are not
    * @param mask_data_pages Whether to build and use a data page mask using the row mask
    * @param options Parquet reader options
    * @param stream CUDA stream used for device memory operations and kernel launches
@@ -435,7 +436,8 @@ class hybrid_scan_multifile {
    * @param[in,out] row_mask Mutable boolean column spanning all selected rows across all sources
    * and indicating surviving rows from page pruning. The row mask size must equal the total
    * number of rows in the input row groups, and is empty only when there are no such rows
-   * (yielding an empty output table)
+   * (yielding an empty output table). Rows that are valid `false` on input are excluded from the
+   * output, and null rows are not
    *
    * @return Table chunk of materialized filter columns and metadata
    */

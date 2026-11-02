@@ -577,7 +577,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
   table_with_metadata finalize_output(read_columns_mode columns_mode,
                                       table_metadata& out_metadata,
                                       std::vector<std::unique_ptr<column>>& out_columns,
-                                      RowMaskView row_mask);
+                                      RowMaskView& row_mask);
 
   /**
    * @brief Read a chunk of data and return an output table.
@@ -594,7 +594,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
   template <typename RowMaskView>
   table_with_metadata read_chunk_internal(read_mode mode,
                                           read_columns_mode columns_mode,
-                                          RowMaskView row_mask);
+                                          RowMaskView& row_mask);
 
   /**
    * @brief Check if all rows are pruned (all valid and false)
@@ -608,10 +608,12 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
 
   /**
    * @brief Updates the output row mask such that out_row_mask[i + out_row_mask_offset] = true if
-   * and only if in_row_mask[i] is valid and true
+   * and only if in_row_mask[i] is valid and true, and out_row_mask[i + out_row_mask_offset] is not
+   * already pruned (valid and false)
    *
-   * Updates the output row mask to reflect the final valid and surviving rows from the input row
-   * mask. This is inline with the masking behavior of cudf::apply_retention_mask.
+   * Combines the input row mask with the rows already pruned in the output row mask, and makes the
+   * updated range of the output row mask all valid. This is inline with the masking behavior of
+   * cudf::apply_retention_mask.
    *
    * @param in_row_mask Input row mask column
    * @param out_row_mask Output row mask column

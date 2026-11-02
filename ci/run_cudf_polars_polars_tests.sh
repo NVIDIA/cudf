@@ -117,6 +117,9 @@ else
     PYTEST_MARK_EXPR="not slow"
 fi
 
+RAPIDS_TESTS_DIR=${RAPIDS_TESTS_DIR:-"${PWD}/test-results"}
+mkdir -p "${RAPIDS_TESTS_DIR}"
+
 cd "${POLARS_DIR:-${SCRIPT_DIR}/../polars}"
 
 DESELECTED_TESTS=()
@@ -153,6 +156,7 @@ if [[ "${ENGINE}" == "both" || "${ENGINE}" == "in-memory" ]]; then
        python -m pytest \
            --import-mode=importlib \
            --cache-clear \
+           --junitxml="${RAPIDS_TESTS_DIR}/junit-cudf-polars-polars-tests-in-memory.xml" \
            -x \
            -m "${PYTEST_MARK_EXPR}" \
            -p cudf_polars.testing.inject_gpu_engine \
@@ -179,6 +183,7 @@ if [[ "${ENGINE}" == "both" || "${ENGINE}" == "spmd" ]]; then
        python -m pytest \
            --import-mode=importlib \
            --cache-clear \
+           --junitxml="${RAPIDS_TESTS_DIR}/junit-cudf-polars-polars-tests-spmd.xml" \
            -x \
            -m "${PYTEST_MARK_EXPR}" \
            -p cudf_polars.testing.inject_gpu_engine \

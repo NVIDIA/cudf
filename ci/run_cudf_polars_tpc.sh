@@ -34,8 +34,12 @@ nvidia-smi
 
 rapids-logger "Running TPC-H and TPC-DS validation tests"
 
+RAPIDS_TESTS_DIR=${RAPIDS_TESTS_DIR:-"${PWD}/test-results"}
+mkdir -p "${RAPIDS_TESTS_DIR}"
+
 cd python/cudf_polars
 
 python -m pytest tests/streaming/test_tpch.py tests/streaming/test_tpcds.py \
+    --junitxml="${RAPIDS_TESTS_DIR}/junit-cudf-polars-tpc.xml" \
     --iterations 2 \
     -v

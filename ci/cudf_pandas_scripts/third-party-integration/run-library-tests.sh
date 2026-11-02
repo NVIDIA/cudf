@@ -22,8 +22,12 @@ runtest() {
             ;;
     esac
 
+    RAPIDS_TESTS_DIR=${RAPIDS_TESTS_DIR:-"${PWD}/test-results"}
+    mkdir -p "${RAPIDS_TESTS_DIR}"
+
     pytest \
     "${args[@]}" \
+    --junitxml="${RAPIDS_TESTS_DIR}/junit-cudf-pandas-third-party-${mode}.xml" \
     -v \
     --continue-on-collection-errors \
     --cache-clear \

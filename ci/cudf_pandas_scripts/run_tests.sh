@@ -43,6 +43,7 @@ python -m ipykernel install --user --name python3
 rapids-logger "pytest cudf.pandas parallel"
 # The third-party integration tests are ignored because they are run in a separate nightly CI job
 python -m pytest -p cudf.pandas \
+    --junitxml="${RAPIDS_TESTS_DIR}/junit-cudf-pandas-parallel.xml" \
     --ignore=./python/cudf/cudf_pandas_tests/third_party_integration_tests/ \
     --numprocesses=8 \
     --dist=worksteal \
@@ -59,6 +60,7 @@ python -m pytest -p cudf.pandas \
 rapids-logger "pytest cudf.pandas serial"
 
 python -m pytest -p cudf.pandas \
+    --junitxml="${RAPIDS_TESTS_DIR}/junit-cudf-pandas-serial.xml" \
     --ignore=./python/cudf/cudf_pandas_tests/third_party_integration_tests/ \
     -k "not profiler" \
     -m "serial" \
@@ -75,6 +77,7 @@ python -m pytest -p cudf.pandas \
 # As a workaround, we run profiler tests separately without parallelism or `--cov`.
 # More details: https://github.com/NVIDIA/cudf/pull/16930#issuecomment-2707873968
 python -m pytest -p cudf.pandas \
+    --junitxml="${RAPIDS_TESTS_DIR}/junit-cudf-pandas-profiler.xml" \
     --ignore=./python/cudf/cudf_pandas_tests/third_party_integration_tests/ \
     --config-file=./python/cudf/pyproject.toml \
     --numprocesses=0 \
@@ -117,6 +120,7 @@ for version in "${versions[@]}"; do
         -r "${pandas_requirements_txt}"
 
     python -m pytest -p cudf.pandas \
+        --junitxml="${RAPIDS_TESTS_DIR}/junit-cudf-pandas-parallel-${version}.xml" \
         --ignore=./python/cudf/cudf_pandas_tests/third_party_integration_tests/ \
         --numprocesses=8 \
         --dist=worksteal \
@@ -133,6 +137,7 @@ for version in "${versions[@]}"; do
     # with multiple versions of pandas.
 
     python -m pytest -p cudf.pandas \
+        --junitxml="${RAPIDS_TESTS_DIR}/junit-cudf-pandas-profiler-${version}.xml" \
         --ignore=./python/cudf/cudf_pandas_tests/third_party_integration_tests/ \
         --numprocesses=0 \
         -k "profiler" \

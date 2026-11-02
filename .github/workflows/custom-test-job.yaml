@@ -1,0 +1,333 @@
+# Local test-specific variant of rapidsai/shared-workflows' custom-job
+# workflow. It uploads JUnit XML even when the test script fails.
+on:
+  workflow_call:
+    inputs:
+      build_type:
+        description: "One of: [branch, nightly, pull-request, release-candidate]"
+        required: true
+        type: string
+      branch:
+        description: |
+          Git branch the workflow run targets.
+          This is required even when 'sha' is provided because it is also used for organizing artifacts.
+        type: string
+      date:
+        description: "Date (YYYY-MM-DD) this run is for. Used to organize artifacts produced by nightly builds"
+        type: string
+      sha:
+        description: "Full git commit SHA to check out"
+        type: string
+      build-datetime:
+        description: |
+          date-time to be used in build strings.
+          Unlike input 'date' (set in the call to the calling workflow), this is computed at runtime
+          by the calling workflow.
+        default: null
+        required: false
+        type: string
+      repo:
+        description: "Git repo to check out, in '{org}/{repo}' form, e.g. 'rapidsai/cudf'"
+        type: string
+      arch:
+        description: "One of [amd64, arm64]. CPU architecture to run on."
+        type: string
+        default: "amd64"
+      node_type:
+        description: |
+          Suffix, without leading '-', indicating the type of machine to run jobs on (e.g., 'cpu4' or 'gpu-l4-latest-1').
+          Runner labels are of the form '{operating_system}-{arch}-{node_type}'.
+          See https://github.com/nv-gha-runners/enterprise-runner-configuration/blob/main/docs/runner-groups.md for a list
+          of valid values.
+        type: string
+        default: "cpu8"
+      container_image:
+        description: "Container image URI"
+        type: string
+        default: "rapidsai/ci-conda:26.12-latest"
+      container-options:
+        description: |
+          Command-line arguments passed to 'docker run' when starting the container this workflow runs in.
+          This should be provided as a single string to be inlined into 'docker run', not an array.
+          For example, '--quiet --ulimit nofile=2048'.
+        required: false
+        type: string
+        default: "-e _NOOP"
+      script:
+        required: false
+        type: string
+        description: "Shell code to be executed in a step. Ideally this should just invoke a script managed in the repo the workflow runs from, like 'ci/test_java.sh'."
+      file_to_upload:
+        description: |
+          Path to file(s) to be uploaded as a CI artifact.
+          If a directory is provided, all files in it will be bundled into a zip archive.
+          See 'path' input at https://github.com/actions/upload-artifact?tab=readme-ov-file#inputs
+        type: string
+        default: "gh-status.json"
+      artifact-name:
+        description: |
+          Identifier for the GitHub Actions artifact created by uploading ``file_to_upload``.
+          See 'name' input at https://github.com/actions/upload-artifact?tab=readme-ov-file#inputs
+        type: string
+        default: "result"
+      test-results-artifact-name:
+        description: "Name for the GitHub Artifact containing this job's JUnit XML reports."
+        type: string
+        required: true
+      continue-on-error:
+        description: |
+          If false (the default), treat job failures as workflow failures.
+          If true, job failures do not result in workflow failures (useful for implementing optional CI workflows).
+          See https://docs.github.com/en/actions/reference/workflow-syntax-for-github-actions#jobsjob_idcontinue-on-error
+        type: boolean
+        required: false
+        default: false
+      build_workflow_name:
+        description: |
+          Name of a workflow file that produced artifacts to be downloaded in this run.
+          If not set (the default), artifact-handling scripts use RAPIDS-conventional defaults (like "build.yaml" when "build_type == nightly").
+        required: false
+        type: string
+      sccache-dist-request-timeout:
+        type: string
+        default: 7140
+        description: |
+          The maximum time (in seconds) the sccache client should wait for a distributed compilation to complete.
+      sccache-dist-token-secret-name:
+        type: string
+        required: false
+        description: |
+          The name of the secret that contains the token used to authenticate with the RAPIDS Build Engineering sccache-dist build cluster.
+      alternative-gh-token-secret-name:
+        type: string
+        required: false
+        description: |
+          If provided, should contain the name of a secret in the repo which holds a GitHub API token.
+          When this is non-empty, that secret's value is used in place of the default repo-level token
+          anywhere that environment variable GH_TOKEN is set. This is especially useful for downloading
+          artifacts from other private repos, which repo tokens do not have access to.
+      requires_license_builder:
+        description: "Whether to ensure license builder scripts are provided in 'tools/'"
+        default: false
+        type: boolean
+        required: false
+      release-catalog-config:
+        description: >-
+          Optional JSON configuration for the shared-actions release catalog action. In release-candidate mode,
+          it writes the declared files and evidence to the private candidate store. See
+          https://github.com/rapidsai/shared-actions/tree/main/release-catalog for configuration details.
+        default: ''
+        type: string
+        required: false
+      candidate-train-sha256:
+        description: "Canonical SHA-256 of the release train; required for release-candidate builds."
+        type: string
+        default: ""
+    secrets:
+      script-env-secret-1-key:
+        description: |
+          Name of an environment variable in the environment where 'inputs.script' is run.
+          Variable's value will be set to the value passed as 'secrets.script-env-secret-1-value'.
+        required: false
+      script-env-secret-1-value:
+        description: |
+          Secret value.
+          Will be available via an environment variable named by 'secrets.script-env-secret-1-key'.
+        required: false
+      script-env-secret-2-key:
+        description: |
+          Name of an environment variable in the environment where 'inputs.script' is run.
+          Variable's value will be set to the value passed as 'secrets.script-env-secret-2-value'.
+        required: false
+      script-env-secret-2-value:
+        description: |
+          Secret value.
+          Will be available via an environment variable named by 'secrets.script-env-secret-2-key'.
+        required: false
+      script-env-secret-3-key:
+        description: |
+          Name of an environment variable in the environment where 'inputs.script' is run.
+          Variable's value will be set to the value passed as 'secrets.script-env-secret-3-value'.
+        required: false
+      script-env-secret-3-value:
+        description: |
+          Secret value.
+          Will be available via an environment variable named by 'secrets.script-env-secret-3-key'.
+        required: false
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  actions: read
+  checks: none
+  contents: read
+  deployments: none
+  discussions: none
+  id-token: write
+  issues: none
+  packages: read
+  pages: none
+  pull-requests: read
+  repository-projects: none
+  security-events: none
+  statuses: none
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+    runs-on: "linux-${{ inputs.arch }}-${{ inputs.node_type }}"
+    continue-on-error: ${{ inputs.continue-on-error }}
+    env:
+      RAPIDS_ARTIFACTS_DIR: ${{ github.workspace }}/artifacts
+      RAPIDS_TESTS_DIR: ${{ github.workspace }}/test-results
+    container:
+      image: ${{ inputs.container_image }} # zizmor: ignore[unpinned-images]
+      options: ${{ inputs.container-options }}
+      env:
+        NVIDIA_VISIBLE_DEVICES: ${{ env.NVIDIA_VISIBLE_DEVICES }}
+        RAPIDS_BUILD_TYPE: ${{ inputs.build_type }}
+        RAPIDS_DATETIME_STRING: ${{ inputs.build-datetime }}
+    steps:
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-duration-seconds: 43200 # 12h
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.repo }}
+          ref: ${{ inputs.sha }}
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Setup proxy cache
+        uses: nv-gha-runners/setup-proxy-cache@eadc57871cde0c92a223d0f486ab669a2360f978 # main
+        continue-on-error: true
+        with:
+          enable-apt: true
+          enable-conda: true
+          enable-pip: true
+          enable-pypi-anaconda: true
+      - name: Get PR Info
+        if: startsWith(github.ref_name, 'pull-request/')
+        id: get-pr-info
+        uses: nv-gha-runners/get-pr-info@090577647b8ddc4e06e809e264f7881650ecdccf # main
+      - name: Add PR Info
+        if: startsWith(github.ref_name, 'pull-request/')
+        run: | # zizmor: ignore[template-injection]
+          echo "RAPIDS_BASE_BRANCH=${{ fromJSON(steps.get-pr-info.outputs.pr-info).base.ref }}" >> "${GITHUB_ENV}"
+      - name: Standardize repository information
+        uses: rapidsai/shared-actions/rapids-github-info@35374eb5eebee7de1efd2f84ad2136137d05e28c # main
+        with:
+          repo: ${{ inputs.repo }}
+          branch: ${{ inputs.branch }}
+          date: ${{ inputs.date }}
+          sha: ${{ inputs.sha }}
+          build_workflow_name: ${{ inputs.build_workflow_name }}
+      # Install latest rapidsai/sccache client and configure sccache-dist
+      - name: Setup sccache-dist
+        uses: rapidsai/shared-actions/setup-sccache-dist@35374eb5eebee7de1efd2f84ad2136137d05e28c # main
+        env:
+          AWS_REGION: "${{env.AWS_REGION}}"
+          AWS_ACCESS_KEY_ID: "${{env.AWS_ACCESS_KEY_ID}}"
+          AWS_SECRET_ACCESS_KEY: "${{env.AWS_SECRET_ACCESS_KEY}}"
+        with:
+          log-file: "${{ env.RAPIDS_ARTIFACTS_DIR }}/sccache.log"
+          request-timeout: ${{ inputs.sccache-dist-request-timeout }}
+      # Per the docs at https://docs.github.com/en/rest/rate-limit/rate-limit?apiVersion=2022-11-28#get-rate-limit-status-for-the-authenticated-user,
+      # checking '/rate_limit | jq .' should not itself count against any rate limits.
+      #
+      # gh CLI is pre-installed on Github-hosted runners, but may not be on self-hosted runners.
+      - name: Check GitHub API rate limits
+        run: |
+          if ! type gh >/dev/null; then
+              echo "'gh' CLI is not installed... skipping rate-limits check"
+          else
+              gh api /rate_limit | jq .
+          fi
+        env:
+          # NEEDS alternative-gh-token-secret_name - API limits need to be for whatever token is used for upload/download. Repo token may be a different pool for rate limits.
+          GH_TOKEN: ${{ inputs.alternative-gh-token-secret-name && secrets[inputs.alternative-gh-token-secret-name] || github.token }} # zizmor: ignore[overprovisioned-secrets]
+      - name: Get RAPIDS License Builder
+        if: ${{ inputs.requires_license_builder }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: "rapidsai/spdx-license-builder"
+          ref: "refs/heads/main"
+          path: "./tool/"
+          fetch-depth: 0
+          persist-credentials: false
+      # cannot put possibly-null things as keys in the 'env:' mapping, so need to process these in a script
+      - name: Set secrets in script env
+        run: |
+          set_env_var() {
+            local input_prefix="script-env-secret-$1"
+            local key_str=$2
+            local val_str=$3
+            if test -n "${val_str}"; then
+              if ! test -n "${key_str}"; then
+                echo "ERROR: '${input_prefix}-value' non-empty but '${input_prefix}-key' is empty. Set '${input_prefix}-key'."
+                exit 1
+              fi
+              echo "${key_str}=${val_str}" >> "${GITHUB_ENV}"
+            fi
+          }
+          set_env_var '1' "${SECRET_1_NAME}" "${SECRET_1_VALUE}"
+          set_env_var '2' "${SECRET_2_NAME}" "${SECRET_2_VALUE}"
+          set_env_var '3' "${SECRET_3_NAME}" "${SECRET_3_VALUE}"
+        env:
+          SECRET_1_NAME: ${{ secrets.script-env-secret-1-key }}
+          SECRET_1_VALUE: ${{ secrets.script-env-secret-1-value }}
+          SECRET_2_NAME: ${{ secrets.script-env-secret-2-key }}
+          SECRET_2_VALUE: ${{ secrets.script-env-secret-2-value }}
+          SECRET_3_NAME: ${{ secrets.script-env-secret-3-key }}
+          SECRET_3_VALUE: ${{ secrets.script-env-secret-3-value }}
+      - name: Run script
+        run: |
+          ulimit -n "$(ulimit -Hn)"
+          $INPUTS_SCRIPT
+        env:
+          # NEEDS alternative-gh-token-secret-name - may require a token with more permissions
+          GH_TOKEN: ${{ inputs.alternative-gh-token-secret-name && secrets[inputs.alternative-gh-token-secret-name] || github.token }} # zizmor: ignore[overprovisioned-secrets]
+          INPUTS_SCRIPT: ${{ inputs.script }}
+          # opt out of conda sharded repodata
+          #
+          # TODO: remove these when this is resolved: https://github.com/conda/infrastructure/issues/1286#issuecomment-4628580232
+          CONDA_PLUGINS_USE_SHARDED_REPODATA: false
+          MAMBA_USE_SHARDED_REPODATA: false
+          RATTLER_SHARDED: false
+      - name: Upload file to GitHub Artifact
+        if: ${{ inputs.build_type != 'release-candidate' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: ${{ inputs.file_to_upload }}
+          if-no-files-found: ignore
+      - name: Upload JUnit test results
+        if: ${{ !cancelled() && inputs.build_type != 'release-candidate' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.test-results-artifact-name }}-attempt-${{ github.run_attempt }}
+          path: "${{ env.RAPIDS_TESTS_DIR }}/*.xml"
+          if-no-files-found: error
+      - name: Configure release-candidate store credentials
+        if: ${{ inputs.build_type == 'release-candidate' }}
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          aws-region: us-east-2
+          role-duration-seconds: 43200 # 12h
+          role-to-assume: arn:aws:iam::279114543810:role/gha-oidc-rapids-release-candidates
+      - name: Create release catalog companion
+        if: ${{ inputs.build_type == 'release-candidate' && inputs.release-catalog-config != '' }}
+        uses: rapidsai/shared-actions/release-catalog@4f580aef2a239f6c7b44f98ef526ae83b7543c78 # shared-actions PR 136 merged
+        with:
+          config: ${{ inputs.release-catalog-config }}
+          source-artifact-name: ${{ inputs.artifact-name }}
+          source-sha: ${{ env.RAPIDS_SHA }}
+          candidate-train-sha256: ${{ inputs.candidate-train-sha256 }}
+          upload-to-s3: 'true'
+      - name: Upload additional artifacts
+        if: ${{ !cancelled() && inputs.build_type != 'release-candidate' }}
+        run: rapids-upload-artifacts-dir "custom-job-$(arch)"

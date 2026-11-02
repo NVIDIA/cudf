@@ -42,6 +42,10 @@ if [[ ${RAPIDS_BUILD_TYPE:-} == pull-request ]]; then
   cudf_timeout=20m
 fi
 
+RESULTS_DIR=${RAPIDS_TESTS_DIR:-"$(mktemp -d)"}
+RAPIDS_TESTS_DIR=${RAPIDS_TESTS_DIR:-"${RESULTS_DIR}/test-results"}/
+mkdir -p "${RAPIDS_TESTS_DIR}"
+
 # Download the wheel artifacts built in the previous steps.
 LIBCUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_cpp libcudf cudf --cuda "$RAPIDS_CUDA_VERSION")")
 PYLIBCUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python pylibcudf cudf --stable --cuda "$RAPIDS_CUDA_VERSION")")
@@ -88,6 +92,7 @@ if [[ "${RUN_PYLIBCUDF_TESTS}" == "true" || "${RUN_CUDF_TESTS}" == "true" ]]; th
     pushd python/pylibcudf/tests
     timeout "${pylibcudf_timeout}" python -m pytest \
       --cache-clear \
+      --junitxml="${RAPIDS_TESTS_DIR}/junit-pylibcudf-no-optional.xml" \
       --numprocesses=8 \
       --dist=worksteal \
       .
@@ -98,10 +103,6 @@ if [[ "${RUN_PYLIBCUDF_TESTS}" == "true" || "${RUN_CUDF_TESTS}" == "true" ]]; th
 
   if [[ "${RUN_CUDF_TESTS}" == "true" ]]; then
     CUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python cudf cudf --stable --cuda "$RAPIDS_CUDA_VERSION")")
-
-    RESULTS_DIR=${RAPIDS_TESTS_DIR:-"$(mktemp -d)"}
-    RAPIDS_TESTS_DIR=${RAPIDS_TESTS_DIR:-"${RESULTS_DIR}/test-results"}/
-    mkdir -p "${RAPIDS_TESTS_DIR}"
 
     rapids-logger "Install cudf, pylibcudf, and test requirements"
 
@@ -119,6 +120,7 @@ if [[ "${RUN_PYLIBCUDF_TESTS}" == "true" || "${RUN_CUDF_TESTS}" == "true" ]]; th
       pushd python/pylibcudf/tests
       timeout "${pylibcudf_timeout}" python -m pytest \
         --cache-clear \
+        --junitxml="${RAPIDS_TESTS_DIR}/junit-pylibcudf.xml" \
         --numprocesses=8 \
         --dist=worksteal \
         .
@@ -178,6 +180,7 @@ if [[ "${RUN_CUDF_STREAMING_TESTS}" == "true" ]]; then
   EXITCODE=0
   timeout 30m python -m pytest \
     --cache-clear \
+    --junitxml="${RAPIDS_TESTS_DIR}/junit-cudf-streaming.xml" \
     --numprocesses=8 \
     --dist=worksteal \
     . || EXITCODE=$?

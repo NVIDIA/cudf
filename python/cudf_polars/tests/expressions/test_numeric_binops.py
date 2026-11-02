@@ -376,3 +376,10 @@ def test_decimal_comparison_with_literal_of_maximum_precision(engine: pl.GPUEngi
     df = pl.DataFrame({"a": ["1", "9" * 38]}).cast(pl.Decimal(38, 0)).lazy()
     q = df.select(lt=pl.col("a") < pl.lit(Decimal("9" * 38)))
     assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("literal", [Decimal("27.5"), 27.5])
+def test_decimal_comparison_with_fractional_literal(engine: pl.GPUEngine, literal):
+    df = pl.DataFrame({"a": ["1.00", "27.50", "30.00", None]}).cast(pl.Decimal(15, 2))
+    q = df.lazy().select(lt=pl.col("a") < literal, ge=pl.col("a") >= literal)
+    assert_gpu_result_equal(q, engine=engine)

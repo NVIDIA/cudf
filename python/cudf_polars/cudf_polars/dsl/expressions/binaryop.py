@@ -42,13 +42,11 @@ def _decimal_precision(node: Expr) -> int:
     dtype = node.dtype.polars_type
     assert isinstance(dtype, pl.Decimal)
     if isinstance(node, Literal) and isinstance(node.value, Decimal):
-        # The default context rounds to 28 digits, which would change the
-        # count for a value near the 38 digit limit.
-        with localcontext() as ctx:
-            ctx.prec = 2 * _DECIMAL128_MAX_PRECISION
-            scaled = node.value.scaleb(dtype.scale)
-            if scaled == scaled.to_integral_value():
-                return max(len(str(abs(int(scaled)))), 1)
+        # Polars writes a Decimal literal with exactly the scale of its dtype, so
+        # the scaled value is a whole number. The default context rounds to 28
+        # digits, which would change the count near the 38 digit limit.
+        with localcontext(prec=2 * _DECIMAL128_MAX_PRECISION):
+            return max(len(str(abs(int(node.value.scaleb(dtype.scale))))), 1)
     return dtype.precision or _DECIMAL128_MAX_PRECISION
 
 

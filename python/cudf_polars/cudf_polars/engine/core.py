@@ -928,7 +928,12 @@ def evaluate_on_rank(
     # Each query reserves its collective IDs from its own pool, so that the
     # IDs agree across ranks even if this process concurrently takes part in
     # other queries (possibly on other communicators).
-    with collective_id_scope():
+    memory_monitor: contextlib.AbstractContextManager = contextlib.nullcontext()
+    if quent_query_worker_state is not None:
+        memory_monitor = quent_query_worker_state.runtime.monitor_device_memory(
+            quent_query_worker_state.query_id
+        )
+    with collective_id_scope(), memory_monitor:
         return _evaluate_on_rank(
             ctx,
             comm,

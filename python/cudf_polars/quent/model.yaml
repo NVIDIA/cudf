@@ -275,6 +275,19 @@ entities:
         attributes:
           limits: { sets-resource-bounds: true }
 
+  SampledDeviceMemory:
+    doc: >-
+      Device-memory occupancy as periodically sampled from the worker's memory
+      resource. Independent of `DeviceMemory`, which is reserved for usage
+      attributed to individual operators.
+    resource:
+      bytes: { kind: occupancy }
+    events:
+      declared:
+        attributes:
+          instance_name: string
+          worker: { scope-ref: Worker }
+
   Storage:
     doc: A worker-local storage resource whose capacity may be unknown.
     resource:
@@ -365,6 +378,21 @@ fsms:
       failed:
         attributes:
           error: string
+
+  DeviceMemorySampler:
+    doc: >-
+      Sampling of device-memory occupancy on one worker for the duration of
+      one query. Each `sampling` transition is one reading, held until the
+      next transition replaces it, so consecutive readings form a step
+      function over the SampledDeviceMemory resource.
+    states:
+      sampling:
+        initial: true
+        attributes:
+          query: { scope-ref: Query }
+          memory: { uses: SampledDeviceMemory }
+        to: [sampling, stopped]
+      stopped: {}
 
   Actor:
     doc: Lifetime of one rapidsmpf streaming actor for an operator.

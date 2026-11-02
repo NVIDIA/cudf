@@ -721,6 +721,42 @@ its `QuentQueryConfig` carries display metadata that may change per query.
 `QuentQueryWorkerState` binds a query ID to the worker runtime that owns the
 rank-local generated handles and resource UUIDs.
 
+#### Sampled device memory
+
+While queries execute, each worker periodically samples the bytes its device
+memory resource has allocated and reports them on the worker's
+`SampledDeviceMemory` resource, so the Quent UI can chart device memory
+occupancy over the query. The sampling interval defaults to one second and is
+set with `QuentConfig.device_memory_poll_interval_s` (`None` disables sampling).
+
+`SampledDeviceMemory` is independent of the `DeviceMemory` resource. It is a
+measurement of the memory resource itself and cannot attribute memory to any
+operator; `DeviceMemory` is reserved for usage that cudf-polars attributes to
+individual operators. Keeping them separate lets the two be compared, and
+keeps sampled readings from being summed into attributed usage.
+
+Each query on each worker has one `DeviceMemorySampler` FSM. Every reading is a
+`sampling` transition that holds a `SampledDeviceMemory` usage until the next
+transition (the next reading, or `stopped` when the query finishes), so
+consecutive readings form a step function. A single thread per worker takes
+each reading and delivers it to every query running on that worker; the thread
+exists only while at least one query is running. A reading is taken as soon as
+a query starts, so even a query shorter than the interval is sampled.
+Sampling failures never fail the query: the thread stops and a `RuntimeWarning`
+is emitted when the query ends.
+
+The reading must not take a lock that allocations also take. When Quent is
+enabled at engine creation, engines wrap the base memory resource in an
+`rmm.mr.LimitingResourceAdaptor` (with an effectively unlimited limit, so it
+never rejects allocations) and sample its `get_allocated_bytes()`, a plain
+atomic load. Without Quent the memory resource is not wrapped, and a Quent
+context enabled later (for example by a reset) is not sampled. RapidsMPF's
+`RmmResourceAdaptor.current_allocated` and RMM's statistics and tracking
+adaptors are not used for this because they read, and update on every
+allocation and deallocation, under a mutex. The value is live bytes handed out
+by the memory resource, not the size of any underlying pool, and can briefly
+include in-flight allocations.
+
 ### Concepts
 
 cudf-polars and Quent's Query Engine domain have somewhat overlapping names for
@@ -747,6 +783,7 @@ Quent's names.
 | `IR.do_evaluate` | `Evaluate` | Synchronous host-side evaluation of an IR node. |
 | rapidsmpf streaming actor | `Actor` | Actor lifetime and aggregate chunk/byte statistics. |
 | worker I/O or rank link | `DataChannel` | A concrete resource used for data transfer. |
+| sampled device memory reading | `DeviceMemorySampler` | One FSM per query and worker; each `sampling` transition is a reading of live allocated device bytes, held as a `SampledDeviceMemory` usage until the next transition. See [Sampled device memory](#sampled-device-memory). |
 
 
 [Quent]: https://github.com/rapidsai/quent

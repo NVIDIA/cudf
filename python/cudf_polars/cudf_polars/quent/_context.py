@@ -70,18 +70,35 @@ class QuentQueryConfig:
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class QuentConfig:
-    """Serializable engine configuration shared by all ranks."""
+    """
+    Serializable engine configuration shared by all ranks.
+
+    Parameters
+    ----------
+    device_memory_poll_interval_s
+        Seconds between polls of live device memory usage while a query
+        executes. ``None`` disables polling.
+    """
 
     engine_id: uuid.UUID = dataclasses.field(default_factory=uuid.uuid4)
     implementation_name: str = "cudf-polars"
     implementation_version: str = __version__
     output_root: str = dataclasses.field(default_factory=resolve_quent_output_root)
     query: QuentQueryConfig = dataclasses.field(default_factory=QuentQueryConfig)
+    device_memory_poll_interval_s: float | None = 0.1
 
     def __post_init__(self) -> None:
         object.__setattr__(
             self, "output_root", resolve_quent_output_root(self.output_root)
         )
+        if (
+            self.device_memory_poll_interval_s is not None
+            and self.device_memory_poll_interval_s <= 0
+        ):
+            raise ValueError(
+                "device_memory_poll_interval_s must be positive or None, "
+                f"got {self.device_memory_poll_interval_s}"
+            )
 
     @property
     def run_root(self) -> Path:
@@ -107,6 +124,7 @@ class QuentConfig:
             implementation_name=payload["implementation_name"],
             implementation_version=payload["implementation_version"],
             output_root=payload["output_root"],
+            device_memory_poll_interval_s=payload["device_memory_poll_interval_s"],
             query=QuentQueryConfig(
                 query_group_id=uuid.UUID(int=int(payload["query"]["query_group_id"])),
                 query_group_name=payload["query"]["query_group_name"],
@@ -127,6 +145,7 @@ class WorkerResources:
     processor_registry: _ProcessorRegistry
     device_memory_id: uuid.UUID
     device_memory_bytes: int
+    sampled_device_memory_id: uuid.UUID
     filesystem_id: uuid.UUID
     disk_to_device_channel_id: uuid.UUID
     link_channel_ids: dict[int, uuid.UUID]
@@ -151,6 +170,7 @@ class WorkerResources:
             processor_registry=_ProcessorRegistry(),
             device_memory_id=uuid.uuid5(namespace, "device-memory"),
             device_memory_bytes=get_total_device_memory() or 0,
+            sampled_device_memory_id=uuid.uuid5(namespace, "sampled-device-memory"),
             filesystem_id=uuid.uuid5(namespace, "filesystem"),
             disk_to_device_channel_id=uuid.uuid5(namespace, "disk-to-device"),
             link_channel_ids={
@@ -166,6 +186,12 @@ class WorkerResources:
             instance_name=f"{self.instance_suffix} device memory",
             worker=self.worker_id,
             limits={"bytes": self.device_memory_bytes},
+        )
+        context.sampled_device_memory_observer().handle(
+            self.sampled_device_memory_id
+        ).declared(
+            instance_name=f"{self.instance_suffix} sampled device memory",
+            worker=self.worker_id,
         )
         context.storage_observer().handle(self.filesystem_id).declared(
             instance_name=f"{self.instance_suffix} filesystem",

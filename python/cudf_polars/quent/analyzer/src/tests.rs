@@ -18,10 +18,11 @@ use uuid::Uuid;
 use crate::{
     CudfPolarsUiAnalyzer, Viewer,
     generated::{
-        ActorEvent, ColumnSchema, CudfPolars, CudfPolarsEvent, DataFrameSchema, EngineEvent,
-        EvaluateEvent, Implementation, JoinFilterPushdownDetails, OperatorEvent, OperatorSchemas,
-        OperatorStatistics, PlanEvent, ProcessorEvent, QueryEvent, QueryGroupEvent,
-        RuntimePrefilterStatistics, ThreadPoolEvent, WorkerEvent,
+        ActorEvent, ColumnSchema, CudfPolars, CudfPolarsEvent, DataFrameSchema, DeviceMemoryBounds,
+        DeviceMemoryEvent, DeviceMemorySamplerEvent, EngineEvent, EvaluateEvent, Implementation,
+        JoinFilterPushdownDetails, OperatorEvent, OperatorSchemas, OperatorStatistics, PlanEvent,
+        ProcessorEvent, QueryEvent, QueryGroupEvent, RuntimePrefilterStatistics,
+        SampledDeviceMemoryEvent, SampledDeviceMemoryUsage, ThreadPoolEvent, WorkerEvent,
     },
     resource::{EVALUATE_ENTITY_TYPE, PROCESSOR_RESOURCE_TYPE},
 };
@@ -570,6 +571,207 @@ fn builds_query_bundle_from_generated_events() {
         ))
         .expect_err("unknown resource group should be rejected");
     assert!(matches!(error, AnalyzerError::InvalidArgument(_)));
+}
+
+#[test]
+fn sampled_device_memory_forms_an_occupancy_step_function() {
+    let engine_id = Uuid::now_v7();
+    let worker_id = Uuid::now_v7();
+    let query_group_id = Uuid::now_v7();
+    let query_id = Uuid::now_v7();
+    let other_query_id = Uuid::now_v7();
+    let memory_id = Uuid::now_v7();
+    let sampled_memory_id = Uuid::now_v7();
+    // One `DeviceMemorySampler` FSM: a `sampling` transition per reading, then
+    // an optional `stopped`.
+    let sampler = |query: Uuid, readings: &[(u64, u64)], stopped_at: Option<u64>| {
+        let id = Uuid::now_v7();
+        let mut events: Vec<_> = readings
+            .iter()
+            .enumerate()
+            .map(|(seq, &(timestamp, bytes))| {
+                Event::new(
+                    id,
+                    timestamp,
+                    CudfPolarsEvent::DeviceMemorySampler(DeviceMemorySamplerEvent::Sampling {
+                        seq: seq as u16,
+                        query: EntityRef::new(query, ()),
+                        memory: EntityRef::new(
+                            sampled_memory_id,
+                            SampledDeviceMemoryUsage { bytes },
+                        ),
+                    }),
+                )
+            })
+            .collect();
+        if let Some(timestamp) = stopped_at {
+            events.push(Event::new(
+                id,
+                timestamp,
+                CudfPolarsEvent::DeviceMemorySampler(DeviceMemorySamplerEvent::Stopped {
+                    seq: readings.len() as u16,
+                }),
+            ));
+        }
+        events
+    };
+    let query_events = |id: Uuid, name: &str| {
+        [
+            Event::new(
+                id,
+                100,
+                CudfPolarsEvent::Query(QueryEvent::Initialized {
+                    seq: 0,
+                    instance_name: name.to_owned(),
+                    query_group: EntityRef::new(query_group_id, ()),
+                }),
+            ),
+            Event::new(
+                id,
+                100,
+                CudfPolarsEvent::Query(QueryEvent::Planning { seq: 1 }),
+            ),
+            Event::new(
+                id,
+                100,
+                CudfPolarsEvent::Query(QueryEvent::Executing { seq: 2 }),
+            ),
+            Event::new(
+                id,
+                120,
+                CudfPolarsEvent::Query(QueryEvent::Completed { seq: 3 }),
+            ),
+        ]
+    };
+    let mut events = vec![
+        Event::new(
+            engine_id,
+            1,
+            CudfPolarsEvent::Engine(EngineEvent::Init {
+                seq: 0,
+                instance_name: "cudf-polars".to_owned(),
+                implementation: Implementation {
+                    name: "cudf-polars".to_owned(),
+                    version: "test".to_owned(),
+                    backend: "spmd".to_owned(),
+                    custom_attributes: DynamicAttributes::new(),
+                },
+            }),
+        ),
+        Event::new(
+            worker_id,
+            2,
+            CudfPolarsEvent::Worker(WorkerEvent::Init {
+                seq: 0,
+                instance_name: "rank-0".to_owned(),
+                engine: EntityRef::new(engine_id, ()),
+            }),
+        ),
+        Event::new(
+            query_group_id,
+            3,
+            CudfPolarsEvent::QueryGroup(QueryGroupEvent::Declared {
+                instance_name: Some("group".to_owned()),
+                engine: EntityRef::new(engine_id, ()),
+            }),
+        ),
+        Event::new(
+            memory_id,
+            3,
+            CudfPolarsEvent::DeviceMemory(DeviceMemoryEvent::Declared {
+                instance_name: "rank-0 device memory".to_owned(),
+                worker: EntityRef::new(worker_id, ()),
+                limits: DeviceMemoryBounds { bytes: 1 << 20 },
+            }),
+        ),
+        Event::new(
+            sampled_memory_id,
+            3,
+            CudfPolarsEvent::SampledDeviceMemory(SampledDeviceMemoryEvent::Declared {
+                instance_name: "rank-0 sampled device memory".to_owned(),
+                worker: EntityRef::new(worker_id, ()),
+            }),
+        ),
+    ];
+    events.extend(query_events(query_id, "measured"));
+    events.push(Event::new(
+        Uuid::now_v7(),
+        100,
+        CudfPolarsEvent::Plan(PlanEvent::Declared {
+            instance_name: "logical".to_owned(),
+            query: EntityRef::new(query_id, ()),
+            parent_plan: None,
+            worker: Some(EntityRef::new(worker_id, ())),
+            edges: vec![],
+        }),
+    ));
+    events.extend(query_events(other_query_id, "other"));
+    events.extend(sampler(query_id, &[(100, 1000), (110, 3000)], Some(120)));
+    // Another query's readings must not leak into this query's timeline.
+    events.extend(sampler(other_query_id, &[(100, 1 << 30)], Some(120)));
+    // A sampler that never stopped (e.g. the process died) loses only its last
+    // reading: the second is dropped rather than extending to the end of time.
+    events.extend(sampler(query_id, &[(110, 0), (115, 1 << 40)], None));
+
+    let analyzer = CudfPolarsUiAnalyzer::try_new(engine_id, events.into_iter()).unwrap();
+    let timeline_of = |resource_id: Uuid| {
+        let response = analyzer
+            .bulk_resource_timeline(BulkTimelineRequest {
+                entries: [(
+                    "memory".to_owned(),
+                    TimelineRequest::Resource(
+                        quent_ui::timeline::request::ResourceTimelineRequest {
+                            resource_id,
+                            long_entities_threshold_s: None,
+                            entity_filter: quent_ui::timeline::request::EntityFilter {
+                                entity_type_name: None,
+                            },
+                            application: OperatorFilter {
+                                operator_ids: vec![],
+                            },
+                            config: quent_ui::timeline::request::TimelineConfig {
+                                num_bins: 4,
+                                start: 0.0,
+                                end: 20e-9,
+                            },
+                        },
+                    ),
+                )]
+                .into_iter()
+                .collect(),
+                app_params: QueryFilter { query_id },
+            })
+            .unwrap();
+        let BulkTimelinesResponseEntry::Ok { data, .. } = &response.entries["memory"] else {
+            panic!("memory timeline entry failed")
+        };
+        let UiResourceTimeline::Binned(timeline) = data else {
+            panic!("expected an unkeyed memory timeline")
+        };
+        timeline
+            .capacities_values
+            .get("bytes")
+            .cloned()
+            .unwrap_or_default()
+    };
+    let bytes = timeline_of(sampled_memory_id);
+    assert_eq!(bytes.len(), 4);
+    assert_eq!(bytes[0], bytes[1]);
+    assert_eq!(bytes[2], bytes[3]);
+    assert!(bytes[0] > 0.0);
+    assert!(bytes[2] > bytes[0], "later sample should hold more bytes");
+    assert!(
+        bytes
+            .iter()
+            .all(|&value| value < (1u64 << 20) as f64 * 1024.0),
+        "samples from other queries or unterminated readings must be excluded"
+    );
+    // Sampled occupancy is independent of `DeviceMemory`, which is reserved for
+    // usage attributed to operators.
+    assert!(
+        timeline_of(memory_id).iter().all(|&value| value == 0.0),
+        "sampled readings must not be attributed to the DeviceMemory resource"
+    );
 }
 
 #[test]

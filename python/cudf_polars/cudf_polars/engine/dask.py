@@ -264,6 +264,7 @@ def _setup_root(
     hardware_binding: HardwareBindingPolicy,
     memory_resource_config: MemoryResourceConfig | None,
     dask_worker: distributed.Worker | None = None,
+    enable_mr_tracking: bool = False,
 ) -> bytes:
     """
     Initialize the root rank on one Dask worker.
@@ -288,6 +289,8 @@ def _setup_root(
         :class:`rmm.mr.CudaAsyncMemoryResource`.
     dask_worker
         Injected by ``distributed`` when called via :meth:`distributed.Client.run`.
+    enable_mr_tracking
+        Whether to enable tracking of allocated bytes for Quent.
 
     Returns
     -------
@@ -297,7 +300,11 @@ def _setup_root(
     options = Options.deserialize(rapidsmpf_options_as_bytes)
     bind_to_gpu(hardware_binding)
     memory_resource_config = memory_resource_config or MemoryResourceConfig.default()
-    base_mr = memory_resource_config.create_memory_resource()
+    # When quent is enabled, we create a tracked memory resource
+    base_mr = memory_resource_config.create_memory_resource(
+        enable_tracking=enable_mr_tracking
+    )
+
     statistics = Statistics.from_options(options)
     comm = new_communicator(
         nranks=nranks,
@@ -338,6 +345,7 @@ def _setup_worker(
     kvikio_reactor_count: int,
     kvikio_request_ceiling: int,
     dask_worker: distributed.Worker | None = None,
+    enable_mr_tracking: bool = False,
 ) -> None:
     """
     Complete communicator bootstrap and create the streaming context.
@@ -380,6 +388,8 @@ def _setup_worker(
         Number of ``MULTI_POLL`` reactor threads to configure on this worker process.
     kvikio_request_ceiling
         ``MULTI_POLL`` concurrent-request ceiling to configure on this worker process.
+    enable_mr_tracking
+        Whether to enable tracking of allocated bytes for Quent.
     """
     assert dask_worker is not None
     options = Options.deserialize(rapidsmpf_options_as_bytes)
@@ -400,7 +410,9 @@ def _setup_worker(
         memory_resource_config = (
             memory_resource_config or MemoryResourceConfig.default()
         )
-        base_mr = memory_resource_config.create_memory_resource()
+        base_mr = memory_resource_config.create_memory_resource(
+            enable_tracking=enable_mr_tracking
+        )
         root_addr = ucx_api.UCXAddress.create_from_buffer(root_ucxx_address_as_bytes)
         statistics = Statistics.from_options(options)
         comm = new_communicator(
@@ -471,6 +483,13 @@ def _update_quent_on_worker(
             mp_ctx.quent_worker_runtime = None
     if quent_context is not None and collector_address is not None:
         assert mp_ctx.comm is not None
+        # quent_context being not None implies that the memory resource is a tracked memory resource.
+        # However, `StreamingEngine._reset` breaks this invariant, since it allows replacing
+        # the QuentContext but not the base Memory Resource.
+        if isinstance(mp_ctx.base_mr, rmm.mr.LimitingResourceAdaptor):
+            allocated_bytes = mp_ctx.base_mr.get_allocated_bytes
+        else:
+            allocated_bytes = None
         worker_id = uuid.uuid4()
         mp_ctx.quent_worker_runtime = QuentWorkerRuntime.create(
             quent_context,
@@ -479,6 +498,7 @@ def _update_quent_on_worker(
             rank=mp_ctx.comm.rank,
             nranks=mp_ctx.comm.nranks,
             instance_name=f"DaskWorker-rank{mp_ctx.comm.rank}",
+            allocated_bytes=allocated_bytes,
         )
 
 
@@ -1083,6 +1103,7 @@ class DaskEngine(StreamingEngine):
                     uid=rapidsmpf_id,
                     hardware_binding=hw_binding,
                     memory_resource_config=mr_config,
+                    enable_mr_tracking=quent_context is not None,
                 ),
                 nranks,
                 rapidsmpf_options_as_bytes,
@@ -1098,6 +1119,7 @@ class DaskEngine(StreamingEngine):
                     uid=rapidsmpf_id,
                     hardware_binding=hw_binding,
                     memory_resource_config=mr_config,
+                    enable_mr_tracking=quent_context is not None,
                 ),
                 root_ucxx_address_as_bytes,
                 nranks,

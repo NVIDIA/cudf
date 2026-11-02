@@ -248,6 +248,9 @@ class RankActor:
     memory_resource_config
         Optional RMM memory resource configuration. If ``None``, defaults to
         :meth:`cudf_polars.utils.config.MemoryResourceConfig.default`.
+    enable_mr_tracking
+        Whether to enable tracking of allocated bytes for Quent. Only set
+        when Quent is enabled, since it wraps the memory resource.
 
     Notes
     -----
@@ -272,6 +275,7 @@ class RankActor:
         hardware_binding: HardwareBindingPolicy,
         memory_resource_config: MemoryResourceConfig | None,
         worker_id: uuid.UUID,
+        enable_mr_tracking: bool = False,
     ) -> None:
         bind_to_gpu(hardware_binding)
         configure_kvikio(
@@ -285,8 +289,11 @@ class RankActor:
         memory_resource_config = (
             memory_resource_config or MemoryResourceConfig.default()
         )
+        # When quent is enabled, we create a tracked memory resource
         self._base_mr: rmm.mr.DeviceMemoryResource | None = (
-            memory_resource_config.create_memory_resource()
+            memory_resource_config.create_memory_resource(
+                enable_tracking=enable_mr_tracking
+            )
         )
         self._mr: RmmResourceAdaptor | None = (
             None  # set after `Context` is built (below).
@@ -396,6 +403,13 @@ class RankActor:
                 rank=self._comm.rank,
                 nranks=self._nranks,
                 instance_name=f"RankActor-{self._worker_id.hex[:8]}",
+                # Quent can be enabled after construction (via a reset), in which
+                # case the memory resource isn't tracked and isn't sampled.
+                allocated_bytes=(
+                    self._base_mr.get_allocated_bytes
+                    if isinstance(self._base_mr, rmm.mr.LimitingResourceAdaptor)
+                    else None
+                ),
             )
 
     def reset(
@@ -977,6 +991,7 @@ class RayEngine(StreamingEngine):
                         hardware_binding=hw_binding,
                         memory_resource_config=mr_config,
                         worker_id=worker_id,
+                        enable_mr_tracking=quent_context is not None,
                     )
                 )
 

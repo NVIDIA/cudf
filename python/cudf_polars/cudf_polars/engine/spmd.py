@@ -644,7 +644,10 @@ class SPMDEngine(StreamingEngine):
         mr_config: MemoryResourceConfig = engine_options.get(
             "memory_resource_config", MemoryResourceConfig.default()
         )
-        base_mr = mr_config.create_memory_resource()
+        # When quent is enabled, we create a tracked memory resource
+        base_mr = mr_config.create_memory_resource(
+            enable_tracking=quent_context is not None
+        )
         if comm is None:
             statistics = Statistics.from_options(self.rapidsmpf_options)
             if bootstrap.is_running_with_rrun():
@@ -835,6 +838,14 @@ class SPMDEngine(StreamingEngine):
                 rank=comm.rank,
                 nranks=comm.nranks,
                 instance_name=f"rank-{comm.rank}",
+                # Quent can be enabled after construction (via a reset, or by
+                # rank 0's context), in which case the memory resource isn't
+                # tracked and isn't sampled.
+                allocated_bytes=(
+                    self._base_mr.get_allocated_bytes
+                    if isinstance(self._base_mr, rmm.mr.LimitingResourceAdaptor)
+                    else None
+                ),
             )
         except BaseException:  # pragma: no cover - defensive startup cleanup
             steps: list[Callable[[], object]] = [

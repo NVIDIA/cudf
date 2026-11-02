@@ -164,6 +164,77 @@ def test_quent_controller_cleanup_continues_after_handle_failure() -> None:
     collector.close.assert_called_once_with(timeout=10.0)
 
 
+def test_sampled_device_memory(
+    engine_with_quent_context: tuple[StreamingEngine, StreamingOptions],
+) -> None:
+    engine, base_options = engine_with_quent_context
+    pl.LazyFrame({"x": [1, 2, 3]}).filter(pl.col("x") > 1).collect(engine=engine)
+
+    # Close Quent to flush events to disk.
+    quent_output_root = engine._quent_output_root
+    assert quent_output_root is not None
+    engine._reset(
+        rapidsmpf_options=base_options.to_rapidsmpf_options(),
+        executor_options={
+            **base_options.to_executor_options(),
+            "quent_context": None,
+            "fallback_mode": "silent",
+        },
+        engine_options=base_options.to_engine_options(),
+    )
+
+    events = _stored_events(quent_output_root)
+    sampled_memory_ids = {
+        event["id"]
+        for event in _of_type(events, "SampledDeviceMemory")
+        if "Declared" in event["data"]["SampledDeviceMemory"]
+    }
+    # Attributable and sampled device memory are separate resources.
+    memory_ids = {
+        event["id"]
+        for event in _of_type(events, "DeviceMemory")
+        if "Declared" in event["data"]["DeviceMemory"]
+    }
+    query_ids = {
+        event["id"]
+        for event in _of_type(events, "Query")
+        if "Initialized" in event["data"]["Query"]
+    }
+    assert sampled_memory_ids
+    # The test engines are built with a tracked memory resource, so the
+    # sampler actually ran (it isn't started for untracked memory resources).
+    assert _of_type(events, "DeviceMemorySampler")
+    assert memory_ids
+    assert not sampled_memory_ids & memory_ids
+    assert query_ids
+
+    # One sampler FSM per query on each rank. Even a query shorter than the
+    # sampling interval is sampled once, and the FSM is stopped when the query
+    # finishes.
+    sampler_events = _of_type(events, "DeviceMemorySampler")
+    assert sampler_events
+    sampler_states: dict[str, list[str]] = {}
+    for event in sampler_events:
+        sampler_states.setdefault(event["id"], []).append(
+            next(iter(event["data"]["DeviceMemorySampler"]))
+        )
+    for states in sampler_states.values():
+        assert states[:-1] == ["Sampling"] * (len(states) - 1)
+        assert states[-1] == "Stopped"
+        assert len(states) >= 2
+    queries_by_sampler: dict[str, set[str]] = {}
+    for event in sampler_events:
+        sampling = event["data"]["DeviceMemorySampler"].get("Sampling")
+        if sampling is not None:
+            queries_by_sampler.setdefault(event["id"], set()).add(
+                sampling["query"]["target"]
+            )
+            assert sampling["memory"]["target"] in sampled_memory_ids
+            assert sampling["memory"]["data"]["bytes"] >= 0
+    assert all(len(queries) == 1 for queries in queries_by_sampler.values())
+    assert set().union(*queries_by_sampler.values()) <= query_ids
+
+
 def test_quent_lifecycle(
     engine_with_quent_context: tuple[StreamingEngine, StreamingOptions],
     quent_context: QuentConfig,

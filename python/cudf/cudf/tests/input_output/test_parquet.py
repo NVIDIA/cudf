@@ -1733,6 +1733,8 @@ def test_parquet_writer_chunked_utc_timestamps(
     if store_schema:
         # Durations are written as unannotated INT64 with the arrow schema
         assert td_type["Type"] == "None"
+        arrow_tz = pq.read_schema(fname).field("ts").type.tz
+        assert arrow_tz == ("UTC" if expected else None)
     else:
         assert td_type["Type"] == "Time"
         assert td_type["isAdjustedToUTC"] is expected

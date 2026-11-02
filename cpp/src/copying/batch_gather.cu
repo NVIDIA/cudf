@@ -561,6 +561,16 @@ constexpr int64_t kBatchMemcpyRowThreshold{524'288};
 // runs the same CUB engine there, and a lowered threshold or a1 coarsening revives the band).
 constexpr size_type kStringFallbackRowThreshold{262'144};
 
+// Preset-mask staging bands pay off only above this many preset destination masks in one call:
+// a band memset costs ~24 µs (nsys-captured band-fill attribution) while a per-mask memset
+// submission costs ~7 µs (submission-latency-bound — the device bytes are negligible at both
+// the 8 KiB and 128 KiB mask extents), so the fill-method crossover sits at ~4 preset masks
+// with one band populated to ~7 with both. 8 keeps a margin on the drip side while the
+// measured win shapes (~60 preset masks) clear it by ~9x. Counted in preset MASKS, not
+// destination columns: a wide table with few nullable columns would otherwise pay the fixed
+// band cost for almost no replaced drip.
+constexpr size_type kMaskBandPresetGate{8};
+
 // Work item for one string column on the N3 path: source addressing plus the
 // destination buffers the payload kernel writes. The src fields are complete
 // when the item is registered (the scan reads only those); the dst fields are
@@ -1217,6 +1227,11 @@ class carve_memory_resource {
 
   void deallocate(cuda::stream_ref, void*, std::size_t, std::size_t) noexcept {}
 
+  // The arena's base pointer, for a call-site-wide fill over the whole block (the preset-mask
+  // bands' single memset — padding gaps inside the block are filled too, which no column
+  // observes). Null on a zero-sized carve (nothing was allocated); callers guard on size.
+  void* arena_base() const noexcept { return _arena; }
+
  private:
   cuda::mr::any_resource<cuda::mr::device_accessible> _upstream;  // owns a deep copy
   cuda::stream_ref _stream;  // the arena block's stream-ordered free stream
@@ -1253,6 +1268,30 @@ struct fixed_width_destination_layout {
     total_bytes =
       cudf::util::round_up_safe(total_bytes + mask_words * sizeof(bitmask_type), slice_alignment);
     total_bytes = cudf::util::round_up_safe(total_bytes + data_bytes, slice_alignment);
+  }
+};
+
+// Preset-mask fill reservation for ONE of the two fill patterns (ALL_VALID 0xff / ALL_NULL
+// 0x00). During the build walk each preset destination mask is instead carved from a pattern's
+// staging arena; after the walk ONE memset per non-empty arena covers every preset fill in that
+// pattern, replacing the per-mask cudaMemsetAsync submissions (the measured ~60-mask drip-feed
+// class). The staging arenas are created alongside the fw carve arena — slices outside it, so
+// the fw reservation mirror above is untouched. The slice sizing (`dst_mask_plan::mask_bytes`)
+// MUST track `fixed_width_destination_layout::carve`'s mask sizing exactly
+// (`bitmask_allocation_size_words`) so the fills stay byte-identical to per-mask memsets,
+// padding words included.
+struct preset_mask_fill_layout {
+  static constexpr std::size_t slice_alignment{256};  // CUDA's allocation granularity
+
+  std::size_t total_bytes{0};
+
+  // Reserves one preset mask's padded word extent. `num_rows` is the DESTINATION row count
+  // (sliced sources included), matching the carve sites' sizing.
+  void carve(size_type num_rows)
+  {
+    total_bytes = cudf::util::round_up_safe(
+      total_bytes + cudf::bitmask_allocation_size_words(num_rows) * sizeof(bitmask_type),
+      slice_alignment);
   }
 };
 
@@ -1425,6 +1464,26 @@ struct dst_mask_plan {
   bitmask_type* kernel_mask{};  // non-null iff the fused kernel writes the mask
   size_type null_count{};       // host-visible count; 0 placeholder when kernel-masked
   bool skip_data{};             // all-null source: mask pre-set ALL_NULL, no descriptor pushed
+  // Preset masks only: which pattern's staging arena the mask slices from (0 = ALL_VALID,
+  // 1 = ALL_NULL) and its padded byte extent, so the carve consumes the pre-walk reservation
+  // and the post-walk memset fills the matching pattern. `use_band` = the preset mask rides
+  // the band; false (below `kMaskBandPresetGate`) takes the stock per-mask carve + memset.
+  std::size_t band{};
+  std::size_t mask_bytes{};
+  bool use_band{};
+};
+
+// One preset-mask fill pattern's staging arena: a carve_memory_resource whose slices are
+// filled by a SINGLE post-walk memset (pattern byte 0xff for ALL_VALID, 0x00 for ALL_NULL),
+// plus the reservation that sized it. Index into the builder's two-element array with the
+// pattern (see `dst_mask_plan::band`). The arena is created AFTER the builder's aggregate
+// initialization (`shared_resource` has no default constructor), so — like the fw carve
+// arena — it is owned by the enclosing scope: the member is a pointer null until the
+// post-walk pass sets it; every use site runs after that point, and destination columns
+// hold their own value copies so the wrapper's lifetime is not entangled with the builder's.
+struct mask_band {
+  preset_mask_fill_layout layout;
+  std::unique_ptr<cuda::mr::shared_resource<carve_memory_resource>> mr;
 };
 
 // The exact condition under which `plan_destination_mask` hands the fused kernel a
@@ -1476,7 +1535,10 @@ descriptor_counts estimate_descriptor_counts(column_view const& src, bool nullif
 // `src.size() < num_rows`, so an all-null sliced source must still mark all
 // `num_rows` destination rows null. Callers must therefore pass the call's
 // `num_rows` even though only `null_count` consumes it.
-dst_mask_plan plan_destination_mask(column_view const& src, bool nullify, size_type num_rows)
+dst_mask_plan plan_destination_mask(column_view const& src,
+                                    bool nullify,
+                                    size_type num_rows,
+                                    bool bands_enabled)
 {
   dst_mask_plan plan;
   bool const all_null = src.size() > 0 and src.null_count() == src.size();
@@ -1486,6 +1548,7 @@ dst_mask_plan plan_destination_mask(column_view const& src, bool nullify, size_t
     plan.preset     = true;
     plan.null_count = num_rows;
     plan.skip_data  = true;
+    plan.band       = 1;
   } else if (nullify or src.null_count() > 0) {
     // The kernel writes this mask; the caller assigns `kernel_mask` from whichever mask
     // buffer it constructs (carved or stock).
@@ -1495,40 +1558,50 @@ dst_mask_plan plan_destination_mask(column_view const& src, bool nullify, size_t
     plan.state  = mask_state::ALL_VALID;
     plan.preset = true;
   }
+  if (plan.preset) {
+    plan.mask_bytes = cudf::bitmask_allocation_size_words(num_rows) * sizeof(bitmask_type);
+    plan.use_band   = bands_enabled;
+  }
   return plan;
 }
 
-// Applies `plan`'s fill semantics to a freshly created destination mask: the constant states
-// are memset here (the same fill `create_null_mask` would have done), a kernel-written
-// UNINITIALIZED mask is left untouched, and UNALLOCATED must never reach this helper. The
-// caller assigns `plan.kernel_mask` from the returned buffer before pushing any descriptor.
+// Applies `plan`'s fill semantics to a freshly created destination mask. A preset mask fills
+// its padded extent (`plan.mask_bytes`) with its pattern byte: banded — carved from its
+// pattern's staging arena, filled by the post-walk band memset — when the caller took the band
+// path (`bands_enabled`), else the per-mask memset (the stock form). A kernel-written
+// UNINITIALIZED mask is left untouched; UNALLOCATED must never reach this helper. The caller
+// assigns `plan.kernel_mask` from the buffer before pushing any descriptor.
 void fill_destination_mask(dst_mask_plan& plan,
                            cuda::device_buffer<bitmask_type>& mask,
+                           bool bands_enabled,
                            cuda::stream_ref stream)
 {
   if (plan.state == mask_state::UNALLOCATED) { return; }
   plan.kernel_mask = plan.state == mask_state::UNINITIALIZED ? mask.data() : nullptr;
-  if (plan.preset) {
-    CUDF_CUDA_TRY(cudaMemsetAsync(mask.data(),
-                                  plan.state == mask_state::ALL_VALID ? 0xff : 0x00,
-                                  mask.size() * sizeof(bitmask_type),
-                                  stream.get()));
-  }
+  if (not plan.preset) { return; }
+  if (bands_enabled) { return; }  // the post-walk band memset fills it
+  CUDF_CUDA_TRY(cudaMemsetAsync(
+    mask.data(), plan.state == mask_state::ALL_VALID ? 0xff : 0x00, plan.mask_bytes, stream.get()));
 }
 
 // Builds ONE destination fixed-width column whose mask and data buffers are slices of the
 // call-wide carve arena. The mask is created FIRST (matching `fixed_width_destination_layout::
-// carve`'s mask-then-data order), filled per `plan`'s semantics, then the data slice is carved;
-// `plan.kernel_mask` is assigned from the mask buffer so the caller can push its descriptor
-// with it. Both buffers store a value copy of the shared carve resource, so the column keeps
-// its slices alive independently and the arena block is freed stream-ordered when the last
-// shared copy dies. A zero-size data slice (num_rows == 0) constructs to a null data pointer
-// exactly as stock does (RMM skips zero-size allocations).
+// carve`'s mask-then-data order), then the data slice is carved; a banded preset mask slices
+// the matching pattern's staging arena (its fill rides the post-walk band memset), a
+// stock-path preset mask carves the fw arena (filled here per-mask), and a kernel-written mask
+// slices the fw arena untouched. `plan.kernel_mask` is assigned from the mask buffer so the
+// caller can push its descriptor with it. Every slice stores a value copy of the shared
+// resource it carves from, so the column keeps its slices alive independently and an arena
+// block is freed stream-ordered when the last shared copy dies. A zero-size data slice
+// (num_rows == 0) constructs to a null data pointer exactly as stock does (RMM skips zero-size
+// allocations).
 std::unique_ptr<column> make_carved_fixed_width(
   column_view const& src,
   size_type num_rows,
   dst_mask_plan& plan,
   cuda::mr::shared_resource<carve_memory_resource> const& carve_mr,
+  mask_band* bands,
+  bool bands_enabled,
   cuda::stream_ref stream)
 {
   auto const data_bytes = static_cast<std::size_t>(num_rows) * cudf::size_of(src.type());
@@ -1539,13 +1612,20 @@ std::unique_ptr<column> make_carved_fixed_width(
   // it for the data slice, and `column`'s generic ctor forwards both into their owned members.
   auto const mask_env =
     cuda::std::execution::prop{cuda::allocation_alignment, carve_memory_resource::slice_alignment};
-  auto mask_slice = cuda::device_buffer<bitmask_type>{
-    stream,
-    carve_mr,
-    plan.state == mask_state::UNALLOCATED ? 0 : cudf::bitmask_allocation_size_words(num_rows),
-    cuda::no_init,
-    mask_env};
-  fill_destination_mask(plan, mask_slice, stream);
+  auto mask_slice =
+    plan.use_band
+      ? cuda::device_buffer<bitmask_type>{stream,
+                                          *bands[plan.band].mr,
+                                          plan.mask_bytes / sizeof(bitmask_type),
+                                          cuda::no_init,
+                                          mask_env}
+      : cuda::device_buffer<bitmask_type>{
+          stream,
+          carve_mr,
+          plan.state == mask_state::UNALLOCATED ? 0 : cudf::bitmask_allocation_size_words(num_rows),
+          cuda::no_init,
+          mask_env};
+  fill_destination_mask(plan, mask_slice, bands_enabled, stream);
   auto data_slice =
     rmm::device_buffer{data_bytes, carve_memory_resource::slice_alignment, stream, carve_mr};
 
@@ -1590,10 +1670,18 @@ struct descriptor_path_builder {
   std::vector<column*>& kernel_masked_columns;      // slot i's count target (columns[i])
   size_type num_rows;
   bool nullify;
+  // The call-wide band-path decision (`kMaskBandPresetGate`): banded preset-mask fills vs the
+  // stock per-mask memsets. Mirrored into every `dst_mask_plan` the builder plans.
+  bool bands_enabled;
   cuda::stream_ref stream;
   rmm::device_async_resource_ref output_mr;
   rmm::device_async_resource_ref temp_mr;
   fixed_width_destination_layout fw_layout;  // reservation, advanced during the build walk
+  // One staging arena per preset-mask fill pattern (index 0 = ALL_VALID 0xff, 1 = ALL_NULL
+  // 0x00). Slices are handed out during the build walk; each arena's layout was reserved by
+  // the pre-walk pass and ONE memset per non-empty arena (issued post-walk, before the launch)
+  // fills every preset mask in that pattern.
+  mask_band mask_bands[2];
   // Set once the fw arena exists (after the build walk); the fw carve class checks it so a
   // misordered construction that would carve after teardown fails loudly.
   cuda::mr::shared_resource<carve_memory_resource>* fw_carve_mr{};
@@ -1778,12 +1866,13 @@ struct descriptor_path_builder {
   std::unique_ptr<column> emit_fixed_width(column_view const& src, size_type ancestor_offset)
   {
     CUDF_EXPECTS(fw_carve_mr != nullptr, "fw carve arena missing at leaf emission");
-    auto plan               = plan_destination_mask(src, nullify, num_rows);
+    auto plan               = plan_destination_mask(src, nullify, num_rows, bands_enabled);
     auto const element_size = static_cast<int32_t>(cudf::size_of(src.type()));
     // The reservation for this leaf was already added by the pre-walk pass; the arena replay
     // below consumes it (mask first, then data — matching `fixed_width_destination_layout::
     // carve`'s per-column regions).
-    auto dst = make_carved_fixed_width(src, num_rows, plan, *fw_carve_mr, stream);
+    auto dst =
+      make_carved_fixed_width(src, num_rows, plan, *fw_carve_mr, mask_bands, bands_enabled, stream);
     if (plan.skip_data) {
       // Every destination row is null: pre-set ALL_NULL mask, undefined payload (stock parity),
       // and no descriptor — the kernel would only re-read the source mask per row.
@@ -1816,22 +1905,32 @@ struct descriptor_path_builder {
   {
     CUDF_EXPECTS(fw_carve_mr != nullptr, "fw carve arena missing at struct build");
     auto const base_offset = ancestor_offset + node.offset();
-    auto plan              = plan_destination_mask(node, nullify, num_rows);
+    auto plan              = plan_destination_mask(node, nullify, num_rows, bands_enabled);
     // The node's own destination mask is carved BEFORE the children recurse: the fw arena is
     // a single bump allocator replaying the reservation's pre-order (node mask first, then
     // each child's regions), so any other construction order could out-consume the reserved
-    // advance and falsely trip `arena exhausted` on a later column. The mask is filled here
-    // and moves into the column at the end; the MASK-ONLY descriptor (when pushed) takes the
+    // advance and falsely trip `arena exhausted` on a later column. A banded preset mask
+    // slices its pattern's staging arena (its band carve mirrors the band reservation, which
+    // the walk also issued pre-order); the mask is filled by the post-walk band memset and
+    // moves into the column at the end; the MASK-ONLY descriptor (when pushed) takes the
     // carved pointer, which the move preserves.
     auto node_mask_env = cuda::std::execution::prop{cuda::allocation_alignment,
                                                     carve_memory_resource::slice_alignment};
-    auto node_mask     = cuda::device_buffer<bitmask_type>{
-      stream,
-      *fw_carve_mr,
-      plan.state == mask_state::UNALLOCATED ? 0 : cudf::bitmask_allocation_size_words(num_rows),
-      cuda::no_init,
-      node_mask_env};
-    fill_destination_mask(plan, node_mask, stream);
+    auto node_mask =
+      plan.use_band
+        ? cuda::device_buffer<bitmask_type>{stream,
+                                            *mask_bands[plan.band].mr,
+                                            plan.mask_bytes / sizeof(bitmask_type),
+                                            cuda::no_init,
+                                            node_mask_env}
+        : cuda::device_buffer<bitmask_type>{stream,
+                                            *fw_carve_mr,
+                                            plan.state == mask_state::UNALLOCATED
+                                              ? 0
+                                              : cudf::bitmask_allocation_size_words(num_rows),
+                                            cuda::no_init,
+                                            node_mask_env};
+    fill_destination_mask(plan, node_mask, bands_enabled, stream);
 
     std::vector<std::unique_ptr<column>> children;
     children.reserve(node.num_children());
@@ -1891,22 +1990,32 @@ struct descriptor_path_builder {
     auto const dict     = dictionary_column_view{src};
     auto const& indices = dict.indices();
     CUDF_EXPECTS(fw_carve_mr != nullptr, "fw carve arena missing at dictionary build");
-    auto plan = plan_destination_mask(src, nullify, num_rows);
+    auto plan = plan_destination_mask(src, nullify, num_rows, bands_enabled);
     // The indices payload and the parent mask are carved (their reservations were added by
     // the pre-walk pass). The mask must exist before the descriptor is pushed: the kernel
     // writes through the descriptor's pointer, and even the deferred string-keyed assembly
     // runs BEFORE the launch, so creating it here for every path is safe and keeps one
     // upstream pair for the whole class. The carve order mirrors the reservation's per-column
-    // mask-then-data: mask first, then the indices data.
+    // mask-then-data: mask first, then the indices data. A banded preset mask slices its
+    // pattern's staging arena (filled by the post-walk band memset), a stock-path preset mask
+    // or a kernel-written mask slices the fw arena.
     auto parent_mask_env = cuda::std::execution::prop{cuda::allocation_alignment,
                                                       carve_memory_resource::slice_alignment};
-    auto parent_mask     = cuda::device_buffer<bitmask_type>{
-      stream,
-      *fw_carve_mr,
-      plan.state == mask_state::UNALLOCATED ? 0 : cudf::bitmask_allocation_size_words(num_rows),
-      cuda::no_init,
-      parent_mask_env};
-    fill_destination_mask(plan, parent_mask, stream);
+    auto parent_mask =
+      plan.use_band
+        ? cuda::device_buffer<bitmask_type>{stream,
+                                            *mask_bands[plan.band].mr,
+                                            plan.mask_bytes / sizeof(bitmask_type),
+                                            cuda::no_init,
+                                            parent_mask_env}
+        : cuda::device_buffer<bitmask_type>{stream,
+                                            *fw_carve_mr,
+                                            plan.state == mask_state::UNALLOCATED
+                                              ? 0
+                                              : cudf::bitmask_allocation_size_words(num_rows),
+                                            cuda::no_init,
+                                            parent_mask_env};
+    fill_destination_mask(plan, parent_mask, bands_enabled, stream);
     auto indices_dst = rmm::device_buffer{
       static_cast<std::size_t>(num_rows) * static_cast<std::size_t>(cudf::size_of(indices.type())),
       carve_memory_resource::slice_alignment,
@@ -1991,7 +2100,7 @@ struct descriptor_path_builder {
   // unsliced base through the sliced offsets exactly as stock does.
   std::unique_ptr<column> build_string(column_view const& src, std::unique_ptr<column>* dst_slot)
   {
-    auto plan = plan_destination_mask(src, nullify, num_rows);
+    auto plan = plan_destination_mask(src, nullify, num_rows, bands_enabled);
     // Strings are NOT carved (chars bytes unknowable until the scan readback); their
     // destination masks keep the stock allocation regime.
     if (plan.skip_data) {
@@ -2631,6 +2740,35 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
   // leaf descriptors plus mask-only node descriptors (reassembled after the launch); dictionary
   // columns emit one data descriptor over their annotated indices. All-null sources emit no
   // descriptor (their masks are pre-set ALL_NULL); if nothing remains, the launch is skipped.
+  // The band-path decision, made once per call BEFORE any band arena exists: the band fill
+  // trades a fixed ~24 µs-per-band memset for per-mask ~7 µs submissions, so with fewer than
+  // `kMaskBandPresetGate` preset masks the per-mask drip wins and every preset mask must take
+  // the stock carve + per-mask memset (a populated band memset ≈ 24 µs vs ~7 µs per mask
+  // submission: 8 masks ≈ 56 µs > 2 × 24 µs). The
+  // count is computed from the same `plan_destination_mask` classification the build walk
+  // uses (struct children recursed), so the walk and this decision cannot diverge.
+  bool const bands_enabled = [&] {
+    if (fused_indices.empty()) { return false; }
+    size_type preset_masks                                      = 0;
+    std::function<void(column_view const&, bool)> count_presets = [&](column_view const& src,
+                                                                      bool nullify_flag) {
+      if (src.type().id() == type_id::STRING) { return; }
+      auto const plan = plan_destination_mask(src, nullify_flag, num_rows, false);
+      if (plan.preset) { ++preset_masks; }
+      if (src.type().id() == type_id::STRUCT) {
+        for (size_type i = 0; i < src.num_children(); ++i) {
+          count_presets(src.child(i), nullify_flag);
+        }
+      }
+    };
+    for (size_type pos = 0; pos < static_cast<size_type>(fused_indices.size()); ++pos) {
+      auto const& src = source_table.column(fused_indices[pos]);
+      if (num_rows == 0 and not cudf::is_fixed_width(src.type())) { continue; }
+      count_presets(src, bounds_policy == out_of_bounds_policy::NULLIFY);
+    }
+    return preset_masks > kMaskBandPresetGate;
+  }();
+
   std::vector<column_descriptor> descriptors;
   std::vector<size_type> kernel_masked_positions;  // positions of kernel-masked descriptors
   std::vector<column*> kernel_masked_columns;      // slot i's count target (columns[i])
@@ -2639,6 +2777,7 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
                                   kernel_masked_columns,
                                   num_rows,
                                   bounds_policy == out_of_bounds_policy::NULLIFY,
+                                  bands_enabled,
                                   stream,
                                   output_mr,
                                   temp_mr};
@@ -2654,35 +2793,53 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
     // keep their own carve in `assemble_strings`. The mirror must include every buffer the
     // build walk creates: an all-null destination still owns a full-size (uninitialized) data
     // buffer and a pre-set ALL_NULL mask.
-    auto fw_mask_exists = [](column_view const& src, bool nullify_flag) {
-      bool const all_null = src.size() > 0 and src.null_count() == src.size();
-      return all_null or nullify_flag or src.null_count() > 0 or src.nullable();
-    };
     // std::function, not `auto`: the reservation mirrors the build walk's STRUCT recursion,
     // so the lambda must call itself from its own initializer (an `auto` initializer cannot
     // self-reference). One host-side allocation per call, outside the carve path.
     std::function<void(column_view const&, bool)> fw_reserve = [&](column_view const& src,
                                                                    bool nullify_flag) {
       if (src.type().id() == type_id::STRING) { return; }
+      // A banded preset mask's reservation rides its pattern's band layout, not the fw arena
+      // (the build walk carves banded preset masks from the band, kernel-written masks from
+      // the arena — `plan_destination_mask` computes the same classification here as at build
+      // time, so the two mirrors stay in lockstep). A stock-path preset mask (below the band
+      // gate) carves the fw arena with the rest, matching `plan.use_band` at build time.
+      auto const plan = plan_destination_mask(src, nullify_flag, num_rows, bands_enabled);
       if (src.type().id() == type_id::STRUCT) {
-        if (fw_mask_exists(src, nullify_flag)) { builder.fw_layout.carve(num_rows, 0, true); }
+        if (plan.preset and plan.use_band) { builder.mask_bands[plan.band].layout.carve(num_rows); }
+        if (plan.state != mask_state::UNALLOCATED and not plan.use_band) {
+          builder.fw_layout.carve(num_rows, 0, true);
+        }
         for (size_type i = 0; i < src.num_children(); ++i) {
           fw_reserve(src.child(i), nullify_flag);
         }
         return;
       }
       if (src.type().id() == type_id::DICTIONARY32) {
-        auto const indices = dictionary_column_view{src}.indices();
-        builder.fw_layout.carve(num_rows,
-                                static_cast<std::size_t>(num_rows) *
-                                  static_cast<std::size_t>(cudf::size_of(indices.type())),
-                                fw_mask_exists(src, nullify_flag));
+        auto const indices    = dictionary_column_view{src}.indices();
+        auto const data_bytes = static_cast<std::size_t>(num_rows) *
+                                static_cast<std::size_t>(cudf::size_of(indices.type()));
+        if (plan.use_band) {
+          // The parent mask rides the band; the gathered indices payload still carves the
+          // fw arena at build time (`build_dictionary` carves it on every path), so its
+          // region must be reserved here too or the replay out-consumes the layout.
+          builder.mask_bands[plan.band].layout.carve(num_rows);
+          builder.fw_layout.carve(num_rows, data_bytes, false);
+        } else if (plan.state != mask_state::UNALLOCATED) {
+          builder.fw_layout.carve(num_rows, data_bytes, true);
+        } else {
+          builder.fw_layout.carve(num_rows, data_bytes, false);
+        }
         return;
       }
-      builder.fw_layout.carve(
-        num_rows,
-        static_cast<std::size_t>(num_rows) * static_cast<std::size_t>(cudf::size_of(src.type())),
-        fw_mask_exists(src, nullify_flag));
+      auto const data_bytes =
+        static_cast<std::size_t>(num_rows) * static_cast<std::size_t>(cudf::size_of(src.type()));
+      if (plan.use_band) {
+        builder.mask_bands[plan.band].layout.carve(num_rows);
+        builder.fw_layout.carve(num_rows, data_bytes, false);
+      } else {
+        builder.fw_layout.carve(num_rows, data_bytes, plan.state != mask_state::UNALLOCATED);
+      }
     };
     for (size_type pos = 0; pos < static_cast<size_type>(fused_indices.size()); ++pos) {
       auto const& src = source_table.column(fused_indices[pos]);
@@ -2692,6 +2849,11 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
     auto fw_carve_mr = cuda::mr::make_shared_resource<carve_memory_resource>(
       output_mr, stream, builder.fw_layout.total_bytes);
     builder.fw_carve_mr = &fw_carve_mr;
+    for (auto& band : builder.mask_bands) {
+      band.mr = std::make_unique<cuda::mr::shared_resource<carve_memory_resource>>(
+        cuda::mr::make_shared_resource<carve_memory_resource>(
+          output_mr, stream, band.layout.total_bytes));
+    }
 
     descriptors.reserve(estimated_descriptors);
     kernel_masked_positions.reserve(estimated_kernel_masked);
@@ -2724,6 +2886,19 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
             builder.build_dictionary(src, &destination[fused_indices[pos]]);
           break;
         default: destination[fused_indices[pos]] = builder.emit_fixed_width(src, 0); break;
+      }
+    }
+    // One memset per non-empty band replaces the per-mask fills: every banded preset mask
+    // carved from that band gets the pattern byte in a single submission, stream-ordered
+    // before any consumer (the kernel launch and the deferred assemblies both follow on the
+    // same stream). Below the band gate the per-mask fills already ran during the walk.
+    if (bands_enabled) {
+      for (size_t band = 0; band < 2; ++band) {
+        auto const& b = builder.mask_bands[band];
+        if (b.layout.total_bytes == 0) { continue; }
+        auto const pattern = band == 0 ? 0xff : 0x00;
+        CUDF_CUDA_TRY(
+          cudaMemsetAsync(b.mr->get().arena_base(), pattern, b.layout.total_bytes, stream.get()));
       }
     }
     // Zero rows never reach `build_dictionary` (the empty-map branch above returns early for

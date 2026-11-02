@@ -447,6 +447,256 @@ TEST_F(BatchGatherSlicedTest, AllNullMixedColumnsShortMapParity)
 }
 
 // ============================================================================
+// §5.2b Preset-mask fill parity: the batched constant-mask fills (ALL_VALID 0xff /
+// ALL_NULL 0x00 riding pattern staging bands, one memset per band) must produce masks
+// byte-identical to the stock per-mask memsets — including the Arrow-padded tail words,
+// which column comparisons do read through the null-count/mask equality path. The band
+// path engages only above `kMaskBandPresetGate` (8) preset destination masks per call;
+// fixtures here carry 12+ preset columns to stay on the band path (and one fixture sits
+// exactly AT the gate to pin the stock per-mask path).
+// ============================================================================
+
+class BatchGatherPresetMaskTest : public cudf::test::BaseFixture {};
+
+// Boundary shapes at the padded-word tails: 511/512/513-bit masks straddle the last
+// word's valid/padding boundary, where a fill that missed padding words or inverted the
+// tail word would corrupt the mask (padding bits are never read back, but the
+// ALL_NULL-with-padding case must still zero them for byte parity with stock). 12 preset
+// columns keep every fixture above the `kMaskBandPresetGate` band gate.
+TEST_F(BatchGatherPresetMaskTest, AllValidMaskWordTailParity)
+{
+  for (auto const num_rows : {511, 512, 513}) {
+    std::vector<std::unique_ptr<cudf::column>> preset_cols;
+    preset_cols.reserve(12);
+    for (int i = 0; i < 12; ++i) {
+      preset_cols.push_back(make_fixed_column<int32_t>(
+        num_rows,
+        [i](cudf::size_type r) { return i * 1000 + r; },
+        [](cudf::size_type) { return true; }));
+    }
+    auto views = std::vector<cudf::column_view>();
+    views.reserve(preset_cols.size());
+    for (auto const& c : preset_cols) {
+      views.push_back(c->view());
+    }
+    cudf::table_view source_table(views);
+    auto gather_map = make_fixed_column<cudf::size_type>(
+      num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+
+    auto result    = run_batch_gather(source_table, gather_map->view());
+    auto reference = run_reference(source_table, gather_map->view());
+
+    CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+    for (cudf::size_type c = 0; c < 12; ++c) {
+      EXPECT_EQ(result->view().column(c).null_count(), 0) << "column " << c;
+    }
+  }
+}
+
+TEST_F(BatchGatherPresetMaskTest, AllNullMaskWordTailParity)
+{
+  for (auto const num_rows : {511, 512, 513}) {
+    std::vector<std::unique_ptr<cudf::column>> preset_cols;
+    preset_cols.reserve(12);
+    for (int i = 0; i < 12; ++i) {
+      preset_cols.push_back(make_fixed_column<int32_t>(
+        num_rows, [](cudf::size_type) { return 0; }, [](cudf::size_type) { return false; }));
+    }
+    auto views = std::vector<cudf::column_view>();
+    views.reserve(preset_cols.size());
+    for (auto const& c : preset_cols) {
+      views.push_back(c->view());
+    }
+    cudf::table_view source_table(views);
+    auto gather_map = make_fixed_column<cudf::size_type>(
+      num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+
+    auto result    = run_batch_gather(source_table, gather_map->view());
+    auto reference = run_reference(source_table, gather_map->view());
+
+    CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+    for (cudf::size_type c = 0; c < 12; ++c) {
+      EXPECT_EQ(result->view().column(c).null_count(), num_rows) << "column " << c;
+    }
+  }
+}
+
+// Sliced all-valid and all-null sources: the preset plan keys off the DESTINATION row
+// count, so a sliced source whose underlying mask is larger must still fill exactly the
+// destination extent — and the null count must be the map size, not the slice size. 6+6
+// columns stay above the `kMaskBandPresetGate` band gate.
+TEST_F(BatchGatherPresetMaskTest, SlicedPresetSourceParity)
+{
+  constexpr cudf::size_type source_size{1000};
+  constexpr cudf::size_type slice_begin{100};
+  constexpr cudf::size_type num_rows{500};
+
+  auto all_valid = make_fixed_column<int32_t>(
+    source_size, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+  auto all_null = make_fixed_column<int32_t>(
+    source_size, [](cudf::size_type) { return 0; }, [](cudf::size_type) { return false; });
+  auto sliced_valid = cudf::slice(all_valid->view(), {slice_begin, slice_begin + num_rows});
+  auto sliced_null  = cudf::slice(all_null->view(), {slice_begin, slice_begin + num_rows});
+  ASSERT_EQ(sliced_valid.size(), 1);
+  ASSERT_EQ(sliced_null.size(), 1);
+  auto views = std::vector<cudf::column_view>();
+  views.reserve(12);
+  for (int i = 0; i < 6; ++i) {
+    views.push_back(sliced_valid[0]);
+  }
+  for (int i = 0; i < 6; ++i) {
+    views.push_back(sliced_null[0]);
+  }
+  auto gather_map = make_fixed_column<cudf::size_type>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+
+  cudf::table_view source_table(views);
+  auto result    = run_batch_gather(source_table, gather_map->view());
+  auto reference = run_reference(source_table, gather_map->view());
+
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+  for (cudf::size_type c = 0; c < 6; ++c) {
+    EXPECT_EQ(result->view().column(c).null_count(), 0) << "column " << c;
+  }
+  for (cudf::size_type c = 6; c < 12; ++c) {
+    EXPECT_EQ(result->view().column(c).null_count(), num_rows) << "column " << c;
+  }
+}
+
+// Zero-row map with preset sources: the ALL_VALID destination stays nullable-but-valid
+// (empty mask, null_count 0) and the ALL_NULL destination reports null_count 0 for an
+// empty column — stock parity, and the band memsets must not fire on empty arenas.
+TEST_F(BatchGatherPresetMaskTest, ZeroRowPresetSources)
+{
+  std::vector<std::unique_ptr<cudf::column>> preset_cols;
+  preset_cols.reserve(12);
+  for (int i = 0; i < 6; ++i) {
+    preset_cols.push_back(make_fixed_column<int32_t>(
+      10, [i](cudf::size_type r) { return i * 10 + r; }, [](cudf::size_type) { return true; }));
+  }
+  for (int i = 0; i < 6; ++i) {
+    preset_cols.push_back(make_fixed_column<int32_t>(
+      10, [](cudf::size_type r) { return r; }, [](cudf::size_type) { return false; }));
+  }
+  auto views = std::vector<cudf::column_view>();
+  views.reserve(preset_cols.size());
+  for (auto const& c : preset_cols) {
+    views.push_back(c->view());
+  }
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map{};
+
+  cudf::table_view source_table(views);
+  auto result = run_batch_gather(source_table, gather_map);
+
+  ASSERT_EQ(result->num_rows(), 0);
+  for (cudf::size_type c = 0; c < 6; ++c) {
+    EXPECT_EQ(result->view().column(c).null_count(), 0) << "column " << c;
+  }
+}
+
+// Both patterns in ONE call (the two-band case): a mixed table where every preset class
+// is present, plus a kernel-masked column (NULLIFY) to prove the kernel-written masks
+// never ride a band. Compared against the stock reference exactly. 15 preset columns
+// (9 all-valid + 4 all-null + the all-valid struct node + its all-valid child) stay
+// above the band gate.
+TEST_F(BatchGatherPresetMaskTest, MixedPresetClassesParity)
+{
+  constexpr cudf::size_type num_rows{1000};
+
+  std::vector<std::unique_ptr<cudf::column>> cols;
+  cols.reserve(15);
+  for (int i = 0; i < 9; ++i) {
+    cols.push_back(make_fixed_column<int32_t>(
+      num_rows,
+      [i](cudf::size_type r) { return i * 1000 + r; },
+      [](cudf::size_type) { return true; }));
+  }
+  for (int i = 0; i < 4; ++i) {
+    cols.push_back(make_fixed_column<int64_t>(
+      num_rows, [](cudf::size_type) { return 0; }, [](cudf::size_type) { return false; }));
+  }
+  auto kernel_masked = make_fixed_column<int32_t>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type i) { return i % 3 != 0; });
+  // A struct node rides the band through the struct path when its source is all-valid.
+  std::vector<std::unique_ptr<cudf::column>> struct_children;
+  struct_children.push_back(make_fixed_column<int32_t>(
+    num_rows, [](cudf::size_type i) { return 2 * i; }, [](cudf::size_type) { return true; }));
+  auto col_struct =
+    make_independent_struct(std::move(struct_children), std::vector<bool>(num_rows, true));
+
+  cols.push_back(std::move(kernel_masked));
+  cols.push_back(std::move(col_struct));
+
+  auto views = std::vector<cudf::column_view>();
+  views.reserve(cols.size());
+  for (auto const& c : cols) {
+    views.push_back(c->view());
+  }
+  auto gather_map = make_fixed_column<cudf::size_type>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+
+  cudf::table_view source_table(views);
+  auto result    = run_batch_gather(source_table, gather_map->view());
+  auto reference = run_reference(source_table, gather_map->view());
+
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+  for (cudf::size_type c = 0; c < 9; ++c) {
+    EXPECT_EQ(result->view().column(c).null_count(), 0) << "column " << c;
+  }
+  for (cudf::size_type c = 9; c < 13; ++c) {
+    EXPECT_EQ(result->view().column(c).null_count(), num_rows) << "column " << c;
+  }
+  EXPECT_EQ(result->view().column(14).null_count(), 0);  // the struct node
+}
+
+// Below the `kMaskBandPresetGate` band gate (8 preset masks in one call): the fill falls
+// back to the stock per-mask carve + per-mask memset path — the fixed two-band-fill cost
+// (~48 µs) would exceed the replaced per-mask drip (~7 µs/mask submission) at few columns.
+// Byte parity with stock must hold identically on this path, and the path choice is
+// observable here only through the parity itself: 8 preset masks is exactly AT the gate.
+TEST_F(BatchGatherPresetMaskTest, BandGateBelowThresholdPerMaskParity)
+{
+  constexpr cudf::size_type num_rows{1000};
+
+  // 8 preset columns exactly at the gate (gate fires only ABOVE 8) + one kernel-masked
+  // column: every preset mask takes the stock per-mask path.
+  std::vector<std::unique_ptr<cudf::column>> cols;
+  cols.reserve(9);
+  for (int i = 0; i < 6; ++i) {
+    cols.push_back(make_fixed_column<int32_t>(
+      num_rows,
+      [i](cudf::size_type r) { return i * 1000 + r; },
+      [](cudf::size_type) { return true; }));
+  }
+  for (int i = 0; i < 2; ++i) {
+    cols.push_back(make_fixed_column<int64_t>(
+      num_rows, [](cudf::size_type) { return 0; }, [](cudf::size_type) { return false; }));
+  }
+  cols.push_back(make_fixed_column<int32_t>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type i) { return i % 3 != 0; }));
+
+  auto views = std::vector<cudf::column_view>();
+  views.reserve(cols.size());
+  for (auto const& c : cols) {
+    views.push_back(c->view());
+  }
+  auto gather_map = make_fixed_column<cudf::size_type>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+
+  cudf::table_view source_table(views);
+  auto result    = run_batch_gather(source_table, gather_map->view());
+  auto reference = run_reference(source_table, gather_map->view());
+
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+  for (cudf::size_type c = 0; c < 6; ++c) {
+    EXPECT_EQ(result->view().column(c).null_count(), 0) << "column " << c;
+  }
+  for (cudf::size_type c = 6; c < 8; ++c) {
+    EXPECT_EQ(result->view().column(c).null_count(), num_rows) << "column " << c;
+  }
+}
+
+// ============================================================================
 // §5.3 Degenerate shapes.
 // ============================================================================
 

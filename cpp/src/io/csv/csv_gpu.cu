@@ -221,7 +221,7 @@ CUDF_KERNEL void __launch_bounds__(csvparse_block_dim)
         // This could possibly result in additional empty fields
         // As in seek_field_end, a quote only counts if it opens the field: 5" is not a number
         auto trimmed_field_range = trim_whitespaces(field_start, next_delimiter);
-        if (trimmed_field_range.first == field_start) {
+        if (opts.detect_whitespace_around_quotes || trimmed_field_range.first == field_start) {
           trimmed_field_range =
             trim_quotes(trimmed_field_range.first, trimmed_field_range.second, opts.quotechar);
         }

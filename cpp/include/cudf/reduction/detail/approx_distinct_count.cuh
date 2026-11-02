@@ -127,13 +127,11 @@ class approx_distinct_count {
    * @param precision The precision parameter for the sketch (4-18)
    * @param null_handling `INCLUDE` or `EXCLUDE` rows with nulls
    * @param nan_handling `NAN_IS_VALID` or `NAN_IS_NULL`
-   * @param mr Device memory resource (unused in non-owning mode, retained for member consistency)
    */
   approx_distinct_count(cuda::std::span<cuda::std::byte> sketch_span,
                         std::int32_t precision,
                         null_policy null_handling,
-                        nan_policy nan_handling,
-                        cuda::mr::any_resource<cuda::mr::device_accessible> mr);
+                        nan_policy nan_handling);
 
   approx_distinct_count()                                        = delete;
   ~approx_distinct_count()                                       = default;
@@ -269,8 +267,6 @@ class approx_distinct_count {
                  cuda::std::span<cuda::std::byte>     ///< Non-owning storage (user-provided)
                  >;
 
-  // Declared before `_storage` so it outlives the owning buffer. Unused in non-owning (span) mode.
-  cuda::mr::any_resource<cuda::mr::device_accessible> _mr;  ///< Owns the sketch storage resource
   storage_type _storage;       ///< Sketch register storage (owning or non-owning)
   std::int32_t _precision;     ///< HLL precision parameter (determines 2^p registers)
   null_policy _null_handling;  ///< Null handling policy (immutable after construction)

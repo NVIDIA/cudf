@@ -56,8 +56,8 @@ struct quantile_functor {
   std::unique_ptr<column> operator()(column_view const& input)
     requires(cudf::concepts::arithmetic<T> or cudf::concepts::fixed_point<T>)
   {
-    using StorageType   = cudf::device_storage_type_t<T>;
-    using ExactResult   = std::conditional_t<exact and not cudf::is_fixed_point<T>(), double, T>;
+    using StorageType = cudf::device_storage_type_t<T>;
+    using ExactResult = std::conditional_t<exact and not cudf::concepts::fixed_point<T>, double, T>;
     using StorageResult = cudf::device_storage_type_t<ExactResult>;
 
     auto const type =

@@ -1859,9 +1859,10 @@ class ParquetWriter:
         If ``True``, enable computing and writing arrow schema to Parquet
         file footer's key-value metadata section for faithful round-tripping.
     utc_timestamps : bool, default True
-        If ``True``, timestamp columns are written with
-        ``isAdjustedToUTC=true``. If ``False``, they are written with
-        ``isAdjustedToUTC=false``, matching ``DataFrame.to_parquet``.
+        Value of ``isAdjustedToUTC`` in the Parquet logical type of
+        timestamp columns (and of duration columns, which are written as
+        ``TIME``). The values themselves are not shifted. Set to ``False``
+        to match ``DataFrame.to_parquet``.
 
     See Also
     --------

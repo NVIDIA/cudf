@@ -8,10 +8,12 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/strings/detail/strings_column_factories.cuh>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/utility>
 #include <cuda/stream>

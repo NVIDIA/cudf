@@ -9,6 +9,7 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/strings/attributes.hpp>
 #include <cudf/strings/detail/attributes.hpp>
@@ -19,10 +20,10 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cub/warp/warp_reduce.cuh>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/stream>
@@ -217,7 +218,8 @@ std::unique_ptr<column> code_points(strings_column_view const& input,
   auto d_column       = *strings_column;
 
   // create offsets vector to account for each string's character length
-  rmm::device_uvector<size_type> offsets(input.size() + 1, stream);
+  cuda::device_buffer<size_type> offsets(
+    stream, cudf::get_current_device_resource_ref(), input.size() + 1, cuda::no_init);
   thrust::transform_inclusive_scan(
     rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
     cuda::counting_iterator<size_type>{0},
@@ -230,10 +232,13 @@ std::unique_ptr<column> code_points(strings_column_view const& input,
     }),
     cuda::std::plus<size_type>());
 
-  offsets.set_element_to_zero_async(0, stream);
+  CUDF_CUDA_TRY(cudaMemsetAsync(offsets.data(), 0, sizeof(size_type), stream.get()));
 
   // the total size is the number of characters in the entire column
-  size_type num_characters = offsets.back_element(stream);
+  size_type num_characters;
+  CUDF_CUDA_TRY(cudf::detail::memcpy_async(
+    &num_characters, offsets.data() + offsets.size() - 1, sizeof(num_characters), stream));
+  cudf::detail::sync_stream(stream);
   // create output column with no nulls
   auto results = make_numeric_column(
     data_type{type_id::INT32}, num_characters, mask_state::UNALLOCATED, stream, mr);

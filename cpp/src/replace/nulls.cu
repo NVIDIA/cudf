@@ -32,8 +32,7 @@
 #include <cudf/utilities/type_checks.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/device_uvector.hpp>
-
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/tuple>
 #include <cuda/stream>
@@ -274,7 +273,8 @@ std::unique_ptr<cudf::column> replace_nulls_policy_impl(cudf::column_view const&
   auto valid_it  = cudf::detail::make_validity_iterator(*device_in);
   auto in_begin  = cuda::make_zip_iterator(cuda::std::make_tuple(index, valid_it));
 
-  rmm::device_uvector<cudf::size_type> gather_map(input.size(), stream);
+  cuda::device_buffer<cudf::size_type> gather_map(
+    stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
   auto gm_begin = cuda::make_zip_iterator(
     cuda::std::make_tuple(gather_map.begin(), cuda::make_discard_iterator()));
 

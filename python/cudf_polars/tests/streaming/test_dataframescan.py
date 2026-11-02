@@ -117,6 +117,32 @@ def test_dataframescan_concat(request, df, streaming_engine_factory):
     assert_gpu_result_equal(df2, engine=streaming_engine)
 
 
+def test_dataframescan_fanout_three_consumers(request, df, streaming_engine_factory):
+    # One scan feeding three consumers: exercises the rapidsmpf fanout actor
+    # (data) together with the metadata-forwarding actor, with more than two
+    # outputs.
+    streaming_engine = streaming_engine_factory(
+        StreamingOptions(max_rows_per_partition=1_000),
+    )
+    if streaming_engine.nranks > 1:
+        request.applymarker(
+            pytest.mark.xfail(
+                reason="https://github.com/NVIDIA/cudf/issues/22376",
+                strict=False,
+            )
+        )
+    assert_gpu_result_equal(pl.concat([df, df, df]), engine=streaming_engine)
+
+
+def test_dataframescan_fanout_self_join(df, streaming_engine_factory):
+    # Self-join: one scan feeds both sides of the join.
+    streaming_engine = streaming_engine_factory(
+        StreamingOptions(max_rows_per_partition=1_000),
+    )
+    q = df.join(df, on=df.collect_schema().names()[0], how="inner")
+    assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=False)
+
+
 def test_join_in_memory_lazy_stable_id_pickle(
     streaming_engine_factory,
     parquet_stats_executor: concurrent.futures.ThreadPoolExecutor,

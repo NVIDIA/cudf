@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from cudf_streaming.channel_metadata import ChannelMetadata
@@ -12,11 +11,9 @@ from cudf_streaming.table_chunk import (
     TableChunk,
     make_table_chunks_available_or_wait,
 )
-from rapidsmpf.memory.buffer import MemoryType
 from rapidsmpf.memory.memory_reservation import opaque_memory_usage
 from rapidsmpf.streaming.core.actor import define_actor
-from rapidsmpf.streaming.core.message import Message
-from rapidsmpf.streaming.core.spillable_messages import SpillableMessages
+from rapidsmpf.streaming.core.fanout import FanoutPolicy, fanout
 
 from cudf_polars.dsl.ir import IR, Empty, Join
 from cudf_polars.streaming.actor_graph.dispatch import (
@@ -33,7 +30,6 @@ from cudf_polars.streaming.actor_graph.utils import (
     empty_table_chunk,
     gather_in_task_group,
     join_preserves_side_order,
-    make_spill_function,
     maybe_remap_partitioning,
     process_children,
     recv_metadata,
@@ -281,8 +277,7 @@ async def default_node_multi(
         await ch_out.drain(context)
 
 
-@define_actor()
-async def fanout_node_bounded(
+async def fanout_metadata_node(
     context: Context,
     ch_in: Channel[TableChunk],
     *chs_out: Channel[TableChunk],
@@ -290,10 +285,15 @@ async def fanout_node_bounded(
     ir_context: IRExecutionContext,
 ) -> None:
     """
-    Bounded fanout node for rapidsmpf.
+    Forward channel metadata for a fanout node.
 
-    Each chunk is broadcasted to all output channels
-    as it arrives.
+    The rapidsmpf C++ fanout actor only broadcasts data messages, so
+    this actor forwards the metadata side-channel to every output.
+
+    This is deliberately *not* wrapped in ``define_actor``: that wrapper
+    shuts down every channel argument when the actor returns, which would
+    kill the data path still being served by the C++ fanout actor. Channels
+    are only shut down on error, by ``shutdown_on_error``.
 
     Parameters
     ----------
@@ -308,9 +308,6 @@ async def fanout_node_bounded(
     ir_context
         The execution context for the IR node.
     """
-    # TODO: Use rapidsmpf fanout node once available.
-    # See: https://github.com/rapidsai/rapidsmpf/issues/560
-    # TODO: Use ir_context
     async with shutdown_on_error(
         context,
         chs_in=(ch_in,),
@@ -318,256 +315,10 @@ async def fanout_node_bounded(
         trace_ir=trace_ir,
         ir_context=ir_context,
     ):
-        # Forward metadata to all outputs.
         metadata = await recv_metadata(ch_in, context)
         await gather_in_task_group(
             *(send_metadata(ch, context, metadata) for ch in chs_out)
         )
-
-        while (msg := await ch_in.recv(context)) is not None:
-            # Pass-through: every output wraps the same device buffer
-            # (exclusive_view=False), so nothing is duplicated.
-            table_chunk, _ = await make_table_chunks_available_or_wait(
-                context,
-                TableChunk.from_message(msg, br=context.br()),
-                reserve_extra=0,
-                net_memory_delta=0,
-            )
-            seq_num = msg.sequence_number
-            del msg
-            for ch_out in chs_out:
-                await ch_out.send(
-                    context,
-                    Message(
-                        seq_num,
-                        TableChunk.from_pylibcudf_table(
-                            table_chunk.table_view(),
-                            table_chunk.stream,
-                            exclusive_view=False,
-                            br=context.br(),
-                        ),
-                    ),
-                )
-            del table_chunk
-
-        await gather_in_task_group(*(ch.drain(context) for ch in chs_out))
-
-
-@define_actor()
-async def fanout_node_unbounded(
-    context: Context,
-    ch_in: Channel[TableChunk],
-    *chs_out: Channel[TableChunk],
-    trace_ir: IR,
-    ir_context: IRExecutionContext,
-) -> None:
-    """
-    Unbounded fanout node for rapidsmpf with spilling support.
-
-    Broadcasts chunks from input to all output channels. This is called
-    "unbounded" because it handles the case where one channel may consume
-    all data before another channel consumes any data.
-
-    The implementation uses adaptive sending with spillable buffers:
-    - Maintains a spillable FIFO buffer for each output channel
-    - Messages are buffered in host memory (spillable to disk)
-    - Sends to all channels concurrently
-    - Receives next chunk as soon as any channel makes progress
-    - Efficient for both balanced and imbalanced consumption patterns
-
-    Parameters
-    ----------
-    context
-        The rapidsmpf context.
-    ch_in
-        The input Channel[TableChunk].
-    chs_out
-        The output Channel[TableChunk]s.
-    trace_ir
-        The IR node to trace. Passed through to shutdown_on_error.
-    ir_context
-        The execution context for the IR node.
-    """
-    # TODO: Use rapidsmpf fanout node once available.
-    # See: https://github.com/rapidsai/rapidsmpf/issues/560
-    # TODO: Use ir_context
-    async with shutdown_on_error(
-        context,
-        chs_in=(ch_in,),
-        chs_out=chs_out,
-        trace_ir=trace_ir,
-        ir_context=ir_context,
-    ):
-        # Forward metadata to all outputs.
-        metadata = await recv_metadata(ch_in, context)
-        await gather_in_task_group(
-            *(send_metadata(ch, context, metadata) for ch in chs_out)
-        )
-
-        # Spillable FIFO buffer for each output channel
-        output_buffers: list[SpillableMessages] = [
-            SpillableMessages(context.br()) for _ in chs_out
-        ]
-        num_outputs = len(chs_out)
-
-        # Track message IDs in FIFO order for each output buffer
-        buffer_ids: list[list[int]] = [[] for _ in chs_out]
-
-        # Register a single spill function for all buffers
-        # This ensures global FIFO ordering when spilling across all outputs
-        spill_func_id = context.br().spill_manager.add_spill_function(
-            make_spill_function(output_buffers, context), priority=0
-        )
-
-        # Track active send/drain tasks for each output
-        active_tasks: dict[int, asyncio.Task] = {}
-
-        # Track which outputs need to be drained (set when no more input)
-        needs_drain: set[int] = set()
-
-        # Receive task
-        recv_task: asyncio.Task | None = asyncio.create_task(ch_in.recv(context))
-
-        # Flag to indicate we should start a new receive (for backpressure)
-        can_receive: bool = True
-
-        try:
-
-            async def send_one_from_buffer(idx: int) -> None:
-                """
-                Send one buffered message for output idx.
-
-                The message remains in host memory (spillable) through the channel.
-                The downstream consumer will call make_available() when needed.
-                """
-                if buffer_ids[idx]:
-                    mid = buffer_ids[idx].pop(0)
-                    msg = output_buffers[idx].extract(mid=mid)
-                    await chs_out[idx].send(context, msg)
-
-            async def drain_output(idx: int) -> None:
-                """Drain output channel idx."""
-                await chs_out[idx].drain(context)
-
-            # Main loop: coordinate receiving, sending, and draining
-            while (
-                recv_task is not None or active_tasks or any(buffer_ids) or needs_drain
-            ):
-                # Collect all currently active tasks
-                tasks_to_wait = list(active_tasks.values())
-                # Only include recv_task if we're allowed to receive
-                if recv_task is not None and can_receive:
-                    tasks_to_wait.append(recv_task)
-
-                # Start new tasks for outputs with work to do
-                for idx in range(len(chs_out)):
-                    if idx not in active_tasks:
-                        if buffer_ids[idx]:
-                            # Send next buffered message
-                            task = asyncio.create_task(send_one_from_buffer(idx))
-                            active_tasks[idx] = task
-                            tasks_to_wait.append(task)
-                        elif idx in needs_drain:
-                            # Buffer empty and no more input - drain this output
-                            task = asyncio.create_task(drain_output(idx))
-                            active_tasks[idx] = task
-                            tasks_to_wait.append(task)
-                            needs_drain.discard(idx)
-
-                # If nothing to wait for, we're done
-                if not tasks_to_wait:
-                    break
-
-                # Wait for ANY task to complete
-                done, _ = await asyncio.wait(
-                    tasks_to_wait, return_when=asyncio.FIRST_COMPLETED
-                )
-
-                # Process completed tasks
-                for task in done:
-                    if task is recv_task:
-                        # Receive completed
-                        msg = task.result()
-                        if msg is None:
-                            # End of input - mark all outputs as needing drain
-                            recv_task = None
-                            needs_drain.update(range(len(chs_out)))
-                        else:
-                            # Determine where to copy based on:
-                            # 1. Current message location (avoid unnecessary transfers)
-                            # 2. Available memory (avoid OOM)
-                            content_desc = msg.get_content_description()
-                            device_size = content_desc.content_sizes.get(
-                                MemoryType.DEVICE, 0
-                            )
-
-                            # Check if we have enough device memory for all copies
-                            # We need (num_outputs - 1) copies since last one reuses original
-                            num_copies = num_outputs - 1
-                            total_copy_cost = msg.copy_cost() * num_copies
-
-                            # Decide target memory. Keep the copies on device when
-                            # the message is already there and device has room,
-                            # otherwise buffer on host. Downstream consumers call
-                            # make_available() when they need device memory.
-                            # `reserve_or_fail` takes the first type that fits
-                            # without spilling, so it neither blocks the event loop
-                            # nor races a separate memory_available() check.
-                            mem_types = (
-                                [
-                                    MemoryType.DEVICE,
-                                    MemoryType.PINNED_HOST,
-                                    MemoryType.HOST,
-                                ]
-                                if device_size > 0
-                                else [MemoryType.PINNED_HOST, MemoryType.HOST]
-                            )
-                            try:
-                                memory_reservation = context.br().reserve_or_fail(
-                                    total_copy_cost, mem_types
-                                )
-                            except RuntimeError:
-                                # Nothing fit. Overbook on host rather than fail the query.
-                                memory_reservation, _ = context.br().reserve(
-                                    MemoryType.HOST,
-                                    total_copy_cost,
-                                    allow_overbooking=True,
-                                )
-
-                            # Copy message for each output buffer
-                            # Copies are spillable and allow downstream consumers
-                            # to control device memory allocation
-                            for idx, sm in enumerate(output_buffers):
-                                if idx < num_outputs - 1:
-                                    # Copy to target memory and insert into spillable buffer
-                                    mid = sm.insert(msg.copy(memory_reservation))
-                                else:
-                                    # Optimization: reuse the original message for last output
-                                    # (no copy needed)
-                                    mid = sm.insert(msg)
-                                buffer_ids[idx].append(mid)
-
-                            # Don't receive next chunk until at least one send completes
-                            can_receive = False
-                            recv_task = asyncio.create_task(ch_in.recv(context))
-                    else:
-                        # Must be a send or drain task - find which output and remove it
-                        for idx, at in list(active_tasks.items()):
-                            if at is task:
-                                del active_tasks[idx]
-                                # A send completed - allow receiving again
-                                can_receive = True
-                                break
-
-        finally:
-            # Cancel any outstanding tasks
-            if recv_task is not None and not recv_task.done():
-                recv_task.cancel()
-            for task in active_tasks.values():
-                if not task.done():
-                    task.cancel()
-            # Clean up spill function registration
-            context.br().spill_manager.remove_spill_function(spill_func_id)
 
 
 @generate_ir_sub_network.register(IR)
@@ -699,24 +450,22 @@ def generate_ir_sub_network_wrapper(
     if (fanout_info := rec.state["fanout_nodes"].get(ir)) is not None:
         count = fanout_info.num_consumers
         manager = ChannelManager(rec.state["context"], count=count)
-        ir_context = ir_context_for_node(rec, ir)
-        fanout_node: Any
-        if fanout_info.unbounded:
-            fanout_node = fanout_node_unbounded(
+        policy = (
+            FanoutPolicy.UNBOUNDED if fanout_info.unbounded else FanoutPolicy.BOUNDED
+        )
+        ch_in = channels[ir].reserve_output_slot()
+        chs_out = [manager.reserve_input_slot() for _ in range(count)]
+        # Data messages: rapidsmpf C++ fanout. Metadata: Python actor.
+        nodes[ir].append(
+            fanout_metadata_node(
                 rec.state["context"],
-                channels[ir].reserve_output_slot(),
-                *[manager.reserve_input_slot() for _ in range(count)],
+                ch_in,
+                *chs_out,
                 trace_ir=ir,
-                ir_context=ir_context,
+                ir_context=ir_context_for_node(rec, ir),
             )
-        else:  # "bounded"
-            fanout_node = fanout_node_bounded(
-                rec.state["context"],
-                channels[ir].reserve_output_slot(),
-                *[manager.reserve_input_slot() for _ in range(count)],
-                trace_ir=ir,
-                ir_context=ir_context,
-            )
+        )
+        fanout_node = fanout(rec.state["context"], ch_in, chs_out, policy)
         nodes[ir].append(fanout_node)
         channels[ir] = manager
     return nodes, channels

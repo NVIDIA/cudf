@@ -402,6 +402,56 @@ TEST_F(BatchGatherSlicedTest, AllNullSlicedSourceParity)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view(), result->view().column(0));
 }
 
+// Regression for the ALL_NULL null-count semantics across the three carve consumer classes:
+// a fixed-width child inside a STRUCT (consumes plan.null_count through the struct path), a
+// string-keyed DICTIONARY (eager parent mask path), and a plain STRINGS column (staged
+// null_count path). A map SHORTER than the source discriminates src.size() from num_rows: on
+// the pre-fix tree every column here would report 1000 (src.size()) instead of 500, so the
+// per-column null_count assertion below — not table equality alone — is what fails.
+std::unique_ptr<cudf::column> make_independent_struct(
+  std::vector<std::unique_ptr<cudf::column>> children, std::vector<bool> const& parent_valid);
+std::vector<std::string> periodic_strings(cudf::size_type num_rows, int const stride);
+
+TEST_F(BatchGatherSlicedTest, AllNullMixedColumnsShortMapParity)
+{
+  constexpr cudf::size_type source_size{1000};
+  constexpr cudf::size_type num_rows{500};
+
+  auto all_null_child = make_fixed_column<int32_t>(
+    source_size, [](cudf::size_type) { return 0; }, [](cudf::size_type) { return false; });
+  std::vector<std::unique_ptr<cudf::column>> struct_children;
+  struct_children.push_back(std::move(all_null_child));
+  auto col_struct =
+    make_independent_struct(std::move(struct_children), std::vector<bool>(source_size, false));
+
+  std::vector<std::string> dict_values(source_size);
+  std::generate(dict_values.begin(), dict_values.end(), [n = 0]() mutable {
+    return std::string(1, static_cast<char>('a' + (n++) % 4));
+  });
+  auto dict_invalid =
+    cudf::detail::make_counting_transform_iterator(0, [](cudf::size_type) { return false; });
+  cudf::test::dictionary_column_wrapper<std::string> col_dict(
+    dict_values.begin(), dict_values.end(), dict_invalid);
+
+  auto str_invalid =
+    cudf::detail::make_counting_transform_iterator(0, [](cudf::size_type) { return false; });
+  auto const strings = periodic_strings(source_size, 7);
+  cudf::test::strings_column_wrapper col_str(strings.begin(), strings.end(), str_invalid);
+
+  cudf::table_view source_table({col_struct->view(), col_dict, col_str});
+  auto gather_map = make_fixed_column<cudf::size_type>(
+    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+
+  auto result    = run_batch_gather(source_table, gather_map->view());
+  auto reference = run_reference(source_table, gather_map->view());
+
+  ASSERT_EQ(result->num_columns(), 3);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+  for (cudf::size_type c = 0; c < 3; ++c) {
+    EXPECT_EQ(result->view().column(c).null_count(), num_rows) << "column " << c;
+  }
+}
+
 // ============================================================================
 // §5.3 Degenerate shapes.
 // ============================================================================

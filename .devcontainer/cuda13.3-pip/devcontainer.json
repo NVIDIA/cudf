@@ -21,6 +21,9 @@
   "hostRequirements": {
     "gpu": "optional"
   },
+  "containerEnv": {
+    "PIP_EXTRA_INDEX_URL": "https://pypi.anaconda.org/rapidsai-wheels-nightly/simple"
+  },
   "features": {
     "ghcr.io/rapidsai/devcontainers/features/rapids-build-utils:26.12": {}
   },

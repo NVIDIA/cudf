@@ -21,7 +21,10 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cooperative_groups.h>
-#include <cub/cub.cuh>
+#include <cub/block/block_reduce.cuh>
+#include <cub/block/block_scan.cuh>
+#include <cub/warp/warp_reduce.cuh>
+#include <cuda/cmath>
 #include <cuda/iterator>
 #include <cuda/std/chrono>
 #include <cuda/std/functional>
@@ -31,10 +34,6 @@
 #include <cuda/std/utility>
 #include <cuda/stream>
 #include <thrust/binary_search.h>
-#include <thrust/gather.h>
-#include <thrust/merge.h>
-#include <thrust/scan.h>
-#include <thrust/scatter.h>
 
 #include <bitset>
 
@@ -55,7 +54,7 @@ __device__ constexpr int rolling_idx(int pos) { return rolling_index<rle_buffer_
 
 // max V1 header size
 // also valid for dict page header (V1 or V2)
-constexpr int MAX_V1_HDR_SIZE = util::round_up_unsafe(27, 8);
+constexpr int MAX_V1_HDR_SIZE = cuda::round_up(27, 8);
 
 // do not truncate statistics
 constexpr int32_t NO_TRUNC_STATS = 0;
@@ -516,7 +515,7 @@ __device__ size_t delta_data_len(Type physical_type,
   }();
 
   auto const vals_per_block = delta::block_size;
-  size_t const num_blocks   = util::div_rounding_up_unsafe(num_values, vals_per_block);
+  size_t const num_blocks   = cuda::ceil_div(num_values, vals_per_block);
   // need max dtype_len + 1 bytes for min_delta (because we only encode 7 bits per byte)
   // one byte per mini block for the bitwidth
   auto const mini_block_header_size = dtype_len + 1 + delta::num_mini_blocks;
@@ -524,7 +523,7 @@ __device__ size_t delta_data_len(Type physical_type,
   auto const max_bits = dtype_len * 8 + 1;
   // each data block will then be max_bits * values per block. vals_per_block is guaranteed to be
   // divisible by 128 (via static assert on delta::block_size), but do safe division anyway.
-  auto const bytes_per_block = cudf::util::div_rounding_up_unsafe(max_bits * vals_per_block, 8);
+  auto const bytes_per_block = cuda::ceil_div(max_bits * vals_per_block, 8);
   auto const block_size      = mini_block_header_size + bytes_per_block;
   // the number of DELTA_BINARY_PACKED blocks to encode
   auto const num_dbp_blocks = encoding == encode_kernel_mask::DELTA_BYTE_ARRAY ? 2 : 1;
@@ -646,8 +645,7 @@ CUDF_KERNEL void __launch_bounds__(128)
         page_g.num_leaf_values = ck_g.num_dict_entries;
         page_g.num_values      = ck_g.num_dict_entries;  // TODO: shouldn't matter for dict page
         page_g.dict_rle_bits   = ck_g.dict_rle_bits;     // TODO: shouldn't matter for dict page
-        page_offset +=
-          util::round_up_unsafe(page_g.max_hdr_size + page_g.max_data_size, page_align);
+        page_offset += cuda::round_up(page_g.max_hdr_size + page_g.max_data_size, page_align);
         if (not comp_page_sizes.empty()) {
           comp_page_offset += page_g.max_hdr_size + comp_page_sizes[ck_g.first_page];
           page_g.comp_data_size = comp_page_sizes[ck_g.first_page + num_pages];
@@ -697,10 +695,10 @@ CUDF_KERNEL void __launch_bounds__(128)
         frag_g.num_rows           = 0;
       }
       __syncwarp();
-      auto const fragment_data_size =
-        (ck_g.use_dictionary) ? static_cast<size_t>(frag_g.num_leaf_values) *
-                                  util::div_rounding_up_unsafe<size_t>(ck_g.dict_rle_bits, 8)
-                              : frag_g.fragment_data_size;
+      auto const fragment_data_size = (ck_g.use_dictionary)
+                                        ? static_cast<size_t>(frag_g.num_leaf_values) *
+                                            cuda::ceil_div<size_t, size_t>(ck_g.dict_rle_bits, 8)
+                                        : frag_g.fragment_data_size;
 
       // TODO (dm): this convoluted logic to limit page size needs refactoring
       size_t this_max_page_size = (values_in_page * 2 >= ck_g.num_values)   ? 256 * 1024
@@ -729,6 +727,9 @@ CUDF_KERNEL void __launch_bounds__(128)
         if (ck_g.use_dictionary) {
           // Additional byte to store entry bit width
           page_size = 1 + max_RLE_page_size(ck_g.dict_rle_bits, values_in_page);
+        } else if (write_v2_headers && col_g.physical_type == Type::BOOLEAN) {
+          // V2 BOOLEAN data is RLE encoded, so one byte per value is not enough for tiny pages
+          page_size = max(page_size, max_RLE_page_size(1, leaf_values_in_page));
         }
         if (!t) {
           page_g.num_fragments  = fragments_in_chunk - page_start;
@@ -755,7 +756,7 @@ CUDF_KERNEL void __launch_bounds__(128)
             }
             page_g.max_hdr_size += stats_hdr_len;
           }
-          page_g.max_hdr_size = util::round_up_unsafe(page_g.max_hdr_size, page_align);
+          page_g.max_hdr_size = cuda::round_up(page_g.max_hdr_size, page_align);
           page_g.page_data    = ck_g.uncompressed_bfr + page_offset;
           if (not comp_page_sizes.empty()) {
             page_g.compressed_data = ck_g.compressed_bfr + comp_page_offset;
@@ -770,9 +771,9 @@ CUDF_KERNEL void __launch_bounds__(128)
           auto const rep_level_size = max_RLE_page_size(col_g.num_rep_level_bits(), values_in_page);
           // V2 headers keep the level data outside the page payload, so it is padded out to
           // `page_align`. Store in a local size_t until page size has been validated below.
-          size_t const lvl_size = write_v2_headers ? util::round_up_unsafe<size_t>(
-                                                       def_level_size + rep_level_size, page_align)
-                                                   : def_level_size + rep_level_size;
+          size_t const lvl_size =
+            write_v2_headers ? cuda::round_up<size_t>(def_level_size + rep_level_size, page_align)
+                             : def_level_size + rep_level_size;
           // get a different bound if using delta encoding
           if (is_use_delta) {
             auto const delta_len = delta_data_len(
@@ -797,8 +798,7 @@ CUDF_KERNEL void __launch_bounds__(128)
           page_g.max_data_size    = static_cast<uint32_t>(max_data_size);
           pagestats_g.start_chunk = ck_g.first_fragment + page_start;
           pagestats_g.num_chunks  = page_g.num_fragments;
-          page_offset +=
-            util::round_up_unsafe(page_g.max_hdr_size + page_g.max_data_size, page_align);
+          page_offset += cuda::round_up(page_g.max_hdr_size + page_g.max_data_size, page_align);
           // if encoding delta_byte_array, need to allocate some space for scratch data.
           // if there are leaf nulls, we need space for a mapping array:
           //   sizeof(size_type) * num_leaf_values
@@ -806,7 +806,7 @@ CUDF_KERNEL void __launch_bounds__(128)
           if (page_g.kernel_mask == encode_kernel_mask::DELTA_BYTE_ARRAY) {
             // scratch needs to be aligned to a size_type boundary
             auto const pg_end = reinterpret_cast<uintptr_t>(ck_g.uncompressed_bfr + page_offset);
-            auto scratch      = util::round_up_unsafe(pg_end, sizeof(size_type));
+            auto scratch      = cuda::round_up(pg_end, sizeof(size_type));
             if (page_g.num_valid != page_g.num_leaf_values) {
               scratch += sizeof(size_type) * page_g.num_leaf_values;
             }
@@ -871,7 +871,7 @@ CUDF_KERNEL void __launch_bounds__(128)
     __syncwarp();
     if (!t) {
       if (ck_g.ck_stat_size == 0 && ck_g.stats) {
-        uint32_t ck_stat_size = util::round_up_unsafe(48 + 2 * ck_max_stats_len, page_align);
+        uint32_t ck_stat_size = cuda::round_up(48 + 2 * ck_max_stats_len, page_align);
         page_offset += ck_stat_size;
         comp_page_offset += ck_stat_size;
         ck_g.ck_stat_size = ck_stat_size;
@@ -2273,7 +2273,7 @@ CUDF_KERNEL void __launch_bounds__(block_size, 8)
     // set pointer to beginning of scratch space (aligned to size_type boundary)
     auto scratch_start =
       reinterpret_cast<uintptr_t>(s->page.page_data + s->page.max_hdr_size + s->page.max_data_size);
-    scratch_start = util::round_up_unsafe(scratch_start, sizeof(size_type));
+    scratch_start = cuda::round_up(scratch_start, sizeof(size_type));
     scratch_data  = reinterpret_cast<uint8_t*>(scratch_start);
   }
   __syncthreads();
@@ -2405,7 +2405,7 @@ CUDF_KERNEL void __launch_bounds__(block_size, 8)
   non_zero = block_reduce(temp_storage.reduce_storage).Sum(non_zero);
   __syncthreads();
   suffix_bytes = block_reduce(temp_storage.reduce_storage).Sum(suffix_bytes);
-  if (t == 0) { avg_suffix_len = util::div_rounding_up_unsafe(suffix_bytes, non_zero); }
+  if (t == 0) { avg_suffix_len = non_zero == 0 ? 0 : cuda::ceil_div(suffix_bytes, non_zero); }
   __syncthreads();
 
   // Now copy the byte array data. For shorter suffixes (<= 64 bytes), it is faster to use

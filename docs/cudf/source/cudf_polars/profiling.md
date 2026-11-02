@@ -143,111 +143,36 @@ The result is `(result_df, timings_df)`, see the Polars docs link above for the 
 
 ## Tracing
 
-cudf-polars can optionally trace execution of each node in the query plan. To enable tracing, set
-the environment variable ``CUDF_POLARS_LOG_TRACES`` to a true value ("1", "true", "y", "yes")
-before starting your process.
-
-cudf-polars logs traces at three scopes (levels):
-
-1. `plan`: These generally happen once per query. This will include things like the (serialized)
-   query plan.
-2. `actor`: (streaming engines only). There will be roughly one `actor` trace per node in the
-   logical plan.
-3. `evaluate_ir_node`: Logs the evaluation of a physical node in the query plan. Note that one
-   logical node might expand to more than one physical nodes.
-
-Each trace includes a `scope` key indicating which level that trace belongs to. `actor`-scoped
-nodes will be nested under a `plan`-scoped node. When using a streaming engine,
-`evaluate_ir_node`-scoped nodes will be nested under an `actor`-scoped node.
-
-### Schemas
-
-The different scopes have different schemas. Fields in **bold** are required / always present.
-
-#### scope=plan
-
-| Field Name | Type  | Description |
-| ---------- | ----- | ----------- |
-| **scope**  | Literal["plan"] | The string literal `"plan"`. Useful for distinguishing from other types of traces. |
-| **cudf_polars_query_id** | UUID4 | A unique identifier for the polars query being executed. All traces logged as part of this query use this ID. |
-| **plan**   | `PlanObject` | A serialized representation of the query plan. |
-| **event**  | String | A message like "Query Plan" |
-
-#### scope=actor
-
-`actor`-scoped traces only appear when running on a streaming engine.
-
-| Field Name | Type  | Description |
-| ---------- | ----- | ----------- |
-| **scope**      | Literal["actor"] | The string literal `"actor"`. Useful for distinguishing from other types of traces. |
-| **cudf_polars_query_id** | UUID4 | A unique identifier for the polars query being executed. All traces logged as part of this query use this ID. |
-| **start**      | int   | A nanosecond-resolution counter indicating when the actor started. Note: actors generally start early in the query and suspend waiting for data. |
-| **stop**      | int   | A nanosecond-resolution counter indicating when the actor completed. |
-| **event**      | String | A message like "Streaming Actor". |
-| **actor_ir_type** | String | The type of the actor, like `"Scan"`. |
-| **actor_ir_id**   | int    | A unique identifier for the actor. All traces logged under this actor will include this value. |
-| chunk_count | int | A counter for how many table chunks have been processed by this actor at the time of logging. |
-| duplicated | bool | Whether the output rows are duplicated across ranks (e.g. after an allgather). |
-| row_count       | int  | Total row count produced by this node during execution. |
-
-#### scope=evaluate_ir_node
-
-| Field Name | Type  | Description |
-| ---------- | ----- | ----------- |
-| **scope** | `Literal["evaluate_ir_node"]` | The string literal `"evaluate_ir_node"`. Useful for distinguishing from other types of traces. |
-| **cudf_polars_query_id** | UUID4 | A unique identifier for the polars query being executed. All traces logged as part of this query use this ID. |
-| **type**       | string | The name of the IR node |
-| **start**      | int    | A nanosecond-precision counter indicating when this node started executing |
-| **stop**       | int    | A nanosecond-precision counter indicating when this node finished executing |
-| **overhead_duration**   | int    | The overhead, in nanoseconds, added by tracing |
-| `count_frames_{phase}` | int | The number of dataframes for the input / output `phase`. This metric can be disabled by setting `CUDF_POLARS_LOG_TRACES_DATAFRAMES=0`. |
-| `frames_{phase}` | `list[dict]` | A list with dictionaries with "shape" and "size" fields, one per input dataframe, for the input / output `phase`. This metric can be disabled by setting `CUDF_POLARS_LOG_TRACES_DATAFRAMES=0`. |
-| `total_bytes_{phase}` | int | The sum of the size (in bytes) of the dataframes for the input / output `phase`. This metric can be disabled by setting `CUDF_POLARS_LOG_TRACES_DATAFRAMES=0`. |
-| `rmm_current_bytes_{phase}` | int | The current number of bytes allocated by RMM Memory Resource used by cudf-polars for the input / output `phase`. This metric can be enabled by setting `CUDF_POLARS_LOG_TRACES_MEMORY=1`. |
-| `rmm_current_count_{phase}` | int | The current number of allocations made by RMM Memory Resource used by cudf-polars for the input / output `phase`. This metric can be enabled by setting `CUDF_POLARS_LOG_TRACES_MEMORY=1`. |
-| `rmm_peak_bytes_{phase}` | int | The peak number of bytes allocated by RMM Memory Resource used by cudf-polars for the input / output `phase`. This metric can be enabled by setting `CUDF_POLARS_LOG_TRACES_MEMORY=1`. |
-| `rmm_peak_count_{phase}` | int | The peak number of allocations made by RMM Memory Resource used by cudf-polars for the input / output `phase`. This metric can be enabled by setting `CUDF_POLARS_LOG_TRACES_MEMORY=1`. |
-| `rmm_total_bytes_{phase}` | int | The total number of bytes allocated by RMM Memory Resource used by cudf-polars for the input / output `phase`. This metric can be enabled by setting `CUDF_POLARS_LOG_TRACES_MEMORY=1`. |
-| `rmm_total_count_{phase}` | int | The total number of allocations made by RMM Memory Resource used by cudf-polars for the input / output `phase`. This metric can be enabled by setting `CUDF_POLARS_LOG_TRACES_MEMORY=1`. |
-| `nvml_current_bytes_{phase}` | int | The device memory usage of this process, as reported by NVML, for the input / output `phase`. This metric can be enabled by setting `CUDF_POLARS_LOG_TRACES_MEMORY=1`. |
-| actor_ir_id   | int    | A unique identifier for the parent actor (streaming engines only). |
-
-Setting `CUDF_POLARS_LOG_TRACES=1` enables basic metrics including the type and
-duration of tasks, and the shape of input and output dataframes. Memory related
-metrics are disabled by default. You can enable or disable some metrics through
-additional environment variables. For example, to enable the memory-related
-metrics, set:
-
-```bash
-CUDF_POLARS_LOG_TRACES=1 CUDF_POLARS_LOG_TRACES_MEMORY=1
-```
-
-And to disable the memory and dataframe metrics, which essentially leaves just the duration
-metrics, set
-```bash
-CUDF_POLARS_LOG_TRACES=1 CUDF_POLARS_LOG_TRACES_DATAFRAMES=0
-```
-
-Note that tracing still needs to be enabled with `CUDF_POLARS_LOG_TRACES=1`.
-
-The implementation uses [structlog] to build log records. You can configure the output using
-structlog's [configuration][structlog-configure] and enrich the records with
-[context variables][structlog-context].
+The streaming runtime uses [Quent] to provide observability into how queries are executed.
+You can enable profiling by providing a `QuentConfig` when creating an engine:
 
 ```python
->>> df = pl.DataFrame({"a": ["a", "a", "b"], "b": [1, 2, 3]}).lazy()
->>> df.group_by("a").agg(pl.col("b").min().alias("min"), pl.col("b").max().alias("max")).collect(engine=pl.GPUEngine(executor="in-memory"))
-2025-09-10 07:44:01 [info     ] Execute IR      count_frames_input=0 count_frames_output=1 ... type=DataFrameScan
-2025-09-10 07:44:01 [info     ] Execute IR      count_frames_input=1 count_frames_output=1 ... type=GroupBy
-shape: (2, 3)
-┌─────┬─────┬─────┐
-│ a   ┆ min ┆ max │
-│ --- ┆ --- ┆ --- │
-│ str ┆ i64 ┆ i64 │
-╞═════╪═════╪═════╡
-│ b   ┆ 3   ┆ 3   │
-│ a   ┆ 1   ┆ 2   │
-└─────┴─────┴─────┘
+import polars as pl
+
+from cudf_polars.quent import QuentConfig
+from cudf_polars.engine.spmd import SPMDEngine
+
+
+q = pl.scan_parquet(...)  # build your polars query
+
+quent_config = QuentConfig()
+with SPMDEngine(
+    executor_options={
+        "quent_context": quent_config
+    }
+) as engine:
+    result = q.collect(engine=engine)
+```
+
+The cudf-polars runtime will write telemetry data to `quent_config.output_root`
+(`.quent-events` in the current directory, by default). The telemetry can be inspected visually using the
+Quent UI, which can be started using `quent-open`:
+
+```bash
+$ quent-open .quent-events
+discovered 2 context(s) -> 1 viewer(s)
+building: cudf-polars-quent-analyzer (quent@ff07098d4907 analyzer@87ddd5c004a1) — 2 context(s)
+ready: cudf-polars-quent-analyzer (quent@ff07098d4907 analyzer@87ddd5c004a1) — 2 context(s)  http://127.0.0.1:36937/
 ```
 
 [nsight]: https://developer.nvidia.com/nsight-systems
@@ -255,6 +180,4 @@ shape: (2, 3)
 [kvikio-stats]: inv:kvikio:std:doc:#statistics
 [kvikio-busy]: <inv:kvikio:std:label:#statistics:busy time and bandwidth>
 [rapidsmpf-stats]: inv:rapidsmpf:std:doc:#statistics
-[structlog]: https://www.structlog.org/en/stable/
-[structlog-configure]: https://www.structlog.org/en/stable/configuration.html
-[structlog-context]: https://www.structlog.org/en/stable/contextvars.html
+[Quent]: https://github.com/rapidsai/quent

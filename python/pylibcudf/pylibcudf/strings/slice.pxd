@@ -1,19 +1,18 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from pylibcudf.column cimport Column
-from pylibcudf.scalar cimport Scalar
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
 ctypedef fused ColumnOrScalar:
     Column
-    Scalar
+    object
 
 cpdef Column slice_strings(
     Column input,
     ColumnOrScalar start=*,
     ColumnOrScalar stop=*,
-    Scalar step=*,
+    object step=*,
     object stream = *,
     DeviceMemoryResource mr=*
 )

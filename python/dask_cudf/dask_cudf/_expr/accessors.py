@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 
@@ -98,7 +98,7 @@ class ListMethods:
         dtype: int32
         """
         return self.d_series.map_partitions(
-            lambda s: s.list.len(), meta=self.d_series._meta
+            lambda s: s.list.len(), meta=self.d_series._meta.list.len()
         )
 
     def contains(self, search_key):
@@ -124,7 +124,8 @@ class ListMethods:
         dtype: bool
         """
         return self.d_series.map_partitions(
-            lambda s: s.list.contains(search_key), meta=self.d_series._meta
+            lambda s: s.list.contains(search_key),
+            meta=self.d_series._meta.list.contains(search_key),
         )
 
     def get(self, index):
@@ -152,7 +153,10 @@ class ListMethods:
         dtype: int64
         """
         return self.d_series.map_partitions(
-            lambda s: s.list.get(index), meta=self.d_series._meta
+            lambda s: s.list.get(index),
+            # The result dtype does not depend on the index, which may also
+            # be a list of per-row positions that the empty meta cannot take.
+            meta=self.d_series._meta.list.get(0),
         )
 
     @property
@@ -179,7 +183,7 @@ class ListMethods:
         dtype: int64
         """
         return self.d_series.map_partitions(
-            lambda s: s.list.leaves, meta=self.d_series._meta
+            lambda s: s.list.leaves, meta=self.d_series._meta.list.leaves
         )
 
     def take(self, lists_indices):

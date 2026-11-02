@@ -12,7 +12,6 @@
 #include <rmm/mr/polymorphic_allocator.hpp>
 
 #include <cuco/roaring_bitmap.cuh>
-#include <thrust/transform.h>
 
 namespace cudf {
 

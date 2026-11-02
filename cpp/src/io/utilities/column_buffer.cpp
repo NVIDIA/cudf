@@ -13,11 +13,13 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/structs/utilities.hpp>
 #include <cudf/detail/unary.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 
 #include <functional>
@@ -32,10 +34,10 @@ void gather_column_buffer::allocate_strings_data(bool memset_data, cuda::stream_
   // Due to the fact that make_strings_column copies the input data to
   // produce its outputs, _strings is actually a temporary. As a result, we
   // do not pass the provided mr to the call to
-  // make_zeroed_device_uvector_async here and instead let it use the
+  // make_zeroed_device_buffer_async here and instead let it use the
   // default rmm memory resource.
-  _strings = std::make_unique<rmm::device_uvector<string_index_pair>>(
-    cudf::detail::make_zeroed_device_uvector_async<string_index_pair>(
+  _strings = std::make_unique<cuda::device_buffer<string_index_pair>>(
+    cudf::detail::make_zeroed_device_buffer_async<string_index_pair>(
       size, stream, cudf::get_current_device_resource_ref()));
 }
 
@@ -215,8 +217,12 @@ std::unique_ptr<column> make_column(column_buffer_base<string_policy>& buffer,
                        "Cannot convert strings column to lists column due to size_type limit",
                        std::overflow_error);
 
-          auto uint8_col = std::make_unique<column>(
-            data_type{type_id::UINT8}, char_size, std::move(*data), rmm::device_buffer{}, 0);
+          auto uint8_col =
+            std::make_unique<column>(data_type{type_id::UINT8},
+                                     char_size,
+                                     std::move(*data),
+                                     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                     0);
 
           if (schema_info != nullptr) {
             schema_info->children.emplace_back("offsets");
@@ -248,8 +254,12 @@ std::unique_ptr<column> make_column(column_buffer_base<string_policy>& buffer,
 
       case type_id::LIST: {
         // make offsets column
-        auto offsets = std::make_unique<column>(
-          data_type{type_id::INT32}, buffer.size, std::move(buffer._data), rmm::device_buffer{}, 0);
+        auto offsets =
+          std::make_unique<column>(data_type{type_id::INT32},
+                                   buffer.size,
+                                   std::move(buffer._data),
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                   0);
 
         column_name_info* child_info = nullptr;
         if (schema_info != nullptr) {
@@ -342,7 +352,11 @@ std::unique_ptr<column> empty_like(column_buffer_base<string_policy>& buffer,
           schema_info->is_binary = true;
         }
         return make_lists_column(
-          0, std::move(offsets), std::move(child), 0, rmm::device_buffer{0, stream, mr});
+          0,
+          std::move(offsets),
+          std::move(child),
+          0,
+          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr));
       }
       return cudf::make_empty_column(buffer.type);
     }
@@ -365,7 +379,11 @@ std::unique_ptr<column> empty_like(column_buffer_base<string_policy>& buffer,
 
       // make the final list column
       return make_lists_column(
-        0, std::move(offsets), std::move(child), 0, rmm::device_buffer{0, stream, mr});
+        0,
+        std::move(offsets),
+        std::move(child),
+        0,
+        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr));
     } break;
 
     case type_id::STRUCT: {
@@ -385,7 +403,12 @@ std::unique_ptr<column> empty_like(column_buffer_base<string_policy>& buffer,
                      });
 
       return make_structs_column(
-        0, std::move(output_children), 0, rmm::device_buffer{0, stream, mr}, stream, mr);
+        0,
+        std::move(output_children),
+        0,
+        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
+        stream,
+        mr);
     } break;
 
     default: return cudf::make_empty_column(buffer.type);

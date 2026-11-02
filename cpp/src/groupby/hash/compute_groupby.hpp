@@ -8,9 +8,8 @@
 #include <cudf/groupby.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
-
-#include <rmm/resource_ref.hpp>
 
 #include <cuda/stream>
 
@@ -28,26 +27,19 @@ namespace cudf::groupby::detail::hash {
  * of kernels. Then using these results, compound aggregations that require multiple passes will be
  * computed on top of them. All results are stored into the in/out parameter `cache`.
  *
- * @tparam Equal Device row comparator type
- * @tparam Hash Device row hasher type
- *
  * @param keys Table whose rows act as the groupby keys
  * @param requests The set of columns to aggregate and the aggregations to perform
- * @param skip_rows_with_nulls Flag indicating whether to ignore nulls or not
- * @param d_row_equal Device row comparator
- * @param d_row_hash Device row hasher
+ * @param include_null_keys Whether rows containing null keys participate in grouping
  * @param cache Dense aggregation results
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned table
+ * @param mr Device memory resources used for the returned keys, aggregation results, and temporary
+ * storage
  * @return Table of unique keys
  */
-template <typename Equal, typename Hash>
 std::unique_ptr<cudf::table> compute_groupby(table_view const& keys,
                                              std::span<aggregation_request const> requests,
-                                             bool skip_rows_with_nulls,
-                                             Equal const& d_row_equal,
-                                             Hash const& d_row_hash,
+                                             null_policy include_null_keys,
                                              cudf::detail::result_cache* cache,
                                              cuda::stream_ref stream,
-                                             rmm::device_async_resource_ref mr);
+                                             cudf::memory_resources mr);
 }  // namespace cudf::groupby::detail::hash

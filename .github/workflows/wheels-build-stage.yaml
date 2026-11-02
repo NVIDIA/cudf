@@ -83,14 +83,8 @@ jobs:
         continue-on-error: true
         with:
           enable-apt: true
-      - name: Telemetry setup
-        uses: rapidsai/shared-actions/telemetry-dispatch-setup@main
-        continue-on-error: true
-        if: ${{ vars.TELEMETRY_ENABLED == 'true' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        with:
-          extra_attributes: rapids.PACKAGER=wheel,rapids.CUDA_VER=${{ matrix.CUDA_VER }},rapids.PY_VER=${{ matrix.PY_VER }},rapids.ARCH=${{ matrix.ARCH }},rapids.LINUX_VER=${{ matrix.LINUX_VER }}
+          enable-pip: true
+          enable-pypi-anaconda: true
       - name: Setup sccache-dist
         uses: rapidsai/shared-actions/setup-sccache-dist@main
         env:
@@ -132,50 +126,51 @@ jobs:
         if: inputs.pure-wheel == false
         with:
           if-no-files-found: error
+          compression-level: 0
           name: ${{ steps.build-wheels.outputs.libcudf_artifact_name }}
           path: ${{ steps.build-wheels.outputs.libcudf_output_dir }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: inputs.pure-wheel == false
         with:
           if-no-files-found: error
+          compression-level: 0
           name: ${{ steps.build-wheels.outputs.libcudf_streaming_artifact_name }}
           path: ${{ steps.build-wheels.outputs.libcudf_streaming_output_dir }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: inputs.pure-wheel == false
         with:
           if-no-files-found: error
+          compression-level: 0
           name: ${{ steps.build-wheels.outputs.pylibcudf_artifact_name }}
           path: ${{ steps.build-wheels.outputs.pylibcudf_output_dir }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: inputs.pure-wheel == false
         with:
           if-no-files-found: error
+          compression-level: 0
           name: ${{ steps.build-wheels.outputs.cudf_artifact_name }}
           path: ${{ steps.build-wheels.outputs.cudf_output_dir }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: inputs.pure-wheel == false
         with:
           if-no-files-found: error
+          compression-level: 0
           name: ${{ steps.build-wheels.outputs.cudf_streaming_artifact_name }}
           path: ${{ steps.build-wheels.outputs.cudf_streaming_output_dir }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: inputs.pure-wheel
         with:
           if-no-files-found: error
+          compression-level: 0
           name: ${{ steps.build-wheels.outputs.dask_cudf_artifact_name }}
           path: ${{ steps.build-wheels.outputs.dask_cudf_output_dir }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: inputs.pure-wheel
         with:
           if-no-files-found: error
+          compression-level: 0
           name: ${{ steps.build-wheels.outputs.cudf_polars_artifact_name }}
           path: ${{ steps.build-wheels.outputs.cudf_polars_output_dir }}
       - name: Upload additional artifacts
         if: ${{ !cancelled() }}
         run: rapids-upload-artifacts-dir "cuda${RAPIDS_CUDA_VERSION%%.*}_$(arch)_py${RAPIDS_PY_VERSION//.}"
-      - name: Telemetry upload attributes
-        if: ${{ vars.TELEMETRY_ENABLED == 'true' }}
-        uses: rapidsai/shared-actions/telemetry-dispatch-stash-job-artifacts@main
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}

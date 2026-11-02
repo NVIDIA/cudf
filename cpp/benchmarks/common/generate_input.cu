@@ -32,9 +32,12 @@
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/buffer>
+#include <cuda/cmath>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/functional>
+#include <cuda/std/random>
 #include <cuda/std/tuple>
 #include <thrust/binary_search.h>
 #include <thrust/copy.h>
@@ -42,8 +45,9 @@
 #include <thrust/fill.h>
 #include <thrust/for_each.h>
 #include <thrust/gather.h>
-#include <thrust/random/uniform_int_distribution.h>
-#include <thrust/random/uniform_real_distribution.h>
+#include <thrust/iterator/transform_iterator.h>
+#include <thrust/iterator/transform_output_iterator.h>
+#include <thrust/iterator/zip_iterator.h>
 #include <thrust/scan.h>
 #include <thrust/shuffle.h>
 #include <thrust/tabulate.h>
@@ -62,7 +66,7 @@ namespace {
 /**
  * @brief Mersenne Twister pseudo-random engine.
  */
-auto deterministic_engine(unsigned seed) { return thrust::minstd_rand{seed}; }
+auto deterministic_engine(unsigned seed) { return cuda::std::philox4x32{seed}; }
 
 /**
  *  Computes the mean value for a distribution of given type and value bounds.
@@ -224,10 +228,10 @@ double avg_element_size(data_profile const& profile, cudf::data_type dtype)
  * @brief bool generator with given probability [0.0 - 1.0] of returning true.
  */
 struct bool_generator {
-  thrust::minstd_rand engine;
-  thrust::uniform_real_distribution<float> dist;
+  cuda::std::philox4x32 engine;
+  cuda::std::uniform_real_distribution<float> dist;
   double probability_true;
-  bool_generator(thrust::minstd_rand engine, double probability_true)
+  bool_generator(cuda::std::philox4x32 engine, double probability_true)
     : engine(engine), dist{0, 1}, probability_true{probability_true}
   {
   }
@@ -254,16 +258,18 @@ struct bool_generator {
  * The implementation is SFINAEd for different type groups. Currently only used for fixed-width
  * types.
  */
-template <typename T, typename Enable = void>
+template <typename T,
+          typename Enable = void,
+          typename Buffer = rmm::device_uvector<cudf::device_storage_type_t<T>>>
 struct random_value_fn;
 
 /**
  * @brief Creates an random timestamp/duration value
  */
-template <typename T>
-struct random_value_fn<T, std::enable_if_t<cudf::is_chrono<T>()>> {
-  distribution_fn<int64_t> seconds_gen;
-  distribution_fn<int64_t> nanoseconds_gen;
+template <typename T, typename Buffer>
+struct random_value_fn<T, std::enable_if_t<cudf::is_chrono<T>()>, Buffer> {
+  distribution_fn<int64_t, cuda::device_buffer<int64_t>> seconds_gen;
+  distribution_fn<int64_t, cuda::device_buffer<int64_t>> nanoseconds_gen;
 
   random_value_fn(distribution_params<T> params)
   {
@@ -273,14 +279,15 @@ struct random_value_fn<T, std::enable_if_t<cudf::is_chrono<T>()>> {
       duration_cast<cuda::std::chrono::seconds>(typename T::duration{params.lower_bound}),
       duration_cast<cuda::std::chrono::seconds>(typename T::duration{params.upper_bound})};
     if (range_s.first != range_s.second) {
-      seconds_gen =
-        make_distribution<int64_t>(params.id, range_s.first.count(), range_s.second.count());
+      seconds_gen = make_distribution<int64_t, cuda::device_buffer<int64_t>>(
+        params.id, range_s.first.count(), range_s.second.count());
 
-      nanoseconds_gen = make_distribution<int64_t>(distribution_id::UNIFORM, 0l, 1000000000l);
+      nanoseconds_gen = make_distribution<int64_t, cuda::device_buffer<int64_t>>(
+        distribution_id::UNIFORM, 0l, 1000000000l);
     } else {
       // Don't need a random seconds generator for sub-second intervals
-      seconds_gen = [range_s](thrust::minstd_rand&, size_t size) {
-        rmm::device_uvector<int64_t> result(size, cudf::get_default_stream());
+      seconds_gen = [range_s](cuda::std::philox4x32&, size_t size) {
+        auto result = make_distribution_buffer<int64_t, cuda::device_buffer<int64_t>>(size);
         thrust::uninitialized_fill(
           thrust::device, result.begin(), result.end(), range_s.second.count());
         return result;
@@ -289,17 +296,18 @@ struct random_value_fn<T, std::enable_if_t<cudf::is_chrono<T>()>> {
       std::pair<cudf::duration_ns, cudf::duration_ns> const range_ns = {
         duration_cast<cudf::duration_ns>(typename T::duration{params.lower_bound}),
         duration_cast<cudf::duration_ns>(typename T::duration{params.upper_bound})};
-      nanoseconds_gen = make_distribution<int64_t>(distribution_id::UNIFORM,
-                                                   std::min(range_ns.first.count(), 0l),
-                                                   std::max(range_ns.second.count(), 0l));
+      nanoseconds_gen = make_distribution<int64_t, cuda::device_buffer<int64_t>>(
+        distribution_id::UNIFORM,
+        std::min(range_ns.first.count(), 0l),
+        std::max(range_ns.second.count(), 0l));
     }
   }
 
-  rmm::device_uvector<T> operator()(thrust::minstd_rand& engine, unsigned size)
+  Buffer operator()(cuda::std::philox4x32& engine, unsigned size)
   {
     auto const sec = seconds_gen(engine, size);
     auto const ns  = nanoseconds_gen(engine, size);
-    rmm::device_uvector<T> result(size, cudf::get_default_stream());
+    auto result    = make_distribution_buffer<T, Buffer>(size);
     thrust::transform(
       thrust::device,
       sec.begin(),
@@ -319,23 +327,23 @@ struct random_value_fn<T, std::enable_if_t<cudf::is_chrono<T>()>> {
 /**
  * @brief Creates an random fixed_point value.
  */
-template <typename T>
-struct random_value_fn<T, std::enable_if_t<cudf::is_fixed_point<T>()>> {
+template <typename T, typename Buffer>
+struct random_value_fn<T, std::enable_if_t<cudf::is_fixed_point<T>()>, Buffer> {
   using DeviceType = cudf::device_storage_type_t<T>;
   DeviceType const lower_bound;
   DeviceType const upper_bound;
-  distribution_fn<DeviceType> dist;
+  distribution_fn<DeviceType, Buffer> dist;
   std::optional<numeric::scale_type> scale;
 
   random_value_fn(distribution_params<T> const& desc)
     : lower_bound{desc.lower_bound},
       upper_bound{desc.upper_bound},
-      dist{make_distribution<DeviceType>(desc.id, lower_bound, upper_bound)},
+      dist{make_distribution<DeviceType, Buffer>(desc.id, lower_bound, upper_bound)},
       scale{desc.scale}
   {
   }
 
-  [[nodiscard]] numeric::scale_type get_scale(thrust::minstd_rand& engine)
+  [[nodiscard]] numeric::scale_type get_scale(cuda::std::philox4x32& engine)
   {
     if (not scale.has_value()) {
       constexpr int max_scale = std::numeric_limits<DeviceType>::digits10;
@@ -346,50 +354,49 @@ struct random_value_fn<T, std::enable_if_t<cudf::is_fixed_point<T>()>> {
     return scale.value_or(numeric::scale_type{0});
   }
 
-  rmm::device_uvector<DeviceType> operator()(thrust::minstd_rand& engine, unsigned size)
-  {
-    return dist(engine, size);
-  }
+  Buffer operator()(cuda::std::philox4x32& engine, unsigned size) { return dist(engine, size); }
 };
 
 /**
  * @brief Creates an random numeric value with the given distribution.
  */
-template <typename T>
-struct random_value_fn<T, std::enable_if_t<!std::is_same_v<T, bool> && cudf::is_numeric<T>()>> {
+template <typename T, typename Buffer>
+struct random_value_fn<T,
+                       std::enable_if_t<!std::is_same_v<T, bool> && cudf::is_numeric<T>()>,
+                       Buffer> {
   T const lower_bound;
   T const upper_bound;
-  distribution_fn<T> dist;
+  distribution_fn<T, Buffer> dist;
 
   random_value_fn(distribution_params<T> const& desc)
     : lower_bound{desc.lower_bound},
       upper_bound{desc.upper_bound},
-      dist{make_distribution<T>(desc.id, desc.lower_bound, desc.upper_bound)}
+      dist{make_distribution<T, Buffer>(desc.id, desc.lower_bound, desc.upper_bound)}
   {
   }
 
-  auto operator()(thrust::minstd_rand& engine, unsigned size) { return dist(engine, size); }
+  auto operator()(cuda::std::philox4x32& engine, unsigned size) { return dist(engine, size); }
 };
 
 /**
  * @brief Creates an boolean value with given probability of returning `true`.
  */
-template <typename T>
-struct random_value_fn<T, typename std::enable_if_t<std::is_same_v<T, bool>>> {
+template <typename T, typename Buffer>
+struct random_value_fn<T, typename std::enable_if_t<std::is_same_v<T, bool>>, Buffer> {
   // Bernoulli distribution
-  distribution_fn<bool> dist;
+  distribution_fn<bool, Buffer> dist;
 
   random_value_fn(distribution_params<bool> const& desc)
-    : dist{[valid_prob = desc.probability_true](thrust::minstd_rand& engine,
-                                                size_t size) -> rmm::device_uvector<bool> {
-        rmm::device_uvector<bool> result(size, cudf::get_default_stream());
-        thrust::tabulate(
-          thrust::device, result.begin(), result.end(), bool_generator(engine, valid_prob));
-        return result;
-      }}
+    : dist{
+        [valid_prob = desc.probability_true](cuda::std::philox4x32& engine, size_t size) -> Buffer {
+          auto result = make_distribution_buffer<bool, Buffer>(size);
+          thrust::tabulate(
+            thrust::device, result.begin(), result.end(), bool_generator(engine, valid_prob));
+          return result;
+        }}
   {
   }
-  auto operator()(thrust::minstd_rand& engine, unsigned size) { return dist(engine, size); }
+  auto operator()(cuda::std::philox4x32& engine, unsigned size) { return dist(engine, size); }
 };
 
 /**
@@ -402,16 +409,16 @@ struct random_value_fn<T, typename std::enable_if_t<std::is_same_v<T, bool>>> {
  * @param engine       Random engine
  * @return Generated indices of type `cudf::size_type`
  */
-rmm::device_uvector<cudf::size_type> sample_indices_with_run_length(cudf::size_type avg_run_len,
+cuda::device_buffer<cudf::size_type> sample_indices_with_run_length(cudf::size_type avg_run_len,
                                                                     cudf::size_type cardinality,
                                                                     cudf::size_type num_rows,
-                                                                    thrust::minstd_rand& engine)
+                                                                    cuda::std::philox4x32& engine)
 {
-  auto sample_dist = random_value_fn<cudf::size_type>{
+  auto sample_dist = random_value_fn<cudf::size_type, void, cuda::device_buffer<cudf::size_type>>{
     distribution_params<cudf::size_type>{distribution_id::UNIFORM, 0, cardinality - 1}};
   if (avg_run_len > 1) {
-    auto avglen_dist =
-      random_value_fn<int>{distribution_params<int>{distribution_id::UNIFORM, 1, 2 * avg_run_len}};
+    auto avglen_dist = random_value_fn<int, void, cuda::device_buffer<int>>{
+      distribution_params<int>{distribution_id::UNIFORM, 1, 2 * avg_run_len}};
     auto const approx_run_len = num_rows / avg_run_len + 1;
     auto run_lens             = avglen_dist(engine, approx_run_len);
     thrust::inclusive_scan(
@@ -427,8 +434,8 @@ rmm::device_uvector<cudf::size_type> sample_indices_with_run_length(cudf::size_t
           auto sample_idx = thrust::upper_bound(thrust::seq, rb, re, i) - rb;
           return samples_indices[sample_idx];
         }));
-    rmm::device_uvector<cudf::size_type> repeated_sample_indices(num_rows,
-                                                                 cudf::get_default_stream());
+    auto repeated_sample_indices =
+      make_distribution_buffer<cudf::size_type, cuda::device_buffer<cudf::size_type>>(num_rows);
     thrust::copy(thrust::device,
                  avg_repeated_sample_indices_iterator,
                  avg_repeated_sample_indices_iterator + num_rows,
@@ -440,21 +447,19 @@ rmm::device_uvector<cudf::size_type> sample_indices_with_run_length(cudf::size_t
   }
 }
 
-enum class string_encoding {
-  ASCII,
-  UTF8,
-};
-
-template <string_encoding Encoding = string_encoding::UTF8>
 struct string_generator {
   char* chars;
-  thrust::minstd_rand engine;
-  thrust::uniform_int_distribution<unsigned char> char_dist;
-  string_generator(char* c, thrust::minstd_rand& engine)
-    : chars(c), engine(engine), char_dist(32, Encoding == string_encoding::ASCII ? 126 : 137)
-  // ~90% ASCII, ~10% UTF-8.
-  // ~80% not-space, ~20% space.
-  // range 32-127 is ASCII; 127-136 will be multi-byte UTF-8
+  cuda::std::philox4x32 engine;
+  cuda::std::uniform_int_distribution<unsigned char> char_dist;
+  unsigned char last_char;  // replaces a multi-byte character that would not fit at the end;
+                            // char_lower is always ASCII so it is within the range
+  // With the default range of 32-137: ~90% ASCII, ~10% UTF-8.
+  // Characters 32-126 are ASCII; 127 and above will be multi-byte UTF-8
+  string_generator(char* c,
+                   cuda::std::philox4x32& engine,
+                   unsigned char char_lower,
+                   unsigned char char_upper)
+    : chars(c), engine(engine), char_dist(char_lower, char_upper), last_char(char_lower)
   {
   }
   __device__ void operator()(cuda::std::tuple<int64_t, int64_t> str_begin_end)
@@ -464,12 +469,10 @@ struct string_generator {
     engine.discard(begin);
     for (auto i = begin; i < end; ++i) {
       auto ch = char_dist(engine);
-      if constexpr (Encoding == string_encoding::UTF8) {
-        if (i == end - 1 && ch >= '\x7F') ch = ' ';  // last element ASCII only.
-        if (ch >= '\x7F') {                          // x7F is at the top edge of ASCII
-          chars[i++] = '\xC4';                       // these characters are assigned two bytes
-          ch         = (ch >> 2) | 0x80;
-        }
+      if (i == end - 1 && ch >= '\x7F') ch = last_char;  // last element ASCII only.
+      if (ch >= '\x7F') {                                // x7F is at the top edge of ASCII
+        chars[i++] = '\xC4';                             // these characters are assigned two bytes
+        ch         = (ch >> 2) | 0x80;
       }
       chars[i] = static_cast<char>(ch);
     }
@@ -480,14 +483,17 @@ struct string_generator {
  * @brief Create a UTF-8 string column with the average length.
  *
  */
-template <string_encoding Encoding = string_encoding::UTF8>
 std::unique_ptr<cudf::column> create_random_utf8_string_column(data_profile const& profile,
-                                                               thrust::minstd_rand& engine,
+                                                               cuda::std::philox4x32& engine,
                                                                cudf::size_type num_rows)
 {
+  auto const string_params = profile.get_distribution_params<cudf::string_view>();
+  auto const char_lower    = string_params.char_lower;
+  auto const char_upper    = string_params.char_upper;
+
   auto len_dist =
-    random_value_fn<uint32_t>{profile.get_distribution_params<cudf::string_view>().length_params};
-  auto valid_dist = random_value_fn<bool>(
+    random_value_fn<uint32_t, void, cuda::device_buffer<uint32_t>>{string_params.length_params};
+  auto valid_dist = random_value_fn<bool, void, cuda::device_buffer<bool>>(
     distribution_params<bool>{1. - profile.get_null_probability().value_or(0)});
   auto lengths   = len_dist(engine, num_rows + 1);
   auto null_mask = valid_dist(engine, num_rows + 1);
@@ -511,12 +517,14 @@ std::unique_ptr<cudf::column> create_random_utf8_string_column(data_profile cons
   thrust::for_each_n(thrust::device,
                      cuda::make_zip_iterator(cuda::std::make_tuple(offsets_itr, offsets_itr + 1)),
                      num_rows,
-                     string_generator<Encoding>{chars.data(), engine});
+                     string_generator{chars.data(), engine, char_lower, char_upper});
 
   auto [result_bitmask, null_count] =
     profile.get_null_probability().has_value()
       ? cudf::bools_to_mask(cudf::device_span<bool const>(null_mask), stream)
-      : std::pair{std::make_unique<rmm::device_buffer>(), 0};
+      : std::pair{std::make_unique<cuda::device_buffer<cudf::bitmask_type>>(
+                    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED)),
+                  0};
 
   return cudf::make_strings_column(num_rows,
                                    std::move(offsets),
@@ -528,19 +536,19 @@ std::unique_ptr<cudf::column> create_random_utf8_string_column(data_profile cons
 // Forward declarations for create_rand_col_fn
 template <typename T>
 std::unique_ptr<cudf::column> create_random_column(data_profile const& profile,
-                                                   thrust::minstd_rand& engine,
+                                                   cuda::std::philox4x32& engine,
                                                    cudf::size_type num_rows);
 
 template <typename T>
   requires(cudf::is_numeric_not_bool<T>())
 std::unique_ptr<cudf::column> create_distinct_rows_column(data_profile const& profile,
-                                                          thrust::minstd_rand& engine,
+                                                          cuda::std::philox4x32& engine,
                                                           cudf::size_type num_rows);
 
 template <typename T>
   requires(!cudf::is_numeric_not_bool<T>())
 std::unique_ptr<cudf::column> create_distinct_rows_column(data_profile const& profile,
-                                                          thrust::minstd_rand& engine,
+                                                          cuda::std::philox4x32& engine,
                                                           cudf::size_type num_rows);
 
 /**
@@ -550,7 +558,7 @@ struct create_rand_col_fn {
  public:
   template <typename T>
   std::unique_ptr<cudf::column> operator()(data_profile const& profile,
-                                           thrust::minstd_rand& engine,
+                                           cuda::std::philox4x32& engine,
                                            cudf::size_type num_rows)
   {
     if (profile.get_cardinality() >= num_rows) {
@@ -572,11 +580,11 @@ struct create_rand_col_fn {
  */
 template <typename T>
 std::unique_ptr<cudf::column> create_random_column(data_profile const& profile,
-                                                   thrust::minstd_rand& engine,
+                                                   cuda::std::philox4x32& engine,
                                                    cudf::size_type num_rows)
 {
   // Bernoulli distribution
-  auto valid_dist = random_value_fn<bool>(
+  auto valid_dist = random_value_fn<bool, void, cuda::device_buffer<bool>>(
     distribution_params<bool>{1. - profile.get_null_probability().value_or(0)});
   auto value_dist = random_value_fn<T>{profile.get_distribution_params<T>()};
 
@@ -591,7 +599,8 @@ std::unique_ptr<cudf::column> create_random_column(data_profile const& profile,
   // Distribution for picking elements from the array of samples
   auto const avg_run_len = profile.get_avg_run_length();
   rmm::device_uvector<DeviceType> data(0, cudf::get_default_stream());
-  rmm::device_uvector<bool> null_mask(0, cudf::get_default_stream());
+  cuda::device_buffer<bool> null_mask(
+    cudf::get_default_stream(), cudf::get_current_device_resource_ref(), 0, cuda::no_init);
 
   if (profile.get_cardinality() == 0 and avg_run_len == 1) {
     data      = value_dist(engine, num_rows);
@@ -601,14 +610,16 @@ std::unique_ptr<cudf::column> create_random_column(data_profile const& profile,
       return (profile_cardinality == 0 or profile_cardinality > num_rows) ? num_rows
                                                                           : profile_cardinality;
     }();
-    rmm::device_uvector<bool> samples_null_mask = valid_dist(engine, cardinality);
-    rmm::device_uvector<DeviceType> samples     = value_dist(engine, cardinality);
+    cuda::device_buffer<bool> samples_null_mask = valid_dist(engine, cardinality);
+    auto sample_dist = random_value_fn<T, void, cuda::device_buffer<DeviceType>>{
+      profile.get_distribution_params<T>()};
+    auto samples = sample_dist(engine, cardinality);
 
     // generate n samples and gather.
     auto const sample_indices =
       sample_indices_with_run_length(avg_run_len, cardinality, num_rows, engine);
     data      = rmm::device_uvector<DeviceType>(num_rows, cudf::get_default_stream());
-    null_mask = rmm::device_uvector<bool>(num_rows, cudf::get_default_stream());
+    null_mask = make_distribution_buffer<bool, cuda::device_buffer<bool>>(num_rows);
     thrust::gather(
       thrust::device, sample_indices.begin(), sample_indices.end(), samples.begin(), data.begin());
     thrust::gather(thrust::device,
@@ -621,7 +632,9 @@ std::unique_ptr<cudf::column> create_random_column(data_profile const& profile,
   auto [result_bitmask, null_count] =
     profile.get_null_probability().has_value()
       ? cudf::bools_to_mask(cudf::device_span<bool const>(null_mask))
-      : std::pair{std::make_unique<rmm::device_buffer>(), 0};
+      : std::pair{std::make_unique<cuda::device_buffer<cudf::bitmask_type>>(
+                    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED)),
+                  0};
 
   return std::make_unique<cudf::column>(
     dtype, num_rows, data.release(), std::move(*result_bitmask.release()), null_count);
@@ -638,7 +651,7 @@ std::unique_ptr<cudf::column> create_random_column(data_profile const& profile,
  */
 template <>
 std::unique_ptr<cudf::column> create_random_column<cudf::string_view>(data_profile const& profile,
-                                                                      thrust::minstd_rand& engine,
+                                                                      cuda::std::philox4x32& engine,
                                                                       cudf::size_type num_rows)
 {
   auto const cardinality = std::min(profile.get_cardinality(), num_rows);
@@ -658,16 +671,15 @@ std::unique_ptr<cudf::column> create_random_column<cudf::string_view>(data_profi
 }
 
 template <>
-std::unique_ptr<cudf::column> create_random_column<cudf::dictionary32>(data_profile const& profile,
-                                                                       thrust::minstd_rand& engine,
-                                                                       cudf::size_type num_rows)
+std::unique_ptr<cudf::column> create_random_column<cudf::dictionary32>(
+  data_profile const& profile, cuda::std::philox4x32& engine, cudf::size_type num_rows)
 {
   CUDF_FAIL("not implemented yet");
 }
 
 template <>
 std::unique_ptr<cudf::column> create_random_column<cudf::struct_view>(data_profile const& profile,
-                                                                      thrust::minstd_rand& engine,
+                                                                      cuda::std::philox4x32& engine,
                                                                       cudf::size_type num_rows)
 {
   auto const dist_params = profile.get_distribution_params<cudf::struct_view>();
@@ -683,7 +695,7 @@ std::unique_ptr<cudf::column> create_random_column<cudf::struct_view>(data_profi
                      cudf::data_type(type_id), create_rand_col_fn{}, profile, engine, num_rows);
                  });
 
-  auto valid_dist = random_value_fn<bool>(
+  auto valid_dist = random_value_fn<bool, void, cuda::device_buffer<bool>>(
     distribution_params<bool>{1. - profile.get_null_probability().value_or(0)});
 
   // Generate the column bottom-up
@@ -700,12 +712,14 @@ std::unique_ptr<cudf::column> create_random_column<cudf::struct_view>(data_profi
           return cudf::bools_to_mask(cudf::device_span<bool const>(valids),
                                      cudf::get_default_stream());
         }
-        return std::pair{std::make_unique<rmm::device_buffer>(), 0};
+        return std::pair{std::make_unique<cuda::device_buffer<cudf::bitmask_type>>(
+                           cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED)),
+                         0};
       }();
 
       // Adopt remaining children as evenly as possible
-      auto const num_to_adopt = cudf::util::div_rounding_up_unsafe(
-        std::distance(current_child, children.end()), std::distance(current_parent, parents.end()));
+      auto const num_to_adopt = cuda::ceil_div(std::distance(current_child, children.end()),
+                                               std::distance(current_parent, parents.end()));
       CUDF_EXPECTS(num_to_adopt > 0, "No children columns left to adopt");
 
       std::vector<std::unique_ptr<cudf::column>> children_to_adopt;
@@ -748,7 +762,7 @@ struct clamp_down {
  */
 template <>
 std::unique_ptr<cudf::column> create_random_column<cudf::list_view>(data_profile const& profile,
-                                                                    thrust::minstd_rand& engine,
+                                                                    cuda::std::philox4x32& engine,
                                                                     cudf::size_type num_rows)
 {
   auto const dist_params       = profile.get_distribution_params<cudf::list_view>();
@@ -762,7 +776,7 @@ std::unique_ptr<cudf::column> create_random_column<cudf::list_view>(data_profile
     cudf::data_type(dist_params.element_type), create_rand_col_fn{}, profile, engine, num_elements);
   auto len_dist =
     random_value_fn<uint32_t>{profile.get_distribution_params<cudf::list_view>().length_params};
-  auto valid_dist = random_value_fn<bool>(
+  auto valid_dist = random_value_fn<bool, void, cuda::device_buffer<bool>>(
     distribution_params<bool>{1. - profile.get_null_probability().value_or(0)});
 
   // Generate the list column bottom-up
@@ -785,15 +799,19 @@ std::unique_ptr<cudf::column> create_random_column<cudf::list_view>(data_profile
     thrust::device_pointer_cast(offsets.end())[-1] =
       current_child_column->size();  // Always include all elements
 
-    auto offsets_column = std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::INT32},
-                                                         current_num_rows + 1,
-                                                         offsets.release(),
-                                                         rmm::device_buffer{},
-                                                         0);
+    auto offsets_column =
+      std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::INT32},
+                                     current_num_rows + 1,
+                                     offsets.release(),
+                                     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                     0);
 
-    auto [null_mask, null_count] = profile.get_null_probability().has_value()
-                                     ? cudf::bools_to_mask(cudf::device_span<bool const>(valids))
-                                     : std::pair{std::make_unique<rmm::device_buffer>(), 0};
+    auto [null_mask, null_count] =
+      profile.get_null_probability().has_value()
+        ? cudf::bools_to_mask(cudf::device_span<bool const>(valids))
+        : std::pair{std::make_unique<cuda::device_buffer<cudf::bitmask_type>>(
+                      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED)),
+                    0};
 
     list_column = cudf::make_lists_column(current_num_rows,
                                           std::move(offsets_column),
@@ -814,7 +832,7 @@ std::unique_ptr<cudf::column> create_random_column<cudf::list_view>(data_profile
 template <typename T>
   requires(cudf::is_numeric_not_bool<T>())
 std::unique_ptr<cudf::column> create_distinct_rows_column(data_profile const& profile,
-                                                          thrust::minstd_rand& engine,
+                                                          cuda::std::philox4x32& engine,
                                                           cudf::size_type num_rows)
 {
   auto init = cudf::make_fixed_width_scalar(T{});
@@ -824,11 +842,11 @@ std::unique_ptr<cudf::column> create_distinct_rows_column(data_profile const& pr
   thrust::shuffle(thrust::device,
                   col->mutable_view().template begin<T>(),
                   col->mutable_view().template end<T>(),
-                  engine);
+                  cuda::std::philox4x32(engine()));
 
   if (profile.get_null_probability().has_value()) {
-    auto valid_dist =
-      random_value_fn<bool>(distribution_params<bool>{1. - profile.get_null_probability().value()});
+    auto valid_dist = random_value_fn<bool, void, cuda::device_buffer<bool>>(
+      distribution_params<bool>{1. - profile.get_null_probability().value()});
     auto null_mask = valid_dist(engine, num_rows);
     auto [result_bitmask, null_count] =
       cudf::bools_to_mask(cudf::device_span<bool const>(null_mask), cudf::get_default_stream());
@@ -842,7 +860,7 @@ std::unique_ptr<cudf::column> create_distinct_rows_column(data_profile const& pr
 template <typename T>
   requires(!cudf::is_numeric_not_bool<T>())
 std::unique_ptr<cudf::column> create_distinct_rows_column(data_profile const& profile,
-                                                          thrust::minstd_rand& engine,
+                                                          cuda::std::philox4x32& engine,
                                                           cudf::size_type num_rows)
 {
   return create_random_column<T>(profile, engine, num_rows);
@@ -850,8 +868,12 @@ std::unique_ptr<cudf::column> create_distinct_rows_column(data_profile const& pr
 
 template <>
 std::unique_ptr<cudf::column> create_distinct_rows_column<cudf::string_view>(
-  data_profile const& profile, thrust::minstd_rand& engine, cudf::size_type num_rows)
+  data_profile const& profile, cuda::std::philox4x32& engine, cudf::size_type num_rows)
 {
+  // uniqueness comes from appending the row index as decimal digits
+  auto const string_params = profile.get_distribution_params<cudf::string_view>();
+  CUDF_EXPECTS(string_params.char_lower <= '0' && string_params.char_upper >= '9',
+               "Character range must include the digits 0-9 to generate distinct strings");
   auto col        = create_random_column<cudf::string_view>(profile, engine, num_rows);
   auto int_col    = cudf::sequence(num_rows, *cudf::make_fixed_width_scalar<int32_t>(0));
   auto int2strcol = cudf::strings::from_integers(int_col->view());
@@ -861,7 +883,7 @@ std::unique_ptr<cudf::column> create_distinct_rows_column<cudf::string_view>(
 
 template <>
 std::unique_ptr<cudf::column> create_distinct_rows_column<cudf::list_view>(
-  data_profile const& profile, thrust::minstd_rand& engine, cudf::size_type num_rows)
+  data_profile const& profile, cuda::std::philox4x32& engine, cudf::size_type num_rows)
 {
   auto const dist_params = profile.get_distribution_params<cudf::list_view>();
   auto col               = create_random_column<cudf::list_view>(profile, engine, num_rows);
@@ -869,8 +891,12 @@ std::unique_ptr<cudf::column> create_distinct_rows_column<cudf::list_view>(
   auto child_column      = cudf::sequence(num_rows, *zero);
   for (int lvl = dist_params.max_depth; lvl > 0; --lvl) {
     auto offsets_column = cudf::sequence(num_rows + 1, *zero);
-    auto list_column    = cudf::make_lists_column(
-      num_rows, std::move(offsets_column), std::move(child_column), 0, rmm::device_buffer{});
+    auto list_column =
+      cudf::make_lists_column(num_rows,
+                              std::move(offsets_column),
+                              std::move(child_column),
+                              0,
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
     if (auto const cv = list_column->view();
         cudf::has_nonempty_nulls(cv, cudf::get_default_stream())) {
       list_column = cudf::purge_nonempty_nulls(
@@ -885,14 +911,14 @@ std::unique_ptr<cudf::column> create_distinct_rows_column<cudf::list_view>(
 
 template <>
 std::unique_ptr<cudf::column> create_distinct_rows_column<cudf::dictionary32>(
-  data_profile const& profile, thrust::minstd_rand& engine, cudf::size_type num_rows)
+  data_profile const& profile, cuda::std::philox4x32& engine, cudf::size_type num_rows)
 {
   CUDF_FAIL("not implemented yet");
 }
 
 template <>
 std::unique_ptr<cudf::column> create_distinct_rows_column<cudf::struct_view>(
-  data_profile const& profile, thrust::minstd_rand& engine, cudf::size_type num_rows)
+  data_profile const& profile, cuda::std::philox4x32& engine, cudf::size_type num_rows)
 {
   auto const dist_params = profile.get_distribution_params<cudf::struct_view>();
   auto col               = create_random_column<cudf::struct_view>(profile, engine, num_rows);
@@ -900,8 +926,8 @@ std::unique_ptr<cudf::column> create_distinct_rows_column<cudf::struct_view>(
   children.push_back(cudf::sequence(num_rows, *cudf::make_fixed_width_scalar<int32_t>(0)));
   for (int lvl = dist_params.max_depth; lvl > 1; --lvl) {
     std::vector<std::unique_ptr<cudf::column>> parents;
-    parents.push_back(
-      cudf::create_structs_hierarchy(num_rows, std::move(children), 0, rmm::device_buffer{}));
+    parents.push_back(cudf::create_structs_hierarchy(
+      num_rows, std::move(children), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED)));
     std::swap(parents, children);
   }
   auto const null_count = col->null_count();
@@ -972,7 +998,7 @@ std::unique_ptr<cudf::table> create_random_table(std::vector<cudf::type_id> cons
                                                  unsigned seed)
 {
   auto seed_engine = deterministic_engine(seed);
-  thrust::uniform_int_distribution<unsigned> seed_dist;
+  cuda::std::uniform_int_distribution<unsigned> seed_dist;
 
   std::vector<std::unique_ptr<cudf::column>> output_columns;
   std::transform(
@@ -998,7 +1024,7 @@ std::unique_ptr<cudf::table> create_sequence_table(std::vector<cudf::type_id> co
                                                    unsigned seed)
 {
   auto seed_engine = deterministic_engine(seed);
-  thrust::uniform_int_distribution<unsigned> seed_dist;
+  cuda::std::uniform_int_distribution<unsigned> seed_dist;
 
   auto columns = std::vector<std::unique_ptr<cudf::column>>(dtype_ids.size());
   std::transform(dtype_ids.begin(), dtype_ids.end(), columns.begin(), [&](auto dtype) mutable {
@@ -1065,10 +1091,12 @@ std::unique_ptr<cudf::column> create_string_column(cudf::size_type num_rows,
   return std::move(table->release().front());
 }
 
-std::pair<rmm::device_buffer, cudf::size_type> create_random_null_mask(
+std::pair<cuda::device_buffer<cudf::bitmask_type>, cudf::size_type> create_random_null_mask(
   cudf::size_type size, std::optional<double> null_probability, unsigned seed)
 {
-  if (not null_probability.has_value()) { return {rmm::device_buffer{}, 0}; }
+  if (not null_probability.has_value()) {
+    return {cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0};
+  }
   CUDF_EXPECTS(*null_probability >= 0.0 and *null_probability <= 1.0,
                "Null probability must be within the range [0.0, 1.0]");
   if (*null_probability == 0.0f) {
@@ -1088,8 +1116,12 @@ std::unique_ptr<cudf::column> create_ascii_string_column(data_profile const& pro
                                                          cudf::size_type num_rows,
                                                          unsigned seed)
 {
-  auto engine = deterministic_engine(seed);
-  return create_random_utf8_string_column<string_encoding::ASCII>(profile, engine, num_rows);
+  // limit the character range to ASCII and use the regular strings generator
+  auto const string_params = profile.get_distribution_params<cudf::string_view>();
+  auto ascii_profile       = profile;
+  ascii_profile.set_string_char_range(string_params.char_lower,
+                                      std::min<unsigned char>(string_params.char_upper, 126));
+  return create_random_column(cudf::type_id::STRING, row_count{num_rows}, ascii_profile, seed);
 }
 
 std::vector<cudf::type_id> get_type_or_group(int32_t id)
@@ -1177,6 +1209,8 @@ void data_profile::set_struct_types(cudf::host_span<cudf::type_id const> types)
 void data_profile::set_string_char_range(unsigned char lower, unsigned char upper)
 {
   CUDF_EXPECTS(lower <= upper, "Lower bound must be <= upper bound");
+  // a single-byte character is needed to end a string when a 2-byte character does not fit
+  CUDF_EXPECTS(lower < 127, "Lower bound must be an ASCII character (< 127)");
   string_dist_desc.char_lower = lower;
   string_dist_desc.char_upper = upper;
 }

@@ -14,11 +14,14 @@
 #include <cudf/utilities/span.hpp>
 
 #include <cuda/std/bit>
+#include <cuda/std/concepts>
+#include <cuda/std/type_traits>
 
 #include <algorithm>
 #include <concepts>
 #include <cstddef>
 #include <limits>
+#include <span>
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
@@ -94,7 +97,7 @@ class CompactProtocolReader {
 
   // Returns a varint-encoded integer. `T` is constrained to unsigned so `numeric_limits<T>::digits`
   // is the full value width; a signed `T` would drop the sign bit and misplace the overflow bound.
-  template <std::unsigned_integral T>
+  template <cuda::std::unsigned_integral T>
   T get_varint()
   {
     T v = 0;
@@ -116,7 +119,7 @@ class CompactProtocolReader {
   template <typename T>
   T get_zigzag()
   {
-    using U   = std::make_unsigned_t<T>;
+    using U   = cuda::std::make_unsigned_t<T>;
     U const u = get_varint<U>();
     return static_cast<T>((u >> 1u) ^ -static_cast<T>(u & 1));
   }
@@ -151,12 +154,15 @@ class CompactProtocolReader {
  public:
   // Generate Thrift structure parsing routines
   void read(SchemaElement* s);
-  void read(LogicalType* l);
+  void read(LogicalType* l, LogicalTypePayload* payload);
   void read(DecimalType* d);
   void read(TimeType* t);
   void read(TimeUnit* u);
   void read(TimestampType* t);
   void read(IntType* t);
+  void read(GeometryType* g);
+  void read(VariantType* v);
+  void read(GeographyType* g);
   void read(RowGroup* r);
   void read(ColumnChunk* c);
   void read(BloomFilterAlgorithm* bf);
@@ -214,10 +220,10 @@ class CompactProtocolReader {
   friend class parquet_field_list;
   template <typename T>
   friend class parquet_field_struct_list;
-  friend void decode_footer_bytes(cudf::host_span<uint8_t const> footer_bytes,
+  friend void decode_footer_bytes(std::span<uint8_t const> footer_bytes,
                                   FileMetaData* metadata,
                                   experimental::thrift_mismatch_policy mode);
-  friend void decode_footer_and_init_schema(cudf::host_span<uint8_t const> footer_bytes,
+  friend void decode_footer_and_init_schema(std::span<uint8_t const> footer_bytes,
                                             FileMetaData* metadata);
 };
 
@@ -231,7 +237,7 @@ class CompactProtocolReader {
  * @throws cudf::logic_error If the footer is truncated or corrupt within the struct
  */
 void decode_footer_bytes(
-  cudf::host_span<uint8_t const> footer_bytes,
+  std::span<uint8_t const> footer_bytes,
   FileMetaData* metadata,
   experimental::thrift_mismatch_policy mode = experimental::thrift_mismatch_policy::THROW);
 
@@ -247,8 +253,7 @@ void decode_footer_bytes(
  * @throws cudf::logic_error If the schema cannot be initialized
  * @throws cudf::logic_error If the footer is truncated or corrupt within the struct
  */
-void decode_footer_and_init_schema(cudf::host_span<uint8_t const> footer_bytes,
-                                   FileMetaData* metadata);
+void decode_footer_and_init_schema(std::span<uint8_t const> footer_bytes, FileMetaData* metadata);
 
 }  // namespace io::parquet::detail
 }  // namespace CUDF_EXPORT cudf

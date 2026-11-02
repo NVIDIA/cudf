@@ -18,6 +18,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/std/type_traits>
 #include <thrust/transform.h>
 
 #include <iomanip>
@@ -99,7 +100,7 @@ namespace {
 
 template <typename T>
 static auto numeric_to_string_precise(T value)
-  requires(std::is_integral_v<T>)
+  requires(cuda::std::is_integral_v<T>)
 {
   return std::to_string(value);
 }

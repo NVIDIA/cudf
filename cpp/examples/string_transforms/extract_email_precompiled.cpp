@@ -25,10 +25,10 @@ std::tuple<std::unique_ptr<cudf::column>, std::vector<int32_t>> transform(
   auto emails      = table.column(1);
   auto transformed = std::vector<int32_t>{1};
 
-  auto const index_max =
-    cudf::numeric_scalar<cudf::size_type>{std::numeric_limits<cudf::size_type>::max(), stream, mr};
-  auto const npos = cudf::numeric_scalar<cudf::size_type>{-1, stream, mr};
-  auto const one  = cudf::numeric_scalar<cudf::size_type>{1, stream, mr};
+  auto const index_max = cudf::numeric_scalar<cudf::size_type>{
+    std::numeric_limits<cudf::size_type>::max(), true, stream, mr};
+  auto const npos = cudf::numeric_scalar<cudf::size_type>{-1, true, stream, mr};
+  auto const one  = cudf::numeric_scalar<cudf::size_type>{1, true, stream, mr};
   auto const alt  = cudf::string_scalar(cudf::string_view{"(unknown)", 9}, true, stream, mr);
 
   // find the positions of the "@" in the email, -1 is returned if not found

@@ -19,6 +19,7 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/batched_memcpy.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/data_sink.hpp>
@@ -33,19 +34,20 @@
 #include <cudf/strings/detail/strings_children.cuh>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/table/table.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
+#include <cuda/cmath>
+#include <cuda/std/concepts>
 #include <cuda/stream>
 #include <thrust/execution_policy.h>
 #include <thrust/fill.h>
-#include <thrust/host_vector.h>
 #include <thrust/logical.h>
-#include <thrust/scan.h>
 #include <thrust/tabulate.h>
 
 #include <algorithm>
@@ -91,7 +93,7 @@ size_t compression_block_size(compression_type compression, size_t requested_siz
   auto const size        = std::min(requested_size, codec_limit.value_or(requested_size));
 
   auto const alignment = io::detail::compress_required_chunk_alignment(compression);
-  return std::max(alignment, cudf::util::round_down_safe(size, alignment));
+  return std::max(alignment, cuda::round_down(size, alignment));
 }
 
 /**
@@ -139,23 +141,24 @@ void write_compressed_to_sink(data_sink* out_sink,
       return cudf::util::round_up_safe(io::detail::max_compressed_size(compression, input.size()),
                                        alignment);
     });
-  rmm::device_uvector<uint8_t> comp_buffer(out_offsets.back(), stream);
+  auto const temp_mr = cudf::get_current_device_resource_ref();
+  cuda::device_buffer<uint8_t> comp_buffer(stream, temp_mr, out_offsets.back(), cuda::no_init);
 
   for (size_t block = 0; block < num_blocks; ++block) {
     h_outputs[block] = device_span<uint8_t>{comp_buffer.data() + out_offsets[block],
                                             out_offsets[block + 1] - out_offsets[block]};
   }
-  auto const temp_mr   = cudf::get_current_device_resource_ref();
-  auto const d_inputs  = cudf::detail::make_device_uvector_async(h_inputs, stream, temp_mr);
-  auto const d_outputs = cudf::detail::make_device_uvector_async(h_outputs, stream, temp_mr);
+  auto const d_inputs  = cudf::detail::make_device_buffer_async(h_inputs, stream, temp_mr);
+  auto const d_outputs = cudf::detail::make_device_buffer_async(h_outputs, stream, temp_mr);
 
-  rmm::device_uvector<io::detail::codec_exec_result> d_results(num_blocks, stream, temp_mr);
+  cuda::device_buffer<io::detail::codec_exec_result> d_results(
+    stream, temp_mr, num_blocks, cuda::no_init);
   thrust::fill(rmm::exec_policy_nosync(stream, temp_mr),
                d_results.begin(),
                d_results.end(),
                io::detail::codec_exec_result{0, io::detail::codec_status::FAILURE});
 
-  io::detail::compress(compression, d_inputs, d_outputs, d_results, stream);
+  io::detail::compress(compression, d_inputs, d_outputs, d_results, stream, {temp_mr, temp_mr});
 
   auto const results = cudf::detail::make_host_vector(d_results, stream);
   CUDF_EXPECTS(std::all_of(results.begin(),
@@ -171,21 +174,23 @@ void write_compressed_to_sink(data_sink* out_sink,
   auto h_dests   = cudf::detail::make_pinned_vector_async<uint8_t*>(num_blocks, stream);
   auto h_sizes   = cudf::detail::make_pinned_vector_async<size_t>(num_blocks, stream);
   size_t total_comp_size{0};
-  rmm::device_uvector<uint8_t> packed_buffer(
+  cuda::device_buffer<uint8_t> packed_buffer(
+    stream,
+    cudf::get_current_device_resource_ref(),
     std::accumulate(results.begin(),
                     results.end(),
                     size_t{0},
                     [](size_t sum, auto const& result) { return sum + result.bytes_written; }),
-    stream);
+    cuda::no_init);
   for (size_t block = 0; block < num_blocks; ++block) {
     h_sources[block] = comp_buffer.data() + out_offsets[block];
     h_dests[block]   = packed_buffer.data() + total_comp_size;
     h_sizes[block]   = results[block].bytes_written;
     total_comp_size += results[block].bytes_written;
   }
-  auto const d_sources = cudf::detail::make_device_uvector_async(h_sources, stream, temp_mr);
-  auto const d_dests   = cudf::detail::make_device_uvector_async(h_dests, stream, temp_mr);
-  auto const d_sizes   = cudf::detail::make_device_uvector_async(h_sizes, stream, temp_mr);
+  auto const d_sources = cudf::detail::make_device_buffer_async(h_sources, stream, temp_mr);
+  auto const d_dests   = cudf::detail::make_device_buffer_async(h_dests, stream, temp_mr);
+  auto const d_sizes   = cudf::detail::make_device_buffer_async(h_sizes, stream, temp_mr);
   cudf::detail::batched_memcpy_async(
     d_sources.begin(), d_dests.begin(), d_sizes.begin(), num_blocks, stream);
 
@@ -267,9 +272,8 @@ struct column_to_strings_fn {
 
   // bools:
   //
-  template <typename column_type>
+  template <cudf::concepts::boolean column_type>
   std::unique_ptr<column> operator()(column_view const& column) const
-    requires(std::is_same_v<column_type, bool>)
   {
     string_scalar true_string{
       options_.get_true_value(), true, stream_, cudf::get_current_device_resource_ref()};
@@ -280,9 +284,8 @@ struct column_to_strings_fn {
 
   // strings:
   //
-  template <typename column_type>
+  template <cudf::concepts::string_view column_type>
   std::unique_ptr<column> operator()(column_view const& column_v) const
-    requires(std::is_same_v<column_type, cudf::string_view>)
   {
     if (options_.get_quoting() == cudf::io::quote_style::NONE) {
       return std::make_unique<column>(column_v, stream_, mr_);
@@ -308,36 +311,32 @@ struct column_to_strings_fn {
 
   // ints:
   //
-  template <typename column_type>
+  template <cudf::concepts::integral_not_bool column_type>
   std::unique_ptr<column> operator()(column_view const& column) const
-    requires(std::is_integral_v<column_type> && !std::is_same_v<column_type, bool>)
   {
     return cudf::strings::detail::from_integers(column, stream_, mr_);
   }
 
   // floats:
   //
-  template <typename column_type>
+  template <cuda::std::floating_point column_type>
   std::unique_ptr<column> operator()(column_view const& column) const
-    requires(std::is_floating_point_v<column_type>)
   {
     return cudf::strings::detail::from_floats(column, stream_, mr_);
   }
 
   // fixed point:
   //
-  template <typename column_type>
+  template <cudf::concepts::fixed_point column_type>
   std::unique_ptr<column> operator()(column_view const& column) const
-    requires(cudf::is_fixed_point<column_type>())
   {
     return cudf::strings::detail::from_fixed_point(column, stream_, mr_);
   }
 
   // timestamps:
   //
-  template <typename column_type>
+  template <cudf::concepts::timestamp column_type>
   std::unique_ptr<column> operator()(column_view const& column) const
-    requires(cudf::is_timestamp<column_type>())
   {
     std::string format = [&]() {
       if (std::is_same_v<cudf::timestamp_s, column_type>) {
@@ -373,9 +372,8 @@ struct column_to_strings_fn {
       mr_);
   }
 
-  template <typename column_type>
+  template <cudf::concepts::duration column_type>
   std::unique_ptr<column> operator()(column_view const& column) const
-    requires(cudf::is_duration<column_type>())
   {
     return cudf::io::detail::csv::pandas_format_durations(column, stream_, mr_);
   }
@@ -384,7 +382,6 @@ struct column_to_strings_fn {
   //
   template <typename column_type>
   std::unique_ptr<column> operator()(column_view const&) const
-    requires(!cudf::io::detail::is_convertible_to_string_column<column_type>())
   {
     CUDF_FAIL("Unsupported column type.");
   }
@@ -465,7 +462,7 @@ void write_chunked_begin(data_sink* out_sink,
 
     if (compression != compression_type::NONE) {
       // the compressor operates on device memory, so the header needs to be copied to the device
-      auto const d_header = cudf::detail::make_device_uvector_async(
+      auto const d_header = cudf::detail::make_device_buffer_async(
         host_span<char const>{header}, stream, cudf::get_current_device_resource_ref());
       write_compressed_to_sink(
         out_sink, d_header, {}, compression, options.get_compression_block_size(), stream);

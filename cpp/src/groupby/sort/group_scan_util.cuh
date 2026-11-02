@@ -5,30 +5,43 @@
 
 #pragma once
 
-#include "reductions/nested_types_extrema_utils.cuh"
+#include "groupby/common/group_struct_minmax_scan.hpp"
 
 #include <cudf/column/column.hpp>
+#include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/column/column_view.hpp>
 #include <cudf/copying.hpp>
 #include <cudf/detail/aggregation/aggregation.cuh>
+#include <cudf/detail/aggregation/aggregation.hpp>
 #include <cudf/detail/gather.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/structs/utilities.hpp>
 #include <cudf/detail/utilities/cast_functor.cuh>
-#include <cudf/table/table_device_view.cuh>
+#include <cudf/strings/string_view.cuh>
+#include <cudf/structs/struct_view.hpp>
+#include <cudf/table/table.hpp>
+#include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
+#include <cudf/utilities/traits.hpp>
+#include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/functional>
 #include <cuda/stream>
 #include <thrust/scan.h>
+
+#include <memory>
+#include <type_traits>
+#include <utility>
+#include <vector>
 
 namespace cudf {
 namespace groupby {
@@ -50,7 +63,7 @@ struct group_scan_dispatcher {
                                      size_type num_groups,
                                      cudf::device_span<cudf::size_type const> group_labels,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
   {
     return group_scan_functor<K, T>::invoke(values, num_groups, group_labels, stream, mr);
   }
@@ -79,7 +92,7 @@ struct group_scan_functor<K, T, std::enable_if_t<is_group_scan_supported<K, T>()
                                         size_type num_groups,
                                         cudf::device_span<cudf::size_type const> group_labels,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cudf::memory_resources mr)
   {
     using DeviceType       = device_storage_type_t<T>;
     using OpType           = cudf::detail::corresponding_operator_t<K>;
@@ -90,8 +103,8 @@ struct group_scan_functor<K, T, std::enable_if_t<is_group_scan_supported<K, T>()
                          ? data_type{type_to_id<ResultType>(), values.type().scale()}
                          : data_type{type_to_id<ResultType>()};
 
-    std::unique_ptr<column> result =
-      make_fixed_width_column(result_type, values.size(), mask_state::UNALLOCATED, stream, mr);
+    std::unique_ptr<column> result = make_fixed_width_column(
+      result_type, values.size(), mask_state::UNALLOCATED, stream, mr.get_output_mr());
 
     if (values.is_empty()) { return result; }
 
@@ -101,19 +114,19 @@ struct group_scan_functor<K, T, std::enable_if_t<is_group_scan_supported<K, T>()
     cudf::detail::initialize_with_identity(
       result_table, host_span<aggregation::Kind const>(&kind, 1), stream);
 
-    auto result_view = mutable_column_device_view::create(result->mutable_view(), stream);
-    auto values_view = column_device_view::create(values, stream);
+    auto result_view =
+      mutable_column_device_view::create(result->mutable_view(), stream, mr.get_temporary_mr());
+    auto values_view = column_device_view::create(values, stream, mr.get_temporary_mr());
 
     // Perform segmented scan.
     auto const do_scan = [&](auto const& inp_iter, auto const& out_iter, auto const& binop) {
-      thrust::inclusive_scan_by_key(
-        rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-        group_labels.begin(),
-        group_labels.end(),
-        inp_iter,
-        out_iter,
-        cuda::std::equal_to{},
-        binop);
+      thrust::inclusive_scan_by_key(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+                                    group_labels.begin(),
+                                    group_labels.end(),
+                                    inp_iter,
+                                    out_iter,
+                                    cuda::std::equal_to{},
+                                    binop);
     };
 
     if (values.has_nulls()) {
@@ -121,7 +134,8 @@ struct group_scan_functor<K, T, std::enable_if_t<is_group_scan_supported<K, T>()
         make_null_replacement_iterator(*values_view, OpType::template identity<DeviceType>()),
         cudf::detail::cast_fn<ResultDeviceType>{});
       do_scan(input, result_view->begin<ResultDeviceType>(), OpType{});
-      result->set_null_mask(cudf::detail::copy_bitmask(values, stream, mr), values.null_count());
+      result->set_null_mask(cudf::detail::copy_bitmask(values, stream, mr.get_output_mr()),
+                            values.null_count());
     } else {
       auto input = cuda::transform_iterator(values_view->begin<DeviceType>(),
                                             cudf::detail::cast_fn<ResultDeviceType>{});
@@ -139,27 +153,27 @@ struct group_scan_functor<K,
                                         size_type num_groups,
                                         cudf::device_span<cudf::size_type const> group_labels,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cudf::memory_resources mr)
   {
     using OpType = cudf::detail::corresponding_operator_t<K>;
 
     if (values.is_empty()) { return cudf::make_empty_column(cudf::type_id::STRING); }
 
     // create an empty output vector we can fill with string_view instances
-    auto results_vector = rmm::device_uvector<string_view>(values.size(), stream);
+    auto results_vector =
+      cuda::device_buffer<string_view>(stream, mr.get_temporary_mr(), values.size(), cuda::no_init);
 
-    auto values_view = column_device_view::create(values, stream);
+    auto values_view = column_device_view::create(values, stream, mr.get_temporary_mr());
 
     // Perform segmented scan.
     auto const do_scan = [&](auto const& inp_iter, auto const& out_iter, auto const& binop) {
-      thrust::inclusive_scan_by_key(
-        rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-        group_labels.begin(),
-        group_labels.end(),
-        inp_iter,
-        out_iter,
-        cuda::std::equal_to{},
-        binop);
+      thrust::inclusive_scan_by_key(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+                                    group_labels.begin(),
+                                    group_labels.end(),
+                                    inp_iter,
+                                    out_iter,
+                                    cuda::std::equal_to{},
+                                    binop);
     };
 
     if (values.has_nulls()) {
@@ -171,9 +185,10 @@ struct group_scan_functor<K,
     }
 
     // turn the string_view vector into a strings column
-    auto results = make_strings_column(results_vector, string_view{}, stream, mr);
+    auto results = make_strings_column(results_vector, string_view{}, stream, mr.get_output_mr());
     if (values.has_nulls())
-      results->set_null_mask(cudf::detail::copy_bitmask(values, stream, mr), values.null_count());
+      results->set_null_mask(cudf::detail::copy_bitmask(values, stream, mr.get_output_mr()),
+                             values.null_count());
     return results;
   }
 };
@@ -186,23 +201,16 @@ struct group_scan_functor<K,
                                         size_type num_groups,
                                         cudf::device_span<cudf::size_type const> group_labels,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cudf::memory_resources mr)
   {
     if (values.is_empty()) { return cudf::empty_like(values); }
 
     // Create a gather map containing indices of the prefix min/max elements within each group.
-    auto gather_map = rmm::device_uvector<size_type>(values.size(), stream);
+    cuda::device_buffer<size_type> gather_map(
+      stream, mr.get_temporary_mr(), values.size(), cuda::no_init);
 
-    auto const binop_generator =
-      cudf::reduction::detail::arg_minmax_binop_generator::create<K>(values, stream);
-    thrust::inclusive_scan_by_key(
-      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-      group_labels.begin(),
-      group_labels.end(),
-      cuda::counting_iterator<size_type>{0},
-      gather_map.begin(),
-      cuda::std::equal_to{},
-      binop_generator.binop());
+    scan_struct_argminmax(
+      values, group_labels, gather_map.data(), K == aggregation::MIN, stream, mr);
 
     //
     // Gather the children elements of the prefix min/max struct elements first.
@@ -226,16 +234,16 @@ struct group_scan_functor<K,
     if (values.has_nulls()) {
       for (std::unique_ptr<column>& child : scanned_children) {
         child = structs::detail::superimpose_and_sanitize_nulls(
-          values.null_mask(), values.null_count(), std::move(child), stream, mr);
+          values.null_mask(), values.null_count(), std::move(child), stream, mr.get_output_mr());
       }
     }
 
     return create_structs_hierarchy(values.size(),
                                     std::move(scanned_children),
                                     values.null_count(),
-                                    cudf::detail::copy_bitmask(values, stream, mr),
+                                    cudf::detail::copy_bitmask(values, stream, mr.get_output_mr()),
                                     stream,
-                                    mr);
+                                    mr.get_output_mr());
   }
 };
 

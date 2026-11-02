@@ -131,11 +131,12 @@ std::unique_ptr<column> extract_list_element_impl(lists_column_view lists_column
   // 2. If indices = {4, 3, 2, 1, null},
   //    index_lists_column = { {4}, {3}, {2}, {1}, {MAX_SIZE_TYPE} }.
 
-  auto const index_lists_column = make_lists_column(num_lists,
-                                                    make_index_offsets(num_lists, stream),
-                                                    make_index_child(index, num_lists, stream),
-                                                    0,
-                                                    {});
+  auto const index_lists_column =
+    make_lists_column(num_lists,
+                      make_index_offsets(num_lists, stream),
+                      make_index_child(index, num_lists, stream),
+                      0,
+                      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   // We want the output of `segmented_gather` to be a lists column in which each list has exactly
   // one element, even for the null lists.

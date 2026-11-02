@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,7 +10,9 @@
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 
-#include <cub/cub.cuh>
+#include <cub/block/block_reduce.cuh>
+#include <cub/block/block_scan.cuh>
+#include <cub/warp/warp_reduce.cuh>
 #include <cuda/functional>
 #include <cuda/std/limits>
 #include <cuda/std/type_traits>
@@ -120,7 +122,7 @@ inline __device__ void bitpack_mini_block(
 template <typename T>
 class delta_binary_packer {
  public:
-  using U            = std::make_unsigned_t<T>;
+  using U            = cuda::std::make_unsigned_t<T>;
   using block_reduce = cub::BlockReduce<T, delta::block_size>;
   using warp_reduce  = cub::WarpReduce<U>;
   using index_scan   = cub::BlockScan<size_type, delta::block_size>;

@@ -6,12 +6,11 @@
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
+#include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/pinned_memory.hpp>
 
 #include <rmm/exec_policy.hpp>
-
-#include <thrust/copy.h>
 
 #include <algorithm>
 #include <ranges>
@@ -52,11 +51,16 @@ void copy_pageable(void* dst, void const* src, std::size_t size, cuda::stream_re
 }
 
 #if CUDART_VERSION >= 13000
+/**
+ * @brief Whether the specified stream is the legacy default stream
+ *
+ * The null stream is the legacy default stream unless per-thread
+ * default stream is enabled.
+ */
 bool is_default_stream(cuda::stream_ref stream)
 {
   auto const cstream = stream.get();
-  return cstream == cudaStreamDefault || cstream == cudaStreamLegacy ||
-         cstream == cudaStreamPerThread;
+  return cstream == cudaStreamLegacy or (cstream == nullptr and not cudf::is_ptds_enabled());
 }
 #endif  // CUDART_VERSION >= 13000
 
@@ -69,7 +73,7 @@ cudaError_t memcpy_batch_async(void* const* dsts,
                                cuda::stream_ref stream)
 {
 // Uses cudaMemcpyBatchAsync for CUDA 13.0+ to avoid driver-side locking overhead.
-// cudaMemcpyBatchAsync does not support the default stream.
+// cudaMemcpyBatchAsync does not support the legacy default stream.
 #if CUDART_VERSION >= 13000
   if (!is_default_stream(stream)) {
     constexpr std::size_t prefer_overlap_threshold = 128 * 1024;

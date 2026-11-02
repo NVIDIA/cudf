@@ -27,6 +27,7 @@ from pylibcudf.libcudf.io.hybrid_scan cimport (
     const_uint8_t,
     hybrid_scan_metadata as cpp_hybrid_scan_metadata,
     hybrid_scan_reader as cpp_hybrid_scan_reader,
+    read_columns_mode as cpp_read_columns_mode,
     use_data_page_mask as cpp_use_data_page_mask,
 )
 from pylibcudf.libcudf.io.parquet_schema cimport FileMetaData as cpp_FileMetaData
@@ -48,8 +49,15 @@ from pylibcudf.io.parquet_metadata import FileMetaData
 import pylibcudf.libcudf.io.hybrid_scan
 
 UseDataPageMask = pylibcudf.libcudf.io.hybrid_scan.use_data_page_mask
+ReadColumnsMode = pylibcudf.libcudf.io.hybrid_scan.read_columns_mode
 
-__all__ = ["FileMetaData", "HybridScanMetadata", "HybridScanReader", "UseDataPageMask"]
+__all__ = [
+    "FileMetaData",
+    "HybridScanMetadata",
+    "HybridScanReader",
+    "ReadColumnsMode",
+    "UseDataPageMask",
+]
 
 
 cdef device_span[const_uint8_t] _get_device_span(object obj) except *:
@@ -698,6 +706,48 @@ cdef class HybridScanReader:
             ))
         return [ByteRangeInfo(r.offset(), r.size()) for r in ranges]
 
+    def payload_pages_byte_ranges(
+        self,
+        list row_group_indices: list[int],
+        Column row_mask,
+        ParquetReaderOptions options,
+        object stream: CudaStreamLike | None = None
+    ) -> list[ByteRangeInfo]:
+        """Get byte ranges of pages of payload columns.
+
+        Byte ranges are ordered by row group, column chunk, and page. Dictionary
+        pages precede data pages within each column chunk, and pruned pages are
+        returned as empty byte ranges.
+
+        Parameters
+        ----------
+        row_group_indices : list[int]
+            Input row group indices
+        row_mask : Column
+            Boolean column indicating which rows need to be read
+        options : ParquetReaderOptions
+            Parquet reader options
+        stream : Stream, optional
+            CUDA stream
+
+        Returns
+        -------
+        list[ByteRangeInfo]
+            Byte ranges to pages of payload columns
+        """
+        cdef vector[size_type] indices_vec = row_group_indices
+        cdef Stream _stream = _get_stream(stream)
+        cdef column_view mask_view = row_mask.view()
+        cdef vector[byte_range_info] ranges
+        with nogil:
+            ranges = move(self.c_obj.get()[0].payload_pages_byte_ranges(
+                std_span[const_size_type](indices_vec.data(), indices_vec.size()),
+                mask_view,
+                options.c_obj,
+                _stream.view().get()
+            ))
+        return [ByteRangeInfo(r.offset(), r.size()) for r in ranges]
+
     def materialize_payload_columns(
         self,
         list row_group_indices: list[int],
@@ -875,8 +925,9 @@ cdef class HybridScanReader:
 
         self._stream = _get_stream(stream)
         self.mr = _get_memory_resource(mr)
-        # keep reference to avoid use-after-free of device spans
+        # keep references to avoid use-after-free of device spans and filter
         self._filter_chunk_data = column_chunk_data
+        self._filter = options._filter
 
         cdef column_view mask_view = row_mask.view()
         with nogil:
@@ -919,6 +970,7 @@ cdef class HybridScanReader:
             more_chunks = self.c_obj.get()[0].has_next_table_chunk()
         if not more_chunks:
             self._filter_chunk_data = None
+            self._filter = None
         return TableWithMetadata.from_libcudf(
             c_result, self._stream, self.mr
         )
@@ -984,6 +1036,75 @@ cdef class HybridScanReader:
                 self.mr.get_mr()
             )
 
+    def setup_chunking_for_payload_pages(
+        self,
+        size_t chunk_read_limit,
+        size_t pass_read_limit,
+        list row_group_indices: list[int],
+        Column row_mask,
+        object page_data: Sequence,
+        ParquetReaderOptions options,
+        object stream: CudaStreamLike | None = None,
+        DeviceMemoryResource mr=None
+    ) -> None:
+        """Setup chunking information for payload columns read page by page.
+
+        The data page mask is inferred from ``page_data``, which must be in the
+        same order as the byte ranges returned by
+        :meth:`payload_pages_byte_ranges`. Table chunks are read with
+        :meth:`materialize_payload_columns_chunk`.
+
+        Parameters
+        ----------
+        chunk_read_limit : int
+            Limit on bytes returned per chunk (0 for no limit)
+        pass_read_limit : int
+            Limit on memory for reading/decompressing (0 for no limit)
+        row_group_indices : list[int]
+            Input row group indices
+        row_mask : Column
+            Boolean column indicating which rows need to be read
+        page_data : Sequence
+            Span-like objects containing the page data of payload columns, in
+            the same order as the byte ranges returned by
+            :meth:`payload_pages_byte_ranges`. ``None`` indicates a
+            pruned page
+        options : ParquetReaderOptions
+            Parquet reader options
+        stream : Stream, optional
+            CUDA stream
+        mr : DeviceMemoryResource, optional
+            Device memory resource
+        """
+        cdef vector[size_type] indices_vec = row_group_indices
+
+        cdef vector[device_span[const_uint8_t]] spans_vec
+        for page in page_data:
+            if page is None:
+                spans_vec.push_back(device_span[const_uint8_t]())
+            else:
+                spans_vec.push_back(_get_device_span(page))
+
+        self._stream = _get_stream(stream)
+        self.mr = _get_memory_resource(mr)
+        # Released by materialize_payload_columns_chunk after the last chunk
+        self._payload_chunk_data = page_data
+
+        cdef column_view mask_view = row_mask.view()
+        with nogil:
+            self.c_obj.get()[0].setup_chunking_for_payload_pages(
+                chunk_read_limit,
+                pass_read_limit,
+                std_span[const_size_type](indices_vec.data(), indices_vec.size()),
+                mask_view,
+                std_span[const_device_span_const_uint8_t](
+                    <const_device_span_const_uint8_t*>spans_vec.data(), spans_vec.size()
+                ),
+                options.c_obj,
+                self._stream.view().get(),
+                self.mr.get_mr()
+            )
+
     def materialize_payload_columns_chunk(
         self,
         Column row_mask,
@@ -1015,11 +1136,13 @@ cdef class HybridScanReader:
 
     def construct_row_group_passes(
         self,
+        cpp_read_columns_mode columns_mode,
         list row_group_indices: list[int],
         size_t pass_read_limit,
+        ParquetReaderOptions options,
     ) -> list[list[int]]:
         """Partition row groups into passes such that the GPU memory required to
-        materialize a pass is bounded by the specified limit.
+        materialize a pass for selected columns is bounded by the specified limit.
 
         Note that ``pass_read_limit`` is a hint, not an absolute limit. i.e. if
         a row group cannot fit within the limit, it will still constitute a valid
@@ -1027,11 +1150,15 @@ cdef class HybridScanReader:
 
         Parameters
         ----------
+        columns_mode : ReadColumnsMode
+            Columns selection to use for pass memory estimation
         row_group_indices : list[int]
             Input row group indices
         pass_read_limit : int
-            Limit on the amount of memory used for reading and decompressing data
-        or 0 if there is no limit.
+            Limit on the amount of memory used for reading and decompressing
+            data, or 0 if there is no limit.
+        options : ParquetReaderOptions
+            Parquet reader options used to select columns.
 
         Returns
         -------
@@ -1046,12 +1173,16 @@ cdef class HybridScanReader:
         cdef vector[size_type] indices_vec = row_group_indices
         cdef vector[vector[size_type]] passes
         with nogil:
-            passes = move(self.c_obj.get()[0].construct_row_group_passes(
-                std_span[const_size_type](
-                    indices_vec.data(), indices_vec.size()
-                ),
-                pass_read_limit
-            ))
+            passes = move(
+                self.c_obj.get()[0].construct_row_group_passes(
+                    columns_mode,
+                    std_span[const_size_type](
+                        indices_vec.data(), indices_vec.size()
+                    ),
+                    pass_read_limit,
+                    options.c_obj
+                )
+            )
         return passes
 
     def has_next_table_chunk(self) -> bool:

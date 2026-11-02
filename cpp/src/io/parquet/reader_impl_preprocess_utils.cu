@@ -9,6 +9,7 @@
 #include <cudf/detail/algorithms/reduce.cuh>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/parquet_io_utils.hpp>
@@ -16,6 +17,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/algorithm>
@@ -111,15 +113,18 @@ void generate_depth_remappings(
       int schema_idx = mapped_src_col_schema;
       while (schema_idx > 0) {
         auto& cur_schema = md.get_schema(schema_idx, src_file_idx);
+        auto const one_level_list =
+          cur_schema.is_one_level_list(md.get_schema(cur_schema.parent_idx, src_file_idx));
         if (cur_schema.max_repetition_level == r) {
           // if this is a repeated field, map it one level deeper
           shallowest = cur_schema.is_stub() ? cur_depth + 1 : cur_depth;
         }
         // if it's one-level encoding list
-        else if (cur_schema.is_one_level_list(md.get_schema(cur_schema.parent_idx, src_file_idx))) {
+        else if (one_level_list) {
           shallowest = cur_depth - 1;
         }
-        if (!cur_schema.is_stub()) { cur_depth--; }
+        // a one-level list also accounts for its implicit list level
+        if (!cur_schema.is_stub()) { cur_depth -= one_level_list ? 2 : 1; }
         schema_idx = cur_schema.parent_idx;
       }
       return shallowest;
@@ -130,19 +135,15 @@ void generate_depth_remappings(
   // compute "Y" from above
   for (int s_idx = schema.max_definition_level; s_idx >= 0; s_idx--) {
     auto find_deepest = [&](int d) {
-      SchemaElement prev_schema;
       int schema_idx = mapped_src_col_schema;
       int r1         = 0;
       while (schema_idx > 0) {
         SchemaElement cur_schema = md.get_schema(schema_idx, src_file_idx);
         if (cur_schema.max_definition_level == d) {
-          // if this is a repeated field, map it one level deeper
-          r1 = cur_schema.is_stub() ? prev_schema.max_repetition_level
-                                    : cur_schema.max_repetition_level;
+          r1 = cur_schema.max_repetition_level;
           break;
         }
-        prev_schema = cur_schema;
-        schema_idx  = cur_schema.parent_idx;
+        schema_idx = cur_schema.parent_idx;
       }
 
       // we now know R1 from above. return the deepest nesting level that has the
@@ -151,14 +152,20 @@ void generate_depth_remappings(
       int depth  = max_depth - 1;
       while (schema_idx > 0) {
         SchemaElement cur_schema = md.get_schema(schema_idx, src_file_idx);
+        auto const one_level_list =
+          cur_schema.is_one_level_list(md.get_schema(cur_schema.parent_idx, src_file_idx));
         if (cur_schema.max_repetition_level == r1) {
           // if this is a repeated field, map it one level deeper
           depth = cur_schema.is_stub() ? depth + 1 : depth;
           break;
         }
-        if (!cur_schema.is_stub()) { depth--; }
-        prev_schema = cur_schema;
-        schema_idx  = cur_schema.parent_idx;
+        // the implicit list of a one-level list has one less repetition level than its leaf
+        if (one_level_list and cur_schema.max_repetition_level - 1 == r1) {
+          depth--;
+          break;
+        }
+        if (!cur_schema.is_stub()) { depth -= one_level_list ? 2 : 1; }
+        schema_idx = cur_schema.parent_idx;
       }
       return depth;
     };
@@ -267,47 +274,6 @@ void generate_depth_remappings(
   return total_pages;
 }
 
-void fill_in_page_info(host_span<ColumnChunkDesc> chunks,
-                       device_span<PageInfo> pages,
-                       cuda::stream_ref stream)
-{
-  auto const num_pages = pages.size();
-  auto page_indexes    = cudf::detail::make_pinned_vector_async<page_index_info>(num_pages, stream);
-  std::fill(page_indexes.begin(), page_indexes.end(), page_index_info{});
-
-  for (size_t c = 0, page_count = 0; c < chunks.size(); c++) {
-    auto const& chunk = chunks[c];
-    CUDF_EXPECTS(chunk.h_chunk_info != nullptr, "Expected non-null column info struct");
-    auto const& chunk_info = *chunk.h_chunk_info;
-    size_t start_row       = 0;
-    page_count += chunk.num_dict_pages;
-    for (size_t p = 0; p < chunk_info.pages.size(); p++, page_count++) {
-      auto& page      = page_indexes[page_count];
-      page.num_rows   = chunk_info.pages[p].num_rows;
-      page.chunk_row  = start_row;
-      page.num_nulls  = chunk_info.pages[p].num_nulls.value_or(0);
-      page.num_valids = chunk_info.pages[p].num_valid.value_or(0);
-      page.str_bytes  = chunk_info.pages[p].var_bytes_size.value_or(0);
-      page.has_value_info =
-        (chunk_info.pages[p].num_nulls.has_value() and chunk_info.pages[p].num_valid.has_value() and
-         (chunk.physical_type != Type::BYTE_ARRAY or
-          chunk_info.pages[p].var_bytes_size.has_value()));
-
-      start_row += page.num_rows;
-    }
-  }
-
-  auto d_page_indexes = cudf::detail::make_device_uvector_async(
-    page_indexes, stream, cudf::get_current_device_resource_ref());
-
-  auto iter = cuda::counting_iterator<size_type>{0};
-  thrust::for_each(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                   iter,
-                   iter + num_pages,
-                   copy_page_info{d_page_indexes, pages});
-  stream.sync();  // ensures the page_indexes is not destroyed before the copy is completed
-}
-
 std::string encoding_to_string(Encoding encoding)
 {
   switch (encoding) {
@@ -378,7 +344,8 @@ cudf::detail::hostdevice_vector<PageInfo> sort_pages(device_span<PageInfo const>
   // 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3
   //
   // We also need to preserve key-relative page ordering, so we need to use a stable sort.
-  rmm::device_uvector<int32_t> page_keys{unsorted_pages.size(), stream};
+  cuda::device_buffer<int32_t> page_keys(
+    stream, cudf::get_current_device_resource_ref(), unsorted_pages.size(), cuda::no_init);
   thrust::transform(
     rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
     unsorted_pages.begin(),
@@ -390,7 +357,8 @@ cudf::detail::hostdevice_vector<PageInfo> sort_pages(device_span<PageInfo const>
   // we are doing this by sorting indices first and then transforming the output because nvcc
   // started generating kernels using too much shared memory when trying to sort the pages
   // directly.
-  rmm::device_uvector<int32_t> sort_indices(unsorted_pages.size(), stream);
+  cuda::device_buffer<int32_t> sort_indices(
+    stream, cudf::get_current_device_resource_ref(), unsorted_pages.size(), cuda::no_init);
   thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                    sort_indices.begin(),
                    sort_indices.end(),
@@ -401,7 +369,8 @@ cudf::detail::hostdevice_vector<PageInfo> sort_pages(device_span<PageInfo const>
     page_keys.end(),
     sort_indices.begin(),
     cuda::std::less<int>());
-  auto pass_pages = cudf::detail::hostdevice_vector<PageInfo>(unsorted_pages.size(), stream);
+  auto pass_pages = cudf::detail::hostdevice_vector<PageInfo>(
+    unsorted_pages.size(), stream, cudf::get_current_device_resource_ref());
   thrust::gather(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                  sort_indices.begin(),
                  sort_indices.end(),
@@ -412,6 +381,56 @@ cudf::detail::hostdevice_vector<PageInfo> sort_pages(device_span<PageInfo const>
 }
 
 namespace {
+
+/**
+ * @brief Construct metadata for a data page; dictionary slots remain zero-initialized.
+ */
+page_index_info make_page_index_info(page_info const& source, Type physical_type, size_t start_row)
+{
+  page_index_info page{};
+  page.num_rows       = source.num_rows;
+  page.chunk_row      = start_row;
+  page.num_nulls      = source.num_nulls.value_or(0);
+  page.num_valids     = source.num_valid.value_or(0);
+  page.str_bytes      = source.var_bytes_size.value_or(0);
+  page.has_value_info = source.num_nulls.has_value() and source.num_valid.has_value() and
+                        (physical_type != Type::BYTE_ARRAY or source.var_bytes_size.has_value());
+  return page;
+}
+
+/**
+ * @brief Construct page_index_info metadata structs for each page.
+ * To be applied to PageInfo later when decoding pages.
+ *
+ * @param[in] chunks Host span of column chunks
+ * @param[in] num_pages Number of pages
+ * @param[in] stream CUDA stream to use
+ * @return Pinned vector of page index metadata
+ */
+auto construct_page_index_info(host_span<ColumnChunkDesc> chunks,
+                               size_t num_pages,
+                               cuda::stream_ref stream)
+{
+  auto page_indexes = cudf::detail::make_pinned_vector_async<page_index_info>(num_pages, stream);
+  std::fill(page_indexes.begin(), page_indexes.end(), page_index_info{});
+
+  for (size_t c = 0, page_count = 0; c < chunks.size(); c++) {
+    auto const& chunk = chunks[c];
+    CUDF_EXPECTS(chunk.h_chunk_info != nullptr, "Expected non-null column info struct");
+    auto const& chunk_info = *chunk.h_chunk_info;
+    size_t start_row       = 0;
+    page_count += chunk.num_dict_pages;
+    CUDF_EXPECTS(page_count + chunk_info.pages.size() <= num_pages,
+                 "Page index metadata exceeds the number of pages");
+    for (size_t p = 0; p < chunk_info.pages.size(); p++, page_count++) {
+      auto const page = make_page_index_info(chunk_info.pages[p], chunk.physical_type, start_row);
+      page_indexes[page_count] = page;
+      start_row += page.num_rows;
+    }
+  }
+
+  return page_indexes;
+}
 
 /**
  * @brief Page data source type
@@ -441,7 +460,8 @@ void decode_page_headers_impl(pass_intermediate_data& pass,
   CUDF_FUNC_RANGE();
 
   auto iter = cuda::counting_iterator<size_t>{0};
-  rmm::device_uvector<size_type> chunk_page_offsets(pass.chunks.size() + 1, stream);
+  cuda::device_buffer<size_type> chunk_page_offsets(
+    stream, cudf::get_current_device_resource_ref(), pass.chunks.size() + 1, cuda::no_init);
   thrust::transform_exclusive_scan(
     rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
     iter,
@@ -454,7 +474,8 @@ void decode_page_headers_impl(pass_intermediate_data& pass,
       }),
     size_type{0},
     cuda::std::plus<size_type>{});
-  rmm::device_uvector<chunk_page_info> d_chunk_page_info(pass.chunks.size(), stream);
+  cuda::device_buffer<chunk_page_info> d_chunk_page_info(
+    stream, cudf::get_current_device_resource_ref(), pass.chunks.size(), cuda::no_init);
   thrust::for_each(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                    iter,
                    iter + pass.chunks.size(),
@@ -469,13 +490,17 @@ void decode_page_headers_impl(pass_intermediate_data& pass,
   if constexpr (data_source_type == page_data_source_type::PAGE_SPANS) {
     CUDF_EXPECTS(page_data.size() == unsorted_pages.size(),
                  "Page span count must match the number of logical pages");
-    auto device_page_data = cudf::detail::make_device_uvector_async(
+    auto const page_indexes = construct_page_index_info(pass.chunks, unsorted_pages.size(), stream);
+    auto const d_page_indexes = cudf::detail::make_device_buffer_async(
+      page_indexes, stream, cudf::get_current_device_resource_ref());
+    auto device_page_data = cudf::detail::make_device_buffer_async(
       page_data, stream, cudf::get_current_device_resource_ref());
     decode_page_headers_from_page_data(
       device_span<ColumnChunkDesc const>(pass.chunks.device_ptr(), pass.chunks.size()),
       unsorted_pages,
       device_page_data,
       device_span<size_type const>(chunk_page_offsets.data(), chunk_page_offsets.size()),
+      d_page_indexes,
       error_code.data(),
       stream);
   }
@@ -484,9 +509,18 @@ void decode_page_headers_impl(pass_intermediate_data& pass,
   else if constexpr (data_source_type == page_data_source_type::OFFSET_INDEX) {
     auto host_page_data = cudf::detail::make_pinned_vector_async<cudf::device_span<uint8_t const>>(
       unsorted_pages.size(), stream);
-    auto curr_page_idx = 0;
+    auto page_indexes =
+      cudf::detail::make_pinned_vector_async<page_index_info>(unsorted_pages.size(), stream);
+    std::fill(page_indexes.begin(), page_indexes.end(), page_index_info{});
+    size_t curr_page_idx = 0;
 
     std::for_each(pass.chunks.begin(), pass.chunks.end(), [&](auto const& chunk) {
+      CUDF_EXPECTS(chunk.h_chunk_info and
+                     std::cmp_equal(chunk.h_chunk_info->pages.size(), chunk.num_data_pages),
+                   "Encountered invalid sized data page information in the page index");
+      CUDF_EXPECTS(curr_page_idx + chunk.num_dict_pages + chunk.h_chunk_info->pages.size() <=
+                     unsorted_pages.size(),
+                   "Page index metadata exceeds the number of pages");
       // Column chunk buffer's data pointer
       auto data_ptr = const_cast<uint8_t*>(chunk.compressed_data);
 
@@ -509,10 +543,8 @@ void decode_page_headers_impl(pass_intermediate_data& pass,
       }
 
       // Data pages
-      CUDF_EXPECTS(chunk.h_chunk_info and
-                     std::cmp_equal(chunk.h_chunk_info->pages.size(), chunk.num_data_pages),
-                   "Encountered invalid sized data page information in the page index");
       auto const num_data_pages = chunk.num_data_pages;
+      size_t start_row          = 0;
       std::for_each(
         cuda::counting_iterator<int32_t>{0},
         cuda::counting_iterator{num_data_pages},
@@ -520,6 +552,10 @@ void decode_page_headers_impl(pass_intermediate_data& pass,
           auto const page_size = chunk.h_chunk_info->pages[page_idx].location.compressed_page_size;
           CUDF_EXPECTS(page_size >= 0, "Encountered invalid data page size");
           host_page_data[curr_page_idx] = {data_ptr, static_cast<std::size_t>(page_size)};
+          auto const index              = make_page_index_info(
+            chunk.h_chunk_info->pages[page_idx], chunk.physical_type, start_row);
+          page_indexes[curr_page_idx] = index;
+          start_row += index.num_rows;
           ++curr_page_idx;
           if (page_idx < num_data_pages - 1) {
             data_ptr += chunk.h_chunk_info->pages[page_idx + 1].location.offset -
@@ -533,8 +569,10 @@ void decode_page_headers_impl(pass_intermediate_data& pass,
                  "Expected page offsets to match total pages");
 
     // Copy page data spans to device
-    auto page_data = cudf::detail::make_device_uvector_async(
+    auto page_data = cudf::detail::make_device_buffer_async(
       host_page_data, stream, cudf::get_current_device_resource_ref());
+    auto const d_page_indexes = cudf::detail::make_device_buffer_async(
+      page_indexes, stream, cudf::get_current_device_resource_ref());
 
     // Accelerated decode page headers, one thread per page
     decode_page_headers_from_page_data(
@@ -542,6 +580,7 @@ void decode_page_headers_impl(pass_intermediate_data& pass,
       unsorted_pages,
       page_data,
       device_span<size_type const>(chunk_page_offsets.data(), chunk_page_offsets.size()),
+      d_page_indexes,
       error_code.data(),
       stream);
   } else {
@@ -562,11 +601,6 @@ void decode_page_headers_impl(pass_intermediate_data& pass,
     } else {
       CUDF_FAIL("Parquet header parsing failed with code(s) " + kernel_error::to_string(error));
     }
-  }
-
-  if (data_source_type == page_data_source_type::OFFSET_INDEX or
-      data_source_type == page_data_source_type::PAGE_SPANS) {
-    fill_in_page_info(pass.chunks, unsorted_pages, stream);
   }
 
   // compute max bytes needed for level data
@@ -591,7 +625,8 @@ void decode_page_headers_impl(pass_intermediate_data& pass,
   // page_keys:   1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3
   //
   // result:      0,          4,          8
-  rmm::device_uvector<size_type> page_counts(pass.pages.size() + 1, stream);
+  cuda::device_buffer<size_type> page_counts(
+    stream, cudf::get_current_device_resource_ref(), pass.pages.size() + 1, cuda::no_init);
   auto page_keys =
     make_page_key_iterator(device_span<PageInfo const>(pass.pages.device_ptr(), pass.pages.size()));
   auto const page_counts_end = cudf::detail::reduce_by_key(page_keys,
@@ -603,7 +638,8 @@ void decode_page_headers_impl(pass_intermediate_data& pass,
                                                            stream)
                                  .second;
   auto const num_page_counts = page_counts_end - page_counts.begin();
-  pass.page_offsets          = rmm::device_uvector<size_type>(num_page_counts + 1, stream);
+  pass.page_offsets          = cuda::device_buffer<size_type>(
+    stream, cudf::get_current_device_resource_ref(), num_page_counts + 1, cuda::no_init);
   thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                          page_counts.begin(),
                          page_counts.begin() + num_page_counts + 1,

@@ -66,7 +66,7 @@ std::unique_ptr<column> copy_range(strings_column_view const& source,
   // create null mask
   auto [null_mask, null_count] = [&] {
     if (!target.parent().nullable() && !source.parent().nullable()) {
-      return std::pair(rmm::device_buffer{}, 0);
+      return std::pair(cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
     }
     return cudf::detail::valid_if(
       cuda::counting_iterator<size_type>{0},

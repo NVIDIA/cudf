@@ -116,22 +116,42 @@ def capture_stack_trace(pid: int, stack_type=StackType.C) -> None:
         print(f"Skipping stack trace for process {pid}: gdb not found")
         return
 
+    gdb_args = [gdb, "--quiet"]
+    try:
+        executable = psutil.Process(pid).exe()
+    except (psutil.AccessDenied, psutil.NoSuchProcess):
+        pass
+    else:
+        auto_load_script = f"{executable}-gdb.py"
+        if os.path.isfile(auto_load_script):
+            # GDB attaches while processing --pid, before regular -ex commands
+            # run. Trust only this executable's helper early enough for it to
+            # register Python commands such as py-bt during the attach.
+            gdb_args.extend(
+                [
+                    "-iex",
+                    f"add-auto-load-safe-path {auto_load_script}",
+                ]
+            )
+
+    gdb_args.extend(
+        [
+            "--pid",
+            str(pid),
+            "-ex",
+            "set pagination off",
+            "-ex",
+            "set confirm off",
+            "-ex",
+            bt_command,
+            "-ex",
+            "quit",
+        ]
+    )
+
     try:
         proc = subprocess.run(
-            [
-                gdb,
-                "--quiet",
-                "--pid",
-                str(pid),
-                "-ex",
-                "set pagination off",
-                "-ex",
-                "set confirm off",
-                "-ex",
-                bt_command,
-                "-ex",
-                "quit",
-            ],
+            gdb_args,
             capture_output=True,
             text=True,
             check=False,

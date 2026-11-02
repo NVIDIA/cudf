@@ -21,6 +21,7 @@
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <cuda/iterator>
+#include <cuda/std/type_traits>
 #include <cuda/stream>
 #include <thrust/reduce.h>
 
@@ -198,7 +199,7 @@ struct cast_numeric_scalar_fn {
   template <typename ResultType>
   static constexpr bool is_supported()
   {
-    return cudf::is_convertible<InputType, ResultType>::value && cudf::is_numeric<ResultType>();
+    return cuda::std::is_convertible_v<InputType, ResultType> && cudf::is_numeric<ResultType>();
   }
 
  public:
@@ -240,7 +241,7 @@ struct bool_result_element_dispatcher {
                                      std::optional<std::reference_wrapper<scalar const>> init,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
-    requires(std::is_arithmetic_v<ElementType>)
+    requires(cuda::std::is_arithmetic_v<ElementType>)
   {
     return simple_reduction<ElementType, bool, Op>(col, init, stream, mr);
   }
@@ -250,7 +251,7 @@ struct bool_result_element_dispatcher {
                                      std::optional<std::reference_wrapper<scalar const>>,
                                      cuda::stream_ref,
                                      rmm::device_async_resource_ref)
-    requires(not std::is_arithmetic_v<ElementType>)
+    requires(not cuda::std::is_arithmetic_v<ElementType>)
   {
     CUDF_FAIL("Reduction operator not supported for this type");
   }
@@ -406,7 +407,7 @@ struct element_type_dispatcher {
       return reduce<ElementType, ElementType>(col, init, stream, mr);
     }
 
-    using OutputType  = std::conditional_t<std::is_integral_v<ElementType>, int64_t, double>;
+    using OutputType  = std::conditional_t<cuda::std::is_integral_v<ElementType>, int64_t, double>;
     auto const result = reduce<ElementType, OutputType>(col, init, stream, mr);
 
     // This will cast the result to the output_type.

@@ -16,7 +16,6 @@ from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
 )
-from cudf_polars.utils.versions import POLARS_VERSION_LT_138, POLARS_VERSION_LT_143
 
 
 @pytest.mark.parametrize(
@@ -223,10 +222,6 @@ def test_dataframescan_with_decimals(engine: pl.GPUEngine):
     assert_gpu_result_equal(q, engine=engine)
 
 
-@pytest.mark.skipif(
-    POLARS_VERSION_LT_138,
-    reason="height parameter added in Polars 1.38",
-)
 def test_dataframescan_zero_width_with_rows(engine: pl.GPUEngine):
     df = pl.LazyFrame(height=5)
     q = df.select(pl.len())
@@ -239,10 +234,6 @@ def test_struct_literal_not_supported(engine: pl.GPUEngine):
     assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
-@pytest.mark.skipif(
-    POLARS_VERSION_LT_143,
-    reason="Polars < 1.43 does not push len() below the union",
-)
 def test_len_does_not_materialize_dataframescan(
     in_memory_engine: pl.GPUEngine, monkeypatch: pytest.MonkeyPatch
 ):
@@ -282,10 +273,7 @@ def test_len_and_data_share_dataframescan_cache(
 
     monkeypatch.setattr(Select, "_len_frame", spy)
     assert_gpu_result_equal(q, engine=in_memory_engine, check_row_order=False)
-    if not POLARS_VERSION_LT_143:
-        # Polars < 1.43 plans a projection between the len and the Cache, so
-        # the fast path is not reached there; results are still checked above.
-        assert len(fast_path_calls) == (1 if len_first else 0)
+    assert len(fast_path_calls) == (1 if len_first else 0)
 
 
 def _virtual_frame(n: int) -> pl.LazyFrame:
@@ -300,10 +288,6 @@ def test_len_of_dataframescan_beyond_size_type(in_memory_engine: pl.GPUEngine):
     assert q.collect(engine=in_memory_engine).item() == n
 
 
-@pytest.mark.skipif(
-    POLARS_VERSION_LT_143,
-    reason="Polars < 1.43 does not push len() below the union",
-)
 def test_len_of_union_exceeding_index_dtype_raises(in_memory_engine: pl.GPUEngine):
     if pl.get_index_type() != pl.UInt32:
         pytest.skip("requires a 32-bit polars index type")

@@ -8,6 +8,7 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/offsets_iterator.cuh>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
@@ -17,12 +18,13 @@
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/transform.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/std/optional>
 #include <cuda/stream>
@@ -159,7 +161,7 @@ void flatten_hierarchy(ColIter begin,
  */
 struct flatten_functor {
   // fixed width
-  template <typename T>
+  template <cudf::concepts::fixed_width T>
   void operator()(column_view const& col,
                   std::vector<cudf::column_view>& out,
                   std::vector<column_info>& info,
@@ -168,7 +170,6 @@ struct flatten_functor {
                   size_type cur_depth,
                   size_type cur_branch_depth,
                   cuda::std::optional<int>)
-    requires(cudf::is_fixed_width<T>())
   {
     out.push_back(col);
     info.push_back({cur_depth, cur_branch_depth, cur_branch_depth});
@@ -177,7 +178,7 @@ struct flatten_functor {
   }
 
   // strings
-  template <typename T>
+  template <cudf::concepts::string_view T>
   void operator()(column_view const& col,
                   std::vector<cudf::column_view>& out,
                   std::vector<column_info>& info,
@@ -186,7 +187,6 @@ struct flatten_functor {
                   size_type cur_depth,
                   size_type cur_branch_depth,
                   cuda::std::optional<int>)
-    requires(std::is_same_v<T, string_view>)
   {
     out.push_back(col);
     info.push_back({cur_depth, cur_branch_depth, cur_branch_depth});
@@ -194,7 +194,7 @@ struct flatten_functor {
   }
 
   // lists
-  template <typename T>
+  template <cudf::concepts::list_view T>
   void operator()(column_view const& col,
                   std::vector<cudf::column_view>& out,
                   std::vector<column_info>& info,
@@ -203,7 +203,6 @@ struct flatten_functor {
                   size_type cur_depth,
                   size_type cur_branch_depth,
                   cuda::std::optional<int> parent_index)
-    requires(std::is_same_v<T, list_view>)
   {
     // track branch depth as we reach this list and after we pass it
     auto const branch_depth_start = cur_branch_depth;
@@ -233,7 +232,7 @@ struct flatten_functor {
   }
 
   // structs
-  template <typename T>
+  template <cudf::concepts::struct_view T>
   void operator()(column_view const& col,
                   std::vector<cudf::column_view>& out,
                   std::vector<column_info>& info,
@@ -242,7 +241,6 @@ struct flatten_functor {
                   size_type cur_depth,
                   size_type cur_branch_depth,
                   cuda::std::optional<int>)
-    requires(std::is_same_v<T, struct_view>)
   {
     out.push_back(col);
     info.push_back({cur_depth, cur_branch_depth, cur_branch_depth});
@@ -266,8 +264,8 @@ struct flatten_functor {
   // everything else
   template <typename T, typename... Args>
   void operator()(Args&&...)
-    requires(!cudf::is_fixed_width<T>() && !std::is_same_v<T, string_view> &&
-             !std::is_same_v<T, list_view> && !std::is_same_v<T, struct_view>)
+    requires(!cudf::concepts::fixed_width<T> && !cudf::concepts::string_view<T> &&
+             !cudf::concepts::nested<T>)
   {
     CUDF_FAIL("Unsupported column type in row_bit_count");
   }
@@ -523,8 +521,8 @@ std::unique_ptr<column> segmented_row_bit_count(table_view const& t,
     create_column_device_views<column_device_view>(host_span<column_view const>{cols}, stream);
 
   // move stack info to the gpu
-  rmm::device_uvector<column_info> d_info =
-    cudf::detail::make_device_uvector_async(info, stream, cudf::get_current_device_resource_ref());
+  cuda::device_buffer<column_info> d_info =
+    cudf::detail::make_device_buffer_async(info, stream, cudf::get_current_device_resource_ref());
 
   // each thread needs to maintain a stack of row spans of size max_branch_depth. we will use
   // shared memory to do this rather than allocating a potentially gigantic temporary buffer

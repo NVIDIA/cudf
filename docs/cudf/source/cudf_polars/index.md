@@ -111,6 +111,7 @@ usage
 engines
 options
 execute
+pytorch
 io_plugins
 profiling
 other_engines

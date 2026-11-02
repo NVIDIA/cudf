@@ -12,6 +12,7 @@
 
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/functional>
 #include <cuda/std/tuple>
@@ -36,7 +37,8 @@ std::unique_ptr<column> group_replace_nulls(cudf::column_view const& grouped_val
   auto valid_it  = cudf::detail::make_validity_iterator(*device_in);
   auto in_begin  = cuda::make_zip_iterator(cuda::std::make_tuple(index, valid_it));
 
-  rmm::device_uvector<cudf::size_type> gather_map(size, stream);
+  cuda::device_buffer<cudf::size_type> gather_map(
+    stream, cudf::get_current_device_resource_ref(), size, cuda::no_init);
   auto gm_begin = cuda::make_zip_iterator(
     cuda::std::make_tuple(gather_map.begin(), cuda::make_discard_iterator()));
 

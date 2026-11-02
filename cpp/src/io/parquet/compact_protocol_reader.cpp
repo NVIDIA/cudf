@@ -17,6 +17,7 @@
 #include <exception>
 #include <functional>
 #include <future>
+#include <optional>
 #include <tuple>
 #include <utility>
 
@@ -360,6 +361,31 @@ class parquet_field_struct : public parquet_field {
   {
     if (not cpr->check_field_type(field_type, FieldType::STRUCT)) { return false; }
     cpr->read(&val);
+    return true;
+  }
+};
+
+/**
+ * @brief Functor to read a LogicalType and its payload from CompactProtocolReader
+ *
+ * @return true if the field was read, false if skipped on a type mismatch
+ */
+class parquet_field_logical_type : public parquet_field {
+  cuda::std::optional<LogicalType>& val;
+  LogicalTypePayload& payload;
+
+ public:
+  parquet_field_logical_type(int f, cuda::std::optional<LogicalType>& v, LogicalTypePayload& p)
+    : parquet_field(f), val(v), payload(p)
+  {
+  }
+
+  inline bool operator()(CompactProtocolReader* cpr, int field_type)
+  {
+    if (not cpr->check_field_type(field_type, FieldType::STRUCT)) { return false; }
+    LogicalType v;
+    cpr->read(&v, &payload);
+    val = v;
     return true;
   }
 };
@@ -742,25 +768,25 @@ void CompactProtocolReader::read(SchemaElement* s)
 {
   using optional_converted_type =
     parquet_field_optional<ConvertedType, parquet_field_enum<ConvertedType>>;
-  using optional_logical_type = parquet_field_optional<LogicalType,
-                                                       parquet_field_struct<LogicalType>,
-                                                       cuda::std::optional<LogicalType>>;
-  auto op                     = std::make_tuple(parquet_field_enum<Type>(1, s->type),
-                            parquet_field_int32(2, s->type_length),
-                            parquet_field_enum<FieldRepetitionType>(3, s->repetition_type),
-                            parquet_field_string(4, s->name),
-                            parquet_field_int32(5, s->num_children),
-                            optional_converted_type(6, s->converted_type),
-                            parquet_field_int32(7, s->decimal_scale),
-                            parquet_field_int32(8, s->decimal_precision),
-                            parquet_field_optional<int32_t, parquet_field_int32>(9, s->field_id),
-                            optional_logical_type(10, s->logical_type));
+  auto op =
+    std::make_tuple(parquet_field_enum<Type>(1, s->type),
+                    parquet_field_int32(2, s->type_length),
+                    parquet_field_enum<FieldRepetitionType>(3, s->repetition_type),
+                    parquet_field_string(4, s->name),
+                    parquet_field_int32(5, s->num_children),
+                    optional_converted_type(6, s->converted_type),
+                    parquet_field_int32(7, s->decimal_scale),
+                    parquet_field_int32(8, s->decimal_precision),
+                    parquet_field_optional<int32_t, parquet_field_int32>(9, s->field_id),
+                    parquet_field_logical_type(10, s->logical_type, s->logical_type_payload));
   function_builder(this, op);
 }
 
-void CompactProtocolReader::read(LogicalType* l)
+void CompactProtocolReader::read(LogicalType* l, LogicalTypePayload* payload)
 {
-  auto op = std::make_tuple(
+  // Clear the destination so only the parsed union member is engaged.
+  *payload = LogicalTypePayload{};
+  auto op  = std::make_tuple(
     parquet_field_union_enumerator(1, l->type),
     parquet_field_union_enumerator(2, l->type),
     parquet_field_union_enumerator(3, l->type),
@@ -773,8 +799,44 @@ void CompactProtocolReader::read(LogicalType* l)
     parquet_field_union_enumerator(11, l->type),
     parquet_field_union_enumerator(12, l->type),
     parquet_field_union_enumerator(13, l->type),
-    parquet_field_union_enumerator(16, l->type));
+    parquet_field_union_enumerator(14, l->type),  // UUID
+    parquet_field_union_enumerator(15, l->type),  // FLOAT16
+    parquet_field_union_struct<LogicalType::Type, VariantType>(16, l->type, payload->variant_type),
+    parquet_field_union_struct<LogicalType::Type, GeometryType>(
+      17, l->type, payload->geometry_type),
+    parquet_field_union_struct<LogicalType::Type, GeographyType>(
+      18, l->type, payload->geography_type),
+    parquet_field_union_enumerator(19, l->type));  // FILE
   function_builder(this, op);
+}
+
+void CompactProtocolReader::read(GeometryType* g)
+{
+  // Thrift field 1 is the `crs` string; only its PRESENCE is recorded, mirroring GeographyType.
+  std::optional<std::string> crs;
+  auto op = std::make_tuple(parquet_field_optional<std::string, parquet_field_string>(1, crs));
+  function_builder(this, op);
+  g->has_crs = crs.has_value();
+}
+
+void CompactProtocolReader::read(VariantType* v)
+{
+  using optional_version = parquet_field_optional<int8_t, parquet_field_int8>;
+  auto op                = std::make_tuple(optional_version(1, v->specification_version));
+  function_builder(this, op);
+}
+
+void CompactProtocolReader::read(GeographyType* g)
+{
+  using optional_algorithm = parquet_field_optional<EdgeInterpolationAlgorithm,
+                                                    parquet_field_enum<EdgeInterpolationAlgorithm>>;
+  // Thrift field 1 is the `crs` string; only its PRESENCE is recorded while `algorithm` (id 2)
+  // round-trips.
+  std::optional<std::string> crs;
+  auto op = std::make_tuple(parquet_field_optional<std::string, parquet_field_string>(1, crs),
+                            optional_algorithm(2, g->algorithm));
+  function_builder(this, op);
+  g->has_crs = crs.has_value();
 }
 
 void CompactProtocolReader::read(DecimalType* d)
@@ -935,7 +997,8 @@ void CompactProtocolReader::read(DataPageHeaderV2* d)
 
 void CompactProtocolReader::read(KeyValue* k)
 {
-  auto op = std::make_tuple(parquet_field_string(1, k->key), parquet_field_string(2, k->value));
+  auto op = std::make_tuple(parquet_field_string(1, k->key),
+                            parquet_field_optional<std::string, parquet_field_string>(2, k->value));
   function_builder(this, op);
 }
 
@@ -977,7 +1040,8 @@ void CompactProtocolReader::read(ColumnIndex* c)
                             parquet_field_enum<BoundaryOrder>(4, c->boundary_order),
                             optional_list_i64(5, c->null_counts),
                             optional_list_i64(6, c->repetition_level_histogram),
-                            optional_list_i64(7, c->definition_level_histogram));
+                            optional_list_i64(7, c->definition_level_histogram),
+                            optional_list_i64(8, c->nan_counts));
   function_builder(this, op);
 }
 
@@ -994,13 +1058,16 @@ void CompactProtocolReader::read(Statistics* s)
                             optional_binary(5, s->max_value),
                             optional_binary(6, s->min_value),
                             optional_bool(7, s->is_max_value_exact),
-                            optional_bool(8, s->is_min_value_exact));
+                            optional_bool(8, s->is_min_value_exact),
+                            optional_int64(9, s->nan_count));
   function_builder(this, op);
 }
 
 void CompactProtocolReader::read(ColumnOrder* c)
 {
-  auto op = std::make_tuple(parquet_field_union_enumerator<ColumnOrder::Type>(1, c->type));
+  auto op = std::make_tuple(parquet_field_union_enumerator(1, c->type),
+                            parquet_field_union_enumerator(2, c->type),
+                            parquet_field_union_enumerator(3, c->type));
   function_builder(this, op);
 }
 
@@ -1106,7 +1173,7 @@ int CompactProtocolReader::WalkSchema(
   }
 }
 
-void decode_footer_bytes(cudf::host_span<uint8_t const> footer_bytes,
+void decode_footer_bytes(std::span<uint8_t const> footer_bytes,
                          FileMetaData* metadata,
                          experimental::thrift_mismatch_policy mode)
 {
@@ -1115,8 +1182,7 @@ void decode_footer_bytes(cudf::host_span<uint8_t const> footer_bytes,
   CUDF_EXPECTS(not reader.overread(), overread_message);
 }
 
-void decode_footer_and_init_schema(cudf::host_span<uint8_t const> footer_bytes,
-                                   FileMetaData* metadata)
+void decode_footer_and_init_schema(std::span<uint8_t const> footer_bytes, FileMetaData* metadata)
 {
   CompactProtocolReader reader{footer_bytes.data(), footer_bytes.size()};
   reader.read(metadata);

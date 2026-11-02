@@ -12,7 +12,9 @@
 
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/std/utility>
 #include <cuda/stream>
@@ -103,8 +105,11 @@ int64_t find_next_split(int64_t cur_pos,
  *
  * This function is asynchronous. Call stream.sync() before using the
  * results.
+ *
+ * TODO: Change this to a resizable buffer if/when https://github.com/NVIDIA/cccl/issues/12051
+ * is implemented
  */
-std::pair<rmm::device_uvector<cumulative_page_info>, rmm::device_uvector<int32_t>>
+std::pair<cuda::device_buffer<cumulative_page_info>, cuda::device_buffer<int32_t>>
 adjust_cumulative_sizes(device_span<cumulative_page_info const> c_info,
                         device_span<PageInfo const> pages,
                         cuda::stream_ref stream);
@@ -134,7 +139,7 @@ adjust_cumulative_sizes(device_span<cumulative_page_info const> c_info,
  * expected memory usage (including scratch space)
  *
  */
-std::tuple<rmm::device_uvector<page_span>, size_t, size_t> compute_next_subpass(
+std::tuple<cuda::device_buffer<page_span>, size_t, size_t> compute_next_subpass(
   device_span<cumulative_page_info const> c_info,
   device_span<PageInfo const> pages,
   device_span<ColumnChunkDesc const> chunks,
@@ -186,13 +191,13 @@ std::vector<row_range> compute_page_splits_by_row(device_span<cumulative_page_in
  * @return A pair of device buffers containing the decompressed data for dictionary and
  * non-dictionary pages, respectively.
  */
-[[nodiscard]] std::pair<rmm::device_buffer, rmm::device_buffer> decompress_page_data(
-  host_span<ColumnChunkDesc const> chunks,
-  host_span<PageInfo> pass_pages,
-  host_span<PageInfo> subpass_pages,
-  host_span<bool const> subpass_page_mask,
-  cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+[[nodiscard]] std::pair<cuda::device_buffer<std::uint8_t>, cuda::device_buffer<std::uint8_t>>
+decompress_page_data(host_span<ColumnChunkDesc const> chunks,
+                     host_span<PageInfo> pass_pages,
+                     host_span<PageInfo> subpass_pages,
+                     host_span<bool const> subpass_page_mask,
+                     cuda::stream_ref stream,
+                     rmm::device_async_resource_ref mr);
 
 /**
  * @brief Detect malformed parquet input data
@@ -217,7 +222,7 @@ void detect_malformed_pages(device_span<PageInfo const> pages,
 /**
  * @brief Computes the per-page scratch space required for decompression.
  */
-rmm::device_uvector<size_t> compute_decompression_scratch_sizes(
+cuda::device_buffer<size_t> compute_decompression_scratch_sizes(
   device_span<ColumnChunkDesc const> chunks,
   device_span<PageInfo const> pages,
   cuda::stream_ref stream);
@@ -233,11 +238,11 @@ rmm::device_uvector<size_t> compute_decompression_scratch_sizes(
  * @param skip_rows Starting row for the pass
  * @param num_rows Number of rows to read in the pass
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource to use for allocating the returned device_uvector
+ * @param mr Device memory resource to use for allocating the returned device_buffer
  * @returns A vector of size_t values, one for each page, indicating the size needed for string
  * offsets
  */
-rmm::device_uvector<size_t> compute_string_offset_sizes(device_span<ColumnChunkDesc const> chunks,
+cuda::device_buffer<size_t> compute_string_offset_sizes(device_span<ColumnChunkDesc const> chunks,
                                                         device_span<PageInfo const> pages,
                                                         size_t skip_rows,
                                                         size_t num_rows,
@@ -256,11 +261,11 @@ rmm::device_uvector<size_t> compute_string_offset_sizes(device_span<ColumnChunkD
  * @param skip_rows Starting row for the pass
  * @param num_rows Number of rows to read in the pass
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource to use for allocating the returned device_uvector
+ * @param mr Device memory resource to use for allocating the returned device_buffer
  * @returns A vector of size_t values, one for each page, indicating the size needed for level
  * decode preprocessing
  */
-rmm::device_uvector<size_t> compute_level_decode_sizes(device_span<ColumnChunkDesc const> chunks,
+cuda::device_buffer<size_t> compute_level_decode_sizes(device_span<ColumnChunkDesc const> chunks,
                                                        device_span<PageInfo const> pages,
                                                        int level_type_size,
                                                        size_t skip_rows,
@@ -405,8 +410,10 @@ struct flat_column_num_rows {
 struct codec_stats {
   Compression compression_type  = Compression::UNCOMPRESSED;
   size_t num_pages              = 0;
+  size_t num_level_pages        = 0;
   int32_t max_decompressed_size = 0;
   size_t total_decomp_size      = 0;
+  size_t total_output_size      = 0;
 
   enum class page_selection { DICT_PAGES, NON_DICT_PAGES };
 
@@ -417,16 +424,56 @@ struct codec_stats {
 };
 
 /**
+ * @brief Describes the input and output for a page decompressed by the codec.
+ */
+struct decompression_input {
+  device_span<uint8_t const> values;
+  int32_t level_bytes;
+  int32_t uncompressed_values_size;
+  bool is_page_compressed;
+
+  /**
+   * @brief Whether this page contributes a V2 level-bytes copy alongside decompression.
+   */
+  [[nodiscard]] CUDF_HOST_DEVICE constexpr bool needs_level_copy() const { return level_bytes > 0; }
+};
+
+/**
+ * @brief Returns the compressed values passed to the decompressor, excluding V2 level bytes.
+ */
+CUDF_HOST_DEVICE inline decompression_input get_decompression_input(PageInfo const& page)
+{
+  // V2 data pages record compression per page so check the `is_compressed` field. Dictionary and V1
+  // pages are compressed whenever their column chunk uses a compression codec.
+  auto const is_page_compressed = (page.flags & PAGEINFO_FLAGS_V2) ? page.is_compressed : true;
+
+  auto const level_bytes =
+    page.lvl_bytes[level_type::DEFINITION] + page.lvl_bytes[level_type::REPETITION];
+  if (not is_page_compressed or page.compressed_page_size <= level_bytes or
+      page.uncompressed_page_size <= level_bytes) {
+    return {{}, level_bytes, 0, is_page_compressed};
+  }
+  return {
+    {page.page_data + level_bytes, static_cast<size_t>(page.compressed_page_size - level_bytes)},
+    level_bytes,
+    page.uncompressed_page_size - level_bytes,
+    true};
+}
+
+/**
  * @brief Functor which retrieves per-page decompression information.
  */
 struct get_decomp_info {
   device_span<ColumnChunkDesc const> chunks;
   __device__ inline decompression_info operator()(PageInfo const& p) const
   {
-    return {parquet_compression_support(chunks[p.chunk_idx].codec).first,
+    auto const codec = parquet_compression_support(chunks[p.chunk_idx].codec).first;
+    auto const input = get_decompression_input(p);
+    if (input.values.empty()) { return {codec, 0, 0, 0}; }
+    return {codec,
             1,
-            static_cast<size_t>(p.uncompressed_page_size),
-            static_cast<size_t>(p.uncompressed_page_size)};
+            static_cast<size_t>(input.uncompressed_values_size),
+            static_cast<size_t>(input.uncompressed_values_size)};
   }
 };
 

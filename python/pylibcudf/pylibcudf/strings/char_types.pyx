@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from libc.stdint cimport uint8_t, uintptr_t
 from libcpp.memory cimport unique_ptr
 from libcpp.utility cimport move
 from pylibcudf.column cimport Column
@@ -27,7 +28,34 @@ __all__ = [
     "StringCharacterTypes",
     "all_characters_of_type",
     "filter_characters_of_type",
+    "get_character_flags_table_ptr",
 ]
+
+cpdef get_character_flags_table_ptr(
+    object stream: CudaStreamLike | None = None,
+):
+    """
+    Return a device pointer to the character-flags lookup table.
+
+    The table maps a code point (indexed 0..0xFFFF) to a bitmask of
+    :class:`StringCharacterTypes` flags, and backs the character-class checks
+    used by :func:`all_characters_of_type`. The table is lazily copied to the
+    device on first use and remains valid for the process lifetime.
+
+    Parameters
+    ----------
+    stream : Stream | None
+        CUDA stream on which to perform the (first-use) device copy.
+
+    Returns
+    -------
+    int
+        The device address of the ``uint8`` flags table.
+    """
+    cdef Stream _stream = _get_stream(stream)
+    cdef cudaStream_t _cs = _stream.view().get()
+    cdef const uint8_t* tbl = cpp_char_types.get_character_flags_table(_cs)
+    return int(<uintptr_t>tbl)
 
 cpdef Column all_characters_of_type(
     Column source_strings,

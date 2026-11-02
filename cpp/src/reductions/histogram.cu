@@ -10,6 +10,7 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/row_operator/equality.cuh>
 #include <cudf/detail/row_operator/hashing.cuh>
+#include <cudf/null_mask.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/structs/structs_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -20,6 +21,7 @@
 #include <cuco/operator.hpp>
 #include <cuco/static_set.cuh>
 #include <cuda/atomic>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/tuple>
@@ -75,8 +77,13 @@ auto gather_histogram(table_view const& input,
   std::vector<std::unique_ptr<column>> struct_children;
   struct_children.emplace_back(std::move(distinct_rows->release().front()));
   struct_children.emplace_back(std::move(distinct_counts));
-  auto output_structs = make_structs_column(
-    static_cast<size_type>(distinct_indices.size()), std::move(struct_children), 0, {}, stream, mr);
+  auto output_structs =
+    make_structs_column(static_cast<size_type>(distinct_indices.size()),
+                        std::move(struct_children),
+                        0,
+                        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                        stream,
+                        mr);
 
   return std::make_unique<cudf::list_scalar>(
     std::move(*output_structs.release()), true, stream, mr);
@@ -92,7 +99,7 @@ std::unique_ptr<column> make_empty_histogram_like(column_view const& values)
   return std::make_unique<column>(data_type{type_id::STRUCT},
                                   0,
                                   rmm::device_buffer{},
-                                  rmm::device_buffer{},
+                                  cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
                                   0,
                                   std::move(struct_children));
 }
@@ -132,7 +139,7 @@ compute_row_frequencies(table_view const& input,
   std::size_t const num_rows = input.num_rows();
 
   // Construct a vector to store reduced counts and init to zero
-  rmm::device_uvector<histogram_count_type> reduction_results(num_rows, stream, mr);
+  cuda::device_buffer<histogram_count_type> reduction_results(stream, mr, num_rows, cuda::no_init);
   thrust::uninitialized_fill(rmm::exec_policy_nosync(stream, temp_mr),
                              reduction_results.begin(),
                              reduction_results.end(),

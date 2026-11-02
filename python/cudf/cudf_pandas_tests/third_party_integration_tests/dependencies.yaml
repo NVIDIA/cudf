@@ -237,10 +237,6 @@ dependencies:
       - output_types: conda
         matrices:
           - matrix:
-              py: "3.11"
-            packages:
-              - python=3.11
-          - matrix:
               py: "3.12"
             packages:
               - python=3.12
@@ -254,7 +250,7 @@ dependencies:
               - python=3.14
           - matrix:
             packages:
-              - python>=3.11
+              - python>=3.12
   test_base:
     common:
       - output_types: conda
@@ -284,6 +280,17 @@ dependencies:
         packages:
           - numpy
           - pytorch>=2.4.0
+    specific:
+      - output_types: conda
+        matrices:
+          - matrix:
+              arch: x86_64
+            packages:
+              # mkl 2026.2.0 is missing libmkl_gf_lp64, which aborts numpy imports
+              # https://github.com/conda-forge/intel_repack-feedstock/issues/145
+              - mkl<2026.2
+          - matrix:
+            packages:
   test_seaborn:
     common:
       - output_types: conda

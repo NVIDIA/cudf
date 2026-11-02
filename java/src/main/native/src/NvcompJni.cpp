@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -51,8 +51,13 @@ void check_nvcomp_status(JNIEnv* env, nvcompStatus_t status)
 extern "C" {
 
 // methods for lz4
-JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_nvcomp_NvcompJni_batchedLZ4CompressGetTempSize(
-  JNIEnv* env, jclass, jlong j_batch_size, jlong j_max_chunk_size, jlong j_max_total_size)
+JNIEXPORT jlong JNICALL
+Java_ai_rapids_cudf_nvcomp_NvcompJni_batchedLZ4CompressGetTempSize(JNIEnv* env,
+                                                                   jclass,
+                                                                   jlong j_batch_size,
+                                                                   jlong j_max_chunk_size,
+                                                                   jlong j_max_total_size,
+                                                                   jlong j_stream)
 {
   JNI_TRY
   {
@@ -60,9 +65,14 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_nvcomp_NvcompJni_batchedLZ4CompressG
     auto batch_size       = static_cast<std::size_t>(j_batch_size);
     auto max_chunk_size   = static_cast<std::size_t>(j_max_chunk_size);
     auto total_size       = static_cast<std::size_t>(j_max_total_size);
+    auto stream           = reinterpret_cast<cudaStream_t>(j_stream);
     std::size_t temp_size = 0;
-    auto status           = nvcompBatchedLZ4CompressGetTempSizeAsync(
-      batch_size, max_chunk_size, nvcompBatchedLZ4CompressDefaultOpts, &temp_size, total_size);
+    auto status           = nvcompBatchedLZ4CompressGetTempSize(batch_size,
+                                                      max_chunk_size,
+                                                      nvcompBatchedLZ4CompressDefaultOpts,
+                                                      &temp_size,
+                                                      total_size,
+                                                      stream);
     check_nvcomp_status(env, status);
     return static_cast<jlong>(temp_size);
   }
@@ -131,8 +141,13 @@ Java_ai_rapids_cudf_nvcomp_NvcompJni_batchedLZ4CompressAsync(JNIEnv* env,
   JNI_CATCH(env, );
 }
 
-JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_nvcomp_NvcompJni_batchedLZ4DecompressGetTempSize(
-  JNIEnv* env, jclass, jlong j_batch_size, jlong j_chunk_size, jlong j_max_total_size)
+JNIEXPORT jlong JNICALL
+Java_ai_rapids_cudf_nvcomp_NvcompJni_batchedLZ4DecompressGetTempSize(JNIEnv* env,
+                                                                     jclass,
+                                                                     jlong j_batch_size,
+                                                                     jlong j_chunk_size,
+                                                                     jlong j_max_total_size,
+                                                                     jlong j_stream)
 {
   JNI_TRY
   {
@@ -140,9 +155,14 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_nvcomp_NvcompJni_batchedLZ4Decompres
     auto batch_size       = static_cast<std::size_t>(j_batch_size);
     auto chunk_size       = static_cast<std::size_t>(j_chunk_size);
     auto total_size       = static_cast<std::size_t>(j_max_total_size);
+    auto stream           = reinterpret_cast<cudaStream_t>(j_stream);
     std::size_t temp_size = 0;
-    auto status           = nvcompBatchedLZ4DecompressGetTempSizeAsync(
-      batch_size, chunk_size, nvcompBatchedLZ4DecompressDefaultOpts, &temp_size, total_size);
+    auto status           = nvcompBatchedLZ4DecompressGetTempSize(batch_size,
+                                                        chunk_size,
+                                                        nvcompBatchedLZ4DecompressDefaultOpts,
+                                                        &temp_size,
+                                                        total_size,
+                                                        stream);
     check_nvcomp_status(env, status);
     return static_cast<jlong>(temp_size);
   }
@@ -220,8 +240,13 @@ Java_ai_rapids_cudf_nvcomp_NvcompJni_batchedLZ4GetDecompressSizeAsync(JNIEnv* en
 }
 
 // methods for zstd
-JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_nvcomp_NvcompJni_batchedZstdCompressGetTempSize(
-  JNIEnv* env, jclass, jlong j_batch_size, jlong j_max_chunk_size, jlong j_max_total_size)
+JNIEXPORT jlong JNICALL
+Java_ai_rapids_cudf_nvcomp_NvcompJni_batchedZstdCompressGetTempSize(JNIEnv* env,
+                                                                    jclass,
+                                                                    jlong j_batch_size,
+                                                                    jlong j_max_chunk_size,
+                                                                    jlong j_max_total_size,
+                                                                    jlong j_stream)
 {
   JNI_TRY
   {
@@ -229,9 +254,14 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_nvcomp_NvcompJni_batchedZstdCompress
     auto batch_size       = static_cast<std::size_t>(j_batch_size);
     auto max_chunk_size   = static_cast<std::size_t>(j_max_chunk_size);
     auto total_size       = static_cast<std::size_t>(j_max_total_size);
+    auto stream           = reinterpret_cast<cudaStream_t>(j_stream);
     std::size_t temp_size = 0;
-    auto status           = nvcompBatchedZstdCompressGetTempSizeAsync(
-      batch_size, max_chunk_size, nvcompBatchedZstdCompressDefaultOpts, &temp_size, total_size);
+    auto status           = nvcompBatchedZstdCompressGetTempSize(batch_size,
+                                                       max_chunk_size,
+                                                       nvcompBatchedZstdCompressDefaultOpts,
+                                                       &temp_size,
+                                                       total_size,
+                                                       stream);
     check_nvcomp_status(env, status);
     return static_cast<jlong>(temp_size);
   }
@@ -299,8 +329,13 @@ Java_ai_rapids_cudf_nvcomp_NvcompJni_batchedZstdCompressAsync(JNIEnv* env,
   JNI_CATCH(env, );
 }
 
-JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_nvcomp_NvcompJni_batchedZstdDecompressGetTempSize(
-  JNIEnv* env, jclass, jlong j_batch_size, jlong j_chunk_size, jlong j_max_total_size)
+JNIEXPORT jlong JNICALL
+Java_ai_rapids_cudf_nvcomp_NvcompJni_batchedZstdDecompressGetTempSize(JNIEnv* env,
+                                                                      jclass,
+                                                                      jlong j_batch_size,
+                                                                      jlong j_chunk_size,
+                                                                      jlong j_max_total_size,
+                                                                      jlong j_stream)
 {
   JNI_TRY
   {
@@ -308,9 +343,14 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_nvcomp_NvcompJni_batchedZstdDecompre
     auto batch_size       = static_cast<std::size_t>(j_batch_size);
     auto chunk_size       = static_cast<std::size_t>(j_chunk_size);
     auto total_size       = static_cast<std::size_t>(j_max_total_size);
+    auto stream           = reinterpret_cast<cudaStream_t>(j_stream);
     std::size_t temp_size = 0;
-    auto status           = nvcompBatchedZstdDecompressGetTempSizeAsync(
-      batch_size, chunk_size, nvcompBatchedZstdDecompressDefaultOpts, &temp_size, total_size);
+    auto status           = nvcompBatchedZstdDecompressGetTempSize(batch_size,
+                                                         chunk_size,
+                                                         nvcompBatchedZstdDecompressDefaultOpts,
+                                                         &temp_size,
+                                                         total_size,
+                                                         stream);
     check_nvcomp_status(env, status);
     return static_cast<jlong>(temp_size);
   }

@@ -72,7 +72,7 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_ast_AstJitProgram_destroy(JNIEnv* env
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    delete reinterpret_cast<cudf::transform_program*>(j_program);
+    cudf::jni::safe_delete<cudf::transform_program>(j_program);
   }
   JNI_CATCH(env, );
 }

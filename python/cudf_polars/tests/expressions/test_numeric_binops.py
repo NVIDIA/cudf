@@ -12,7 +12,7 @@ from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
 )
-from cudf_polars.utils.versions import POLARS_VERSION_LT_140, POLARS_VERSION_LT_142
+from cudf_polars.testing.engine_utils import is_streaming_engine
 
 dtypes = [
     pl.Int8,
@@ -23,6 +23,45 @@ dtypes = [
     pl.Float32,
     pl.Float64,
 ]
+
+_BINOPS = [
+    pl.Expr.eq,
+    pl.Expr.eq_missing,
+    pl.Expr.ne,
+    pl.Expr.ne_missing,
+    pl.Expr.lt,
+    pl.Expr.le,
+    pl.Expr.gt,
+    pl.Expr.ge,
+    pl.Expr.add,
+    pl.Expr.sub,
+    pl.Expr.mul,
+    pl.Expr.truediv,
+    pl.Expr.floordiv,
+    pl.Expr.mod,
+]
+
+_COMPARISONS = _BINOPS[:8]
+
+# Preserve the complete promotion matrix for both SPMD configurations. Other
+# backends exercise every operator and nullability path with pairs covering
+# each dtype in both operand positions, without duplicating the full matrix.
+_REPRESENTATIVE_DTYPE_PAIRS = [
+    (pl.Int8, pl.Int16),
+    (pl.Int16, pl.Int64),
+    (pl.Int64, pl.UInt8),
+    (pl.UInt8, pl.UInt64),
+    (pl.UInt64, pl.Float32),
+    (pl.Float32, pl.Float64),
+    (pl.Float64, pl.Int8),
+]
+
+
+_SIGNED_INTEGERS = {pl.Int8, pl.Int16, pl.Int64}
+
+
+def _promotes_to_int128(ltype, rtype):
+    return {ltype, rtype} & _SIGNED_INTEGERS and pl.UInt64 in {ltype, rtype}
 
 
 @pytest.fixture(params=dtypes)
@@ -36,30 +75,14 @@ def rtype(request):
 
 
 @pytest.fixture(
-    params=[
-        pl.Expr.eq,
-        pl.Expr.eq_missing,
-        pl.Expr.ne,
-        pl.Expr.ne_missing,
-        pl.Expr.lt,
-        pl.Expr.le,
-        pl.Expr.gt,
-        pl.Expr.ge,
-        pl.Expr.add,
-        pl.Expr.sub,
-        pl.Expr.mul,
-        pl.Expr.truediv,
-        pl.Expr.floordiv,
-        pl.Expr.mod,
-    ],
+    params=_BINOPS,
     ids=lambda fn: fn.__name__,
 )
 def binop(request):
     return request.param
 
 
-@pytest.fixture
-def df(request, ltype, rtype, with_nulls, binop):
+def _make_df(ltype, rtype, with_nulls):
     a = [1, 2, 3, 5, 8]
     if with_nulls:
         a[2] = None
@@ -73,12 +96,37 @@ def df(request, ltype, rtype, with_nulls, binop):
     return pl.LazyFrame({"a": a, "b": b}, schema={"a": ltype, "b": rtype})
 
 
-def test_numeric_binop(engine: pl.GPUEngine, df, binop):
+@pytest.fixture
+def df(ltype, rtype, with_nulls):
+    return _make_df(ltype, rtype, with_nulls)
+
+
+@pytest.mark.engine_params(["spmd", "spmd-small"])
+def test_numeric_binop(engine: pl.GPUEngine, df, binop, ltype, rtype):
     left = pl.col("a")
     right = pl.col("b")
 
     q = df.select(binop(left, right))
 
+    if _promotes_to_int128(ltype, rtype) and binop not in _COMPARISONS:
+        assert_ir_translation_raises(q, engine, NotImplementedError)
+    else:
+        assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.engine_params(["in-memory", "dask", "ray"])
+@pytest.mark.parametrize(
+    "ltype,rtype",
+    _REPRESENTATIVE_DTYPE_PAIRS,
+    ids=[
+        f"{ltype.__name__}-{rtype.__name__}"
+        for ltype, rtype in _REPRESENTATIVE_DTYPE_PAIRS
+    ],
+)
+@pytest.mark.parametrize("with_nulls", [False, True], ids=["no_nulls", "nulls"])
+def test_numeric_binop_non_spmd(engine: pl.GPUEngine, ltype, rtype, with_nulls, binop):
+    """Exercise non-SPMD backends with representative promotion pairs."""
+    q = _make_df(ltype, rtype, with_nulls).select(binop(pl.col("a"), pl.col("b")))
     assert_gpu_result_equal(q, engine=engine)
 
 
@@ -124,6 +172,101 @@ def test_true_div_with_decimals(engine: pl.GPUEngine):
     assert_gpu_result_equal(q, engine=engine)
 
 
+def test_sql_decimal_div(engine: pl.GPUEngine):
+    df = pl.LazyFrame(
+        {
+            "revenue": [Decimal("10.00"), Decimal("20.00")],
+            "total": [Decimal("40.00"), Decimal("50.00")],
+        },
+        schema={"revenue": pl.Decimal(15, 2), "total": pl.Decimal(15, 2)},
+    )
+    q = df.sql("SELECT revenue / total AS share FROM self")
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("scales", [(2, 2), (2, 4), (4, 2)])
+def test_sql_decimal_div_rounding_nulls(engine: pl.GPUEngine, scales):
+    left_scale, right_scale = scales
+    df = pl.LazyFrame(
+        {
+            "x": [Decimal("1"), Decimal("2"), Decimal("-1"), Decimal("5"), None],
+            "y": [Decimal("3"), Decimal("3"), Decimal("3"), None, Decimal("7")],
+        },
+        schema={"x": pl.Decimal(15, left_scale), "y": pl.Decimal(15, right_scale)},
+    )
+    q = df.sql("SELECT x / y AS share FROM self")
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def assert_decimal_div_by_zero_raises(q: pl.LazyFrame, engine: pl.GPUEngine):
+    match = "division by zero"
+    if is_streaming_engine(engine):
+        with pytest.RaisesGroup(
+            pytest.RaisesExc(pl.exceptions.ComputeError, match=match)
+        ):
+            q.collect(engine=engine)
+    else:
+        with pytest.raises(pl.exceptions.ComputeError, match=match):
+            q.collect(engine=engine)
+
+
+def test_sql_decimal_div_by_zero_raises(engine: pl.GPUEngine):
+    df = pl.LazyFrame(
+        {"x": [Decimal("1.00"), Decimal("2.00")], "y": [Decimal("3.00"), Decimal("0")]},
+        schema={"x": pl.Decimal(15, 2), "y": pl.Decimal(15, 2)},
+    )
+    q = df.sql("SELECT x / y AS share FROM self")
+    assert_decimal_div_by_zero_raises(q, engine)
+
+
+def test_sql_decimal_div_by_zero_null_dividend(engine: pl.GPUEngine):
+    df = pl.LazyFrame(
+        {"x": [Decimal("1.00"), None], "y": [Decimal("3.00"), Decimal("0")]},
+        schema={"x": pl.Decimal(15, 2), "y": pl.Decimal(15, 2)},
+    )
+    q = df.sql("SELECT x / y AS share FROM self")
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_sql_decimal_div_by_zero_literal(engine: pl.GPUEngine):
+    df = pl.LazyFrame(
+        {"x": [Decimal("1.00"), Decimal("2.00")]}, schema={"x": pl.Decimal(15, 2)}
+    )
+    q = df.sql("SELECT x / 0.00 AS share FROM self")
+    assert_decimal_div_by_zero_raises(q, engine)
+
+
+@pytest.mark.parametrize("rows", [1, 3], ids=["one-row", "many-rows"])
+def test_sql_decimal_div_by_zero_literal_row_counts(engine: pl.GPUEngine, rows):
+    df = pl.LazyFrame({"x": [Decimal("1.00")] * rows}, schema={"x": pl.Decimal(15, 2)})
+    q = df.sql("SELECT x / 0.00 AS share FROM self")
+    assert_decimal_div_by_zero_raises(q, engine)
+
+
+def test_sql_decimal_div_by_zero_literal_null_dividends(engine: pl.GPUEngine):
+    df = pl.LazyFrame({"x": [None, None]}, schema={"x": pl.Decimal(15, 2)})
+    q = df.sql("SELECT x / 0.00 AS share FROM self")
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_sql_decimal_div_by_nonzero_literal(engine: pl.GPUEngine):
+    df = pl.LazyFrame(
+        {"x": [Decimal("1.00"), None, Decimal("-3.00")]},
+        schema={"x": pl.Decimal(15, 2)},
+    )
+    q = df.sql("SELECT x / 2.00 AS share FROM self")
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_sql_decimal_div_by_zero_single_row_column(engine: pl.GPUEngine):
+    df = pl.LazyFrame(
+        {"x": [Decimal("1.00")], "y": [Decimal("0")]},
+        schema={"x": pl.Decimal(15, 2), "y": pl.Decimal(15, 2)},
+    )
+    q = df.sql("SELECT x / y AS share FROM self")
+    assert_decimal_div_by_zero_raises(q, engine)
+
+
 def test_multiply_with_decimals(engine: pl.GPUEngine):
     df = pl.LazyFrame(
         {
@@ -137,13 +280,7 @@ def test_multiply_with_decimals(engine: pl.GPUEngine):
     assert_gpu_result_equal(q, engine=engine)
 
 
-def test_sum_decimal_widens_precision(request) -> None:
-    if POLARS_VERSION_LT_140:
-        request.applymarker(
-            pytest.mark.xfail(
-                reason="Polars does not widen precision for sum of decimals."
-            )
-        )
+def test_sum_decimal_widens_precision() -> None:
     df = pl.LazyFrame(
         {"x": [Decimal("5000000000000.00"), Decimal("5000000000000.00")]},
         schema={"x": pl.Decimal(15, 2)},
@@ -166,7 +303,32 @@ def test_fused_arithmetic(engine: pl.GPUEngine, expr: pl.Expr) -> None:
     # fms: fused multiply subtract
     df = pl.LazyFrame({"a": [1, 2, 3], "b": [10, 20, 30], "c": [5, 5, 5]})
     q = df.select(expr)
-    if POLARS_VERSION_LT_142:
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "left_dtype,right_dtype,fallback",
+    [
+        # Both fit in Decimal(38, 4) after rescaling.
+        (pl.Decimal(10, 2), pl.Decimal(38, 4), False),
+        # No Decimal(38, s) holds both operands; polars 2.1 compares exactly,
+        # libcudf would wrap when rescaling.
+        (pl.Decimal(38, 2), pl.Decimal(38, 12), True),
+        (pl.Decimal(38, 12), pl.Decimal(38, 2), True),
+    ],
+)
+def test_decimal_comparison_mixed_scale_overflow(
+    engine: pl.GPUEngine, left_dtype, right_dtype, fallback
+):
+    big = "9" * (left_dtype.precision - left_dtype.scale) + "." + "9" * left_dtype.scale
+    left = pl.DataFrame({"a": ["-2.5", "1", big, None]}).cast(left_dtype)
+    right = pl.DataFrame({"b": ["1", "-1.5", "0.5", "3"]}).cast(right_dtype)
+    q = (
+        pl.concat([left, right], how="horizontal")
+        .lazy()
+        .select(gt=pl.col("a") > pl.col("b"), eq=pl.col("a") == pl.col("b"))
+    )
+    if fallback:
         assert_ir_translation_raises(q, engine, NotImplementedError)
     else:
         assert_gpu_result_equal(q, engine=engine)

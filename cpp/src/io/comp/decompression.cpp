@@ -12,13 +12,17 @@
 #include "unbz2.hpp"  // bz2 uncompress
 
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/getenv_or.hpp>
 #include <cudf/detail/utilities/host_worker_pool.hpp>
 #include <cudf/detail/utilities/stream_pool.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/detail/codec.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
+
+#include <cuda/buffer>
 
 #include <zlib.h>  // uncompress
 #include <zstd.h>
@@ -520,7 +524,8 @@ void device_decompress(compression_type compression,
                        device_span<codec_exec_result> results,
                        size_t max_uncomp_chunk_size,
                        size_t max_total_uncomp_size,
-                       cuda::stream_ref stream)
+                       cuda::stream_ref stream,
+                       cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   if (compression == compression_type::NONE or inputs.empty()) { return; }
@@ -530,12 +535,18 @@ void device_decompress(compression_type compression,
                                         ? nvcomp::is_decompression_disabled(*nvcomp_type)
                                         : "invalid compression type";
   if (not nvcomp_disabled_reason) {
-    return nvcomp::batched_decompress(
-      *nvcomp_type, inputs, outputs, results, max_uncomp_chunk_size, max_total_uncomp_size, stream);
+    return nvcomp::batched_decompress(*nvcomp_type,
+                                      inputs,
+                                      outputs,
+                                      results,
+                                      max_uncomp_chunk_size,
+                                      max_total_uncomp_size,
+                                      stream,
+                                      mr);
   }
 
   switch (compression) {
-    case compression_type::BROTLI: return gpu_debrotli(inputs, outputs, results, stream);
+    case compression_type::BROTLI: return gpu_debrotli(inputs, outputs, results, stream, mr);
     case compression_type::GZIP:
       return gpuinflate(inputs, outputs, results, gzip_header_included::YES, stream);
     case compression_type::SNAPPY: return gpu_unsnap(inputs, outputs, results, stream);
@@ -649,7 +660,8 @@ size_t get_uncompressed_size(compression_type compression, host_span<uint8_t con
   device_span<device_span<uint8_t const> const> inputs,
   size_t max_uncomp_chunk_size,
   size_t max_total_uncomp_size,
-  cuda::stream_ref stream)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   if (compression == compression_type::NONE or
       get_host_engine_state(compression) == host_engine_state::ON) {
@@ -664,7 +676,7 @@ size_t get_uncompressed_size(compression_type compression, host_span<uint8_t con
     !nvcomp_disabled,
     "Cannot compute decompression scratch size for " + compression_type_name(compression));
   return nvcomp::batched_decompress_temp_size_ex(
-    nvcomp_type.value(), inputs, max_uncomp_chunk_size, max_total_uncomp_size, stream);
+    nvcomp_type.value(), inputs, max_uncomp_chunk_size, max_total_uncomp_size, stream, mr);
 }
 
 [[nodiscard]] bool is_decompression_scratch_size_ex_supported(compression_type compression)
@@ -769,15 +781,17 @@ void decompress(compression_type compression,
                 device_span<detail::codec_exec_result> results,
                 size_t max_uncomp_chunk_size,
                 size_t max_total_uncomp_size,
-                cuda::stream_ref stream)
+                cuda::stream_ref stream,
+                cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
+  auto const temp_mr = mr.get_temporary_mr();
 
   if (inputs.empty()) { return; }
 
   // sort inputs by size, largest first
   auto const [sorted_inputs, sorted_outputs, order] =
-    sort_decompression_tasks(inputs, outputs, stream, cudf::get_current_device_resource_ref());
+    sort_decompression_tasks(inputs, outputs, stream, {temp_mr, temp_mr});
   device_span<device_span<uint8_t const> const> inputs_view = sorted_inputs;
   device_span<device_span<uint8_t> const> outputs_view      = sorted_outputs;
 
@@ -791,8 +805,7 @@ void decompress(compression_type compression,
                                                       default_host_device_decompression_cost_ratio),
                               stream);
 
-  auto tmp_results = cudf::detail::make_device_uvector_async<detail::codec_exec_result>(
-    results, stream, cudf::get_current_device_resource_ref());
+  auto tmp_results = cuda::device_buffer<codec_exec_result>(stream, temp_mr, results);
   device_span<codec_exec_result> results_view = tmp_results;
 
   // Chunks [0, split_idx) go to the host engine, [split_idx, end) to the device engine.
@@ -808,7 +821,8 @@ void decompress(compression_type compression,
                               results_view.subspan(split_idx, results_view.size() - split_idx),
                               max_uncomp_chunk_size,
                               max_total_uncomp_size,
-                              streams[0]);
+                              streams[0],
+                              mr);
     detail::host_decompress(compression,
                             inputs_view.subspan(0, split_idx),
                             outputs_view.subspan(0, split_idx),
@@ -822,12 +836,13 @@ void decompress(compression_type compression,
                               results_view,
                               max_uncomp_chunk_size,
                               max_total_uncomp_size,
-                              stream);
+                              stream,
+                              mr);
   } else {
     detail::host_decompress(compression, inputs_view, outputs_view, results_view, stream);
   }
 
-  copy_results_to_original_order(results_view, results, order, stream);
+  copy_results_to_original_order(results_view, results, order, stream, mr);
 }
 
 [[nodiscard]] bool is_host_decompression_supported(compression_type compression)

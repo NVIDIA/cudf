@@ -32,7 +32,6 @@
 #include <cuda/iterator>
 #include <cuda/stream>
 #include <thrust/gather.h>
-#include <thrust/logical.h>
 
 #include <algorithm>
 
@@ -357,11 +356,12 @@ struct column_gatherer_impl<list_view> {
         lists::detail::gather_list_nested(list.get_sliced_child(stream), gd, stream, output_mr);
 
       // return the final column
-      return make_lists_column(gather_map_size,
-                               std::move(gd.offsets),
-                               std::move(child),
-                               0,
-                               rmm::device_buffer{0, stream, output_mr});
+      return make_lists_column(
+        gather_map_size,
+        std::move(gd.offsets),
+        std::move(child),
+        0,
+        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, output_mr));
     }
 
     // it's a leaf.  do a regular gather
@@ -369,11 +369,12 @@ struct column_gatherer_impl<list_view> {
       lists::detail::gather_list_leaf(list.get_sliced_child(stream), gd, stream, output_mr);
 
     // assemble final column
-    return make_lists_column(gather_map_size,
-                             std::move(gd.offsets),
-                             std::move(child),
-                             0,
-                             rmm::device_buffer{0, stream, output_mr});
+    return make_lists_column(
+      gather_map_size,
+      std::move(gd.offsets),
+      std::move(child),
+      0,
+      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, output_mr));
   }
 };
 
@@ -407,7 +408,7 @@ struct column_gatherer_impl<dictionary32> {
 
     dictionary_column_view dictionary(source_column);
     auto output_count = std::distance(gather_map_begin, gather_map_end);
-    if (output_count == 0) return make_empty_column(type_id::DICTIONARY32);
+    if (output_count == 0) { return empty_like(source_column); }
     // The gather could cause some keys to be abandoned -- no indices point to them.
     // In this case, we could do further work to remove the abandoned keys and
     // reshuffle the indices values.
@@ -494,7 +495,10 @@ struct column_gatherer_impl<struct_view> {
       gather_map_size,
       std::move(output_struct_members),
       0,
-      rmm::device_buffer{0, stream, output_mr},  // Null mask will be fixed up in cudf::gather().
+      cudf::create_null_mask(0,
+                             cudf::mask_state::UNALLOCATED,
+                             stream,
+                             output_mr),  // Null mask will be fixed up in cudf::gather().
       stream,
       output_mr);
   }

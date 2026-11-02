@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -16,6 +16,7 @@
 #include <cudf/wrappers/durations.hpp>
 #include <cudf/wrappers/timestamps.hpp>
 
+#include <cuda/std/type_traits>
 #include <thrust/host_vector.h>
 
 #include <array>
@@ -79,7 +80,9 @@ make_type_param_vector(std::initializer_list<T> const& init_list)
   std::vector<TypeParam> vec(init_list.size());
   std::transform(
     std::cbegin(input), std::cend(input), std::begin(vec), [](auto const& e) -> TypeParam {
-      if constexpr (std::is_unsigned_v<TypeParam>) { return static_cast<TypeParam>(std::abs(e)); }
+      if constexpr (cuda::std::is_unsigned_v<TypeParam>) {
+        return static_cast<TypeParam>(std::abs(e));
+      }
       return static_cast<TypeParam>(e);
     });
   return vec;

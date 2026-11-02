@@ -22,12 +22,12 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/stream>
 #include <thrust/fill.h>
 #include <thrust/scatter.h>
 #include <thrust/sequence.h>
-#include <thrust/transform.h>
 
 namespace cudf {
 namespace dictionary {
@@ -123,7 +123,7 @@ std::unique_ptr<column> remove_keys_fn(dictionary_column_view const& dictionary_
                                             mr)
                          ->release();
   std::unique_ptr<column> indices_column(std::move(table_indices.front()));
-  indices_column->set_null_mask(rmm::device_buffer{}, 0);
+  indices_column->set_null_mask(cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
 
   // compute new nulls -- merge the existing nulls with the newly created ones (value<0)
   auto const offset = dictionary_column.offset();
@@ -138,8 +138,9 @@ std::unique_ptr<column> remove_keys_fn(dictionary_column_view const& dictionary_
     },
     stream,
     mr);
-  rmm::device_buffer new_null_mask =
-    (new_nulls.second > 0) ? std::move(new_nulls.first) : rmm::device_buffer{0, stream, mr};
+  cuda::device_buffer<cudf::bitmask_type> new_null_mask =
+    (new_nulls.second > 0) ? std::move(new_nulls.first)
+                           : cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr);
 
   // create column with keys_column and indices_column
   return make_dictionary_column(
@@ -178,7 +179,8 @@ std::unique_ptr<column> remove_unused_keys(dictionary_column_view const& diction
   // search the indices values with key indices to look for any holes
   auto const matches = [&] {
     // build keys index to verify against indices values
-    rmm::device_uvector<int32_t> keys_positions(keys_size, stream);
+    cuda::device_buffer<int32_t> keys_positions(
+      stream, cudf::get_current_device_resource_ref(), keys_size, cuda::no_init);
     thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                      keys_positions.begin(),
                      keys_positions.end());

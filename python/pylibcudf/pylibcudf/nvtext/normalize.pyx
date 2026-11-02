@@ -9,6 +9,10 @@ from pylibcudf.column cimport Column
 from pylibcudf.libcudf.column.column cimport column
 from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.nvtext cimport normalize as cpp_normalize
+from pylibcudf.libcudf.nvtext.normalize cimport (
+    normalize_flags,
+    underlying_type_t_normalize_flags,
+)
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
 from typing import TYPE_CHECKING
 
@@ -18,8 +22,11 @@ from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 from cuda.bindings.cyruntime cimport cudaStream_t
 
+from pylibcudf.libcudf.nvtext.normalize import normalize_flags as NormalizeFlags  # no-cython-lint
+
 __all__ = [
-    "CharacterNormalizer"
+    "CharacterNormalizer",
+    "NormalizeFlags",
     "normalize_characters",
     "normalize_spaces",
 ]
@@ -90,6 +97,7 @@ cpdef Column normalize_spaces(
 cpdef Column normalize_characters(
     Column input,
     CharacterNormalizer normalizer,
+    underlying_type_t_normalize_flags flags = <underlying_type_t_normalize_flags>normalize_flags.PAD_PUNCTUATION,
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
@@ -104,6 +112,9 @@ cpdef Column normalize_characters(
         Input strings
     normalizer : CharacterNormalizer
         Normalizer object used for modifying the input column text
+    flags : NormalizeFlags, optional
+        Bitmask of :py:class:`NormalizeFlags` values controlling normalization
+        behavior. Default is ``NormalizeFlags.PAD_PUNCTUATION``.
     stream : Stream | None
         CUDA stream on which to perform the operation.
 
@@ -118,12 +129,16 @@ cpdef Column normalize_characters(
     mr = _get_memory_resource(mr)
 
     cdef column_view c_input = input.view()
+    cdef normalize_flags c_flags = <normalize_flags>flags
     with nogil:
         c_result = cpp_normalize.normalize_characters(
             c_input,
             dereference(normalizer.c_obj.get()),
+            c_flags,
             _cs,
             mr.get_mr()
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
+
+NormalizeFlags.__str__ = NormalizeFlags.__repr__

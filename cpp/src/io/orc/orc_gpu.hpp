@@ -15,11 +15,13 @@
 #include <cudf/io/types.hpp>
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/types.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
 #include <rmm/mr/polymorphic_allocator.hpp>
 
 #include <cuco/static_map.cuh>
+#include <cuda/buffer>
 #include <cuda/stream>
 
 namespace cudf::io::orc::detail {
@@ -213,10 +215,12 @@ void initialize_dictionary_hash_maps(device_2dspan<stripe_dictionary> dictionari
  *
  * @param dictionaries Dictionary descriptors
  * @param columns  Pre-order flattened device array of ORC column views
+ * @param max_dict_rows Largest number of rows in any of the dictionaries, used to size the grid
  * @param stream CUDA stream used for device memory operations and kernel launches
  */
 void populate_dictionary_hash_maps(device_2dspan<stripe_dictionary> dictionaries,
                                    device_span<orc_column_device_view const> columns,
+                                   size_type max_dict_rows,
                                    cuda::stream_ref stream);
 
 /**
@@ -232,10 +236,12 @@ void collect_map_entries(device_2dspan<stripe_dictionary> dictionaries, cuda::st
  *
  * @param dictionaries Dictionary descriptors
  * @param columns Pre-order flattened device array of ORC column views
+ * @param max_dict_rows Largest number of rows in any of the dictionaries, used to size the grid
  * @param stream CUDA stream used for device memory operations and kernel launches
  */
 void get_dictionary_indices(device_2dspan<stripe_dictionary> dictionaries,
                             device_span<orc_column_device_view const> columns,
+                            size_type max_dict_rows,
                             cuda::stream_ref stream);
 
 constexpr uint32_t encode_block_size = 512;
@@ -319,6 +325,7 @@ void decode_nulls_and_string_dictionaries(column_desc* chunks,
  * @param[in] num_stripes Number of stripes
  * @param[in] first_row Crop all rows below first_row
  * @param[in] tz_table Timezone translation table
+ * @param[in] orc_base_epoch ORC epoch in the writer's timezone
  * @param[in] row_groups Optional row index data [rowgroup][column]
  * @param[in] num_rowgroups Number of row groups in row index data
  * @param[in] rowidx_stride Row index stride
@@ -333,6 +340,7 @@ void decode_column_data(column_desc* chunks,
                         size_type num_stripes,
                         int64_t first_row,
                         table_device_view tz_table,
+                        duration_s orc_base_epoch,
                         int64_t num_rowgroups,
                         size_type rowidx_stride,
                         size_t level,
@@ -344,10 +352,12 @@ void decode_column_data(column_desc* chunks,
  *
  * @param[in] chunks  encoder chunk device array [column][rowgroup]
  * @param[in, out] streams chunk streams device array [column][rowgroup]
+ * @param[in] base_epoch Instant that encoded timestamps are stored relative to
  * @param[in] stream CUDA stream used for device memory operations and kernel launches
  */
 void encode_orc_column_data(device_2dspan<encoder_chunk const> chunks,
                             device_2dspan<encoder_chunk_streams> streams,
+                            duration_s base_epoch,
                             cuda::stream_ref stream);
 
 /**
@@ -436,7 +446,7 @@ void rowgroup_char_counts(device_2dspan<size_type> counts,
  * @param stream CUDA stream used for device memory operations and kernel launches
  */
 void decimal_sizes_to_offsets(device_2dspan<rowgroup_rows const> rg_bounds,
-                              std::map<uint32_t, rmm::device_uvector<uint32_t>>& elem_sizes,
+                              std::map<uint32_t, cuda::device_buffer<uint32_t>>& elem_sizes,
                               cuda::stream_ref stream);
 
 /**

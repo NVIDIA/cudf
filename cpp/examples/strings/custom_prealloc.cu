@@ -8,9 +8,9 @@
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/scalar/scalar.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_uvector.hpp>
-
+#include <cuda/buffer>
 #include <cuda/stream>
 #include <cuda_runtime.h>
 #include <nvtx3/nvToolsExt.h>
@@ -91,9 +91,11 @@ std::unique_ptr<cudf::column> redact_strings(cudf::column_view const& names,
   auto const offsets = scv.offsets().begin<cudf::size_type>();
 
   // create working memory to hold the output of each string
-  auto working_memory = rmm::device_uvector<char>(scv.chars_size(stream), stream);
+  auto working_memory = cuda::device_buffer<char>(
+    stream, cudf::get_current_device_resource_ref(), scv.chars_size(stream), cuda::no_init);
   // create a vector for the output strings' pointers
-  auto str_ptrs = rmm::device_uvector<cudf::string_view>(names.size(), stream);
+  auto str_ptrs = cuda::device_buffer<cudf::string_view>(
+    stream, cudf::get_current_device_resource_ref(), names.size(), cuda::no_init);
 
   // build the output strings
   redact_kernel<<<blocks, block_size, 0, stream.get()>>>(*d_names,

@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <benchmarks/common/memory_stats.hpp>
+
 #include <cudf_test/column_wrapper.hpp>
 
 #include <cudf/detail/iterator.cuh>
@@ -12,10 +14,11 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/device_uvector.hpp>
+#include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_reduce.cuh>
+#include <cuda/buffer>
 #include <cuda/iterator>
-#include <thrust/execution_policy.h>
 #include <thrust/reduce.h>
 
 #include <nvbench/nvbench.cuh>
@@ -30,7 +33,10 @@ inline auto reduce_by_cub(OutputIterator result, InputIterator d_in, int num_ite
     nullptr, temp_storage_bytes, d_in, result, num_items, cudf::DeviceSum{}, init);
 
   // Allocate temporary storage
-  rmm::device_buffer d_temp_storage(temp_storage_bytes, cudf::get_default_stream());
+  cuda::device_buffer<std::byte> d_temp_storage(cudf::get_default_stream(),
+                                                cudf::get_current_device_resource_ref(),
+                                                temp_storage_bytes,
+                                                cuda::no_init);
 
   // Run reduction
   cub::DeviceReduce::Reduce(
@@ -78,7 +84,8 @@ void raw_stream_bench_thrust(cudf::column_view& col, rmm::device_uvector<T>& res
   T init{0};
   auto d_in  = col.data<T>();
   auto d_end = d_in + col.size();
-  thrust::reduce(thrust::device, d_in, d_end, init, cudf::DeviceSum{});
+  thrust::reduce(
+    rmm::exec_policy_nosync(cudf::get_default_stream()), d_in, d_end, init, cudf::DeviceSum{});
 }
 
 template <typename T, bool has_null>
@@ -91,11 +98,13 @@ void iterator_bench_thrust(cudf::column_view& col, rmm::device_uvector<T>& resul
   if (has_null) {
     auto d_in  = cudf::detail::make_null_replacement_iterator(*d_col, init);
     auto d_end = d_in + col.size();
-    thrust::reduce(thrust::device, d_in, d_end, init, cudf::DeviceSum{});
+    thrust::reduce(
+      rmm::exec_policy_nosync(cudf::get_default_stream()), d_in, d_end, init, cudf::DeviceSum{});
   } else {
     auto d_in  = d_col->begin<T>();
     auto d_end = d_in + col.size();
-    thrust::reduce(thrust::device, d_in, d_end, init, cudf::DeviceSum{});
+    thrust::reduce(
+      rmm::exec_policy_nosync(cudf::get_default_stream()), d_in, d_end, init, cudf::DeviceSum{});
   }
 }
 
@@ -121,8 +130,11 @@ void bench_iterator_cub_raw(nvbench::state& state)
   state.add_global_memory_reads<nvbench::int8_t>(data_size);
   state.add_global_memory_writes<nvbench::int8_t>(data_size);
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync,
              [&](nvbench::launch&) { raw_stream_bench_cub<T>(hasnull_F, dev_result); });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 void bench_iterator_cub_iter(nvbench::state& state)
@@ -145,8 +157,11 @@ void bench_iterator_cub_iter(nvbench::state& state)
   state.add_global_memory_reads<nvbench::int8_t>(data_size);
   state.add_global_memory_writes<nvbench::int8_t>(data_size);
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync,
              [&](nvbench::launch&) { iterator_bench_cub<T, false>(hasnull_F, dev_result); });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 void bench_iterator_thrust_raw(nvbench::state& state)
@@ -169,8 +184,11 @@ void bench_iterator_thrust_raw(nvbench::state& state)
   state.add_global_memory_reads<nvbench::int8_t>(data_size);
   state.add_global_memory_writes<nvbench::int8_t>(data_size);
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync,
              [&](nvbench::launch&) { raw_stream_bench_thrust<T>(hasnull_F, dev_result); });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 void bench_iterator_thrust_iter(nvbench::state& state)
@@ -193,8 +211,11 @@ void bench_iterator_thrust_iter(nvbench::state& state)
   state.add_global_memory_reads<nvbench::int8_t>(data_size);
   state.add_global_memory_writes<nvbench::int8_t>(data_size);
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync,
              [&](nvbench::launch&) { iterator_bench_thrust<T, false>(hasnull_F, dev_result); });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 NVBENCH_BENCH(bench_iterator_cub_raw)

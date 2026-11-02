@@ -19,9 +19,7 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
-#include <thrust/binary_search.h>
 #include <thrust/host_vector.h>
-#include <thrust/transform_scan.h>
 
 #include <numeric>
 
@@ -112,7 +110,8 @@ void hybrid_scan_reader_impl::setup_next_pass(
     auto chunk_start = _file_itm_data.chunks.begin() + (row_group_start * chunks_per_rowgroup);
     auto chunk_end   = _file_itm_data.chunks.begin() + (row_group_end * chunks_per_rowgroup);
 
-    pass.chunks = cudf::detail::hostdevice_vector<ColumnChunkDesc>(num_chunks, _stream);
+    pass.chunks =
+      cudf::detail::hostdevice_vector<ColumnChunkDesc>(num_chunks, _stream, _mr.as_temporary());
     std::copy(chunk_start, chunk_end, pass.chunks.begin());
 
     // compute skip_rows / num_rows for this pass.

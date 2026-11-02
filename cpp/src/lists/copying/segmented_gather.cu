@@ -92,12 +92,15 @@ std::unique_ptr<column> segmented_gather(lists_column_view const& value_column,
   auto output_offset = cudf::detail::allocate_like(
     gather_map.offsets(), gather_map.size() + 1, mask_allocation_policy::RETAIN, stream, mr);
   auto output_offset_view = output_offset->mutable_view();
+  // TODO: route through the caller's memory resources once segmented_gather is migrated
+  auto const temp_mr = cudf::get_current_device_resource_ref();
   cudf::detail::copy_range_in_place(gather_map.offsets(),
                                     output_offset_view,
                                     gather_map.offset(),
                                     gather_map.offset() + output_offset_view.size(),
                                     0,
-                                    stream);
+                                    stream,
+                                    cudf::memory_resources{temp_mr, temp_mr});
   // When gather_map is a sliced view, the copied offsets start at a nonzero base.
   // Subtract it so that output_offset[0] == 0.
   if (gather_map.offset() > 0) {

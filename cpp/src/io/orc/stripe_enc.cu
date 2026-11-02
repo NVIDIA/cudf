@@ -27,6 +27,7 @@
 #include <cuda/buffer>
 #include <cuda/cmath>
 #include <cuda/functional>
+#include <cuda/std/bit>
 #include <cuda/std/limits>
 #include <cuda/std/type_traits>
 #include <cuda/stream>
@@ -232,7 +233,7 @@ static __device__ uint32_t byte_rle(
         uint32_t run_id = t >> 7;
         uint32_t run    = min(literal_run - run_id * 128, 128);
         if (!(t & 0x7f)) dst[run_id + t] = 0x100 - run;
-        dst[run_id + t + 1] = (cid == CI_PRESENT) ? __brev(v0) >> 24 : v0;
+        dst[run_id + t + 1] = (cid == CI_PRESENT) ? cuda::std::bit_reverse(v0) : v0;
       }
       dst += num_runs + literal_run;
       out_cnt += literal_run;
@@ -245,7 +246,7 @@ static __device__ uint32_t byte_rle(
         if (t == literal_run)  // repeat_run follows literal_run
         {
           dst[0] = 0x7f;
-          dst[1] = (cid == CI_PRESENT) ? __brev(v0) >> 24 : v0;
+          dst[1] = (cid == CI_PRESENT) ? cuda::std::bit_reverse(v0) : v0;
         }
         dst += 2;
         out_cnt += 130;
@@ -261,7 +262,7 @@ static __device__ uint32_t byte_rle(
         if (t == literal_run)  // repeat_run follows literal_run
         {
           dst[0] = repeat_run - 3;
-          dst[1] = (cid == CI_PRESENT) ? __brev(v0) >> 24 : v0;
+          dst[1] = (cid == CI_PRESENT) ? cuda::std::bit_reverse(v0) : v0;
         }
         dst += 2;
         out_cnt += repeat_run;
@@ -1425,7 +1426,7 @@ void decimal_sizes_to_offsets(device_2dspan<rowgroup_rows const> rg_bounds,
   });
 
   // Copy the vector of views to the device so that we can pass it to the kernel
-  auto d_sizes = cudf::detail::make_device_uvector_async<decimal_column_element_sizes>(
+  auto d_sizes = cudf::detail::make_device_buffer_async<decimal_column_element_sizes>(
     h_sizes, stream, cudf::get_current_device_resource_ref());
 
   constexpr int block_size = 256;

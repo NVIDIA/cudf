@@ -263,8 +263,8 @@ struct host_udf_segmented_reduction_example : cudf::segmented_reduce_host_udf {
         cuda::make_zip_iterator(output->mutable_view().begin<OutputType>(), valid_idx.begin()),
         transform_fn{*input_dv_ptr, offsets, static_cast<OutputType>(init_value), null_handling});
 
-      auto const valid_idx_cv = cudf::column_view{
-        cudf::data_type{cudf::type_id::INT32}, num_segments, valid_idx.data(), nullptr, 0};
+      auto const valid_idx_cv =
+        cudf::column_view{cudf::device_span<cudf::size_type const>{valid_idx}};
       return std::move(cudf::gather(cudf::table_view{{output->view()}},
                                     valid_idx_cv,
                                     cudf::out_of_bounds_policy::NULLIFY,

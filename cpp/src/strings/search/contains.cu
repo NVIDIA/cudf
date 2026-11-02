@@ -384,7 +384,8 @@ CUDF_KERNEL void lrb_search_kernel(column_device_view const d_strings,
   // log2 of the chunk tasks per row of this lane's bin: rows in bin b have at most 2^b bytes
   auto const chunk_shift = cuda::std::max(lane - LRB_CHUNK_SHIFT, 0);
   auto const bin_tasks =
-    static_cast<int64_t>(cudf::util::div_rounding_up_safe(bin_count, rows_per_task)) << chunk_shift;
+    static_cast<int64_t>(cudf::detail::div_rounding_up_safe(bin_count, rows_per_task))
+    << chunk_shift;
   auto const tasks_incl  = cg::inclusive_scan(warp, bin_tasks);
   auto const tasks_excl  = tasks_incl - bin_tasks;
   auto const bin_start   = cg::exclusive_scan(warp, bin_count);
@@ -467,7 +468,7 @@ std::unique_ptr<column> contains(strings_column_view const& input,
   auto sorted = cuda::device_buffer<size_type>(stream, tmp_mr, num_rows, cuda::no_init);
 
   auto const num_sms     = static_cast<int64_t>(cudf::detail::num_multiprocessors());
-  auto const row_blocks  = cudf::util::div_rounding_up_safe<int64_t>(num_rows, LRB_BLOCK_SIZE);
+  auto const row_blocks  = cudf::detail::div_rounding_up_safe<int64_t>(num_rows, LRB_BLOCK_SIZE);
   auto const stride_grid = static_cast<int>(std::min<int64_t>(row_blocks, num_sms * 8));
 
   // one row per thread (like thrust::transform) rather than grid-stride: the direct search in

@@ -143,28 +143,33 @@ size_type select_gather_map_tile_cols(table_view const& source_table,
                                       cuda::stream_ref stream);
 
 /**
- * @brief Largest number of fused descriptors the fused kernel can take by value
+ * @brief Descriptor counts for the two by-value parameter tiers of the fused kernel
  *
- * A table with at most this many fixed-width columns passes its descriptors as one by-value
- * kernel parameter instead of a device array, which removes the staging allocation, the device
- * allocation, and the host-to-device copy from every call. 128 descriptors occupy
- * `16 + 48 * 128 = 6'160` bytes of the 32'764-byte kernel-parameter budget, so the driver-side
- * copy of the parameter block stays small; a block filling the whole budget would cost that
- * copy on every launch, which is the fixed cost this tier removes.
+ * A table whose fixed-width column count fits one of these caps passes its descriptors as one
+ * by-value kernel parameter instead of a device array, which removes the staging allocation,
+ * the device allocation, and the host-to-device copy from every call. A descriptor block costs
+ * `16 + 48 * kCap` bytes of the 32'764-byte kernel-parameter budget (the small tier 784,
+ * the wide tier 24'592); the driver copies the whole fixed-size parameter block on every
+ * launch, so the tiers stay below it — the arithmetic ceiling is 680 descriptors.
+ * The small tier keeps the launch copy tiny for the short-table/latency-bound shapes; the
+ * wide tier pulls the 256/512-column tables off the device-array path, whose staging cost
+ * grows with the column count.
  */
-constexpr size_type batch_gather_max_by_value_descriptors{128};
+constexpr size_type batch_gather_small_by_value_descriptors{16};
+constexpr size_type batch_gather_wide_by_value_descriptors{512};
 
 /**
- * @brief Whether `num_descriptors` fused columns travel by value instead of through device memory.
+ * @brief Which by-value tier, if any, carries `num_descriptors` fused columns.
  *
- * This is the tier dispatch used by the fused kernel launch; the capacity is inclusive.
+ * This is the tier dispatch used by the fused kernel launch; both capacities are inclusive.
  *
  * @param[in] num_descriptors Number of fixed-width columns the fused kernel will process
- * @return true if the by-value parameter tier handles that descriptor count
+ * @return 0 for the device-array path, 1 for the small by-value tier, 2 for the wide tier
  */
-constexpr bool batch_gather_descriptors_by_value(size_type num_descriptors)
+constexpr int batch_gather_descriptors_by_value_tier(size_type num_descriptors)
 {
-  return num_descriptors <= batch_gather_max_by_value_descriptors;
+  if (num_descriptors <= batch_gather_small_by_value_descriptors) { return 1; }
+  return num_descriptors <= batch_gather_wide_by_value_descriptors ? 2 : 0;
 }
 
 }  // namespace detail

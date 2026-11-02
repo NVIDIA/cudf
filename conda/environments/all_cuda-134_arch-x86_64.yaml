@@ -25,7 +25,7 @@ dependencies:
 - cuda-nvtx-dev
 - cuda-profiler-api
 - cuda-sanitizer-api
-- cuda-version=13.3
+- cuda-version=13.4
 - cupy>=14.0.1,!=14.1.0
 - cxx-compiler
 - cython>=3.2.2,<3.3.0a0
@@ -119,4 +119,4 @@ dependencies:
 - pip:
   - nvidia-sphinx-theme
   - polars-iceberg>=0.1.0
-name: all_cuda-133_arch-x86_64
+name: all_cuda-134_arch-x86_64

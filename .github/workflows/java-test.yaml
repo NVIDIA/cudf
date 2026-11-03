@@ -53,7 +53,7 @@ on:
       build_workflow_name:
         description: |
           Name of a workflow file that produced artifacts to be downloaded in this run.
-          If not set (the default), artifact-handling scripts use RAPIDS-conventional defaults (like "build.yaml" when "build_type == nightly").
+          If not set (the default), artifact-handling scripts use conventional defaults (like "build.yaml" when "build_type == nightly").
         required: false
         type: string
       alternative-gh-token-secret-name:

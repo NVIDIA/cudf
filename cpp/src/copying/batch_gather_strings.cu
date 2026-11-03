@@ -103,17 +103,18 @@ void assemble_strings_impl(std::vector<staged_string>& staged_strings,
   // Staging-arena sizing, BEFORE the arena is created: a carve never frees, so the arena is
   // sized once, up front, at worst case — every upload cohort is bounded by live.size()
   // (the routing walk only SPLITS the live columns between the routed and unrouted lists),
-  // so the arena covers the per-class maximum of all five segments and the actual carve
+  // so the arena covers the per-class maximum of all segments and the actual carve
   // sequence always consumes at most the reservation. The bound is the per-segment
   // aligned sum, NOT the raw byte sum: `string_work_item` is 16-aligned (its offsetalator
   // members carry `alignas(16)`) while its 104 B size is not a multiple of 16, so each
   // carve request bumps the arena pointer by up to 8 bytes; `size_type` requests shift it
   // by up to 4. Reserving the aligned segment sizes covers every round-up the sequence
-  // can make (the all-routed path d_items + d_payload_items + d_memcpy_live +
-  // d_routed_items is the worst case); a shortfall trips the carve resource's loud
-  // `arena exhausted` expect rather than corrupting memory. Each segment's bump
-  // round-up is bounded by (alignment − 1) over an arbitrary start, so the reservation
-  // is the raw byte sum plus that slack per segment slot.
+  // can make (the worst case is d_items + d_payload_items + d_routed_items plus one
+  // size_type cohort — d_memcpy_live and d_unrouted are disjoint splits of the live
+  // columns, and d_engine_cols fires only when the unrouted carve does not); a shortfall
+  // trips the carve resource's loud `arena exhausted` expect rather than corrupting
+  // memory. Each segment's bump round-up is bounded by (alignment − 1) over an arbitrary
+  // start, so the reservation is the raw byte sum plus that slack per segment slot.
   auto const staging_total =
     3 * (items.size() * sizeof(string_work_item) + (std::alignment_of_v<string_work_item> - 1)) +
     2 * (items.size() * sizeof(size_type) + (std::alignment_of_v<size_type> - 1));
@@ -144,6 +145,12 @@ void assemble_strings_impl(std::vector<staged_string>& staged_strings,
   auto col_totals =
     cudf::detail::make_zeroed_device_uvector_async<int64_t>(live.size(), stream, temp_mr);
 
+  // Every H2D staging source below is a pinned `host_vector`: with the CUDA 13+ batch
+  // copy's stream-order source semantics a pageable source must outlive the stream's
+  // execution of the copy, and the function returns without synchronizing after these
+  // uploads. Pinned host memory is device-accessible, so the copy wrapper takes the
+  // pinned path and the allocator's stream-ordered free keeps the source readable until
+  // the stream drains it.
   auto staging_items =
     cudf::detail::make_pinned_vector_async<string_work_item>(items.size(), stream);
   std::copy(items.begin(), items.end(), staging_items.begin());
@@ -326,8 +333,11 @@ void assemble_strings_impl(std::vector<staged_string>& staged_strings,
     items[k].dst_mask    = staged.kernel_mask_written ? staged.dst_mask->data() : nullptr;
     items[k].valid_count = staged.kernel_mask_written ? string_counts.data() + k : nullptr;
   }
+  // The dst fields were patched after the first upload, so copy the final items into the
+  // pinned staging buffer and upload from there (the d_items copy used the initial values).
+  std::copy(items.begin(), items.end(), staging_items.begin());
   auto d_payload_items =
-    carve_device_vector(host_span<string_work_item const>{items}, stream, staging_carve_mr);
+    carve_device_vector(host_span<string_work_item const>{staging_items}, stream, staging_carve_mr);
 
   if (any_batched_memcpy) {
     // (source ptr, destination ptr, byte size) per row over the routed columns' flat
@@ -337,8 +347,12 @@ void assemble_strings_impl(std::vector<staged_string>& staged_strings,
     // lambda replicates the kernel chars-phase gate verbatim (resolve/validity/size>0),
     // nullptr/0 for dead rows; the routed-column table is `d_memcpy_live` (device copy of
     // the host list), and the buffer count is the flat routed row count.
-    auto const d_memcpy_live =
-      carve_device_vector(host_span<size_type const>{memcpy_live}, stream, staging_carve_mr);
+    // Pinned staging copy of the routed cohort; dies stream-ordered with the call.
+    auto staging_memcpy_live =
+      cudf::detail::make_pinned_vector_async<size_type>(memcpy_live.size(), stream);
+    std::copy(memcpy_live.begin(), memcpy_live.end(), staging_memcpy_live.begin());
+    auto const d_memcpy_live = carve_device_vector(
+      host_span<size_type const>{staging_memcpy_live}, stream, staging_carve_mr);
     // Hoist the member `num_rows` into a local: a `__device__` lambda inside this member
     // function cannot capture `this`, so the unqualified member name would be ill-formed
     // in the capture lists below.
@@ -429,8 +443,12 @@ void assemble_strings_impl(std::vector<staged_string>& staged_strings,
   auto const unrouted_rows =
     static_cast<int64_t>(memcpy_unrouted.size()) * static_cast<int64_t>(num_rows);
   if (unrouted_rows > 0) {
+    // Pinned staging copy of the unrouted cohort; dies stream-ordered with the call.
+    auto staging_unrouted =
+      cudf::detail::make_pinned_vector_async<size_type>(memcpy_unrouted.size(), stream);
+    std::copy(memcpy_unrouted.begin(), memcpy_unrouted.end(), staging_unrouted.begin());
     auto const d_unrouted =
-      carve_device_vector(host_span<size_type const>{memcpy_unrouted}, stream, staging_carve_mr);
+      carve_device_vector(host_span<size_type const>{staging_unrouted}, stream, staging_carve_mr);
     auto const grid = static_cast<unsigned>(
       std::min<int64_t>(util::div_rounding_up_safe(unrouted_rows, static_cast<int64_t>(block_size)),
                         static_cast<int64_t>(65535)));
@@ -445,8 +463,12 @@ void assemble_strings_impl(std::vector<staged_string>& staged_strings,
                                               map_begin);
     CUDF_CUDA_TRY(cudaGetLastError());
   } else if (engine_active) {
-    auto const d_engine_cols = cudf::detail::make_device_uvector_async(
-      host_span<size_type const>{engine_cols}, stream, temp_mr);
+    // Pinned staging copy of the engine cohort; dies stream-ordered with the call.
+    auto staging_engine_cols =
+      cudf::detail::make_pinned_vector_async<size_type>(engine_cols.size(), stream);
+    std::copy(engine_cols.begin(), engine_cols.end(), staging_engine_cols.begin());
+    auto const d_engine_cols = carve_device_vector(
+      host_span<size_type const>{staging_engine_cols}, stream, staging_carve_mr);
     auto const engine_tiles =
       static_cast<int64_t>(engine_cols.size()) *
       util::div_rounding_up_safe(static_cast<int64_t>(num_rows), static_cast<int64_t>(warp_size));
@@ -475,8 +497,12 @@ void assemble_strings_impl(std::vector<staged_string>& staged_strings,
     for (size_t r = 0; r < memcpy_live.size(); ++r) {
       routed_items[r] = items[memcpy_live[r]];
     }
+    // Pinned staging copy of the routed cohort's items; dies stream-ordered with the call.
+    auto staging_routed_items =
+      cudf::detail::make_pinned_vector_async<string_work_item>(routed_items.size(), stream);
+    std::copy(routed_items.begin(), routed_items.end(), staging_routed_items.begin());
     auto d_routed_items = carve_device_vector(
-      host_span<string_work_item const>{routed_items}, stream, staging_carve_mr);
+      host_span<string_work_item const>{staging_routed_items}, stream, staging_carve_mr);
     auto const routed_rows = static_cast<int64_t>(memcpy_live.size()) * num_rows;
     auto const meta_grid   = static_cast<unsigned>(
       std::min<int64_t>(util::div_rounding_up_safe(routed_rows, static_cast<int64_t>(block_size)),

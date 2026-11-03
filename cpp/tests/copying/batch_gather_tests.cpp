@@ -63,9 +63,7 @@ std::unique_ptr<cudf::table> run_batch_gather_tile(
   cudf::table_view const& source,
   cudf::column_view const& map,
   cudf::size_type tile_cols,
-  cudf::out_of_bounds_policy bounds              = cudf::out_of_bounds_policy::DONT_CHECK,
-  std::optional<cudf::size_type> rows_per_thread = std::nullopt,
-  std::optional<cudf::size_type> block_size      = std::nullopt);
+  cudf::out_of_bounds_policy bounds = cudf::out_of_bounds_policy::DONT_CHECK);
 
 std::unique_ptr<cudf::table> run_reference(
   cudf::table_view const& source,
@@ -1187,194 +1185,6 @@ TEST_F(BatchGatherPolicyTest, ExplicitWideTileMaskedNullifyDifferential)
   CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
   EXPECT_EQ(result->view().column(0).null_count(), reference->view().column(0).null_count());
   EXPECT_GT(result->view().column(0).null_count(), 0);
-}
-
-TEST_F(BatchGatherPolicyTest, EveryBlockSizeMatchesGather)
-{
-  // The block_size measurement axis (128/256/512) must be behavior-neutral: each size runs the
-  // full masked machinery (row < num_rows tails, per-warp mask words, block reduction), so a
-  // differential against the stock gather per size covers all instantiations at once. 1000 rows
-  // gives every size a partial final block (8 blocks at 128, 4 at 256, 2 at 512), exercising the
-  // partial-tail path on each.
-  constexpr cudf::size_type num_rows{1000};
-  auto source_column = make_fixed_column<int32_t>(
-    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type i) { return i % 2 != 0; });
-  auto const host_map = shuffled_iota(num_rows);
-  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
-                                                                     host_map.end());
-  cudf::table_view source_table({source_column->view()});
-  auto reference = run_reference(source_table, gather_map);
-
-  for (auto const block_size : {128, 256, 512}) {
-    auto result = run_batch_gather_tile(source_table,
-                                        gather_map,
-                                        2,
-                                        cudf::out_of_bounds_policy::DONT_CHECK,
-                                        std::nullopt,
-                                        block_size);
-    CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
-  }
-}
-
-TEST_F(BatchGatherPolicyTest, Decimal128MatchesGather)
-{
-  // The 16-byte copy path: one 16-byte element move per row (b128 PTX forms in the streaming
-  // regime, one 128-bit vector access otherwise) must produce byte-identical columns to the
-  // stock gather. DECIMAL128 rows sit at 16-byte offsets from the 256B-aligned column base, so
-  // every access is naturally aligned.
-  constexpr cudf::size_type num_rows{1000};
-  auto source_column = make_fixed_column<numeric::decimal128>(
-    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type i) { return i % 2 != 0; });
-  auto const host_map = shuffled_iota(num_rows);
-  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
-                                                                     host_map.end());
-  cudf::table_view source_table({source_column->view()});
-
-  auto result    = run_batch_gather(source_table, gather_map);
-  auto reference = run_reference(source_table, gather_map);
-  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
-}
-
-TEST_F(BatchGatherPolicyTest, StreamingDecimal128MatchesGather)
-{
-  // The 16-byte path in the STREAMING instantiation: `ld/st.global.L1::evict_first.b128`. The
-  // only route there is the routed entry with a sampled coalesced verdict, which needs the
-  // sampler's floors crossed (262144 rows, work >= 4M — 262144 rows x 16 columns) and a
-  // strictly monotonic permutation map (descending iota). The hint cannot change values, so the
-  // differential still proves the b128 forms load and store the right bytes.
-  constexpr cudf::size_type num_rows{262'144};
-  constexpr cudf::size_type num_cols{16};
-  std::vector<std::unique_ptr<cudf::column>> columns;
-  for (cudf::size_type c = 0; c < num_cols; ++c) {
-    columns.push_back(make_fixed_column<numeric::decimal128>(
-      num_rows,
-      [c](cudf::size_type i) { return i + c; },
-      [](cudf::size_type i) { return i % 2 != 0; }));
-  }
-  std::vector<cudf::column_view> views;
-  views.reserve(columns.size());
-  for (auto const& column : columns) {
-    views.push_back(column->view());
-  }
-  cudf::table_view source_table(views);
-  auto gather_map = make_fixed_column<cudf::size_type>(
-    num_rows,
-    [](cudf::size_type i) { return num_rows - 1 - i; },
-    [](cudf::size_type) { return true; });
-
-  auto result    = run_batch_gather(source_table, gather_map->view());
-  auto reference = run_reference(source_table, gather_map->view());
-  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
-}
-
-// ============================================================================
-// §5.5a Row coarsening: the rows_per_thread overload must match the un-coarsened kernel and
-// the stock gather bit-for-bit, including the interleaved mask-word ballot path that only the
-// R > 1 instantiations execute.
-// ============================================================================
-
-TEST_F(BatchGatherPolicyTest, CoarsenedRowsMatchUncoarsenedAcrossWidths)
-{
-  // Null-bearing column forces the kMasked instantiation, so the ballot interleaving and the
-  // valid_counts readback run for every (tile, rows) pair.
-  constexpr cudf::size_type num_rows{333};
-  auto source_column = make_fixed_column<int64_t>(
-    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type i) { return i % 5 != 0; });
-  auto const host_map = shuffled_iota(num_rows, 7);
-  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
-                                                                     host_map.end());
-  cudf::table_view source_table({source_column->view()});
-
-  auto reference = run_reference(source_table, gather_map);
-  for (cudf::size_type const tile : {1, 2, 4, 8}) {
-    for (cudf::size_type const rows : {1, 2, 4}) {
-      auto result = run_batch_gather_tile(
-        source_table, gather_map, tile, cudf::out_of_bounds_policy::DONT_CHECK, rows);
-      CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
-      EXPECT_EQ(result->view().column(0).null_count(), reference->view().column(0).null_count());
-    }
-  }
-}
-
-TEST_F(BatchGatherPolicyTest, CoarsenedRowsMaskWindowBoundaryRows)
-{
-  // num_rows % 32 leaves trailing bits in the last word: with R > 1 those bits must be 0 even
-  // though their map rows exist and the rows themselves never do.
-  constexpr cudf::size_type num_rows{33};
-  auto source_column = make_fixed_column<int32_t>(
-    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type i) { return i % 3 != 0; });
-  auto gather_map = make_fixed_column<cudf::size_type>(
-    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
-  cudf::table_view source_table({source_column->view()});
-
-  for (cudf::size_type const rows : {2, 4}) {
-    auto result = run_batch_gather_tile(
-      source_table, gather_map->view(), 1, cudf::out_of_bounds_policy::DONT_CHECK, rows);
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(source_column->view(), result->view().column(0));
-    EXPECT_EQ(result->view().column(0).null_count(), 11);
-  }
-}
-
-TEST_F(BatchGatherPolicyTest, CoarsenedRowsNullifyOOBDifferential)
-{
-  // The NULLIFY path keeps both mask sides live AND makes validity depend on the bounds check:
-  // the interleaved ballots must carry the nullified rows as invalid.
-  constexpr cudf::size_type num_rows{1000};
-  auto source_column = make_fixed_column<int32_t>(
-    num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type i) { return i % 2 != 0; });
-  auto host_map = shuffled_iota(num_rows, 3);
-  host_map[0]   = num_rows + 1;  // Out of bounds: NULLIFY must clear this row.
-  host_map[5]   = num_rows + 7;
-  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
-                                                                     host_map.end());
-  cudf::table_view source_table({source_column->view()});
-
-  for (cudf::size_type const rows : {2, 4}) {
-    auto result =
-      run_batch_gather_tile(source_table, gather_map, 1, cudf::out_of_bounds_policy::NULLIFY, rows);
-    auto reference = run_reference(source_table, gather_map, cudf::out_of_bounds_policy::NULLIFY);
-    CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
-    EXPECT_EQ(result->view().column(0).null_count(), reference->view().column(0).null_count());
-    EXPECT_GT(result->view().column(0).null_count(), 0);
-  }
-}
-
-TEST_F(BatchGatherPolicyTest, CoarsenedRowsRandomizedDifferential)
-{
-  // Same generator contract as the §5.7 stock differential, with rows_per_thread forced to
-  // every supported value (and tile 1) so every shape class — including the row counts that
-  // leave warp windows partially beyond num_rows — runs the interleaved mask path.
-  std::mt19937 rng(4242);
-  for (int iteration = 0; iteration < 4; ++iteration) {
-    SCOPED_TRACE("iteration=" + std::to_string(iteration));
-    auto const num_rows = std::uniform_int_distribution<cudf::size_type>(1, 5000)(rng);
-    std::vector<std::unique_ptr<cudf::column>> source_columns;
-    source_columns.reserve(2);
-    for (int c = 0; c < 2; ++c) {
-      auto const type = random_candidate_types()[std::uniform_int_distribution<std::size_t>(
-        0, random_candidate_types().size() - 1)(rng)];
-      source_columns.push_back(make_random_column(type, num_rows, 0.25, rng));
-    }
-    std::vector<cudf::column_view> views;
-    for (auto const& col : source_columns) {
-      views.push_back(col->view());
-    }
-    cudf::table_view source_table(views);
-
-    std::vector<cudf::size_type> host_map(num_rows);
-    std::uniform_int_distribution<cudf::size_type> uniform_idx(0, num_rows - 1);
-    std::generate(host_map.begin(), host_map.end(), [&]() { return uniform_idx(rng); });
-    cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
-                                                                       host_map.end());
-
-    auto const bounds = iteration % 2 == 0 ? cudf::out_of_bounds_policy::DONT_CHECK
-                                           : cudf::out_of_bounds_policy::NULLIFY;
-    auto reference    = run_reference(source_table, gather_map, bounds);
-    for (cudf::size_type const rows : {1, 2, 4}) {
-      auto result = run_batch_gather_tile(source_table, gather_map, 1, bounds, rows);
-      CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
-    }
-  }
 }
 
 // ============================================================================
@@ -3662,30 +3472,15 @@ class BatchGatherRoutingTest : public cudf::test::BaseFixture {};
 std::unique_ptr<cudf::table> run_batch_gather_tile(cudf::table_view const& source,
                                                    cudf::column_view const& map,
                                                    cudf::size_type tile_cols,
-                                                   cudf::out_of_bounds_policy bounds,
-                                                   std::optional<cudf::size_type> rows_per_thread,
-                                                   std::optional<cudf::size_type> block_size)
+                                                   cudf::out_of_bounds_policy bounds)
 {
-  return rows_per_thread.has_value() or block_size.has_value()
-           ? cudf::detail::batch_gather(
-               source,
-               map,
-               bounds,
-               cudf::negative_index_policy::NOT_ALLOWED,
-               cudf::get_default_stream(),
-               cudf::memory_resources{cudf::get_current_device_resource_ref()},
-               tile_cols,
-               rows_per_thread.value_or(1),
-               block_size.value_or(256))
-           : cudf::detail::batch_gather(
-               source,
-               map,
-               bounds,
-               cudf::negative_index_policy::NOT_ALLOWED,
-               cudf::get_default_stream(),
-               cudf::memory_resources{cudf::get_current_device_resource_ref()},
-               tile_cols,
-               256);
+  return cudf::detail::batch_gather(source,
+                                    map,
+                                    bounds,
+                                    cudf::negative_index_policy::NOT_ALLOWED,
+                                    cudf::get_default_stream(),
+                                    cudf::memory_resources{cudf::get_current_device_resource_ref()},
+                                    tile_cols);
 }
 
 TEST_F(BatchGatherRoutingTest, ClassifierWorkGateSamplesTallFewColumnTables)

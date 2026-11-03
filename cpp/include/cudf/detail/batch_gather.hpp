@@ -71,13 +71,7 @@ std::unique_ptr<table> batch_gather(table_view const& source_table,
  *
  * @param[in] tile_cols Number of consecutive columns per blockIdx.y tile in the fused kernel;
  * one of {1, 2, 4, 8}. 1 degenerates to one column per y block.
- * @param[in] block_size Threads per blockIdx.x row block in the fused kernel; one of
- * {128, 256, 512}. 256 matches the routed entry. This is a measurement axis, not a routing
- * decision: every supported size is a multiple of the warp size, so the destination mask-word
- * exactly-once invariant holds and correctness is identical across the set. Row coarsening
- * stays at the default 1 row per thread; the 9-argument overload selects both axes together.
- * @throws std::invalid_argument if `tile_cols` is not one of {1, 2, 4, 8} or `block_size` is
- * not one of {128, 256, 512}
+ * @throws std::invalid_argument if `tile_cols` is not one of {1, 2, 4, 8}
  */
 std::unique_ptr<table> batch_gather(table_view const& source_table,
                                     column_view const& gather_map,
@@ -85,42 +79,10 @@ std::unique_ptr<table> batch_gather(table_view const& source_table,
                                     negative_index_policy neg_indices,
                                     cuda::stream_ref stream,
                                     memory_resources mr,
-                                    size_type tile_cols,
-                                    size_type block_size);
+                                    size_type tile_cols);
 
 /**
- * @copydoc cudf::detail::batch_gather(table_view const&, column_view const&,
- * out_of_bounds_policy, negative_index_policy, cuda::stream_ref, memory_resources)
- *
- * @param[in] tile_cols Number of consecutive columns per blockIdx.y tile in the fused kernel;
- * one of {1, 2, 4, 8}. 1 degenerates to one column per y block.
- * @param[in] rows_per_thread Number of consecutive output rows each kernel thread owns; one of
- * {1, 2, 4}. 1 is the un-coarsened geometry. A warp then covers `32 * rows_per_thread`
- * consecutive rows per iteration and ballots once per row slot: lane 0 interleaves those
- * ballots into the destination mask words, keeping every word written exactly once. R > 1 is
- * instantiated for the non-streaming narrow tiles (tile_cols 1 and 2) only; on other widths the
- * value is accepted and routes to the R = 1 geometry, since wider tiles already keep enough
- * loads in flight and coarsening there only multiplies register pressure.
- * @param[in] block_size Threads per blockIdx.x row block in the fused kernel; one of
- * {128, 256, 512}. 256 matches the routed entry. This is a measurement axis, not a routing
- * decision: every supported size is a multiple of the warp size, so the destination mask-word
- * exactly-once invariant holds and correctness is identical across the set. Independent of
- * `rows_per_thread`: the two axes compose, and the grid's row extent is
- * `ceil(rows / (block_size * rows_per_thread))` blocks.
- * @throws std::invalid_argument if `tile_cols` is not one of {1, 2, 4, 8}, `rows_per_thread` is
- * not one of {1, 2, 4}, or `block_size` is not one of {128, 256, 512}
- */
-std::unique_ptr<table> batch_gather(table_view const& source_table,
-                                    column_view const& gather_map,
-                                    out_of_bounds_policy bounds_policy,
-                                    negative_index_policy neg_indices,
-                                    cuda::stream_ref stream,
-                                    memory_resources mr,
-                                    size_type tile_cols,
-                                    size_type rows_per_thread,
-                                    size_type block_size);
 
-/**
  * @brief Classifies the gather map's locality and returns the fused kernel tile width to use.
  *
  * Sampling is skipped entirely — returning the unsampled width without touching the map — when
@@ -143,7 +105,7 @@ std::unique_ptr<table> batch_gather(table_view const& source_table,
  * @param[in] max_fused_element_size Largest element size in bytes among the fused columns'
  * data payloads (mask-only struct nodes carry none)
  * @param[in] stream CUDA stream used for the sample copy and its synchronization
- * @return Tile width in {1, 2, 8} for the `batch_gather` tile_cols parameter
+ * @return Tile width in {1, 2, 8} for the `batch_gather` tile_cols overload
  */
 size_type select_gather_map_tile_cols(table_view const& source_table,
                                       column_view const& gather_map,

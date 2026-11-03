@@ -156,7 +156,7 @@ struct sort_groupby_helper {
    * @return vector of offsets of the starting point of each group in the sorted
    * key table
    */
-  device_span<size_type const> const& group_offsets(cuda::stream_ref stream);
+  device_span<size_type const> group_offsets(cuda::stream_ref stream);
 
   /**
    * @brief Get the group labels corresponding to the sorted order of `keys`.

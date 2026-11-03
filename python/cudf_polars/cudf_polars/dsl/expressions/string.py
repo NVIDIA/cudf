@@ -311,11 +311,11 @@ class StringFunction(Expr):
                 "String split with regex (literal=False) is not supported."
             )
         elif self.name is StringFunction.Name.Strptime:
-            format, strict, exact, cache = self.options
+            # polars uses cache to speed up repeated values on the CPU. It
+            # does not change the result, so the GPU engine ignores it.
+            format, strict, exact, _ = self.options
             if not format and not strict:
                 raise NotImplementedError("format inference requires strict checking")
-            if cache:
-                raise NotImplementedError("Strptime cache is a CPU feature")
             if not exact:
                 raise NotImplementedError("Strptime does not support exact=False")
             if format is not None:

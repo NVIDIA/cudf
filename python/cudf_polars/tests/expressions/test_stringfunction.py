@@ -318,7 +318,7 @@ def test_to_datetime(
             exact=exact,
         )
     )
-    if cache or not exact or (not strict and format is None):
+    if not exact or (not strict and format is None):
         outcome = "translation_error"
     elif (values[0] == "foo" and format is None and strict) or (
         strict and has_invalid_row
@@ -340,6 +340,23 @@ def test_to_datetime(
                 q.collect(engine=engine)
     else:
         assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        pl.col("a").str.to_date("%Y-%m-%d"),
+        pl.col("a").str.to_datetime("%Y-%m-%d"),
+        pl.col("a").str.strptime(pl.Date, "%Y-%m-%d"),
+    ],
+    ids=["to_date", "to_datetime", "strptime"],
+)
+def test_strptime_default_cache(engine: pl.GPUEngine, expr):
+    # cache=True is the polars default and must not make the query fall back
+    # to the CPU.
+    df = pl.LazyFrame({"a": ["2024-01-01", "2024-01-01", "2023-06-15", None]})
+    q = df.select(expr)
+    assert_gpu_result_equal(q, engine=engine)
 
 
 @pytest.mark.parametrize(

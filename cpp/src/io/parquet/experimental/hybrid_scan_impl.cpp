@@ -156,20 +156,6 @@ namespace {
   return column_schemas;
 }
 
-/**
- * @brief Recomputes the null count of a row mask whose nulls were updated in place on device
- *
- * @param row_mask Row mask column
- * @param stream CUDA stream used for device memory operations and kernel launches
- */
-void update_null_count(cudf::mutable_column_view& row_mask, cuda::stream_ref stream)
-{
-  if (row_mask.nullable()) {
-    row_mask.set_null_count(cudf::detail::null_count(
-      row_mask.null_mask(), row_mask.offset(), row_mask.offset() + row_mask.size(), stream));
-  }
-}
-
 }  // namespace
 
 void hybrid_scan_reader_impl::mark_buffers_nullable_for_pruned_pages()
@@ -783,7 +769,7 @@ template <read_columns_mode mode>
 table_with_metadata hybrid_scan_reader_impl::materialize_table(
   std::span<std::vector<size_type> const> row_group_indices,
   std::span<cudf::device_span<uint8_t const> const> column_chunk_data,
-  row_mask_view_t<mode>& row_mask,
+  row_mask_view_t<mode> const& row_mask,
   use_data_page_mask mask_data_pages,
   parquet_reader_options const& options,
   cuda::stream_ref stream,
@@ -803,9 +789,7 @@ table_with_metadata hybrid_scan_reader_impl::materialize_table(
                           stream,
                           mr);
 
-  auto output = read_chunk_internal(read_mode::READ_ALL, mode, row_mask);
-  if constexpr (mode == read_columns_mode::FILTER_COLUMNS) { update_null_count(row_mask, stream); }
-  return output;
+  return read_chunk_internal(read_mode::READ_ALL, mode, row_mask);
 }
 
 template <read_columns_mode mode>
@@ -862,7 +846,7 @@ void hybrid_scan_reader_impl::setup_chunked_sparse_payload_materialization(
 
 template <read_columns_mode mode>
 table_with_metadata hybrid_scan_reader_impl::materialize_table_chunk(
-  row_mask_view_t<mode>& row_mask)
+  row_mask_view_t<mode> const& row_mask)
 {
   CUDF_EXPECTS(_file_preprocessed and _selected_columns_mode.has_value(),
                "Chunking for columns not yet setup");
@@ -878,9 +862,15 @@ table_with_metadata hybrid_scan_reader_impl::materialize_table_chunk(
   }
 
   prepare_data(read_mode::CHUNKED_READ, {}, {}, {});
-  auto output = read_chunk_internal(read_mode::CHUNKED_READ, mode, row_mask);
-  if constexpr (mode == read_columns_mode::FILTER_COLUMNS) { update_null_count(row_mask, _stream); }
-  return output;
+  return read_chunk_internal(read_mode::CHUNKED_READ, mode, row_mask);
+}
+
+void hybrid_scan_reader_impl::update_row_mask_null_count(cudf::mutable_column_view& row_mask) const
+{
+  if (row_mask.nullable()) {
+    row_mask.set_null_count(cudf::detail::null_count(
+      row_mask.null_mask(), row_mask.offset(), row_mask.offset() + row_mask.size(), _stream));
+  }
 }
 
 std::pair<std::vector<std::vector<cudf::size_type>>, std::vector<cudf::size_type>>
@@ -1485,7 +1475,7 @@ void hybrid_scan_reader_impl::set_sparse_pass_page_mask(
   template table_with_metadata hybrid_scan_reader_impl::materialize_table<mode>(       \
     std::span<std::vector<size_type> const>,                                           \
     std::span<cudf::device_span<uint8_t const> const>,                                 \
-    row_mask_view_t<mode>&,                                                            \
+    row_mask_view_t<mode> const&,                                                      \
     use_data_page_mask,                                                                \
     parquet_reader_options const&,                                                     \
     cuda::stream_ref,                                                                  \
@@ -1501,7 +1491,7 @@ void hybrid_scan_reader_impl::set_sparse_pass_page_mask(
     cuda::stream_ref,                                                                  \
     cudf::memory_resources);                                                           \
   template table_with_metadata hybrid_scan_reader_impl::materialize_table_chunk<mode>( \
-    row_mask_view_t<mode>&);
+    row_mask_view_t<mode> const&);
 
 INSTANTIATE_HYBRID_SCAN_COLUMNS_APIS(read_columns_mode::FILTER_COLUMNS)
 INSTANTIATE_HYBRID_SCAN_COLUMNS_APIS(read_columns_mode::PAYLOAD_COLUMNS)

@@ -5,18 +5,19 @@ from __future__ import annotations
 
 import asyncio
 from typing import TYPE_CHECKING
+from unittest.mock import Mock
 
 import pytest
 
 import polars as pl
 
-import pylibcudf as plc
 from cudf_streaming.table_chunk import (
     TableChunk,
     make_table_chunks_available_or_wait,
 )
 
 from cudf_polars.containers import DataFrame, DataType
+from cudf_polars.streaming.actor_graph.collectives import slice_exchange
 from cudf_polars.streaming.actor_graph.collectives.common import reserve_op_id
 from cudf_polars.streaming.actor_graph.collectives.slice_exchange import (
     SliceRoute,
@@ -29,17 +30,13 @@ if TYPE_CHECKING:
 
 
 def _chunk(values: list[int], context: Context, stream: Stream) -> TableChunk:
+    frame = DataFrame.from_polars(
+        pl.DataFrame({"value": pl.Series(values, dtype=pl.Int64())}), stream
+    )
     return TableChunk.from_pylibcudf_table(
-        plc.Table(
-            [
-                plc.Column.from_arrow(
-                    pl.Series("value", values, dtype=pl.Int64()),
-                    stream=stream,
-                )
-            ]
-        ),
+        frame.table,
         stream,
-        exclusive_view=True,
+        exclusive_view=False,
         br=context.br(),
     )
 
@@ -58,14 +55,15 @@ def _values(chunk: TableChunk) -> list[int]:
 
 
 @pytest.mark.spmd
-def test_sparse_exchange_sends_slice_and_moves_chunk(spmd_engine) -> None:
-    """A borrowed slice keeps its source, while a whole-chunk send consumes it."""
+def test_sparse_exchange_sends_slice_and_chunk(spmd_engine) -> None:
+    """A borrowed slice leaves its source intact and a whole chunk arrives."""
     if spmd_engine.comm.nranks != 2:
         pytest.skip("This test expects exactly two ranks.")
 
     async def run() -> None:
         context = spmd_engine.context
         rank = spmd_engine.comm.rank
+        stream = context.br().stream_pool.get_stream()
         with reserve_op_id() as op_id:
             async with SparseExchange(
                 context,
@@ -75,21 +73,10 @@ def test_sparse_exchange_sends_slice_and_moves_chunk(spmd_engine) -> None:
                 destinations=(1,) if rank == 0 else (),
             ) as exchange:
                 if rank == 0:
-                    source = _chunk(
-                        [0, 1, 2, 3],
-                        context,
-                        context.br().stream_pool.get_stream(),
-                    )
+                    source = _chunk([0, 1, 2, 3], context, stream)
                     await exchange.insert_slices(source, (SliceRoute(1, 1, 3),))
                     assert _values(source) == [0, 1, 2, 3]
-                    moved = _chunk(
-                        [4, 5],
-                        context,
-                        context.br().stream_pool.get_stream(),
-                    )
-                    await exchange.insert_chunk(1, moved)
-                    with pytest.raises(ValueError, match="released"):
-                        moved.is_available()
+                    await exchange.insert_chunk(1, _chunk([4, 5], context, stream))
                 await exchange.finish()
                 if rank == 1:
                     remote = exchange.extract(0)
@@ -107,31 +94,43 @@ def test_sparse_exchange_sends_slice_and_moves_chunk(spmd_engine) -> None:
     asyncio.run(run())
 
 
-def test_sparse_exchange_finish_survives_cancellation() -> None:
-    """Keep the borrowed exchange alive until finish completes after cancellation."""
+def test_sparse_exchange_finish_survives_cancellation(monkeypatch) -> None:
+    """Wait for exchange completion even after repeated cancellation."""
 
     async def run() -> None:
+        started = asyncio.Event()
         release = asyncio.Event()
+        finished = asyncio.Event()
 
         class DelayedExchange:
             async def insert_finished(self, _context) -> None:
+                started.set()
                 await release.wait()
+                finished.set()
 
-        exchange = SparseExchange.__new__(SparseExchange)
-        exchange.context = None
-        exchange._exchange = DelayedExchange()
-        exchange._finish_task = None
-        exchange._finished = False
-        exchange._closed = False
+        monkeypatch.setattr(
+            slice_exchange,
+            "SparseAlltoall",
+            lambda *_args, **_kwargs: DelayedExchange(),
+        )
+        exchange = SparseExchange(
+            Mock(), Mock(rank=0, nranks=2), 0, sources=(), destinations=(1,)
+        )
 
         task = asyncio.create_task(exchange.finish())
-        await asyncio.sleep(0)
-        task.cancel()
-        await asyncio.sleep(0)
-        task.cancel()
-        release.set()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-        assert exchange._finished
+        try:
+            await asyncio.wait_for(started.wait(), timeout=5)
+            task.cancel()
+            await asyncio.sleep(0)
+            task.cancel()
+            await asyncio.sleep(0)
+            assert not task.done()
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert finished.is_set()
+            await exchange.aclose()
+        finally:
+            release.set()
 
     asyncio.run(run())

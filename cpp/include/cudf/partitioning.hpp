@@ -35,6 +35,14 @@ enum class hash_id : int32_t {
 };
 
 /**
+ * @brief Whether a partitioning operation preserves the input order of rows within each partition.
+ */
+enum class partition_order : bool {
+  UNSTABLE,  ///< Rows within a partition may appear in any order
+  STABLE     ///< Rows within a partition appear in their input order
+};
+
+/**
  * @brief Partitions rows of `t` according to the mapping specified by
  * `partition_map`.
  *
@@ -139,6 +147,48 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition(
   table_view const& input,
   table_view const& keys,
   int num_partitions,
+  hash_id hash_function             = hash_id::HASH_MURMUR3,
+  uint32_t seed                     = DEFAULT_HASH_SEED,
+  cuda::stream_ref stream           = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Computes a gather map that groups the rows of `keys` into hash partitions.
+ *
+ * Each row of `keys` is hashed and assigned to a partition. Returns a gather map of row indices
+ * grouped by partition and a vector of `num_partitions + 1` offsets, where the indices of partition
+ * `i` are in the range `[offsets[i], offsets[i+1])` of the gather map. The partition assignment of
+ * each row matches `cudf::hash_partition` with the same `hash_function` and `seed`.
+ *
+ * Unlike `cudf::hash_partition`, no table is materialized. Callers can gather any table with the
+ * same number of rows as `keys`, either all at once or one partition at a time.
+ *
+ * If `order` is `partition_order::STABLE`, the row indices within each partition are in increasing
+ * order. Otherwise their order within a partition is unspecified.
+ *
+ * @code{.pseudo}
+ * auto [gather_map, offsets] = cudf::hash_partition_indices(
+ *   input.select(columns_to_hash), num_partitions, cudf::partition_order::STABLE);
+ * auto partitioned = cudf::gather(input, gather_map->view());
+ * @endcode
+ *
+ * @throw std::invalid_argument if `num_partitions` is negative
+ *
+ * @param keys The table whose rows are hashed to determine partitions
+ * @param num_partitions The number of partitions to create
+ * @param order Whether row indices within each partition preserve input order
+ * @param hash_function Optional hash id that chooses the hash function to use
+ * @param seed Optional seed value to the hash function
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource used to allocate the returned column's device memory
+ *
+ * @return An INT32 gather map of row indices grouped by partition, and a vector of
+ * `num_partitions + 1` partition offsets into the gather map
+ */
+std::pair<std::unique_ptr<column>, std::vector<size_type>> hash_partition_indices(
+  table_view const& keys,
+  int num_partitions,
+  partition_order order,
   hash_id hash_function             = hash_id::HASH_MURMUR3,
   uint32_t seed                     = DEFAULT_HASH_SEED,
   cuda::stream_ref stream           = cudf::get_default_stream(),

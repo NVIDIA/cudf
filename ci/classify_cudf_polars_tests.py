@@ -43,12 +43,18 @@ INTERNAL_TEST_FILES = frozenset(
         "tests/test_config.py",
         "tests/test_engine_execute.py",
         "tests/test_executors.py",
-        "tests/test_hconcat.py",
         "tests/test_mapfunction.py",
         "tests/test_profile.py",
         "tests/test_tracing.py",
         "tests/test_tracing_disabled.py",
         "tests/test_unstable.py",
+    }
+)
+INTERNAL_TEST_NAMES = frozenset(
+    {
+        ("tests/test_hconcat.py", "test_hconcat_should_broadcast"),
+        ("tests/test_hconcat.py", "test_empty_init"),
+        ("tests/test_hconcat.py", "test_empty_evaluate"),
     }
 )
 INTROSPECTIVE_NAME_TERMS = (
@@ -154,7 +160,11 @@ def _classification(
         return "retain_streaming_or_engine"
     if path in INTROSPECTIVE_TEST_FILES:
         return "rewrite_introspective"
-    if path.startswith(INTERNAL_TEST_PREFIXES) or path in INTERNAL_TEST_FILES:
+    if (
+        path.startswith(INTERNAL_TEST_PREFIXES)
+        or path in INTERNAL_TEST_FILES
+        or (path, _test_name(coverage.nodeid)) in INTERNAL_TEST_NAMES
+    ):
         return "retain_internal_contract"
     if any(
         term in _test_name(coverage.nodeid)

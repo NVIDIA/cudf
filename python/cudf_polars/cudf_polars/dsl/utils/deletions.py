@@ -14,6 +14,7 @@ import pylibcudf as plc
 
 from cudf_polars.containers import Column, DataFrame
 from cudf_polars.containers.datatype import DataType
+from cudf_polars.utils.uri import strip_file_uri
 from cudf_polars.utils.versions import POLARS_VERSION_LT_21
 
 if TYPE_CHECKING:
@@ -230,7 +231,7 @@ def _iceberg_positions(
 
         # Scan paths have the file:// scheme stripped, so the keys must too.
         puffin_cache[puffin] = {
-            vector.referenced_data_file.removeprefix("file://"): vector.to_vector()
+            strip_file_uri(vector.referenced_data_file): vector.to_vector()
             for vector in deletion_vectors_from_puffin_file(
                 PuffinFile(Path(puffin).read_bytes())
             )

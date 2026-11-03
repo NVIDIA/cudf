@@ -79,9 +79,6 @@ namespace detail {
 
 namespace {
 
-// Block size of the fused kernel; matches the valid_if_n_kernel/concatenate precedent.
-constexpr size_type block_size{256};
-
 // A struct column joins the descriptor path when every descendant is a fixed-width leaf; any
 // list child at any depth keeps the WHOLE column in the fallback (partial flattening is a
 // later stage). A STRING child is no longer disqualifying: top-level strings take the

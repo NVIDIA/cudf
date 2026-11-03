@@ -15,17 +15,17 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
+#include <cuda/std/concepts>
 #include <cuda/stream>
 
 namespace cudf {
 namespace detail {
 struct nan_dispatcher {
-  template <typename T, typename Predicate>
+  template <cuda::std::floating_point T, typename Predicate>
   std::unique_ptr<column> operator()(cudf::column_view const& input,
                                      Predicate predicate,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
-    requires(std::is_floating_point_v<T>)
   {
     auto input_device_view = column_device_view::create(input, stream);
 
@@ -53,7 +53,6 @@ struct nan_dispatcher {
                                      Predicate predicate,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
-    requires(!std::is_floating_point_v<T>)
   {
     CUDF_FAIL("NAN is not supported in a Non-floating point type column");
   }

@@ -41,6 +41,8 @@ _BINOPS = [
     pl.Expr.mod,
 ]
 
+_COMPARISONS = _BINOPS[:8]
+
 # Preserve the complete promotion matrix for both SPMD configurations. Other
 # backends exercise every operator and nullability path with pairs covering
 # each dtype in both operand positions, without duplicating the full matrix.
@@ -106,7 +108,7 @@ def test_numeric_binop(engine: pl.GPUEngine, df, binop, ltype, rtype):
 
     q = df.select(binop(left, right))
 
-    if _promotes_to_int128(ltype, rtype):
+    if _promotes_to_int128(ltype, rtype) and binop not in _COMPARISONS:
         assert_ir_translation_raises(q, engine, NotImplementedError)
     else:
         assert_gpu_result_equal(q, engine=engine)
@@ -301,4 +303,83 @@ def test_fused_arithmetic(engine: pl.GPUEngine, expr: pl.Expr) -> None:
     # fms: fused multiply subtract
     df = pl.LazyFrame({"a": [1, 2, 3], "b": [10, 20, 30], "c": [5, 5, 5]})
     q = df.select(expr)
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "left_dtype,right_dtype,fallback",
+    [
+        # Both fit in Decimal(38, 4) after rescaling.
+        (pl.Decimal(10, 2), pl.Decimal(38, 4), False),
+        # No Decimal(38, s) holds both operands; polars 2.1 compares exactly,
+        # libcudf would wrap when rescaling.
+        (pl.Decimal(38, 2), pl.Decimal(38, 12), True),
+        (pl.Decimal(38, 12), pl.Decimal(38, 2), True),
+    ],
+)
+def test_decimal_comparison_mixed_scale_overflow(
+    engine: pl.GPUEngine, left_dtype, right_dtype, fallback
+):
+    big = "9" * (left_dtype.precision - left_dtype.scale) + "." + "9" * left_dtype.scale
+    left = pl.DataFrame({"a": ["-2.5", "1", big, None]}).cast(left_dtype)
+    right = pl.DataFrame({"b": ["1", "-1.5", "0.5", "3"]}).cast(right_dtype)
+    q = (
+        pl.concat([left, right], how="horizontal")
+        .lazy()
+        .select(gt=pl.col("a") > pl.col("b"), eq=pl.col("a") == pl.col("b"))
+    )
+    if fallback:
+        assert_ir_translation_raises(q, engine, NotImplementedError)
+    else:
+        assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("dtype", [pl.Decimal(15, 2), pl.Decimal(38, 2)])
+@pytest.mark.parametrize("literal", [0, 24, -6, 10_000])
+def test_decimal_comparison_with_integer_literal(engine: pl.GPUEngine, dtype, literal):
+    # polars types an integer literal as Decimal(38, 0), but its value needs
+    # far fewer digits than that, so rescaling it cannot overflow.
+    biggest = "9" * (dtype.precision - dtype.scale) + "." + "9" * dtype.scale
+    df = pl.DataFrame({"a": ["-2.5", "0", "24", str(literal), biggest, None]}).cast(
+        dtype
+    )
+    a = pl.col("a")
+    q = df.lazy().select(
+        lt=a < literal,
+        le=a <= literal,
+        gt=a > literal,
+        ge=a >= literal,
+        eq=a == literal,
+        ne=a != literal,
+    )
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_decimal_comparison_of_expression_with_integer_literal(
+    engine: pl.GPUEngine,
+):
+    df = pl.DataFrame({"a": ["1.50", "2.25", "3.00"]}).cast(pl.Decimal(7, 2)).lazy()
+    q = df.select(gt=(pl.col("a") * 2).sum() > 0, lt=pl.col("a") * 2 < 5)
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_decimal_comparison_with_literal_that_may_overflow(engine: pl.GPUEngine):
+    # The literal has a finer scale than the column, so rescaling the column
+    # to the literal's scale needs 36 + 3 digits.
+    df = pl.DataFrame({"a": ["1.00", "2.00"]}).cast(pl.Decimal(38, 2)).lazy()
+    q = df.select(gt=pl.col("a") > pl.lit(Decimal("1.005")))
+    assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+def test_decimal_comparison_with_literal_of_maximum_precision(engine: pl.GPUEngine):
+    # Neither operand needs rescaling, so a literal of 38 digits is supported.
+    df = pl.DataFrame({"a": ["1", "9" * 38]}).cast(pl.Decimal(38, 0)).lazy()
+    q = df.select(lt=pl.col("a") < pl.lit(Decimal("9" * 38)))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("literal", [Decimal("27.5"), 27.5])
+def test_decimal_comparison_with_fractional_literal(engine: pl.GPUEngine, literal):
+    df = pl.DataFrame({"a": ["1.00", "27.50", "30.00", None]}).cast(pl.Decimal(15, 2))
+    q = df.lazy().select(lt=pl.col("a") < literal, ge=pl.col("a") >= literal)
     assert_gpu_result_equal(q, engine=engine)

@@ -16,7 +16,7 @@ CUDF_STREAMING_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name 
 CUDF_POLARS_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python cudf-polars cudf --pure --arch any --cuda "$RAPIDS_CUDA_VERSION")")
 
 # generate constraints (possibly pinning to oldest support versions of dependencies)
-rapids-generate-pip-constraints py_test_cudf_polars "${PIP_CONSTRAINT}" constraints
+rapids-generate-pip-constraints py_test_cudf_polars "${PIP_CONSTRAINT}"
 
 rapids-logger "Install libcudf, pylibcudf and cudf_polars"
 
@@ -56,7 +56,8 @@ rapids-pip-retry install \
     --prefer-binary \
     --constraint "${PIP_CONSTRAINT}" \
     -r polars/py-polars/requirements-dev.txt \
-    -r polars/py-polars/requirements-ci.txt
+    -r polars/py-polars/requirements-ci.txt \
+    "polars-iceberg>=0.1.0,<1.0.0"
 
 # shellcheck disable=SC2317
 function set_exitcode()

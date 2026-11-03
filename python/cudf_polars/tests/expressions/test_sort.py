@@ -57,6 +57,17 @@ def test_sort_by_expression(
     assert_gpu_result_equal(query, engine=engine, check_row_order=maintain_order)
 
 
+@pytest.mark.parametrize(
+    "scalar_key", [pl.lit(1), pl.col("b").max()], ids=["literal", "aggregation"]
+)
+def test_sort_by_scalar_key(engine: pl.GPUEngine, scalar_key):
+    ldf = pl.LazyFrame({"a": [3, 1, 2, 5, 4], "b": [2, 1, 2, 1, 2]})
+    query = ldf.select(
+        pl.col("a").sort_by(scalar_key, pl.col("b"), maintain_order=True)
+    )
+    assert_gpu_result_equal(query, engine=engine)
+
+
 @pytest.mark.parametrize("descending", [False, True])
 @pytest.mark.parametrize("nulls_last", [False, True])
 @pytest.mark.parametrize("with_nulls", ["no_nulls", "nulls"])

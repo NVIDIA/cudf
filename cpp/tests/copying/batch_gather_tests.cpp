@@ -1514,11 +1514,12 @@ TEST_F(BatchGatherMixedTest, DeferredStringCountsReadbackMatchesReference)
 
 // ============================================================================
 // §5.6b String seam: tall string columns between the fused fast path and the stock per-column
-// fallback. Strings in the seam band [kStringFallbackRowThreshold, kBatchMemcpyRowThreshold)
-// take the stock path — the composed A/B of the short-string engine confirmed the band
-// exclusion (the engine's wins live below the band, and the tall-str1 routed-metadata path
-// owns ≥524288-row strings); the tests pin parity (CUDF_TEST_EXPECT_TABLES_EQUAL against a
-// run_reference gather) at every boundary.
+// fallback. Strings below `kBatchMemcpyRowThreshold` stay fused — short-row shapes ride the
+// fused short-string engine (the former seam band [262144, 524288) re-enters the fused path
+// with it, where its cells are measured engine wins) and ≥524288-row strings run the
+// tall-str1 routed-metadata path; only long-row below-gate shapes take the payload kernel's
+// group walk. The tests pin parity (CUDF_TEST_EXPECT_TABLES_EQUAL against a run_reference
+// gather) at every boundary.
 // ============================================================================
 
 class BatchGatherTallSeamTest : public cudf::test::BaseFixture {};
@@ -1574,9 +1575,10 @@ TEST_F(BatchGatherTallSeamTest, SmallTwoColumnFastPathPinned)
   CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
 }
 
-// Class 2: at 262144 rows (the band's lower edge) strings take the stock fallback — the band
-// exclusion routes them out of the fused path. Parity with stock is still the contract. The
-// names stay (they pin the same row counts); only the route changed.
+// Class 2: at 262144 rows (the band's lower edge) short-average strings stay on the fused
+// path — the band re-enters the fused path, so this call is engine-admitted. Parity with
+// stock is still the contract. The names stay (they pin the same row counts); only the route
+// changed.
 TEST_F(BatchGatherTallSeamTest, AtThresholdStringsFallbackPinned)
 {
   constexpr cudf::size_type num_rows{262'144};
@@ -1595,12 +1597,13 @@ TEST_F(BatchGatherTallSeamTest, AtThresholdStringsFallbackPinned)
   CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
 }
 
-// Guard pin for the seam-band exclusion: at 262144 rows (the band's lower edge) the string
-// column is routed host-side to the stock per-column fallback (the classification walk never
-// enters it in fused_indices), so the payload kernel and the fused short-string engine are
-// both unreachable for it. Parity covers correctness; the routing is a host-side band branch
-// on kStringFallbackRowThreshold/kBatchMemcpyRowThreshold, pinned by this exact row count.
-TEST_F(BatchGatherTallSeamTest, SeamGuardExcludesBandStringFromFusedPath)
+// Guard pin for the band interior: at 262144 rows the string column rides the fused path's
+// band route — engine-admitted for short-average rows (the band's lower edge is a measured
+// engine win cell) — while fixed-width siblings stay on the descriptor path. Parity covers
+// correctness; the routing is host-side on `kBatchMemcpyRowThreshold` alone, pinned by this
+// exact row count (a re-tightened band exclusion would route this call back to the stock
+// fallback and is caught against stock semantics).
+TEST_F(BatchGatherTallSeamTest, SeamBandStringStaysFusedPath)
 {
   constexpr cudf::size_type num_rows{262'144};
   auto const strings = periodic_strings(num_rows, 17);  // short-average rows: engine-shaped
@@ -1623,6 +1626,8 @@ TEST_F(BatchGatherTallSeamTest, SeamGuardExcludesBandStringFromFusedPath)
   CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
 }
 
+// At 300000 rows (band interior) short-average strings stay fused: the band re-enters the
+// fused path, so the call is engine-admitted. Parity with stock is the contract.
 TEST_F(BatchGatherTallSeamTest, AboveThresholdStringsFallbackPinned)
 {
   constexpr cudf::size_type num_rows{300'000};
@@ -1642,9 +1647,9 @@ TEST_F(BatchGatherTallSeamTest, AboveThresholdStringsFallbackPinned)
   CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
 }
 
-// Class 3: off-by-one boundary pin — 262143 rows (below the band, fused path) and 262144 rows
-// (the band's lower edge, stock fallback) must BOTH match stock; the pair fails if the
-// comparison is off by one.
+// Class 3: off-by-one boundary pin — 262143 and 262144 rows are both fused (engine-admitted
+// for short-average rows) and must BOTH match stock; the pair fails if the comparison is off
+// by one.
 TEST_F(BatchGatherTallSeamTest, BoundaryBelowByOneUsesFastPath)
 {
   constexpr cudf::size_type num_rows{262'143};
@@ -1666,8 +1671,8 @@ TEST_F(BatchGatherTallSeamTest, BoundaryBelowByOneUsesFastPath)
   CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
 }
 
-// Class 4a: NULLIFY policy with out-of-bounds entries at the threshold — exercises the
-// fallback's gather_bitmask NULLIFY leg next to fused fixed-width columns in the same call.
+// Class 4a: NULLIFY policy with out-of-bounds entries in the band — exercises the fused
+// string build's NULLIFY leg next to fused fixed-width columns in the same call.
 TEST_F(BatchGatherTallSeamTest, NullifyOutOfBoundsAtThreshold)
 {
   constexpr cudf::size_type num_rows{262'144};
@@ -1697,8 +1702,8 @@ TEST_F(BatchGatherTallSeamTest, NullifyOutOfBoundsAtThreshold)
   CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
 }
 
-// Class 4c: an all-null string source at the threshold — the stock path's null handling must
-// match the fast path's skip_data inline build, parity on both sides of the gate.
+// Class 4c: an all-null string source in the band — the fused build's skip_data inline
+// build must match the stock path's null handling, parity on both sides of the gate.
 TEST_F(BatchGatherTallSeamTest, AllNullStringsAtThreshold)
 {
   constexpr cudf::size_type num_rows{262'144};
@@ -1720,8 +1725,8 @@ TEST_F(BatchGatherTallSeamTest, AllNullStringsAtThreshold)
   CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
 }
 
-// Class 5: negative-index policy ALLOWED at the threshold — gated strings take the wrap
-// transform-iterator branch into run_fallback.
+// Class 5: negative-index policy ALLOWED in the band — the fused string resolve must take
+// the same wrap transform-iterator branch stock does.
 TEST_F(BatchGatherTallSeamTest, NegativeIndexWrapAtThreshold)
 {
   constexpr cudf::size_type num_rows{262'144};
@@ -1756,8 +1761,8 @@ TEST_F(BatchGatherTallSeamTest, NegativeIndexWrapAtThreshold)
   CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
 }
 
-// Class 6: mixed-table composition at the threshold (m1 style) — strings newly gated, lists
-// unchanged (already fallback), fixed-width still fused; whole-table equality vs stock.
+// Class 6: mixed-table composition in the band (m1 style) — strings fused, lists unchanged
+// (already fallback), fixed-width fused; whole-table equality vs stock.
 TEST_F(BatchGatherTallSeamTest, MixedCompositionAtThreshold)
 {
   constexpr cudf::size_type num_rows{262'144};
@@ -1948,8 +1953,9 @@ TEST_F(BatchGatherTallSeamTest, CarvedMixedColumnsOutliveCallScopeArena)
 // ============================================================================
 // §5.6c String routed-metadata parity: tall short-row calls route per-column chars to
 // cub::DeviceMemcpy::Batched and their offsets/masks/counts to the row-parallel
-// string_routed_metadata_kernel. Rows above 524288 exercise the routed path while the
-// 262144-row seam keeps unrelated mid cells on the fallback. Every test compares exactly
+// string_routed_metadata_kernel. Rows above 524288 exercise the routed path; below the gate
+// the fused short-string engine serves short-row shapes, so a 262144-row seam call is
+// engine-admitted rather than on the fallback. Every test compares exactly
 // against a run_reference gather.
 // ============================================================================
 
@@ -2275,9 +2281,10 @@ TEST_F(StringRoutedMetadataParity, SlicedSourceRouted)
 }
 
 // The routing gate band below the metadata engine's reach: a 262143-row SHORT-average call
-// rides the fused short-string engine (below the seam band the engine replaces the group
-// walk); this parity pin stays so any future gate re-tightening that moves the cell back to
-// the stock fallback is caught against stock semantics.
+// rides the fused short-string engine (below the gate the engine replaces the group walk,
+// including the whole former seam band); this parity pin stays so any future gate
+// re-tightening that moves the cell back to the stock fallback is caught against stock
+// semantics.
 TEST_F(StringRoutedMetadataParity, GateBandStaysFallback)
 {
   constexpr cudf::size_type num_rows{262'143};
@@ -2301,17 +2308,18 @@ TEST_F(StringRoutedMetadataParity, GateBandStaysFallback)
 
 // ============================================================================
 // §5.6c Fused short-string engine (below-gate warp-tile path): parity against the stock
-// gather. The engine replaces the payload kernel for below-band short-average calls; the seam
-// band [262144, 524288) takes the stock fallback and ≥524288-row strings run the
-// routed-metadata path, so the engine serves calls below 262144 rows. Every test here compares
+// gather. The engine replaces the payload kernel for below-gate short-average calls —
+// including the whole former seam band [262144, 524288), whose cells are measured engine
+// wins — while ≥524288-row strings run the routed-metadata path. Every test here compares
 // against `run_reference` so the engine's offsets/masks/counts/chars must match stock exactly.
 // ============================================================================
 
 class StringFusedEngineParity : public cudf::test::BaseFixture {};
 
-// The below-band tall cell (the measured win cell class): short-average rows at a large row
+// The band-cell parity class (the measured win cell class): short-average rows at a large row
 // count — one warp covers 32 rows of one column; tile tails (num_rows % 32 != 0) exercise the
-// ballot's dead-lane path. 262143 is the largest below-band count (one row under the seam band).
+// ballot's dead-lane path. 262143 pins the band's lower edge minus one; the band interior is
+// pinned by `SeamBandStringStaysFusedPath` above.
 TEST_F(StringFusedEngineParity, SeamBandShortRowsSingleColumn)
 {
   constexpr cudf::size_type num_rows{262'143};  // 1 mod 32: one tail tile
@@ -2332,7 +2340,7 @@ TEST_F(StringFusedEngineParity, SeamBandShortRowsSingleColumn)
 
 // Multi-column: warps map flat slots across column tiles; the sentinel (N+1) writer must be
 // per-column and the masks/counts per-column too. Mixed widths across columns. Row count just
-// below the seam band so the call stays engine-admitted.
+// under the seam band's lower edge so the call stays engine-admitted.
 TEST_F(StringFusedEngineParity, MultiColumnTilesAndSentinels)
 {
   constexpr cudf::size_type num_rows{262'142};            // 262142 % 32 != 0: one tail tile
@@ -2557,11 +2565,11 @@ TEST_F(StringFusedEngineParity, RepeatedSourceRowsEngine)
   CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
 }
 
-// A below-band long-average column must NOT be engine-admitted (the short-average check
-// rejects it) and must still match stock — the payload kernel's group walk serves it. Below
-// the seam band the call stays fused; inside the band, the exclusion routes the call to the
-// stock fallback (pinned by BatchGatherTallSeamTest).
-TEST_F(StringFusedEngineParity, BandLongRowsKeepPayloadKernel)
+// A below-gate long-average column must NOT be engine-admitted (the short-average check
+// rejects it) and must still match stock — the payload kernel's group walk serves it. The
+// 262143-row count keeps the call fused (below the routing gate); the tall seam tests pin
+// the ≥524288 side.
+TEST_F(StringFusedEngineParity, BelowGateLongRowsKeepPayloadKernel)
 {
   constexpr cudf::size_type num_rows{262'143};
   auto const strings = long_strings(num_rows);  // avg ~543 B: average above the 32 B gate

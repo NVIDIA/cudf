@@ -326,8 +326,6 @@ CUDF_KERNEL __launch_bounds__(BlockSize) void batch_gather_kernel(
 // in 64 bits.
 // ---------------------------------------------------------------------------
 
-// `kStringFallbackRowThreshold` lives in `batch_gather_common.cuh` (shared with the strings TU).
-
 // The batched string payload kernel `string_payload_kernel` lives in `batch_gather_common.cuh`
 // (only `batch_gather_strings.cu` launches it).
 
@@ -966,23 +964,19 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
   size_type estimated_kernel_masked = 0;
   for (size_type i = 0; i < source_table.num_columns(); ++i) {
     auto const& src = source_table.column(i);
-    // Tall string columns ride the stock per-column fallback unless the batched-memcpy
-    // routing engine will be active for the call: the routed metadata path removes the
-    // group-walk metadata work that made the fused path lose tall cells, but it only engages
-    // above `kBatchMemcpyRowThreshold` (the host routing walk keys off `chars_routing_active`).
-    // The seam band between the two thresholds is EXCLUDED: the engine wins the band cell when
-    // admitted (262144x100 −69.5%, engine-vs-stock) but the band route costs the tall regime —
-    // the band exclusion trades that one-cell win for keeping ≥524288-row strings on the
-    // routed-metadata path, the measured tall win a wholesale exclusion would forfeit. Gathered
-    // row sizes
-    // are unknowable before the scan, so no stronger per-column proxy is possible here; the
-    // exact post-totals routing still splits per column. Below the band `assemble_strings`
-    // picks the engine for short-row shapes; an all-long-row below-band table falls to the
-    // payload kernel's group walk (the pre-engine fused behavior) — its loss on that shape is
-    // the known admission risk the falsifier's regression checks watch.
-    if (is_descriptor_path_candidate(src) and
-        not(src.type().id() == type_id::STRING and num_rows >= kStringFallbackRowThreshold and
-            num_rows < kBatchMemcpyRowThreshold)) {
+    // String columns join the fused path at every row count: the batched-memcpy routing
+    // engine engages above `kBatchMemcpyRowThreshold` (the host routing walk keys off
+    // `chars_routing_active`).
+    // Below the gate every string cohort stays fused: the engine serves short-row shapes (the
+    // band cell is one of its measured win cells, engine-vs-stock) and an all-long-row table
+    // falls to the payload kernel's group walk (the pre-engine fused behavior) — its loss on
+    // that shape is the known admission risk the falsifier's regression checks watch. The
+    // earlier band exclusion was a guard against a composed-tree tall regression that turned
+    // out to be that tree losing the routed tall route, not a cost of admitting the band, and
+    // it forfeited the measured band win while only the band's stock route differed; it is
+    // reverted. Gathered row sizes are unknowable before the scan, so no stronger per-column
+    // proxy is possible here; the exact post-totals routing still splits per column.
+    if (is_descriptor_path_candidate(src)) {
       fused_indices.push_back(i);
       if (not(num_rows == 0 and not cudf::is_fixed_width(src.type()))) {
         // Mirror the build's skip: an empty map routes non-fixed-width columns to empty_like

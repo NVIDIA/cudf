@@ -290,9 +290,9 @@ void assemble_strings_impl(std::vector<staged_string>& staged_strings,
   // ---- fused short-string engine admission: BELOW the routing gate, the payload kernel's
   // group walk (3 CTA barriers per 8-row group) is replaced by the warp-tile engine when
   // every live column's average gathered row is short enough for it — the exact premise the
-  // group walk was designed for. Calls in the excluded seam band never reach the kernel
-  // (those strings take the stock fallback); at ≥524288 rows the routed-metadata path owns
-  // string metadata, so the engine serves only below-band short-row calls. Above the
+  // group walk was designed for. This includes the whole former seam band (short-row band
+  // calls are measured engine win cells); at ≥524288 rows the routed-metadata path owns
+  // string metadata, so the engine serves only below-gate short-row calls. Above the
   // gate the payload kernel serves only the UNROUTED cohort (long-row columns), which the
   // engine does NOT admit (subgroup copies serialize on long rows), so the group walk stays
   // authoritative there. The AVERAGE does not bound the maximum: long outlier rows are safe

@@ -215,16 +215,6 @@ constexpr int64_t kBlockRowCopyThreshold{32};
 // regime ~7x its CUB counterpart. Below the gate the payload kernel keeps its 65536-row wins.
 constexpr int64_t kBatchMemcpyRowThreshold{524'288};
 
-// Row-count gate (rows) between the N3 scan+payload string fast path and the stock per-column
-// string path (run_fallback -> column_gatherer<string_view> -> strings::detail::gather). The
-// payload's group-walk cost scales with the call's row count: measured A/B on tall cells shows
-// every string shape at >= 262144 rows losing to the stock path (up to ~1.9x) while 65536 rows
-// wins ~1.7x, and the loss persists even when every column's chars route to CUB — so the
-// discriminator is the call's row count, not bytes-per-row. Above this threshold the
-// chars-routing branch below becomes unreachable through this API; keep it (the stock path
-// runs the same CUB engine there, and a lowered threshold or a1 coarsening revives the band).
-constexpr size_type kStringFallbackRowThreshold{262'144};
-
 // Preset-mask staging bands pay off only above this many preset destination masks in one call:
 // a band memset costs ~24 µs (nsys-captured band-fill attribution) while a per-mask memset
 // submission costs ~7 µs (submission-latency-bound — the device bytes are negligible at both

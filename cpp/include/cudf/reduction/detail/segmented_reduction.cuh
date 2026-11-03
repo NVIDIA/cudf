@@ -9,6 +9,7 @@
 
 #include <cudf/detail/utilities/cast_functor.cuh>
 #include <cudf/reduction/detail/reduction_policy.cuh>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/execution_env.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -16,6 +17,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_segmented_reduce.cuh>
+#include <cuda/buffer>
 #include <cuda/execution>
 #include <cuda/iterator>
 #include <cuda/std/execution>
@@ -52,7 +54,7 @@ template <typename InputIterator,
           typename OffsetIterator,
           typename OutputIterator,
           typename BinaryOp,
-          typename OutputType = cuda::std::iter_value_t<OutputIterator>>
+          cudf::concepts::fixed_width OutputType = cuda::std::iter_value_t<OutputIterator>>
 void segmented_reduce(InputIterator d_in,
                       OffsetIterator d_offset_begin,
                       OffsetIterator d_offset_end,
@@ -61,7 +63,7 @@ void segmented_reduce(InputIterator d_in,
                       OutputType initial_value,
                       cuda::stream_ref stream,
                       cudf::memory_resources mr)
-  requires(is_fixed_width<OutputType>() && !cudf::is_fixed_point<OutputType>())
+  requires(not cudf::concepts::fixed_point<OutputType>)
 {
   auto const num_segments = static_cast<size_type>(std::distance(d_offset_begin, d_offset_end)) - 1;
   auto const binary_op    = cudf::detail::cast_functor<OutputType>(op);
@@ -89,7 +91,6 @@ void segmented_reduce(InputIterator,
                       OutputType,
                       cuda::stream_ref,
                       cudf::memory_resources)
-  requires(!(is_fixed_width<OutputType>() && !cudf::is_fixed_point<OutputType>()))
 {
   CUDF_FAIL(
     "Unsupported data types called on segmented_reduce. Only numeric and chrono types are "
@@ -135,8 +136,10 @@ void segmented_reduce(InputIterator d_in,
   auto const initial_value = op.template get_identity<IntermediateType>();
   auto const binary_op     = cudf::detail::cast_functor<IntermediateType>(op.get_binary_op());
 
-  rmm::device_uvector<IntermediateType> intermediate_result{static_cast<std::size_t>(num_segments),
-                                                            stream};
+  cuda::device_buffer<IntermediateType> intermediate_result{stream,
+                                                            cudf::get_current_device_resource_ref(),
+                                                            static_cast<std::size_t>(num_segments),
+                                                            cuda::no_init};
 
   auto const env = [&] {
     if constexpr (std::is_same_v<Op, op::variance> || std::is_same_v<Op, op::standard_deviation>) {

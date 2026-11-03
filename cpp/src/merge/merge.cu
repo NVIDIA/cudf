@@ -11,8 +11,8 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/row_operator/lexicographic.cuh>
 #include <cudf/detail/search.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
-#include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/dictionary/detail/merge.hpp>
 #include <cudf/dictionary/detail/update_keys.hpp>
 #include <cudf/lists/detail/concatenate.hpp>
@@ -239,7 +239,7 @@ index_vector generate_merged_indices(table_view const& left_table,
   auto rhs_device_view = table_device_view::create(right_table, stream);
 
   auto d_column_order =
-    cudf::detail::make_device_uvector_async(column_order, stream, mr.get_temporary_mr());
+    cudf::detail::make_device_buffer_async(column_order, stream, mr.as_temporary());
 
   if (has_nulls) {
     auto const new_null_precedence = [&]() {
@@ -253,7 +253,7 @@ index_vector generate_merged_indices(table_view const& left_table,
     }();
 
     auto d_null_precedence =
-      cudf::detail::make_device_uvector_async(new_null_precedence, stream, mr.get_temporary_mr());
+      cudf::detail::make_device_buffer_async(new_null_precedence, stream, mr.as_temporary());
 
     auto ineq_op = detail::row_lexicographic_tagged_comparator<true>(
       *lhs_device_view, *rhs_device_view, d_column_order, d_null_precedence);

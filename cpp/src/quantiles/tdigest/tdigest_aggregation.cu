@@ -22,6 +22,7 @@
 #include <cudf/fixed_point/conv.hpp>
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/unary.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
@@ -1143,7 +1144,7 @@ struct typed_group_tdigest {
                                      int delta,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
-    requires(cudf::is_numeric<T>() || cudf::is_fixed_point<T>())
+    requires(cudf::concepts::arithmetic<T> or cudf::concepts::fixed_point<T>)
   {
     // first, generate cluster weight information for each input group
     auto cinfo = [&]() {
@@ -1216,7 +1217,7 @@ struct typed_group_tdigest {
 
   template <typename T, typename... Args>
   std::unique_ptr<column> operator()(Args&&...)
-    requires(!cudf::is_numeric<T>() && !cudf::is_fixed_point<T>())
+    requires(not cudf::concepts::arithmetic<T> and not cudf::concepts::fixed_point<T>)
   {
     CUDF_FAIL("Non-numeric type in group_tdigest");
   }
@@ -1229,7 +1230,7 @@ struct typed_reduce_tdigest {
                                      int delta,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
-    requires(cudf::is_numeric<T>() || cudf::is_fixed_point<T>())
+    requires(cudf::concepts::arithmetic<T> or cudf::concepts::fixed_point<T>)
   {
     CUDF_FUNC_RANGE();
 
@@ -1296,7 +1297,7 @@ struct typed_reduce_tdigest {
 
   template <typename T, typename... Args>
   std::unique_ptr<scalar> operator()(Args&&...)
-    requires(!cudf::is_numeric<T>() && !cudf::is_fixed_point<T>())
+    requires(not cudf::concepts::arithmetic<T> and not cudf::concepts::fixed_point<T>)
   {
     CUDF_FAIL("Non-numeric type in group_tdigest");
   }

@@ -25,7 +25,6 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
@@ -133,7 +132,7 @@ cuda::device_buffer<std::uint8_t> decompress_stripe_data(
   cuda::device_buffer<std::uint8_t> decomp_data(
     stream,
     cudf::get_current_device_resource_ref(),
-    cudf::util::round_up_safe(total_decomp_size, BUFFER_PADDING_MULTIPLE),
+    cudf::detail::round_up_safe(total_decomp_size, BUFFER_PADDING_MULTIPLE),
     cuda::no_init);
 
   // If total_decomp_size is zero, the input data may be just empty.
@@ -755,7 +754,7 @@ void reader_impl::decompress_and_decode_stripes(read_mode mode)
       std::size_t{0},
       [](auto const& sum, auto const& cols_level) { return sum + cols_level.size(); });
 
-    return cudf::detail::make_zeroed_device_uvector_async<uint32_t>(
+    return cudf::detail::make_zeroed_device_buffer_async<uint32_t>(
       num_total_cols * stripe_count, _stream, cudf::get_current_device_resource_ref());
   }();
   std::size_t num_processed_lvl_columns      = 0;

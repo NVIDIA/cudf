@@ -3808,7 +3808,7 @@ class Series(SingleColumnFrame, IndexedFrame):
     @_performance_tracking
     def add_prefix(self, prefix, axis=None):
         if axis is not None:
-            raise NotImplementedError("axis is currently not implemented.")
+            self._get_axis_from_axis_arg(axis)
         return Series._from_data(
             data=self._data.copy(deep=False),
             index=prefix + self.index.astype(str),
@@ -3818,7 +3818,7 @@ class Series(SingleColumnFrame, IndexedFrame):
     @_performance_tracking
     def add_suffix(self, suffix, axis=None):
         if axis is not None:
-            raise NotImplementedError("axis is currently not implemented.")
+            self._get_axis_from_axis_arg(axis)
         return Series._from_data(
             data=self._data.copy(deep=False),
             index=self.index.astype(str) + suffix,

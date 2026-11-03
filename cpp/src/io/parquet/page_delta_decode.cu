@@ -525,6 +525,21 @@ CUDF_KERNEL void __launch_bounds__(decode_delta_binary_block_size)
   if (block.thread_rank() == 0 and s->setup.error != 0) { set_error(s->setup.error, error_code); }
 }
 
+// Null count for the rows a page contributes, for the nz map consumers: `num_rows` minus the map's
+// valid values at or after `first_row`. The map also holds the valid values before `first_row`; it
+// is sorted, so there are `first_row`'s lower bound of them. Only the first page of a read has
+// `first_row > 0`, so the search is skipped otherwise.
+__device__ int nz_map_null_count(uint32_t const* nz_idx, int nz_count, int first_row, int num_rows)
+{
+  auto const prefix_valid_count =
+    first_row > 0
+      ? static_cast<int>(
+          cuda::std::lower_bound(nz_idx, nz_idx + nz_count, static_cast<uint32_t>(first_row)) -
+          nz_idx)
+      : 0;
+  return num_rows - (nz_count - prefix_valid_count);
+}
+
 // Decodes flat DELTA_BINARY_PACKED pages, like `decode_delta_binary_kernel`, but places values
 // using the nz map's rank map instead of decoding definition levels itself.
 CUDF_KERNEL void __launch_bounds__(decode_delta_binary_with_nz_map_block_size)
@@ -566,18 +581,9 @@ CUDF_KERNEL void __launch_bounds__(decode_delta_binary_with_nz_map_block_size)
 
   auto& ni = s->nesting.nesting_info[s->setup.col.max_nesting_depth - 1];
   cg::invoke_one(block, [&] {
-    // A sliced page keeps the valid values preceding `first_row` in its map, so the null count for
-    // the rows this page contributes has to skip them. The map is ascending, so that prefix is the
-    // distance to `first_row`'s lower bound. Only the first page of a read is sliced, so skip the
-    // search when there is no prefix to find.
-    auto const prefix_valid_count =
-      (process_nulls && s->setup.first_row > 0)
-        ? static_cast<int>(cuda::std::lower_bound(nz_idx,
-                                                  nz_idx + nz_count_in,
-                                                  static_cast<uint32_t>(s->setup.first_row)) -
-                           nz_idx)
-        : static_cast<int>(s->setup.first_row);
-    ni.null_count = process_nulls ? s->setup.num_rows - (nz_count_in - prefix_valid_count) : 0;
+    ni.null_count =
+      process_nulls ? nz_map_null_count(nz_idx, nz_count_in, s->setup.first_row, s->setup.num_rows)
+                    : 0;
     s->progress.nz_count = nz_count_in;
   });
   block.sync();
@@ -1196,17 +1202,9 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
   int const init_valid_map_offset = ni.valid_map_offset;
 
   cg::invoke_one(block, [&] {
-    // `prefix_valid_count` is the number of valid values before `first_row`, which the map includes
-    // but this page's output does not. The map is sorted, so it is `first_row`'s lower bound. Skip
-    // the search when `first_row` is 0.
-    auto const prefix_valid_count =
-      (process_nulls && s->setup.first_row > 0)
-        ? static_cast<int>(cuda::std::lower_bound(nz_idx,
-                                                  nz_idx + nz_count_in,
-                                                  static_cast<uint32_t>(s->setup.first_row)) -
-                           nz_idx)
-        : static_cast<int>(s->setup.first_row);
-    ni.null_count = process_nulls ? s->setup.num_rows - (nz_count_in - prefix_valid_count) : 0;
+    ni.null_count =
+      process_nulls ? nz_map_null_count(nz_idx, nz_count_in, s->setup.first_row, s->setup.num_rows)
+                    : 0;
     s->progress.nz_count = nz_count_in;
     string_offset        = 0;
     page_string_data     = db->find_end_of_block(s->stream.data_start, s->stream.data_end);

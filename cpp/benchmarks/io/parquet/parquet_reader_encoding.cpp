@@ -125,9 +125,9 @@ void bench_read_encoding(nvbench::state& state,
   auto const page_rows   = use_nullable_page_size_matrix
                              ? static_cast<cudf::size_type>(state.get_int64("page_rows"))
                              : cudf::size_type{0};
-  // `create_nested_table` builds its own profile, so the nested path ignores `validity` and every
-  // value of it yields the same table. Run that configuration once.
-  if (nesting > 0 and validity != "no_validity") {
+  // `create_nested_table` builds its own profile with the default 1% null probability, so run the
+  // nested configuration once, under the `validity` value that describes it.
+  if (nesting > 0 and validity != "nullable_1") {
     state.skip("validity does not apply to the nested table builder");
     return;
   }

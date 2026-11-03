@@ -1208,7 +1208,12 @@ class SQLQueries:
         def query(run_config: RunConfig) -> QueryResult:
             context = pl.SQLContext(
                 {
-                    table: get_data(run_config.dataset_path, table, run_config.suffix)
+                    table: get_data(
+                        run_config.dataset_path,
+                        table,
+                        run_config.suffix,
+                        input_format=run_config.input_format,
+                    )
                     for table in table_names
                 }
             )

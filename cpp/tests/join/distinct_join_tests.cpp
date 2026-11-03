@@ -734,7 +734,9 @@ TEST_F(DistinctJoinTest, InvalidLoadFactor)
                std::invalid_argument);
 }
 
-TEST_F(DistinctJoinTest, DistinctLargeExtentOverflowPrevention)
+// Disabled since this requires about 20GB of device memory.
+// Run with --gtest_also_run_disabled_tests to verify extent overflow prevention.
+TEST_F(DistinctJoinTest, DISABLED_DistinctLargeExtentOverflowPrevention)
 {
   // Test that validates size_t extent can handle hash table sizes that would
   // overflow int32_t extent when load_factor < 1.0

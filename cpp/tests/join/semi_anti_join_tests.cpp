@@ -421,7 +421,9 @@ TEST_P(SemiAntiJoinTest, SemiJoinEmptyTables)
   }
 }
 
-TEST_P(SemiAntiJoinTest, AntiSemiJoinLargeExtentOverflowPrevention)
+// Disabled since this requires about 20GB of device memory.
+// Run with --gtest_also_run_disabled_tests to verify extent overflow prevention.
+TEST_P(SemiAntiJoinTest, DISABLED_AntiSemiJoinLargeExtentOverflowPrevention)
 {
   auto const implementation = GetParam();
   if (use_mark_join(implementation)) { GTEST_SKIP(); }

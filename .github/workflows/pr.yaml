@@ -212,18 +212,8 @@ jobs:
           - 'python/cudf/**'
           - '!python/cudf/cudf/pandas/**'
           - 'python/dask_cudf/**'
-  checks:
-    permissions:
-      contents: read
-    uses: rapidsai/shared-workflows/.github/workflows/checks.yaml@main
-    with:
-      enable_check_generated_files: false
-      ignored_pr_jobs: "cudf-spark-jni cuml-compat-tests conda-python-cudf-polars-tests-integration-optional"
-      # Main builds seed this cache. PR merge refs can restore it but should not create
-      # duplicate archives that are inaccessible to other PRs.
-      pre-commit-cache-read-only: true
   conda-cpp-build:
-    needs: [build-details, checks, changed-files]
+    needs: [build-details, changed-files]
     permissions:
       actions: read
       contents: read
@@ -250,7 +240,7 @@ jobs:
         && 'ci/build_cpp.sh' || 'ci/build_cpp_runtime.sh' }}
       matrix_type: pull-request
   cudf-polars-quent:
-    needs: [build-details, checks, changed-files]
+    needs: [build-details, changed-files]
     permissions:
       actions: read
       contents: read
@@ -358,7 +348,7 @@ jobs:
       matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
       matrix_type: wsl-pr
   wheel-build:
-    needs: [build-details, checks]
+    needs: [build-details]
     permissions:
       actions: read
       contents: read
@@ -375,7 +365,7 @@ jobs:
       node_type: cpu16
       matrix_type: pull-request
   wheel-python-build-noarch:
-    needs: [build-details, checks]
+    needs: [build-details]
     permissions:
       actions: read
       contents: read

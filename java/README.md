@@ -96,9 +96,9 @@ is compressed with zstd level 9 and stored in the JAR without ZIP compression.
 The JAR then contains a chunk manifest instead of the original `libcudf.so`
 entry. Maven uses Jython and `zstd-jni` to create and verify the chunks.
 
-The optional zstd packaging requires `zstd-jni` at runtime. It is a Maven
-dependency of cuDF Java and must be on the classpath when extracting zstd
-chunks with the CLI:
+The optional zstd packaging requires `zstd-jni` at runtime. cuDF Java declares
+it as an optional Maven dependency, so consumers of a chunked JAR must add it
+to their classpath. For CLI extraction:
 
 ```shell script
 java -cp "cudf-<version>-cuda12.jar:zstd-jni-1.5.6-6.jar" \

@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Pin the draft gha-tools PR so every job tests the same helper implementation.
-CUDF_GHA_TOOLS_REVISION=bdbf4480a9fd1d4c2c5843a0af82888b598ae9b2
+CUDF_GHA_TOOLS_REVISION=3cd64f15184d9ac9d0f6042f568c2783beba3a98
 if [[ "${CUDF_GHA_TOOLS_INSTALLED_REVISION:-}" != "${CUDF_GHA_TOOLS_REVISION}" ]]; then
     (
         set -euo pipefail

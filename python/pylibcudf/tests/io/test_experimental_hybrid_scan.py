@@ -129,11 +129,10 @@ def simple_hybrid_scan_reader(
 
 
 def _row_mask_with_exclusions(
-    col0: pa.ChunkedArray, filter_threshold: int
+    col0: pa.Array, filter_threshold: int
 ) -> tuple[pa.Array, pa.Array]:
-    """Input row mask excluding every third row (e.g. deleted rows) and every
-    fifth row (null), and the expected surviving rows for
-    `col0 >= filter_threshold`.
+    """Row mask excluding every third (false) and fifth (null) row, and the
+    expected surviving rows for `col0 >= filter_threshold`.
     """
     row_mask = pa.array(
         [None if i % 5 == 0 else i % 3 != 0 for i in range(len(col0))],
@@ -142,7 +141,7 @@ def _row_mask_with_exclusions(
     keep = pc.and_(
         pc.greater_equal(col0, filter_threshold), pc.fill_null(row_mask, False)
     )
-    return row_mask, keep.combine_chunks()
+    return row_mask, keep
 
 
 def test_hybrid_scan_reader_basic(
@@ -412,7 +411,7 @@ def test_hybrid_scan_materialize_columns(
     )
     assert total_rows == num_rows
     row_mask_array, keep = _row_mask_with_exclusions(
-        simple_parquet_table["col0"], filter_threshold
+        simple_parquet_table["col0"].combine_chunks(), filter_threshold
     )
     row_mask = plc.Column.from_arrow(row_mask_array)
 
@@ -447,10 +446,12 @@ def test_hybrid_scan_materialize_columns(
     synchronize_stream(stream)
 
     # Filter column should have 1 column, with rows passing the filter and
-    # not excluded by the input row mask
-    expected = simple_parquet_table.filter(keep)
+    # the input row mask, and the row mask is updated to exactly those rows
+    expected_result_rows = pc.sum(keep).as_py()
+    assert row_mask.null_count() == 0
+    assert row_mask.to_arrow().equals(keep)
     assert filter_result.tbl.num_columns() == 1
-    assert filter_result.tbl.num_rows() == expected.num_rows
+    assert filter_result.tbl.num_rows() == expected_result_rows
 
     # Get payload column data
     payload_ranges = (
@@ -485,17 +486,28 @@ def test_hybrid_scan_materialize_columns(
     synchronize_stream(stream)
 
     assert payload_result.tbl.num_columns() == 2
-    assert payload_result.tbl.num_rows() == expected.num_rows
+    assert payload_result.tbl.num_rows() == expected_result_rows
 
-    # Filter and payload columns must select the same rows
-    hybrid_arrow = plc.Table(
-        filter_result.tbl.columns() + payload_result.tbl.columns()
-    ).to_arrow()
-    assert hybrid_arrow.equals(
-        expected.rename_columns(hybrid_arrow.schema.names).cast(
-            hybrid_arrow.schema
-        )
-    )
+    # Verify results match regular parquet reader
+    # Create a fresh BytesIO to avoid buffer position issues
+    comparison_buffer = io.BytesIO(simple_parquet_bytes)
+    comparison_source = plc.io.SourceInfo([comparison_buffer])
+    comparison_options = plc.io.parquet.ParquetReaderOptions.builder(
+        comparison_source
+    ).build()
+    expected_result = plc.io.parquet.read_parquet(comparison_options, stream)
+
+    synchronize_stream(stream)
+
+    # Combine hybrid scan results
+    hybrid_columns = filter_result.tbl.columns() + payload_result.tbl.columns()
+    hybrid_table = plc.Table(hybrid_columns)
+
+    # Compare just the table data (metadata structures are complex)
+    expected_arrow = expected_result.tbl.to_arrow().filter(keep)
+    hybrid_arrow = hybrid_table.to_arrow()
+
+    assert expected_arrow.equals(hybrid_arrow)
 
 
 def test_hybrid_scan_payload_page_mask_without_page_index(
@@ -816,9 +828,8 @@ def test_hybrid_scan_chunked_reading(
         filtered_row_groups
     )
     assert total_rows == num_rows
-    row_mask_array, keep = _row_mask_with_exclusions(
-        simple_parquet_table["col0"], filter_threshold
-    )
+    col0 = simple_parquet_table["col0"].combine_chunks()
+    row_mask_array, keep = _row_mask_with_exclusions(col0, filter_threshold)
     # Slice the row mask so that it has a non-zero offset
     offset = 3
     row_mask = plc.copying.slice(
@@ -878,11 +889,11 @@ def test_hybrid_scan_chunked_reading(
     # The chunk read limit is small enough to split the output
     assert len(chunks) > 1
 
-    # Chunks hold rows passing the filter and not excluded by the input row
-    # mask, and the row mask is updated to exactly those rows
+    # Chunks hold rows passing the filter and the input row mask, and the row
+    # mask is updated to exactly those rows
     result = pa.concat_tables(chunks).column(0)
-    expected = simple_parquet_table["col0"].filter(keep)
-    assert result.to_pylist() == expected.to_pylist()
+    assert result.to_pylist() == col0.filter(keep).to_pylist()
+    assert row_mask.null_count() == 0
     assert row_mask.to_arrow().equals(keep)
 
 

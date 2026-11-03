@@ -882,7 +882,7 @@ TYPED_TEST(PageFilteringWithPageIndexStats, FilterPages)
   }
 }
 
-TEST_F(HybridScanFiltersTest, UndecidedPageStatsAreRetained)
+TEST_F(HybridScanFiltersTest, IncompletePageStats)
 {
   auto const input = cudf::test::fixed_width_column_wrapper<double>{{3.0, 0.0, 1.0, 0.0},
                                                                     {true, false, true, false}};

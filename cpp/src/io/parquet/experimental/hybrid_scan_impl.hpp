@@ -586,7 +586,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
                                           RowMaskView row_mask);
 
   /**
-   * @brief Check if all rows are pruned (all valid and false)
+   * @brief Check if all rows are pruned (all null or false)
    *
    * @param row_mask Input row mask column
    * @param stream CUDA stream used for device memory operations and kernel launches
@@ -599,9 +599,8 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
    * @brief Updates the output row mask such that out_row_mask[i + out_row_mask_offset] = true if
    * and only if both in_row_mask[i] and out_row_mask[i + out_row_mask_offset] are valid and true
    *
-   * Combines the input row mask with the output row mask, and makes the updated range of the output
-   * row mask all valid. This is inline with the masking behavior of
-   * cudf::apply_retention_mask.
+   * Updates the output row mask to reflect the final valid and surviving rows from the input row
+   * mask. This is inline with the masking behavior of cudf::apply_retention_mask.
    *
    * @param in_row_mask Input row mask column
    * @param out_row_mask Output row mask column

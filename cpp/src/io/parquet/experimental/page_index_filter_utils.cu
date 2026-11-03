@@ -59,7 +59,7 @@ namespace {
  * @brief Functor to read the row mask, i.e. the zeroth Fenwick tree level
  *
  * Nulls are read as retained rows here so that pages aren't accidentally pruned due to
- * unavailable page-level statistics (represented as nulls)
+ * unavailable page-level statistics
  */
 struct row_mask_accessor {
   bool const* data;               ///< Row mask data, adjusted for the column view offset
@@ -771,17 +771,15 @@ std::unique_ptr<column> compute_row_mask_from_page_stats(
   CUDF_EXPECTS(segment_mask->type().id() == type_id::BOOL8,
                "Page statistics expression must produce a boolean column");
 
-  // Statistics can't decide the null segments, so don't prune them
-  if (segment_mask->has_nulls()) {
-    segment_mask =
-      cudf::detail::replace_nulls(segment_mask->view(),
-                                  cudf::numeric_scalar<bool>(true, true, stream, temp_mr),
-                                  stream,
-                                  temp_mr);
-  }
-
-  // Drop the null mask if it was allocated but ended up empty
-  if (segment_mask->nullable() and segment_mask->null_count() == 0) {
+  // Statistics can't decide the null segments so retain them and drop the null mask
+  if (segment_mask->nullable()) {
+    if (segment_mask->null_count() > 0) {
+      segment_mask =
+        cudf::detail::replace_nulls(segment_mask->view(),
+                                    cudf::numeric_scalar<bool>(true, true, stream, temp_mr),
+                                    stream,
+                                    temp_mr);
+    }
     segment_mask->set_null_mask(
       cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, temp_mr), 0);
   }

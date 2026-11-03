@@ -12,6 +12,7 @@ from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
 )
+from cudf_polars.testing.engine_utils import is_streaming_engine
 
 dtypes = [
     pl.Int8,
@@ -39,6 +40,8 @@ _BINOPS = [
     pl.Expr.floordiv,
     pl.Expr.mod,
 ]
+
+_COMPARISONS = _BINOPS[:8]
 
 # Preserve the complete promotion matrix for both SPMD configurations. Other
 # backends exercise every operator and nullability path with pairs covering
@@ -105,7 +108,7 @@ def test_numeric_binop(engine: pl.GPUEngine, df, binop, ltype, rtype):
 
     q = df.select(binop(left, right))
 
-    if _promotes_to_int128(ltype, rtype):
+    if _promotes_to_int128(ltype, rtype) and binop not in _COMPARISONS:
         assert_ir_translation_raises(q, engine, NotImplementedError)
     else:
         assert_gpu_result_equal(q, engine=engine)
@@ -169,6 +172,101 @@ def test_true_div_with_decimals(engine: pl.GPUEngine):
     assert_gpu_result_equal(q, engine=engine)
 
 
+def test_sql_decimal_div(engine: pl.GPUEngine):
+    df = pl.LazyFrame(
+        {
+            "revenue": [Decimal("10.00"), Decimal("20.00")],
+            "total": [Decimal("40.00"), Decimal("50.00")],
+        },
+        schema={"revenue": pl.Decimal(15, 2), "total": pl.Decimal(15, 2)},
+    )
+    q = df.sql("SELECT revenue / total AS share FROM self")
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("scales", [(2, 2), (2, 4), (4, 2)])
+def test_sql_decimal_div_rounding_nulls(engine: pl.GPUEngine, scales):
+    left_scale, right_scale = scales
+    df = pl.LazyFrame(
+        {
+            "x": [Decimal("1"), Decimal("2"), Decimal("-1"), Decimal("5"), None],
+            "y": [Decimal("3"), Decimal("3"), Decimal("3"), None, Decimal("7")],
+        },
+        schema={"x": pl.Decimal(15, left_scale), "y": pl.Decimal(15, right_scale)},
+    )
+    q = df.sql("SELECT x / y AS share FROM self")
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def assert_decimal_div_by_zero_raises(q: pl.LazyFrame, engine: pl.GPUEngine):
+    match = "division by zero"
+    if is_streaming_engine(engine):
+        with pytest.RaisesGroup(
+            pytest.RaisesExc(pl.exceptions.ComputeError, match=match)
+        ):
+            q.collect(engine=engine)
+    else:
+        with pytest.raises(pl.exceptions.ComputeError, match=match):
+            q.collect(engine=engine)
+
+
+def test_sql_decimal_div_by_zero_raises(engine: pl.GPUEngine):
+    df = pl.LazyFrame(
+        {"x": [Decimal("1.00"), Decimal("2.00")], "y": [Decimal("3.00"), Decimal("0")]},
+        schema={"x": pl.Decimal(15, 2), "y": pl.Decimal(15, 2)},
+    )
+    q = df.sql("SELECT x / y AS share FROM self")
+    assert_decimal_div_by_zero_raises(q, engine)
+
+
+def test_sql_decimal_div_by_zero_null_dividend(engine: pl.GPUEngine):
+    df = pl.LazyFrame(
+        {"x": [Decimal("1.00"), None], "y": [Decimal("3.00"), Decimal("0")]},
+        schema={"x": pl.Decimal(15, 2), "y": pl.Decimal(15, 2)},
+    )
+    q = df.sql("SELECT x / y AS share FROM self")
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_sql_decimal_div_by_zero_literal(engine: pl.GPUEngine):
+    df = pl.LazyFrame(
+        {"x": [Decimal("1.00"), Decimal("2.00")]}, schema={"x": pl.Decimal(15, 2)}
+    )
+    q = df.sql("SELECT x / 0.00 AS share FROM self")
+    assert_decimal_div_by_zero_raises(q, engine)
+
+
+@pytest.mark.parametrize("rows", [1, 3], ids=["one-row", "many-rows"])
+def test_sql_decimal_div_by_zero_literal_row_counts(engine: pl.GPUEngine, rows):
+    df = pl.LazyFrame({"x": [Decimal("1.00")] * rows}, schema={"x": pl.Decimal(15, 2)})
+    q = df.sql("SELECT x / 0.00 AS share FROM self")
+    assert_decimal_div_by_zero_raises(q, engine)
+
+
+def test_sql_decimal_div_by_zero_literal_null_dividends(engine: pl.GPUEngine):
+    df = pl.LazyFrame({"x": [None, None]}, schema={"x": pl.Decimal(15, 2)})
+    q = df.sql("SELECT x / 0.00 AS share FROM self")
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_sql_decimal_div_by_nonzero_literal(engine: pl.GPUEngine):
+    df = pl.LazyFrame(
+        {"x": [Decimal("1.00"), None, Decimal("-3.00")]},
+        schema={"x": pl.Decimal(15, 2)},
+    )
+    q = df.sql("SELECT x / 2.00 AS share FROM self")
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_sql_decimal_div_by_zero_single_row_column(engine: pl.GPUEngine):
+    df = pl.LazyFrame(
+        {"x": [Decimal("1.00")], "y": [Decimal("0")]},
+        schema={"x": pl.Decimal(15, 2), "y": pl.Decimal(15, 2)},
+    )
+    q = df.sql("SELECT x / y AS share FROM self")
+    assert_decimal_div_by_zero_raises(q, engine)
+
+
 def test_multiply_with_decimals(engine: pl.GPUEngine):
     df = pl.LazyFrame(
         {
@@ -205,4 +303,102 @@ def test_fused_arithmetic(engine: pl.GPUEngine, expr: pl.Expr) -> None:
     # fms: fused multiply subtract
     df = pl.LazyFrame({"a": [1, 2, 3], "b": [10, 20, 30], "c": [5, 5, 5]})
     q = df.select(expr)
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "left_dtype,right_dtype,fallback",
+    [
+        # Both fit in Decimal(38, 4) after rescaling.
+        (pl.Decimal(10, 2), pl.Decimal(38, 4), False),
+        # No Decimal(38, s) holds both operands; polars 2.1 compares exactly,
+        # libcudf would wrap when rescaling.
+        (pl.Decimal(38, 2), pl.Decimal(38, 12), True),
+        (pl.Decimal(38, 12), pl.Decimal(38, 2), True),
+    ],
+)
+def test_decimal_comparison_mixed_scale_overflow(
+    engine: pl.GPUEngine, left_dtype, right_dtype, fallback
+):
+    big = "9" * (left_dtype.precision - left_dtype.scale) + "." + "9" * left_dtype.scale
+    left = pl.DataFrame({"a": ["-2.5", "1", big, None]}).cast(left_dtype)
+    right = pl.DataFrame({"b": ["1", "-1.5", "0.5", "3"]}).cast(right_dtype)
+    q = (
+        pl.concat([left, right], how="horizontal")
+        .lazy()
+        .select(gt=pl.col("a") > pl.col("b"), eq=pl.col("a") == pl.col("b"))
+    )
+    if fallback:
+        assert_ir_translation_raises(q, engine, NotImplementedError)
+    else:
+        assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("dtype", [pl.Decimal(15, 2), pl.Decimal(38, 2)])
+@pytest.mark.parametrize("literal", [0, 24, -6, 10_000])
+def test_decimal_comparison_with_integer_literal(engine: pl.GPUEngine, dtype, literal):
+    # polars types an integer literal as Decimal(38, 0), but its value needs
+    # far fewer digits than that, so rescaling it cannot overflow.
+    biggest = "9" * (dtype.precision - dtype.scale) + "." + "9" * dtype.scale
+    df = pl.DataFrame({"a": ["-2.5", "0", "24", str(literal), biggest, None]}).cast(
+        dtype
+    )
+    a = pl.col("a")
+    q = df.lazy().select(
+        lt=a < literal,
+        le=a <= literal,
+        gt=a > literal,
+        ge=a >= literal,
+        eq=a == literal,
+        ne=a != literal,
+    )
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_decimal_comparison_of_expression_with_integer_literal(
+    engine: pl.GPUEngine,
+):
+    df = pl.DataFrame({"a": ["1.50", "2.25", "3.00"]}).cast(pl.Decimal(7, 2)).lazy()
+    q = df.select(gt=(pl.col("a") * 2).sum() > 0, lt=pl.col("a") * 2 < 5)
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_decimal_comparison_with_literal_that_may_overflow(engine: pl.GPUEngine):
+    # The literal has a finer scale than the column, so rescaling the column
+    # to the literal's scale needs 36 + 3 digits.
+    df = pl.DataFrame({"a": ["1.00", "2.00"]}).cast(pl.Decimal(38, 2)).lazy()
+    q = df.select(gt=pl.col("a") > pl.lit(Decimal("1.005")))
+    assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+def test_decimal_comparison_with_literal_of_maximum_precision(engine: pl.GPUEngine):
+    # Neither operand needs rescaling, so a literal of 38 digits is supported.
+    df = pl.DataFrame({"a": ["1", "9" * 38]}).cast(pl.Decimal(38, 0)).lazy()
+    q = df.select(lt=pl.col("a") < pl.lit(Decimal("9" * 38)))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("literal", [Decimal("27.5"), 27.5])
+def test_decimal_comparison_with_fractional_literal(engine: pl.GPUEngine, literal):
+    df = pl.DataFrame({"a": ["1.00", "27.50", "30.00", None]}).cast(pl.Decimal(15, 2))
+    q = df.lazy().select(lt=pl.col("a") < literal, ge=pl.col("a") >= literal)
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("dtype", [pl.Int64, pl.UInt64])
+@pytest.mark.parametrize("exponent", [2, pl.col("e")], ids=["literal", "column"])
+def test_integer_pow_is_exact_above_2_53(engine: pl.GPUEngine, dtype, exponent):
+    # A double holds only the integers up to 2**53, so squaring 100_000_001 in
+    # double rounds the result to 10_000_000_200_000_000.
+    df = pl.LazyFrame(
+        {"a": [100_000_001, 3_000_000_019, 2, 0, None, 7], "e": [2, 2, 62, 5, 2, 0]},
+        schema={"a": dtype, "e": dtype},
+    )
+    q = df.select(pl.col("a").pow(exponent))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_pow_with_a_float_exponent_stays_floating_point(engine: pl.GPUEngine):
+    df = pl.LazyFrame({"a": [1, 2, 3, 4]}, schema={"a": pl.Int64})
+    q = df.select(pl.col("a").pow(2.0))
     assert_gpu_result_equal(q, engine=engine)

@@ -5,7 +5,6 @@
 
 #include <benchmarks/io/cuio_common.hpp>
 
-#include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/logger.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>

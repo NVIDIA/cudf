@@ -24,6 +24,17 @@ from numba_cuda_mlir.lowering_utilities import (
 )
 from numba_cuda_mlir.extending import lowering_registry as registry
 from cudf.core.udf.mlir_backend.cooperative_types import CooperativeArrayType
+from cudf.core.udf.mlir_backend.cooperative_device_funcs import (
+    corr_func_name,
+    idxmax_func_name,
+    idxmin_func_name,
+    max_func_name,
+    mean_func_name,
+    min_func_name,
+    std_func_name,
+    sum_func_name,
+    var_func_name,
+)
 from numba_cuda_mlir.numba_cuda import types as nb_types
 
 
@@ -133,8 +144,6 @@ for _dt in _SUPPORTED_DTYPES:
 
 def _lower_sum(builder, target, args, kwargs):
     """Emit a call to the outlined _coop_sum_{dtype} device function."""
-    from cudf.core.udf.mlir_backend.cooperative_device_funcs import sum_func_name
-
     self_var = args[0]
     ca_val = builder.load_var(self_var)
     ca_type = builder.get_numba_type(self_var.name)
@@ -173,8 +182,6 @@ for _dt in _SUPPORTED_DTYPES:
 
 def _lower_mean(builder, target, args, kwargs):
     """Emit a call to the outlined _coop_mean_{dtype} device function."""
-    from cudf.core.udf.mlir_backend.cooperative_device_funcs import mean_func_name
-
     self_var = args[0]
     ca_val = builder.load_var(self_var)
     ca_type = builder.get_numba_type(self_var.name)
@@ -213,8 +220,6 @@ for _dt in _SUPPORTED_DTYPES:
 
 def _lower_min(builder, target, args, kwargs):
     """Emit a call to the outlined _coop_min_{dtype} device function."""
-    from cudf.core.udf.mlir_backend.cooperative_device_funcs import min_func_name
-
     self_var = args[0]
     ca_val = builder.load_var(self_var)
     ca_type = builder.get_numba_type(self_var.name)
@@ -250,8 +255,6 @@ for _dt in _SUPPORTED_DTYPES:
 
 def _lower_max(builder, target, args, kwargs):
     """Emit a call to the outlined _coop_max_{dtype} device function."""
-    from cudf.core.udf.mlir_backend.cooperative_device_funcs import max_func_name
-
     self_var = args[0]
     ca_val = builder.load_var(self_var)
     ca_type = builder.get_numba_type(self_var.name)
@@ -287,8 +290,6 @@ for _dt in _SUPPORTED_DTYPES:
 
 def _lower_std(builder, target, args, kwargs):
     """Emit a call to the outlined _coop_std_{dtype} device function."""
-    from cudf.core.udf.mlir_backend.cooperative_device_funcs import std_func_name
-
     self_var = args[0]
     ca_val = builder.load_var(self_var)
     ca_type = builder.get_numba_type(self_var.name)
@@ -326,8 +327,6 @@ for _dt in _SUPPORTED_DTYPES:
 
 def _lower_var(builder, target, args, kwargs):
     """Emit a call to the outlined _coop_var_{dtype} device function."""
-    from cudf.core.udf.mlir_backend.cooperative_device_funcs import var_func_name
-
     self_var = args[0]
     ca_val = builder.load_var(self_var)
     ca_type = builder.get_numba_type(self_var.name)
@@ -365,8 +364,6 @@ for _dt in _SUPPORTED_DTYPES:
 
 def _lower_corr(builder, target, args, kwargs):
     """Emit a call to the outlined _coop_corr_{dtype} device function."""
-    from cudf.core.udf.mlir_backend.cooperative_device_funcs import corr_func_name
-
     self_var = args[0]
     other_var = args[1]
     lhs_val = builder.load_var(self_var)
@@ -404,10 +401,6 @@ for _dt in _SUPPORTED_DTYPES:
 # ---------------------------------------------------------------------------
 
 def _lower_idx(builder, target, args, kwargs, *, is_max):
-    from cudf.core.udf.mlir_backend.cooperative_device_funcs import (
-        idxmax_func_name, idxmin_func_name,
-    )
-
     self_var = args[0]
     ca_val = builder.load_var(self_var)
     ca_type = builder.get_numba_type(self_var.name)

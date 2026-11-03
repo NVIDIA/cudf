@@ -49,20 +49,96 @@ def _nb1(dtype):
     return _NB[np.dtype(dtype)][::1]
 
 
+# Kernel bodies, one per reduction. numba cannot JIT a dynamic
+# ``getattr(group, method)()`` (the method must be known at trace time), so each
+# reduction gets its own small kernel and the helpers dispatch by name.
+
+def _k_min(o, a):
+    r = CooperativeArray(a, a.size).min()
+    if cuda.grid(1) == 0:
+        o[0] = r
+
+
+def _k_max(o, a):
+    r = CooperativeArray(a, a.size).max()
+    if cuda.grid(1) == 0:
+        o[0] = r
+
+
+def _k_sum(o, a):
+    r = CooperativeArray(a, a.size).sum()
+    if cuda.grid(1) == 0:
+        o[0] = r
+
+
+def _k_mean(o, a):
+    r = CooperativeArray(a, a.size).mean()
+    if cuda.grid(1) == 0:
+        o[0] = r
+
+
+def _k_var(o, a):
+    r = CooperativeArray(a, a.size).var()
+    if cuda.grid(1) == 0:
+        o[0] = r
+
+
+def _k_std(o, a):
+    r = CooperativeArray(a, a.size).std()
+    if cuda.grid(1) == 0:
+        o[0] = r
+
+
+_REDUCE_KERNELS = {
+    "min": _k_min,
+    "max": _k_max,
+    "sum": _k_sum,
+    "mean": _k_mean,
+    "var": _k_var,
+    "std": _k_std,
+}
+
+
+def _k_idxmin(o, a, idx):
+    r = CooperativeArray(a, a.size, idx).idxmin()
+    if cuda.grid(1) == 0:
+        o[0] = r
+
+
+def _k_idxmax(o, a, idx):
+    r = CooperativeArray(a, a.size, idx).idxmax()
+    if cuda.grid(1) == 0:
+        o[0] = r
+
+
+_IDX_KERNELS = {"idxmin": _k_idxmin, "idxmax": _k_idxmax}
+
+
+def _k_corr(o, a, b):
+    r = CooperativeArray(a, a.size).corr(CooperativeArray(b, b.size))
+    if cuda.grid(1) == 0:
+        o[0] = r
+
+
+def _k_corr_self(o, a):
+    r = CooperativeArray(a, a.size).corr(CooperativeArray(a, a.size))
+    if cuda.grid(1) == 0:
+        o[0] = r
+
+
+def _k_group_add(o, a):
+    r = CooperativeArray(a, a.size) + CooperativeArray(a, a.size)
+    if cuda.grid(1) == 0:
+        o[0] = r.size
+
+
 def _reduce(arr, method, out_dtype, tpb=_TPB):
     """Run ``CooperativeArray(arr).<method>()`` over one block; return the scalar."""
     out = cp.zeros(1, dtype=out_dtype)
-    g = {"cuda": cuda, "CooperativeArray": CooperativeArray}
-    exec(
-        f"def _k(o, a):\n"
-        f"    r = CooperativeArray(a, a.size).{method}()\n"
-        f"    if cuda.grid(1) == 0:\n        o[0] = r\n",
-        g,
-    )
     k = cuda.jit(
         types.void(_nb1(out_dtype), _nb1(arr.dtype)),
         link=[cooperative_reductions_linkable()],
-    )(g["_k"])
+    )(_REDUCE_KERNELS[method])
     with MLIRNumbaCudaConfig():
         k[1, tpb, 0, _SHM](out, arr)
     cuda.synchronize()
@@ -72,17 +148,10 @@ def _reduce(arr, method, out_dtype, tpb=_TPB):
 def _reduce_idx(arr, index, method, tpb=_TPB):
     """Run ``CooperativeArray(arr, size, index).<method>()``; return the int64 index."""
     out = cp.zeros(1, dtype=np.int64)
-    g = {"cuda": cuda, "CooperativeArray": CooperativeArray}
-    exec(
-        f"def _k(o, a, idx):\n"
-        f"    r = CooperativeArray(a, a.size, idx).{method}()\n"
-        f"    if cuda.grid(1) == 0:\n        o[0] = r\n",
-        g,
-    )
     k = cuda.jit(
         types.void(types.int64[::1], _nb1(arr.dtype), types.int64[::1]),
         link=[cooperative_reductions_linkable()],
-    )(g["_k"])
+    )(_IDX_KERNELS[method])
     with MLIRNumbaCudaConfig():
         k[1, tpb, 0, _SHM](out, arr, index)
     cuda.synchronize()
@@ -92,17 +161,10 @@ def _reduce_idx(arr, index, method, tpb=_TPB):
 def _corr(a, b, tpb=_TPB):
     """Run ``CooperativeArray(a).corr(CooperativeArray(b))``; return the scalar."""
     out = cp.zeros(1, dtype=np.float64)
-    g = {"cuda": cuda, "CooperativeArray": CooperativeArray}
-    exec(
-        "def _k(o, a, b):\n"
-        "    r = CooperativeArray(a, a.size).corr(CooperativeArray(b, b.size))\n"
-        "    if cuda.grid(1) == 0:\n        o[0] = r\n",
-        g,
-    )
     k = cuda.jit(
         types.void(types.float64[::1], _nb1(a.dtype), _nb1(b.dtype)),
         link=[cooperative_reductions_linkable()],
-    )(g["_k"])
+    )(_k_corr)
     with MLIRNumbaCudaConfig():
         k[1, tpb, 0, _SHM](out, a, b)
     cuda.synchronize()
@@ -221,45 +283,20 @@ def test_corr(dtype, tpb):
 
 def test_corr_float_unsupported():
     # Correlation of floating types is not supported (#13839); rejected in typing.
-    a = cp.asarray(np.array([1.0, 2.0, 3.0], dtype="float64"))
-    g = {"cuda": cuda, "CooperativeArray": CooperativeArray}
-    exec(
-        "def _k(o, a):\n"
-        "    r = CooperativeArray(a, a.size).corr(CooperativeArray(a, a.size))\n"
-        "    if cuda.grid(1) == 0:\n        o[0] = r\n",
-        g,
-    )
     with pytest.raises(UDFError, match="corr"):
-        cuda.jit(types.void(types.float64[::1], types.float64[::1]))(g["_k"])
+        cuda.jit(types.void(types.float64[::1], types.float64[::1]))(_k_corr_self)
 
 
 def test_corr_dtype_mismatch_rejected():
     # Mismatched integer dtypes are rejected in typing; otherwise lowering would
     # read one buffer at the wrong element width (bdice review on #25018).
-    a = cp.asarray(np.array([1, 2, 3], dtype="int32"))
-    b = cp.asarray(np.array([1, 2, 3], dtype="int64"))
-    g = {"cuda": cuda, "CooperativeArray": CooperativeArray}
-    exec(
-        "def _k(o, a, b):\n"
-        "    r = CooperativeArray(a, a.size).corr(CooperativeArray(b, b.size))\n"
-        "    if cuda.grid(1) == 0:\n        o[0] = r\n",
-        g,
-    )
     with pytest.raises(UDFError, match="corr"):
         cuda.jit(
             types.void(types.float64[::1], types.int32[::1], types.int64[::1])
-        )(g["_k"])
+        )(_k_corr)
 
 
 def test_operator_on_group_rejected():
     # Operators applied directly to a grouped column are not supported.
-    a = cp.asarray(np.array([1, 2, 3], dtype="int64"))
-    g = {"cuda": cuda, "CooperativeArray": CooperativeArray}
-    exec(
-        "def _k(o, a):\n"
-        "    r = CooperativeArray(a, a.size) + CooperativeArray(a, a.size)\n"
-        "    if cuda.grid(1) == 0:\n        o[0] = r.size\n",
-        g,
-    )
     with pytest.raises(UDFError, match="is not supported"):
-        cuda.jit(types.void(types.int64[::1], types.int64[::1]))(g["_k"])
+        cuda.jit(types.void(types.int64[::1], types.int64[::1]))(_k_group_add)

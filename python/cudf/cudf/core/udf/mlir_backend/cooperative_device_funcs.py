@@ -19,7 +19,7 @@ from functools import lru_cache
 
 from numba_cuda_mlir._mlir import ir
 from numba_cuda_mlir._mlir.extras import types as T
-from numba_cuda_mlir._mlir.dialects import arith, func, gpu, llvm, scf
+from numba_cuda_mlir._mlir.dialects import arith, func, gpu, llvm, math as mlir_math, scf
 from numba_cuda_mlir._mlir.passmanager import PassManager
 from numba_cuda_mlir.lowering_utilities import context
 from numba_cuda_mlir.numba_cuda import types as nb_types
@@ -378,8 +378,6 @@ def _emit_std(dtype, *, take_sqrt, name):
     Returns sqrt(variance) when take_sqrt (std), else variance (var). For
     n == 1 this is 0 / 0 -> NaN, matching pandas.
     """
-    from numba_cuda_mlir._mlir.dialects import math as mlir_math
-
     elem_ty = _dtype_mlir_type(dtype)
     f64_ty = ir.F64Type.get()
     ft = ir.FunctionType.get([_ptr(), T.i64(), _ptr()], [f64_ty])
@@ -429,10 +427,8 @@ def _emit_corr(dtype):
     (means first, then centered sums) to match pandas and avoid catastrophic
     cancellation. The ddof factor cancels, so correlation reduces to
     S_lr / sqrt(S_ll * S_rr). Returns NaN when either centered sum of squares is
-    zero. Integer inputs only (float corr is rejected in typing).
+    zero. Integer inputs only (float     corr is rejected in typing).
     """
-    from numba_cuda_mlir._mlir.dialects import math as mlir_math
-
     name = corr_func_name(dtype)
     elem_ty = _dtype_mlir_type(dtype)
     f64_ty = ir.F64Type.get()

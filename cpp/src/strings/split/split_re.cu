@@ -121,7 +121,8 @@ struct token_reader_fn {
  * @param direction Whether tokens are generated forwards or backwards.
  * @param maxsplit The maximum number of tokens for each split.
  * @param stream CUDA stream used for kernel launches.
- * @param mr Memory resources used to allocate the returned tokens' and offsets' device memory
+ * @param mr Memory resources used to allocate the returned offsets' device memory; the returned
+ *        tokens use its temporary resource
  */
 template <typename ProgDevice>
 std::pair<cuda::device_buffer<string_index_pair>, std::unique_ptr<column>> generate_tokens(
@@ -153,7 +154,7 @@ std::pair<cuda::device_buffer<string_index_pair>, std::unique_ptr<column>> gener
 
   // build a vector of tokens
   cuda::device_buffer<string_index_pair> tokens(
-    stream, mr.get_output_mr(), total_tokens, cuda::no_init);
+    stream, mr.get_temporary_mr(), total_tokens, cuda::no_init);
   if (total_tokens > 0) {
     auto tr_fn = token_reader_fn{d_strings, direction, d_offsets, tokens.data()};
     launch_for_each_kernel(tr_fn, d_prog, d_strings.size(), stream, mr.as_temporary());
@@ -169,16 +170,15 @@ std::pair<cuda::device_buffer<string_index_pair>, std::unique_ptr<column>> gener
   regex_program const& prog,
   split_direction direction,
   size_type maxsplit,
-  cuda::stream_ref stream)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   if (regex_device_builder::glushkov_fast_path_supported(prog)) {
     auto d_prog = regex_device_builder::create_gkprog_device(prog, stream);
-    return generate_tokens(
-      d_strings, *d_prog, direction, maxsplit, stream, cudf::get_current_device_resource_ref());
+    return generate_tokens(d_strings, *d_prog, direction, maxsplit, stream, mr);
   }
   auto d_prog = regex_device_builder::create_prog_device(prog, stream);
-  return generate_tokens(
-    d_strings, *d_prog, direction, maxsplit, stream, cudf::get_current_device_resource_ref());
+  return generate_tokens(d_strings, *d_prog, direction, maxsplit, stream, mr);
 }
 
 /**
@@ -234,8 +234,9 @@ std::unique_ptr<table> split_re(strings_column_view const& input,
 
   // get the split tokens from the input column; this also computes the match counts
   // and converts them into offsets, using a single device regex program build
-  auto [tokens, offsets] = generate_tokens(*d_strings, prog, direction, maxsplit, stream);
-  auto const d_offsets   = cudf::detail::offsetalator_factory::make_input_iterator(offsets->view());
+  auto [tokens, offsets] = generate_tokens(
+    *d_strings, prog, direction, maxsplit, stream, cudf::get_current_device_resource_ref());
+  auto const d_offsets = cudf::detail::offsetalator_factory::make_input_iterator(offsets->view());
 
   // the output column count is the maximum number of tokens generated for any input string
   auto const columns_count = thrust::transform_reduce(
@@ -300,7 +301,7 @@ std::unique_ptr<column> split_record_re(strings_column_view const& input,
 
   // get the split tokens from the input column; this also computes the match counts
   // and converts them into offsets, using a single device regex program build
-  auto [tokens, offsets] = generate_tokens(*d_strings, prog, direction, maxsplit, stream);
+  auto [tokens, offsets] = generate_tokens(*d_strings, prog, direction, maxsplit, stream, mr);
 
   CUDF_EXPECTS(tokens.size() < static_cast<std::size_t>(std::numeric_limits<size_type>::max()),
                "Size of output exceeds the column size limit",

@@ -65,8 +65,11 @@ cuda::device_buffer<NodeIndexT> get_values_column_indices(TreeDepthT const row_a
                                                           cuda::stream_ref stream,
                                                           cudf::memory_resources mr)
 {
-  auto [level2_nodes, level2_indices] = get_array_children_indices(
-    row_array_children_level, d_tree.node_levels, d_tree.parent_node_ids, stream);
+  auto [level2_nodes, level2_indices] = get_array_children_indices(row_array_children_level,
+                                                                   d_tree.node_levels,
+                                                                   d_tree.parent_node_ids,
+                                                                   stream,
+                                                                   mr.as_temporary());
   auto col_id_location = cuda::make_permutation_iterator(col_ids.begin(), level2_nodes.begin());
   cuda::device_buffer<NodeIndexT> values_column_indices(
     stream, mr.get_output_mr(), num_columns, cuda::no_init);

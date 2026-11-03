@@ -767,23 +767,23 @@ std::pair<cuda::device_buffer<NodeIndexT>, cuda::device_buffer<NodeIndexT>>
 get_array_children_indices(TreeDepthT row_array_children_level,
                            device_span<TreeDepthT const> node_levels,
                            device_span<NodeIndexT const> parent_node_ids,
-                           cuda::stream_ref stream)
+                           cuda::stream_ref stream,
+                           cudf::memory_resources mr)
 {
   // array children level: (level 2 for values, level 1 for values-JSONLines format)
   // copy nodes id of level 1's children (level 2)
   // exclusive scan by key (on key their parent_node_id, because we need indices in each row.
   // parent_node_id for each row will be same).
   // -> return their indices and their node id
-  auto const num_nodes = node_levels.size();
-  auto num_level2_nodes =
-    thrust::count(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                  node_levels.begin(),
-                  node_levels.end(),
-                  row_array_children_level);
+  auto const num_nodes  = node_levels.size();
+  auto num_level2_nodes = thrust::count(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+                                        node_levels.begin(),
+                                        node_levels.end(),
+                                        row_array_children_level);
   cuda::device_buffer<NodeIndexT> level2_nodes(
-    stream, cudf::get_current_device_resource_ref(), num_level2_nodes, cuda::no_init);
+    stream, mr.get_output_mr(), num_level2_nodes, cuda::no_init);
   cuda::device_buffer<NodeIndexT> level2_indices(
-    stream, cudf::get_current_device_resource_ref(), num_level2_nodes, cuda::no_init);
+    stream, mr.get_output_mr(), num_level2_nodes, cuda::no_init);
   cudf::detail::copy_if_async(
     cuda::counting_iterator<std::size_t>{0},
     cuda::counting_iterator{num_nodes},
@@ -795,12 +795,11 @@ get_array_children_indices(TreeDepthT row_array_children_level,
     stream);
   auto level2_parent_nodes =
     cuda::make_permutation_iterator(parent_node_ids.begin(), level2_nodes.cbegin());
-  thrust::exclusive_scan_by_key(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-    level2_parent_nodes,
-    level2_parent_nodes + num_level2_nodes,
-    cuda::make_constant_iterator(NodeIndexT{1}),
-    level2_indices.begin());
+  thrust::exclusive_scan_by_key(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+                                level2_parent_nodes,
+                                level2_parent_nodes + num_level2_nodes,
+                                cuda::make_constant_iterator(NodeIndexT{1}),
+                                level2_indices.begin());
   return std::make_pair(std::move(level2_nodes), std::move(level2_indices));
 }
 
@@ -848,7 +847,11 @@ std::pair<cuda::device_buffer<size_type>, cuda::device_buffer<size_type>> hash_n
     // These indices uniquely identify each column in each row. This is used during hashing for
     // level 2 nodes to generate unique column ids, instead of field name for level 2 nodes.
     auto [level2_nodes, level2_indices] =
-      get_array_children_indices(row_array_children_level, node_levels, parent_node_ids, stream);
+      get_array_children_indices(row_array_children_level,
+                                 node_levels,
+                                 parent_node_ids,
+                                 stream,
+                                 cudf::get_current_device_resource_ref());
     // memory usage could be reduced by using different data structure (hashmap)
     // or alternate method to hash it at node_type
     list_indices = cuda::device_buffer<size_type>(

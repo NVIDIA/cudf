@@ -363,6 +363,7 @@ records_orient_tree_traversal(device_span<SymbolT const> d_input,
  * @param node_levels Levels of each node in the tree
  * @param parent_node_ids Parent node ids of each node in the tree
  * @param stream The CUDA stream to which kernels are dispatched
+ * @param mr Memory resources used to allocate the returned device memory
  * @return A pair of device_buffer containing the original node indices and their corresponding
  * child index
  */
@@ -370,7 +371,8 @@ std::pair<cuda::device_buffer<NodeIndexT>, cuda::device_buffer<NodeIndexT>>
 get_array_children_indices(TreeDepthT row_array_children_level,
                            device_span<TreeDepthT const> node_levels,
                            device_span<NodeIndexT const> parent_node_ids,
-                           cuda::stream_ref stream);
+                           cuda::stream_ref stream,
+                           cudf::memory_resources mr);
 
 /**
  * @brief Reduces node tree representation to column tree representation.

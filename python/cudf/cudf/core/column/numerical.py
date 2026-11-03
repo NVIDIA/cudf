@@ -1402,7 +1402,10 @@ def _normalize_find_and_replace_input(
     col_to_normalize_dtype = normalized_column.dtype
     if isinstance(col_to_normalize, list):
         if normalized_column.is_all_null:
-            normalized_column = normalized_column.astype(input_column_dtype)
+            # Casting would turn nulls into False for a bool column
+            normalized_column = column_empty(
+                len(normalized_column), dtype=input_column_dtype
+            )
         if normalized_column.can_cast_safely(input_column_dtype):
             return normalized_column.astype(input_column_dtype)
         col_to_normalize_dtype = normalized_column._min_column_type(  # type: ignore[attr-defined]

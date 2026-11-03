@@ -619,9 +619,26 @@ class parquet_reader_options {
   /**
    * @brief Sets timestamp_type used to cast timestamp columns.
    *
+   * Only TIMESTAMP_SECONDS, TIMESTAMP_MILLISECONDS, TIMESTAMP_MICROSECONDS and
+   * TIMESTAMP_NANOSECONDS are supported as the target type; EMPTY, the default, keeps each
+   * column's own resolution. For a coarser resolution such as TIMESTAMP_DAYS, cast the output
+   * column instead.
+   *
+   * @throws cudf::logic_error if `type` is not EMPTY, TIMESTAMP_SECONDS, TIMESTAMP_MILLISECONDS,
+   * TIMESTAMP_MICROSECONDS or TIMESTAMP_NANOSECONDS
+   *
    * @param type The timestamp data_type to which all timestamp columns need to be cast
    */
-  void set_timestamp_type(data_type type) { _timestamp_type = type; }
+  void set_timestamp_type(data_type type)
+  {
+    CUDF_EXPECTS(type.id() == type_id::EMPTY or type.id() == type_id::TIMESTAMP_SECONDS or
+                   type.id() == type_id::TIMESTAMP_MILLISECONDS or
+                   type.id() == type_id::TIMESTAMP_MICROSECONDS or
+                   type.id() == type_id::TIMESTAMP_NANOSECONDS,
+                 "timestamp_type must be EMPTY, TIMESTAMP_SECONDS, TIMESTAMP_MILLISECONDS, "
+                 "TIMESTAMP_MICROSECONDS or TIMESTAMP_NANOSECONDS");
+    _timestamp_type = type;
+  }
 
   /**
    * @brief Sets decimal width used to cast decimal columns.
@@ -899,6 +916,9 @@ class parquet_reader_options_builder {
 
   /**
    * @brief timestamp_type used to cast timestamp columns.
+   *
+   * @throws cudf::logic_error if `type` is not EMPTY, TIMESTAMP_SECONDS, TIMESTAMP_MILLISECONDS,
+   * TIMESTAMP_MICROSECONDS or TIMESTAMP_NANOSECONDS
    *
    * @param type The timestamp data_type to which all timestamp columns need to be cast
    * @return this for chaining

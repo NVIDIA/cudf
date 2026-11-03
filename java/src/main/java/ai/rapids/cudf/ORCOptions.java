@@ -1,6 +1,6 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
@@ -73,11 +73,13 @@ public class ORCOptions extends ColumnFilterOptions {
 
     /**
      * Specify the time unit to use when returning timestamps.
+     * Only TIMESTAMP_SECONDS, TIMESTAMP_MILLISECONDS, TIMESTAMP_MICROSECONDS and
+     * TIMESTAMP_NANOSECONDS are valid; for TIMESTAMP_DAYS, cast the returned column instead.
      * @param unit default unit of time specified by the user
      * @return builder for chaining
      */
     public ORCOptions.Builder withTimeUnit(DType unit) {
-      assert unit.isTimestampType();
+      assert unit == DType.EMPTY || unit.hasTimeResolution();
       this.unit = unit;
       return this;
     }

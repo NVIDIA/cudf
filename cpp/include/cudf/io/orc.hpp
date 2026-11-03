@@ -277,9 +277,26 @@ class orc_reader_options {
   /**
    * @brief Sets timestamp type to which timestamp column will be cast.
    *
+   * Only TIMESTAMP_SECONDS, TIMESTAMP_MILLISECONDS, TIMESTAMP_MICROSECONDS and
+   * TIMESTAMP_NANOSECONDS are supported as the target type; EMPTY, the default, reads timestamps
+   * as TIMESTAMP_NANOSECONDS. For a coarser resolution such as TIMESTAMP_DAYS, cast the output
+   * column instead.
+   *
    * @param type Type of timestamp
+   *
+   * @throw cudf::logic_error if `type` is not EMPTY, TIMESTAMP_SECONDS, TIMESTAMP_MILLISECONDS,
+   * TIMESTAMP_MICROSECONDS or TIMESTAMP_NANOSECONDS
    */
-  void set_timestamp_type(data_type type) { _timestamp_type = type; }
+  void set_timestamp_type(data_type type)
+  {
+    CUDF_EXPECTS(type.id() == type_id::EMPTY or type.id() == type_id::TIMESTAMP_SECONDS or
+                   type.id() == type_id::TIMESTAMP_MILLISECONDS or
+                   type.id() == type_id::TIMESTAMP_MICROSECONDS or
+                   type.id() == type_id::TIMESTAMP_NANOSECONDS,
+                 "timestamp_type must be EMPTY, TIMESTAMP_SECONDS, TIMESTAMP_MILLISECONDS, "
+                 "TIMESTAMP_MICROSECONDS or TIMESTAMP_NANOSECONDS");
+    _timestamp_type = type;
+  }
 
   /**
    * @brief Set columns that should be read as 128-bit Decimal
@@ -405,6 +422,9 @@ class orc_reader_options_builder {
    *
    * @param type Type of timestamp
    * @return this for chaining
+   *
+   * @throw cudf::logic_error if `type` is not EMPTY, TIMESTAMP_SECONDS, TIMESTAMP_MILLISECONDS,
+   * TIMESTAMP_MICROSECONDS or TIMESTAMP_NANOSECONDS
    */
   orc_reader_options_builder& timestamp_type(data_type type)
   {

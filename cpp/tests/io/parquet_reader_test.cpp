@@ -1011,6 +1011,31 @@ TEST_F(ParquetReaderTest, SelectColumnByMissingFieldIds)
   }
 }
 
+TEST_F(ParquetReaderTest, TimestampTypeMustHaveSecondBasedUnit)
+{
+  // The reader rescales timestamps by a clock rate in ticks per second, which TIMESTAMP_DAYS
+  // cannot express: a request for it used to decode seconds as 8-byte values into a column
+  // allocated at 4 bytes per row.
+  auto options = cudf::io::parquet_reader_options{};
+  for (auto const id : {cudf::type_id::EMPTY,
+                        cudf::type_id::TIMESTAMP_SECONDS,
+                        cudf::type_id::TIMESTAMP_MILLISECONDS,
+                        cudf::type_id::TIMESTAMP_MICROSECONDS,
+                        cudf::type_id::TIMESTAMP_NANOSECONDS}) {
+    EXPECT_NO_THROW(options.set_timestamp_type(cudf::data_type{id}));
+    EXPECT_EQ(options.get_timestamp_type().id(), id);
+  }
+  for (auto const id :
+       {cudf::type_id::TIMESTAMP_DAYS, cudf::type_id::DURATION_SECONDS, cudf::type_id::INT64}) {
+    EXPECT_THROW(options.set_timestamp_type(cudf::data_type{id}), cudf::logic_error);
+  }
+  // A rejected type leaves the previous one in place.
+  EXPECT_EQ(options.get_timestamp_type().id(), cudf::type_id::TIMESTAMP_NANOSECONDS);
+  EXPECT_THROW(cudf::io::parquet_reader_options_builder{}.timestamp_type(
+                 cudf::data_type{cudf::type_id::TIMESTAMP_DAYS}),
+               cudf::logic_error);
+}
+
 TEST_F(ParquetReaderTest, ColumnSelectionModesAreExclusive)
 {
   auto selected_by_name = cudf::io::parquet_reader_options{};

@@ -559,3 +559,34 @@ def test_large_sort_external_in_memory_fast_path(
     # streaming insertion is exercised but no runs are written.
     q = large_df.sort(by, maintain_order=stable)
     assert_gpu_result_equal(q, engine=engine_large_external)
+
+
+@pytest.mark.parametrize("descending", [False, True])
+@pytest.mark.parametrize("nulls_last", [False, True])
+def test_sort_external_with_nulls(
+    engine_large_external, force_external_sort, descending, nulls_last
+):
+    # Null keys must merge correctly across run pages in both null orders.
+    n = 4_201
+    df = pl.LazyFrame(
+        {
+            "k": [None if i % 7 == 0 else (i * 31) % 97 for i in range(n)],
+            "idx": list(range(n)),
+        }
+    )
+    q = df.sort("k", "idx", descending=descending, nulls_last=nulls_last)
+    assert_gpu_result_equal(q, engine=engine_large_external)
+
+
+def test_sort_external_tie_heavy_stable(engine_large_external, force_external_sort):
+    # Few distinct keys, so ties span many pages; maintain_order must hold.
+    n = 4_201
+    df = pl.LazyFrame({"k": [i % 3 for i in range(n)], "v": list(range(n))})
+    q = df.sort("k", maintain_order=True)
+    assert_gpu_result_equal(q, engine=engine_large_external)
+
+
+def test_sort_external_empty(engine_large_external, force_external_sort):
+    df = pl.LazyFrame({"k": list(range(4_201)), "v": list(range(4_201))})
+    q = df.filter(pl.col("k") < 0).sort("k")
+    assert_gpu_result_equal(q, engine=engine_large_external)

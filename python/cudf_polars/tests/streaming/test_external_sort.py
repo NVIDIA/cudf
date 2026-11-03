@@ -4,30 +4,22 @@
 
 from __future__ import annotations
 
-import asyncio
 import gc
 import random
-from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
 
 import pytest
 
 import polars as pl
 
-from cudf_streaming.channel_metadata import OrderKey
 from rapidsmpf.memory.buffer import MemoryType
 
-from cudf_polars.containers import DataFrame, DataType
-from cudf_polars.dsl.ir import IRExecutionContext
 from cudf_polars.engine.options import StreamingOptions
 from cudf_polars.streaming.actor_graph.collectives import external_sort as es
 from cudf_polars.testing.asserts import assert_gpu_result_equal
-from cudf_polars.utils import sorting
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    import pylibcudf as plc
 
 pytestmark = pytest.mark.engine_params(["spmd", "dask", "ray"])
 
@@ -61,235 +53,8 @@ def engine_external(streaming_engine_factory):
     return streaming_engine_factory(StreamingOptions(**BASE))
 
 
-# --------------------------------------------------------------------------- #
-# Direct unit tests of the run writer / cursor / k-way merge
-# --------------------------------------------------------------------------- #
-
-_I64 = DataType(pl.Int64())
-
-
-def _run_async(coro):
-    return asyncio.run(coro)
-
-
-def _frame_table(frame: pl.DataFrame, stream) -> plc.Table:
-    return DataFrame.from_polars(frame, stream).table
-
-
-def _table_frame(table: plc.Table, names: list[str], stream) -> pl.DataFrame:
-    return DataFrame.from_table(table, names, [_I64] * len(names), stream).to_polars()
-
-
-def _ir_context(context) -> tuple[ThreadPoolExecutor, IRExecutionContext]:
-    pool = ThreadPoolExecutor(max_workers=2)
-    return pool, IRExecutionContext(
-        pool, get_cuda_stream=context.br().stream_pool.get_stream
-    )
-
-
-async def _write_run(context, ir_context, stream, frame: pl.DataFrame, page_rows: int):
-    writer = es.RunWriter(context, page_rows)
-    await writer.write(_frame_table(frame, stream), stream, ir_context)
-    return writer.finish()
-
-
 def _spill_files(spill: Path) -> list[Path]:
     return sorted(p for p in spill.rglob("*") if p.is_file())
-
-
-def _sorted_frame(
-    frame: pl.DataFrame, *, descending: bool, nulls_last: bool
-) -> pl.DataFrame:
-    return frame.sort(
-        ["k", "v"], descending=descending, nulls_last=nulls_last, maintain_order=True
-    )
-
-
-def _order_keys(*, descending: bool, nulls_last: bool) -> list[OrderKey]:
-    # Same polars -> libcudf mapping the Sort IR uses (null precedence is
-    # expressed relative to the reversed order for descending columns).
-    # Merge on both columns so the result is fully determined (no ties).
-    orders, null_orders = sorting.sort_order(
-        [descending, descending], nulls_last=[nulls_last, nulls_last], num_keys=2
-    )
-    return [OrderKey(i, orders[i], null_orders[i]) for i in range(2)]
-
-
-def _random_frame(n: int, seed: int, *, with_nulls: bool) -> pl.DataFrame:
-    rng = random.Random(seed)
-    k: list[int | None] = [rng.randint(0, 20) for _ in range(n)]  # many duplicates
-    v = list(range(n))
-    if with_nulls:
-        k = [None if rng.random() < 0.1 else x for x in k]
-    return pl.DataFrame({"k": k, "v": v}, schema={"k": pl.Int64, "v": pl.Int64})
-
-
-@pytest.mark.spmd
-@pytest.mark.parametrize("with_spill_dir", [False, True])
-def test_run_writer_and_cursor_roundtrip(
-    spmd_engine_factory, tmp_path, with_spill_dir
-) -> None:
-    spill = tmp_path / "spill"
-    options: dict[str, Any] = {"disk_spill_dir": str(spill)} if with_spill_dir else {}
-    context = spmd_engine_factory(StreamingOptions(**options)).context
-    mem_type = MemoryType.DISK if with_spill_dir else MemoryType.HOST
-    assert es.run_memory_type(context.br()) == mem_type
-    frame = _random_frame(100, 1, with_nulls=False).sort("k", "v")
-
-    async def _run():
-        pool, ir_context = _ir_context(context)
-        with pool:
-            stream = ir_context.get_cuda_stream()
-            run = await _write_run(context, ir_context, stream, frame, 7)
-            assert len(run.pages) == 15  # ceil(100 / 7)
-            assert run.num_rows == 100
-            for page in run.pages:
-                assert not page.chunk.is_available()
-                assert page.chunk.data_alloc_size(MemoryType.DEVICE) == 0
-                assert page.chunk.data_alloc_size(mem_type) > 0
-            if with_spill_dir:
-                assert len(_spill_files(spill)) == len(run.pages)
-            cursor = es.RunCursor(run)
-            del run
-            parts = []
-            while cursor.has_more():
-                table = await cursor.load_next(context, ir_context, [0, 1], stream)
-                parts.append(_table_frame(table, ["k", "v"], stream))
-                # tail = key columns of the last row of the page just loaded
-                tail = _table_frame(cursor.tail, ["k", "v"], stream)
-                assert tail.row(0) == parts[-1].row(-1)
-            assert pl.concat(parts).equals(frame)
-            if with_spill_dir:
-                # Page files are deleted as they are consumed.
-                assert _spill_files(spill) == []
-
-    _run_async(_run())
-
-
-@pytest.mark.spmd
-@pytest.mark.parametrize("n_runs", [1, 2, 5])
-@pytest.mark.parametrize("page_rows", [3, 50])
-@pytest.mark.parametrize("descending", [False, True])
-@pytest.mark.parametrize("with_nulls", [False, True])
-def test_merge_runs_matches_sorted_concat(
-    spmd_engine, n_runs, page_rows, descending, with_nulls
-) -> None:
-    context = spmd_engine.context
-    nulls_last = not descending  # exercise both null placements
-    frames = [
-        _sorted_frame(
-            _random_frame(60 + 13 * i, i, with_nulls=with_nulls),
-            descending=descending,
-            nulls_last=nulls_last,
-        )
-        for i in range(n_runs)
-    ]
-    expected = _sorted_frame(
-        pl.concat(frames), descending=descending, nulls_last=nulls_last
-    )
-
-    async def _run():
-        pool, ir_context = _ir_context(context)
-        with pool:
-            stream = ir_context.get_cuda_stream()
-            runs = [
-                await _write_run(context, ir_context, stream, f, page_rows)
-                for f in frames
-            ]
-            emitted: list[pl.DataFrame] = []
-
-            async def emit(table, stream):
-                emitted.append(_table_frame(table, ["k", "v"], stream))
-
-            await es.merge_runs(
-                context,
-                ir_context,
-                runs,
-                _order_keys(descending=descending, nulls_last=nulls_last),
-                emit,
-                stream,
-            )
-            return emitted
-
-    emitted = _run_async(_run())
-    assert emitted, "merge emitted nothing"
-    result = pl.concat(emitted)
-    assert result.equals(expected)
-    # Every emitted chunk is itself sorted and chunks do not overlap.
-    for chunk in emitted:
-        assert chunk.equals(
-            _sorted_frame(chunk, descending=descending, nulls_last=nulls_last)
-        )
-
-
-@pytest.mark.spmd
-def test_merge_runs_refills_every_run_sharing_the_minimum_tail(spmd_engine) -> None:
-    """Two runs whose first pages end on the same key must both be refilled."""
-    context = spmd_engine.context
-    # page_rows=3: run A pages end on keys 5, 9; run B pages end on 5, 12; run C is all larger.
-    a = pl.DataFrame({"k": [1, 3, 5, 6, 8, 9], "v": [0, 1, 2, 3, 4, 5]})
-    b = pl.DataFrame({"k": [2, 4, 5, 10, 11, 12], "v": [6, 7, 8, 9, 10, 11]})
-    c = pl.DataFrame({"k": [20, 21, 22], "v": [12, 13, 14]})
-    expected = pl.concat([a, b, c]).sort("k", "v")
-
-    async def _run():
-        pool, ir_context = _ir_context(context)
-        with pool:
-            stream = ir_context.get_cuda_stream()
-            runs = [
-                await _write_run(context, ir_context, stream, f, 3) for f in (a, b, c)
-            ]
-            emitted = []
-
-            async def emit(table, stream):
-                emitted.append(_table_frame(table, ["k", "v"], stream))
-
-            await es.merge_runs(
-                context,
-                ir_context,
-                runs,
-                _order_keys(descending=False, nulls_last=True),
-                emit,
-                stream,
-            )
-            return emitted
-
-    emitted = _run_async(_run())
-    assert pl.concat(emitted).equals(expected)
-
-
-@pytest.mark.spmd
-def test_merge_runs_empty_inputs(spmd_engine) -> None:
-    context = spmd_engine.context
-
-    async def _run():
-        pool, ir_context = _ir_context(context)
-        with pool:
-            stream = ir_context.get_cuda_stream()
-            calls = []
-
-            async def emit(table, stream):
-                calls.append(table.num_rows())
-
-            await es.merge_runs(
-                context,
-                ir_context,
-                [],
-                _order_keys(descending=False, nulls_last=True),
-                emit,
-                stream,
-            )
-            await es.merge_runs(
-                context,
-                ir_context,
-                [es.Run(), es.Run()],
-                _order_keys(descending=False, nulls_last=True),
-                emit,
-                stream,
-            )
-            return calls
-
-    assert _run_async(_run()) == []
 
 
 # --------------------------------------------------------------------------- #

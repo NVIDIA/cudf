@@ -170,10 +170,6 @@ class Run:
 
     pages: list[RunPage] = field(default_factory=list)
 
-    @property
-    def num_rows(self) -> int:  # noqa: D102
-        return sum(page.num_rows for page in self.pages)
-
 
 class RunWriter:
     """Write sorted tables as pages of a run."""
@@ -355,6 +351,8 @@ async def merge_runs(
         if pending:
             merged_keys = plc.Table([merged.columns()[i] for i in key_indices])
             cut, refill = _emit_bound(merged_keys, pending, orders, null_orders, stream)
+            # merged_keys is a view of merged; don't let it pin merged.
+            del merged_keys
         else:
             cut, refill = merged.num_rows(), []
 
@@ -366,6 +364,8 @@ async def merge_runs(
             if cut > 0:
                 await emit(head.copy(stream=stream), stream)
             carry = rest.copy(stream=stream)
+            # head and rest are views of merged; drop them with it.
+            del head, rest
         del merged
 
         tables = [
@@ -652,27 +652,31 @@ class _ChunkPreparer:
         br = self._context.br()
         prepared_sample = ChunkStore(self._context)
         local_candidates_list: list[TableChunk] = []
-        for msg in sampled_chunks:
-            seq_num, df, tbl = await self.prepare(msg)
-            local_candidates_list.append(
-                TableChunk.from_pylibcudf_table(
-                    select_local_split_candidates(
-                        df.select(by), by, num_partitions, seq_num
-                    ).table,
-                    df.stream,
-                    exclusive_view=True,
-                    br=br,
-                )
-            )
-            prepared_sample.insert(
-                Message(
-                    seq_num,
+        try:
+            for msg in sampled_chunks:
+                seq_num, df, tbl = await self.prepare(msg)
+                local_candidates_list.append(
                     TableChunk.from_pylibcudf_table(
-                        tbl, df.stream, exclusive_view=True, br=br
-                    ),
+                        select_local_split_candidates(
+                            df.select(by), by, num_partitions, seq_num
+                        ).table,
+                        df.stream,
+                        exclusive_view=True,
+                        br=br,
+                    )
                 )
-            )
-            del df
+                prepared_sample.insert(
+                    Message(
+                        seq_num,
+                        TableChunk.from_pylibcudf_table(
+                            tbl, df.stream, exclusive_view=True, br=br
+                        ),
+                    )
+                )
+                del df
+        except BaseException:
+            prepared_sample.clear()
+            raise
         return prepared_sample, local_candidates_list
 
 
@@ -773,58 +777,67 @@ async def global_sort_external(
     )
 
     preparer = _ChunkPreparer(context, comm, ir, ir_context)
-    prepared_sample, local_candidates_list = await preparer.prepare_sample(
-        sampled_chunks, by, num_partitions
-    )
+    prepared_sample: ChunkStore | None = None
+    try:
+        prepared_sample, local_candidates_list = await preparer.prepare_sample(
+            sampled_chunks, by, num_partitions
+        )
 
-    need_allgather = comm.nranks > 1 and not metadata_in.duplicated
-    sort_boundaries_df = await compute_sort_boundaries(
-        context,
-        comm,
-        ir_context,
-        local_candidates_list,
-        ir,
-        by,
-        num_partitions,
-        collective_ids.pop() if need_allgather else None,
-    )
+        need_allgather = comm.nranks > 1 and not metadata_in.duplicated
+        sort_boundaries_df = await compute_sort_boundaries(
+            context,
+            comm,
+            ir_context,
+            local_candidates_list,
+            ir,
+            by,
+            num_partitions,
+            collective_ids.pop() if need_allgather else None,
+        )
 
-    await send_metadata(
-        ch_out,
-        context,
-        ChannelMetadata(
-            local_count=max(1, num_partitions // comm.nranks),
-            # Only claim row ordering: the emitted chunks are not guaranteed
-            # to line up with ``sort_boundaries_df``, so no boundaries promise.
-            partitioning=Partitioning(
-                row_orderings=(
-                    RowOrdering(sort_to_order_keys(ir), RowOrderingScope.GLOBAL),
+        await send_metadata(
+            ch_out,
+            context,
+            ChannelMetadata(
+                local_count=max(1, num_partitions // comm.nranks),
+                # Only claim row ordering: the emitted chunks are not guaranteed
+                # to line up with ``sort_boundaries_df``, so no boundaries promise.
+                partitioning=Partitioning(
+                    row_orderings=(
+                        RowOrdering(sort_to_order_keys(ir), RowOrderingScope.GLOBAL),
+                    ),
                 ),
             ),
-        ),
-    )
+        )
 
-    shuffle = ShuffleManager(
-        context,
-        comm,
-        num_partitions,
-        collective_ids.pop(),
-        partition_assignment=PartitionAssignment.CONTIGUOUS,
-    )
+        shuffle = ShuffleManager(
+            context,
+            comm,
+            num_partitions,
+            collective_ids.pop(),
+            partition_assignment=PartitionAssignment.CONTIGUOUS,
+        )
 
-    await _stream_chunks_into_shuffle(
-        context,
-        comm,
-        ir,
-        ir_context,
-        shuffle,
-        prepared_sample,
-        preparer,
-        ch_in,
-        metadata_in,
-        sort_boundaries_df,
-        by,
-    )
+        await _stream_chunks_into_shuffle(
+            context,
+            comm,
+            ir,
+            ir_context,
+            shuffle,
+            prepared_sample,
+            preparer,
+            ch_in,
+            metadata_in,
+            sort_boundaries_df,
+            by,
+        )
+    finally:
+        # Release the sample stores if preparation, boundary computation or
+        # the shuffle insertion fails part-way (iteration drains them, so
+        # this is a no-op on success).
+        sampled_chunks.clear()
+        if prepared_sample is not None:
+            prepared_sample.clear()
 
     order_keys = sort_to_order_keys(build_post_sort_ir(ir))
     batch_bytes = batch_bytes_for(executor.target_partition_size)

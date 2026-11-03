@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import enum
 import importlib
 import importlib.util
 import json
@@ -153,7 +154,19 @@ def get_validation_options(run_options: RunOptions) -> dict[str, Any]:
 
 _STREAMING_FRONTENDS = frozenset({"dask", "ray", "spmd"})
 _CPU_ENGINES = frozenset({"polars-cpu", "duckdb"})
-InputFormat = Literal["parquet", "iceberg"]
+
+
+class InputFormat(enum.StrEnum):
+    """
+    The format of the benchmark input tables.
+
+    * ``InputFormat.PARQUET`` : Parquet files at ``{path}/{table}{suffix}``.
+    * ``InputFormat.ICEBERG`` : Iceberg tables at ``{path}/iceberg/{table}``.
+    """
+
+    PARQUET = "parquet"
+    ICEBERG = "iceberg"
+
 
 EXIT_SUCCESS = 0
 EXIT_QUERY_FAILURE = 3
@@ -502,7 +515,7 @@ def get_data(
     table_name: str,
     suffix: str = "",
     *,
-    input_format: InputFormat = "parquet",
+    input_format: InputFormat = InputFormat.PARQUET,
 ) -> pl.LazyFrame:
     """
     Get table from dataset.
@@ -513,11 +526,11 @@ def get_data(
     local filesystem, falls back to scanning ``{path}/{table_name}`` as a
     directory of parquet files.
 
-    With ``input_format="iceberg"``, scans the Iceberg table at
+    With ``input_format=InputFormat.ICEBERG``, scans the Iceberg table at
     ``{path}/iceberg/{table_name}`` and ignores ``suffix``.
     """
     root = str(path).removesuffix("/")
-    if input_format == "iceberg":
+    if input_format == InputFormat.ICEBERG:
         return pl.scan_iceberg(f"{root}/iceberg/{table_name}")
     return pl.scan_parquet(f"{root}/{table_name}{suffix}")
 
@@ -592,7 +605,7 @@ class RunConfig:
     dataset_path: str | Path
     scale_factor: int | float
     suffix: str
-    input_format: InputFormat = "parquet"
+    input_format: InputFormat = InputFormat.PARQUET
     qualification: bool = False
 
     # Execution mode
@@ -666,15 +679,14 @@ class RunConfig:
         if args.qualification and "pdsds" not in name:
             raise ValueError("--qualification can only be used with PDS-DS benchmarks.")
 
-        if args.input_format == "iceberg":
+        if args.input_format == InputFormat.ICEBERG:
             if "pdsds" in name:
-                raise ValueError(
+                raise NotImplementedError(
                     "--input-format iceberg is only supported for PDS-H benchmarks."
                 )
             if args.debug:
-                raise ValueError(
-                    "--debug is not supported with --input-format iceberg; "
-                    "translating an Iceberg scan with --debug hangs."
+                raise NotImplementedError(
+                    "--debug is not supported with --input-format iceberg."
                 )
             if importlib.util.find_spec("pyiceberg") is None:
                 raise RuntimeError(
@@ -1873,7 +1885,7 @@ def _duckdb_register_views(
     dataset_path: str | Path,
     suffix: str,
     query_set: str,
-    input_format: InputFormat = "parquet",
+    input_format: InputFormat = InputFormat.PARQUET,
 ) -> None:
     """Register one view per table in the query set over `dataset_path`."""
     if is_remote_path(dataset_path):
@@ -1882,14 +1894,14 @@ def _duckdb_register_views(
         conn.execute("INSTALL httpfs")
         conn.execute("LOAD httpfs")
         conn.execute("CREATE OR REPLACE SECRET (TYPE s3, PROVIDER credential_chain)")
-    if input_format == "iceberg":
+    if input_format == InputFormat.ICEBERG:
         conn.execute("INSTALL iceberg")
         conn.execute("LOAD iceberg")
 
     root = str(dataset_path).removesuffix("/")
     tbl_names = PDSDS_TABLE_NAMES if query_set == "pdsds" else PDSH_TABLE_NAMES
     for name in tbl_names:
-        if input_format == "iceberg":
+        if input_format == InputFormat.ICEBERG:
             source = f"iceberg_scan('{root}/iceberg/{name}')"
         else:
             source = f"parquet_scan('{root}/{name}{suffix}')"
@@ -1905,7 +1917,7 @@ def print_duckdb_plan(
     args: argparse.Namespace,
     run_config: RunConfig | None = None,
     *,
-    input_format: InputFormat = "parquet",
+    input_format: InputFormat = InputFormat.PARQUET,
 ) -> None:
     """Print DuckDB query plan using EXPLAIN."""
     if duckdb is None:
@@ -1934,7 +1946,7 @@ def execute_duckdb_query(
     *,
     suffix: str = ".parquet",
     query_set: str = "pdsh",
-    input_format: InputFormat = "parquet",
+    input_format: InputFormat = InputFormat.PARQUET,
     run_config: RunConfig | None = None,
 ) -> pl.DataFrame:
     """Execute a query with DuckDB."""
@@ -2129,9 +2141,9 @@ def _add_dataset_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--input-format",
         dest="input_format",
-        type=str,
-        default="parquet",
-        choices=["parquet", "iceberg"],
+        type=InputFormat,
+        default=InputFormat.PARQUET,
+        choices=list(InputFormat),
         help=textwrap.dedent("""\
             Format of the input tables:
                 - parquet : Parquet files at {path}/{table}{suffix} (default)
@@ -2147,10 +2159,7 @@ def _add_dataset_args(parser: argparse.ArgumentParser) -> None:
             Cache state control for each timed iteration:
                 - cold     : Drop Linux page cache before each iteration (requires kvikio)
                 - lukewarm : Drop once before the first query, then let cache warm naturally (default)
-                - hot      : One untimed warmup iteration to populate cache before measured runs
-            Page cache is dropped only for files under --path. With --input-format iceberg,
-            the manifests store absolute data file paths, so a copied dataset still reads
-            the original data files."""),
+                - hot      : One untimed warmup iteration to populate cache before measured runs"""),
     )
     parser.add_argument(
         "--validation-abs-tol",

@@ -12,8 +12,11 @@ from datetime import datetime
 from enum import IntEnum, auto
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
-from polars import Struct as pl_Struct  # noqa: TC002 (used in runtime cast())
-from polars.exceptions import InvalidOperationError
+from polars import (
+    Series as pl_Series,
+    Struct as pl_Struct,  # noqa: TC002 (used in runtime cast())
+)
+from polars.exceptions import ComputeError, InvalidOperationError
 
 import pylibcudf as plc
 
@@ -161,6 +164,13 @@ class StringFunction(Expr):
     # backslash via a back-reference replacement template.
     _ESCAPE_REGEX_PATTERN: ClassVar[str] = r"([#$&()*+\-.?\[\\\]\^{|}~])"
     _ESCAPE_REGEX_REPLACEMENT: ClassVar[str] = r"\\1"
+    # strptime format specifiers that libcudf parses the same way as polars.
+    # libcudf does not support some other specifiers, such as %b, %.f and %T.
+    # Others parse differently in libcudf. %f reads the digits as a fraction
+    # of a second, but polars reads them as nanoseconds. libcudf ignores %j,
+    # reads year 69 as 1969 instead of 2069 for %y, and fails on a "+05:45"
+    # offset for %z.
+    _STRPTIME_SUPPORTED_SPECIFIERS: ClassVar[frozenset[str]] = frozenset("YmdHMSIp")
     __slots__ = ("_empty_regex", "_invalid_regex", "_regex_program", "name", "options")
     _non_child = ("dtype", "name", "options")
 
@@ -309,6 +319,50 @@ class StringFunction(Expr):
                 raise NotImplementedError("Strptime cache is a CPU feature")
             if not exact:
                 raise NotImplementedError("Strptime does not support exact=False")
+            if format is not None:
+                specs = re.findall(r"%(.?)", format)
+                unsupported = {
+                    spec
+                    for spec in specs
+                    if spec not in self._STRPTIME_SUPPORTED_SPECIFIERS
+                }
+                if unsupported:
+                    raise NotImplementedError(
+                        "Strptime does not support format specifiers "
+                        + ", ".join(sorted(f"%{s}" for s in unsupported))
+                    )
+                if len(specs) != len(set(specs)):
+                    # libcudf and polars can read a repeated specifier
+                    # differently. With "%I:%M %p %I" on "03:30 PM 03",
+                    # polars returns 15:30 and libcudf returns 03:30.
+                    raise NotImplementedError(
+                        "Strptime does not support a repeated format specifier"
+                    )
+                hour_12 = format.find("%I")
+                if ("%I" in format or "%p" in format) and (
+                    not 0 <= hour_12 < format.find("%p") or "%H" in format
+                ):
+                    # libcudf handles PM by adding 12 to the hour parsed
+                    # before %p. If %p comes first, %I then overwrites the
+                    # hour and the PM is lost. polars rejects the other
+                    # combinations: %I without %p, %p without %I, and %H
+                    # with %p.
+                    raise NotImplementedError(
+                        "Strptime only supports %p after %I, without %H"
+                    )
+            time_zone = getattr(self.dtype.polars_type, "time_zone", None)
+            if time_zone not in {None, "UTC"}:
+                # polars reads the strings as local times in time_zone, but
+                # libcudf reads them as UTC.
+                raise NotImplementedError(
+                    f"Strptime to a datetime with time zone {time_zone!r}"
+                )
+            if time_zone is not None and format is None:
+                # polars can infer formats with UTC offsets such as "+10:00"
+                # and "Z". _infer_datetime_format does not support them.
+                raise NotImplementedError(
+                    "Strptime format inference to a datetime with a time zone"
+                )
         elif self.name in {
             StringFunction.Name.StripChars,
             StringFunction.Name.StripCharsStart,
@@ -1088,6 +1142,7 @@ class StringFunction(Expr):
                     ),
                     self.dtype,
                 )
+            has_fraction = False
             if format is None:
                 # Polars begins inference with the first non null value
                 if plc_col.null_mask() is not None:
@@ -1095,25 +1150,63 @@ class StringFunction(Expr):
                     table = plc.stream_compaction.apply_retention_mask(
                         plc.Table([plc_col]), boolmask, stream=df.stream
                     )
-                    filtered = table.columns()[0]
-                    first_valid_data = plc.copying.get_element(
-                        filtered, 0, stream=df.stream
-                    ).to_py(stream=df.stream)
+                    valid = table.columns()[0]
                 else:
-                    first_valid_data = plc.copying.get_element(
-                        plc_col, 0, stream=df.stream
-                    ).to_py(stream=df.stream)
+                    valid = plc_col
+                first_valid_data = plc.copying.get_element(
+                    valid, 0, stream=df.stream
+                ).to_py(stream=df.stream)
 
+                date_only = self.dtype.plc_type.id() == plc.TypeId.TIMESTAMP_DAYS
                 # See https://github.com/NVIDIA/cudf/issues/20202 for we type ignore
-                format = _infer_datetime_format(first_valid_data)  # type: ignore[arg-type]
+                format = _infer_datetime_format(
+                    first_valid_data,  # type: ignore[arg-type]
+                    date_only=date_only,
+                )
                 if not format:
-                    raise InvalidOperationError(
-                        "Unable to infer datetime format from data"
+                    # polars guesses the format from the first value it can
+                    # parse, so a later value can set the format. Then the
+                    # first value fails the strict check. If no value can set
+                    # the format, polars raises ComputeError instead.
+                    if any(
+                        _infer_datetime_format(value, date_only=date_only)
+                        for value in pl_Series(valid.to_arrow(stream=df.stream))
+                    ):
+                        raise InvalidOperationError(
+                            "Unable to infer datetime format from data"
+                        )
+                    raise ComputeError(
+                        "could not find an appropriate format to parse dates, "
+                        "please define a format"
                     )
+                has_fraction = format.endswith(".%f")
+                if has_fraction:
+                    # libcudf reads only 6 digits for %f. %9f reads up to 9
+                    # digits, so nanoseconds keep full precision.
+                    format = format.removesuffix("%f") + "%9f"
 
             is_timestamps = plc.strings.convert.convert_datetime.is_timestamp(
                 plc_col, format, stream=df.stream
             )
+            if has_fraction:
+                # is_timestamp accepts "12:00:00." with no digits after the
+                # ".". It also ignores anything after the ninth digit, so it
+                # accepts "12:00:00.123456789x". polars rejects both. The
+                # seconds must end the string with only digits after the ".".
+                ends_with_fraction = plc.strings.contains.contains_re(
+                    plc_col,
+                    plc.strings.regex_program.RegexProgram.create(
+                        r":\d{1,2}\.\d+$", plc.strings.regex_flags.RegexFlags.DEFAULT
+                    ),
+                    stream=df.stream,
+                )
+                is_timestamps = plc.binaryop.binary_operation(
+                    is_timestamps,
+                    ends_with_fraction,
+                    plc.binaryop.BinaryOperator.LOGICAL_AND,
+                    plc.DataType(plc.TypeId.BOOL8),
+                    stream=df.stream,
+                )
             if strict:
                 if not plc.reduce.reduce(
                     is_timestamps,
@@ -1121,7 +1214,10 @@ class StringFunction(Expr):
                     plc.DataType(plc.TypeId.BOOL8),
                     stream=df.stream,
                 ).to_py(stream=df.stream):
-                    raise InvalidOperationError("conversion from `str` failed.")
+                    raise InvalidOperationError(
+                        "conversion from `str` to "
+                        f"`{self.dtype.polars_type._string_repr()}` failed"
+                    )
             else:
                 not_timestamps = plc.unary.unary_operation(
                     is_timestamps, plc.unary.UnaryOperator.NOT, stream=df.stream
@@ -1225,7 +1321,7 @@ class StringFunction(Expr):
         )  # pragma: no cover; handled by init raising
 
 
-def _infer_datetime_format(val: str) -> str | None:
+def _infer_datetime_format(val: str, *, date_only: bool) -> str | None:
     # port of parts of infer.rs and patterns.rs from polars rust
     DATETIME_DMY_RE = re.compile(
         r"""
@@ -1319,6 +1415,9 @@ def _infer_datetime_format(val: str) -> str | None:
             "%d-%m-%Y %H:%M:%S",
             "%d/%m/%Y %H:%M:%S",
             "%d.%m.%Y %H:%M:%S",
+            "%d-%m-%Y %H:%M:%S.%f",
+            "%d/%m/%Y %H:%M:%S.%f",
+            "%d.%m.%Y %H:%M:%S.%f",
         ],
         "DATETIME_YMD": [
             "%Y/%m/%d",
@@ -1328,6 +1427,10 @@ def _infer_datetime_format(val: str) -> str | None:
             "%Y/%m/%d %H:%M:%S",
             "%Y.%m.%d %H:%M:%S",
             "%Y-%m-%dT%H:%M:%S",
+            "%Y-%m-%d %H:%M:%S.%f",
+            "%Y/%m/%d %H:%M:%S.%f",
+            "%Y.%m.%d %H:%M:%S.%f",
+            "%Y-%m-%dT%H:%M:%S.%f",
         ],
         "DATETIME_YMDZ": [
             "%Y-%m-%dT%H:%M:%S%z",
@@ -1345,9 +1448,17 @@ def _infer_datetime_format(val: str) -> str | None:
             month = int(m.group("month"))
             if not (1 <= month <= 12):
                 continue
+            # datetime.strptime reads at most 6 digits for %f, but the
+            # regexes above allow up to 9. Drop the extra digits for this
+            # check only.
+            check_val = re.sub(r"(\.\d{6})\d+", r"\1", val)
             for fmt in PATTERN_FORMATS[pattern_name]:
+                if date_only and "%H" in fmt:
+                    # polars guesses only formats without a time, such as
+                    # "%Y-%m-%d", when it parses to a date.
+                    continue
                 try:
-                    datetime.strptime(val, fmt)
+                    datetime.strptime(check_val, fmt)
                 except ValueError:
                     continue
                 else:

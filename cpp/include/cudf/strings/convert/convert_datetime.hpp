@@ -38,7 +38,7 @@ namespace strings {
  * | \%H | 24-hour of the day: 00-23 |
  * | \%I | 12-hour of the day: 01-12 |
  * | \%M | Minute of the hour: 00-59 |
- * | \%S | Second of the minute: 00-59. Leap second is not supported. |
+ * | \%S | Second of the minute: 00-60. A leap second of 60 rolls over to the next minute. |
  * | \%f | 6-digit microsecond: 000000-999999 |
  * | \%z | UTC offset with format ±HHMM Example +0500 |
  * | \%j | Day of the year: 001-366 |
@@ -61,7 +61,7 @@ namespace strings {
  * precision with a single integer value (1-9) as follows:
  * use "%3f" for milliseconds, "%6f" for microseconds and "%9f" for nanoseconds.
  *
- * Although leap second is not supported for "%S", no checking is performed on the value.
+ * No checking is performed on the "%S" value. A leap second of 60 rolls over to the next minute.
  * The cudf::strings::is_timestamp can be used to verify the valid range of values.
  *
  * If "%W"/"%w" (or "%U/%u") and "%m"/"%d" are both specified, the "%W"/%U and "%w"/%u values
@@ -98,7 +98,7 @@ std::unique_ptr<column> to_timestamps(
  * | \%H | 24-hour of the day: 00-23 |
  * | \%I | 12-hour of the day: 01-12 |
  * | \%M | Minute of the hour: 00-59|
- * | \%S | Second of the minute: 00-59. Leap second is not supported. |
+ * | \%S | Second of the minute: 00-60. 60 is a leap second. |
  * | \%f | 6-digit microsecond: 000000-999999 |
  * | \%z | UTC offset with format ±HHMM Example +0500 |
  * | \%j | Day of the year: 001-366 |

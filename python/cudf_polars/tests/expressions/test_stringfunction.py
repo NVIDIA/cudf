@@ -343,6 +343,160 @@ def test_to_datetime(
 
 
 @pytest.mark.parametrize(
+    "values, format",
+    [
+        (["01 Jan 2024"], "%d %b %Y"),
+        (["2024-001"], "%Y-%j"),
+        (["69-01-01"], "%y-%m-%d"),
+        pytest.param(
+            ["2024-01-01 10:30:00.123456"],
+            "%Y-%m-%d %H:%M:%S.%f",
+            marks=pytest.mark.filterwarnings(
+                "ignore::polars.exceptions.ChronoFormatWarning"
+            ),
+        ),
+        (["2024-01-01 10:30:00.123"], "%Y-%m-%d %H:%M:%S%.f"),
+        (["2024-01-01 10:30:00+05:45"], "%Y-%m-%d %H:%M:%S%z"),
+        (["2024-01-01 10:30:00"], "%F %T"),
+        (["2024-01-01 PM 03:30"], "%Y-%m-%d %p %I:%M"),
+        (["2024-01-01 03:30 PM"], "%Y-%m-%d %H:%M %p"),
+        (["2024-01-01 03:30"], "%Y-%m-%d %I:%M"),
+        (["2024-01-01 PM"], "%Y-%m-%d %p"),
+        (["2024-01-01 03:30 PM 03"], "%Y-%m-%d %I:%M %p %I"),
+    ],
+)
+def test_strptime_unsupported_format_raises(engine: pl.GPUEngine, values, format):
+    df = pl.LazyFrame({"a": values})
+    q = df.select(pl.col("a").str.to_datetime(format, cache=False))
+    assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+def test_strptime_12_hour_clock(engine: pl.GPUEngine):
+    df = pl.LazyFrame(
+        {"a": ["2024-01-01 03:30 PM", "2024-01-01 12:15 AM", "2024-01-01 12:45 pm"]}
+    )
+    q = df.select(pl.col("a").str.to_datetime("%Y-%m-%d %I:%M %p", cache=False))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        ["2024-01-01 12:00:00.1", "2024-01-01 12:00:00.123456", None],
+        ["2024-01-01T12:00:00.123", "2024-01-01T12:00:00.5"],
+        ["01/02/2024 12:00:00.123", "31/12/2023 23:59:59.999999"],
+        ["2024-01-01 12:00:00.123456789", "2024-01-01 12:00:00.5"],
+        ["2024-01-01 12:00:00.1", "2024-01-01 12:00:00.987654321"],
+        ["2024-01-01 12:00:00.1", "2024-01-01 12:00:00.123456789999"],
+    ],
+    ids=[
+        "ymd",
+        "ymd_t",
+        "dmy",
+        "nine_digits_first",
+        "nine_digits_later",
+        "twelve_digits",
+    ],
+)
+@pytest.mark.parametrize("time_unit", ["ms", "us", "ns"])
+def test_strptime_infer_fractional_seconds(engine: pl.GPUEngine, values, time_unit):
+    df = pl.LazyFrame({"a": pl.Series(values, dtype=pl.String())})
+    q = df.select(pl.col("a").str.to_datetime(time_unit=time_unit, cache=False))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        "2024-01-01 12:00:00.",
+        "2024-01-01 12:00:00.5 ",
+        "2024-01-01 12:00:00.123456789x",
+        "2024-01-01 12:00:00.123456789x.5",
+    ],
+    ids=["no_digits", "trailing_space", "trailing_letter", "second_fraction"],
+)
+def test_strptime_infer_fractional_seconds_invalid(engine: pl.GPUEngine, invalid):
+    df = pl.LazyFrame({"a": ["2024-01-01 12:00:00.1", invalid]})
+    q = df.select(pl.col("a").str.to_datetime(time_unit="ns", cache=False))
+    with pytest.raises(pl.exceptions.InvalidOperationError):
+        q.collect(engine="in-memory")
+    if is_streaming_engine(engine):
+        with pytest.RaisesGroup(pl.exceptions.InvalidOperationError):
+            q.collect(engine=engine)
+    else:
+        with pytest.raises(pl.exceptions.InvalidOperationError):
+            q.collect(engine=engine)
+
+
+@pytest.mark.parametrize(
+    "values", [["2024-01-01", "2023-06-15"], ["31/12/2023", "01/02/2024"]]
+)
+def test_to_date_infer(engine: pl.GPUEngine, values):
+    q = pl.LazyFrame({"a": values}).select(pl.col("a").str.to_date(cache=False))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["2024-01-01 12:00:00", "2024-01-01 12:00:00.123", "01/02/2024 12:00:00"],
+)
+def test_to_date_infer_with_time_raises(engine: pl.GPUEngine, value):
+    # polars does not guess a format with a time when it parses to a date.
+    q = pl.LazyFrame({"a": [value]}).select(pl.col("a").str.to_date(cache=False))
+    with pytest.raises(pl.exceptions.ComputeError):
+        q.collect(engine="in-memory")
+    if is_streaming_engine(engine):
+        with pytest.RaisesGroup(pl.exceptions.ComputeError):
+            q.collect(engine=engine)
+    else:
+        with pytest.raises(pl.exceptions.ComputeError):
+            q.collect(engine=engine)
+
+
+@pytest.mark.parametrize(
+    "values, error",
+    [
+        (["foo", "bar"], pl.exceptions.ComputeError),
+        (["foo", "2024-01-01"], pl.exceptions.InvalidOperationError),
+    ],
+    ids=["no_value_sets_format", "later_value_sets_format"],
+)
+def test_strptime_infer_error_type(engine: pl.GPUEngine, values, error):
+    # polars raises ComputeError when no value can set the format, and
+    # InvalidOperationError when a later value sets it.
+    q = pl.LazyFrame({"a": values}).select(pl.col("a").str.to_datetime(cache=False))
+    with pytest.raises(error):
+        q.collect(engine="in-memory")
+    if is_streaming_engine(engine):
+        with pytest.RaisesGroup(error):
+            q.collect(engine=engine)
+    else:
+        with pytest.raises(error):
+            q.collect(engine=engine)
+
+
+def test_strptime_leap_second(engine: pl.GPUEngine):
+    # polars reads a second of 60 as the first second of the next minute.
+    df = pl.LazyFrame({"a": ["2024-01-01 23:59:60", "2024-06-30 12:00:00"]})
+    q = df.select(pl.col("a").str.to_datetime("%Y-%m-%d %H:%M:%S", cache=False))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("time_zone", ["UTC", "Asia/Kathmandu"])
+def test_strptime_time_zone(engine: pl.GPUEngine, time_zone):
+    df = pl.LazyFrame({"a": ["2024-01-01 10:30:00", None]})
+    q = df.select(
+        pl.col("a").str.to_datetime(
+            "%Y-%m-%d %H:%M:%S", time_zone=time_zone, cache=False
+        )
+    )
+    if time_zone == "UTC":
+        assert_gpu_result_equal(q, engine=engine)
+    else:
+        assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+@pytest.mark.parametrize(
     "target, repl",
     [("a", "a"), ("Wı", "☺"), ("FG", ""), ("doesnotexist", "blahblah")],  # noqa: RUF001
 )

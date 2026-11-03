@@ -227,6 +227,8 @@ def test_review_pool_excludes_local_dtype_and_engine_contracts() -> None:
         {
             "tests/test_categorical.py::test_dataframe_roundtrip": lines,
             "tests/test_engine.py::test_engine_select": lines,
+            "tests/test_mapfunction.py::test_streaming_partitioning": lines,
+            "tests/test_rolling.py::test_unsorted_raises": lines,
         },
         {"tests/unit/test_roundtrip.py::test_dataframe_roundtrip": lines},
         {source: set(range(10, 15))},

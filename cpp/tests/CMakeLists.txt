@@ -223,20 +223,6 @@ ConfigureTest(
 # JIT compilation can overlap the GPU work in other tests.
 set_tests_properties(MIXED_JOIN_TEST PROPERTIES COST 300)
 
-# Build the unsplit control with identical sources and dependencies for matched measurements.
-get_target_property(join_baseline_sources JOIN_TEST SOURCES)
-list(FIND join_baseline_sources join/direct_join_tests.cpp mixed_join_position)
-if(mixed_join_position LESS 0)
-  message(FATAL_ERROR "Cannot reconstruct the original JOIN source order")
-endif()
-list(INSERT join_baseline_sources ${mixed_join_position} join/mixed_join_tests.cu)
-ConfigureTest(
-  JOIN_UNSPLIT_BASELINE_TEST ${join_baseline_sources}
-  GPUS 1
-  PERCENT 100
-)
-set_tests_properties(JOIN_UNSPLIT_BASELINE_TEST PROPERTIES DISABLED TRUE)
-
 # ##################################################################################################
 # * is_sorted tests -------------------------------------------------------------------------------
 ConfigureTest(IS_SORTED_TEST sort/is_sorted_tests.cpp)

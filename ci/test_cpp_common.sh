@@ -42,45 +42,6 @@ fi
 export LIBCUDF_KERNEL_CACHE_PATH
 mkdir -p "${LIBCUDF_KERNEL_CACHE_PATH}"
 
-rapids-logger "Scheduling experiment runner budget"
-python - <<'PY'
-import json
-import os
-import platform
-from pathlib import Path
-
-paths = [
-    "/proc/self/cgroup",
-    "/sys/fs/cgroup/cpu.max",
-    "/sys/fs/cgroup/cpu.stat",
-    "/sys/fs/cgroup/cpuset.cpus.effective",
-    "/sys/fs/cgroup/memory.max",
-    "/sys/fs/cgroup/cpu/cpu.cfs_quota_us",
-    "/sys/fs/cgroup/cpu/cpu.cfs_period_us",
-    "/sys/fs/cgroup/cpuset/cpuset.cpus",
-    "/sys/fs/cgroup/memory/memory.limit_in_bytes",
-]
-budget = {
-    "architecture": platform.machine(),
-    "cpu_info": Path("/proc/cpuinfo").read_text().split("\n\n", 1)[0],
-    "visible_cpu_count": os.cpu_count(),
-    "affinity": sorted(os.sched_getaffinity(0)),
-    "memory_info": [
-        line for line in Path("/proc/meminfo").read_text().splitlines()
-        if line.startswith(("MemTotal:", "MemAvailable:"))
-    ],
-    "host_workers": os.environ.get("LIBCUDF_NUM_HOST_WORKERS", "default"),
-    "allocator": os.environ.get("GTEST_CUDF_RMM_MODE", "pool"),
-    "cgroup": {},
-}
-for name in paths:
-    path = Path(name)
-    if path.is_file():
-        budget["cgroup"][name] = path.read_text().strip()
-print("CUDF_SCHEDULING_RUNNER_BUDGET=" + json.dumps(budget, sort_keys=True))
-PY
-conda list --explicit
-
 rapids-print-env
 
 rapids-logger "Check GPU usage"

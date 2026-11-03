@@ -295,6 +295,71 @@ def test_scan_lake_predicate(
     assert_gpu_result_equal(q.filter(predicate).sort("a"), engine=engine)
 
 
+@pytest.fixture
+def column_mapped_iceberg(iceberg_catalog: SqlCatalog) -> str:
+    # Mirrors the upstream polars test
+    # test_scan_iceberg_parquet_prefilter_with_column_mapping: the files are
+    # written under the original schema, then the columns are promoted, dropped,
+    # renamed and reordered so the field IDs no longer match the file names.
+    tbl = iceberg_catalog.create_table(
+        "ns.column_mapped",
+        schema=pyiceberg.schema.Schema(
+            NestedField(1, "column_1", StringType(), required=False),
+            NestedField(2, "column_2", IntegerType(), required=False),
+            NestedField(3, "column_3", StringType(), required=False),
+        ),
+    )
+    df = pl.DataFrame(
+        {
+            "column_1": ["A", "B", "C", "D", "E", "F"],
+            "column_2": pl.Series([1, 2, 3, 4, 5, 6], dtype=pl.Int32),
+            "column_3": ["P", "Q", "R", "S", "T", "U"],
+        }
+    )
+    df.slice(0, 3).write_iceberg(tbl, mode="append")
+    df.slice(3).write_iceberg(tbl, mode="append")
+
+    with tbl.update_schema() as update:
+        update.update_column("column_2", LongType())
+    with tbl.update_schema() as update:
+        update.delete_column("column_1")
+    with tbl.update_schema() as update:
+        update.rename_column("column_3", "column_1")
+    with tbl.update_schema() as update:
+        update.rename_column("column_2", "column_3")
+    with tbl.update_schema() as update:
+        update.move_first("column_1")
+    tbl.refresh()
+    return tbl.metadata_location
+
+
+@pytest.mark.parametrize("use_pyiceberg_filter", [True, False])
+@pytest.mark.parametrize(
+    "predicate",
+    [
+        pl.col("column_3") == 5,
+        pl.col("column_1").is_in(["P", "T"]),
+        (pl.col("column_3") > 4) & (pl.col("column_1") != "U"),
+    ],
+)
+def test_scan_iceberg_column_mapping_filter(
+    engine: pl.GPUEngine,
+    column_mapped_iceberg: str,
+    predicate: pl.Expr,
+    *,
+    use_pyiceberg_filter: bool,
+) -> None:
+    # Predicates that reference columns whose names changed since the files
+    # were written must be evaluated against the renamed (field ID mapped)
+    # columns, both with and without pyiceberg pruning files first.
+    q = pl.scan_iceberg(
+        column_mapped_iceberg,
+        reader_override="native",
+        use_pyiceberg_filter=use_pyiceberg_filter,
+    ).filter(predicate)
+    assert_gpu_result_equal(q.sort("column_3"), engine=engine)
+
+
 @pytest.mark.parametrize(
     "query",
     [

@@ -140,7 +140,7 @@ inline cuda::mr::any_resource<cuda::mr::device_accessible> create_memory_resourc
  * @brief Parses the cuDF test command line options.
  *
  * Currently only supports 'rmm_mode' string parameter, which set the rmm
- * allocation mode. The default value of the parameter is 'pool'.
+ * allocation mode. The default value of the parameter is 'async'.
  * Environment variable 'CUDF_TEST_RMM_MODE' can also be used to set the rmm
  * allocation mode. If both are set, the value of 'rmm_mode' string parameter
  * takes precedence.

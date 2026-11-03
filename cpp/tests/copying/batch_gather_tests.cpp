@@ -2858,6 +2858,21 @@ TEST_F(StringLeanIteratorsParity, RoutedSeparateResourcesParity)
   // Stock oracle: DONT_CHECK + NOT_ALLOWED, same as the batch_gather call below.
   auto expected = run_reference(source_table, gather_map);
 
+  // The destination slices ride the carve arena, which rounds every slice to its 256 B
+  // carve granularity, while `alloc_size()` counts logical bytes — so the harness's
+  // byte-exact live-output check needs the ROUNDED live bytes, not `alloc_size()`.
+  // Mirrors `gate_shape_strings`'s length/validity formulas (seed 6, nullable) and the
+  // random map's gathered-char total, both host-side deterministic.
+  auto const string_len = [](cudf::size_type i) { return (i * 6 + i / 97) % 33; };
+  int64_t chars_bytes   = 0;
+  for (auto const src : host_map) {
+    if (src % 5 != 0) { chars_bytes += string_len(src); }
+  }
+  auto const round_up_256 = [](std::size_t v) { return (v + 255) / 256 * 256; };
+  auto const expected_output_bytes =
+    round_up_256(static_cast<std::size_t>(num_rows + 1) * sizeof(int32_t)) +
+    round_up_256(static_cast<std::size_t>(chars_bytes)) + (num_rows + 7) / 8;
+
   cudf::test::expect_api_uses_memory_resources(
     harness,
     [&](cudf::memory_resources mr) {
@@ -2868,7 +2883,7 @@ TEST_F(StringLeanIteratorsParity, RoutedSeparateResourcesParity)
                                         stream,
                                         mr);
     },
-    [](auto const& result) { return result->alloc_size(); },
+    [&](auto const&) { return expected_output_bytes; },
     [&](auto const& result) { CUDF_TEST_EXPECT_TABLES_EQUAL(expected->view(), result->view()); },
     {cudf::test::output_allocation_expectation::AT_LEAST_LIVE,
      cudf::test::temporary_allocation_expectation::SOME},

@@ -1089,6 +1089,139 @@ CUDF_KERNEL void string_routed_metadata_kernel(string_work_item const* routed_it
   }
 }
 
+// Fused short-string engine for the UNROUTED string cohort — the below-gate path's
+// chars+offsets+masks+counts in ONE kernel, replacing the group-walk payload kernel (8-row
+// groups × 3 CTA barriers per group, a per-byte binary-search fan) and leaving str1's
+// above-gate routing untouched: routed columns' chars still ride cub::DeviceMemcpy::Batched
+// and their metadata still rides string_routed_metadata_kernel.
+//
+// Geometry: one warp owns 32 consecutive rows of ONE column per iteration (a per-column tile
+// walk — tiles never straddle a column, so each column's scratch slice restarts at its own
+// boundary). Per iteration, barrier-free at CTA scope:
+//   resolve — lane r resolves destination row tile_row0+r once: one map read, validity, and
+//             the row's gathered size; the lane writes its offsets entry straight from the
+//             scan scratch (dense publication, no staged boundaries) and stages (src, size)
+//             into warp-private shared slots. The lane owning the column's last row also
+//             writes the N+1 sentinel (scratch[num_rows] — the column total). Row 0's entry
+//             IS its +0 scratch value, so the child's first entry needs no special case.
+//   masks   — __ballot_sync over the full warp (dead lanes vote false; tail words exact)
+//             writes the mask word and pops the count into the column's atomic counter; the
+//             ballot is ALSO the staged slots' warp-wide publication point.
+//   chars   — 4-lane subgroups copy short rows (at or under kBlockRowCopyThreshold bytes):
+//             8 subgroups in flight per round, subgroup sub taking rows sub, sub+8, sub+16,
+//             sub+24 — each subgroup knows its row directly from the staged slots, so there
+//             is no per-byte binary search and no shared group publication. Rows above the
+//             gate fall to a serial full-warp pass (the stock copy_string_span strategy) —
+//             never truncated. The ballot doubles as the staged slots' warp-wide publication
+//             (its writes precede the reads in program order); one warp-level barrier per 32
+//             rows replaces the walk's twelve CTA barriers, and because the staging is
+//             warp-private no CTA barrier ever separates tile iterations.
+//
+// The launch grid covers `num_unrouted * ceil(num_rows / warp_size)` warp slots; a tail
+// slot's dead lanes vote false, store nothing, and participate in every warp collective.
+template <size_type BlockSize>
+CUDF_KERNEL __launch_bounds__(BlockSize) void string_fused_short_engine_kernel(
+  string_work_item const* items,
+  size_type const* unrouted,  // unrouted cohort -> items
+  int64_t num_unrouted,
+  int64_t num_rows,
+  size_type num_source_rows,
+  bool check_bounds,
+  bool negative_allowed,
+  input_indexalator gather_map)
+{
+  static_assert(BlockSize % warp_size == 0);
+  auto const warp            = static_cast<size_type>(threadIdx.x / warp_size);
+  auto const lane            = static_cast<size_type>(threadIdx.x % warp_size);
+  auto const warps_per_block = static_cast<size_type>(BlockSize / warp_size);
+  // Warp-private staging: slot r holds destination row (tile_row0 + r)'s resolved source row
+  // (-1 = dead/no-work) and gathered byte size. Rewritten by the owning warp every iteration.
+  __shared__ int64_t warp_src[BlockSize / warp_size][warp_size];
+  __shared__ int64_t warp_len[BlockSize / warp_size][warp_size];
+
+  auto const tiles_per_col =
+    static_cast<int64_t>(util::div_rounding_up_safe(num_rows, static_cast<int64_t>(warp_size)));
+  auto const total_tiles = num_unrouted * tiles_per_col;
+  for (int64_t t = static_cast<int64_t>(blockIdx.x) * warps_per_block + warp; t < total_tiles;
+       t += static_cast<int64_t>(gridDim.x) * warps_per_block) {
+    auto const col       = static_cast<size_type>(t / tiles_per_col);
+    auto const tile_row0 = (t % tiles_per_col) * static_cast<int64_t>(warp_size);
+    auto const tile_rows =
+      cuda::std::min<int64_t>(static_cast<int64_t>(warp_size), num_rows - tile_row0);
+    auto const& item = items[unrouted[col]];
+
+    // resolve + offsets + staging: lane-parallel, one row per lane. Dead rows stage as
+    // no-work (-1/0) so the chars phase never consults the map for them again.
+    auto const row  = tile_row0 + static_cast<int64_t>(lane);
+    auto const live = static_cast<int64_t>(lane) < tile_rows;
+    int64_t src     = -1;
+    int64_t len     = 0;
+    if (live) {
+      src = resolve_gathered_row(
+        gather_map, static_cast<size_type>(row), num_source_rows, check_bounds, negative_allowed);
+      *(item.dst_offsets + row) = item.dst_scratch[row];
+      if (row + 1 == num_rows) { *(item.dst_offsets + num_rows) = item.dst_scratch[num_rows]; }
+      if (src >= 0 and
+          (item.src_mask == nullptr or
+           bit_is_set(item.src_mask, static_cast<size_type>(item.mask_bit_offset + src)))) {
+        auto const s = static_cast<size_type>(src);
+        len          = item.src_offsets[s + 1] - item.src_offsets[s];
+      } else {
+        src = -1;
+      }
+    }
+    warp_src[warp][lane] = src;
+    warp_len[warp][lane] = len;
+
+    // masks + counts: the ballot runs on EVERY lane of every warp (dead lanes vote false),
+    // so tail words pack exactly; words are written wholesale, never OR'd into stale storage.
+    // The ballot also publishes the staged slots warp-wide (writes above precede it).
+    auto const word_bits = __ballot_sync(0xffffffffu, src >= 0);
+    if (live and lane == 0) {
+      if (item.dst_mask != nullptr) {
+        item.dst_mask[static_cast<size_type>(tile_row0 / warp_size)] = word_bits;
+      }
+      if (item.valid_count != nullptr) {
+        cuda::atomic_ref<size_type, cuda::thread_scope_device> ref{*item.valid_count};
+        ref.fetch_add(cuda::std::popcount(word_bits), cuda::std::memory_order_relaxed);
+      }
+    }
+
+    // chars, short rows: subgroup sub copies rows sub, sub+8, sub+16, sub+24 (8 rows in
+    // flight per round, 4 rounds per tile). The bounds differ per subgroup — safe: nothing
+    // inside the loop is a warp collective.
+    auto const sub      = static_cast<size_type>(lane / 4);
+    auto const sub_lane = static_cast<int64_t>(lane % 4);
+    for (int64_t r = static_cast<int64_t>(sub); r < tile_rows; r += warp_size / 4) {
+      auto const row_src = warp_src[warp][r];
+      auto const row_len = warp_len[warp][r];
+      if (row_src < 0 or row_len == 0 or row_len > kBlockRowCopyThreshold) { continue; }
+      auto const g_row    = tile_row0 + r;
+      auto const s        = static_cast<size_type>(row_src);
+      char* dst_ptr       = item.dst_chars + item.dst_scratch[g_row];
+      char const* src_ptr = item.src_chars + item.src_offsets[s];
+      // 4 lanes cover the row: byte p goes to the lane with p % 4 == sub_lane.
+      for (int64_t p = sub_lane; p < row_len; p += 4) {
+        dst_ptr[p] = src_ptr[p];
+      }
+    }
+    // chars, long rows: the stock warp-cooperative copy, one row at a time. The scan loop is
+    // warp-uniform (shared reads broadcast) and copy_string_span holds no collectives, so the
+    // per-row divergence-free invariant holds even with the subgroup loop above skipped out.
+    for (int64_t r = 0; r < tile_rows; ++r) {
+      auto const row_len = warp_len[warp][r];
+      if (row_len <= kBlockRowCopyThreshold) { continue; }
+      auto const g_row = tile_row0 + r;
+      auto const s     = static_cast<size_type>(warp_src[warp][r]);
+      copy_string_span(item.dst_chars + item.dst_scratch[g_row],
+                       item.src_chars + item.src_offsets[s],
+                       row_len,
+                       static_cast<int64_t>(lane),
+                       warp_size);
+    }
+  }
+}
+
 // Tile width for regimes where sampling is skipped; nullopt means "sample the map". Zero/one
 // fused columns keep K1; otherwise the unsampled choice is K2 while the two-column working set
 // plus the map fit half of L2 (a failed L2 query reports 0 bytes and takes the safe K1).
@@ -2537,6 +2670,25 @@ struct descriptor_path_builder {
                                                 check_bounds,
                                                 negative_allowed,
                                                 map_begin);
+      CUDF_CUDA_TRY(cudaGetLastError());
+    } else if (engine_active) {
+      auto const d_engine_cols = cudf::detail::make_device_uvector_async(
+        host_span<size_type const>{engine_cols}, stream, temp_mr);
+      auto const engine_tiles =
+        static_cast<int64_t>(engine_cols.size()) *
+        util::div_rounding_up_safe(static_cast<int64_t>(num_rows), static_cast<int64_t>(warp_size));
+      auto const engine_grid = static_cast<unsigned>(std::min<int64_t>(
+        util::div_rounding_up_safe(engine_tiles, static_cast<int64_t>(block_size / warp_size)),
+        static_cast<int64_t>(65535)));
+      string_fused_short_engine_kernel<block_size>
+        <<<engine_grid, block_size, 0, stream.get()>>>(d_payload_items.data(),
+                                                       d_engine_cols.data(),
+                                                       static_cast<int64_t>(engine_cols.size()),
+                                                       static_cast<int64_t>(num_rows),
+                                                       num_source_rows,
+                                                       check_bounds,
+                                                       negative_allowed,
+                                                       map_begin);
       CUDF_CUDA_TRY(cudaGetLastError());
     }
 

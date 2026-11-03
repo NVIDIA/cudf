@@ -2553,6 +2553,11 @@ TEST_F(StringFusedEngineParity, BandLongRowsKeepPayloadKernel)
   CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
 }
 
+// §5.7 Randomized differential against the stock gather (reference oracle).
+// ============================================================================
+
+class BatchGatherRandomizedTest : public cudf::test::BaseFixture {};
+
 std::vector<cudf::type_id> const& random_candidate_types()
 {
   static std::vector<cudf::type_id> const candidates{cudf::type_id::INT8,

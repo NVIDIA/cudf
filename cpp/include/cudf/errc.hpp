@@ -6,6 +6,8 @@
 
 #include <cudf/utilities/export.hpp>
 
+#include <cuda/std/cstdint>
+
 /**
  * @file
  * @brief Error codes for libcudf operations.
@@ -19,7 +21,7 @@ namespace CUDF_EXPORT cudf {
  */
 
 /// @brief Integer representation of error-returning device functions, including external UDFs.
-using error_int = int;
+using error_int = cuda::std::int32_t;
 
 /**
  * @brief An enumeration of error codes that can occur during operations.

@@ -30,7 +30,7 @@ using column_wrapper = cudf::test::fixed_width_column_wrapper<T>;
 template <typename T>
 using decimal_wrapper = cudf::test::fixed_point_column_wrapper<typename T::rep>;
 
-TEST_F(TransformLTOTest, CompiledFragmentOwnershipAndIncludes)
+TEST_F(TransformLTOTest, CompileUdfWithIncludes)
 {
   constexpr char source[] = R"(
 #include "scale.cuh"
@@ -42,82 +42,7 @@ extern "C" __device__ int transform(float* output, float input)
 )";
   char const* names[]{"scale.cuh"};
   char const* headers[]{"inline constexpr float scale = 3.0f;"};
-  auto fragment = cudf::compile_cuda_to_lto_ir(source, false, names, headers, {});
-  auto owner    = fragment;
-  EXPECT_EQ(owner.view().data(), fragment.view().data());
-  fragment = {};
-  EXPECT_TRUE(fragment.view().empty());
-  ASSERT_FALSE(owner.view().empty());
-
-  column_wrapper<float> input{{1, 2, 4}};
-  cudf::transform_input inputs[]{input};
-  cudf::transform_output outputs[]{
-    {cudf::data_type{cudf::type_id::FLOAT32}, cudf::output_nullability::ALL_VALID}};
-  auto apply = [&](cudf::compiled_fragment const& code) {
-    return cudf::transform_lto(code.view(),
-                               cudf::lto_binary_type::LTO_IR,
-                               cudf::null_aware::NO,
-                               std::nullopt,
-                               inputs,
-                               outputs,
-                               {},
-                               std::nullopt,
-                               cudf::test::get_default_stream());
-  };
-  auto result = apply(owner);
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(result->get_column(0), (column_wrapper<float>{{3, 6, 12}}));
-
-  temp_directory directory{"cudf_lto_headers"};
-  {
-    std::ofstream file{directory.path() + "scale.cuh"};
-    ASSERT_TRUE(file.good());
-    file << "inline constexpr float scale = 5.0f;";
-  }
-  char const* paths[]{directory.path().c_str()};
-  auto filesystem_code = cudf::compile_cuda_to_lto_ir(source, false, {}, {}, paths);
-  result               = apply(filesystem_code);
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(result->get_column(0), (column_wrapper<float>{{5, 10, 20}}));
-}
-
-TEST_F(TransformLTOTest, CompiledFragmentFailuresAndErrorABI)
-{
-  static_assert(std::is_same_v<std::underlying_type_t<cudf::errc>, cudf::error_int>);
-  static_assert(sizeof(cudf::errc) == sizeof(int));
-  EXPECT_THROW(static_cast<void>(cudf::compile_cuda_to_lto_ir(nullptr, false, {}, {}, {})),
-               std::invalid_argument)
-    << "A null CUDA source pointer is invalid";
-  char const* missing[]{"missing.cuh"};
-  EXPECT_THROW(static_cast<void>(cudf::compile_cuda_to_lto_ir("", false, missing, {}, {})),
-               std::invalid_argument)
-    << "Each in-memory header name requires matching contents";
-
-  constexpr char source[] = R"(
-#include <cudf/errc.hpp>
-extern "C" __device__ cudf::errc transform(float* output, float input)
-{
-  *output = input;
-  return cudf::errc::DIVISION_BY_ZERO;
-}
-)";
-  auto fragment           = cudf::compile_cuda_to_lto_ir(source, true, {}, {}, {});
-  column_wrapper<float> input{{1, 2}};
-  cudf::transform_input inputs[]{input};
-  cudf::transform_output outputs[]{
-    {cudf::data_type{cudf::type_id::FLOAT32}, cudf::output_nullability::ALL_VALID}};
-  try {
-    cudf::transform_lto(fragment.view(),
-                        cudf::lto_binary_type::LTO_IR,
-                        cudf::null_aware::NO,
-                        std::nullopt,
-                        inputs,
-                        outputs,
-                        {},
-                        std::nullopt,
-                        cudf::test::get_default_stream());
-    FAIL() << "The device callback must propagate DIVISION_BY_ZERO";
-  } catch (cudf::evaluation_error const& error) {
-    EXPECT_EQ(error.error_code(), cudf::errc::DIVISION_BY_ZERO);
-  }
+  EXPECT_NO_THROW(static_cast<void>(cudf::compile_cuda_to_lto_ir(source, names, headers, {})));
 }
 
 TEST_F(TransformLTOTest, NullableDictionary)

@@ -533,7 +533,7 @@ class alignas(16) column_device_view_core : public detail::column_device_view_ba
    * is null
    */
   template <typename T>
-  [[nodiscard]] __device__ decltype(auto) nullable_element(size_type element_index) const noexcept
+  [[nodiscard]] __device__ auto nullable_element(size_type element_index) const noexcept
   {
     using value_type = decltype(element<T>(element_index));
     if (is_null(element_index)) { return cuda::std::optional<value_type>{}; }
@@ -738,7 +738,7 @@ class alignas(16) mutable_column_device_view_core : public detail::column_device
    * is null
    */
   template <typename T>
-  [[nodiscard]] __device__ decltype(auto) nullable_element(size_type element_index) const noexcept
+  [[nodiscard]] __device__ auto nullable_element(size_type element_index) const noexcept
   {
     using value_type = decltype(element<T>(element_index));
     if (is_null(element_index)) { return cuda::std::optional<value_type>{}; }

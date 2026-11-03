@@ -296,7 +296,6 @@ rtcx::blob compile_fragment(char const* name,
                             std::span<char const* const> extra_header_include_names,
                             std::span<char const* const> extra_headers,
                             std::span<char const* const> name_expressions,
-                            bool includes_cudf,
                             std::span<char const* const> include_paths)
 {
   CUDF_FUNC_RANGE();
@@ -314,10 +313,8 @@ rtcx::blob compile_fragment(char const* name,
   for (auto const* include_dir : include_paths) {
     options.emplace_back(std::format("-I{}", include_dir));
   }
-  if (includes_cudf) {
-    for (auto const& include_dir : ctx.jit_bundle().get_include_directories()) {
-      options.emplace_back(std::format("-I{}", include_dir));
-    }
+  for (auto const& include_dir : ctx.jit_bundle().get_include_directories()) {
+    options.emplace_back(std::format("-I{}", include_dir));
   }
 
   options.emplace_back(std::format("--gpu-architecture=sm_{}", LTO_ARCHITECTURE));
@@ -377,13 +374,12 @@ rtcx::blob compile_fragment(char const* name,
 
 }  // namespace
 
-std::span<uint8_t const> compiled_fragment::view() const noexcept
+lto_fragment compiled_fragment::view() const noexcept
 {
-  return blob_ ? blob_->view() : std::span<uint8_t const>{};
+  return lto_fragment{.type = lto_binary_type::LTO_IR, .data = blob_->view()};
 }
 
 compiled_fragment compile_cuda_to_lto_ir(char const* source_code,
-                                         bool includes_cudf,
                                          std::span<char const*> include_names,
                                          std::span<char const*> includes,
                                          std::span<char const* const> include_paths)
@@ -394,10 +390,8 @@ compiled_fragment compile_cuda_to_lto_ir(char const* source_code,
                "Header names and contents must have the same size",
                std::invalid_argument);
 
-  compiled_fragment result;
-  result.blob_ = compile_fragment(
-    "cudf_udf.cu", source_code, include_names, includes, {}, includes_cudf, include_paths);
-  return result;
+  return compiled_fragment(compile_fragment(
+    "cudf_udf.cu", source_code, include_names, includes, {}, includes_cudf, include_paths));
 }
 
 kernel get_kernel(std::string const& name,

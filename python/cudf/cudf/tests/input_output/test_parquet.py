@@ -4991,8 +4991,7 @@ def memory_resource(request):
         mr = rmm.mr.CudaMemoryResource()
     elif kind == "pool":
         base = rmm.mr.CudaMemoryResource()
-        free, _ = rmm.mr.available_device_memory()
-        size = int(round(free * 0.5 / 256) * 256)
+        size = 2**30
         mr = rmm.mr.PoolMemoryResource(base, size, size)
     elif kind == "cuda_async":
         mr = rmm.mr.CudaAsyncMemoryResource()

@@ -969,8 +969,7 @@ std::unique_ptr<cudf::column> create_distinct_rows_column<cudf::struct_view>(
   auto const null_count = col->null_count();
   auto col_contents     = col->release();
   col_contents.children.push_back(std::move(children[0]));
-  // Unlike create_structs_hierarchy, this also nulls the added child where the struct is null, as
-  // the other children already are. The Parquet writer expects that (#23868).
+  // Unlike create_structs_hierarchy, this also sanitizes nulls across struct children
   auto structs_col = cudf::make_structs_column(
     num_rows, std::move(col_contents.children), null_count, std::move(*col_contents.null_mask));
   return std::move(cudf::sample(cudf::table_view({structs_col->view()}), num_rows)->release()[0]);

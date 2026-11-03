@@ -1,9 +1,13 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 package ai.rapids.cudf;
 
+/**
+ * The color of an NVTX range, as shown in profiling tools.
+ * Used with {@link NvtxRange}.
+ */
 public enum NvtxColor {
   GREEN(0xff00ff00),
   BLUE(0xff0000ff),

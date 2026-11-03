@@ -144,7 +144,11 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
                 pl.col("d_year")
                 .rank(method="ordinal")
                 .over(
-                    ["i_category", "i_brand", "cc_name"], order_by=["d_year", "d_moy"]
+                    ["i_category", "i_brand", "cc_name"],
+                    # One struct key, not a list: Polars 2.1 plans a list of keys with a
+                    # row_encode expression that cudf-polars cannot see, so the query
+                    # would run on the CPU. See https://github.com/NVIDIA/cudf/issues/24936
+                    order_by=pl.struct("d_year", "d_moy"),
                 )
                 .alias("rn"),
             ]

@@ -684,6 +684,16 @@ physical) and [resources][qr] like Device Memory.
 Certain entities have special lifecycle rules, so they should be modeled as a
 [Quent FSM][fsm]. These include entities like a `Query`, `Engine`, and `Actor`.
 
+The `DeviceMemory` timeline is a rough estimate of known input data resident
+while each `Evaluate` is running. It records the size (in bytes) of its input
+`DataFrame` arguments, but does not include outputs, libcudf scratch space or
+intermediates, queued, channel, cached, packed, or spilled data, shuffle or
+network buffers, allocations outside a `DataFrame`, or memory retained after an
+evaluation. Repeated inputs, columns that are views of the same underlying
+buffer, and separate `DataFrame` wrappers that alias buffers may be counted more
+than once. Inputs released during an evaluation are counted for its full running
+interval.
+
 [qt]: https://rapidsai.github.io/quent/tutorial/
 [qsv]: https://rapidsai.github.io/quent/schema/
 [fsm]: https://rapidsai.github.io/quent/tutorial/instrumentation/modules/finite-state-machine/index.html

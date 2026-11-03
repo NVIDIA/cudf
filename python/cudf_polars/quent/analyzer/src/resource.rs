@@ -36,10 +36,8 @@ pub(crate) fn resource_type(name: &str) -> ResourceTypeDecl {
         }
         _ => unreachable!("resource type validated by caller"),
     };
-    if name != DEVICE_MEMORY_RESOURCE_TYPE {
-        resource_type
-            .used_by
-            .push(EVALUATE_ENTITY_TYPE.parse().expect("valid schema path"));
-    }
+    resource_type
+        .used_by
+        .push(EVALUATE_ENTITY_TYPE.parse().expect("valid schema path"));
     resource_type
 }

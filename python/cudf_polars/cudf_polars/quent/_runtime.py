@@ -359,6 +359,10 @@ class QuentWorkerRuntime:
             input_bytes=input_frames_bytes,
             input=input_attributes,
             processor=processor,
+            device_memory={
+                "target": self.worker_resources.device_memory_id,
+                "data": {"bytes": input_frames_bytes},
+            },
             channel=channel,
         )
 

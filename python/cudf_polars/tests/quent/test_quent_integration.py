@@ -397,3 +397,16 @@ def test_quent_lifecycle(
         for event in _of_type(events, entity)
     ]
     assert len(memory_ids) == len(set(memory_ids))
+
+    device_memory_ids = {event["id"] for event in _of_type(events, "DeviceMemory")}
+    running_evaluations = [
+        event["data"]["Evaluate"]["Running"]
+        for event in _of_type(events, "Evaluate")
+        if "Running" in event["data"]["Evaluate"]
+    ]
+    assert running_evaluations
+    assert all(
+        event["device_memory"]["target"] in device_memory_ids
+        and event["device_memory"]["data"]["bytes"] >= 0
+        for event in running_evaluations
+    )

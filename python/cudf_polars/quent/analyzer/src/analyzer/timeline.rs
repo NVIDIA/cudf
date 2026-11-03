@@ -148,6 +148,22 @@ impl CudfPolarsUiAnalyzer {
                         },
                     )?;
                 }
+                if resource_type_name == DEVICE_MEMORY_RESOURCE_TYPE
+                    && let (Some((device_memory_id, _)), Some(device_memory_bytes)) = (
+                        evaluate.device_memory,
+                        evaluate.device_memory_bytes.as_ref(),
+                    )
+                    && selected_resource_ids.contains(&device_memory_id)
+                {
+                    builder.try_push(
+                        "running",
+                        &EvaluateUsage {
+                            evaluate,
+                            resource_id: device_memory_id,
+                            capacity: device_memory_bytes,
+                        },
+                    )?;
+                }
                 if resource_type_name == DATA_CHANNEL_RESOURCE_TYPE
                     && let (Some((channel_id, _)), Some(channel_bytes)) =
                         (evaluate.channel, evaluate.channel_bytes.as_ref())
@@ -193,6 +209,19 @@ impl CudfPolarsUiAnalyzer {
                         evaluate,
                         resource_id: evaluate.processor_id,
                         capacity: &evaluate.processor_unit,
+                    })?;
+                }
+                if resource_type_name == DEVICE_MEMORY_RESOURCE_TYPE
+                    && let (Some((device_memory_id, _)), Some(device_memory_bytes)) = (
+                        evaluate.device_memory,
+                        evaluate.device_memory_bytes.as_ref(),
+                    )
+                    && selected_resource_ids.contains(&device_memory_id)
+                {
+                    builder.try_push(&EvaluateUsage {
+                        evaluate,
+                        resource_id: device_memory_id,
+                        capacity: device_memory_bytes,
                     })?;
                 }
                 if resource_type_name == DATA_CHANNEL_RESOURCE_TYPE

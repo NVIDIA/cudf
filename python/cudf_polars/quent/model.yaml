@@ -356,6 +356,7 @@ fsms:
           input_bytes: u64
           input: EvaluateInput
           processor: { uses: Processor }
+          device_memory: { option: { uses: DeviceMemory } }
           channel: { option: { uses: DataChannel } }
         to: [completed, failed]
       completed:

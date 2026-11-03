@@ -23,7 +23,7 @@ namespace CUDF_EXPORT cudf {
 /**
  * @brief An enumeration of error codes that can occur during operations.
  */
-enum class [[nodiscard]] errc : cuda::std::int8_t {
+enum class [[nodiscard]] errc : cuda::std::int32_t {
   SUCCESS             = 0,
   ARITHMETIC_OVERFLOW = 1,
   DIVISION_BY_ZERO    = 2,

@@ -25,7 +25,6 @@
 #include <tests/binaryop/binop-fixture.hpp>
 
 #include <cudf/binaryop.hpp>
-#include <cudf/copying.hpp>
 
 // Exercise the deprecated PTX API until its removal.
 #pragma GCC diagnostic push
@@ -210,6 +209,28 @@ TEST_F(BinaryOperationGenericPTXTest, CAdd_Vector_Vector_INT64_INT32_INT64)
   auto out = cudf::binary_operation(lhs, rhs, ptx, cudf::data_type(cudf::type_to_id<TypeOut>()));
 
   ASSERT_BINOP<TypeOut, TypeLhs, TypeRhs>(*out, lhs, rhs, CADD);
+}
+
+TEST_F(BinaryOperationGenericPTXTest, PropagatesErrorStatus)
+{
+  std::string const ptx = R"ptx(
+.version 6.3
+.target sm_70
+.address_size 64
+.visible .func (.param .b32 status) original(
+  .param .b64 output, .param .b32 lhs, .param .b32 rhs)
+{
+  {
+    .reg .b32 %status;
+    mov.u32 %status, 2;
+    st.param.b32 [status], %status;
+  }
+  ret;
+}
+)ptx";
+  cudf::test::fixed_width_column_wrapper<int32_t> input{1, 2, 3};
+  EXPECT_THROW(cudf::binary_operation(input, input, ptx, cudf::data_type{cudf::type_id::INT32}),
+               cudf::evaluation_error);
 }
 
 #pragma GCC diagnostic pop

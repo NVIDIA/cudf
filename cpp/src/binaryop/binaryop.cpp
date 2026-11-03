@@ -22,7 +22,6 @@
  */
 
 #include "compiled/binary_ops.hpp"
-#include "jit/parser.hpp"
 
 #include <cudf/binaryop.hpp>
 #include <cudf/column/column_factories.hpp>
@@ -372,28 +371,20 @@ std::unique_ptr<column> binary_operation(column_view const& lhs,
 
   if (lhs.is_empty()) { return make_empty_column(output_type); }
 
-  // Keep the legacy fixed-width type support when adapting the PTX UDF to transform.
-  // In particular, the PTX transform interface only accepts numeric types.
-  auto const cuda_source =
-    cudf::jit::parse_single_function_ptx(ptx,
-                                         "GENERIC_TRANSFORM_OP",
-                                         {{0, cudf::type_to_name(output_type) + " *"},
-                                          {1, cudf::type_to_name(lhs.type())},
-                                          {2, cudf::type_to_name(rhs.type())}});
-
   std::array<transform_input, 2> inputs{lhs, rhs};
   std::array<transform_output, 1> outputs{transform_output{.type = output_type}};
 
-  auto result = cudf::transform(cuda_source,
-                                udf_source_type::CUDA,
-                                null_aware::NO,
-                                std::nullopt,
-                                inputs,
-                                outputs,
-                                {},
-                                std::nullopt,
-                                stream,
-                                mr);
+  auto result =
+    cudf::transform_lto(std::span{reinterpret_cast<uint8_t const*>(ptx.data()), ptx.size()},
+                        lto_binary_type::PTX,
+                        null_aware::NO,
+                        std::nullopt,
+                        inputs,
+                        outputs,
+                        {},
+                        std::nullopt,
+                        stream,
+                        mr);
 
   auto columns = result->release();
   return std::move(columns.front());

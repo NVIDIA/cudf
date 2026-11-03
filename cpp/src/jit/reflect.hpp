@@ -21,14 +21,12 @@ namespace cudf::jit {
 struct transform_reflection {
   std::string input_accessors;
   std::string output_accessors;
-  std::vector<std::string> ptx_input_value_types;
-  std::vector<std::string> ptx_output_value_types;
 
   bool operator==(transform_reflection const& other) const = default;
 };
 
 /**
- * @brief Reflects input/output accessors and PTX value types.
+ * @brief Reflects input/output accessors.
  *
  * @param source_type The type of the UDF source (either CUDA source or LTO binary).
  * @param inputs The input type specifications.
@@ -42,7 +40,7 @@ struct transform_reflection {
  * @param output_table_indices Optional mapping of output table indices. If empty, the index at
  * position `i` is used.
  *
- * @return A transform_reflection containing the reflected accessors and PTX value types.
+ * @return A transform_reflection containing the reflected accessors.
  */
 transform_reflection reflect(std::variant<udf_source_type, lto_binary_type> source_type,
                              std::span<transform_input_spec const> inputs,
@@ -52,7 +50,7 @@ transform_reflection reflect(std::variant<udf_source_type, lto_binary_type> sour
                              std::span<int32_t const> output_table_sources = {},
                              std::span<int32_t const> output_table_indices = {});
 
-/** @brief Reflects accessors and PTX value types from column storage.
+/** @brief Reflects accessors from column storage.
  *
  * @param source_type The type of the UDF source (either CUDA source or LTO binary).
  * @param inputs The input columns or scalars.
@@ -66,7 +64,7 @@ transform_reflection reflect(std::variant<udf_source_type, lto_binary_type> sour
  * @param output_table_indices Optional mapping of output table indices. If empty, the index at
  * position `i` is used.
  *
- * @return A transform_reflection containing the reflected accessors and PTX value types.
+ * @return A transform_reflection containing the reflected accessors.
  */
 transform_reflection reflect(std::variant<udf_source_type, lto_binary_type> source_type,
                              std::span<transform_input const> inputs,

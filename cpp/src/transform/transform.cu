@@ -57,18 +57,10 @@ kernel instantiate(bool is_null_aware,
                    bool has_user_data,
                    std::string const& ins,
                    std::string const& outs,
-                   std::vector<std::string> const& ptx_input_types,
-                   std::vector<std::string> const& ptx_output_types,
-                   std::string const& udf,
-                   udf_source_type source_type)
+                   std::string const& udf)
 {
   CUDF_FUNC_RANGE();
-  auto cuda_source = (source_type == udf_source_type::PTX)
-                       ? jit::parse_single_function_ptx(
-                           udf,
-                           "GENERIC_TRANSFORM_OP",
-                           jit::build_ptx_params(ptx_output_types, ptx_input_types, has_user_data))
-                       : jit::parse_single_function_cuda(udf, "GENERIC_TRANSFORM_OP");
+  auto cuda_source = jit::parse_single_function_cuda(udf, "GENERIC_TRANSFORM_OP");
 
   auto kernel = rtcx::reflect_template("cudf::jit::transform_kernel",
                                        rtcx::reflect(is_null_aware),
@@ -102,8 +94,8 @@ std::tuple<rtcx::blob, lto_binary_type, std::string> instantiate_fragment(
   bool has_user_data,
   std::string const& ins,
   std::string const& outs,
-  std::span<input_column_view const> inputs,
-  std::span<output_column const> outputs)
+  std::span<transform_input_spec const> inputs,
+  std::span<transform_output_spec const> outputs)
 {
   CUDF_FUNC_RANGE();
   // substitutes the `CUDF_KERNEL_INSTANCE` macro
@@ -160,23 +152,65 @@ auto to_args(std::span<input_column_view const> inputs,
   return std::make_tuple(std::move(d_args), std::move(handles));
 }
 
-kernel get_kernel(bool is_null_aware,
-                  bool has_user_data,
-                  std::span<input_column_view const> inputs,
-                  std::span<output_column const> outputs,
-                  std::string const& udf,
-                  udf_source_type source_type)
+rtcx::binary_type as_rtcx_binary_type(lto_binary_type type)
 {
-  auto [in_types, out_types, ptx_in_types, ptx_out_types] =
-    jit::reflect(source_type, inputs, outputs);
-  return instantiate(is_null_aware,
-                     has_user_data,
-                     in_types,
-                     out_types,
-                     ptx_in_types,
-                     ptx_out_types,
-                     udf,
-                     source_type);
+  switch (type) {
+    case lto_binary_type::LTO_IR: return rtcx::binary_type::LTO_IR;
+    case lto_binary_type::FATBIN: return rtcx::binary_type::FATBIN;
+    case lto_binary_type::PTX: return rtcx::binary_type::PTX;
+    default:
+      CUDF_FAIL(
+        std::format("Unrecognized LTO binary type {} for LTO transform", static_cast<int>(type)),
+        std::invalid_argument);
+  }
+}
+
+kernel get_linked_kernel(
+  std::optional<std::tuple<std::span<uint8_t const>, lto_binary_type, char const*>>
+    precompiled_kernel_fragment,
+  bool is_null_aware,
+  bool has_user_data,
+  std::span<transform_input_spec const> inputs,
+  std::span<transform_output_spec const> outputs,
+  std::span<uint8_t const> udf_binary,
+  lto_binary_type source_type)
+{
+  auto [in_types, out_types] = jit::reflect(source_type, inputs, outputs);
+
+  std::span<uint8_t const> kernel_fragment;
+  lto_binary_type kernel_fragment_binary_type = lto_binary_type::FATBIN;
+  rtcx::blob fragment_blob                    = nullptr;
+  std::string kernel_fragment_id;
+
+  if (precompiled_kernel_fragment.has_value()) {
+    std::tie(kernel_fragment, kernel_fragment_binary_type, kernel_fragment_id) =
+      *precompiled_kernel_fragment;
+  } else {
+    std::tie(fragment_blob, kernel_fragment_binary_type, kernel_fragment_id) =
+      instantiate_fragment(is_null_aware, has_user_data, in_types, out_types, inputs, outputs);
+    kernel_fragment = fragment_blob->view();
+  }
+
+  // nvJitLink consumes PTX as a NUL-terminated string.
+  std::string ptx;
+  if (source_type == lto_binary_type::PTX) {
+    ptx        = jit::parse_single_function_ptx(reinterpret_cast<char const*>(udf_binary.data()));
+    udf_binary = {reinterpret_cast<uint8_t const*>(ptx.c_str()), ptx.size() + 1};
+  }
+
+  rtcx::memory_fragment memory_fragments[] = {
+    {
+      .data = kernel_fragment,
+      .type = as_rtcx_binary_type(kernel_fragment_binary_type),
+      .name = kernel_fragment_id.c_str(),
+    },
+    {
+      .data = udf_binary,
+      .type = as_rtcx_binary_type(source_type),
+      .name = nullptr  // nullptr = unnamed fragment: the binary will be used to hash the UDF
+    }};
+
+  return get_lto_linked_kernel("cudf/cpp/src/transform/jit/kernel.cu", {}, memory_fragments);
 }
 
 kernel get_kernel(bool is_null_aware,
@@ -186,16 +220,32 @@ kernel get_kernel(bool is_null_aware,
                   std::string const& udf,
                   udf_source_type source_type)
 {
-  auto [in_types, out_types, ptx_in_types, ptx_out_types] =
-    jit::reflect(source_type, inputs, outputs);
-  return instantiate(is_null_aware,
-                     has_user_data,
-                     in_types,
-                     out_types,
-                     ptx_in_types,
-                     ptx_out_types,
-                     udf,
-                     source_type);
+  if (source_type == udf_source_type::PTX) {
+    return get_linked_kernel(std::nullopt,
+                             is_null_aware,
+                             has_user_data,
+                             inputs,
+                             outputs,
+                             {reinterpret_cast<uint8_t const*>(udf.data()), udf.size()},
+                             lto_binary_type::PTX);
+  }
+  auto [in_types, out_types] = jit::reflect(source_type, inputs, outputs);
+  return instantiate(is_null_aware, has_user_data, in_types, out_types, udf);
+}
+
+kernel get_kernel(bool is_null_aware,
+                  bool has_user_data,
+                  std::span<input_column_view const> inputs,
+                  std::span<output_column const> outputs,
+                  std::string const& udf,
+                  udf_source_type source_type)
+{
+  return get_kernel(is_null_aware,
+                    has_user_data,
+                    jit::make_input_specs(inputs),
+                    jit::make_output_specs(outputs),
+                    udf,
+                    source_type);
 }
 
 void run(bool is_null_aware,
@@ -238,18 +288,6 @@ void run(kernel const& kernel,
     kernel, row_size, d_stencil, user_data, input_cols, output_cols, d_max_error, stream);
 }
 
-rtcx::binary_type as_rtcx_binary_type(lto_binary_type type)
-{
-  switch (type) {
-    case lto_binary_type::LTO_IR: return rtcx::binary_type::LTO_IR;
-    case lto_binary_type::FATBIN: return rtcx::binary_type::FATBIN;
-    default:
-      CUDF_FAIL(
-        std::format("Unrecognized LTO binary type {} for LTO transform", static_cast<int>(type)),
-        std::invalid_argument);
-  }
-}
-
 void run_lto(std::optional<std::tuple<std::span<uint8_t const>, lto_binary_type, char const*>>
                precompiled_kernel_fragment,
              bool is_null_aware,
@@ -265,36 +303,13 @@ void run_lto(std::optional<std::tuple<std::span<uint8_t const>, lto_binary_type,
              cuda::stream_ref stream,
              rmm::device_async_resource_ref mr)
 {
-  auto [in_types, out_types, ptx_in_types, ptx_out_types] =
-    jit::reflect(source_type, inputs, outputs);
-
-  std::span<uint8_t const> kernel_fragment;
-  lto_binary_type kernel_fragment_binary_type = lto_binary_type::FATBIN;
-  rtcx::blob fragment_blob                    = nullptr;
-  std::string kernel_fragment_id;
-
-  if (precompiled_kernel_fragment.has_value()) {
-    std::tie(kernel_fragment, kernel_fragment_binary_type, kernel_fragment_id) =
-      *precompiled_kernel_fragment;
-  } else {
-    std::tie(fragment_blob, kernel_fragment_binary_type, kernel_fragment_id) =
-      instantiate_fragment(is_null_aware, has_user_data, in_types, out_types, inputs, outputs);
-    kernel_fragment = fragment_blob->view();
-  }
-
-  rtcx::memory_fragment memory_fragments[] = {
-    {
-      .data = kernel_fragment,
-      .type = as_rtcx_binary_type(kernel_fragment_binary_type),
-      .name = kernel_fragment_id.c_str(),
-    },
-    {
-      .data = udf_binary,
-      .type = as_rtcx_binary_type(source_type),
-      .name = nullptr  // nullptr = unnamed fragment: the binary will be used to hash the UDF
-    }};
-
-  auto kernel = get_lto_linked_kernel("cudf/cpp/src/transform/jit/kernel.cu", {}, memory_fragments);
+  auto kernel = get_linked_kernel(precompiled_kernel_fragment,
+                                  is_null_aware,
+                                  has_user_data,
+                                  jit::make_input_specs(inputs),
+                                  jit::make_output_specs(outputs),
+                                  udf_binary,
+                                  source_type);
 
   auto [cols, handles] = to_args(inputs, outputs, stream, mr);
   auto* input_cols     = reinterpret_cast<column_device_view_core const*>(cols.data());
@@ -842,6 +857,18 @@ std::unique_ptr<table> transform(std::string const& udf,
 {
   CUDF_FUNC_RANGE();
   perform_checks(source_type, is_null_aware, row_size, inputs, outputs, string_offsets);
+  if (source_type == udf_source_type::PTX) {
+    return transform_lto({reinterpret_cast<uint8_t const*>(udf.data()), udf.size()},
+                         lto_binary_type::PTX,
+                         is_null_aware,
+                         user_data,
+                         inputs,
+                         outputs,
+                         std::move(string_offsets),
+                         row_size,
+                         stream,
+                         mr);
+  }
   return execute_transform(udf,
                            source_type,
                            is_null_aware,
@@ -920,8 +947,7 @@ dispatch_lto_kernel_fragment(bool is_null_aware,
 
   // the contract here is that CMake and this dispatch function agree on symbol mangling of the
   // reflected kernel name.
-  auto [in_types, out_types, ptx_in_types, ptx_out_types] =
-    jit::reflect(lto_binary_type::FATBIN, inputs, outputs);
+  auto [in_types, out_types] = jit::reflect(lto_binary_type::FATBIN, inputs, outputs);
   auto target = strip_whitespace(rtcx::reflect_template("cudf::jit::transform_kernel",
                                                         rtcx::reflect(is_null_aware),
                                                         rtcx::reflect(has_user_data),

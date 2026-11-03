@@ -80,11 +80,6 @@ std::string reflect_input_value_type(transform_input_spec const& spec, bool use_
   return reflect_input_element(spec, use_physical_type);
 }
 
-std::string reflect_output_value_type(transform_output_spec const& spec, bool use_physical_type)
-{
-  return reflect_output_element(spec, use_physical_type);
-}
-
 std::string reflect_input_column(transform_input_spec const&)
 {
   return "cudf::column_device_view_core";
@@ -166,7 +161,8 @@ transform_reflection reflect(std::variant<udf_source_type, lto_binary_type> sour
                std::runtime_error);
 
   std::vector<std::string> in_types;
-  bool use_physical_types = std::holds_alternative<lto_binary_type>(source_type);
+  bool use_physical_types = std::holds_alternative<lto_binary_type>(source_type) ||
+                            std::get<udf_source_type>(source_type) == udf_source_type::PTX;
   for (int32_t i = 0; i < std::ssize(inputs); i++) {
     auto& in       = inputs[i];
     auto column    = reflect_input_column(in);
@@ -202,20 +198,7 @@ transform_reflection reflect(std::variant<udf_source_type, lto_binary_type> sour
   auto ins  = rtcx::reflect_template("cudf::jit::type_list", in_types);
   auto outs = rtcx::reflect_template("cudf::jit::type_list", out_types);
 
-  std::vector<std::string> ptx_in_types;
-  std::vector<std::string> ptx_out_types;
-  if (std::holds_alternative<udf_source_type>(source_type) &&
-      std::get<udf_source_type>(source_type) == udf_source_type::PTX) {
-    for (auto& in : inputs) {
-      ptx_in_types.push_back(reflect_input_value_type(in, use_physical_types));
-    }
-
-    for (auto& out : outputs) {
-      ptx_out_types.push_back(reflect_output_value_type(out, use_physical_types));
-    }
-  }
-
-  return {ins, outs, ptx_in_types, ptx_out_types};
+  return {ins, outs};
 }
 
 std::vector<transform_input_spec> make_input_specs(std::span<transform_input const> inputs)
@@ -283,7 +266,7 @@ std::string reflect_udf_signature(bool is_null_aware,
   std::vector<std::string> in_types;
 
   for (auto const& input : inputs) {
-    auto element = reflect_input_element(input, use_physical_types);
+    auto element = reflect_input_value_type(input, use_physical_types);
     in_types.push_back(is_null_aware ? std::format("cuda::std::optional<{}>", element) : element);
   }
 

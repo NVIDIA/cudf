@@ -61,29 +61,6 @@ size_type get_projection_size(std::span<std::variant<column_view, scalar_column_
                            cuda::transform_iterator(inputs.end(), get_size));
 }
 
-std::map<uint32_t, std::string> build_ptx_params(std::span<std::string const> output_typenames,
-                                                 std::span<std::string const> input_typenames,
-                                                 bool has_user_data)
-{
-  std::map<uint32_t, std::string> params;
-  uint32_t index = 0;
-
-  if (has_user_data) {
-    params.emplace(index++, "void *");
-    params.emplace(index++, "cudf::size_type");
-  }
-
-  for (auto& name : output_typenames) {
-    params.emplace(index++, name + "*");
-  }
-
-  for (auto& name : input_typenames) {
-    params.emplace(index++, name);
-  }
-
-  return params;
-}
-
 kernel get_udf_kernel(std::string const& source_file,
                       std::string const& kernel_name,
                       std::string const& cuda_source)

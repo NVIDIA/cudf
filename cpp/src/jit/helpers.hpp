@@ -38,10 +38,6 @@ get_transform_base_column(std::vector<column_view> const& inputs);
 size_type get_projection_size(
   std::span<std::variant<column_view, scalar_column_view> const> inputs);
 
-std::map<uint32_t, std::string> build_ptx_params(std::span<std::string const> output_typenames,
-                                                 std::span<std::string const> input_typenames,
-                                                 bool has_user_data);
-
 template <typename T>
 rmm::device_uvector<T> to_device_vector(std::vector<T> const& host,
                                         cuda::stream_ref stream,

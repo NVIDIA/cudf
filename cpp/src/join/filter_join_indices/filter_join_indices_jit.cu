@@ -91,6 +91,20 @@ std::vector<std::string> build_join_filter_template_params(
   return template_params;
 }
 
+std::string build_join_filter_udf_signature(std::span<std::string const> input_types,
+                                            bool has_user_data)
+{
+  // Match the transform ABI so PTX can use the same external symbol and linking machinery.
+  auto signature = std::string{"int("};
+  if (has_user_data) { signature += "void*, cudf::size_type, "; }
+  signature += "bool*";
+  for (auto const& type : input_types) {
+    signature += ", " + type;
+  }
+  signature += ")";
+  return signature;
+}
+
 // Build the JIT kernel for join filtering
 kernel build_join_filter_kernel(std::string const& predicate_code,
                                 std::span<transform_input const> inputs,
@@ -101,7 +115,6 @@ kernel build_join_filter_kernel(std::string const& predicate_code,
 {
   CUDF_FUNC_RANGE();
 
-  std::vector<std::string> ptx_output_types{"bool"};
   std::vector<std::string> ptx_input_types;
 
   for (auto const& input : inputs) {
@@ -113,18 +126,26 @@ kernel build_join_filter_kernel(std::string const& predicate_code,
     }
   }
 
-  // Parse predicate code
-  auto const cuda_source =
-    is_ptx ? cudf::jit::parse_single_function_ptx(
-               predicate_code,
-               "GENERIC_JOIN_FILTER_OP",
-               cudf::jit::build_ptx_params(ptx_output_types, ptx_input_types, has_user_data))
-           : cudf::jit::parse_single_function_cuda(predicate_code, "GENERIC_JOIN_FILTER_OP");
-
-  // Build template parameters and kernel name
+  // Build template parameters and kernel name.
   auto template_args =
     build_join_filter_template_params(inputs, table_sources, has_user_data, is_null_aware);
   auto kernel_name = rtcx::reflect_template("cudf::join::jit::filter_join_kernel", template_args);
+
+  if (is_ptx) {
+    auto signature = build_join_filter_udf_signature(ptx_input_types, has_user_data);
+    auto fragment  = cudf::jit::get_udf_kernel_fragment(
+      "cudf/cpp/src/join/jit/filter_join_kernel.cu", kernel_name, signature);
+    auto ptx                          = cudf::jit::parse_single_function_ptx(predicate_code);
+    rtcx::memory_fragment fragments[] = {
+      {.data = fragment->view(), .type = rtcx::binary_type::LTO_IR, .name = kernel_name.c_str()},
+      {.data = {reinterpret_cast<uint8_t const*>(ptx.c_str()), ptx.size() + 1},
+       .type = rtcx::binary_type::PTX,
+       .name = nullptr}};
+    return get_lto_linked_kernel("cudf/cpp/src/join/jit/filter_join_kernel.cu", {}, fragments);
+  }
+
+  auto cuda_source =
+    cudf::jit::parse_single_function_cuda(predicate_code, "GENERIC_JOIN_FILTER_OP");
 
   // Get compiled kernel
   return cudf::jit::get_udf_kernel(

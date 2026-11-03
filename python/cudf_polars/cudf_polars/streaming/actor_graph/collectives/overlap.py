@@ -1148,7 +1148,7 @@ class OverlapInput[BufferedChunkT: BufferedChunk]:
 
     async def _exchange(
         self,
-        buffer: ChunkStore,
+        source_buffer: ChunkStore,
         policy: RangeOverlapPolicy | RowCountOverlapPolicy,
         sends: Sequence[GhostSend],
         sources: Sequence[int],
@@ -1168,8 +1168,8 @@ class OverlapInput[BufferedChunkT: BufferedChunk]:
         sources = tuple(sorted(sources))
         destinations = tuple(sorted(set(destinations)))
         if not (sources or destinations):
-            return _PreparedInput(buffer, None, sources, host_values)
-        source, output = buffer, ChunkStore(self.context)
+            return _PreparedInput(source_buffer, None, sources, host_values)
+        output = ChunkStore(self.context)
         exchange = SparseExchange(
             self.context,
             self.comm,
@@ -1180,7 +1180,7 @@ class OverlapInput[BufferedChunkT: BufferedChunk]:
         prepared = _PreparedInput(output, exchange, sources, host_values)
         start = 0
         try:
-            for position, msg in enumerate(source):
+            for position, msg in enumerate(source_buffer):
                 chunk = TableChunk.from_message(msg, br=self.context.br())
                 size = chunk.shape[0]
                 pieces: list[tuple[int, int, int]] = []
@@ -1240,7 +1240,6 @@ class OverlapInput[BufferedChunkT: BufferedChunk]:
                     )
                     output.insert(Message(0, available))
                 start += size
-            source.clear()
             await exchange.finish()
         except BaseException:
             with suppress(BaseException):

@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections import deque
-from contextlib import aclosing
+from contextlib import aclosing, suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -74,9 +74,15 @@ class RollingManager[BufferedChunkT: BufferedChunk]:
         """Enter the rolling manager context."""
         return self
 
-    def __exit__(self, *exc_info: object) -> None:
+    def __exit__(
+        self, exc_type: object, _exc_value: object, _traceback: object
+    ) -> None:
         """Release policy-owned resources."""
-        self.policy.close()
+        if exc_type is not None:
+            with suppress(BaseException):
+                self.policy.close()
+        else:
+            self.policy.close()
 
     @staticmethod
     def _latest_nonempty_chunk(

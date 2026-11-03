@@ -220,7 +220,8 @@ def wrap_sources(
     paths
         File paths.
     sizes
-        File sizes in bytes, where known. A missing size costs one HEAD request.
+        File sizes in bytes, where known. Opening a file whose size is unknown
+        costs one suffix-range request, which also fetches its footer.
 
     Returns
     -------
@@ -234,6 +235,6 @@ def wrap_sources(
     args = [(str(p), int(s or 0)) for p, s in zip(paths, sizes, strict=True)]
     if len(args) == 1:
         return [_module.CucascadeDatasource(*args[0])]
-    # Opening a source (HEAD plus footer probe) releases the GIL.
+    # Opening a source (size lookup plus footer read) releases the GIL.
     with ThreadPoolExecutor(min(_MAX_OPEN_THREADS, len(args))) as pool:
         return list(pool.map(lambda a: _module.CucascadeDatasource(*a), args))

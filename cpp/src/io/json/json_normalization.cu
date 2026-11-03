@@ -438,7 +438,8 @@ std::
                     inbuf.end(),
                     stencil.begin(),
                     cuda::std::identity{});
-  // Returned offsets and lengths bound the normalized data within this allocation.
+  // inbuf keeps `num_deletions` stale bytes at the tail; the returned offsets and lengths bound
+  // the normalized data.
 
   thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                          inbuf_lengths.begin(),

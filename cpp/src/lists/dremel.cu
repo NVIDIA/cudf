@@ -472,7 +472,8 @@ dremel_data get_encoding(column_view h_col,
                     rep_level.begin());
   }
 
-  // The final offset bounds the valid level values; consumers use the buffers through pointers.
+  // rep_level/def_level stay sized to max_vals_size; only the first `new_offsets` back element
+  // values are valid. Bound reads with `dremel_offsets`, not `.size()`.
 
   stream.sync();
 

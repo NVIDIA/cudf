@@ -41,7 +41,7 @@ if (( SUITEERROR == 0 )) && [[ "${RUN_LIBCUDF_TESTS}" == "true" && "${RAPIDS_BUI
     gpu_mib=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits | head -n1)
     if (( gpu_mib >= 24576 )); then
         rapids-logger "Run large-memory libcudf gtests"
-        "${INSTALL_PREFIX:-${CONDA_PREFIX:-/usr}}/bin/gtests/libcudf/JOIN_TEST" \
+        timeout 10m "${INSTALL_PREFIX:-${CONDA_PREFIX:-/usr}}/bin/gtests/libcudf/JOIN_TEST" \
             --gtest_also_run_disabled_tests --gtest_filter='*DISABLED_*LargeExtentOverflowPrevention*'
         SUITEERROR=$?
     fi

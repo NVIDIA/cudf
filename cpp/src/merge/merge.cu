@@ -230,7 +230,7 @@ index_vector generate_merged_indices(table_view const& left_table,
   auto left_begin  = cudf::detail::make_counting_transform_iterator(0, left_gen);
   auto right_begin = cudf::detail::make_counting_transform_iterator(0, right_gen);
 
-  index_vector merged_indices(total_size, stream);
+  index_vector merged_indices(total_size, stream, mr.get_output_mr());
 
   auto const has_nulls =
     nullate::DYNAMIC{cudf::has_nulls(left_table) or cudf::has_nulls(right_table)};
@@ -292,7 +292,7 @@ index_vector generate_merged_indices_nested(table_view const& left_table,
   size_type const right_size = right_table.num_rows();
   size_type const total_size = left_size + right_size;
 
-  index_vector merged_indices(total_size, stream);
+  index_vector merged_indices(total_size, stream, mr.get_output_mr());
 
   auto const left_indices_col = cudf::detail::lower_bound(
     right_table, left_table, column_order, null_precedence, stream, mr.get_temporary_mr());

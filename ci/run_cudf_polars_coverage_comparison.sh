@@ -22,6 +22,11 @@ if [[ "${polars_version}" != 2.0.* && "${polars_version}" != 2.1.* ]]; then
     exit 2
 fi
 polars_sha=$(git -C "${polars_dir}" rev-parse HEAD)
+polars_tag=$(git -C "${polars_dir}" describe --tags --exact-match HEAD 2>/dev/null || true)
+if [[ "${polars_tag}" != "py-${polars_version}" ]]; then
+    echo "Expected the Polars checkout at ${polars_dir} to be py-${polars_version}, got ${polars_tag:-an untagged revision}." >&2
+    exit 2
+fi
 cudf_sha=$(git -C "${repo_root}" rev-parse HEAD)
 
 mkdir -p "${output_dir}"
@@ -52,6 +57,7 @@ python "${repo_root}/ci/analyze_cudf_polars_coverage.py" \
     --polars-version "${polars_version}" \
     --polars-sha "${polars_sha}" \
     --cudf-sha "${cudf_sha}" \
+    --gpu-run-list "${repo_root}/ci/cudf_polars/gpu_test_run_list.json" \
     --output-dir "${output_dir}"
 python "${repo_root}/ci/classify_cudf_polars_tests.py" \
     --local-data "${output_dir}/.coverage.local" \

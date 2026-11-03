@@ -25,7 +25,7 @@ on:
         required: false
         type: string
       repo:
-        description: "Git repo to check out, in '{org}/{repo}' form, e.g. 'rapidsai/cudf'"
+        description: "Git repo to check out, in '{org}/{repo}' form, e.g. 'NVIDIA/cudf'"
         type: string
       node_type:
         description: |

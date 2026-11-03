@@ -17,7 +17,7 @@ on:
         description: "Full git commit SHA to check out"
         type: string
       repo:
-        description: "Git repo to check out, in '{org}/{repo}' form, e.g. 'rapidsai/cudf'"
+        description: "Git repo to check out, in '{org}/{repo}' form, e.g. 'NVIDIA/cudf'"
         type: string
       script:
         type: string

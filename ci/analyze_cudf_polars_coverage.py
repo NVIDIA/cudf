@@ -9,24 +9,29 @@ from __future__ import annotations
 import argparse
 import html
 import json
-from itertools import islice
+import re
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
 from coverage import CoverageData
 
 MAX_CONTEXTS_PER_LINE = 20
-MAX_CANDIDATE_EXAMPLES = 3
-MAX_CANDIDATE_CONTEXTS_PER_LINE = 5
-
-# Candidate discovery deliberately focuses on ordinary, non-streaming public
-# behavior. The report is a review aid, not an automatic admission mechanism.
-REVIEW_SOURCE_SUFFIXES = (
-    "/dsl/translate.py",
-    "/dsl/expressions/aggregation.py",
-    "/dsl/expressions/boolean.py",
-    "/containers/column.py",
+MIN_SHARED_LINES = 4
+MAX_SHARED_LINE_EXAMPLES = 10
+EXCLUDED_LOCAL_PATHS = (
+    "tests/containers/",
+    "tests/dsl/",
+    "tests/io/",
+    "tests/streaming/",
+    "tests/testing/",
+    "tests/utils/",
 )
+EXCLUDED_LOCAL_TERMS = ("dtype", "decimal", "fallback", "unsupported", "scan")
+GENERIC_NAME_TOKENS = frozenset({"test", "expr", "lazy", "frame", "polars"})
+
+# The queue is deliberately limited to ordinary, non-streaming public behavior;
+# overlap elsewhere is still visible in the line-level report.
 REVIEW_EXCLUDED_PATHS = (
     "/datatypes/",
     "/io/",
@@ -60,11 +65,6 @@ def _nodeid(context: str) -> str:
     return context.rsplit("|", 1)[0]
 
 
-def _is_review_source(filename: str) -> bool:
-    normalized = filename.replace("\\", "/")
-    return normalized.endswith(REVIEW_SOURCE_SUFFIXES)
-
-
 def _is_review_context(context: str) -> bool:
     """Whether a context belongs in the focused upstream-unit review pool."""
     nodeid = _nodeid(context)
@@ -73,6 +73,88 @@ def _is_review_context(context: str) -> bool:
         and not any(path in nodeid for path in REVIEW_EXCLUDED_PATHS)
         and not any(test in nodeid for test in REVIEW_EXCLUDED_TESTS)
         and not any(term in nodeid.lower() for term in REVIEW_EXCLUDED_TERMS)
+    )
+
+
+def _behavior_tokens(nodeid: str) -> set[str]:
+    path, _, test_name = nodeid.partition("::")
+    behavior = f"{path.rsplit('/', 1)[-1]}_{test_name}"
+    return {
+        token
+        for token in re.split(r"[^a-z0-9]+", behavior.lower())
+        if len(token) > 2 and token not in GENERIC_NAME_TOKENS
+    }
+
+
+def _review_pairs(
+    local_tests: dict[str, set[tuple[str, int]]],
+    upstream_tests: dict[str, set[tuple[str, int]]],
+    upstream_lines: dict[str, set[int]],
+) -> list[dict[str, Any]]:
+    upstream_by_line: dict[tuple[str, int], set[str]] = defaultdict(set)
+    for nodeid, lines in upstream_tests.items():
+        for line in lines:
+            upstream_by_line[line].add(nodeid)
+
+    pairs = []
+    for local_nodeid, lines in local_tests.items():
+        if local_nodeid.startswith(EXCLUDED_LOCAL_PATHS) or any(
+            term in local_nodeid.lower() for term in EXCLUDED_LOCAL_TERMS
+        ):
+            continue
+        matches = Counter(
+            upstream_nodeid
+            for line in lines
+            for upstream_nodeid in upstream_by_line.get(line, ())
+        )
+        name_tokens = _behavior_tokens(local_nodeid)
+        matches = Counter(
+            {
+                nodeid: count
+                for nodeid, count in matches.items()
+                if count >= MIN_SHARED_LINES
+                and name_tokens & _behavior_tokens(nodeid)
+            }
+        )
+        if not matches:
+            continue
+        upstream_nodeid = min(
+            matches,
+            key=lambda nodeid: (-matches[nodeid], nodeid),
+        )
+        shared = sorted(lines & upstream_tests[upstream_nodeid])
+        pairs.append(
+            {
+                "local_nodeid": local_nodeid,
+                "upstream_nodeid": upstream_nodeid,
+                "shared_line_count": len(shared),
+                "local_line_count": len(lines),
+                "local_only_line_count": sum(
+                    line not in upstream_lines.get(filename, set())
+                    for filename, line in lines
+                ),
+                "shared_lines": [
+                    {"source_file": filename, "line": line}
+                    for filename, line in shared[:MAX_SHARED_LINE_EXAMPLES]
+                ],
+                "other_upstream_matches": [
+                    {"nodeid": nodeid, "shared_line_count": count}
+                    for nodeid, count in sorted(
+                        matches.items(),
+                        key=lambda match: (-match[1], match[0]),
+                    )
+                    if nodeid != upstream_nodeid
+                ][:5],
+                "status": "review_candidate",
+            }
+        )
+    return sorted(
+        pairs,
+        key=lambda pair: (
+            -pair["shared_line_count"] / pair["local_line_count"],
+            -pair["shared_line_count"],
+            pair["local_nodeid"],
+        ),
     )
 
 
@@ -89,15 +171,18 @@ def build_report(
     result: dict[str, Any] = {
         "files": {},
         "summary": {},
-        "review_candidates": [],
+        "review_pairs": [],
     }
     totals = {"local_only": 0, "upstream_only": 0, "both": 0}
-    candidates: dict[str, dict[str, Any]] = {}
+    local_tests: dict[str, set[tuple[str, int]]] = defaultdict(set)
+    upstream_tests: dict[str, set[tuple[str, int]]] = defaultdict(set)
+    all_upstream_lines: dict[str, set[int]] = {}
     for filename in files:
         if "/cudf_polars/" not in filename.replace("\\", "/"):
             continue
         local_lines = set(local.lines(filename) or ())
         upstream_lines = set(upstream.lines(filename) or ())
+        all_upstream_lines[filename] = upstream_lines
         local_contexts = local.contexts_by_lineno(filename)
         upstream_contexts = upstream.contexts_by_lineno(filename)
         classifications: dict[str, list[Any]] = {
@@ -108,6 +193,12 @@ def build_report(
         for line in sorted(local_lines | upstream_lines):
             local_line_contexts = sorted(local_contexts.get(line, set()))
             upstream_line_contexts = sorted(upstream_contexts.get(line, set()))
+            for context in local_line_contexts:
+                if _nodeid(context).startswith("tests/"):
+                    local_tests[_nodeid(context)].add((filename, line))
+            for context in upstream_line_contexts:
+                if _is_review_context(context):
+                    upstream_tests[_nodeid(context)].add((filename, line))
             entry = {
                 "line": line,
                 "local_contexts": local_line_contexts[:MAX_CONTEXTS_PER_LINE],
@@ -123,38 +214,6 @@ def build_report(
             }
             if line in local_lines and line in upstream_lines:
                 classifications["both"].append(entry)
-                if _is_review_source(filename):
-                    candidate_contexts = (
-                        context
-                        for context in upstream_line_contexts
-                        if _is_review_context(context)
-                    )
-                    for context in islice(
-                        candidate_contexts, MAX_CANDIDATE_CONTEXTS_PER_LINE
-                    ):
-                        nodeid = _nodeid(context)
-                        candidate = candidates.setdefault(
-                            nodeid,
-                            {
-                                "nodeid": nodeid,
-                                "shared_lines": set(),
-                                "source_modules": set(),
-                                "examples": [],
-                            },
-                        )
-                        candidate["shared_lines"].add((filename, line))
-                        candidate["source_modules"].add(filename)
-                        if len(candidate["examples"]) < MAX_CANDIDATE_EXAMPLES:
-                            candidate["examples"].append(
-                                {
-                                    "source_file": filename,
-                                    "line": line,
-                                    "local_contexts": local_line_contexts[
-                                        :MAX_CONTEXTS_PER_LINE
-                                    ],
-                                    "upstream_context": context,
-                                }
-                            )
             elif line in local_lines:
                 classifications["local_only"].append(entry)
             else:
@@ -164,25 +223,8 @@ def build_report(
             for category, lines in classifications.items():
                 totals[category] += len(lines)
     result["summary"] = {**totals, "files": len(result["files"])}
-    for candidate in candidates.values():
-        source_modules = sorted(candidate["source_modules"])
-        result["review_candidates"].append(
-            {
-                "nodeid": candidate["nodeid"],
-                "sampled_shared_line_count": len(candidate["shared_lines"]),
-                "local_only_line_count": sum(
-                    len(result["files"][filename]["local_only"])
-                    for filename in source_modules
-                ),
-                "source_modules": source_modules,
-                "representative_contexts": candidate["examples"],
-            }
-        )
-    result["review_candidates"].sort(
-        key=lambda candidate: (
-            -candidate["sampled_shared_line_count"],
-            candidate["nodeid"],
-        )
+    result["review_pairs"] = _review_pairs(
+        local_tests, upstream_tests, all_upstream_lines
     )
     return result
 
@@ -214,26 +256,20 @@ def _write_html(report: dict[str, Any], output: Path) -> None:
 
 
 def _write_candidate_html(report: dict[str, Any], output: Path) -> None:
-    """Write a compact table of upstream nodes for behavioral review."""
+    """Write a compact table of local/upstream pairs for behavioral review."""
     rows = []
-    for candidate in report["review_candidates"]:
-        modules = "<br>".join(
-            html.escape(module.rsplit("/cudf_polars/", 1)[-1])
-            for module in candidate["source_modules"]
-        )
+    for pair in report["review_pairs"]:
         examples = "<br>".join(
-            html.escape(
-                f"{example['source_file']}:{example['line']} ← "
-                f"{example['upstream_context']}"
-            )
-            for example in candidate["representative_contexts"]
+            html.escape(f"{line['source_file']}:{line['line']}")
+            for line in pair["shared_lines"]
         )
         rows.append(
             "<tr>"
-            f"<td><code>{html.escape(candidate['nodeid'])}</code></td>"
-            f"<td>{candidate['sampled_shared_line_count']}</td>"
-            f"<td>{candidate['local_only_line_count']}</td>"
-            f"<td>{modules}</td><td><code>{examples}</code></td>"
+            f"<td><code>{html.escape(pair['local_nodeid'])}</code></td>"
+            f"<td><code>{html.escape(pair['upstream_nodeid'])}</code></td>"
+            f"<td>{pair['shared_line_count']}</td>"
+            f"<td>{pair['local_only_line_count']}</td>"
+            f"<td><code>{examples}</code></td>"
             "</tr>"
         )
     output.write_text(
@@ -242,9 +278,9 @@ def _write_candidate_html(report: dict[str, Any], output: Path) -> None:
         "<h1>cudf-polars upstream review candidates</h1>"
         "<p>Coverage overlap is a review signal, not proof that upstream "
         "tests assert the same behavior or execute on the GPU.</p>"
-        "<table><thead><tr><th>Upstream node</th><th>Sampled shared lines</th>"
-        "<th>Local-only lines in modules</th><th>Source modules</th>"
-        "<th>Representative upstream contexts</th></tr></thead><tbody>"
+        "<table><thead><tr><th>Local node</th><th>Upstream node</th>"
+        "<th>Shared lines</th><th>Local-only lines</th>"
+        "<th>Sampled source lines</th></tr></thead><tbody>"
         + "".join(rows)
         + "</tbody></table>"
     )
@@ -255,11 +291,19 @@ def main() -> None:
     parser.add_argument("--local-data", type=Path, required=True)
     parser.add_argument("--upstream-data", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--cudf-sha", required=True)
+    parser.add_argument("--polars-sha", required=True)
+    parser.add_argument("--polars-version", required=True)
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
     report = build_report(
         _read_data(args.local_data), _read_data(args.upstream_data)
     )
+    report["provenance"] = {
+        "cudf_sha": args.cudf_sha,
+        "polars_sha": args.polars_sha,
+        "polars_version": args.polars_version,
+    }
     (args.output_dir / "coverage-comparison.json").write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n"
     )

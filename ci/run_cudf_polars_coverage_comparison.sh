@@ -16,6 +16,14 @@ if [[ ! -d "${polars_dir}/py-polars/tests" ]]; then
     exit 2
 fi
 
+polars_version=$(python -c 'import polars; print(polars.__version__)')
+if [[ "${polars_version}" != 2.0.* && "${polars_version}" != 2.1.* ]]; then
+    echo "Expected an upstream-supported Polars 2.0 or 2.1 installation, got ${polars_version}." >&2
+    exit 2
+fi
+polars_sha=$(git -C "${polars_dir}" rev-parse HEAD)
+cudf_sha=$(git -C "${repo_root}" rev-parse HEAD)
+
 mkdir -p "${output_dir}"
 rm -f "${output_dir}/.coverage.local" "${output_dir}/.coverage.upstream"
 
@@ -41,6 +49,9 @@ python -m pytest --import-mode=importlib --collect-only -q \
 python "${repo_root}/ci/analyze_cudf_polars_coverage.py" \
     --local-data "${output_dir}/.coverage.local" \
     --upstream-data "${output_dir}/.coverage.upstream" \
+    --polars-version "${polars_version}" \
+    --polars-sha "${polars_sha}" \
+    --cudf-sha "${cudf_sha}" \
     --output-dir "${output_dir}"
 python "${repo_root}/ci/classify_cudf_polars_tests.py" \
     --local-data "${output_dir}/.coverage.local" \

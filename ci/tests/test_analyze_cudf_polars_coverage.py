@@ -286,6 +286,12 @@ def test_main_writes_provenance_and_contexts(
             "polars-sha",
             "--polars-version",
             "2.1.0",
+            "--local-exit-status",
+            "0",
+            "--upstream-in-memory-exit-status",
+            "1",
+            "--upstream-spmd-exit-status",
+            "2",
             "--gpu-run-list",
             str(run_list),
         ],
@@ -298,6 +304,11 @@ def test_main_writes_provenance_and_contexts(
         "cudf_sha": "cudf-sha",
         "polars_sha": "polars-sha",
         "polars_version": "2.1.0",
+    }
+    assert report["suite_exit_statuses"] == {
+        "local": 0,
+        "upstream_in_memory": 1,
+        "upstream_spmd": 2,
     }
     assert report["context_data"] == {
         "local": ".coverage.local",

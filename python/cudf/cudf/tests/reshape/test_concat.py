@@ -2934,3 +2934,41 @@ def test_range_index_concat(objs):
     for obj in objs[1:]:
         expected = expected.append(obj)
     assert_eq(expected, actual)
+
+
+@pytest.mark.parametrize(
+    "wrapper",
+    [
+        lambda x: (df for df in x),
+        iter,
+        lambda x: map(lambda df: df, x),
+    ],
+)
+def test_concat_iterator_inputs(wrapper, ignore_index):
+    pdf1 = pd.DataFrame({"a": [1, 2]})
+    pdf2 = pd.DataFrame({"a": [3, 4]})
+    gdf1 = cudf.from_pandas(pdf1)
+    gdf2 = cudf.from_pandas(pdf2)
+
+    assert_eq(
+        pd.concat(wrapper([pdf1, pdf2]), ignore_index=ignore_index),
+        cudf.concat(wrapper([gdf1, gdf2]), ignore_index=ignore_index),
+    )
+
+    assert_eq(
+        pd.concat(
+            wrapper([pd.DataFrame(), pd.DataFrame()]),
+            ignore_index=ignore_index,
+        ),
+        cudf.concat(
+            wrapper([cudf.DataFrame(), cudf.DataFrame()]),
+            ignore_index=ignore_index,
+        ),
+    )
+
+    assert_exceptions_equal(
+        lfunc=pd.concat,
+        rfunc=cudf.concat,
+        lfunc_args_and_kwargs=([], {"objs": wrapper([])}),
+        rfunc_args_and_kwargs=([], {"objs": wrapper([])}),
+    )

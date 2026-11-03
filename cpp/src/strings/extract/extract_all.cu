@@ -20,6 +20,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/stream>
 
@@ -130,12 +131,14 @@ std::unique_ptr<column> extract_all_record(strings_column_view const& input,
     cudf::detail::make_offsets_child_column(sizes_itr, sizes_itr + strings_count, stream, mr);
   auto d_offsets = offsets->view().data<size_type>();
 
-  rmm::device_uvector<string_index_pair> indices(total_strings, stream);
+  cuda::device_buffer<string_index_pair> indices(
+    stream, cudf::get_current_device_resource_ref(), total_strings, cuda::no_init);
 
   launch_for_each_kernel(
     extract_fn{*d_strings, d_offsets, indices.data()}, *d_prog, strings_count, stream);
 
-  auto strings_output = cudf::make_strings_column(indices, stream, mr);
+  auto strings_output = cudf::make_strings_column(
+    cudf::device_span<string_index_pair const>{indices.data(), indices.size()}, stream, mr);
 
   // Build the lists column from the offsets and the strings.
   return make_lists_column(

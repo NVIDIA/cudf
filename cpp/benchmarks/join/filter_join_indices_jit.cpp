@@ -6,6 +6,8 @@
 #include "generate_input_tables.hpp"
 #include "join_common.hpp"
 
+#include <benchmarks/common/memory_stats.hpp>
+
 #include <cudf/ast/expressions.hpp>
 #include <cudf/join/hash_join.hpp>
 #include <cudf/join/join.hpp>
@@ -52,6 +54,8 @@ void filter_join_indices_benchmark(nvbench::state& state,
   state.add_element_count(filter_input_size, "filter_input_size");  // number of bytes
   state.template add_global_memory_reads<nvbench::int8_t>(filter_input_size);
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+
   if (method == "AST") {
     auto col_ref_left_1  = cudf::ast::column_reference(1, cudf::ast::table_reference::LEFT);
     auto col_ref_right_1 = cudf::ast::column_reference(1, cudf::ast::table_reference::RIGHT);
@@ -76,6 +80,9 @@ void filter_join_indices_benchmark(nvbench::state& state,
         probe_table->view(), build_table->view(), left_span, right_span, predicate_code, join_kind);
     });
   }
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
   set_throughputs(state);
 }
 

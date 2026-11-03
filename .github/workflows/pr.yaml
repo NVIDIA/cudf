@@ -533,9 +533,9 @@ jobs:
       build_type: pull-request
       build-datetime: ${{ needs.build-details.outputs.build-datetime }}
       script: ci/build_python_cudf_polars_quent.sh
-      # The package is abi3 and has no CUDA dependency, so build one for amd64:
-      # pick the entry with the oldest Python, then the oldest CUDA.
-      matrix_filter: map(select(.ARCH == "amd64")) | group_by(.ARCH) | map(min_by([(.PY_VER | split(".") | map(tonumber)), (.CUDA_VER | split(".") | map(tonumber))]))
+      # The package is abi3 and has no CUDA dependency, so build one per architecture (the
+      # cudf-polars tests run on both): pick the entry with the oldest Python, then the oldest CUDA.
+      matrix_filter: group_by(.ARCH) | map(min_by([(.PY_VER | split(".") | map(tonumber)), (.CUDA_VER | split(".") | map(tonumber))]))
       matrix_type: pull-request
   conda-python-import-tests:
     needs: [conda-python-build, changed-files]

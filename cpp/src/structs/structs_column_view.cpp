@@ -36,17 +36,19 @@ column_view structs::detail::get_sliced_child(structs_column_view const& input,
     children.push_back(child.child(i));
   }
 
-  return column_view{
-    child.type(),
-    input.size(),
-    child.head<uint8_t>(),
-    child.null_mask(),
-    child.null_count()
-      ? cudf::detail::null_count(
-          child.null_mask(), input.offset(), input.offset() + input.size(), stream, temp_mr)
-      : 0,
-    input.offset(),
-    children};
+  return column_view{child.type(),
+                     input.size(),
+                     child.head<uint8_t>(),
+                     child.null_mask(),
+                     child.null_count()
+                       ? cudf::detail::null_count(child.null_mask(),
+                                                  input.offset(),
+                                                  input.offset() + input.size(),
+                                                  stream,
+                                                  cudf::memory_resources{temp_mr, temp_mr})
+                       : 0,
+                     input.offset(),
+                     children};
 }
 
 }  // namespace cudf

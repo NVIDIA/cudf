@@ -102,7 +102,7 @@ class type_conversion {
     using Type = typename type_selector::template type<T>;
     if constexpr (cudf::is_duration<T>()) {
       return cuda::std::chrono::duration_cast<Type>(elem);
-    } else if constexpr (std::is_same_v<Type, timestamp_ns128>) {
+    } else if constexpr (cuda::std::is_same_v<Type, timestamp_ns128>) {
       static_assert(dependent_false<T>::value,
                     "ORC timestamp statistics are converted by to_wall_clock_ns, which also puts "
                     "them on the writer's wall clock");

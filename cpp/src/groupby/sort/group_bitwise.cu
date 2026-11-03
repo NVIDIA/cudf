@@ -19,8 +19,8 @@
 
 #include <cuda/buffer>
 #include <cuda/iterator>
+#include <cuda/std/concepts>
 #include <cuda/std/functional>
-#include <cuda/std/type_traits>
 #include <cuda/stream>
 
 namespace cudf::groupby::detail {
@@ -28,7 +28,7 @@ namespace cudf::groupby::detail {
 namespace {
 
 struct bitwise_group_reduction_functor {
-  template <typename T, CUDF_ENABLE_IF(cuda::std::is_integral_v<T>)>
+  template <cuda::std::integral T>
   std::unique_ptr<column> operator()(bitwise_op bit_op,
                                      column_view const& values,
                                      device_span<size_type const> group_labels,
@@ -84,7 +84,8 @@ struct bitwise_group_reduction_functor {
     return result;
   }
 
-  template <typename T, typename... Args, CUDF_ENABLE_IF(!cuda::std::is_integral<T>())>
+  template <typename T, typename... Args>
+    requires(not cuda::std::integral<T>)
   std::unique_ptr<column> operator()(Args...) const
   {
     CUDF_FAIL("Bitwise operations are only supported for integral types.");

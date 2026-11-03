@@ -106,6 +106,7 @@ auto dispatch_tasks(std::size_t num_tasks, Task task)
   } else {
     // Dispatch the tasks to the host worker pool
     std::vector<std::future<result_type>> futures;
+    cudf::detail::futures_wait_guard futures_guard{futures};
     futures.reserve(num_tasks);
     std::for_each(cuda::counting_iterator<std::size_t>(0),
                   cuda::counting_iterator<std::size_t>(num_tasks),
@@ -237,6 +238,7 @@ void read_ranges_to_host(std::span<std::reference_wrapper<cudf::io::datasource> 
                          bool serialize_submissions)
 {
   std::vector<std::future<std::size_t>> host_read_tasks;
+  cudf::detail::futures_wait_guard host_read_tasks_guard{host_read_tasks};
   std::vector<std::size_t> expected_sizes;
   host_read_tasks.reserve(count);
   expected_sizes.reserve(count);
@@ -383,7 +385,9 @@ fetch_byte_ranges_to_device_async_impl(
 
   // Vectors to hold futures from datasource
   std::vector<std::future<size_t>> device_read_tasks{};
+  cudf::detail::futures_wait_guard device_read_tasks_guard{device_read_tasks};
   std::vector<std::future<host_read_buffer>> host_read_tasks{};
+  cudf::detail::futures_wait_guard host_read_tasks_guard{host_read_tasks};
   device_read_tasks.reserve(io_offsets.size());
   host_read_tasks.reserve(io_offsets.size());
 
@@ -468,6 +472,7 @@ fetch_byte_ranges_to_device_async_impl(
   if (not host_buffers.empty()) { stream.sync(); }
 
   auto sync_function = [](decltype(device_read_tasks) device_read_tasks) {
+    cudf::detail::futures_wait_guard device_read_tasks_guard{device_read_tasks};
     for (auto& task : device_read_tasks) {
       task.get();
     }

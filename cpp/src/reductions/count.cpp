@@ -6,6 +6,7 @@
 #include <cudf/detail/stream_compaction.hpp>
 #include <cudf/reduction/detail/reduction_functions.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
@@ -17,8 +18,7 @@ namespace detail {
 namespace {
 
 struct count_scalar_fn {
-  template <typename T>
-    requires(cudf::is_numeric_not_bool<T>())
+  template <cudf::concepts::arithmetic_not_bool T>
   std::unique_ptr<cudf::scalar> operator()(size_type count,
                                            cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr) const
@@ -28,7 +28,6 @@ struct count_scalar_fn {
   }
 
   template <typename T>
-    requires(not cudf::is_numeric_not_bool<T>())
   std::unique_ptr<cudf::scalar> operator()(size_type,
                                            cuda::stream_ref,
                                            rmm::device_async_resource_ref) const

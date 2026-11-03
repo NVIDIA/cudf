@@ -15,8 +15,11 @@ import numpy as np
 import pytest
 from numba_cuda_mlir import cuda, types
 
-import cudf.core.udf.mlir_backend.cooperative_lowering  # noqa: F401 registers lowerings + link hook
+import cudf.core.udf.mlir_backend.cooperative_lowering  # noqa: F401 registers lowerings
 import cudf.core.udf.mlir_backend.cooperative_typing  # noqa: F401 registers typing
+from cudf.core.udf.mlir_backend.cooperative_device_funcs import (
+    cooperative_reductions_linkable,
+)
 from cudf.core.udf.mlir_backend.cooperative_typing import CooperativeArray
 from cudf.core.udf.utils import UDFError
 
@@ -56,7 +59,10 @@ def _reduce(arr, method, out_dtype, tpb=_TPB):
         f"    if cuda.grid(1) == 0:\n        o[0] = r\n",
         g,
     )
-    k = cuda.jit(types.void(_nb1(out_dtype), _nb1(arr.dtype)))(g["_k"])
+    k = cuda.jit(
+        types.void(_nb1(out_dtype), _nb1(arr.dtype)),
+        link=[cooperative_reductions_linkable()],
+    )(g["_k"])
     with MLIRNumbaCudaConfig():
         k[1, tpb, 0, _SHM](out, arr)
     cuda.synchronize()
@@ -73,9 +79,10 @@ def _reduce_idx(arr, index, method, tpb=_TPB):
         f"    if cuda.grid(1) == 0:\n        o[0] = r\n",
         g,
     )
-    k = cuda.jit(types.void(types.int64[::1], _nb1(arr.dtype), types.int64[::1]))(
-        g["_k"]
-    )
+    k = cuda.jit(
+        types.void(types.int64[::1], _nb1(arr.dtype), types.int64[::1]),
+        link=[cooperative_reductions_linkable()],
+    )(g["_k"])
     with MLIRNumbaCudaConfig():
         k[1, tpb, 0, _SHM](out, arr, index)
     cuda.synchronize()
@@ -92,7 +99,10 @@ def _corr(a, b, tpb=_TPB):
         "    if cuda.grid(1) == 0:\n        o[0] = r\n",
         g,
     )
-    k = cuda.jit(types.void(types.float64[::1], _nb1(a.dtype), _nb1(b.dtype)))(g["_k"])
+    k = cuda.jit(
+        types.void(types.float64[::1], _nb1(a.dtype), _nb1(b.dtype)),
+        link=[cooperative_reductions_linkable()],
+    )(g["_k"])
     with MLIRNumbaCudaConfig():
         k[1, tpb, 0, _SHM](out, a, b)
     cuda.synchronize()

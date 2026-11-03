@@ -2,10 +2,11 @@
 Lowerings for CooperativeArrayType operations.
 
 Cooperative block reductions (.sum(), .mean(), .min(), .max(), .std(),
-.var(), .corr(), .idxmin(), .idxmax()) are compiled as separate device
-functions (see cooperative_device_funcs.py) and linked at link time.
-This module emits only declarations + func.call sites — no bodies — so
-the MLIR inliner cannot inline them.
+.var(), .corr(), .idxmin(), .idxmax()) are compiled once into a single PTX
+reduction shim (see cooperative_device_funcs.py). This module emits only
+declarations + func.call sites — no bodies — so the MLIR inliner cannot inline
+them. Callers link the shim into the kernel by passing
+``link=[cooperative_reductions_linkable()]`` to ``cuda.jit``.
 
 Every CooperativeArray is a non-owning view: meminfo (bytes 0..7 of the
 {ptr meminfo, ptr data, i64 size, ptr index} struct) is null and no
@@ -127,14 +128,12 @@ for _dt in _SUPPORTED_DTYPES:
 
 
 # ---------------------------------------------------------------------------
-# .sum() reduction: thin call to separately-compiled device function
+# .sum() reduction: thin call to the separately-compiled reduction shim
 # ---------------------------------------------------------------------------
 
 def _lower_sum(builder, target, args, kwargs):
     """Emit a call to the outlined _coop_sum_{dtype} device function."""
-    from cudf.core.udf.mlir_backend.cooperative_device_funcs import (
-        sum_func_name, register_needed_func, _dtype_tag,
-    )
+    from cudf.core.udf.mlir_backend.cooperative_device_funcs import sum_func_name
 
     self_var = args[0]
     ca_val = builder.load_var(self_var)
@@ -159,8 +158,6 @@ def _lower_sum(builder, target, args, kwargs):
     )
     builder.store_var(target, result)
 
-    register_needed_func(builder.metadata, ("sum", _dtype_tag(dtype)))
-
 
 for _dt in _SUPPORTED_DTYPES:
     def _make_sum_lower(ca_type):
@@ -171,14 +168,12 @@ for _dt in _SUPPORTED_DTYPES:
 
 
 # ---------------------------------------------------------------------------
-# .mean() reduction: thin call to separately-compiled device function
+# .mean() reduction: thin call to the separately-compiled reduction shim
 # ---------------------------------------------------------------------------
 
 def _lower_mean(builder, target, args, kwargs):
     """Emit a call to the outlined _coop_mean_{dtype} device function."""
-    from cudf.core.udf.mlir_backend.cooperative_device_funcs import (
-        mean_func_name, register_needed_func, _dtype_tag,
-    )
+    from cudf.core.udf.mlir_backend.cooperative_device_funcs import mean_func_name
 
     self_var = args[0]
     ca_val = builder.load_var(self_var)
@@ -203,8 +198,6 @@ def _lower_mean(builder, target, args, kwargs):
         result = arith.truncf(ir.F32Type.get(), result)
     builder.store_var(target, result)
 
-    register_needed_func(builder.metadata, ("mean", _dtype_tag(dtype)))
-
 
 for _dt in _SUPPORTED_DTYPES:
     def _make_mean_lower(ca_type):
@@ -215,14 +208,12 @@ for _dt in _SUPPORTED_DTYPES:
 
 
 # ---------------------------------------------------------------------------
-# .min() reduction: thin call to separately-compiled device function
+# .min() reduction: thin call to the separately-compiled reduction shim
 # ---------------------------------------------------------------------------
 
 def _lower_min(builder, target, args, kwargs):
     """Emit a call to the outlined _coop_min_{dtype} device function."""
-    from cudf.core.udf.mlir_backend.cooperative_device_funcs import (
-        min_func_name, register_needed_func, _dtype_tag,
-    )
+    from cudf.core.udf.mlir_backend.cooperative_device_funcs import min_func_name
 
     self_var = args[0]
     ca_val = builder.load_var(self_var)
@@ -244,8 +235,6 @@ def _lower_min(builder, target, args, kwargs):
     )
     builder.store_var(target, result)
 
-    register_needed_func(builder.metadata, ("min", _dtype_tag(dtype)))
-
 
 for _dt in _SUPPORTED_DTYPES:
     def _make_min_lower(ca_type):
@@ -256,14 +245,12 @@ for _dt in _SUPPORTED_DTYPES:
 
 
 # ---------------------------------------------------------------------------
-# .max() reduction: thin call to separately-compiled device function
+# .max() reduction: thin call to the separately-compiled reduction shim
 # ---------------------------------------------------------------------------
 
 def _lower_max(builder, target, args, kwargs):
     """Emit a call to the outlined _coop_max_{dtype} device function."""
-    from cudf.core.udf.mlir_backend.cooperative_device_funcs import (
-        max_func_name, register_needed_func, _dtype_tag,
-    )
+    from cudf.core.udf.mlir_backend.cooperative_device_funcs import max_func_name
 
     self_var = args[0]
     ca_val = builder.load_var(self_var)
@@ -285,8 +272,6 @@ def _lower_max(builder, target, args, kwargs):
     )
     builder.store_var(target, result)
 
-    register_needed_func(builder.metadata, ("max", _dtype_tag(dtype)))
-
 
 for _dt in _SUPPORTED_DTYPES:
     def _make_max_lower(ca_type):
@@ -297,14 +282,12 @@ for _dt in _SUPPORTED_DTYPES:
 
 
 # ---------------------------------------------------------------------------
-# .std() reduction: thin call to separately-compiled device function
+# .std() reduction: thin call to the separately-compiled reduction shim
 # ---------------------------------------------------------------------------
 
 def _lower_std(builder, target, args, kwargs):
     """Emit a call to the outlined _coop_std_{dtype} device function."""
-    from cudf.core.udf.mlir_backend.cooperative_device_funcs import (
-        std_func_name, register_needed_func, _dtype_tag,
-    )
+    from cudf.core.udf.mlir_backend.cooperative_device_funcs import std_func_name
 
     self_var = args[0]
     ca_val = builder.load_var(self_var)
@@ -328,8 +311,6 @@ def _lower_std(builder, target, args, kwargs):
         result = arith.truncf(ir.F32Type.get(), result)
     builder.store_var(target, result)
 
-    register_needed_func(builder.metadata, ("std", _dtype_tag(dtype)))
-
 
 for _dt in _SUPPORTED_DTYPES:
     def _make_std_lower(ca_type):
@@ -340,14 +321,12 @@ for _dt in _SUPPORTED_DTYPES:
 
 
 # ---------------------------------------------------------------------------
-# .var() reduction: thin call to separately-compiled device function
+# .var() reduction: thin call to the separately-compiled reduction shim
 # ---------------------------------------------------------------------------
 
 def _lower_var(builder, target, args, kwargs):
     """Emit a call to the outlined _coop_var_{dtype} device function."""
-    from cudf.core.udf.mlir_backend.cooperative_device_funcs import (
-        var_func_name, register_needed_func, _dtype_tag,
-    )
+    from cudf.core.udf.mlir_backend.cooperative_device_funcs import var_func_name
 
     self_var = args[0]
     ca_val = builder.load_var(self_var)
@@ -371,8 +350,6 @@ def _lower_var(builder, target, args, kwargs):
         result = arith.truncf(ir.F32Type.get(), result)
     builder.store_var(target, result)
 
-    register_needed_func(builder.metadata, ("var", _dtype_tag(dtype)))
-
 
 for _dt in _SUPPORTED_DTYPES:
     def _make_var_lower(ca_type):
@@ -383,14 +360,12 @@ for _dt in _SUPPORTED_DTYPES:
 
 
 # ---------------------------------------------------------------------------
-# .corr(other) reduction: thin call to separately-compiled device function
+# .corr(other) reduction: thin call to the separately-compiled reduction shim
 # ---------------------------------------------------------------------------
 
 def _lower_corr(builder, target, args, kwargs):
     """Emit a call to the outlined _coop_corr_{dtype} device function."""
-    from cudf.core.udf.mlir_backend.cooperative_device_funcs import (
-        corr_func_name, register_needed_func, _dtype_tag,
-    )
+    from cudf.core.udf.mlir_backend.cooperative_device_funcs import corr_func_name
 
     self_var = args[0]
     other_var = args[1]
@@ -415,8 +390,6 @@ def _lower_corr(builder, target, args, kwargs):
     )
     builder.store_var(target, result)
 
-    register_needed_func(builder.metadata, ("corr", _dtype_tag(dtype)))
-
 
 for _dt in _SUPPORTED_DTYPES:
     def _make_corr_lower(ca_type):
@@ -432,7 +405,7 @@ for _dt in _SUPPORTED_DTYPES:
 
 def _lower_idx(builder, target, args, kwargs, *, is_max):
     from cudf.core.udf.mlir_backend.cooperative_device_funcs import (
-        idxmax_func_name, idxmin_func_name, register_needed_func, _dtype_tag,
+        idxmax_func_name, idxmin_func_name,
     )
 
     self_var = args[0]
@@ -455,9 +428,6 @@ def _lower_idx(builder, target, args, kwargs, *, is_max):
         operands_=[data, index, size, shm],
     )
     builder.store_var(target, result)
-
-    kind = "idxmax" if is_max else "idxmin"
-    register_needed_func(builder.metadata, (kind, _dtype_tag(dtype)))
 
 
 def _lower_idxmax(builder, target, args, kwargs):
@@ -542,51 +512,3 @@ def _register_cooperative_array_constructor():
 
 
 _register_cooperative_array_constructor()
-
-
-def _install_cooperative_link_patch():
-    """Link cooperative device-function PTX into the kernel at complete().
-
-    WORKAROUND (released numba-cuda-mlir): the released package exposes no hook
-    to add PTX to the linker before ``_Linker.complete()`` runs. We wrap
-    ``mlir_optimization.optimize`` and, only for kernels that requested
-    cooperative device functions, monkeypatch ``_Linker.complete`` at the class
-    level for the duration of that single ``optimize`` call. This class-level
-    patch is not thread-safe and should be removed once numba-cuda-mlir exposes
-    a pre-``complete()`` link hook.
-
-    TODO(cudf): replace with the upstream hook and link the tracking issue here.
-    """
-    import numba_cuda_mlir.mlir_optimization as _opt
-    from numba_cuda_mlir.numba_cuda.cudadrv.driver import _Linker
-
-    from cudf.core.udf.mlir_backend.cooperative_device_funcs import (
-        _NEEDED_FUNCS_KEY,
-        link_cooperative_funcs,
-    )
-
-    if getattr(_opt.optimize, "_cudf_coop_patched", False):
-        return
-
-    _orig_optimize = _opt.optimize
-
-    def _optimize(cres):
-        if not cres.metadata.get(_NEEDED_FUNCS_KEY):
-            return _orig_optimize(cres)
-        _orig_complete = _Linker.complete
-
-        def _complete(self):
-            link_cooperative_funcs(self, cres.metadata)
-            return _orig_complete(self)
-
-        _Linker.complete = _complete
-        try:
-            return _orig_optimize(cres)
-        finally:
-            _Linker.complete = _orig_complete
-
-    _optimize._cudf_coop_patched = True
-    _opt.optimize = _optimize
-
-
-_install_cooperative_link_patch()

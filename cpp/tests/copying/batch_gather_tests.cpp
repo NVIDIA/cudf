@@ -2601,7 +2601,7 @@ TEST_F(StringFusedEngineParity, MultiColumnTilesAndSentinels)
 // Long-row safety inside an engine call: most rows short, a few rows far above the block-copy
 // gate — the average must stay at or under 32 B so the engine is admitted, and the long rows
 // must ride the full-warp copy path byte-exactly (the 4-lane subgroup loop skips them by the
-// row_len gate). 31 short rows (<= 12 B) plus one 300 B row average ~29 B <= 32 B per tile.
+// row_len gate). 31 short rows (<= 12 B) plus one 300+ B row average ~15-16 B <= 32 B per tile.
 TEST_F(StringFusedEngineParity, ShortAverageColumnWithLongOutliers)
 {
   constexpr cudf::size_type num_rows{262'143};

@@ -135,8 +135,8 @@ void assemble_strings_impl(std::vector<staged_string>& staged_strings,
   CUDF_EXPECTS(flat_size <= cuda::std::numeric_limits<uint32_t>::max() - block_size,
                "Flat string index space exceeds uint32_t; reduce the number of string columns "
                "or rows");
-  // Every grid cell holds at most 41.9M flat rows, so the flat index fits uint32_t and the
-  // precomputed 32-bit divisors replace the per-element 64-bit //% (string_flat_layout).
+  // The expects above pins flat_size within uint32_t, so the precomputed 32-bit divisors
+  // replace the per-element 64-bit //% (string_flat_layout).
   string_flat_layout const scan_layout{
     cuda::fast_mod_div<uint32_t>{static_cast<uint32_t>(rows_per_col)},
     cuda::fast_mod_div<uint32_t>{static_cast<uint32_t>(num_rows)}};

@@ -1293,10 +1293,13 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
     // GPU work the gather could have overlapped with.
     builder.assemble_staged_keys();
 
-    // Pinned staging: stream-ordered deallocation, so the H2D needs no host sync. The device
-    // landing buffer is carved from a descriptor-staging arena (ONE upstream pair instead of
-    // one malloc/free per call); its scope is this launch block, and `batch_gather_kernel` —
-    // the buffer's only consumer — is enqueued inside it before the stream-ordered free.
+    // Pinned staging: the pool's deallocation keeps the source readable for as long as
+    // the copy may read it (stream-ordered pool free; the pool-exhaustion fallback frees
+    // through cudaFreeHost, a synchronizing free — no host sync needed either way). The
+    // device landing buffer is carved from a descriptor-staging arena (ONE upstream pair
+    // instead of one malloc/free per call); its scope is this launch block, and
+    // `batch_gather_kernel` — the buffer's only consumer — is enqueued inside it before
+    // the staging vectors die.
     auto staging =
       cudf::detail::make_pinned_vector_async<column_descriptor>(descriptors.size(), stream);
     std::copy(descriptors.begin(), descriptors.end(), staging.begin());

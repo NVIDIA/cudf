@@ -105,16 +105,15 @@ void assemble_strings_impl(std::vector<staged_string>& staged_strings,
   // (the routing walk only SPLITS the live columns between the routed and unrouted lists),
   // so the arena covers the per-class maximum of all segments and the actual carve
   // sequence always consumes at most the reservation. The bound is the per-segment
-  // aligned sum, NOT the raw byte sum: `string_work_item` is 16-aligned (its offsetalator
-  // members carry `alignas(16)`) while its 104 B size is not a multiple of 16, so each
-  // carve request bumps the arena pointer by up to 8 bytes; `size_type` requests shift it
-  // by up to 4. Reserving the aligned segment sizes covers every round-up the sequence
-  // can make (the worst case is d_items + d_payload_items + d_routed_items plus one
-  // size_type cohort — d_memcpy_live and d_unrouted are disjoint splits of the live
-  // columns, and d_engine_cols fires only when the unrouted carve does not); a shortfall
-  // trips the carve resource's loud `arena exhausted` expect rather than corrupting
-  // memory. Each segment's bump round-up is bounded by (alignment − 1) over an arbitrary
-  // start, so the reservation is the raw byte sum plus that slack per segment slot.
+  // aligned sum, NOT the raw byte sum: each carve request may shift the arena pointer by
+  // up to (alignment − 1) bytes over an arbitrary start, so the reservation is the raw
+  // byte sum plus that slack per segment slot. Reserving the aligned segment sizes covers
+  // every round-up the sequence can make (the worst case is d_items + d_payload_items +
+  // d_routed_items plus one size_type cohort — d_memcpy_live and d_unrouted are disjoint
+  // splits of the live columns, and d_engine_cols fires only when the unrouted carve does
+  // not); a shortfall trips the carve resource's loud `arena exhausted` expect rather than
+  // corrupting memory. For the actual layouts every round-up is pure slack
+  // (`string_work_item` is 144 B, a multiple of its 16-byte alignment).
   auto const staging_total =
     3 * (items.size() * sizeof(string_work_item) + (std::alignment_of_v<string_work_item> - 1)) +
     2 * (items.size() * sizeof(size_type) + (std::alignment_of_v<size_type> - 1));
@@ -149,8 +148,11 @@ void assemble_strings_impl(std::vector<staged_string>& staged_strings,
   // copy's stream-order source semantics a pageable source must outlive the stream's
   // execution of the copy, and the function returns without synchronizing after these
   // uploads. Pinned host memory is device-accessible, so the copy wrapper takes the
-  // pinned path and the allocator's stream-ordered free keeps the source readable until
-  // the stream drains it.
+  // pinned path, and the pinned pool's deallocation keeps the source readable for as
+  // long as the copy may still read it: the pool free is stream-ordered (an event
+  // recorded on this stream fences the reuse), while the pool-exhaustion fallback
+  // frees through cudaFreeHost, a synchronizing free that cannot complete while a
+  // copy still reads the allocation.
   auto staging_items =
     cudf::detail::make_pinned_vector_async<string_work_item>(items.size(), stream);
   std::copy(items.begin(), items.end(), staging_items.begin());
@@ -347,7 +349,7 @@ void assemble_strings_impl(std::vector<staged_string>& staged_strings,
     // arrays and no per-operator resolve chains. CUB classifies buffers from the sizes
     // iterator before dereferencing either pointer iterator, so a size-0 buffer's
     // nullptr src/dst is never dereferenced.
-    // Pinned staging copy of the routed cohort; dies stream-ordered with the call.
+    // Pinned staging copy of the routed cohort (lifetime as pinned staging above).
     auto staging_memcpy_live =
       cudf::detail::make_pinned_vector_async<size_type>(memcpy_live.size(), stream);
     std::copy(memcpy_live.begin(), memcpy_live.end(), staging_memcpy_live.begin());
@@ -398,7 +400,7 @@ void assemble_strings_impl(std::vector<staged_string>& staged_strings,
   auto const unrouted_rows =
     static_cast<int64_t>(memcpy_unrouted.size()) * static_cast<int64_t>(num_rows);
   if (unrouted_rows > 0) {
-    // Pinned staging copy of the unrouted cohort; dies stream-ordered with the call.
+    // Pinned staging copy of the unrouted cohort (lifetime as pinned staging above).
     auto staging_unrouted =
       cudf::detail::make_pinned_vector_async<size_type>(memcpy_unrouted.size(), stream);
     std::copy(memcpy_unrouted.begin(), memcpy_unrouted.end(), staging_unrouted.begin());
@@ -418,7 +420,7 @@ void assemble_strings_impl(std::vector<staged_string>& staged_strings,
                                               map_begin);
     CUDF_CUDA_TRY(cudaGetLastError());
   } else if (engine_active) {
-    // Pinned staging copy of the engine cohort; dies stream-ordered with the call.
+    // Pinned staging copy of the engine cohort (lifetime as pinned staging above).
     auto staging_engine_cols =
       cudf::detail::make_pinned_vector_async<size_type>(engine_cols.size(), stream);
     std::copy(engine_cols.begin(), engine_cols.end(), staging_engine_cols.begin());
@@ -452,7 +454,7 @@ void assemble_strings_impl(std::vector<staged_string>& staged_strings,
     for (size_t r = 0; r < memcpy_live.size(); ++r) {
       routed_items[r] = items[memcpy_live[r]];
     }
-    // Pinned staging copy of the routed cohort's items; dies stream-ordered with the call.
+    // Pinned staging copy of the routed cohort's items (lifetime as pinned staging above).
     auto staging_routed_items =
       cudf::detail::make_pinned_vector_async<string_work_item>(routed_items.size(), stream);
     std::copy(routed_items.begin(), routed_items.end(), staging_routed_items.begin());

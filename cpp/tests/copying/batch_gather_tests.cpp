@@ -1963,8 +1963,9 @@ TEST_F(BatchGatherTallSeamTest, CarvedMixedColumnsOutliveCallScopeArena)
 // The staging carve arenas (device landing buffers for the string path's H2D uploads and the
 // descriptor upload) are temp-scoped: every carved buffer must be finished by the launch block
 // that enqueued it BEFORE the arena's stream-ordered free fires. Sources are SLICED (the
-// staging sizes derive from the sliced views' sizes, not the parent's) and one string source is
-// EMPTY (zero rows: its upload is skipped by the live filter, so the carve must still size
+// staging sizes derive from the sliced views' sizes, not the parent's) and one string source
+// is a 500-row column of EMPTY strings (every gathered row is zero bytes: it contributes a
+// full staging item and a zero-byte destination chars carve, so the carve must still size
 // correctly) — the envelope's parity requirements for the carve-bound scratch. The call runs
 // under a block-scoped tracked output resource and compares against the stock gather both
 // in-scope and after the tracking resource dies.
@@ -1983,8 +1984,9 @@ TEST_F(BatchGatherTallSeamTest, StagingCarveSlicedSourceParity)
   auto sliced_str = cudf::slice(str_parent, {slice_begin, slice_end});
   ASSERT_EQ(sliced_str.size(), 1);
   // A column of EMPTY strings exercises the zero-size trap: every row's byte total is 0, so
-  // the routing walk sends it to the unrouted cohort and no chars copy exists for it — the
-  // carve must still size correctly (a zero-length column contributes only its staging item).
+  // below the routing gate it keeps the kernel path unrouted and no chars copy exists for it
+  // — the carve must still size correctly (a zero-length column contributes only its staging
+  // item).
   std::vector<std::string> const empty_strings(num_rows, "");
   cudf::test::strings_column_wrapper empty_str(empty_strings.begin(), empty_strings.end());
   auto col_i32 = make_fixed_column<int32_t>(

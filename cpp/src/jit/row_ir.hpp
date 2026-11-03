@@ -179,8 +179,9 @@ struct [[nodiscard]] instance_context {
   /**
    * @brief Finds a structurally equivalent node belonging to a previously completed output.
    *
-   * A call converted from an AST call that was already converted is equivalent to the first
-   * conversion, whatever its purity, so a call referred to more than once is evaluated once.
+   * Calls of impure functions are never equivalent to another node, including a repeated
+   * reference to the same AST call. Calls of pure functions are equivalent when their
+   * declarations, error policies, and arguments are equivalent.
    *
    * @param candidate Node for which to find an equivalent common subexpression
    * @return Equivalent node, or `nullptr` if none exists

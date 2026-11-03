@@ -20,10 +20,13 @@ namespace CUDF_EXPORT cudf {
  * @{
  */
 
+/// @brief Integer representation of error-returning device functions, including external UDFs.
+using error_int = cuda::std::int32_t;
+
 /**
  * @brief An enumeration of error codes that can occur during operations.
  */
-enum class [[nodiscard]] errc : cuda::std::int8_t {
+enum class [[nodiscard]] errc : error_int {
   SUCCESS             = 0,
   ARITHMETIC_OVERFLOW = 1,
   DIVISION_BY_ZERO    = 2,

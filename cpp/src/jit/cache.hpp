@@ -29,20 +29,17 @@ struct [[nodiscard]] jit_bundle_t {
   [[nodiscard]] std::vector<std::string> get_include_directories() const;
 };
 
-struct [[nodiscard]] kernel {
+/**
+ * @brief Non-owning kernel reference with stream-aware launch helpers.
+ *
+ * The kernel's owning library must remain alive while using this reference.
+ */
+struct [[nodiscard]] kernel_ref {
  private:
-  rtcx::library _library;
   rtcx::kernel_ref _kernel;
 
  public:
-  kernel(rtcx::library lib, rtcx::kernel_ref kernel) : _library(std::move(lib)), _kernel(kernel) {}
-  kernel(kernel const&)            = default;
-  kernel(kernel&&)                 = default;
-  kernel& operator=(kernel const&) = default;
-  kernel& operator=(kernel&&)      = default;
-  ~kernel()                        = default;
-
-  rtcx::kernel_ref get() const { return _kernel; }
+  explicit kernel_ref(rtcx::kernel_ref kernel) : _kernel(kernel) {}
 
   rtcx::kernel_occupancy_config max_occupancy_config(size_t dynamic_shared_memory_bytes,
                                                      int32_t block_size_limit) const
@@ -70,6 +67,21 @@ struct [[nodiscard]] kernel {
     void const* params[] = {&args...};  // NOLINT(modernize-avoid-c-arrays)
     launch(grid_dim, block_dim, shared_mem_bytes, stream, const_cast<void**>(params));
   }
+};
+
+/**
+ * @brief Kernel reference that retains shared ownership of its library.
+ */
+struct [[nodiscard]] kernel : kernel_ref {
+ private:
+  rtcx::library _library;
+
+ public:
+  kernel(rtcx::library lib, rtcx::kernel_ref kernel) : kernel_ref(kernel), _library(std::move(lib))
+  {
+  }
+
+  kernel_ref get() const { return *this; }
 };
 
 /**

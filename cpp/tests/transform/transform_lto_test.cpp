@@ -6,14 +6,21 @@
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
+#include <cudf_test/file_utilities.hpp>
 #include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/random.hpp>
 #include <cudf_test/table_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
+#include <cudf/errc.hpp>
 #include <cudf/transform.hpp>
+#include <cudf/utilities/error.hpp>
 
 #include <cudf_test_fragments.hpp>
+
+#include <fstream>
+#include <stdexcept>
+#include <type_traits>
 
 struct TransformLTOTest : public cudf::test::BaseFixture {};
 
@@ -22,6 +29,51 @@ using column_wrapper = cudf::test::fixed_width_column_wrapper<T>;
 
 template <typename T>
 using decimal_wrapper = cudf::test::fixed_point_column_wrapper<typename T::rep>;
+
+TEST_F(TransformLTOTest, CompileUdfWithIncludes)
+{
+  constexpr char source[] = R"(
+#include "scale.cuh"
+extern "C" __device__ int transform(float* output, float input)
+{
+  *output = scale * input;
+  return 0;
+}
+)";
+  char const* names[]{"scale.cuh"};
+  char const* headers[]{"inline constexpr float scale = 3.0f;"};
+  EXPECT_NO_THROW(static_cast<void>(cudf::compile_cuda_to_lto_ir(source, names, headers, {})));
+}
+
+TEST_F(TransformLTOTest, NullableDictionary)
+{
+  constexpr char source[] = R"(
+#include <cuda/std/optional>
+extern "C" __device__ int transform(cuda::std::optional<int>* output,
+                                   cuda::std::optional<int> input)
+{
+  *output = input;
+  return 0;
+}
+)";
+  auto fragment           = cudf::compile_cuda_to_lto_ir(source, {}, {}, {});
+  cudf::test::dictionary_column_wrapper<int32_t> input{{1, 2, 3}, {true, false, true}};
+  cudf::transform_input inputs[]{input};
+  cudf::transform_output outputs[]{
+    {cudf::data_type{cudf::type_id::INT32}, cudf::output_nullability::PRESERVE}};
+  auto view   = fragment.view();
+  auto result = cudf::transform_lto(view.data,
+                                    view.type,
+                                    cudf::null_aware::YES,
+                                    std::nullopt,
+                                    inputs,
+                                    outputs,
+                                    {},
+                                    std::nullopt,
+                                    cudf::test::get_default_stream());
+  column_wrapper<int32_t> expected{{1, 2, 3}, {true, false, true}};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(result->get_column(0), expected);
+}
 
 TEST_F(TransformLTOTest, InvSqrt)
 {

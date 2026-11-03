@@ -3,12 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "groupby/sort/group_reductions.hpp"
+#include "groupby/hash/group_reductions.hpp"
+#include "groupby/hash/grouped_reductions.cuh"
 
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/aggregation/aggregation.hpp>
-#include <cudf/detail/algorithms/reduce.cuh>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/valid_if.cuh>
 #include <cudf/dictionary/dictionary_column_view.hpp>
@@ -19,6 +19,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/std/functional>
 #include <cuda/std/tuple>
 #include <cuda/stream>
 #include <thrust/transform.h>
@@ -61,13 +62,13 @@ struct type_casted_accessor {
   }
 };
 
+/// The centered product of the two values at a grouped position, zero when either is null.
 template <typename ResultType>
 struct covariance_transform {
   column_device_view const d_values_0, d_values_1;
   ResultType const *d_means_0, *d_means_1;
-  size_type const* d_group_sizes;
+  size_type const* d_grouped_rows;
   size_type const* d_group_labels;
-  size_type ddof{1};  // TODO update based on bias.
 
   __device__ static ResultType value(column_device_view const& view, size_type i)
   {
@@ -77,43 +78,56 @@ struct covariance_transform {
     return type_dispatcher(values_col.type(), type_casted_accessor<ResultType>{}, i, values_col);
   }
 
-  __device__ ResultType operator()(size_type i)
+  __device__ ResultType operator()(size_type position) const
   {
+    auto const i = d_grouped_rows[position];
     if (d_values_0.is_null(i) or d_values_1.is_null(i)) return 0.0;
 
     // This has to be device dispatch because x and y type may differ
     auto const x = value(d_values_0, i);
     auto const y = value(d_values_1, i);
 
-    size_type const group_idx  = d_group_labels[i];
+    size_type const group_idx = d_group_labels[position];
+    ResultType const xmean    = d_means_0[group_idx];
+    ResultType const ymean    = d_means_1[group_idx];
+    return (x - xmean) * (y - ymean);
+  }
+};
+
+/// Divides the summed products of a group by its degrees of freedom.
+template <typename ResultType>
+struct covariance_finalizer {
+  ResultType* d_result;
+  size_type const* d_group_sizes;
+  size_type ddof;
+
+  __device__ void operator()(cuda::std::ptrdiff_t group_idx, ResultType sum) const
+  {
     size_type const group_size = d_group_sizes[group_idx];
-
     // prevent divide by zero error
-    if (group_size == 0 or group_size - ddof <= 0) return 0.0;
-
-    ResultType const xmean = d_means_0[group_idx];
-    ResultType const ymean = d_means_1[group_idx];
-    return (x - xmean) * (y - ymean) / (group_size - ddof);
+    d_result[group_idx] =
+      (group_size == 0 or group_size - ddof <= 0) ? 0.0 : sum / (group_size - ddof);
   }
 };
 }  // namespace
 
 std::unique_ptr<column> group_covariance(column_view const& values_0,
                                          column_view const& values_1,
+                                         hash::grouped_rows const& grouped,
                                          cudf::device_span<size_type const> group_labels,
-                                         size_type num_groups,
                                          column_view const& count,
                                          column_view const& mean_0,
                                          column_view const& mean_1,
                                          size_type min_periods,
                                          size_type ddof,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cudf::memory_resources mr)
 {
   using result_type = id_to_type<type_id::FLOAT64>;
   static_assert(
     std::is_same_v<cudf::detail::target_type_t<result_type, aggregation::Kind::CORRELATION>,
                    result_type>);
+  auto const num_groups = static_cast<size_type>(grouped.offsets.size() - 1);
 
   // check if each child type can be converted to float64.
   auto get_base_type = [](auto const& col) {
@@ -132,30 +146,26 @@ std::unique_ptr<column> group_covariance(column_view const& values_0,
   auto mean0_ptr = mean_0.begin<result_type>();
   auto mean1_ptr = mean_1.begin<result_type>();
 
-  auto d_values_0 = column_device_view::create(values_0, stream);
-  auto d_values_1 = column_device_view::create(values_1, stream);
-  covariance_transform<result_type> covariance_transform_op{*d_values_0,
-                                                            *d_values_1,
-                                                            mean0_ptr,
-                                                            mean1_ptr,
-                                                            count.data<size_type>(),
-                                                            group_labels.data(),
-                                                            ddof};
+  auto d_values_0 = column_device_view::create(values_0, stream, mr.get_temporary_mr());
+  auto d_values_1 = column_device_view::create(values_1, stream, mr.get_temporary_mr());
+  covariance_transform<result_type> covariance_transform_op{
+    *d_values_0, *d_values_1, mean0_ptr, mean1_ptr, grouped.rows.data(), group_labels.data()};
 
-  auto result = make_numeric_column(
-    data_type(type_to_id<result_type>()), num_groups, mask_state::UNALLOCATED, stream, mr);
+  auto result   = make_numeric_column(data_type(type_to_id<result_type>()),
+                                    num_groups,
+                                    mask_state::UNALLOCATED,
+                                    stream,
+                                    mr.get_output_mr());
   auto d_result = result->mutable_view().begin<result_type>();
 
+  // One pass over the grouped rows sums the centered products of each group directly from the
+  // input columns; the division by the degrees of freedom happens once per group on the output.
   auto corr_iter =
     cudf::detail::make_counting_transform_iterator(cudf::size_type{0}, covariance_transform_op);
-
-  cudf::detail::reduce_by_key_async(group_labels.begin(),
-                                    group_labels.end(),
-                                    corr_iter,
-                                    cuda::make_discard_iterator(),
-                                    d_result,
-                                    cuda::std::plus<result_type>(),
-                                    stream);
+  auto const outputs = cuda::tabulate_output_iterator{
+    covariance_finalizer<result_type>{d_result, count.data<size_type>(), ddof}};
+  hash::reduce_groups(
+    grouped, corr_iter, outputs, cuda::std::plus<result_type>(), result_type{0}, stream, mr);
 
   auto is_null = [ddof, min_periods] __device__(size_type group_size) {
     return not(group_size == 0 or group_size - ddof <= 0 or group_size < min_periods);

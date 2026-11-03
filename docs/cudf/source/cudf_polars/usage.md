@@ -7,7 +7,7 @@ picture, this page walks through running your first query.
 
 We always recommend constructing an engine object and using it in a context manager to ensure proper
 resource cleanup. The engine constructor is where you specify {class}`~cudf_polars.engine.options.StreamingOptions`
-such as `spill_to_pinned_memory` or `fallback_mode`. Ray is the showcased example below, see also
+such as `spill_device_limit` or `fallback_mode`. Ray is the showcased example below, see also
 {doc}`other_engines`.
 
 ## Your first GPU query
@@ -152,7 +152,8 @@ the specified path.
 
 {meth}`~cudf_polars.engine.ray.RayEngine.gather_cluster_info` returns
 a list of {class}`~cudf_polars.engine.core.ClusterInfo`, one per rank
-actor, with fields `hostname`, `pid`, `cuda_visible_devices`, and `gpu_uuid`:
+actor, with fields `hostname`, `pid`, `cuda_visible_devices`, `gpu_uuid`, and `device_memory`
+(total device memory in bytes, or `None` if unknown):
 
 ```python
 with RayEngine() as engine:

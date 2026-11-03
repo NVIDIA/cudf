@@ -122,13 +122,13 @@ void BM_filter_min_max(nvbench::state& state)
 
   auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
-    auto stream = launch.get_stream().get_stream();
-    auto mr     = cudf::get_current_device_resource_ref();
+    auto stream       = launch.get_stream().get_stream();
+    auto mr           = cudf::get_current_device_resource_ref();
+    auto filter_table = cudf::table_view{filter_column_views};
 
     switch (engine) {
       case engine_type::AST: {
         auto predicate_table      = cudf::table_view{{predicate_column->view()}};
-        auto filter_table         = cudf::table_view{filter_column_views};
         auto const filter_boolean = cudf::compute_column(predicate_table, tree.back(), stream, mr);
         auto const result =
           cudf::apply_retention_mask(filter_table, filter_boolean->view(), stream, mr);

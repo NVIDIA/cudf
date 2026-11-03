@@ -290,7 +290,7 @@ std::unique_ptr<column> empty_like(scalar const& input);
  *
  * @param input Immutable view of input column to emulate
  * @param mask_alloc Optional, Policy for allocating null mask. Defaults to RETAIN
- * @param mr Device memory resource used to allocate the returned column's device memory
+ * @param mr Memory resources used for device allocations
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @return A column with sufficient uninitialized capacity to hold the same
  * number of elements as `input` of the same type as `input.type()`
@@ -299,7 +299,7 @@ std::unique_ptr<column> allocate_like(
   column_view const& input,
   mask_allocation_policy mask_alloc = mask_allocation_policy::RETAIN,
   cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cudf::memory_resources mr         = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Creates an uninitialized new column of the specified size and same type as the `input`.
@@ -313,7 +313,7 @@ std::unique_ptr<column> allocate_like(
  * @param size The desired number of elements that the new column should have capacity for
  * @param mask_alloc Optional, Policy for allocating null mask. Defaults to RETAIN
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column's device memory
+ * @param mr Memory resources used for device allocations
  * @return A column with sufficient uninitialized capacity to hold the specified number of elements
  * as `input` of the same type as `input.type()`
  */
@@ -322,7 +322,7 @@ std::unique_ptr<column> allocate_like(
   size_type size,
   mask_allocation_policy mask_alloc = mask_allocation_policy::RETAIN,
   cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cudf::memory_resources mr         = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Creates a table of empty columns with the same types as the `input_table`
@@ -367,13 +367,15 @@ std::unique_ptr<table> empty_like(table_view const& input_table);
  * (exclusive)
  * @param target_begin The starting index of the target range (inclusive)
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used for allocations
  */
 void copy_range_in_place(column_view const& source,
                          mutable_column_view& target,
                          size_type source_begin,
                          size_type source_end,
                          size_type target_begin,
-                         cuda::stream_ref stream = cudf::get_default_stream());
+                         cuda::stream_ref stream   = cudf::get_default_stream(),
+                         cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Copies a range of elements out-of-place from one column to another.

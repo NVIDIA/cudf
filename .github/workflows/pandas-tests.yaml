@@ -52,7 +52,7 @@ jobs:
       id-token: write
       packages: read
       pull-requests: read
-    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
+    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
     with:
       build_type: nightly
       branch: ${{ inputs.branch }}
@@ -75,7 +75,7 @@ jobs:
       id-token: write
       packages: read
       pull-requests: read
-    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
+    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
     with:
       build_type: nightly
       branch: ${{ inputs.branch }}

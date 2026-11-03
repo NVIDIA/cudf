@@ -3,6 +3,9 @@ name: Build staged wheels
 on:
   workflow_call:
     inputs:
+      matrix_type:
+        required: true
+        type: string
       build-datetime:
         required: false
         type: string
@@ -45,10 +48,11 @@ permissions:
 
 jobs:
   compute-matrix:
-    uses: rapidsai/shared-workflows/.github/workflows/compute-matrix.yaml@cbf3d64a73fd7b44ee70cebdb50c175b495f6b29
+    uses: rapidsai/shared-workflows/.github/workflows/compute-matrix.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
     with:
       build_type: ${{ inputs.build_type }}
       matrix_name: wheels-build
+      matrix_type: ${{ inputs.matrix_type }}
       matrix_filter: ${{ inputs.matrix_filter }}
       pure_wheel: ${{ inputs.pure-wheel }}
   build:
@@ -80,7 +84,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Standardize repository information
-        uses: rapidsai/shared-actions/rapids-github-info@cea935cc5e25ec216756d0e2676c3cd32717aa4e
+        uses: rapidsai/shared-actions/rapids-github-info@1dd81e7f3c7dd183f30ae2dbf1e0c3b1122674b8
         with:
           branch: ${{ inputs.branch }}
           date: ${{ inputs.date }}
@@ -95,12 +99,12 @@ jobs:
       - name: Resolve controller-bound candidate metadata
         id: candidate-context
         if: ${{ inputs.build_type == 'release-candidate' && inputs.candidate-train-sha256 == '' }}
-        uses: rapidsai/shared-actions/release-candidate-context@cea935cc5e25ec216756d0e2676c3cd32717aa4e
+        uses: rapidsai/shared-actions/release-candidate-context@1dd81e7f3c7dd183f30ae2dbf1e0c3b1122674b8
         with:
           source-sha: ${{ env.RAPIDS_SHA }}
       - name: Prepare frozen wheel dependencies
         if: ${{ inputs.build_type == 'release-candidate' }}
-        uses: rapidsai/shared-actions/release-candidate-dependencies@cea935cc5e25ec216756d0e2676c3cd32717aa4e
+        uses: rapidsai/shared-actions/release-candidate-dependencies@1dd81e7f3c7dd183f30ae2dbf1e0c3b1122674b8
         with:
           implementation-mode: direct
           candidate-train-sha256: ${{ inputs.candidate-train-sha256 || steps.candidate-context.outputs.train-sha256 }}
@@ -115,16 +119,8 @@ jobs:
           enable-apt: true
           enable-pip: true
           enable-pypi-anaconda: true
-      - name: Telemetry setup
-        uses: rapidsai/shared-actions/telemetry-dispatch-setup@main
-        continue-on-error: true
-        if: ${{ inputs.build_type != 'release-candidate' && vars.TELEMETRY_ENABLED == 'true' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        with:
-          extra_attributes: rapids.PACKAGER=wheel,rapids.CUDA_VER=${{ matrix.CUDA_VER }},rapids.PY_VER=${{ matrix.PY_VER }},rapids.ARCH=${{ matrix.ARCH }},rapids.LINUX_VER=${{ matrix.LINUX_VER }}
       - name: Setup sccache-dist
-        uses: rapidsai/shared-actions/setup-sccache-dist@cea935cc5e25ec216756d0e2676c3cd32717aa4e
+        uses: rapidsai/shared-actions/setup-sccache-dist@1dd81e7f3c7dd183f30ae2dbf1e0c3b1122674b8
         env:
           AWS_REGION: ${{ env.AWS_REGION }}
           AWS_ACCESS_KEY_ID: ${{ env.AWS_ACCESS_KEY_ID }}
@@ -164,42 +160,49 @@ jobs:
         if: inputs.pure-wheel == false && inputs.build_type != 'release-candidate'
         with:
           if-no-files-found: error
+          compression-level: 0
           name: ${{ steps.build-wheels.outputs.libcudf_artifact_name }}
           path: ${{ steps.build-wheels.outputs.libcudf_output_dir }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: inputs.pure-wheel == false && inputs.build_type != 'release-candidate'
         with:
           if-no-files-found: error
+          compression-level: 0
           name: ${{ steps.build-wheels.outputs.libcudf_streaming_artifact_name }}
           path: ${{ steps.build-wheels.outputs.libcudf_streaming_output_dir }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: inputs.pure-wheel == false && inputs.build_type != 'release-candidate'
         with:
           if-no-files-found: error
+          compression-level: 0
           name: ${{ steps.build-wheels.outputs.pylibcudf_artifact_name }}
           path: ${{ steps.build-wheels.outputs.pylibcudf_output_dir }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: inputs.pure-wheel == false && inputs.build_type != 'release-candidate'
         with:
           if-no-files-found: error
+          compression-level: 0
           name: ${{ steps.build-wheels.outputs.cudf_artifact_name }}
           path: ${{ steps.build-wheels.outputs.cudf_output_dir }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: inputs.pure-wheel == false && inputs.build_type != 'release-candidate'
         with:
           if-no-files-found: error
+          compression-level: 0
           name: ${{ steps.build-wheels.outputs.cudf_streaming_artifact_name }}
           path: ${{ steps.build-wheels.outputs.cudf_streaming_output_dir }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: inputs.pure-wheel && inputs.build_type != 'release-candidate'
         with:
           if-no-files-found: error
+          compression-level: 0
           name: ${{ steps.build-wheels.outputs.dask_cudf_artifact_name }}
           path: ${{ steps.build-wheels.outputs.dask_cudf_output_dir }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: inputs.pure-wheel && inputs.build_type != 'release-candidate'
         with:
           if-no-files-found: error
+          compression-level: 0
           name: ${{ steps.build-wheels.outputs.cudf_polars_artifact_name }}
           path: ${{ steps.build-wheels.outputs.cudf_polars_output_dir }}
       - name: Upload additional artifacts
@@ -228,7 +231,7 @@ jobs:
           role-duration-seconds: 3600
       - name: Create wheel release catalog companion
         if: ${{ inputs.build_type == 'release-candidate' }}
-        uses: rapidsai/shared-actions/release-catalog-dispatch@cea935cc5e25ec216756d0e2676c3cd32717aa4e
+        uses: rapidsai/shared-actions/release-catalog-dispatch@1dd81e7f3c7dd183f30ae2dbf1e0c3b1122674b8
         with:
           config: >-
             {
@@ -241,9 +244,3 @@ jobs:
           candidate-matrix-arch: ${{ matrix.ARCH }}
           candidate-matrix-cuda-version: ${{ matrix.CUDA_VER }}
           candidate-matrix-python-version: ${{ matrix.PY_VER }}
-      - name: Telemetry upload attributes
-        if: ${{ inputs.build_type != 'release-candidate' && vars.TELEMETRY_ENABLED == 'true' }}
-        uses: rapidsai/shared-actions/telemetry-dispatch-stash-job-artifacts@main
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}

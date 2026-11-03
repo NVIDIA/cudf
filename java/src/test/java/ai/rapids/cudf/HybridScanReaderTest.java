@@ -12,6 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
+import ai.rapids.cudf.ast.AstExpression;
 import ai.rapids.cudf.ast.BinaryOperation;
 import ai.rapids.cudf.ast.BinaryOperator;
 import ai.rapids.cudf.ast.ColumnNameReference;
@@ -164,7 +165,7 @@ public class HybridScanReaderTest extends CudfTestBase {
           open.file, reader.filterColumnChunksByteRanges(survived));
       try (HybridScanReader.FilterMaterializationResult fr =
                reader.materializeFilterColumns(survived, filterCols, true)) {
-        assertEquals(5000L, fr.table().getRowCount(),
+        assertEquals(5000L, fr.tableWithColumnNames().table().getRowCount(),
             "Group 2 (zip_code 100,000–104,999) entirely satisfies zip_code > 99,999");
       } finally {
         closeAll(filterCols);
@@ -554,8 +555,51 @@ public class HybridScanReaderTest extends CudfTestBase {
           open.file, reader.filterColumnChunksByteRanges(survived));
       try (HybridScanReader.FilterMaterializationResult fr =
                reader.materializeFilterColumns(survived, filterCols, false)) {
-        assertEquals(1599L, fr.table().getRowCount());
-        assertEquals(1, fr.table().getNumberOfColumns(), "filter table contains only zip_code");
+        HybridScanReader.TableWithColumnNames filter = fr.tableWithColumnNames();
+        assertArrayEquals(new String[]{"zip_code"}, filter.columnNames());
+        assertEquals(1599L, filter.table().getRowCount());
+        assertEquals(1, filter.table().getNumberOfColumns(), "filter table contains only zip_code");
+      } finally {
+        closeAll(filterCols);
+      }
+    }
+  }
+
+  /**
+   * Verifies materializeFilterColumns() names each filter column correctly when the filter reads
+   * a column outside the selection, without assuming an order for the filter columns: the
+   * selection omits num_units, and num_units == 2 && zip_code > 150,000 keeps the 533 rows with
+   * id 1,402–2,998 and id % 3 == 1.
+   */
+  @Test
+  void testMaterializeFilterColumnsNamesFilterOnlyColumn(@TempDir Path tmp) throws IOException {
+    AstExpression expr = new BinaryOperation(BinaryOperator.LOGICAL_AND,
+        new BinaryOperation(BinaryOperator.EQUAL, new ColumnNameReference("num_units"),
+            Literal.ofInt(2)),
+        new BinaryOperation(BinaryOperator.GREATER, new ColumnNameReference("zip_code"),
+            Literal.ofInt(150000)));
+    try (OpenReader open = OpenReader.standard(tmp, "id", "zip_code").withFilter(expr)) {
+      HybridScanReader reader = open.reader;
+      int[] survived = reader.filterRowGroupsWithStats(reader.allRowGroups());
+      int[] ids = IntStream.rangeClosed(1402, 2998).filter(i -> i % 3 == 1).toArray();
+      DeviceMemoryBuffer[] filterCols = copyRangesToDevice(
+          open.file, reader.filterColumnChunksByteRanges(survived));
+      try (HybridScanReader.FilterMaterializationResult fr =
+               reader.materializeFilterColumns(survived, filterCols, false);
+           ColumnVector expectedZip = ColumnVector.fromInts(
+               Arrays.stream(ids).map(i -> 10000 + i * 100).toArray());
+           ColumnVector expectedUnits = ColumnVector.fromInts(
+               IntStream.generate(() -> 2).limit(ids.length).toArray())) {
+        Table filterTable = fr.tableWithColumnNames().table();
+        List<String> names = Arrays.asList(fr.tableWithColumnNames().columnNames());
+        String[] sortedNames = names.toArray(new String[0]);
+        Arrays.sort(sortedNames);
+        assertArrayEquals(new String[]{"num_units", "zip_code"}, sortedNames,
+            "filter table holds both filter columns, including num_units outside the selection");
+        AssertUtils.assertColumnsAreEqual(expectedZip,
+            filterTable.getColumn(names.indexOf("zip_code")), "zip_code");
+        AssertUtils.assertColumnsAreEqual(expectedUnits,
+            filterTable.getColumn(names.indexOf("num_units")), "num_units");
       } finally {
         closeAll(filterCols);
       }
@@ -568,8 +612,9 @@ public class HybridScanReaderTest extends CudfTestBase {
 
   /**
    * Verifies materializePayloadColumns() produces a payload table with the exact expected
-   * row count and column count: 1599 rows survive the filter; the payload table contains
-   * the two non-filter columns ("id", "num_units").
+   * rows and column names: the 1599 rows with id 1,401–2,999 survive the filter; the payload
+   * table contains the two non-filter columns ("id", "num_units"), and each name labels the
+   * column holding that data.
    */
   @Test
   void testMaterializePayloadColumnsExactRowCount(@TempDir Path tmp) throws IOException {
@@ -578,14 +623,24 @@ public class HybridScanReaderTest extends CudfTestBase {
       int[] survived = reader.filterRowGroupsWithStats(reader.allRowGroups());
       DeviceMemoryBuffer[] filterCols = copyRangesToDevice(
           open.file, reader.filterColumnChunksByteRanges(survived));
-      DeviceMemoryBuffer[] payloadCols = copyRangesToDevice(
-          open.file, reader.payloadColumnChunksByteRanges(survived));
-      try (HybridScanReader.FilterMaterializationResult fr =
-               reader.materializeFilterColumns(survived, filterCols, false);
-           Table payload = reader.materializePayloadColumns(survived, payloadCols,
-               fr.rowMask(), false)) {
-        assertEquals(1599L, payload.getRowCount());
-        assertEquals(2, payload.getNumberOfColumns(), "payload table contains id + num_units");
+      DeviceMemoryBuffer[] payloadCols = null;
+      try {
+        payloadCols = copyRangesToDevice(
+            open.file, reader.payloadColumnChunksByteRanges(survived));
+        try (HybridScanReader.FilterMaterializationResult fr =
+                 reader.materializeFilterColumns(survived, filterCols, false);
+             HybridScanReader.TableWithColumnNames payload =
+                 reader.materializePayloadColumns(survived, payloadCols, fr.rowMask(), false);
+             ColumnVector expectedIds = ColumnVector.fromInts(
+                 IntStream.rangeClosed(1401, 2999).toArray());
+             ColumnVector expectedUnits = ColumnVector.fromInts(
+                 IntStream.rangeClosed(1401, 2999).map(i -> 1 + (i % 3)).toArray())) {
+          assertArrayEquals(new String[]{"id", "num_units"}, payload.columnNames());
+          Table table = payload.table();
+          assertEquals(2, table.getNumberOfColumns(), "payload table contains id + num_units");
+          AssertUtils.assertColumnsAreEqual(expectedIds, table.getColumn(0), "id");
+          AssertUtils.assertColumnsAreEqual(expectedUnits, table.getColumn(1), "num_units");
+        }
       } finally {
         closeAll(filterCols);
         closeAll(payloadCols);
@@ -611,17 +666,21 @@ public class HybridScanReaderTest extends CudfTestBase {
           "Group 0 (zip_code 0-59,999) cannot satisfy zip_code > 100,000");
       DeviceMemoryBuffer[] filterCols = copyRangesToDevice(
           open.file, reader.filterColumnChunksByteRanges(survived));
-      DeviceMemoryBuffer[] payloadCols = copyRangesToDevice(
-          open.file, reader.payloadColumnChunksByteRanges(survived));
-      try (HybridScanReader.FilterMaterializationResult fr =
-               reader.materializeFilterColumns(survived, filterCols, false);
-           Table payload = reader.materializePayloadColumns(survived, payloadCols,
-               fr.rowMask(), true);
-           ColumnVector expectedIds = ColumnVector.fromInts(
-               IntStream.rangeClosed(100001, 119999).toArray())) {
-        assertEquals(2, payload.getNumberOfColumns(), "payload table contains id + num_units");
-        assertEquals(19999L, payload.getRowCount());
-        AssertUtils.assertColumnsAreEqual(expectedIds, payload.getColumn(0), "id");
+      DeviceMemoryBuffer[] payloadCols = null;
+      try {
+        payloadCols = copyRangesToDevice(
+            open.file, reader.payloadColumnChunksByteRanges(survived));
+        try (HybridScanReader.FilterMaterializationResult fr =
+                 reader.materializeFilterColumns(survived, filterCols, false);
+             HybridScanReader.TableWithColumnNames payloadResult =
+                 reader.materializePayloadColumns(survived, payloadCols, fr.rowMask(), true);
+             ColumnVector expectedIds = ColumnVector.fromInts(
+                 IntStream.rangeClosed(100001, 119999).toArray())) {
+          Table payload = payloadResult.table();
+          assertEquals(2, payload.getNumberOfColumns(), "payload table contains id + num_units");
+          assertEquals(19999L, payload.getRowCount());
+          AssertUtils.assertColumnsAreEqual(expectedIds, payload.getColumn(0), "id");
+        }
       } finally {
         closeAll(filterCols);
         closeAll(payloadCols);
@@ -806,9 +865,10 @@ public class HybridScanReaderTest extends CudfTestBase {
       int[] survived = reader.filterRowGroupsWithStats(reader.allRowGroups());
       DeviceMemoryBuffer[] filterCols = copyRangesToDevice(
           open.file, reader.filterColumnChunksByteRanges(survived));
-      DeviceMemoryBuffer[] payloadCols = copyRangesToDevice(
-          open.file, reader.payloadColumnChunksByteRanges(survived));
+      DeviceMemoryBuffer[] payloadCols = null;
       try {
+        payloadCols = copyRangesToDevice(
+            open.file, reader.payloadColumnChunksByteRanges(survived));
         reader.setupChunkingForFilterColumns(0L, 0L, survived, false, filterCols);
         try (ColumnVector rowMask = reader.takeFilterRowMask()) {
           reader.setupChunkingForPayloadColumns(0L, 0L, survived, rowMask, false, payloadCols);
@@ -837,9 +897,10 @@ public class HybridScanReaderTest extends CudfTestBase {
       int[] survived = reader.filterRowGroupsWithStats(reader.allRowGroups());
       DeviceMemoryBuffer[] filterCols = copyRangesToDevice(
           open.file, reader.filterColumnChunksByteRanges(survived));
-      DeviceMemoryBuffer[] payloadCols = copyRangesToDevice(
-          open.file, reader.payloadColumnChunksByteRanges(survived));
+      DeviceMemoryBuffer[] payloadCols = null;
       try {
+        payloadCols = copyRangesToDevice(
+            open.file, reader.payloadColumnChunksByteRanges(survived));
         reader.setupChunkingForFilterColumns(0L, 0L, survived, false, filterCols);
         while (reader.hasNextTableChunk()) {
           reader.materializeFilterColumnsChunk().close();
@@ -876,9 +937,10 @@ public class HybridScanReaderTest extends CudfTestBase {
       int[] survived = reader.filterRowGroupsWithStats(reader.allRowGroups());
       DeviceMemoryBuffer[] filterCols = copyRangesToDevice(
           open.file, reader.filterColumnChunksByteRanges(survived));
-      DeviceMemoryBuffer[] payloadCols = copyRangesToDevice(
-          open.file, reader.payloadColumnChunksByteRanges(survived));
+      DeviceMemoryBuffer[] payloadCols = null;
       try {
+        payloadCols = copyRangesToDevice(
+            open.file, reader.payloadColumnChunksByteRanges(survived));
         reader.setupChunkingForFilterColumns(0L, 0L, survived, false, filterCols);
         while (reader.hasNextTableChunk()) {
           reader.materializeFilterColumnsChunk().close();
@@ -919,9 +981,10 @@ public class HybridScanReaderTest extends CudfTestBase {
       int[] survived = reader.filterRowGroupsWithStats(reader.allRowGroups());
       DeviceMemoryBuffer[] filterCols = copyRangesToDevice(
           open.file, reader.filterColumnChunksByteRanges(survived));
-      DeviceMemoryBuffer[] payloadCols = copyRangesToDevice(
-          open.file, reader.payloadColumnChunksByteRanges(survived));
+      DeviceMemoryBuffer[] payloadCols = null;
       try {
+        payloadCols = copyRangesToDevice(
+            open.file, reader.payloadColumnChunksByteRanges(survived));
         reader.setupChunkingForFilterColumns(0L, 0L, survived, false, filterCols);
         while (reader.hasNextTableChunk()) {
           reader.materializeFilterColumnsChunk().close();
@@ -1307,6 +1370,127 @@ public class HybridScanReaderTest extends CudfTestBase {
   }
 
   // --------------------------------------------------------------------
+  // Tests: dictionaryPagesByteRangesIncludeUnbounded() / dictionaryPageLengths()
+  // --------------------------------------------------------------------
+
+  // Cap for how much of an upper-bound range to read while looking for a dictionary page.
+  private static final long MAX_DICT_PAGE_READ = 1L << 20;
+
+  /**
+   * A writer that sets dictionary_page_offset (every cudf-written file) yields only exact ranges,
+   * so the included-unbounded result matches dictionaryPagesByteRanges() one-for-one.
+   */
+  @Test
+  void testIncludeUnboundedMatchesExactForModernWriter(@TempDir Path tmp) throws IOException {
+    try (OpenReader open = OpenReader.pageIndex(tmp).withFilter("num_units", BinaryOperator.EQUAL, 2)) {
+      open.withPageIndex();
+      HybridScanReader reader = open.reader;
+      int[] rgs = reader.allRowGroups();
+      ByteRange[] exact = reader.dictionaryPagesByteRanges(rgs);
+      DictionaryByteRange[] unbounded = reader.dictionaryPagesByteRangesIncludeUnbounded(rgs);
+      assertEquals(exact.length, unbounded.length, "one range per dict column chunk either way");
+      assertTrue(exact.length > 0, "low-cardinality num_units has dictionary pages");
+      for (int i = 0; i < exact.length; i++) {
+        assertTrue(unbounded[i].isExact(),
+            "cudf sets dictionary_page_offset, so the range is the page itself");
+        assertEquals(exact[i], unbounded[i].byteRange(), "same range as the exact API");
+      }
+    }
+  }
+
+  /**
+   * dictionaryPageLengths() measures the page in each exact range buffer as the whole buffer, since
+   * an exact range is already exactly one dictionary page.
+   */
+  @Test
+  void testDictionaryPageLengthsMeasuresExactPage(@TempDir Path tmp) throws IOException {
+    try (OpenReader open = OpenReader.pageIndex(tmp).withFilter("num_units", BinaryOperator.EQUAL, 2)) {
+      open.withPageIndex();
+      HybridScanReader reader = open.reader;
+      DictionaryByteRange[] ranges =
+          reader.dictionaryPagesByteRangesIncludeUnbounded(reader.allRowGroups());
+      assertTrue(ranges.length > 0, "expected dictionary pages");
+      HostMemoryBuffer[] host = new HostMemoryBuffer[ranges.length];
+      try {
+        for (int i = 0; i < ranges.length; i++) {
+          ByteRange r = ranges[i].byteRangeToRead(MAX_DICT_PAGE_READ);
+          host[i] = open.file.slice(r.offset(), r.size());
+        }
+        long[] lengths = HybridScanReader.dictionaryPageLengths(host);
+        for (int i = 0; i < ranges.length; i++) {
+          assertEquals(ranges[i].byteRange().size(), lengths[i],
+              "an exact range is exactly one dictionary page");
+        }
+      } finally {
+        for (HostMemoryBuffer b : host) {
+          if (b != null) b.close();
+        }
+      }
+    }
+  }
+
+  /** Bytes that do not begin with a dictionary-page header measure as 0 (nothing to prune with). */
+  @Test
+  void testDictionaryPageLengthsZeroForNonPageBytes() {
+    try (HostMemoryBuffer buf = HostMemoryBuffer.allocate(64)) {
+      for (int i = 0; i < 64; i++) {
+        buf.setByte(i, (byte) 0);
+      }
+      long[] lengths = HybridScanReader.dictionaryPageLengths(new HostMemoryBuffer[]{buf});
+      assertEquals(1, lengths.length);
+      assertEquals(0L, lengths[0], "zeroed bytes are not a dictionary page header");
+    }
+  }
+
+  /**
+   * End-to-end included-unbounded pruning: cap each range, cut it down to its page with
+   * dictionaryPageLengths(), stage the page on the device, and prune. Matches the exact-path result
+   * for this cudf-written fixture (all exact ranges).
+   */
+  @Test
+  void testIncludeUnboundedPrunesSubsetOfGroups(@TempDir Path tmp) throws IOException {
+    try (OpenReader open = OpenReader.pageIndex(tmp).withFilter("num_units", BinaryOperator.EQUAL, 2)) {
+      open.withPageIndex();
+      HybridScanReader reader = open.reader;
+      int[] rgs = reader.allRowGroups();
+      DictionaryByteRange[] ranges = reader.dictionaryPagesByteRangesIncludeUnbounded(rgs);
+      assertTrue(ranges.length > 0, "expected dictionary pages");
+
+      // Cap each range and measure the page in it on the host.
+      ByteRange[] toRead = new ByteRange[ranges.length];
+      for (int i = 0; i < ranges.length; i++) {
+        toRead[i] = ranges[i].byteRangeToRead(MAX_DICT_PAGE_READ);
+      }
+      long[] lengths;
+      HostMemoryBuffer[] host = new HostMemoryBuffer[ranges.length];
+      try {
+        for (int i = 0; i < ranges.length; i++) {
+          host[i] = open.file.slice(toRead[i].offset(), toRead[i].size());
+        }
+        lengths = HybridScanReader.dictionaryPageLengths(host);
+      } finally {
+        for (HostMemoryBuffer b : host) {
+          if (b != null) b.close();
+        }
+      }
+
+      // Trim each range to its measured page (empty when there is none), then stage on the device.
+      ByteRange[] trimmed = new ByteRange[ranges.length];
+      for (int i = 0; i < ranges.length; i++) {
+        trimmed[i] = new ByteRange(toRead[i].offset(), lengths[i]);
+      }
+      DeviceMemoryBuffer[] dictBufs = copyRangesToDevice(open.file, trimmed);
+      try {
+        int[] result = reader.filterRowGroupsWithDictionaryPages(dictBufs, rgs);
+        assertArrayEquals(new int[]{0, 1}, result,
+            "num_units == 2 in g0 dict {1,2} and g1 dict {2,3}, not in g2 dict {3,4}");
+      } finally {
+        closeAll(dictBufs);
+      }
+    }
+  }
+
+  // --------------------------------------------------------------------
   // Fixture helpers
   // --------------------------------------------------------------------
 
@@ -1332,9 +1516,14 @@ public class HybridScanReaderTest extends CudfTestBase {
     }
 
     static OpenReader standard(Path tmp) throws IOException {
+      return standard(tmp, DEFAULT_COLS);
+    }
+
+    /** The {@link #standard(Path)} fixture, selecting only {@code cols}. */
+    static OpenReader standard(Path tmp, String... cols) throws IOException {
       File pq = tmp.resolve("fixture.parquet").toFile();
       writeFixtureParquet(pq);
-      return openFromFile(pq, DEFAULT_COLS);
+      return openFromFile(pq, cols);
     }
 
     static OpenReader pageIndex(Path tmp) throws IOException {
@@ -1395,8 +1584,12 @@ public class HybridScanReaderTest extends CudfTestBase {
      * live filter at any time.
      */
     OpenReader withFilter(String col, BinaryOperator op, int literal) {
-      CompiledExpression newFilter = new BinaryOperation(op, new ColumnNameReference(col),
-          Literal.ofInt(literal)).compile();
+      return withFilter(new BinaryOperation(op, new ColumnNameReference(col),
+          Literal.ofInt(literal)));
+    }
+
+    OpenReader withFilter(AstExpression expr) {
+      CompiledExpression newFilter = expr.compile();
       try {
         reader.setFilter(newFilter);
       } catch (Throwable t) {

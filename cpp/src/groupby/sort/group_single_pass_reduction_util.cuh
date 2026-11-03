@@ -17,11 +17,13 @@
 #include <cudf/detail/valid_if.cuh>
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/functional>
 #include <cuda/stream>
@@ -61,7 +63,7 @@ struct null_replaced_value_accessor : value_accessor<SourceType> {
 };
 
 // Error case when no other overload or specialization is available
-template <aggregation::Kind K, typename T, typename Enable = void>
+template <aggregation::Kind K, typename T>
 struct group_reduction_functor {
   template <typename... Args>
   static std::unique_ptr<column> invoke(Args&&...)
@@ -102,10 +104,8 @@ static constexpr bool is_group_reduction_supported()
 }
 
 template <aggregation::Kind K, typename T>
-struct group_reduction_functor<
-  K,
-  T,
-  std::enable_if_t<is_group_reduction_supported<K, T>() && !cudf::is_nested<T>()>> {
+  requires(is_group_reduction_supported<K, T>() and not cudf::concepts::nested<T>)
+struct group_reduction_functor<K, T> {
   static std::unique_ptr<column> invoke(column_view const& values,
                                         size_type num_groups,
                                         cudf::device_span<cudf::size_type const> group_labels,
@@ -160,7 +160,8 @@ struct group_reduction_functor<
     }
 
     if (values.has_nulls()) {
-      rmm::device_uvector<bool> validity(num_groups, stream);
+      cuda::device_buffer<bool> validity(
+        stream, cudf::get_current_device_resource_ref(), num_groups, cuda::no_init);
       do_reduction(cudf::detail::make_validity_iterator(*d_values_ptr),
                    validity.begin(),
                    cuda::std::logical_or{});
@@ -173,11 +174,9 @@ struct group_reduction_functor<
   }
 };
 
-template <aggregation::Kind K, typename T>
-struct group_reduction_functor<
-  K,
-  T,
-  std::enable_if_t<is_group_reduction_supported<K, T>() && cudf::is_nested<T>()>> {
+template <aggregation::Kind K, cudf::concepts::nested T>
+  requires(is_group_reduction_supported<K, T>())
+struct group_reduction_functor<K, T> {
   static std::unique_ptr<column> invoke(column_view const& values,
                                         size_type num_groups,
                                         cudf::device_span<cudf::size_type const> group_labels,
@@ -213,7 +212,8 @@ struct group_reduction_functor<
     if (values.has_nulls()) {
       // Generate bitmask for the output by segmented reduction of the input bitmask.
       auto const d_values_ptr = column_device_view::create(values, stream);
-      auto validity           = rmm::device_uvector<bool>(num_groups, stream);
+      auto validity           = cuda::device_buffer<bool>(
+        stream, cudf::get_current_device_resource_ref(), num_groups, cuda::no_init);
       do_reduction(cudf::detail::make_validity_iterator(*d_values_ptr),
                    validity.begin(),
                    cuda::std::logical_or{});

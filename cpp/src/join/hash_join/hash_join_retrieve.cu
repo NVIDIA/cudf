@@ -11,6 +11,7 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/sizes_to_offsets_iterator.cuh>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/join/join.hpp>
 #include <cudf/table/table_view.hpp>
@@ -19,6 +20,7 @@
 
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/buffer>
 #include <cuda/std/cstdint>
 
 #include <memory>
@@ -77,21 +79,20 @@ hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
     auto [offsets, probe_groups, actual_size] = [&] {
       auto const preprocessed_left = cudf::detail::row::equality::preprocessed_table::create(
         left, stream, cudf::get_current_device_resource_ref());
-      auto match_counts = cudf::detail::make_zeroed_device_uvector_async<size_type>(
+      auto match_counts = cudf::detail::make_zeroed_device_buffer_async<size_type>(
         static_cast<std::size_t>(left.num_rows()) + 1, stream, temp_mr);
-      rmm::device_uvector<size_type> probe_groups(left.num_rows(), stream, temp_mr);
+      cuda::device_buffer<size_type> probe_groups(stream, temp_mr, left.num_rows(), cuda::no_init);
       // A full join appends the unmatched right rows, so track which build rows the probe matched
       // to size the output exactly. Other join kinds skip these flags and their atomics.
-      auto matched_groups = Join == join_kind::FULL_JOIN
-                              ? cudf::detail::make_zeroed_device_uvector_async<cuda::std::uint32_t>(
-                                  _right.num_rows(), stream, temp_mr)
-                              : rmm::device_uvector<cuda::std::uint32_t>{0, stream, temp_mr};
+      auto matched_groups =
+        Join == join_kind::FULL_JOIN
+          ? cudf::detail::make_zeroed_device_buffer_async<cuda::std::uint32_t>(
+              _right.num_rows(), stream, temp_mr)
+          : cuda::device_buffer<cuda::std::uint32_t>{stream, temp_mr, 0, cuda::no_init};
       auto matched_build_rows =
         cudf::detail::device_scalar<cuda::std::uint64_t>(0, stream, temp_mr);
       auto const row_bitmask = cudf::detail::bitmask_and(left, stream, temp_mr).first;
-      auto const valid_rows  = _nulls_equal == null_equality::UNEQUAL
-                                 ? reinterpret_cast<bitmask_type const*>(row_bitmask.data())
-                                 : nullptr;
+      auto const valid_rows = _nulls_equal == null_equality::UNEQUAL ? row_bitmask.data() : nullptr;
 
       auto count_matches = [&](auto equality, auto hasher) {
         launch_hash_csr_probe_count_kernel<Join != join_kind::INNER_JOIN>(
@@ -99,6 +100,7 @@ hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
           valid_rows,
           probe_groups.data(),
           match_counts.data(),
+          nullptr,
           Join == join_kind::FULL_JOIN ? matched_groups.data() : nullptr,
           matched_build_rows.data(),
           _impl->hash_table(),
@@ -115,7 +117,7 @@ hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
                                _nulls_equal,
                                count_matches);
 
-      auto offsets = cudf::detail::make_zeroed_device_uvector_async<cuda::std::int64_t>(
+      auto offsets = cudf::detail::make_zeroed_device_buffer_async<cuda::std::int64_t>(
         static_cast<std::size_t>(left.num_rows()) + 1, stream, temp_mr);
       auto const actual_size = cudf::detail::sizes_to_offsets(
         match_counts.begin(), match_counts.end(), offsets.begin(), 0, stream, temp_mr);

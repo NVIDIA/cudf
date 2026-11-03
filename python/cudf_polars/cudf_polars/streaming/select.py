@@ -11,13 +11,14 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 from cudf_polars.dsl import expr
-from cudf_polars.dsl.expr import Col, Len
+from cudf_polars.dsl.expr import Col, GroupedWindow, Len
 from cudf_polars.dsl.ir import Empty, HConcat, HStack, Projection, Scan, Select, Union
 from cudf_polars.dsl.traversal import traversal
 from cudf_polars.dsl.utils.naming import unique_names
 from cudf_polars.streaming.base import PartitionInfo
 from cudf_polars.streaming.dispatch import lower_ir_node
 from cudf_polars.streaming.expressions import (
+    align_hconcat_inputs,
     decompose_expr_graph,
     hconcat_streaming_safe,
     make_expr_decomposer,
@@ -174,23 +175,30 @@ def decompose_select(
     streaming_safe = hconcat_streaming_safe(hconcat_shapes)
 
     # Concatenate partial selections
-    new_ir: Select | HConcat
+    new_ir: IR
     selections, partition_info = _fuse_over_nodes(selections, partition_info)
     selections, partition_info = _fuse_simple_reductions(
         selections,
         partition_info,
+        config_options,
         streaming_safe=streaming_safe,
     )
     if len(selections) > 1:
+        aligned_selections = align_hconcat_inputs(
+            selections,
+            partition_info,
+            config_options,
+            streaming_safe=streaming_safe,
+        )
         new_ir = HConcat(
             select_ir.schema,
             True,  # noqa: FBT003
             False,  # noqa: FBT003
             streaming_safe,
-            *selections,
+            *aligned_selections,
         )
         partition_info[new_ir] = PartitionInfo(
-            count=max(partition_info[c].count for c in selections)
+            count=max(partition_info[c].count for c in aligned_selections)
         )
     else:
         new_ir = selections[0]
@@ -201,6 +209,7 @@ def decompose_select(
 def _fuse_simple_reductions(
     decomposed_select_irs: Sequence[Select],
     pi: MutableMapping[IR, PartitionInfo],
+    config_options: ConfigOptions,
     *,
     streaming_safe: bool,
 ) -> tuple[list[Select], MutableMapping[IR, PartitionInfo]]:
@@ -213,6 +222,8 @@ def _fuse_simple_reductions(
         The decomposed Select nodes.
     pi
         Partition information.
+    config_options
+        GPUEngine configuration options.
     streaming_safe
         Whether the original decomposed selections may be concatenated
         partition-wise.
@@ -359,18 +370,24 @@ def _fuse_simple_reductions(
     # the results and apply the final (fused) "c" selection,
     # otherwise we may mess up the ordering of the columns.
     if len(new_decomposed_select_irs) < len(decomposed_select_irs):
+        aligned_irs = align_hconcat_inputs(
+            new_decomposed_select_irs,
+            pi,
+            config_options,
+            streaming_safe=streaming_safe,
+        )
         # Compute schema from actual children (intermediate columns)
         hconcat_schema: Schema = {}
-        for ir in new_decomposed_select_irs:
+        for ir in aligned_irs:
             hconcat_schema |= ir.schema
         new_hconcat = HConcat(
             hconcat_schema,
             True,  # noqa: FBT003
             False,  # noqa: FBT003
             streaming_safe,
-            *new_decomposed_select_irs,
+            *aligned_irs,
         )
-        count = max(pi[c].count for c in new_decomposed_select_irs)
+        count = max(pi[c].count for c in aligned_irs)
         pi[new_hconcat] = PartitionInfo(count=count)
 
         final_exprs = [
@@ -444,23 +461,27 @@ def _(
             # Legacy task-engine case
             scan_child = child
 
-    if scan_child and scan_child.predicate is None and scan_child.typ == "parquet":
-        # Special Case: Fast count.
+    if (
+        scan_child
+        and scan_child.predicate is None
+        and scan_child.typ == "parquet"
         # We can't use prefetched file metadata here, because we're in lowering,
         # not execution, so we don't have an IRExecutionContext with the prefetched
         # file metadata yet. Hybrid scan requires prefetched file metadata,
         # so disable that as well.
-        count = Scan._get_parquet_row_count_from_metadata(
-            scan_child.paths,
-            scan_child.skip_rows,
-            scan_child.n_rows,
-            dataclasses.replace(
-                scan_child.parquet_options,
-                prefetch_file_metadata=False,
-                use_hybrid_scan=False,
-            ),
-            None,
+        and (
+            count := Select._count_parquet_rows(
+                scan_child,
+                dataclasses.replace(
+                    scan_child.parquet_options,
+                    prefetch_file_metadata=False,
+                    use_hybrid_scan=False,
+                ),
+            )
         )
+        is not None
+    ):
+        # Special Case: Fast count.
         dtype = ir.exprs[0].value.dtype
 
         lit_expr = expr.LiteralColumn(
@@ -483,7 +504,8 @@ def _(
         return new_node, partition_info
 
     if not any(
-        isinstance(expr, (Col, Len)) for expr in traversal([e.value for e in ir.exprs])
+        isinstance(expr, (Col, GroupedWindow, Len))
+        for expr in traversal([e.value for e in ir.exprs])
     ):
         # Special Case: Selection does not depend on any columns.
         new_node = ir.reconstruct([input_ir := Empty({})])

@@ -7,12 +7,10 @@
 #include "compute_single_pass_aggs.hpp"
 #include "extract_single_pass_aggs.hpp"
 #include "groupby/common/utils.hpp"
-#include "helpers.cuh"
 
 #include <cudf/aggregation.hpp>
 #include <cudf/detail/aggregation/result_cache.hpp>
 #include <cudf/detail/groupby.hpp>
-#include <cudf/detail/row_operator/equality.cuh>
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/groupby.hpp>
 #include <cudf/table/table.hpp>
@@ -22,44 +20,12 @@
 
 #include <cuda/stream>
 
+#include <algorithm>
 #include <memory>
 #include <utility>
 #include <vector>
 
 namespace cudf::groupby::detail::hash {
-namespace {
-
-std::unique_ptr<table> dispatch_groupby(table_view const& keys,
-                                        std::span<aggregation_request const> requests,
-                                        cudf::detail::result_cache* cache,
-                                        bool const keys_have_nulls,
-                                        null_policy const include_null_keys,
-                                        cuda::stream_ref stream,
-                                        cudf::memory_resources mr)
-{
-  auto const null_keys_are_equal  = null_equality::EQUAL;
-  auto const has_null             = nullate::DYNAMIC{cudf::has_nested_nulls(keys)};
-  auto const skip_rows_with_nulls = keys_have_nulls and include_null_keys == null_policy::EXCLUDE;
-
-  auto preprocessed_keys =
-    cudf::detail::row::hash::preprocessed_table::create(keys, stream, mr.get_temporary_mr());
-  auto const comparator = cudf::detail::row::equality::self_comparator{preprocessed_keys};
-  auto const row_hash   = cudf::detail::row::hash::row_hasher{std::move(preprocessed_keys)};
-  auto const d_row_hash = row_hash.device_hasher(has_null);
-
-  if (cudf::detail::has_nested_columns(keys)) {
-    auto const d_row_equal = comparator.equal_to<true>(has_null, null_keys_are_equal);
-    return compute_groupby<nullable_row_comparator_t>(
-      keys, requests, skip_rows_with_nulls, d_row_equal, d_row_hash, cache, stream, mr);
-  } else {
-    auto const d_row_equal = comparator.equal_to<false>(has_null, null_keys_are_equal);
-    return compute_groupby<row_comparator_t>(
-      keys, requests, skip_rows_with_nulls, d_row_equal, d_row_hash, cache, stream, mr);
-  }
-}
-
-}  // namespace
-
 /**
  * @brief Indicates if a set of aggregation requests can be satisfied with a
  * hash-based groupby implementation.
@@ -98,7 +64,7 @@ std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> groupby(
   cudf::detail::result_cache cache(requests.size());
 
   std::unique_ptr<table> unique_keys =
-    dispatch_groupby(keys, requests, &cache, cudf::has_nulls(keys), include_null_keys, stream, mr);
+    compute_groupby(keys, requests, include_null_keys, &cache, stream, mr);
 
   return std::pair(std::move(unique_keys),
                    extract_results(requests, cache, stream, mr.get_output_mr()));

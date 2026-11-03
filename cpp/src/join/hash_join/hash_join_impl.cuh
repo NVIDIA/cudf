@@ -8,9 +8,9 @@
 
 #include <cudf/detail/join/hash_join.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_uvector.hpp>
-
+#include <cuda/buffer>
 #include <cuda/std/bit>
 #include <cuda/std/cstdint>
 
@@ -27,9 +27,9 @@ struct hash_join<Hasher>::impl {
        cuda::stream_ref stream,
        cuda::mr::any_resource<cuda::mr::device_accessible> mr)
     : _mr(std::move(mr)),
-      _slots(capacity, stream, _mr),
-      _offsets(static_cast<std::size_t>(rows) + 1, stream, _mr),
-      _values(0, stream, _mr),
+      _slots(stream, _mr, capacity, cuda::no_init),
+      _offsets(stream, _mr, static_cast<std::size_t>(rows) + 1, cuda::no_init),
+      _values(stream, _mr, 0, cuda::no_init),
       _capacity(capacity),
       _row_mask(
         (cuda::std::uint32_t{1} << cuda::std::bit_width(static_cast<cuda::std::uint32_t>(rows))) -
@@ -45,9 +45,9 @@ struct hash_join<Hasher>::impl {
   csr_ref csr() const { return {_offsets.data(), _values.data()}; }
 
   cuda::mr::any_resource<cuda::mr::device_accessible> _mr;
-  rmm::device_uvector<hash_table_slot_type> _slots;
-  rmm::device_uvector<size_type> _offsets;
-  rmm::device_uvector<size_type> _values;
+  cuda::device_buffer<hash_table_slot_type> _slots;
+  cuda::device_buffer<size_type> _offsets;
+  cuda::device_buffer<size_type> _values;
   cuda::std::uint32_t _capacity;
   cuda::std::uint32_t _row_mask;
 };

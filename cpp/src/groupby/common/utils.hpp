@@ -24,9 +24,9 @@
 namespace cudf::groupby::detail {
 
 // Non-template bridges share mask-kernel instantiations across groupby reductions.
-std::pair<cuda::device_buffer<std::byte>, size_type> make_mask_from_validity(
+std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type> make_mask_from_validity(
   bool* begin, bool* end, cuda::stream_ref stream, cudf::memory_resources mr);
-std::pair<cuda::device_buffer<std::byte>, size_type> make_mask_from_counts(
+std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type> make_mask_from_counts(
   size_type const* begin, size_type const* end, cuda::stream_ref stream, cudf::memory_resources mr);
 
 template <typename RequestType>
@@ -64,7 +64,7 @@ inline std::vector<aggregation_result> extract_results(std::span<RequestType con
  *
  * @return Pair of {buffer, raw_pointer} where pointer is null if no nulls exist.
  */
-std::pair<cuda::device_buffer<std::byte>, bitmask_type const*> compute_row_bitmask(
+std::pair<cuda::device_buffer<cudf::bitmask_type>, bitmask_type const*> compute_row_bitmask(
   table_view const& keys, cuda::stream_ref stream);
 
 /// Whether the given aggregation kind is supported by hash-based groupby.

@@ -600,6 +600,7 @@ _names_to_skip_in_cpp = {
     "type_to_scalar_type_impl",
     "type_to_scalar_type_impl",
     "detail",
+    "concepts",
     # Test-only helper types are intentionally not published as API pages.
     "classcudf_1_1test_1_1",
     # kafka objects

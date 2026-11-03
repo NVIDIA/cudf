@@ -42,9 +42,7 @@
 #include <type_traits>
 #endif
 
-namespace cudf {
-//! Utility functions
-namespace util {
+namespace cudf::detail {
 /**
  * @brief Rounds `number_to_round` up to the next multiple of modulus
  *
@@ -73,67 +71,6 @@ CUDF_HOST_DEVICE constexpr S round_up_safe(S number_to_round, S modulus)
 }
 
 /**
- * @brief Rounds `number_to_round` down to the last multiple of modulus
- *
- * @tparam S type to return
- * @param number_to_round number that is being rounded
- * @param modulus value to which to round
- * @return largest integer not greater than `number_to_round` and modulo `S` is zero.
- *
- * @note This function assumes that `number_to_round` is non-negative and
- * `modulus` is positive and does not check for overflow.
- */
-template <typename S>
-CUDF_HOST_DEVICE constexpr S round_down_safe(S number_to_round, S modulus) noexcept
-{
-  auto remainder    = number_to_round % modulus;
-  auto rounded_down = number_to_round - remainder;
-  return rounded_down;
-}
-
-/**
- * @brief Rounds `number_to_round` up to the next multiple of modulus
- *
- * @tparam S type to return
- * @param number_to_round number that is being rounded
- * @param modulus value to which to round
- * @return smallest integer greater than `number_to_round` and modulo `S` is zero.
- *
- * @note This function assumes that `number_to_round` is non-negative and
- * `modulus` is positive and does not check for overflow.
- */
-template <typename S>
-CUDF_HOST_DEVICE constexpr S round_up_unsafe(S number_to_round, S modulus) noexcept
-{
-  auto remainder = number_to_round % modulus;
-  if (remainder == 0) { return number_to_round; }
-  auto rounded_up = number_to_round - remainder + modulus;
-  return rounded_up;
-}
-
-namespace detail {
-template <typename I>
-CUDF_HOST_DEVICE constexpr I div_rounding_up_safe(cuda::std::false_type,
-                                                  I dividend,
-                                                  I divisor) noexcept
-{
-  // TODO: This could probably be implemented faster
-  return (dividend > divisor) ? 1 + cuda::ceil_div(dividend - divisor, divisor) : (dividend > 0);
-}
-
-template <typename I>
-CUDF_HOST_DEVICE constexpr I div_rounding_up_safe(cuda::std::true_type,
-                                                  I dividend,
-                                                  I divisor) noexcept
-{
-  auto quotient  = dividend / divisor;
-  auto remainder = dividend % divisor;
-  return quotient + (remainder != 0);
-}
-
-}  // namespace detail
-
-/**
  * @brief Divides the left-hand-side by the right-hand-side, rounding up
  * to an integral multiple of the right-hand-side, e.g. (9,5) -> 2 , (10,5) -> 2, (11,5) -> 3.
  *
@@ -152,8 +89,14 @@ CUDF_HOST_DEVICE constexpr I div_rounding_up_safe(cuda::std::true_type,
 template <typename I>
 CUDF_HOST_DEVICE constexpr I div_rounding_up_safe(I dividend, I divisor) noexcept
 {
-  using i_is_a_signed_type = cuda::std::bool_constant<cuda::std::is_signed_v<I>>;
-  return detail::div_rounding_up_safe(i_is_a_signed_type{}, dividend, divisor);
+  if constexpr (cuda::std::is_signed_v<I>) {
+    if (dividend < 0 || divisor < 0) {
+      // Truncation already rounds up when the signs differ.
+      auto const same_sign = (dividend < 0) == (divisor < 0);
+      return dividend / divisor + (same_sign && dividend % divisor != 0);
+    }
+  }
+  return cuda::ceil_div(dividend, divisor);
 }
 
 /**
@@ -174,7 +117,7 @@ CUDF_HOST_DEVICE constexpr I div_rounding_up_safe(I dividend, I divisor) noexcep
  *          argument types are: (uint64_t)
  * @endcode
  *
- * Not all cases could be if-ed out using `std::is_signed_v<T>` and satisfy the compiler.
+ * Not all cases could be if-ed out using `cuda::std::is_signed_v<T>` and satisfy the compiler.
  *
  * @param value Numeric value can be either integer or float type.
  * @return Absolute value if value type is signed.
@@ -186,5 +129,4 @@ CUDF_HOST_DEVICE constexpr auto absolute_value(T value) -> T
   return value;
 }
 
-}  // namespace util
-}  // namespace cudf
+}  // namespace cudf::detail

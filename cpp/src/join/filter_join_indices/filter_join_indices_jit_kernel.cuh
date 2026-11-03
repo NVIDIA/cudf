@@ -49,7 +49,7 @@ filter_join_indices_jit(cudf::table_view const& left,
                         join_kind join_kind,
                         bool is_ptx,
                         cuda::stream_ref stream,
-                        rmm::device_async_resource_ref mr);
+                        cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::filter_join_indices_jit(table_view const&, table_view const&,
@@ -66,7 +66,7 @@ filter_join_indices_jit(cudf::table_view const& left,
                         ast::expression const& predicate,
                         join_kind join_kind,
                         cuda::stream_ref stream,
-                        rmm::device_async_resource_ref mr);
+                        cudf::memory_resources mr);
 
 }  // namespace detail
 }  // namespace cudf

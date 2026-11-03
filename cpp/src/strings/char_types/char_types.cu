@@ -188,7 +188,7 @@ std::unique_ptr<column> filter_characters_of_type(strings_column_view const& str
                            d_replacement};
 
   // copy null mask from input column
-  cuda::device_buffer<std::byte> null_mask =
+  cuda::device_buffer<cudf::bitmask_type> null_mask =
     cudf::detail::copy_bitmask(strings.parent(), stream, mr);
 
   // this utility calls filterer to build the offsets and chars columns
@@ -226,6 +226,11 @@ std::unique_ptr<column> filter_characters_of_type(strings_column_view const& inp
   CUDF_FUNC_RANGE();
   return detail::filter_characters_of_type(
     input, types_to_remove, replacement, types_to_keep, stream, mr);
+}
+
+std::uint8_t const* get_character_flags_table(cuda::stream_ref stream)
+{
+  return detail::get_character_flags_table(stream);
 }
 
 }  // namespace strings

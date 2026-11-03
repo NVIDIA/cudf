@@ -56,6 +56,21 @@ std::size_t bitmask_allocation_size_bytes(size_type number_of_bits,
                                           std::size_t padding_boundary = 64);
 
 /**
+ * @brief Computes the required words necessary to represent the specified
+ * number of bits with a given padding boundary
+ *
+ * @note The Arrow specification for the null bitmask requires a 64B padding
+ * boundary.
+ *
+ * @param number_of_bits The number of bits that need to be represented
+ * @param padding_boundary The value returned will be rounded up to a multiple
+ * of this value
+ * @return The necessary number of words
+ */
+std::size_t bitmask_allocation_size_words(size_type number_of_bits,
+                                          std::size_t padding_boundary = 64 / sizeof(bitmask_type));
+
+/**
  * @brief Returns the number of `bitmask_type` words required to represent the
  * specified number of bits
  *
@@ -79,9 +94,10 @@ size_type num_bitmask_words(size_type number_of_bits);
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Memory resources used for temporary allocations and the returned device_buffer
  * @return A `device_buffer` for use as a null bitmask
- * satisfying the desired size and state
+ * satisfying the desired size and state. The buffer contains `bitmask_type` words,
+ * including padding to the boundary used by `bitmask_allocation_size_bytes`.
  */
-cuda::device_buffer<std::byte> create_null_mask(
+cuda::device_buffer<cudf::bitmask_type> create_null_mask(
   size_type size,
   mask_state state,
   cuda::stream_ref stream   = cudf::get_default_stream(),
@@ -165,7 +181,7 @@ void set_null_masks_unsafe(cudf::host_span<bitmask_type*> bitmasks,
  * @return A `device_buffer` containing the bits
  * `[begin_bit, end_bit)` from `mask`.
  */
-cuda::device_buffer<std::byte> copy_bitmask(
+cuda::device_buffer<cudf::bitmask_type> copy_bitmask(
   bitmask_type const* mask,
   size_type begin_bit,
   size_type end_bit,
@@ -184,7 +200,7 @@ cuda::device_buffer<std::byte> copy_bitmask(
  * @return A `device_buffer` containing the bits
  * `[view.offset(), view.offset() + view.size())` from `view`'s bitmask.
  */
-cuda::device_buffer<std::byte> copy_bitmask(
+cuda::device_buffer<cudf::bitmask_type> copy_bitmask(
   column_view const& view,
   cuda::stream_ref stream   = cudf::get_default_stream(),
   cudf::memory_resources mr = cudf::get_current_device_resource_ref());
@@ -201,7 +217,7 @@ cuda::device_buffer<std::byte> copy_bitmask(
  * @param mr Memory resources used for temporary allocations and the returned device_buffer
  * @return A pair of resulting bitmask and count of unset bits
  */
-std::pair<cuda::device_buffer<std::byte>, size_type> bitmask_and(
+std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type> bitmask_and(
   table_view const& view,
   cuda::stream_ref stream   = cudf::get_default_stream(),
   cudf::memory_resources mr = cudf::get_current_device_resource_ref());
@@ -218,7 +234,7 @@ std::pair<cuda::device_buffer<std::byte>, size_type> bitmask_and(
  * @param mr Memory resources used for temporary allocations and the returned device_buffer
  * @return A pair of resulting bitmask of size mask_size and the count of unset bits
  */
-std::pair<cuda::device_buffer<std::byte>, size_type> bitmask_and(
+std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type> bitmask_and(
   host_span<bitmask_type const* const> masks,
   host_span<size_type const> begin_bits,
   size_type mask_size,
@@ -249,7 +265,8 @@ std::pair<cuda::device_buffer<std::byte>, size_type> bitmask_and(
  * @param mr Memory resources used for temporary allocations and the returned device_buffer
  * @return A pair of vectors containing resulting bitmask and count of unset bits for each segment
  */
-std::pair<std::vector<std::unique_ptr<cuda::device_buffer<std::byte>>>, std::vector<size_type>>
+std::pair<std::vector<std::unique_ptr<cuda::device_buffer<cudf::bitmask_type>>>,
+          std::vector<size_type>>
 segmented_bitmask_and(host_span<column_view const> colviews,
                       host_span<size_type const> segment_offsets,
                       cuda::stream_ref stream   = cudf::get_default_stream(),
@@ -279,7 +296,8 @@ segmented_bitmask_and(host_span<column_view const> colviews,
  * @param mr Memory resources used for temporary allocations and the returned device_buffer
  * @return A pair of vectors containing resulting bitmask and count of unset bits for each segment
  */
-std::pair<std::vector<std::unique_ptr<cuda::device_buffer<std::byte>>>, std::vector<size_type>>
+std::pair<std::vector<std::unique_ptr<cuda::device_buffer<cudf::bitmask_type>>>,
+          std::vector<size_type>>
 segmented_bitmask_and(host_span<bitmask_type const* const> masks,
                       host_span<size_type const> segment_offsets,
                       size_type mask_size_bits,
@@ -298,7 +316,7 @@ segmented_bitmask_and(host_span<bitmask_type const* const> masks,
  * @param mr Memory resources used for temporary allocations and the returned device_buffer
  * @return A pair of resulting bitmask and count of unset bits
  */
-std::pair<cuda::device_buffer<std::byte>, size_type> bitmask_or(
+std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type> bitmask_or(
   table_view const& view,
   cuda::stream_ref stream   = cudf::get_default_stream(),
   cudf::memory_resources mr = cudf::get_current_device_resource_ref());

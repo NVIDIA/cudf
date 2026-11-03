@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -22,7 +22,7 @@ namespace detail {
  * The return includes the integer digits and any exponent offset.
  *
  * @tparam UnsignedDecimalType The unsigned version of the desired decimal type.
- *                             Use the `std::make_unsigned_t` to create the
+ *                             Use the `cuda::std::make_unsigned_t` to create the
  *                             unsigned type from the storage type.
  *
  * @param[in,out] iter Start of characters to parse

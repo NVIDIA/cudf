@@ -278,7 +278,12 @@ packed_columns pack(cudf::table_view const& input,
   // do a contiguous_split with no splits to get the memory for the table
   // arranged as we want it
   auto contig_split_result = cudf::detail::contiguous_split(input, {}, stream, mr);
-  return contig_split_result.empty() ? packed_columns{} : std::move(contig_split_result[0].data);
+  if (contig_split_result.empty()) {
+    // Empty buffers still need a valid stream when consumers adopt their storage.
+    return packed_columns{std::make_unique<std::vector<uint8_t>>(),
+                          std::make_unique<rmm::device_buffer>(0, stream, mr)};
+  }
+  return std::move(contig_split_result[0].data);
 }
 
 std::vector<uint8_t> pack_metadata(table_view const& table,

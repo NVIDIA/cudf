@@ -156,7 +156,8 @@ filter_join_indices(cudf::table_view const& left,
   auto right_table = table_device_view::create(right, stream);
 
   // Allocate array to store predicate evaluation results
-  auto predicate_results = rmm::device_uvector<bool>(left_indices.size(), stream);
+  auto predicate_results = cuda::device_buffer<bool>(
+    stream, cudf::get_current_device_resource_ref(), left_indices.size(), cuda::no_init);
 
   // Configure kernel parameters with dynamic shared memory calculation
   int device_id;

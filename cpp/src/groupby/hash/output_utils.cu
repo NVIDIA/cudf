@@ -63,7 +63,7 @@ struct result_column_creator {
     auto const make_uninitialized_column = [&](data_type d_type, size_type size, mask_state state) {
       auto const type_size = cudf::size_of(d_type);
       if (type_size < 4) {
-        auto adjusted_size    = cudf::util::round_up_safe(size, static_cast<size_type>(4));
+        auto adjusted_size    = cudf::detail::round_up_safe(size, static_cast<size_type>(4));
         auto buffer           = rmm::device_buffer(adjusted_size * type_size, stream, mr);
         auto mask             = create_null_mask(size, state, stream, mr);
         auto const null_count = state_null_count(state, size);
@@ -87,7 +87,8 @@ struct result_column_creator {
       return children;
     };
 
-    auto [null_mask, null_count] = [&]() -> std::pair<cuda::device_buffer<std::byte>, size_type> {
+    auto [null_mask,
+          null_count] = [&]() -> std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type> {
       if (output_size > 0 && nullable) {
         return {create_null_mask(output_size, mask_state::ALL_NULL, stream, mr), output_size};
       }

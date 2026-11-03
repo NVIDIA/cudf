@@ -18,7 +18,7 @@ jobs:
     if: contains(github.event.pull_request.labels.*.name, 'breaking')
     permissions:
       contents: read
-    uses: rapidsai/shared-workflows/.github/workflows/breaking-change-alert.yaml@main
+    uses: rapidsai/shared-workflows/.github/workflows/breaking-change-alert.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
     secrets:
       slack-webhook-url: ${{ secrets.NV_SLACK_BREAKING_CHANGE_NOTIFIER_APP }}
     with:

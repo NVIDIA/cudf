@@ -14,8 +14,6 @@
 #include <cudf/detail/sorting.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_uvector.hpp>
-
 #include <cub/device/device_segmented_sort.cuh>
 #include <cuda/buffer>
 #include <cuda/stream>
@@ -204,7 +202,7 @@ std::unique_ptr<column> fast_segmented_sorted_order(column_view const& input,
  * @param offsets The offsets identifying the segments
  * @param stream CUDA stream used for device memory operations and kernel launches
  */
-rmm::device_uvector<size_type> get_segment_indices(size_type num_rows,
+cuda::device_buffer<size_type> get_segment_indices(size_type num_rows,
                                                    column_view const& offsets,
                                                    cuda::stream_ref stream);
 

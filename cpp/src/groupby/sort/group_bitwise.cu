@@ -11,12 +11,15 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/utilities/device_operators.cuh>
 #include <cudf/detail/valid_if.cuh>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <rmm/resource_ref.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
+#include <cuda/std/concepts>
 #include <cuda/std/functional>
 #include <cuda/stream>
 
@@ -25,7 +28,7 @@ namespace cudf::groupby::detail {
 namespace {
 
 struct bitwise_group_reduction_functor {
-  template <typename T, CUDF_ENABLE_IF(std::is_integral_v<T>)>
+  template <cuda::std::integral T>
   std::unique_ptr<column> operator()(bitwise_op bit_op,
                                      column_view const& values,
                                      device_span<size_type const> group_labels,
@@ -68,7 +71,8 @@ struct bitwise_group_reduction_functor {
     }
 
     if (values.has_nulls()) {
-      rmm::device_uvector<bool> validity(num_groups, stream);
+      cuda::device_buffer<bool> validity(
+        stream, cudf::get_current_device_resource_ref(), num_groups, cuda::no_init);
       do_reduction(cudf::detail::make_validity_iterator(*d_values_ptr),
                    validity.begin(),
                    cuda::std::logical_or{});
@@ -80,7 +84,8 @@ struct bitwise_group_reduction_functor {
     return result;
   }
 
-  template <typename T, typename... Args, CUDF_ENABLE_IF(!std::is_integral<T>())>
+  template <typename T, typename... Args>
+    requires(not cuda::std::integral<T>)
   std::unique_ptr<column> operator()(Args...) const
   {
     CUDF_FAIL("Bitwise operations are only supported for integral types.");

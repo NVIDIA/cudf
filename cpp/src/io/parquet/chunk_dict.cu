@@ -519,7 +519,7 @@ void compute_per_page_dict_bits(device_span<EncPage> pages, cuda::stream_ref str
   if (pages.empty()) { return; }
   auto constexpr warps_per_block = DEFAULT_BLOCK_SIZE / cudf::detail::warp_size;
   auto const num_blocks =
-    cudf::util::div_rounding_up_safe(static_cast<size_type>(pages.size()), warps_per_block);
+    cudf::detail::div_rounding_up_safe(static_cast<size_type>(pages.size()), warps_per_block);
   compute_page_dict_bits_kernel<<<num_blocks, DEFAULT_BLOCK_SIZE, 0, stream.get()>>>(pages);
   CUDF_CUDA_TRY(cudaGetLastError());
 }

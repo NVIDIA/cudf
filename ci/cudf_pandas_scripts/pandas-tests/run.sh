@@ -48,7 +48,12 @@ RESULTS_DIR=${RAPIDS_TESTS_DIR:-"$(mktemp -d)"}
 RAPIDS_TESTS_DIR=${RAPIDS_TESTS_DIR:-"${RESULTS_DIR}/test-results"}/
 mkdir -p "${RAPIDS_TESTS_DIR}"
 
-timeout 90m bash python/cudf/cudf/pandas/scripts/run-pandas-tests.sh \
+test_timeout=90m
+if [[ ${RAPIDS_BUILD_TYPE:-} == pull-request && -n ${NUM_SHARDS} ]]; then
+    test_timeout=30m
+fi
+
+timeout "${test_timeout}" bash python/cudf/cudf/pandas/scripts/run-pandas-tests.sh \
   --durations=50 \
   --durations-min=1 \
   --numprocesses 8 \

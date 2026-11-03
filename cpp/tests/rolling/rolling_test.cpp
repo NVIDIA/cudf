@@ -21,6 +21,7 @@
 #include <cudf/utilities/traits.hpp>
 
 #include <cuda/iterator>
+#include <cuda/std/type_traits>
 #include <thrust/host_vector.h>
 
 #include <src/rolling/detail/rolling.hpp>
@@ -580,7 +581,7 @@ class RollingTest : public cudf::test::BaseFixture {
       case cudf::aggregation::SUM:
         return create_reference_output<cudf::DeviceSum,
                                        cudf::aggregation::SUM,
-                                       std::conditional_t<std::is_integral_v<T>, int64_t, T>,
+                                       std::conditional_t<cuda::std::is_integral_v<T>, int64_t, T>,
                                        false>(
           input, preceding_window, following_window, min_periods);
       case cudf::aggregation::MIN:

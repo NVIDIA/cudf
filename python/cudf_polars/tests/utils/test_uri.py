@@ -13,7 +13,6 @@ from cudf_polars.utils.uri import strip_file_uri
     [
         ("file:///abs/path.parquet", "/abs/path.parquet"),
         ("file:/abs/path.parquet", "/abs/path.parquet"),
-        ("FILE:///abs/path.parquet", "/abs/path.parquet"),
         ("/abs/path.parquet", "/abs/path.parquet"),
         ("relative/path.parquet", "relative/path.parquet"),
         ("file.parquet", "file.parquet"),

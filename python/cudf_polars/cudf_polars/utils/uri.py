@@ -32,9 +32,8 @@ def strip_file_uri(path: str) -> str:
     Polars rejects ``file://`` URIs with a non-empty host, so
     ``file://host/foo/path`` is not handled specially.
     """
-    # The URI scheme is case-insensitive (RFC 3986 section 3.1).
-    prefix = path[:5].lower()
-    if prefix != "file:":
+    # Like Polars, only a lowercase ``file:`` scheme is recognized.
+    if not path.startswith("file:"):
         return path
     rest = path[5:]
     if rest.startswith("//"):

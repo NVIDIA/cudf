@@ -18,6 +18,7 @@ from cudf_polars.dsl import expr
 from cudf_polars.dsl.to_ast import to_parquet_filter
 from cudf_polars.dsl.traversal import traversal
 from cudf_polars.dsl.utils.replace import replace
+from cudf_polars.utils.uri import strip_file_uri
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -272,12 +273,15 @@ class LakehouseScanOptions:
             deletion_kind, deletion_payload = file_options.deletion_files
             if deletion_kind == "iceberg":
                 raw_position_deletes, raw_deletion_vectors = deletion_payload
+                # Scan paths have the file:// scheme stripped (see translate),
+                # and libcudf/kvikio treat any URI scheme as a remote file, so
+                # the delete files must be normalized the same way.
                 position_deletes = {
-                    index: tuple(delete_files)
+                    index: tuple(strip_file_uri(f) for f in delete_files)
                     for index, delete_files in raw_position_deletes.items()
                 }
                 deletion_vectors = {
-                    index: puffin.removeprefix("file://")
+                    index: strip_file_uri(puffin)
                     for index, puffin in raw_deletion_vectors.items()
                 }
                 if any(

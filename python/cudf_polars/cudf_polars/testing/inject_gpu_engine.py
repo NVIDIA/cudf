@@ -443,9 +443,6 @@ EXPECTED_FAILURES: dict[str, str] = {
     "tests/unit/io/test_scan.py::test_async_read_21945[scan_type1]": "chunked-reader + include_file_paths bug: chunk.num_rows_per_source only reflects the first chunk",
     "tests/unit/io/test_scan.py::test_async_read_21945[scan_type2]": "chunked-reader + include_file_paths bug: chunk.num_rows_per_source only reflects the first chunk",
     "tests/unit/io/test_scan.py::test_async_read_21945[scan_type3]": "chunked-reader + include_file_paths bug: chunk.num_rows_per_source only reflects the first chunk",
-    "tests/unit/io/cloud/test_cloud.py::test_sink_single_put_28356[sink_parquet-scan_parquet]": "cudf-polars does not forward storage_options to KvikIO, which rejects the s3:// URL without AWS environment variables",
-    "tests/unit/io/cloud/test_metadata_prefetch.py::test_scan_parquet_metadata_without_head_request": "cudf-polars does not forward storage_options to KvikIO, which rejects the s3:// URL without AWS environment variables",
-    "tests/unit/io/cloud/test_metadata_prefetch.py::test_scan_parquet_metadata_prefetch_too_small": "cudf-polars does not forward storage_options to KvikIO, which rejects the s3:// URL without AWS environment variables",
     "tests/unit/io/test_sink.py::test_collect_all_lazy": "SinkMultiple not supported by InMemory CPU Engine, which we fallback to. See pola-rs/polars/pull/26537",
     "tests/unit/io/test_parquet.py::test_resolve_heavy_sources_survives_an_unreadable_footer": "libcudf raises RuntimeError rather than polars.exceptions.ComputeError for a corrupted parquet footer",
     "tests/unit/io/test_parquet.py::test_parquet_known_source_sizes": "cudf-polars ignores the _source_sizes hint, so a wrong size does not raise polars.exceptions.ComputeError",
@@ -523,6 +520,13 @@ EXPECTED_FAILURES: dict[str, str] = {
 
 TESTS_TO_SKIP: dict[str, str] = {
     "tests/unit/io/cloud/test_cloud.py::test_scan_http_same_host": "Checks Polars CPU object-store HTTP connection caching, which the GPU engine does not use",
+    "tests/unit/io/cloud/test_cloud.py::test_scan_ndjson_http_prefix_metrics_retried_body": "Checks Polars CPU object-store request counts and metrics, which the GPU engine does not use",
+    "tests/unit/io/cloud/test_cloud.py::test_http_store_cache_size[0]": "Checks Polars CPU object-store HTTP connection caching, which the GPU engine does not use",
+    "tests/unit/io/cloud/test_cloud.py::test_http_store_cache_size[1]": "Checks Polars CPU object-store HTTP connection caching, which the GPU engine does not use",
+    "tests/unit/io/cloud/test_cloud.py::test_http_store_cache_size[2]": "Checks Polars CPU object-store HTTP connection caching, which the GPU engine does not use",
+    "tests/unit/io/cloud/test_cloud.py::test_scan_ndjson_mixed_buckets_29758": "Polars does not pass storage_options to the NDJSON scan node, so the GPU engine cannot reach the mock S3 endpoint",
+    "tests/unit/io/cloud/test_cloud.py::test_scan_line_format_small_files_single_request[ndjson]": "Polars does not pass storage_options to the NDJSON scan node, so the GPU engine cannot reach the mock S3 endpoint",
+    "tests/unit/io/cloud/test_cloud.py::test_scan_line_format_prefix_continuation[ndjson]": "Polars does not pass storage_options to the NDJSON scan node, so the GPU engine cannot reach the mock S3 endpoint",
     "tests/unit/io/test_order_keeping_pushdown.py::test_top_k_through_order_keeping_projection[False-expr6]": "Checks verbose logs or metrics specific to the Polars CPU streaming engine",
     "tests/unit/io/test_order_keeping_pushdown.py::test_top_k_through_order_keeping_projection[False-expr7]": "Checks verbose logs or metrics specific to the Polars CPU streaming engine",
     "tests/unit/io/test_order_keeping_pushdown.py::test_top_k_through_order_keeping_projection[True-expr6]": "Checks verbose logs or metrics specific to the Polars CPU streaming engine",
@@ -737,6 +741,7 @@ STREAMING_ENGINE_TESTS_TO_SKIP: Mapping[str, str] = {
 }
 
 STREAMING_ENGINE_TESTS_TO_SKIP_SMALL_BLOCKSIZE: Mapping[str, str] = {
+    "tests/unit/streaming/test_streaming_window.py::test_window_scalar_order_key": "Too slow with --inject-gpu-engine-blocksize=small: the 20,000-row frame becomes ~5,000 4-row chunks and the window shuffle partitions each chunk into ~5,000 pieces (quadratic), exceeding the CI test timeout",
     "tests/benchmark/test_group_by.py::test_groupby_h2oai_q1": "Too slow with --inject-gpu-engine-blocksize=small",
     "tests/benchmark/test_group_by.py::test_groupby_h2oai_q2": "Too slow with --inject-gpu-engine-blocksize=small",
     "tests/benchmark/test_group_by.py::test_groupby_h2oai_q3": "Too slow with --inject-gpu-engine-blocksize=small",

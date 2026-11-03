@@ -216,7 +216,7 @@ ConfigureTest(
 )
 
 ConfigureTest(
-  MIXED_JOIN_TEST join/mixed_join_main.cpp join/mixed_join_tests.cu
+  MIXED_JOIN_TEST join/mixed_join_tests.cu
   GPUS 1
   PERCENT 30
 )

@@ -1117,13 +1117,13 @@ std::unique_ptr<cudf::column> normalize_unicode(cudf::strings_column_view const&
     auto const composer  = detail::composer{cps, p.comp_keys, p.comp_values, p.compat_decomp_flags};
     auto const num_slots = static_cast<int64_t>(cps.size());
     auto const num_words =
-      cudf::util::div_rounding_up_safe(num_slots, static_cast<int64_t>(cudf::detail::warp_size));
+      cudf::detail::div_rounding_up_safe(num_slots, static_cast<int64_t>(cudf::detail::warp_size));
     auto run_starts = cuda::device_buffer<cudf::bitmask_type>{
       stream, temp_mr, static_cast<std::size_t>(num_words), cuda::no_init};
     auto segment_starts = cuda::device_buffer<cudf::bitmask_type>{
       stream, temp_mr, static_cast<std::size_t>(is_composing ? num_words : 0), cuda::no_init};
 
-    auto const num_blocks = cudf::util::div_rounding_up_safe(
+    auto const num_blocks = cudf::detail::div_rounding_up_safe(
       num_slots, static_cast<int64_t>(detail::mark_block_size * detail::mark_items_per_thread));
     detail::mark_slots_kernel<<<num_blocks, detail::mark_block_size, 0, stream.get()>>>(
       reorder, composer, run_starts.data(), is_composing ? segment_starts.data() : nullptr);

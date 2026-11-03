@@ -9,7 +9,6 @@
 #include <benchmarks/io/nvbench_helpers.hpp>
 
 #include <cudf/ast/expressions.hpp>
-#include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/io/datasource.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/io/parquet_metadata.hpp>

@@ -130,6 +130,7 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
     web_returns = get_data(run_config.dataset_path, "web_returns", run_config.suffix)
     item = get_data(run_config.dataset_path, "item", run_config.suffix)
     date_dim = get_data(run_config.dataset_path, "date_dim", run_config.suffix)
+    year_dtype = date_dim.collect_schema()["d_year"]
 
     filtered_items = item.filter(pl.col("i_category") == category).select(
         ["i_item_sk", "i_brand_id", "i_class_id", "i_category_id", "i_manufact_id"]
@@ -254,7 +255,7 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
 
     curr_yr = (
         build_year_sales(year)
-        .with_columns(pl.lit(year, dtype=pl.Int64).alias("curr_d_year"))
+        .with_columns(pl.lit(year, dtype=year_dtype).alias("curr_d_year"))
         .select(
             [
                 pl.col("curr_d_year"),
@@ -270,7 +271,7 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
 
     prev_yr = (
         build_year_sales(year - 1)
-        .with_columns(pl.lit(year - 1, dtype=pl.Int64).alias("prev_d_year"))
+        .with_columns(pl.lit(year - 1, dtype=year_dtype).alias("prev_d_year"))
         .select(
             [
                 pl.col("prev_d_year"),

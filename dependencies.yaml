@@ -1340,7 +1340,7 @@ dependencies:
           - pyarrow>=19.0.0
           # added lower bound pinning to get pytest-subtests for free
           - pytest>=9
-          - tpchgen-cli>=3.0.0
+          - tpcgen-cli>=4.0.0
   test_python_narwhals:
     common:
       - output_types: [conda, requirements, constraints, pyproject]

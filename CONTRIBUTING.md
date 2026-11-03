@@ -344,6 +344,7 @@ AI-assisted contributions are welcome and must meet the same requirements as oth
 
 - **You are responsible:** Review and understand the change before submission. Be able to explain it. For submissions from a bot or agent account, identify the responsible human.
 - **Verify correctness:** AI-generated code may contain bugs or security issues. Run the applicable tests and review the diff carefully.
+- **Self-review before opening a pull request:** Run the repository's review skill (`/review-cudf`, defined in `.agents/skills/review-cudf`) with your AI assistant and address its findings before requesting review from cuDF maintainers. Also have your AI assistant read the review comments and contents of the latest ~10 PRs that touched the same files or folders, and check your change against the feedback reviewers gave there. Maintainers use the same skill, so anything it flags will likely be raised in review.
 - **No AI-generated sensitive content:** Do not use AI to generate security policies, legal, or license text.
 - **Disclose AI assistance:** Note AI assistance in the pull request description.
 - **Own review responses:** Review AI-assisted replies before posting them. You remain responsible for their content and your review decisions.

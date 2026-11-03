@@ -19,6 +19,7 @@ from coverage import CoverageData
 MAX_CONTEXTS_PER_LINE = 20
 MIN_SHARED_LINES = 4
 MAX_SHARED_LINE_EXAMPLES = 10
+MAX_UPSTREAM_CONTEXTS_PER_LINE = 100
 EXCLUDED_LOCAL_PATHS = (
     "tests/containers/",
     "tests/dsl/",
@@ -105,6 +106,8 @@ def _review_pairs(
         matches = Counter(
             upstream_nodeid
             for line in lines
+            if len(upstream_by_line.get(line, ()))
+            <= MAX_UPSTREAM_CONTEXTS_PER_LINE
             for upstream_nodeid in upstream_by_line.get(line, ())
         )
         name_tokens = _behavior_tokens(local_nodeid)
@@ -129,6 +132,7 @@ def _review_pairs(
                 "upstream_nodeid": upstream_nodeid,
                 "shared_line_count": len(shared),
                 "local_line_count": len(lines),
+                "shared_fraction": round(len(shared) / len(lines), 3),
                 "local_only_line_count": sum(
                     line not in upstream_lines.get(filename, set())
                     for filename, line in lines
@@ -289,6 +293,7 @@ def _write_candidate_html(report: dict[str, Any], output: Path) -> None:
             f"<td><code>{html.escape(pair['upstream_nodeid'])}</code></td>"
             f"<td>{'yes' if pair['upstream_gpu_observed'] else 'no'}</td>"
             f"<td>{pair['shared_line_count']}</td>"
+            f"<td>{pair['shared_fraction']:.1%}</td>"
             f"<td>{pair['local_only_line_count']}</td>"
             f"<td><code>{examples}</code></td>"
             "</tr>"
@@ -302,7 +307,8 @@ def _write_candidate_html(report: dict[str, Any], output: Path) -> None:
         "maintained SPMD-default run list.</p>"
         "<table><thead><tr><th>Local node</th><th>Upstream node</th>"
         "<th>GPU observed</th>"
-        "<th>Shared lines</th><th>Local-only lines</th>"
+        "<th>Shared lines</th><th>Shared fraction</th>"
+        "<th>Local-only lines</th>"
         "<th>Sampled source lines</th></tr></thead><tbody>"
         + "".join(rows)
         + "</tbody></table>"

@@ -1015,7 +1015,10 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
     // through gather_bitmask exactly as stock does. The APPLICATION stays subset-scoped — the
     // fused columns' masks are kernel-written per the mask-policy table, which matches stock's
     // per-column outcome (gather_bitmask is per-column self-guarding,
-    // and set_all_valid_null_masks is a no-op for non-nullable inputs).
+    // and set_all_valid_null_masks is a no-op for non-nullable inputs). Under DONT_CHECK a
+    // null-FREE fallback cohort skips gather_bitmask entirely: its per-column outcome is
+    // host-known (all-valid top-level masks, children untouched), which also drops the
+    // valid_counts D2H readback and its stream sync.
     auto fallback_views = std::vector<cudf::column_view>{};
     fallback_views.reserve(indices.size());
     for (auto const idx : indices) {
@@ -1024,15 +1027,36 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
     auto const fallback_table = cudf::table_view{fallback_views};
     if (bounds_policy == out_of_bounds_policy::NULLIFY or
         cudf::has_nested_nullable_columns(source_table)) {
-      if (bounds_policy == out_of_bounds_policy::NULLIFY or cudf::has_nested_nulls(source_table)) {
-        gather_bitmask(fallback_table,
-                       map_it_begin,
-                       fallback_columns,
-                       bounds_policy == out_of_bounds_policy::NULLIFY
-                         ? gather_bitmask_op::NULLIFY
-                         : gather_bitmask_op::DONT_CHECK,
-                       stream,
-                       mr);
+      if (bounds_policy == out_of_bounds_policy::NULLIFY) {
+        gather_bitmask(
+          fallback_table, map_it_begin, fallback_columns, gather_bitmask_op::NULLIFY, stream, mr);
+      } else if (cudf::has_nested_nulls(source_table)) {
+        if (cudf::has_nested_nulls(fallback_table)) {
+          // The fallback cohort itself carries nulls: per-row validity must be computed on the
+          // device, exactly as stock does.
+          gather_bitmask(fallback_table,
+                         map_it_begin,
+                         fallback_columns,
+                         gather_bitmask_op::DONT_CHECK,
+                         stream,
+                         mr);
+        } else {
+          // Null-free fallback cohort under DONT_CHECK: every gathered row is valid, so stock's
+          // per-column outcome is known host-side — no device-view build, no valid_if launch, no
+          // counts readback, no blocking sync. Only nullable SOURCES need a destination mask
+          // (stock's kernel skips null-mask-free sources); a fresh ALL_VALID top-level mask with
+          // null_count 0 matches stock for any destination state, and children are deliberately
+          // NOT rewritten: stock's gather_bitmask writes top-level masks only, and fabricating
+          // child masks here diverges from stock (the child-nullability regression the
+          // whole-table gate exists to prevent).
+          for (size_t i = 0; i < fallback_columns.size(); ++i) {
+            auto const& src = fallback_table.column(i);
+            auto& dst       = *fallback_columns[i];
+            if (not src.nullable()) { continue; }
+            dst.set_null_mask(
+              cudf::create_null_mask(dst.size(), mask_state::ALL_VALID, stream, output_mr), 0);
+          }
+        }
       } else {
         for (size_t i = 0; i < fallback_columns.size(); ++i) {
           cudf::detail::set_all_valid_null_masks(

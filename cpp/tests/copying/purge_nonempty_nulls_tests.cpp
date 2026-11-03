@@ -6,9 +6,11 @@
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/iterator_utilities.hpp>
+#include <cudf_test/memory_resource_utilities.hpp>
 
 #include <cudf/column/column_view.hpp>
 #include <cudf/copying.hpp>
+#include <cudf/detail/copy.hpp>
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/strings/strings_column_view.hpp>
@@ -57,6 +59,41 @@ TEST_F(HasNonEmptyNullsTest, SlicedInputTest)
   for (auto const& col : result) {
     EXPECT_TRUE(cudf::may_have_nonempty_nulls(col));
     EXPECT_FALSE(cudf::has_nonempty_nulls(col));
+  }
+}
+
+TEST_F(HasNonEmptyNullsTest, MemoryResources)
+{
+  auto const stream = cudf::get_default_stream();
+  for (bool dirty : {false, true}) {
+    auto strings = cudf::test::strings_column_wrapper{{"", "a", "b"}, null_at(0)}.release();
+    if (dirty) {
+      cudf::set_null_mask(strings->mutable_view().null_mask(), 1, 2, false, stream);
+      strings->set_null_count(2);
+    }
+    auto const lists =
+      cudf::make_lists_column(2,
+                              offsets_col_t{0, 2, 3}.release(),
+                              std::move(strings),
+                              0,
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+    auto const nested = cudf::column_view{
+      cudf::data_type{cudf::type_id::STRUCT}, 2, nullptr, nullptr, 0, 0, {lists->view()}};
+    for (auto const& input : {cudf::lists_column_view{*lists}.child(), lists->view(), nested}) {
+      SCOPED_TRACE(::testing::Message()
+                   << "dirty=" << dirty << " type=" << static_cast<int>(input.type().id()));
+      auto resources = cudf::test::memory_resource_test_harness{};
+      cudf::test::expect_api_uses_memory_resources(
+        resources,
+        [&](cudf::memory_resources mr) {
+          return cudf::detail::has_nonempty_nulls(input, stream, mr);
+        },
+        [](bool) { return 0; },
+        [dirty](bool result) { EXPECT_EQ(result, dirty); },
+        {cudf::test::output_allocation_expectation::EXACT,
+         cudf::test::temporary_allocation_expectation::SOME},
+        stream);
+    }
   }
 }
 

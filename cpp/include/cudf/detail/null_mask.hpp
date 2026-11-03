@@ -51,12 +51,15 @@ void set_null_mask(bitmask_type* bitmask,
  * @param start Index of the first bit to count (inclusive).
  * @param stop Index of the last bit to count (exclusive).
  * @param stream CUDA stream used for device memory operations and kernel launches.
+ * @param temp_mr Device memory resource used for temporary allocations.
  * @return The number of non-zero bits in the specified range.
  */
-cudf::size_type count_set_bits(bitmask_type const* bitmask,
-                               size_type start,
-                               size_type stop,
-                               cuda::stream_ref stream);
+cudf::size_type count_set_bits(
+  bitmask_type const* bitmask,
+  size_type start,
+  size_type stop,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref temp_mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Given a bitmask, counts the number of unset (0) bits in the range
@@ -125,22 +128,28 @@ std::vector<size_type> segmented_count_unset_bits(bitmask_type const* bitmask,
  * @param[in] start Index of the first bit to count (inclusive).
  * @param[in] stop Index of the last bit to count (exclusive).
  * @param[in] stream CUDA stream used for device memory operations and kernel launches.
+ * @param temp_mr Device memory resource used for temporary allocations.
  * @return The number of valid elements in the specified range.
  */
-cudf::size_type valid_count(bitmask_type const* bitmask,
-                            size_type start,
-                            size_type stop,
-                            cuda::stream_ref stream);
+cudf::size_type valid_count(
+  bitmask_type const* bitmask,
+  size_type start,
+  size_type stop,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref temp_mr = cudf::get_current_device_resource_ref());
 
 /**
  * @copydoc null_count(bitmask_type const* bitmask, size_type start, size_type stop)
  *
  * @param stream Stream view on which to allocate resources and queue execution.
+ * @param temp_mr Device memory resource used for temporary allocations.
  */
-cudf::size_type null_count(bitmask_type const* bitmask,
-                           size_type start,
-                           size_type stop,
-                           cuda::stream_ref stream);
+cudf::size_type null_count(
+  bitmask_type const* bitmask,
+  size_type start,
+  size_type stop,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref temp_mr = cudf::get_current_device_resource_ref());
 
 /**
  * @copydoc cudf::segmented_valid_count

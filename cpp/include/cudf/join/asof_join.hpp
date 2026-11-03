@@ -100,10 +100,12 @@ class asof_join {
    * @param right_by Right-side equality grouping keys
    * @param right_on Right-side ordered key
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Device memory resources used for retained state and temporary allocations
    */
   asof_join(table_view const& right_by,
             column_view const& right_on,
-            cuda::stream_ref stream = cudf::get_default_stream());
+            cuda::stream_ref stream   = cudf::get_default_stream(),
+            cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Returns the matching right-side row index for every left-side row.
@@ -128,14 +130,13 @@ class asof_join {
    * @throws cudf::logic_error if `left_by` has columns and
    *         `left_by.num_rows() != left_on.size()`
    * @throws cudf::logic_error if corresponding left and right key types do not match
-   * @throws cudf::logic_error if the left-side keys do not satisfy the supported type contract
    *
    * @param left_by Left-side equality grouping keys
    * @param left_on Left-side ordered key
    * @param strategy Direction in which to search for a right-side match
    * @param exact_matches Whether equal ordered keys may match
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resource used to allocate the returned indices
+   * @param mr Device memory resources used for returned indices and temporary allocations
    * @return Right-side gather map containing a row index or `cudf::JoinNoMatch` per left row
    */
   [[nodiscard]] std::unique_ptr<rmm::device_uvector<size_type>> join(
@@ -143,8 +144,8 @@ class asof_join {
     column_view const& left_on,
     asof_join_strategy strategy,
     asof_join_exact_matches exact_matches,
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
+    cuda::stream_ref stream   = cudf::get_default_stream(),
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref()) const;
 
  private:
   using impl_type = cudf::experimental::detail::asof_join_impl;

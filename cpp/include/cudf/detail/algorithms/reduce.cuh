@@ -171,6 +171,7 @@ void reduce_by_key_async(KeysInputIterator keys_begin,
  * @param init Initial value for the reduction
  * @param reduce_op Binary reduction operator
  * @param stream CUDA stream to use
+ * @param mr Memory resources whose temporary resource is used for intermediate allocations
  * @return The reduction result
  */
 template <typename TransformationOp,
@@ -182,18 +183,17 @@ OutputType transform_reduce(InputIterator begin,
                             TransformationOp transform_op,
                             OutputType init,
                             ReductionOp reduce_op,
-                            cuda::stream_ref stream)
+                            cuda::stream_ref stream,
+                            cudf::memory_resources mr = cudf::get_current_device_resource_ref())
 {
   auto const num_items = cuda::std::distance(begin, end);
 
   // Device scalar to store the result
-  auto result =
-    cudf::detail::device_scalar<OutputType>(stream, cudf::get_current_device_resource_ref());
+  auto result = cudf::detail::device_scalar<OutputType>(stream, mr.get_temporary_mr());
 
-  auto env =
-    cuda::std::execution::env{cuda::std::execution::prop{cuda::get_stream_t{}, stream},
-                              cuda::std::execution::prop{cuda::mr::get_memory_resource_t{},
-                                                         cudf::get_current_device_resource_ref()}};
+  auto env = cuda::std::execution::env{
+    cuda::std::execution::prop{cuda::get_stream_t{}, stream},
+    cuda::std::execution::prop{cuda::mr::get_memory_resource_t{}, mr.get_temporary_mr()}};
   CUDF_CUDA_TRY(cub::DeviceReduce::TransformReduce(
     begin, result.data(), num_items, reduce_op, transform_op, init, env));
 
@@ -278,13 +278,15 @@ bool none_of(InputIterator begin, InputIterator end, TransformOp op, cuda::strea
  * @param end Device-accessible iterator to end of input values
  * @param predicate Unary predicate that returns true for elements to count
  * @param stream CUDA stream to use
+ * @param mr Memory resources whose temporary resource is used for intermediate allocations
  * @return The count of elements satisfying the predicate
  */
 template <typename Predicate, typename InputIterator>
 cuda::std::size_t count_if(InputIterator begin,
                            InputIterator end,
                            Predicate predicate,
-                           cuda::stream_ref stream)
+                           cuda::stream_ref stream,
+                           cudf::memory_resources mr = cudf::get_current_device_resource_ref())
 {
   // Transform each element to 0 or 1 based on predicate, then sum
   auto transform_op = [predicate] __device__(auto const& val) -> cuda::std::size_t {
@@ -292,7 +294,7 @@ cuda::std::size_t count_if(InputIterator begin,
   };
 
   return transform_reduce(
-    begin, end, transform_op, cuda::std::size_t{0}, cuda::std::plus<>{}, stream);
+    begin, end, transform_op, cuda::std::size_t{0}, cuda::std::plus<>{}, stream, mr);
 }
 
 }  // namespace cudf::detail

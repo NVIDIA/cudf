@@ -7,9 +7,9 @@
 
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/detail/device_scalar.hpp>
-#include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/row_operator/equality.cuh>
 #include <cudf/detail/row_operator/lexicographic.cuh>
+#include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/join/asof_join.hpp>
 #include <cudf/join/join.hpp>
 #include <cudf/table/table_view.hpp>
@@ -34,45 +34,16 @@
 #include <thrust/transform.h>
 
 #include <memory>
-#include <string>
 #include <utility>
 
 namespace cudf::experimental::detail {
 namespace {
 
-bool is_supported_on_type(data_type type)
-{
-  return cudf::is_integral_not_bool(type) || cudf::is_timestamp(type) || cudf::is_duration(type);
-}
-
-bool is_supported_by_type(data_type type)
-{
-  return type.id() == type_id::STRING || cudf::is_fixed_width(type);
-}
-
-void validate_by_types(table_view const& by)
-{
-  for (auto const& column : by) {
-    CUDF_EXPECTS(is_supported_by_type(column.type()),
-                 "As-of join grouping keys must be strings or fixed-width scalar columns");
-  }
-}
-
-void validate_key_sizes(table_view const& by, column_view const& on, char const* side)
-{
-  CUDF_EXPECTS(by.num_columns() == 0 || by.num_rows() == on.size(),
-               std::string{"As-of join "} + side +
-                 " grouping and ordered keys must have the same number of rows");
-}
-
 template <typename RowEqual>
 struct is_group_start {
   RowEqual row_equal;
 
-  __device__ uint8_t operator()(size_type row) const
-  {
-    return row == 0 || !row_equal(row - 1, row);
-  }
+  __device__ bool operator()(size_type row) const { return row == 0 || !row_equal(row - 1, row); }
 };
 
 template <typename T>
@@ -111,13 +82,14 @@ struct probe_dispatch {
   size_type num_groups;
   size_type* output;
   cuda::stream_ref stream;
+  rmm::device_async_resource_ref temp_mr;
 
   template <typename T>
     requires(cudf::is_integral_not_bool<T>() || cudf::is_chrono<T>())
   void operator()() const
   {
     thrust::transform(
-      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      rmm::exec_policy_nosync(stream, temp_mr),
       cuda::counting_iterator<size_type>{0},
       cuda::counting_iterator<size_type>{left_on.size()},
       output,
@@ -134,102 +106,86 @@ struct probe_dispatch {
 
 }  // namespace
 
-asof_join_impl::asof_join_impl(table_view const& right_by,
-                               column_view const& right_on,
-                               cuda::stream_ref stream)
-  : _right_by{right_by}, _right_on{right_on}, _right_group_offsets{0, stream}
+void asof_join_impl::build_groups(cuda::stream_ref stream, cudf::memory_resources mr)
 {
-  cudf::scoped_range range{"asof_join::asof_join"};
-  validate_key_sizes(right_by, right_on, "right");
-  CUDF_EXPECTS(is_supported_on_type(right_on.type()),
-               "As-of join ordered keys must be integer, timestamp, or duration columns");
-  validate_by_types(right_by);
-
   // Ungrouped joins may have an empty _right_by with zero rows, so use _right_on's size.
   auto const num_rows = _right_on.size();
-  auto const mr       = cudf::get_current_device_resource_ref();
-  auto mr_property    = cuda::std::execution::prop{cuda::mr::get_memory_resource, mr};
-  auto env            = cuda::std::execution::env{cuda::stream_ref{stream.get()}, mr_property};
+  auto const temp_mr  = mr.get_temporary_mr();
 
   if (num_rows == 0) {
-    _right_group_offsets.resize(1, stream);
-    CUDF_CUDA_TRY(cub::DeviceTransform::Fill(_right_group_offsets.begin(), 1, size_type{0}, env));
+    _right_group_offsets =
+      cuda::device_buffer<size_type>{stream, mr.get_output_mr(), 1, cuda::no_init};
+    CUDF_CUDA_TRY(
+      cub::DeviceTransform::Fill(_right_group_offsets.begin(), 1, size_type{0}, stream));
     _num_right_groups = 0;
     return;
   }
 
   if (_right_by.num_columns() == 0) {
-    _right_group_offsets.resize(2, stream);
-    CUDF_CUDA_TRY(cub::DeviceTransform::Fill(_right_group_offsets.begin(), 1, size_type{0}, env));
-    CUDF_CUDA_TRY(cub::DeviceTransform::Fill(_right_group_offsets.begin() + 1, 1, num_rows, env));
+    _right_group_offsets =
+      cuda::device_buffer<size_type>{stream, mr.get_output_mr(), 2, cuda::no_init};
+    CUDF_CUDA_TRY(
+      cub::DeviceTransform::Fill(_right_group_offsets.begin(), 1, size_type{0}, stream));
+    CUDF_CUDA_TRY(
+      cub::DeviceTransform::Fill(_right_group_offsets.begin() + 1, 1, num_rows, stream));
     _num_right_groups = 1;
     return;
   }
 
   _right_eq_preprocessed =
-    cudf::detail::row::equality::preprocessed_table::create(right_by, stream, mr);
+    cudf::detail::row::equality::preprocessed_table::create(_right_by, stream, mr);
   _right_lex_preprocessed =
-    cudf::detail::row::lexicographic::preprocessed_table::create(right_by, {}, {}, stream);
+    cudf::detail::row::lexicographic::preprocessed_table::create(_right_by, {}, {}, stream, mr);
 
-  _right_group_offsets.resize(static_cast<std::size_t>(num_rows) + 1, stream);
+  cuda::device_buffer<size_type> offsets(
+    stream, temp_mr, static_cast<std::size_t>(num_rows) + 1, cuda::no_init);
   // Mark the first row and each change in adjacent by keys, then compact their indices into
   // offsets. Append num_rows so group g occupies [offsets[g], offsets[g + 1]).
   auto const has_nulls  = cudf::has_nested_nulls(_right_by);
   auto const comparator = cudf::detail::row::equality::self_comparator{_right_eq_preprocessed};
   auto const row_equal =
     comparator.equal_to<false>(nullate::DYNAMIC{has_nulls}, null_equality::EQUAL);
-  rmm::device_uvector<uint8_t> group_starts(num_rows, stream, mr);
+  cuda::device_buffer<bool> group_starts(stream, temp_mr, num_rows, cuda::no_init);
   // We benchmarked this two-step approach against DeviceSelect::If and found that
   // combining the predicate with selection was slower, especially for string keys.
   CUDF_CUDA_TRY(cub::DeviceTransform::Transform(cuda::counting_iterator<size_type>{0},
                                                 group_starts.begin(),
                                                 num_rows,
                                                 is_group_start{row_equal},
-                                                env));
+                                                stream));
 
-  cudf::detail::device_scalar<size_type> num_groups{0, stream, mr};
+  auto mr_property = cuda::std::execution::prop{cuda::mr::get_memory_resource, temp_mr};
+  auto env         = cuda::std::execution::env{stream, mr_property};
+  cudf::detail::device_scalar<size_type> num_groups{0, stream, temp_mr};
   CUDF_CUDA_TRY(cub::DeviceSelect::Flagged(cuda::counting_iterator<size_type>{0},
                                            group_starts.begin(),
-                                           _right_group_offsets.begin(),
+                                           offsets.begin(),
                                            num_groups.data(),
                                            num_rows,
                                            env));
 
   _num_right_groups = num_groups.value(stream);
   CUDF_CUDA_TRY(
-    cub::DeviceTransform::Fill(_right_group_offsets.begin() + _num_right_groups, 1, num_rows, env));
-  _right_group_offsets.resize(static_cast<std::size_t>(_num_right_groups) + 1, stream);
-  _right_group_offsets.shrink_to_fit(stream);
+    cub::DeviceTransform::Fill(offsets.begin() + _num_right_groups, 1, num_rows, stream));
+  _right_group_offsets = cuda::device_buffer<size_type>{
+    stream, mr.get_output_mr(), static_cast<std::size_t>(_num_right_groups) + 1, cuda::no_init};
+  CUDF_CUDA_TRY(cudf::detail::memcpy_async(_right_group_offsets.data(),
+                                           offsets.data(),
+                                           _right_group_offsets.size() * sizeof(size_type),
+                                           stream));
 }
 
-std::unique_ptr<rmm::device_uvector<size_type>> asof_join_impl::join(
+std::unique_ptr<rmm::device_uvector<size_type>> asof_join_impl::probe(
   table_view const& left_by,
   column_view const& left_on,
-  asof_join_strategy strategy,
-  asof_join_exact_matches exact_matches,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr) const
+  cudf::memory_resources mr) const
 {
-  cudf::scoped_range range{"asof_join::join"};
-  CUDF_EXPECTS(strategy == asof_join_strategy::BACKWARD,
-               "Only backward as-of joins are currently supported");
-  CUDF_EXPECTS(exact_matches == asof_join_exact_matches::YES,
-               "As-of joins without exact matches are currently unsupported");
-  validate_key_sizes(left_by, left_on, "left");
-  CUDF_EXPECTS(left_by.num_columns() == _right_by.num_columns(),
-               "As-of join inputs must have the same number of grouping keys");
-  CUDF_EXPECTS(cudf::have_same_types(left_by, _right_by),
-               "As-of join grouping-key types must match");
-  CUDF_EXPECTS(cudf::have_same_types(left_on, _right_on),
-               "As-of join ordered-key types must match");
-  CUDF_EXPECTS(is_supported_on_type(left_on.type()),
-               "As-of join ordered keys must be integer, timestamp, or duration columns");
-  validate_by_types(left_by);
-
-  auto result = std::make_unique<rmm::device_uvector<size_type>>(left_on.size(), stream, mr);
+  auto result =
+    std::make_unique<rmm::device_uvector<size_type>>(left_on.size(), stream, mr.get_output_mr());
   if (left_on.is_empty()) { return result; }
 
-  auto const temp_mr = cudf::get_current_device_resource_ref();
+  auto const temp_mr = mr.get_temporary_mr();
   if (_num_right_groups == 0) {
     thrust::fill(
       rmm::exec_policy_nosync(stream, temp_mr), result->begin(), result->end(), JoinNoMatch);
@@ -237,14 +193,14 @@ std::unique_ptr<rmm::device_uvector<size_type>> asof_join_impl::join(
   }
 
   // Grouped probes map each left row to a right group, or JoinNoMatch.
-  std::unique_ptr<rmm::device_uvector<size_type>> group_positions;
+  std::unique_ptr<cuda::device_buffer<size_type>> group_positions;
   if (left_by.num_columns() > 0) {
-    group_positions =
-      std::make_unique<rmm::device_uvector<size_type>>(left_on.size(), stream, temp_mr);
+    group_positions = std::make_unique<cuda::device_buffer<size_type>>(
+      stream, temp_mr, left_on.size(), cuda::no_init);
     auto const has_nulls = cudf::has_nested_nulls(_right_by) || cudf::has_nested_nulls(left_by);
     // Binary-search group representatives for the first by key not less than the left key.
-    auto left_lex =
-      cudf::detail::row::lexicographic::preprocessed_table::create(left_by, {}, {}, stream);
+    auto left_lex = cudf::detail::row::lexicographic::preprocessed_table::create(
+      left_by, {}, {}, stream, mr.as_temporary());
     auto const row_less = cudf::detail::row::lexicographic::two_table_comparator{
       _right_lex_preprocessed, std::move(left_lex)};
     auto const right_group_rows = cuda::transform_iterator(
@@ -261,7 +217,7 @@ std::unique_ptr<rmm::device_uvector<size_type>> asof_join_impl::join(
 
     // lower_bound gives only a candidate: reject missing/unequal groups and null grouping keys.
     auto left_eq =
-      cudf::detail::row::equality::preprocessed_table::create(left_by, stream, temp_mr);
+      cudf::detail::row::equality::preprocessed_table::create(left_by, stream, mr.as_temporary());
     auto const row_equal =
       cudf::detail::row::equality::two_table_comparator{_right_eq_preprocessed, std::move(left_eq)};
     auto const equal =
@@ -292,33 +248,9 @@ std::unique_ptr<rmm::device_uvector<size_type>> asof_join_impl::join(
                                        group_positions ? group_positions->data() : nullptr,
                                        _num_right_groups,
                                        result->data(),
-                                       stream});
+                                       stream,
+                                       temp_mr});
   return result;
 }
 
 }  // namespace cudf::experimental::detail
-
-namespace cudf::experimental {
-
-asof_join::~asof_join() = default;
-
-asof_join::asof_join(table_view const& right_by,
-                     column_view const& right_on,
-                     cuda::stream_ref stream)
-  : _impl{std::make_unique<impl_type>(right_by, right_on, stream)}
-{
-}
-
-std::unique_ptr<rmm::device_uvector<size_type>> asof_join::join(
-  table_view const& left_by,
-  column_view const& left_on,
-  asof_join_strategy strategy,
-  asof_join_exact_matches exact_matches,
-  cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr) const
-{
-  CUDF_FUNC_RANGE();
-  return _impl->join(left_by, left_on, strategy, exact_matches, stream, mr);
-}
-
-}  // namespace cudf::experimental

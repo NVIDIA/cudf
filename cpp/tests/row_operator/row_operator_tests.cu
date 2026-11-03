@@ -8,6 +8,8 @@
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
+#include <cudf_test/iterator_utilities.hpp>
+#include <cudf_test/memory_resource_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/column/column.hpp>
@@ -20,6 +22,7 @@
 #include <cudf/detail/row_operator/preprocessed_table.cuh>
 #include <cudf/detail/row_operator/primitive_hashing.cuh>
 #include <cudf/detail/row_operator/spark_hashing.cuh>
+#include <cudf/detail/structs/utilities.hpp>
 #include <cudf/hashing.hpp>
 #include <cudf/hashing/detail/spark_murmurhash3.cuh>
 #include <cudf/hashing/detail/xxhash_64.cuh>
@@ -391,6 +394,110 @@ TYPED_TEST(NaNTableViewTest, TestEqualityComparatorTwoTableNaNCase)
 }
 
 struct RowOperatorTest : public cudf::test::BaseFixtureWithHarness {};
+
+TEST_F(RowOperatorTest, EqualityPreprocessingMemoryResources)
+{
+  auto const stream = this->stream();
+  for (bool dirty : {false, true}) {
+    SCOPED_TRACE(::testing::Message() << "dirty=" << dirty);
+    auto strings =
+      cudf::test::strings_column_wrapper{{"", "a", "b"}, cudf::test::iterators::null_at(0)}
+        .release();
+    if (dirty) {
+      cudf::set_null_mask(strings->mutable_view().null_mask(), 1, 2, false, stream);
+      strings->set_null_count(2);
+    }
+    auto expected =
+      cudf::test::strings_column_wrapper{{"", "", "b"}, cudf::test::iterators::nulls_at({0, 1})}
+        .release();
+    // The device table owns its column views; only dirty input needs an owning sanitized column.
+    auto constexpr alignment = alignof(cudf::column_device_view);
+    auto const padded_view_bytes =
+      cudf::column_device_view::extent(strings->view()) + alignment - 1;
+    // device_buffer rounds the padded allocation up to its requested alignment.
+    auto const retained_bytes = ((padded_view_bytes + alignment - 1) / alignment) * alignment +
+                                (dirty ? expected->alloc_size() : 0);
+    auto resources = cudf::test::memory_resource_test_harness{};
+    cudf::test::expect_api_uses_memory_resources(
+      resources,
+      [&](cudf::memory_resources mr) {
+        return cudf::detail::row::equality::preprocessed_table::create(
+          cudf::table_view{{strings->view()}}, stream, mr);
+      },
+      [&](auto const&) { return retained_bytes; },
+      [](auto const& result) {
+        auto const view = static_cast<cudf::table_device_view>(*result);
+        EXPECT_EQ(view.num_rows(), 3);
+        EXPECT_EQ(view.num_columns(), 1);
+      },
+      {cudf::test::output_allocation_expectation::EXACT,
+       cudf::test::temporary_allocation_expectation::SOME},
+      stream);
+  }
+}
+
+TEST_F(RowOperatorTest, PushDownNullsMemoryResources)
+{
+  auto const stream = this->stream();
+  for (cudf::size_type offset : {0, 1}) {
+    for (bool dirty : {false, true}) {
+      SCOPED_TRACE(::testing::Message() << "dirty=" << dirty << " offset=" << offset);
+      auto strings =
+        offset == 0
+          ? cudf::test::strings_column_wrapper{{"", "a", "b"}, cudf::test::iterators::null_at(0)}
+              .release()
+          : cudf::test::strings_column_wrapper{{"prefix", "", "a", "b"},
+                                               cudf::test::iterators::null_at(1)}
+              .release();
+      auto parent = cudf::test::fixed_width_column_wrapper<int32_t>{
+        cuda::counting_iterator<int32_t>{0},
+        cuda::counting_iterator<int32_t>{3 + offset},
+        cudf::test::iterators::nulls_at(dirty ? std::vector<cudf::size_type>{offset, offset + 1}
+                                              : std::vector<cudf::size_type>{offset})};
+      auto const parent_view = cudf::column_view{parent};
+      auto const input       = cudf::column_view{cudf::data_type{cudf::type_id::STRUCT},
+                                           3,
+                                           nullptr,
+                                           parent_view.null_mask(),
+                                           parent_view.null_count(),
+                                           offset,
+                                                 {strings->view()}};
+      auto resources         = cudf::test::memory_resource_test_harness{};
+      {
+        auto result = [&] {
+          auto guard = resources.fail_on_current_device_resource_use();
+          auto output =
+            cudf::structs::detail::push_down_nulls(input, stream, resources.resources());
+          resources.synchronize(stream);
+          return output;
+        }();
+        ASSERT_EQ(result.second.new_columns.size(), dirty ? 1 : 0);
+        ASSERT_EQ(result.second.new_null_masks.size(), dirty ? 0 : 1);
+        auto const mask_bytes = cudf::bitmask_allocation_size_bytes(input.offset() + input.size());
+        auto const retained_bytes =
+          dirty ? result.second.new_columns.front()->alloc_size() : mask_bytes;
+        auto const output = resources.expect_output_allocations_live(stream);
+        EXPECT_EQ(output.value, retained_bytes);
+        // A provisional child mask is replaced by the sanitized column only for dirty input.
+        // No null-check, bitmask reduction, or gather scratch may use the output resource.
+        EXPECT_EQ(output.total, retained_bytes + (dirty ? mask_bytes : 0));
+        resources.expect_temporary_allocation_activity(stream);
+        resources.expect_temporary_allocations_released(stream);
+        auto expected =
+          dirty
+            ? cudf::test::strings_column_wrapper{{"", "", "b"},
+                                                 cudf::test::iterators::nulls_at({0, 1})}
+                .release()
+            : cudf::test::strings_column_wrapper{{"", "a", "b"}, cudf::test::iterators::null_at(0)}
+                .release();
+        CUDF_TEST_EXPECT_COLUMNS_EQUAL(result.first.child(0), expected->view());
+        EXPECT_EQ(result.first.offset(), dirty ? 0 : offset);
+        EXPECT_EQ(result.first.size(), 3);
+      }
+      resources.expect_no_live_allocations(stream);
+    }
+  }
+}
 
 TEST_F(RowOperatorTest, TestTwoTableComparatorColumnCountCheck)
 {

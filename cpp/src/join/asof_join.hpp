@@ -6,8 +6,6 @@
 #pragma once
 
 #include <cudf/column/column_view.hpp>
-#include <cudf/detail/row_operator/equality.cuh>
-#include <cudf/detail/row_operator/lexicographic.cuh>
 #include <cudf/join/asof_join.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
@@ -15,9 +13,19 @@
 
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/buffer>
 #include <cuda/stream>
 
 #include <memory>
+
+namespace cudf::detail::row {
+namespace equality {
+struct preprocessed_table;
+}
+namespace lexicographic {
+struct preprocessed_table;
+}
+}  // namespace cudf::detail::row
 
 namespace cudf::experimental::detail {
 
@@ -33,19 +41,30 @@ class asof_join_impl {
   asof_join_impl& operator=(asof_join_impl const&) = delete;
   asof_join_impl& operator=(asof_join_impl&&)      = delete;
 
-  asof_join_impl(table_view const& right_by, column_view const& right_on, cuda::stream_ref stream);
+  asof_join_impl(table_view const& right_by,
+                 column_view const& right_on,
+                 cuda::stream_ref stream,
+                 cudf::memory_resources mr);
 
   std::unique_ptr<rmm::device_uvector<size_type>> join(table_view const& left_by,
                                                        column_view const& left_on,
                                                        asof_join_strategy strategy,
                                                        asof_join_exact_matches exact_matches,
                                                        cuda::stream_ref stream,
-                                                       rmm::device_async_resource_ref mr) const;
+                                                       cudf::memory_resources mr) const;
+
+  // NVCC requires the enclosing function of extended device lambdas to be public.
+  std::unique_ptr<rmm::device_uvector<size_type>> probe(table_view const& left_by,
+                                                        column_view const& left_on,
+                                                        cuda::stream_ref stream,
+                                                        cudf::memory_resources mr) const;
 
  private:
+  void build_groups(cuda::stream_ref stream, cudf::memory_resources mr);
+
   table_view _right_by;
   column_view _right_on;
-  rmm::device_uvector<size_type> _right_group_offsets;
+  cuda::device_buffer<size_type> _right_group_offsets;
   size_type _num_right_groups{};
   // Built once and reused by every probe. Lexicographic comparison locates a candidate group
   // with lower_bound; equality verifies an actual match, treating null grouping keys as unequal.

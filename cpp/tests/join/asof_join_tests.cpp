@@ -6,6 +6,7 @@
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/iterator_utilities.hpp>
+#include <cudf_test/memory_resource_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/column/column_factories.hpp>
@@ -335,6 +336,118 @@ TEST_F(AsofJoinTest, EmptyGroupedInputs)
   auto empty_result =
     join.join(empty_by, empty, asof_join_strategy::BACKWARD, asof_join_exact_matches::YES);
   expect_gather_map(*empty_result, {});
+}
+
+TEST_F(AsofJoinTest, GroupedMemoryResources)
+{
+  auto const stream = cudf::get_default_stream();
+  strings_column_wrapper right_by({"", "a", "a", "b"}, cudf::test::iterators::nulls_at({0}));
+  fixed_width_column_wrapper<int32_t> right_on({1, 0, 3, 2}, cudf::test::iterators::nulls_at({1}));
+  strings_column_wrapper left_by({"a", "b", "", "c", "a"}, cudf::test::iterators::nulls_at({2}));
+  fixed_width_column_wrapper<int32_t> left_on({3, 4, 9, 9, 3},
+                                              cudf::test::iterators::nulls_at({4}));
+  auto build_resources = cudf::test::memory_resource_test_harness{};
+  auto probe_resources = cudf::test::memory_resource_test_harness{};
+  {
+    auto join = [&] {
+      auto guard  = build_resources.fail_on_current_device_resource_use();
+      auto result = std::make_unique<asof_join>(
+        cudf::table_view{{right_by}}, right_on, stream, build_resources.resources());
+      build_resources.synchronize(stream);
+      return result;
+    }();
+    auto const retained = build_resources.expect_output_allocations_live(stream).value;
+    EXPECT_EQ(build_resources.output_mr().get_bytes_counter().total, retained);
+    build_resources.expect_temporary_allocation_activity(stream);
+    build_resources.expect_temporary_allocations_released(stream);
+
+    cudf::test::expect_api_uses_memory_resources(
+      probe_resources,
+      [&](cudf::memory_resources mr) {
+        return join->join(cudf::table_view{{left_by}},
+                          left_on,
+                          asof_join_strategy::BACKWARD,
+                          asof_join_exact_matches::YES,
+                          stream,
+                          mr);
+      },
+      [](auto const& result) { return result->size() * sizeof(cudf::size_type); },
+      [](auto const& result) {
+        expect_gather_map(*result, {2, 3, cudf::JoinNoMatch, cudf::JoinNoMatch, cudf::JoinNoMatch});
+      },
+      {cudf::test::output_allocation_expectation::EXACT,
+       cudf::test::temporary_allocation_expectation::SOME},
+      stream);
+    EXPECT_EQ(build_resources.output_mr().get_bytes_counter().value, retained);
+  }
+  build_resources.expect_no_live_allocations(stream);
+}
+
+TEST_F(AsofJoinTest, EmptyAndUngroupedMemoryResources)
+{
+  auto const stream = cudf::get_default_stream();
+  fixed_width_column_wrapper<int32_t> empty{};
+  fixed_width_column_wrapper<int32_t> on{1, 2};
+  strings_column_wrapper by{"a", "b"};
+  auto empty_strings = cudf::make_empty_column(cudf::data_type{cudf::type_id::STRING});
+  for (bool grouped : {false, true}) {
+    for (bool empty_right : {false, true}) {
+      for (bool empty_left : {false, true}) {
+        SCOPED_TRACE(::testing::Message() << "grouped=" << grouped << " empty_right=" << empty_right
+                                          << " empty_left=" << empty_left);
+        auto const right_by  = !grouped      ? cudf::table_view{}
+                               : empty_right ? cudf::table_view{{empty_strings->view()}}
+                                             : cudf::table_view{{by}};
+        auto const left_by   = !grouped     ? cudf::table_view{}
+                               : empty_left ? cudf::table_view{{empty_strings->view()}}
+                                            : cudf::table_view{{by}};
+        auto build_resources = cudf::test::memory_resource_test_harness{};
+        auto probe_resources = cudf::test::memory_resource_test_harness{};
+        {
+          auto join = [&] {
+            auto guard  = build_resources.fail_on_current_device_resource_use();
+            auto result = std::make_unique<asof_join>(
+              right_by,
+              empty_right ? cudf::column_view{empty} : cudf::column_view{on},
+              stream,
+              build_resources.resources());
+            build_resources.synchronize(stream);
+            return result;
+          }();
+          auto const retained = build_resources.expect_output_allocations_live(stream);
+          if (!grouped || empty_right) {
+            EXPECT_EQ(retained.value, (empty_right ? 1 : 2) * sizeof(cudf::size_type));
+            EXPECT_EQ(build_resources.temporary_mr().get_bytes_counter().total, 0);
+          }
+          build_resources.expect_temporary_allocations_released(stream);
+          cudf::test::expect_api_uses_memory_resources(
+            probe_resources,
+            [&](cudf::memory_resources mr) {
+              return join->join(left_by,
+                                empty_left ? cudf::column_view{empty} : cudf::column_view{on},
+                                asof_join_strategy::BACKWARD,
+                                asof_join_exact_matches::YES,
+                                stream,
+                                mr);
+            },
+            [](auto const& result) { return result->size() * sizeof(cudf::size_type); },
+            [&](auto const& result) {
+              expect_gather_map(
+                *result,
+                empty_left    ? std::vector<cudf::size_type>{}
+                : empty_right ? std::vector<cudf::size_type>{cudf::JoinNoMatch, cudf::JoinNoMatch}
+                              : std::vector<cudf::size_type>{0, 1});
+            },
+            {cudf::test::output_allocation_expectation::EXACT,
+             grouped && !empty_left && !empty_right
+               ? cudf::test::temporary_allocation_expectation::SOME
+               : cudf::test::temporary_allocation_expectation::NONE},
+            stream);
+        }
+        build_resources.expect_no_live_allocations(stream);
+      }
+    }
+  }
 }
 
 TEST_F(AsofJoinTest, MismatchedOrderedKeyTypes)

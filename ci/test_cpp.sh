@@ -36,15 +36,15 @@ if [[ "${RUN_LIBCUDF_TESTS}" == "true" ]]; then
     SUITEERROR=$?
 fi
 
-# Tests disabled for needing ~20GB of device memory only run in nightlies on GPUs that can hold them.
-large_memory_test_min_mib=24576
-gpu_memory_mib=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits | head -n1 | tr -d '[:space:]')
-if (( SUITEERROR == 0 )) && [[ "${RUN_LIBCUDF_TESTS}" == "true" ]] && \
-   [[ "${RAPIDS_BUILD_TYPE:-}" == "nightly" ]] && (( gpu_memory_mib >= large_memory_test_min_mib )); then
-    rapids-logger "Run large-memory libcudf gtests"
-    timeout 10m "${INSTALL_PREFIX:-${CONDA_PREFIX:-/usr}}/bin/gtests/libcudf/JOIN_TEST" \
-        --gtest_also_run_disabled_tests --gtest_filter='*DISABLED_*LargeExtentOverflowPrevention*'
-    SUITEERROR=$?
+# Run the ~20GB tests that are DISABLED_ by default, in nightlies on GPUs that can hold them
+if (( SUITEERROR == 0 )) && [[ "${RUN_LIBCUDF_TESTS}" == "true" && "${RAPIDS_BUILD_TYPE:-}" == "nightly" ]]; then
+    gpu_mib=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits | head -n1)
+    if (( gpu_mib >= 24576 )); then
+        rapids-logger "Run large-memory libcudf gtests"
+        "${INSTALL_PREFIX:-${CONDA_PREFIX:-/usr}}/bin/gtests/libcudf/JOIN_TEST" \
+            --gtest_also_run_disabled_tests --gtest_filter='*DISABLED_*LargeExtentOverflowPrevention*'
+        SUITEERROR=$?
+    fi
 fi
 
 if (( SUITEERROR == 0 )) && [[ "${RUN_EXAMPLES_TESTS}" == "true" ]]; then

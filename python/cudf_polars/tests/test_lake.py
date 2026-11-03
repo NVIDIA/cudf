@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 pytest.importorskip("pyiceberg")
 deltalake = pytest.importorskip("deltalake")
 import pyarrow as pa  # noqa: E402
+import pyarrow.parquet as pq  # noqa: E402
 import pyiceberg.schema  # noqa: E402
 from pyiceberg.catalog.sql import SqlCatalog  # noqa: E402
 from pyiceberg.partitioning import PartitionField, PartitionSpec  # noqa: E402
@@ -799,6 +800,50 @@ def test_scan_iceberg_millisecond_timestamps(
         ),
     )
     assert_gpu_result_equal(_scan_iceberg_files(tbl, [path]), engine=engine)
+
+
+@pytest.mark.parametrize("filter_rows", [False, True])
+def test_scan_iceberg_files_with_different_converted_types(
+    engine: pl.GPUEngine,
+    iceberg_catalog: SqlCatalog,
+    tmp_path: Path,
+    *,
+    filter_rows: bool,
+) -> None:
+    # An overwrite rewrites some of the files of a table through pyarrow,
+    # which writes ConvertedType.TIMESTAMP_MICROS on a timestamp without a
+    # time zone; polars does not. The files hold the same logical types, but
+    # libcudf refuses to read them in a single call.
+    tbl = iceberg_catalog.create_table(
+        "ns.converted_types",
+        schema=pyiceberg.schema.Schema(
+            NestedField(1, "a", LongType(), required=False),
+            NestedField(2, "t", TimestampType(), required=False),
+        ),
+    )
+    t = datetime.datetime(2026, 10, 1, 1, 2, 3, 456789)
+    arrow_schema = pa.schema(
+        [
+            pa.field("a", pa.int64(), metadata={"PARQUET:field_id": "1"}),
+            pa.field("t", pa.timestamp("us"), metadata={"PARQUET:field_id": "2"}),
+        ]
+    )
+    pyarrow_paths = [str(tmp_path / f"pyarrow{i}.parquet") for i in range(2)]
+    for path, rows in zip(pyarrow_paths, ([1, 2], [5, 6]), strict=True):
+        pq.write_table(
+            pa.table({"a": rows, "t": [t, None]}, schema=arrow_schema),
+            path,
+            version="2.4",
+        )
+    polars_path = str(tmp_path / "polars.parquet")
+    pl.DataFrame({"a": [3, 4], "t": [None, t]}).write_parquet(
+        polars_path, arrow_schema=arrow_schema
+    )
+    tbl.add_files([pyarrow_paths[0], polars_path, pyarrow_paths[1]])
+    q = pl.scan_iceberg(tbl.metadata_location)
+    if filter_rows:
+        q = q.filter(pl.col("a") > 1)
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
 
 
 def test_scan_iceberg_nested_initial_default_unsupported(

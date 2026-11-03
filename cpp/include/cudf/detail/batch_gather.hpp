@@ -32,9 +32,10 @@ namespace detail {
  * kernel that processes all of them in a single launch — fully-fixed-width structs flatten into
  * per-leaf data descriptors plus mask-only descriptors for the struct nodes themselves, and
  * dictionaries contribute a data descriptor over their annotated indices with the gathered mask
- * landing on the dictionary parent. String columns join the fused path's scan+payload machinery
- * only below a row-count threshold; at or above it (and all lists, structs with any
- * non-fixed-width descendant, and dictionaries with unsigned indices) they fall back to the
+ * landing on the dictionary parent. String columns join the fused path at every row count: the
+ * batched-memcpy routing engine engages above the row-count threshold so long-row tables keep
+ * the fused path, while lists, structs with any non-fixed-width descendant, and dictionaries
+ * with unsigned indices fall back to the
  * stock per-column gather path. The fallback keeps mixed-type tables correct by construction; a
  * pure fixed-width table pays exactly one kernel launch.
  *

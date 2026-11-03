@@ -454,17 +454,38 @@ def test_to_date_infer_with_time_raises(engine: pl.GPUEngine, value):
 
 
 @pytest.mark.parametrize(
-    "values, error",
+    "values, to_date, error",
     [
-        (["foo", "bar"], pl.exceptions.ComputeError),
-        (["foo", "2024-01-01"], pl.exceptions.InvalidOperationError),
+        (["foo", "bar"], False, pl.exceptions.ComputeError),
+        (["foo", "2024-01-01"], False, pl.exceptions.InvalidOperationError),
+        (["foo", None, "2024-01-01"], False, pl.exceptions.InvalidOperationError),
+        (["foo", "15/03/2024 10:20:30"], False, pl.exceptions.InvalidOperationError),
+        (
+            ["foo", "2024-01-01T12:00:00.123456789"],
+            False,
+            pl.exceptions.InvalidOperationError,
+        ),
+        (["foo", "2024-01-01junk"], False, pl.exceptions.ComputeError),
+        (["foo", "2024-01-01"], True, pl.exceptions.InvalidOperationError),
+        (["foo", "2024-01-01 12:00:00"], True, pl.exceptions.ComputeError),
     ],
-    ids=["no_value_sets_format", "later_value_sets_format"],
+    ids=[
+        "no_value_sets_format",
+        "later_value_sets_format",
+        "later_value_sets_format_with_null",
+        "later_value_sets_dmy_format",
+        "later_value_sets_fraction_format",
+        "later_value_has_extra_text",
+        "to_date_later_value_sets_format",
+        "to_date_later_value_has_time",
+    ],
 )
-def test_strptime_infer_error_type(engine: pl.GPUEngine, values, error):
+def test_strptime_infer_error_type(engine: pl.GPUEngine, values, to_date, error):
     # polars raises ComputeError when no value can set the format, and
     # InvalidOperationError when a later value sets it.
-    q = pl.LazyFrame({"a": values}).select(pl.col("a").str.to_datetime(cache=False))
+    s = pl.col("a").str
+    expr = s.to_date(cache=False) if to_date else s.to_datetime(cache=False)
+    q = pl.LazyFrame({"a": values}).select(expr)
     with pytest.raises(error):
         q.collect(engine="in-memory")
     if is_streaming_engine(engine):

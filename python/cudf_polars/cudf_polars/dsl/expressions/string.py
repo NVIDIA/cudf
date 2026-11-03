@@ -12,10 +12,7 @@ from datetime import datetime
 from enum import IntEnum, auto
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
-from polars import (
-    Series as pl_Series,
-    Struct as pl_Struct,  # noqa: TC002 (used in runtime cast())
-)
+from polars import Struct as pl_Struct  # noqa: TC002 (used in runtime cast())
 from polars.exceptions import ComputeError, InvalidOperationError
 
 import pylibcudf as plc
@@ -30,6 +27,8 @@ if TYPE_CHECKING:
     from typing import Self
 
     from polars import _plr as polars
+
+    from rmm.pylibrmm.stream import Stream
 
     from cudf_polars.containers import DataFrame, DataType
 
@@ -1168,9 +1167,8 @@ class StringFunction(Expr):
                     # parse, so a later value can set the format. Then the
                     # first value fails the strict check. If no value can set
                     # the format, polars raises ComputeError instead.
-                    if any(
-                        _infer_datetime_format(value, date_only=date_only)
-                        for value in pl_Series(valid.to_arrow(stream=df.stream))
+                    if _any_value_infers_format(
+                        valid, date_only=date_only, stream=df.stream
                     ):
                         raise InvalidOperationError(
                             "Unable to infer datetime format from data"
@@ -1321,6 +1319,103 @@ class StringFunction(Expr):
         )  # pragma: no cover; handled by init raising
 
 
+_INFER_FORMATS: dict[str, list[str]] = {
+    "DATETIME_DMY": [
+        "%d-%m-%Y",
+        "%d/%m/%Y",
+        "%d.%m.%Y",
+        "%d-%m-%Y %H:%M:%S",
+        "%d/%m/%Y %H:%M:%S",
+        "%d.%m.%Y %H:%M:%S",
+        "%d-%m-%Y %H:%M:%S.%f",
+        "%d/%m/%Y %H:%M:%S.%f",
+        "%d.%m.%Y %H:%M:%S.%f",
+    ],
+    "DATETIME_YMD": [
+        "%Y/%m/%d",
+        "%Y-%m-%d",
+        "%Y.%m.%d",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y/%m/%d %H:%M:%S",
+        "%Y.%m.%d %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d %H:%M:%S.%f",
+        "%Y/%m/%d %H:%M:%S.%f",
+        "%Y.%m.%d %H:%M:%S.%f",
+        "%Y-%m-%dT%H:%M:%S.%f",
+    ],
+    "DATETIME_YMDZ": [
+        "%Y-%m-%dT%H:%M:%S%z",
+        "%Y-%m-%dT%H:%M:%S.%f%z",
+        "%Y-%m-%d %H:%M:%S%z",
+    ],
+}
+
+
+def _format_regex(fmt: str) -> str:
+    """Return a regex that matches a whole string in the layout of fmt."""
+    specifiers = {"Y": r"\d{4}", "f": r"\d{1,9}", "z": r"([+-]\d{2}(:?\d{2})?|Z)"}
+    # re.split puts the letter after each "%" at the odd positions.
+    parts = re.split(r"%(.)", fmt)
+    return (
+        "^"
+        + "".join(
+            specifiers.get(part, r"\d{1,2}") if i % 2 else part.replace(".", r"\.")
+            for i, part in enumerate(parts)
+        )
+        + "$"
+    )
+
+
+def _any_value_infers_format(
+    column: plc.Column, *, date_only: bool, stream: Stream
+) -> bool:
+    """Return whether any value in column parses with a format from _INFER_FORMATS."""
+    any_match: plc.Column | None = None
+    for formats in _INFER_FORMATS.values():
+        for fmt in formats:
+            if date_only and "%H" in fmt:
+                continue
+            # is_timestamp ignores characters after the format, so the regex
+            # checks that the value has no extra text.
+            matches = plc.binaryop.binary_operation(
+                plc.strings.convert.convert_datetime.is_timestamp(
+                    column, fmt.replace("%f", "%9f"), stream=stream
+                ),
+                plc.strings.contains.contains_re(
+                    column,
+                    plc.strings.regex_program.RegexProgram.create(
+                        _format_regex(fmt), plc.strings.regex_flags.RegexFlags.DEFAULT
+                    ),
+                    stream=stream,
+                ),
+                plc.binaryop.BinaryOperator.LOGICAL_AND,
+                plc.DataType(plc.TypeId.BOOL8),
+                stream=stream,
+            )
+            any_match = (
+                matches
+                if any_match is None
+                else plc.binaryop.binary_operation(
+                    any_match,
+                    matches,
+                    plc.binaryop.BinaryOperator.LOGICAL_OR,
+                    plc.DataType(plc.TypeId.BOOL8),
+                    stream=stream,
+                )
+            )
+    assert any_match is not None
+    # Reduce once, so only one result is copied to the host.
+    return bool(
+        plc.reduce.reduce(
+            any_match,
+            plc.aggregation.any(),
+            plc.DataType(plc.TypeId.BOOL8),
+            stream=stream,
+        ).to_py(stream=stream)
+    )
+
+
 def _infer_datetime_format(val: str, *, date_only: bool) -> str | None:
     # port of parts of infer.rs and patterns.rs from polars rust
     DATETIME_DMY_RE = re.compile(
@@ -1407,37 +1502,6 @@ def _infer_datetime_format(val: str, *, date_only: bool) -> str | None:
     """,
         re.VERBOSE,
     )
-    PATTERN_FORMATS = {
-        "DATETIME_DMY": [
-            "%d-%m-%Y",
-            "%d/%m/%Y",
-            "%d.%m.%Y",
-            "%d-%m-%Y %H:%M:%S",
-            "%d/%m/%Y %H:%M:%S",
-            "%d.%m.%Y %H:%M:%S",
-            "%d-%m-%Y %H:%M:%S.%f",
-            "%d/%m/%Y %H:%M:%S.%f",
-            "%d.%m.%Y %H:%M:%S.%f",
-        ],
-        "DATETIME_YMD": [
-            "%Y/%m/%d",
-            "%Y-%m-%d",
-            "%Y.%m.%d",
-            "%Y-%m-%d %H:%M:%S",
-            "%Y/%m/%d %H:%M:%S",
-            "%Y.%m.%d %H:%M:%S",
-            "%Y-%m-%dT%H:%M:%S",
-            "%Y-%m-%d %H:%M:%S.%f",
-            "%Y/%m/%d %H:%M:%S.%f",
-            "%Y.%m.%d %H:%M:%S.%f",
-            "%Y-%m-%dT%H:%M:%S.%f",
-        ],
-        "DATETIME_YMDZ": [
-            "%Y-%m-%dT%H:%M:%S%z",
-            "%Y-%m-%dT%H:%M:%S.%f%z",
-            "%Y-%m-%d %H:%M:%S%z",
-        ],
-    }
     for pattern_name, regex in [
         ("DATETIME_DMY", DATETIME_DMY_RE),
         ("DATETIME_YMD", DATETIME_YMD_RE),
@@ -1452,7 +1516,7 @@ def _infer_datetime_format(val: str, *, date_only: bool) -> str | None:
             # regexes above allow up to 9. Drop the extra digits for this
             # check only.
             check_val = re.sub(r"(\.\d{6})\d+", r"\1", val)
-            for fmt in PATTERN_FORMATS[pattern_name]:
+            for fmt in _INFER_FORMATS[pattern_name]:
                 if date_only and "%H" in fmt:
                     # polars guesses only formats without a time, such as
                     # "%Y-%m-%d", when it parses to a date.

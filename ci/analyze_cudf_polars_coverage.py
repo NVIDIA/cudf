@@ -18,6 +18,7 @@ from coverage import CoverageData
 
 MIN_SHARED_LINES = 4
 MAX_SHARED_LINE_EXAMPLES = 10
+MAX_LOCAL_ONLY_LINE_EXAMPLES = 10
 MAX_UPSTREAM_CONTEXTS_PER_LINE = 100
 EXCLUDED_LOCAL_PATHS = (
     "tests/containers/",
@@ -125,6 +126,11 @@ def _review_pairs(
             key=lambda nodeid: (-matches[nodeid], nodeid),
         )
         shared = sorted(lines & upstream_tests[upstream_nodeid])
+        local_only = sorted(
+            line
+            for line in lines
+            if line[1] not in upstream_lines.get(line[0], set())
+        )
         pairs.append(
             {
                 "local_nodeid": local_nodeid,
@@ -132,13 +138,16 @@ def _review_pairs(
                 "shared_line_count": len(shared),
                 "local_line_count": len(lines),
                 "shared_fraction": round(len(shared) / len(lines), 3),
-                "local_only_line_count": sum(
-                    line not in upstream_lines.get(filename, set())
-                    for filename, line in lines
-                ),
+                "local_only_line_count": len(local_only),
                 "shared_lines": [
                     {"source_file": filename, "line": line}
                     for filename, line in shared[:MAX_SHARED_LINE_EXAMPLES]
+                ],
+                "local_only_lines": [
+                    {"source_file": filename, "line": line}
+                    for filename, line in local_only[
+                        :MAX_LOCAL_ONLY_LINE_EXAMPLES
+                    ]
                 ],
                 "other_upstream_matches": [
                     {"nodeid": nodeid, "shared_line_count": count}
@@ -241,6 +250,13 @@ def build_report(
                 for context in sorted(upstream_contexts[line])
                 if _nodeid(context) == pair["upstream_nodeid"]
             )
+        for example in pair["local_only_lines"]:
+            local_contexts, _ = context_maps[example["source_file"]]
+            example["local_context"] = next(
+                context
+                for context in sorted(local_contexts[example["line"]])
+                if _nodeid(context) == pair["local_nodeid"]
+            )
     return result
 
 
@@ -278,6 +294,10 @@ def _write_candidate_html(report: dict[str, Any], output: Path) -> None:
             html.escape(f"{line['source_file']}:{line['line']}")
             for line in pair["shared_lines"]
         )
+        local_only_examples = "<br>".join(
+            html.escape(f"{line['source_file']}:{line['line']}")
+            for line in pair["local_only_lines"]
+        )
         rows.append(
             "<tr>"
             f"<td><code>{html.escape(pair['local_nodeid'])}</code></td>"
@@ -287,6 +307,7 @@ def _write_candidate_html(report: dict[str, Any], output: Path) -> None:
             f"<td>{pair['shared_fraction']:.1%}</td>"
             f"<td>{pair['local_only_line_count']}</td>"
             f"<td><code>{examples}</code></td>"
+            f"<td><code>{local_only_examples}</code></td>"
             "</tr>"
         )
     output.write_text(
@@ -300,9 +321,8 @@ def _write_candidate_html(report: dict[str, Any], output: Path) -> None:
         "<th>GPU observed</th>"
         "<th>Shared lines</th><th>Shared fraction</th>"
         "<th>Local-only lines</th>"
-        "<th>Sampled source lines</th></tr></thead><tbody>"
-        + "".join(rows)
-        + "</tbody></table>"
+        "<th>Shared source lines</th><th>Local-only source lines</th>"
+        "</tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
     )
 
 

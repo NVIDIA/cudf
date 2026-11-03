@@ -7,6 +7,7 @@
 
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/cudf_gtest.hpp>
+#include <cudf_test/testing_main.hpp>
 
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/detail/tokenize_json.hpp>
@@ -373,3 +374,5 @@ TEST_F(JsonColumnTreeTests, JSONL_CornerCase_SingleColumn)
 {})";
   run_test(json_string, true);
 }
+
+CUDF_TEST_PROGRAM_MAIN()

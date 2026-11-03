@@ -8,6 +8,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -207,9 +208,9 @@ std::vector<std::unique_ptr<column>> make_strings_column_batch(
   std::vector<cuda::device_buffer<cudf::bitmask_type>> null_masks;
   null_masks.reserve(num_columns);
 
-  auto d_chars_sizes = cudf::detail::make_zeroed_device_uvector_async<int64_t>(
+  auto d_chars_sizes = cudf::detail::make_zeroed_device_buffer_async<int64_t>(
     num_columns, stream, cudf::get_current_device_resource_ref());
-  auto d_valid_counts = cudf::detail::make_zeroed_device_uvector_async<size_type>(
+  auto d_valid_counts = cudf::detail::make_zeroed_device_buffer_async<size_type>(
     num_columns, stream, cudf::get_current_device_resource_ref());
 
   // Only the sizes are needed before the sync. Offsets are built per column afterwards, so they

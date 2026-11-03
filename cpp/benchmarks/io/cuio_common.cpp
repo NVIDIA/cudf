@@ -118,8 +118,7 @@ cudf::io::source_info cuio_source_sink_pair::make_source_info()
         d_buffer = cudf::detail::make_device_buffer(h_buffer, stream, d_buffer.memory_resource());
       }
 
-      cudf::device_span<std::byte const> buffer = d_buffer.subspan(0, h_buffer.size());
-      return cudf::io::source_info(buffer);
+      return cudf::io::source_info(d_buffer.subspan(0, h_buffer.size()));
     }
     default: CUDF_FAIL("invalid input type");
   }

@@ -82,7 +82,6 @@ class PDSDSPolarsQueries(PDSDSQueries):
             "both sides of a join predicate and libcudf's AST cannot cast to decimal: "
             "https://github.com/NVIDIA/cudf/issues/24937"
         ),
-        5: "GPU execution failure (packed data cannot be empty): https://github.com/NVIDIA/cudf/issues/22073",
         11: (
             "Falls back to the CPU: Polars casts a float ratio to Decimal(38, 2) on "
             "both sides of a join predicate and libcudf's AST cannot cast to decimal: "

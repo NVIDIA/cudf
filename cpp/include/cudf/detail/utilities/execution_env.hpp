@@ -24,7 +24,7 @@ namespace detail {
  *
  * @returns A new non-synchronizing Thrust execution policy.
  */
-inline auto exec_policy_nosync(cuda::stream_ref stream, cudf::memory_resources mr)
+[[nodiscard]] inline auto exec_policy_nosync(cuda::stream_ref stream, cudf::memory_resources mr)
 {
   return rmm::exec_policy_nosync(stream, mr.get_temporary_mr());
 }
@@ -39,7 +39,7 @@ inline auto exec_policy_nosync(cuda::stream_ref stream, cudf::memory_resources m
  * @returns A new execution environment.
  */
 template <typename... Envs>
-inline auto make_env(cuda::stream_ref stream, cudf::memory_resources mr, Envs... envs)
+[[nodiscard]] inline auto make_env(cuda::stream_ref stream, cudf::memory_resources mr, Envs... envs)
 {
   auto stream_property = cuda::std::execution::prop{cuda::get_stream_t{}, stream};
   auto resource_property =

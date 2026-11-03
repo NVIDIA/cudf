@@ -33,6 +33,7 @@
 #include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/stream>
+#include <thrust/execution_policy.h>
 
 #include <optional>
 #include <ranges>

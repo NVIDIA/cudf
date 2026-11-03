@@ -21,6 +21,7 @@ MIN_SHARED_LINES = 4
 MAX_SHARED_LINE_EXAMPLES = 10
 MAX_LOCAL_ONLY_LINE_EXAMPLES = 10
 MAX_UPSTREAM_CONTEXTS_PER_LINE = 100
+MAX_CANDIDATE_HTML_ROWS = 500
 EXCLUDED_LOCAL_PATHS = (
     "tests/containers/",
     "tests/dsl/",
@@ -29,7 +30,18 @@ EXCLUDED_LOCAL_PATHS = (
     "tests/testing/",
     "tests/utils/",
 )
-EXCLUDED_LOCAL_TERMS = ("dtype", "decimal", "fallback", "unsupported", "scan")
+EXCLUDED_LOCAL_TERMS = (
+    "dtype",
+    "decimal",
+    "categorical",
+    "enum",
+    "engine",
+    "config",
+    "optimizer",
+    "fallback",
+    "unsupported",
+    "scan",
+)
 GENERIC_NAME_TOKENS = frozenset({"test", "expr", "lazy", "frame", "polars"})
 
 # The queue is deliberately limited to ordinary, non-streaming public behavior;
@@ -45,6 +57,7 @@ REVIEW_EXCLUDED_TESTS = (
     "test_null_count.py",
     "test_cse.py",
     "test_optimizations.py",
+    "test_engine_selection.py",
     "test_statistics.py",
 )
 REVIEW_EXCLUDED_TERMS = (
@@ -189,6 +202,14 @@ def _review_pairs(
     )
 
 
+def _prioritize_gpu_pairs(
+    pairs: list[dict[str, Any]], gpu_nodes: set[str]
+) -> None:
+    for pair in pairs:
+        pair["upstream_gpu_observed"] = pair["upstream_nodeid"] in gpu_nodes
+    pairs.sort(key=lambda pair: not pair["upstream_gpu_observed"])
+
+
 def build_report(
     local: CoverageData, upstream: CoverageData
 ) -> dict[str, Any]:
@@ -326,7 +347,7 @@ def _write_html(report: dict[str, Any], output: Path) -> None:
 def _write_candidate_html(report: dict[str, Any], output: Path) -> None:
     """Write a compact table of local/upstream pairs for behavioral review."""
     rows = []
-    for pair in report["review_pairs"]:
+    for pair in report["review_pairs"][:MAX_CANDIDATE_HTML_ROWS]:
         examples = "<br>".join(
             html.escape(f"{line['source_file']}:{line['line']}")
             for line in pair["shared_lines"]
@@ -353,7 +374,9 @@ def _write_candidate_html(report: dict[str, Any], output: Path) -> None:
         "<h1>cudf-polars upstream review candidates</h1>"
         "<p>Coverage overlap is a review signal, not proof that upstream "
         "tests assert the same behavior. GPU observation comes from the "
-        "maintained SPMD-default run list.</p>"
+        "maintained SPMD-default run list."
+        f" Showing the first {min(len(report['review_pairs']), MAX_CANDIDATE_HTML_ROWS)} "
+        f"of {len(report['review_pairs'])} ranked pairs; the JSON has all pairs.</p>"
         "<table><thead><tr><th>Local node</th><th>Upstream node</th>"
         "<th>GPU observed</th>"
         "<th>Shared lines</th><th>Shared fraction</th>"
@@ -391,8 +414,7 @@ def main() -> None:
     if selection_key not in selections:
         parser.error(f"No GPU-execution selection for {selection_key}")
     gpu_nodes = set(selections[selection_key]["nodes"])
-    for pair in report["review_pairs"]:
-        pair["upstream_gpu_observed"] = pair["upstream_nodeid"] in gpu_nodes
+    _prioritize_gpu_pairs(report["review_pairs"], gpu_nodes)
     (args.output_dir / "coverage-comparison.json").write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n"
     )

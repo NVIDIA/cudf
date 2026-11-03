@@ -181,6 +181,23 @@ def test_review_pairs_rank_by_overlap_fraction() -> None:
     assert [pair["shared_fraction"] for pair in pairs] == [0.8, 0.667]
 
 
+def test_gpu_observed_pairs_lead_the_review_queue() -> None:
+    analyzer = _load_analyzer()
+    pairs = [
+        {"upstream_nodeid": "tests/unit/test_join.py::test_join"},
+        {"upstream_nodeid": "tests/unit/test_filter.py::test_filter"},
+    ]
+
+    analyzer._prioritize_gpu_pairs(
+        pairs, {"tests/unit/test_filter.py::test_filter"}
+    )
+
+    assert [pair["upstream_gpu_observed"] for pair in pairs] == [True, False]
+    assert (
+        pairs[0]["upstream_nodeid"] == "tests/unit/test_filter.py::test_filter"
+    )
+
+
 def test_candidate_context_filter_excludes_non_ordinary_behavior() -> None:
     analyzer = _load_analyzer()
 
@@ -194,8 +211,28 @@ def test_candidate_context_filter_excludes_non_ordinary_behavior() -> None:
         "tests/unit/lazyframe/test_cse.py::test_cse_10452|run"
     )
     assert not analyzer._is_review_context(
+        "tests/unit/lazyframe/test_engine_selection.py::test_engine_import_error_raises|run"
+    )
+    assert not analyzer._is_review_context(
         "tests/unit/operations/test_group_by.py::test_group_by_skew_kurtosis|run"
     )
+
+
+def test_review_pool_excludes_local_dtype_and_engine_contracts() -> None:
+    analyzer = _load_analyzer()
+    source = "/work/cudf_polars/dsl/translate.py"
+    lines = {(source, line) for line in range(10, 15)}
+
+    pairs = analyzer._review_pairs(
+        {
+            "tests/test_categorical.py::test_dataframe_roundtrip": lines,
+            "tests/test_engine.py::test_engine_select": lines,
+        },
+        {"tests/unit/test_roundtrip.py::test_dataframe_roundtrip": lines},
+        {source: set(range(10, 15))},
+    )
+
+    assert pairs == []
 
 
 @pytest.mark.parametrize("gpu_observed", [False, True])

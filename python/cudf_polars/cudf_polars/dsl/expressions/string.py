@@ -1032,6 +1032,16 @@ class StringFunction(Expr):
             )
         elif self.name is StringFunction.Name.EndsWith:
             column, suffix = columns
+            if suffix.is_scalar and suffix.null_count:
+                # libcudf requires a valid target; a null suffix matches nothing
+                return Column(
+                    plc.Column.from_scalar(
+                        plc.Scalar.from_py(None, self.dtype.plc_type, stream=df.stream),
+                        column.size,
+                        stream=df.stream,
+                    ),
+                    dtype=self.dtype,
+                )
             return Column(
                 plc.strings.find.ends_with(
                     column.obj,
@@ -1044,6 +1054,16 @@ class StringFunction(Expr):
             )
         elif self.name is StringFunction.Name.StartsWith:
             column, prefix = columns
+            if prefix.is_scalar and prefix.null_count:
+                # libcudf requires a valid target; a null prefix matches nothing
+                return Column(
+                    plc.Column.from_scalar(
+                        plc.Scalar.from_py(None, self.dtype.plc_type, stream=df.stream),
+                        column.size,
+                        stream=df.stream,
+                    ),
+                    dtype=self.dtype,
+                )
             return Column(
                 plc.strings.find.starts_with(
                     column.obj,

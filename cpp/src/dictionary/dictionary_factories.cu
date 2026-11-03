@@ -47,7 +47,6 @@ std::unique_ptr<column> make_dictionary_column(column_view const& keys_column,
                                                rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(!keys_column.has_nulls(), "keys column must not have nulls", std::invalid_argument);
-  if (keys_column.is_empty()) return make_empty_column(type_id::DICTIONARY32);
 
   auto keys_copy = std::make_unique<column>(keys_column, stream, mr);
   auto indices_copy =

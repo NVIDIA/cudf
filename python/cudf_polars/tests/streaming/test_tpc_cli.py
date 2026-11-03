@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import sys
 from typing import TYPE_CHECKING
 
 import pytest
@@ -19,6 +20,7 @@ from cudf_polars.streaming.benchmarks.utils import (
     RunConfig,
     SQLQueries,
     SQLQueryFiles,
+    drop_file_page_cache_recursively,
     parse_args,
 )
 
@@ -80,6 +82,34 @@ def test_tpcds_cli_parse(query_id: int, tmp_path: Path) -> None:
     assert run_config.qualification
     assert run_config.frontend == "spmd"
     assert run_config.io_mode == "lukewarm"
+
+
+@pytest.mark.parametrize("io_mode", ["cold", "lukewarm"])
+def test_remote_path_single_iteration(
+    io_mode: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = parse_args(
+        [
+            "1",
+            "--path",
+            "s3://bucket/tpcds/scale-1",
+            "--scale",
+            "1",
+            "--frontend",
+            "duckdb",
+            "--iterations",
+            "1",
+            "--io-mode",
+            io_mode,
+        ],
+        num_queries=PDSDSPolarsQueries.num_queries,
+    )
+    vars(args).update({"query_set": PDSDSPolarsQueries.name})
+    run_config = RunConfig.from_args(args)
+    assert run_config.iterations == 1
+    assert run_config.io_mode == io_mode
+    monkeypatch.setitem(sys.modules, "kvikio", None)
+    drop_file_page_cache_recursively(run_config.dataset_path)
 
 
 def test_sql_cli_parse(tmp_path: Path) -> None:

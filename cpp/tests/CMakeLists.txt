@@ -653,10 +653,14 @@ ConfigureTest(
 # ##################################################################################################
 # * large strings test ----------------------------------------------------------------------------
 ConfigureTest(
+  LARGE_STRINGS_CSV_TEST large_strings/csv_tests.cpp large_strings/large_strings_fixture.cpp
+  GPUS 1
+  PERCENT 30
+)
+ConfigureTest(
   LARGE_STRINGS_TEST
   large_strings/concatenate_tests.cpp
   large_strings/case_tests.cpp
-  large_strings/csv_tests.cpp
   large_strings/json_tests.cpp
   large_strings/large_strings_fixture.cpp
   large_strings/bpe_tests.cpp

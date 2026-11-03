@@ -202,6 +202,9 @@ class ChunkedParquetWriterOptionsBuilder:
     def max_dictionary_size(
         self, val: int
     ) -> ChunkedParquetWriterOptionsBuilder: ...
+    def utc_timestamps(
+        self, enabled: bool
+    ) -> ChunkedParquetWriterOptionsBuilder: ...
     def write_arrow_schema(
         self, enabled: bool
     ) -> ChunkedParquetWriterOptionsBuilder: ...

@@ -383,7 +383,7 @@ class StringMethods(BaseAccessor):
                 )
             data = self._column.concatenate(other_cols, sep, na_rep)
 
-        if len(data) == 1 and data.null_count == 1:
+        if others is None and len(data) == 1 and data.null_count == 1:
             data = as_column("", length=len(data))
         # We only want to keep the index if we are adding something to each
         # row, not if we are joining all the rows into a single string.

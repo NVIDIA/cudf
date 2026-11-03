@@ -131,8 +131,8 @@ def simple_hybrid_scan_reader(
 def _row_mask_with_exclusions(
     col0: pa.ChunkedArray, filter_threshold: int
 ) -> tuple[pa.Array, pa.Array]:
-    """Input row mask excluding every third row (e.g. deleted rows) with every
-    fifth row null (not excluded), and the expected surviving rows for
+    """Input row mask excluding every third row (e.g. deleted rows) and every
+    fifth row (null), and the expected surviving rows for
     `col0 >= filter_threshold`.
     """
     row_mask = pa.array(
@@ -140,7 +140,7 @@ def _row_mask_with_exclusions(
         type=pa.bool_(),
     )
     keep = pc.and_(
-        pc.greater_equal(col0, filter_threshold), pc.fill_null(row_mask, True)
+        pc.greater_equal(col0, filter_threshold), pc.fill_null(row_mask, False)
     )
     return row_mask, keep.combine_chunks()
 

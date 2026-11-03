@@ -38,8 +38,8 @@ using text::byte_range_info;
 /**
  * @brief Row mask column view type for the columns selection `mode`
  *
- * Materializing filter columns updates the row mask in place so it requires a mutable view. Other
- * columns selections only read the row mask so they take an immutable view.
+ * Materializing filter columns updates the row mask (and its null count) in place so it requires a
+ * mutable view. Other columns selections only read the row mask so they take an immutable view.
  *
  * @tparam mode Columns selection
  */
@@ -230,7 +230,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
   [[nodiscard]] table_with_metadata materialize_table(
     std::span<std::vector<size_type> const> row_group_indices,
     std::span<cudf::device_span<uint8_t const> const> column_chunk_data,
-    row_mask_view_t<mode> const& row_mask,
+    row_mask_view_t<mode>& row_mask,
     use_data_page_mask mask_data_pages,
     parquet_reader_options const& options,
     cuda::stream_ref stream,
@@ -308,7 +308,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
    * @return Table chunk of materialized columns and metadata
    */
   template <read_columns_mode mode>
-  [[nodiscard]] table_with_metadata materialize_table_chunk(row_mask_view_t<mode> const& row_mask);
+  [[nodiscard]] table_with_metadata materialize_table_chunk(row_mask_view_t<mode>& row_mask);
 
  private:
   /**
@@ -559,7 +559,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
   table_with_metadata finalize_output(read_columns_mode columns_mode,
                                       table_metadata& out_metadata,
                                       std::vector<std::unique_ptr<column>>& out_columns,
-                                      RowMaskView& row_mask);
+                                      RowMaskView row_mask);
 
   /**
    * @brief Read a chunk of data and return an output table.
@@ -576,7 +576,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
   template <typename RowMaskView>
   table_with_metadata read_chunk_internal(read_mode mode,
                                           read_columns_mode columns_mode,
-                                          RowMaskView& row_mask);
+                                          RowMaskView row_mask);
 
   /**
    * @brief Check if all rows are pruned (all valid and false)
@@ -590,11 +590,10 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
 
   /**
    * @brief Updates the output row mask such that out_row_mask[i + out_row_mask_offset] = true if
-   * and only if in_row_mask[i] is valid and true, and out_row_mask[i + out_row_mask_offset] is not
-   * already pruned (valid and false)
+   * and only if both in_row_mask[i] and out_row_mask[i + out_row_mask_offset] are valid and true
    *
-   * Combines the input row mask with the rows already pruned in the output row mask, and makes the
-   * updated range of the output row mask all valid. This is inline with the masking behavior of
+   * Combines the input row mask with the output row mask, and makes the updated range of the output
+   * row mask all valid. This is inline with the masking behavior of
    * cudf::apply_retention_mask.
    *
    * @param in_row_mask Input row mask column

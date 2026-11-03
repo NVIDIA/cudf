@@ -882,7 +882,7 @@ TYPED_TEST(PageFilteringWithPageIndexStats, FilterPages)
   }
 }
 
-TEST_F(HybridScanFiltersTest, RowMaskNullsAreRetained)
+TEST_F(HybridScanFiltersTest, UndecidedPageStatsAreRetained)
 {
   auto const input = cudf::test::fixed_width_column_wrapper<double>{{3.0, 0.0, 1.0, 0.0},
                                                                     {true, false, true, false}};
@@ -917,7 +917,7 @@ TEST_F(HybridScanFiltersTest, RowMaskNullsAreRetained)
   auto row_mask = reader.build_row_mask_with_page_index_stats(row_groups, options, stream, mr);
 
   ASSERT_EQ(row_mask->size(), table.num_rows());
-  ASSERT_EQ(row_mask->null_count(), table.num_rows());
+  ASSERT_EQ(row_mask->null_count(), 0);
 
   auto const byte_ranges = reader.filter_column_chunks_byte_ranges(row_groups, options);
   auto [column_buffers, column_data, read_tasks] =

@@ -12,6 +12,7 @@
 #include <cudf/detail/gather.hpp>
 #include <cudf/detail/labeling/label_segments.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/replace.hpp>
 #include <cudf/detail/transform.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/host_vector.hpp>
@@ -769,6 +770,15 @@ std::unique_ptr<column> compute_row_mask_from_page_stats(
     cudf::detail::compute_column(page_segments_table, stats_expression.get(), stream, temp_mr);
   CUDF_EXPECTS(segment_mask->type().id() == type_id::BOOL8,
                "Page statistics expression must produce a boolean column");
+
+  // Statistics can't decide the null segments, so don't prune them
+  if (segment_mask->has_nulls()) {
+    segment_mask =
+      cudf::detail::replace_nulls(segment_mask->view(),
+                                  cudf::numeric_scalar<bool>(true, true, stream, temp_mr),
+                                  stream,
+                                  temp_mr);
+  }
 
   // Drop the null mask if it was allocated but ended up empty
   if (segment_mask->nullable() and segment_mask->null_count() == 0) {

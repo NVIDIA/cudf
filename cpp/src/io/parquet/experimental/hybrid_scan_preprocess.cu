@@ -372,19 +372,27 @@ struct is_row_pruned_fn {
 };
 
 /**
- * @brief Computes the updated row mask value such that a row survives iff the predicate is valid
- * and true and the row is not already pruned in the row mask. This is inline with the masking
- * behavior of cudf::apply_retention_mask.
+ * @brief Checks if a row of a boolean column is valid and true
+ */
+__device__ inline bool is_valid_and_true(column_device_view const& col, cudf::size_type row_idx)
+{
+  return col.is_valid(row_idx) and col.element<bool>(row_idx);
+}
+
+/**
+ * @brief Computes the updated row mask value such that a row survives iff both the predicate and
+ * the row mask are valid and true. This is inline with the masking behavior of
+ * cudf::apply_retention_mask.
  */
 struct row_mask_update_fn {
   column_device_view predicate;
-  is_row_pruned_fn is_row_pruned;
+  column_device_view row_mask;
   cudf::size_type row_mask_offset;
 
   __device__ bool operator()(cudf::size_type row_idx) const
   {
-    return predicate.is_valid(row_idx) and predicate.element<bool>(row_idx) and
-           not is_row_pruned(row_mask_offset + row_idx);
+    return is_valid_and_true(predicate, row_idx) and
+           is_valid_and_true(row_mask, row_mask_offset + row_idx);
   }
 };
 
@@ -425,7 +433,7 @@ void hybrid_scan_reader_impl::update_row_mask(cudf::column_view const& in_row_ma
     cuda::counting_iterator<cudf::size_type>{0},
     out_row_mask.begin<bool>() + out_row_mask_offset,
     total_rows,
-    row_mask_update_fn{*d_in_row_mask, is_row_pruned_fn{*d_out_row_mask}, out_row_mask_offset},
+    row_mask_update_fn{*d_in_row_mask, *d_out_row_mask, out_row_mask_offset},
     stream.get()));
 
   // Make sure the null mask of the output row mask column is all valid after the update. This is

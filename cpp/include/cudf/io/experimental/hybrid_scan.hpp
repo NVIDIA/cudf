@@ -315,9 +315,7 @@ class hybrid_scan_metadata {
  * `build_all_true_row_mask()` function or it may contain a `true` value for only the rows that
  * survive the page-level statistics from the page index subject to the same filter as row groups
  * (needs page index to be set up using the `setup_page_index()` function). The size of this row
- * mask column must be equal to the total number of rows in the current span of row groups. Rows
- * may also be excluded upfront (e.g. deleted rows) by setting them to valid `false` in the row
- * mask; such rows are excluded from both filter and payload columns. Null rows are not excluded.
+ * mask column must be equal to the total number of rows in the current span of row groups.
  * @code{.cpp}
  * // If not already done, get the page index byte range
  * auto page_index_byte_range = reader->page_index_byte_range();
@@ -663,8 +661,7 @@ class hybrid_scan_reader {
    *
    * @param row_group_indices Input row groups indices
    * @param column_chunk_data Device spans of column chunk data of filter columns
-   * @param[in,out] row_mask Mutable boolean column indicating surviving rows. Rows that are valid
-   * `false` on input are excluded from the output, and null rows are not
+   * @param[in,out] row_mask Mutable boolean column indicating surviving rows
    * @param mask_data_pages Whether to build and use a data page mask using the row mask
    * @param options Parquet reader options
    * @param stream CUDA stream used for device memory operations and kernel launches
@@ -788,8 +785,7 @@ class hybrid_scan_reader {
    * @brief Materializes a chunk of filter columns and updates the corresponding range of input row
    * mask to only the rows that exist in the output table
    *
-   * @param[in,out] row_mask Mutable boolean column indicating surviving rows from page pruning.
-   * Rows that are valid `false` on input are excluded from the output, and null rows are not
+   * @param[in,out] row_mask Mutable boolean column indicating surviving rows from page pruning
    *
    * @return Table chunk of materialized filter columns and metadata
    */

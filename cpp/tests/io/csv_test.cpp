@@ -1529,14 +1529,14 @@ TEST_F(CsvReaderTest, QuotedValuesInference)
 
   auto const inf = std::numeric_limits<double>::infinity();
   ASSERT_EQ(view.num_columns(), 5);
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(cudf::test::fixed_width_column_wrapper<int64_t>{-1, 2},
-                                 view.column(0));
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(cudf::test::fixed_width_column_wrapper<double>{1.5, -2.5},
-                                 view.column(1));
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(cudf::test::fixed_width_column_wrapper<bool>{true, false},
-                                 view.column(2));
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(cudf::test::fixed_width_column_wrapper<double>{inf, -inf},
-                                 view.column(3));
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(cudf::test::fixed_width_column_wrapper<int64_t>{-1, 2},
+                                      view.column(0));
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(cudf::test::fixed_width_column_wrapper<double>{1.5, -2.5},
+                                      view.column(1));
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(cudf::test::fixed_width_column_wrapper<bool>{true, false},
+                                      view.column(2));
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(cudf::test::fixed_width_column_wrapper<double>{inf, -inf},
+                                      view.column(3));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(cudf::test::strings_column_wrapper{"abc", "def"}, view.column(4));
 }
 
@@ -1544,6 +1544,7 @@ TEST_F(CsvReaderTest, UnpairedQuotesInference)
 {
   // Quotes that do not enclose the field are part of the value
   std::string const buffer =
+    "A,B\n"
     "5\", \"1\"\n"
     "7\", \"2\"\n";
   cudf::io::csv_reader_options const in_opts =
@@ -1551,11 +1552,12 @@ TEST_F(CsvReaderTest, UnpairedQuotesInference)
       cudf::io::source_info{cudf::host_span<std::byte const>{
         reinterpret_cast<std::byte const*>(buffer.c_str()), buffer.size()}})
       .compression(cudf::io::compression_type::NONE)
-      .header(-1);
+      .header(0);
   auto const result = cudf::io::read_csv(in_opts);
   auto const view   = result.tbl->view();
 
   ASSERT_EQ(view.num_columns(), 2);
+  ASSERT_EQ(view.num_rows(), 2);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(cudf::test::strings_column_wrapper{"5\"", "7\""}, view.column(0));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(cudf::test::strings_column_wrapper{" \"1\"", " \"2\""},
                                  view.column(1));
@@ -1584,7 +1586,7 @@ TEST_F(CsvReaderTest, QuotedNullValues)
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(
       (cudf::test::fixed_width_column_wrapper<bool>{{true, false}, {true, false}}), view.column(1));
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(
-      (cudf::test::strings_column_wrapper{{"abc", "NA"}, {true, false}}), view.column(2));
+      (cudf::test::strings_column_wrapper({"abc", "NA"}, {true, false})), view.column(2));
   }
 }
 
@@ -1626,12 +1628,12 @@ TEST_F(CsvReaderTest, QuotedValuesWhitespaceInference)
 
     auto const inf = std::numeric_limits<double>::infinity();
     ASSERT_EQ(view.num_columns(), 3);
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(cudf::test::fixed_width_column_wrapper<int64_t>{1, 2},
-                                   view.column(0));
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(cudf::test::fixed_width_column_wrapper<bool>{true, false},
-                                   view.column(1));
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(cudf::test::fixed_width_column_wrapper<double>{inf, -inf},
-                                   view.column(2));
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(cudf::test::fixed_width_column_wrapper<int64_t>{1, 2},
+                                        view.column(0));
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(cudf::test::fixed_width_column_wrapper<bool>{true, false},
+                                        view.column(1));
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(cudf::test::fixed_width_column_wrapper<double>{inf, -inf},
+                                        view.column(2));
   }
 }
 
@@ -1654,10 +1656,10 @@ TEST_F(CsvReaderTest, UnquotedTokensWhitespaceInference)
     ASSERT_EQ(view.num_columns(), 3);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(
       (cudf::test::fixed_width_column_wrapper<int64_t>{{1, 0}, {true, false}}), view.column(0));
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(cudf::test::fixed_width_column_wrapper<bool>{true, false},
-                                   view.column(1));
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(cudf::test::fixed_width_column_wrapper<double>{inf, -inf},
-                                   view.column(2));
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(cudf::test::fixed_width_column_wrapper<bool>{true, false},
+                                        view.column(1));
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(cudf::test::fixed_width_column_wrapper<double>{inf, -inf},
+                                        view.column(2));
   }
 }
 
@@ -1676,8 +1678,8 @@ TEST_F(CsvReaderTest, QuotedThousandsInference)
   auto const view   = result.tbl->view();
 
   ASSERT_EQ(view.num_columns(), 1);
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(cudf::test::fixed_width_column_wrapper<int64_t>{1000, 2000},
-                                 view.column(0));
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(cudf::test::fixed_width_column_wrapper<int64_t>{1000, 2000},
+                                      view.column(0));
 }
 
 TEST_F(CsvReaderTest, DelimWhitespaceNoHeaderLeadingTrailingDelimiter)

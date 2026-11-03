@@ -6,21 +6,15 @@
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
-#include <cudf_test/file_utilities.hpp>
 #include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/random.hpp>
 #include <cudf_test/table_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
-#include <cudf/errc.hpp>
 #include <cudf/transform.hpp>
 #include <cudf/utilities/error.hpp>
 
 #include <cudf_test_fragments.hpp>
-
-#include <fstream>
-#include <stdexcept>
-#include <type_traits>
 
 struct TransformLTOTest : public cudf::test::BaseFixture {};
 
@@ -40,9 +34,36 @@ extern "C" __device__ int transform(float* output, float input)
   return 0;
 }
 )";
-  char const* names[]{"scale.cuh"};
-  char const* headers[]{"inline constexpr float scale = 3.0f;"};
-  EXPECT_NO_THROW(static_cast<void>(cudf::compile_cuda_to_lto_ir(source, names, headers, {})));
+  column_wrapper<float> input{{1, 2, 4}};
+  cudf::transform_input inputs[]{input};
+  cudf::transform_output outputs[]{
+    {cudf::data_type{cudf::type_id::FLOAT32}, cudf::output_nullability::ALL_VALID}};
+  struct test_case {
+    char const* header;
+    float factor;
+  };
+  test_case const cases[]{{"inline constexpr float scale = 3.0f;", 3},
+                          {"inline constexpr float scale = 3.0f;", 3},
+                          {"inline constexpr float scale = 5.0f;", 5}};
+  for (auto const& test : cases) {
+    SCOPED_TRACE(test.header);
+    char const* names[]{"scale.cuh"};
+    char const* headers[]{test.header};
+    // Header contents change under the same include name, so disable PCH reuse.
+    auto fragment   = cudf::compile_cuda_to_lto_ir(source, names, headers, {}, false);
+    auto const view = fragment.view();
+    auto result     = cudf::transform_lto(view.data,
+                                      view.type,
+                                      cudf::null_aware::NO,
+                                      std::nullopt,
+                                      inputs,
+                                      outputs,
+                                          {},
+                                      std::nullopt,
+                                      cudf::test::get_default_stream());
+    column_wrapper<float> expected{{test.factor, 2 * test.factor, 4 * test.factor}};
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(result->get_column(0), expected);
+  }
 }
 
 TEST_F(TransformLTOTest, NullableDictionary)

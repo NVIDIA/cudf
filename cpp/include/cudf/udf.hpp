@@ -18,7 +18,11 @@ struct blob_t;
 namespace CUDF_EXPORT cudf {
 
 /// @brief Device-code formats accepted by LTO execution APIs.
-enum class lto_binary_type : uint8_t { LTO_IR = 0, FATBIN = 1, PTX = 2 };
+enum class lto_binary_type : uint8_t {
+  LTO_IR = 0,  ///< LTO IR binary
+  FATBIN = 1,  ///< FATBIN binary
+  PTX    = 2   ///< Null-terminated PTX text
+};
 
 /**
  * @brief Non-owning device-code fragment.
@@ -55,16 +59,25 @@ struct [[nodiscard]] compiled_fragment {
   friend compiled_fragment compile_cuda_to_lto_ir(char const*,
                                                   std::span<char const*>,
                                                   std::span<char const*>,
-                                                  std::span<char const* const>);
+                                                  std::span<char const* const>,
+                                                  bool);
 };
 
 /**
  * @brief Compiles CUDA device source into an owning LTO IR fragment.
  *
+ * Compiled fragments are cached by source, in-memory headers, ordered include paths and PCH use.
+ * Filesystem headers and their dependencies must remain unchanged while caches may be reused;
+ * use versioned include paths when changing filesystem dependencies.
+ *
+ * When PCH is enabled, headers used to build it must remain unchanged while it may be reused.
+ * Place changing headers after `#pragma nv_hdrstop` or disable PCH.
+ *
  * @param source_code Null-terminated CUDA source
  * @param include_names Null-terminated names of additional in-memory headers
  * @param includes Matching null-terminated header contents
- * @param include_paths Filesystem header directories
+ * @param include_paths Filesystem header directories, searched before bundled header directories
+ * @param use_pch Enable automatic precompiled headers on supported NVRTC versions
  * @return Shared ownership of the compiled bytes
  * @throws std::invalid_argument for null source or mismatched header spans
  * @throws std::runtime_error if compilation fails
@@ -72,6 +85,7 @@ struct [[nodiscard]] compiled_fragment {
 compiled_fragment compile_cuda_to_lto_ir(char const* source_code,
                                          std::span<char const*> include_names,
                                          std::span<char const*> includes,
-                                         std::span<char const* const> include_paths);
+                                         std::span<char const* const> include_paths,
+                                         bool use_pch = true);
 
 }  // namespace CUDF_EXPORT cudf

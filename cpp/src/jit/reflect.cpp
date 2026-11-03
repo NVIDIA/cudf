@@ -163,7 +163,8 @@ rtcx::binary_type as_rtcx_binary_type(lto_binary_type type)
     case lto_binary_type::FATBIN: return rtcx::binary_type::FATBIN;
     case lto_binary_type::PTX: return rtcx::binary_type::PTX;
   }
-  CUDF_UNREACHABLE("Unsupported compiled fragment type");
+  CUDF_FAIL(std::format("Unrecognized LTO binary type {}", static_cast<int>(type)),
+            std::invalid_argument);
 }
 
 transform_reflection reflect(std::variant<udf_source_type, lto_binary_type> source_type,

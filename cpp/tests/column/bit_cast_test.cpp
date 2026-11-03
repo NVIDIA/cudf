@@ -21,17 +21,8 @@ struct rep_type_impl {
   using type = void;
 };
 
-template <cudf::concepts::timestamp T>
-struct rep_type_impl<T> {
-  using type = typename T::duration::rep;
-};
-
-template <cudf::concepts::duration T>
-struct rep_type_impl<T> {
-  using type = typename T::rep;
-};
-
-template <cudf::concepts::fixed_point T>
+template <typename T>
+  requires(cudf::concepts::chrono<T> or cudf::concepts::fixed_point<T>)
 struct rep_type_impl<T> {
   using type = typename T::rep;
 };

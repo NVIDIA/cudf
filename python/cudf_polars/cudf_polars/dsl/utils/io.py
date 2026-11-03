@@ -126,8 +126,8 @@ def _prefetch_parquet_footers_for_paths(
 
     cache_sources = cucascade.wrap_sources(paths)
     if cache_sources is not None:
-        # Remote paths read through cuCascade: sizes come from its handle (one HEAD per
-        # object per process) and the footers are cached, so later queries re-read neither.
+        # Remote paths read through cuCascade: opening each source resolves the file
+        # size and reads its footer in a single suffix-range request.
         sizes = [src.nbytes() for src in cache_sources]
         metadata = plc.io.parquet_metadata.read_parquet_footers(
             plc.io.types.SourceInfo(cache_sources)

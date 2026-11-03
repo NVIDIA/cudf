@@ -20,6 +20,7 @@
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
+#include <cudf/utilities/type_dispatcher.hpp>
 
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
@@ -38,6 +39,57 @@ namespace cudf {
 namespace groupby {
 namespace detail {
 namespace sort {
+
+namespace {
+
+/// Whether the presorted keys can be split into groups by comparing adjacent values directly.
+bool supports_typed_group_offsets(table_view const& keys)
+{
+  return keys.num_columns() != 0 &&
+         std::all_of(keys.begin(), keys.end(), [](column_view const& col) {
+    return !col.has_nulls() && cudf::is_fixed_width(col.type()) &&
+           !cudf::is_floating_point(col.type());
+  });
+}
+
+struct mark_group_starts_fn {
+  template <typename T>
+  void operator()(column_view const& col, bool* flags, bool first, cuda::stream_ref stream) const
+    requires(cudf::is_fixed_width<T>())
+  {
+    auto const data = col.data<T>();
+    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                      cuda::counting_iterator<size_type>{0},
+                      cuda::counting_iterator<size_type>{col.size()},
+                      flags,
+                      [data, flags, first] __device__(size_type row) -> bool {
+                        auto const differs = row == 0 || data[row] != data[row - 1];
+                        return first ? differs : (flags[row] || differs);
+                      });
+  }
+
+  template <typename T, typename... Args>
+  void operator()(Args&&...) const
+    requires(!cudf::is_fixed_width<T>())
+  {
+    CUDF_FAIL("Typed group offsets require fixed-width keys");
+  }
+};
+
+size_type compute_typed_group_offsets(table_view const& keys,
+                                      size_type* offsets,
+                                      cuda::stream_ref stream)
+{
+  auto const temp_mr = cudf::get_current_device_resource_ref();
+  auto flags         = cuda::device_buffer<bool>(stream, temp_mr, keys.num_rows(), cuda::no_init);
+  for (size_type i = 0; i < keys.num_columns(); ++i) {
+    type_dispatcher<dispatch_storage_type>(
+      keys.column(i).type(), mark_group_starts_fn{}, keys.column(i), flags.data(), i == 0, stream);
+  }
+  return compact_group_offsets(flags.data(), keys.num_rows(), offsets, stream, temp_mr);
+}
+
+}  // namespace
 
 size_type compact_group_offsets(bool* flags,
                                 size_type size,
@@ -142,12 +194,16 @@ sort_groupby_helper::index_vector const& sort_groupby_helper::group_offsets(cuda
   // This way, a 2nd (parallel) call to this will not be given a partially created object.
   auto group_offsets = std::make_unique<index_vector>(size + 1, stream);
 
-  auto const sorted_order = key_sort_order(stream).data<size_type>();
   size_type num_groups;
-  if (cudf::detail::has_nested_columns(_keys)) {
-    num_groups = compute_nested_group_offsets(_keys, sorted_order, size, *group_offsets, stream);
+  if (is_presorted() && supports_typed_group_offsets(_keys)) {
+    num_groups = compute_typed_group_offsets(_keys, group_offsets->data(), stream);
   } else {
-    num_groups = compute_group_offsets<false>(_keys, sorted_order, size, *group_offsets, stream);
+    auto const sorted_order = key_sort_order(stream).data<size_type>();
+    if (cudf::detail::has_nested_columns(_keys)) {
+      num_groups = compute_nested_group_offsets(_keys, sorted_order, size, *group_offsets, stream);
+    } else {
+      num_groups = compute_group_offsets<false>(_keys, sorted_order, size, *group_offsets, stream);
+    }
   }
 
   group_offsets->set_element_async(num_groups, size, stream);

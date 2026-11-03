@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections import deque
+from contextlib import aclosing
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -203,60 +204,60 @@ class RollingManager[BufferedChunkT: BufferedChunk]:
         future: deque[StagedChunk[BufferedChunkT]] = deque()
         input_exhausted = False
         output_sequence_number = 0
-        chunks = aiter(rolling_input)
-        staged = await anext(chunks, None)
-        while staged is not None:
-            chunk = staged.chunk
-            self.policy.validate_chunk(chunk)
-            if not staged.owned:
-                history.append(chunk)
-            elif chunk.num_rows == 0:
-                result = await evaluate_chunk(
-                    self.context,
-                    chunk.chunk,
-                    self.ir,
-                    ir_context=self.ir_context,
-                    already_available=True,
-                )
-                await send_chunk(
-                    self.context,
-                    ch_out,
-                    result,
-                    output_sequence_number,
-                    tracer=tracer,
-                )
-                output_sequence_number += 1
-            else:
-                cursor = chunk
-                history = self.policy.evict_history(history, cursor)
-                if not input_exhausted:
-                    input_exhausted = await self._fill_future(
-                        chunks,
-                        cursor,
-                        future,
+        async with aclosing(aiter(rolling_input)) as chunks:
+            staged = await anext(chunks, None)
+            while staged is not None:
+                chunk = staged.chunk
+                self.policy.validate_chunk(chunk)
+                if not staged.owned:
+                    history.append(chunk)
+                elif chunk.num_rows == 0:
+                    result = await evaluate_chunk(
+                        self.context,
+                        chunk.chunk,
+                        self.ir,
+                        ir_context=self.ir_context,
+                        already_available=True,
                     )
-                result = await self._evaluate_cursor(
-                    cursor,
-                    [*history, cursor, *(item.chunk for item in future)],
-                )
-                retained = await self.policy.history_chunk(
-                    self.context,
-                    cursor,
-                )
-                if retained is not None:
-                    history.append(retained)
-                await send_chunk(
-                    self.context,
-                    ch_out,
-                    result,
-                    output_sequence_number,
-                    tracer=tracer,
-                )
-                output_sequence_number += 1
-            if future:
-                staged = future.popleft()
-            else:
-                staged = await anext(chunks, None)
+                    await send_chunk(
+                        self.context,
+                        ch_out,
+                        result,
+                        output_sequence_number,
+                        tracer=tracer,
+                    )
+                    output_sequence_number += 1
+                else:
+                    cursor = chunk
+                    history = self.policy.evict_history(history, cursor)
+                    if not input_exhausted:
+                        input_exhausted = await self._fill_future(
+                            chunks,
+                            cursor,
+                            future,
+                        )
+                    result = await self._evaluate_cursor(
+                        cursor,
+                        [*history, cursor, *(item.chunk for item in future)],
+                    )
+                    retained = await self.policy.history_chunk(
+                        self.context,
+                        cursor,
+                    )
+                    if retained is not None:
+                        history.append(retained)
+                    await send_chunk(
+                        self.context,
+                        ch_out,
+                        result,
+                        output_sequence_number,
+                        tracer=tracer,
+                    )
+                    output_sequence_number += 1
+                if future:
+                    staged = future.popleft()
+                else:
+                    staged = await anext(chunks, None)
         await ch_out.drain(self.context)
 
 

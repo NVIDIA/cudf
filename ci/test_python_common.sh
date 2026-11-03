@@ -20,11 +20,11 @@ rapids-logger "Generate Python testing dependencies"
 
 ENV_YAML_DIR="$(mktemp -d)"
 
-CMD="rapids-dependency-file-generator --output conda"
+CMD=(rapids-dependency-file-generator --output conda)
 
 # Add file-key options for each argument
 for KEY in "$@"; do
-  CMD="${CMD} --file-key \"${KEY}\""
+  CMD+=(--file-key "${KEY}")
 done
 
 DEPENDENCY_MATRIX="cuda=${RAPIDS_CUDA_VERSION%.*};arch=$(arch);py=${RAPIDS_PY_VERSION};dependencies=${RAPIDS_DEPENDENCIES}"
@@ -32,14 +32,20 @@ if [[ -n "${CUDF_EXTRA_DEPENDENCY_MATRIX:-}" ]]; then
   DEPENDENCY_MATRIX="${DEPENDENCY_MATRIX};${CUDF_EXTRA_DEPENDENCY_MATRIX}"
 fi
 
-CMD="${CMD} \
-  --prepend-channel \"${CPP_CHANNEL}\" \
-  --prepend-channel \"${PYTHON_CHANNEL}\" \
-  --prepend-channel \"${PYTHON_NOARCH_CHANNEL}\" \
-  ${CUDF_POLARS_QUENT_CHANNEL:+--prepend-channel \"${CUDF_POLARS_QUENT_CHANNEL}\"} \
-  --matrix \"${DEPENDENCY_MATRIX}\""
+CMD+=(
+  --prepend-channel "${CPP_CHANNEL}"
+  --prepend-channel "${PYTHON_CHANNEL}"
+  --prepend-channel "${PYTHON_NOARCH_CHANNEL}"
+)
 
-eval ${CMD} | tee "${ENV_YAML_DIR}/env.yaml"
+# Only set by jobs that downloaded the cudf-polars-quent package.
+if [[ -n "${CUDF_POLARS_QUENT_CHANNEL:-}" ]]; then
+  CMD+=(--prepend-channel "${CUDF_POLARS_QUENT_CHANNEL}")
+fi
+
+CMD+=(--matrix "${DEPENDENCY_MATRIX}")
+
+"${CMD[@]}" | tee "${ENV_YAML_DIR}/env.yaml"
 
 rapids-mamba-retry env create --yes -f "${ENV_YAML_DIR}/env.yaml" -n test
 

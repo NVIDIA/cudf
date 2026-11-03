@@ -931,7 +931,14 @@ void declare_udfs(std::span<std::unique_ptr<node> const> output_irs, code_sink& 
     for (auto const& arg : ir.get_args()) {
       self(self, *arg);
     }
-    if (auto udf = ir.get_udf()) { udfs.insert(std::move(*udf)); }
+    if (auto udf = ir.get_udf()) {
+      auto const [it, inserted] = udfs.insert(*udf);
+      CUDF_EXPECTS(inserted || (it->output_type == udf->output_type &&
+                                it->input_types == udf->input_types &&
+                                it->is_null_aware == udf->is_null_aware),
+                   "Calls of one UDF symbol must use one signature",
+                   std::invalid_argument);
+    }
   };
   for (auto const& ir : output_irs) {
     collect_udfs(collect_udfs, *ir);

@@ -82,6 +82,27 @@ def test_slice(np_array, s):
     assert result == np_array.view("u1")[s].tolist()
 
 
+@pytest.mark.parametrize("stream", [None, rmm.pylibrmm.stream.Stream()])
+def test_slice_preserves_stream(stream):
+    class CudaArray:
+        def __init__(self, stream):
+            self.__cuda_array_interface__ = {
+                "data": (0, False),
+                "shape": (10,),
+                "typestr": "|u1",
+                "version": 3,
+            }
+            if stream is not None:
+                self.__cuda_array_interface__["stream"] = stream
+
+    gv = plc.gpumemoryview(CudaArray(stream))
+    sliced_cai = gv.byte_slice(slice(2, 5)).__cuda_array_interface__
+
+    assert ("stream" in sliced_cai) == (stream is not None)
+    if stream is not None:
+        assert sliced_cai["stream"] is stream
+
+
 def test_slice_fails(np_array):
     gv = plc.Column.from_array(np_array.view("u1")).data()
     with pytest.raises(TypeError, match="requires a slice"):

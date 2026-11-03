@@ -7,7 +7,11 @@
 // in tests/ast/jit_expressions_tests.cpp and tests/join/mixed_join_tests.cu.
 
 #include <cudf/errc.hpp>
+#include <cudf/fixed_point/fixed_point.hpp>
+#include <cudf/strings/string_view.cuh>
 #include <cudf/wrappers/timestamps.hpp>
+
+#include <cuda/std/optional>
 
 extern "C" __device__ cudf::errc lto_add_one(int32_t* out, int32_t a)
 {
@@ -85,5 +89,31 @@ extern "C" __device__ cudf::errc lto_week_start_ns(cudf::timestamp_ns* out, cudf
   auto weeks         = shifted / 7;
   if (shifted % 7 != 0 && shifted < 0) { --weeks; }
   *out = cudf::timestamp_ns{cudf::duration_ns{(weeks * 7 - 3) * ticks_per_day}};
+  return cudf::errc::SUCCESS;
+}
+
+extern "C" __device__ cudf::errc lto_decimal_add(numeric::decimal64* out,
+                                                 numeric::decimal32 a,
+                                                 numeric::decimal64 b,
+                                                 int32_t output_scale)
+{
+  auto const widened_a = numeric::decimal64{numeric::scaled_integer<int64_t>{a.value(), a.scale()}};
+  auto const sum       = (widened_a + b).rescaled(numeric::scale_type{output_scale});
+  // The caller uses only the representation, so this scale deliberately differs from output_scale.
+  *out = numeric::decimal64{numeric::scaled_integer<int64_t>{sum.value(), numeric::scale_type{0}}};
+  return cudf::errc::SUCCESS;
+}
+
+extern "C" __device__ cudf::errc lto_string_tail(cudf::string_view* out, cudf::string_view input)
+{
+  *out = input.empty() ? input : input.substr(1, input.length() - 1);
+  return cudf::errc::SUCCESS;
+}
+
+extern "C" __device__ cudf::errc lto_nullable_string_tail(
+  cuda::std::optional<cudf::string_view>* out, cuda::std::optional<cudf::string_view> input)
+{
+  auto const value = input.value_or(cudf::string_view{});
+  *out             = value.empty() ? value : value.substr(1, value.length() - 1);
   return cudf::errc::SUCCESS;
 }

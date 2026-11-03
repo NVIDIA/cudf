@@ -40,7 +40,9 @@ namespace jit {
  * to fail with a conflicting declaration. Use a distinct symbol name, for example with a
  * consumer-specific prefix.
  *
- * STRING inputs are passed as `cudf::string_view`.
+ * STRING inputs and outputs use `cudf::string_view`. Returned views must refer to device memory
+ * that remains valid while cuDF copies the strings into the output column. Views into input
+ * strings are allowed.
  *
  * Decimal inputs retain their scales. For decimal outputs, only the representation is used;
  * the scale of the decimal value written by the function is ignored. Users must pass the

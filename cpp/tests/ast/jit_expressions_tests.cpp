@@ -31,6 +31,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <functional>
 #include <initializer_list>
 #include <limits>
@@ -120,6 +121,46 @@ TEST_F(JITExpressionTest, UdfCall)
   auto result   = run_column(table, call);
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view(), VERBOSITY);
+}
+
+TEST_F(JITExpressionTest, UdfCallStringViewInputsAndOutput)
+{
+  std::vector<std::string> const values{"", "a", "é", "你好", "cudf", "🙂z"};
+  auto string_type = cudf::data_type{cudf::type_id::STRING};
+  for (bool has_nulls : {false, true}) {
+    std::vector<bool> const validity{true, true, true, true, true, !has_nulls};
+    auto input =
+      has_nulls ? cudf::test::strings_column_wrapper(values.begin(), values.end(), validity.begin())
+                : cudf::test::strings_column_wrapper(values.begin(), values.end());
+    auto table = cudf::table_view{{input}};
+    for (bool is_null_aware : {false, true}) {
+      for (auto policy : {cudf::error_policy::PROPAGATE, cudf::error_policy::NULLIFY}) {
+        SCOPED_TRACE(::testing::Message()
+                     << "has_nulls=" << has_nulls << ", is_null_aware=" << is_null_aware
+                     << ", nullify=" << (policy == cudf::error_policy::NULLIFY));
+        auto tree = cudf::ast::tree{};
+        auto ref  = cudf::ast::column_reference{0};
+        auto function =
+          cudf::ast::jit::udf{is_null_aware ? "lto_nullable_string_tail" : "lto_string_tail",
+                              true,
+                              string_type,
+                              {string_type},
+                              is_null_aware ? cudf::null_aware::YES : cudf::null_aware::NO};
+        auto& call  = cudf::ast::jit::call(tree, function, {ref}, policy);
+        auto result = run_column(table, call);
+
+        // Remove one Unicode character, including a multibyte character. The null-aware UDF
+        // converts null input to a valid empty string; the regular UDF propagates nulls.
+        std::vector<std::string> const expected_values{
+          "", "", "", "好", "udf", has_nulls ? "" : "z"};
+        std::vector<bool> const expected_validity{
+          true, true, true, true, true, !has_nulls || is_null_aware};
+        auto expected = cudf::test::strings_column_wrapper(
+          expected_values.begin(), expected_values.end(), expected_validity.begin());
+        CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, result->view(), VERBOSITY);
+      }
+    }
+  }
 }
 
 TEST_F(JITExpressionTest, UdfCallFusesWithOperators)
@@ -224,15 +265,23 @@ TEST_F(JITExpressionTest, UdfCallImpureCalls)
 
 TEST_F(JITExpressionTest, UdfCallPropagatesNulls)
 {
-  auto a        = column_wrapper<int32_t>{{1, 2, 3}, {1, 0, 1}};
-  auto expected = column_wrapper<int32_t>{{2, 0, 4}, {1, 0, 1}};
-  auto table    = cudf::table_view{{a}};
-  auto tree     = cudf::ast::tree{};
-  auto a_ref    = cudf::ast::column_reference(0);
-  auto& call    = cudf::ast::jit::call(tree, callee("lto_add_one", int32_type), {a_ref});
-  auto result   = run_column(table, call);
+  // lto_add_one is null-unaware. PROPAGATE uses the regular kernel; NULLIFY forces the
+  // null-aware kernel. Both must preserve nulls without passing them to the UDF.
+  for (auto policy : {cudf::error_policy::PROPAGATE, cudf::error_policy::NULLIFY}) {
+    for (bool all_null : {false, true}) {
+      SCOPED_TRACE(::testing::Message() << "nullify=" << (policy == cudf::error_policy::NULLIFY)
+                                        << ", all_null=" << all_null);
+      auto a        = column_wrapper<int32_t>{{1, 2, 3}, {!all_null, false, !all_null}};
+      auto expected = column_wrapper<int32_t>{{2, 0, 4}, {!all_null, false, !all_null}};
+      auto table    = cudf::table_view{{a}};
+      auto tree     = cudf::ast::tree{};
+      auto a_ref    = cudf::ast::column_reference{0};
+      auto& call  = cudf::ast::jit::call(tree, callee("lto_add_one", int32_type), {a_ref}, policy);
+      auto result = run_column(table, call);
 
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view(), VERBOSITY);
+      CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view(), VERBOSITY);
+    }
+  }
 }
 
 TEST_F(JITExpressionTest, UdfCallErrorPolicies)
@@ -320,6 +369,44 @@ TEST_F(JITExpressionTest, UdfCallUserErrorCodes)
                       code(cudf::errc::ARITHMETIC_OVERFLOW)}),
             cudf::errc::USER_RESERVED);
   EXPECT_STREQ(cudf::to_string(static_cast<cudf::errc>(0x10011)), "Unknown Error");
+}
+
+TEST_F(JITExpressionTest, UdfCallDecimalInputsAndOutput)
+{
+  auto a =
+    cudf::test::fixed_point_column_wrapper<int32_t>{{125, -250, 0, 375}, numeric::scale_type{-2}};
+  auto b =
+    cudf::test::fixed_point_column_wrapper<int64_t>{{20, 15, -30, 0}, numeric::scale_type{-1}};
+  auto table = cudf::table_view{{a, b}};
+  for (auto output_scale : {-3, -1}) {
+    for (auto policy : {cudf::error_policy::PROPAGATE, cudf::error_policy::NULLIFY}) {
+      SCOPED_TRACE(::testing::Message() << "output_scale=" << output_scale
+                                        << ", nullify=" << (policy == cudf::error_policy::NULLIFY));
+      auto tree        = cudf::ast::tree{};
+      auto a_ref       = cudf::ast::column_reference{0};
+      auto b_ref       = cudf::ast::column_reference{1};
+      auto scale       = cudf::numeric_scalar<int32_t>{output_scale};
+      auto& scale_ref  = tree.push(cudf::ast::literal{scale});
+      auto output_type = cudf::data_type{cudf::type_id::DECIMAL64, output_scale};
+      auto function =
+        cudf::ast::jit::udf{"lto_decimal_add",
+                            true,
+                            output_type,
+                            {table.column(0).type(), table.column(1).type(), int32_type}};
+      auto& call  = cudf::ast::jit::call(tree, function, {a_ref, b_ref, scale_ref}, policy);
+      auto result = run_column(table, call);
+
+      // The inputs represent 1.25, -2.50, 0, 3.75 and 2.0, 1.5, -3.0, 0 respectively.
+      // The UDF rescales their sum explicitly, then returns its representation with scale zero.
+      // Only that representation is used; the result column takes its scale from output_type.
+      auto expected_values = output_scale == -3 ? std::array<int64_t, 4>{3250, -1000, -3000, 3750}
+                                                : std::array<int64_t, 4>{32, -10, -30, 37};
+      auto expected        = cudf::test::fixed_point_column_wrapper<int64_t>{
+        expected_values.begin(), expected_values.end(), numeric::scale_type{output_scale}};
+      EXPECT_EQ(result->type(), output_type);
+      CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, result->view(), VERBOSITY);
+    }
+  }
 }
 
 TEST_F(JITExpressionTest, UdfCallOverTimestamps)

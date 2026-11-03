@@ -1697,6 +1697,9 @@ struct descriptor_path_builder {
       // destination must still be a full strings column (full-size offsets
       // child, empty chars) — `allocate_like` is fixed-width-only, so the
       // column is assembled directly, matching the empty-source completion.
+      // The zero-row-source arm arrives with an UNINITIALIZED plan whose
+      // `null_count` is the 0 placeholder; every gathered row is out-of-bounds
+      // for such a source, so the destination is exactly all-null.
       auto offsets_col =
         cudf::strings::detail::create_offsets_child_column(0, num_rows + 1, stream, output_mr);
       // Empty rows: offsets are all zero. The child's data is uninitialized,
@@ -1709,7 +1712,7 @@ struct descriptor_path_builder {
         num_rows,
         std::move(offsets_col),
         rmm::device_buffer{},
-        plan.null_count,
+        src.size() == 0 ? num_rows : plan.null_count,
         cudf::detail::create_null_mask(num_rows, mask_state::ALL_NULL, stream, output_mr));
     }
     staged_string staged;
@@ -1874,6 +1877,8 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
       auto const& src = source_table.column(idx);
       if (src.type().id() == type_id::STRUCT) {
         destination[idx] = cudf::empty_like(src);
+      } else if (src.type().id() == type_id::STRING) {
+        destination[idx] = cudf::make_empty_column(type_id::STRING);
       } else if (src.type().id() == type_id::DICTIONARY32) {
         destination[idx] = cudf::make_empty_column(type_id::DICTIONARY32);
       } else {
@@ -2105,6 +2110,10 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
   }
 
   if (not descriptors.empty() and num_rows > 0) {
+    // Deferred key-catalog assembly (string-keyed dictionaries): one batched offsets read
+    // plus one synchronization for every catalog in the call. Must precede the launch so the
+    // sync does not wait behind GPU work the gather could have overlapped with.
+    builder.assemble_staged_keys();
     // THE single pre-launch synchronization: it resolves the enqueued locality sample (when the
     // routed entry took one) and drains the stream, which is also what makes the pinned staging
     // below safe to write from the host.

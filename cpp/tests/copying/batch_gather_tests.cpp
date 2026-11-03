@@ -731,8 +731,18 @@ TEST_F(BatchGatherDegenerateTest, ZeroRowMap)
 TEST_F(BatchGatherDegenerateTest, ZeroRowStringSourceNullifyParity)
 {
   auto empty_str = cudf::test::strings_column_wrapper{}.release();
-  auto strings   = periodic_strings(4, 3);
-  cudf::test::strings_column_wrapper col_str(strings.begin(), strings.end());
+  // The mixed cohort rides beside a live 4-row string column, so the empty source must keep
+  // the table's uniform row count: a strings wrapper with an all-false validity mask makes a
+  // 4-row all-null source — the zero-row (NULLIFY → every row out-of-bounds) case is pinned
+  // by the single-column call above, and a table_view enforces equal column sizes.
+  auto strings = periodic_strings(8, 3);
+  std::vector<bool> null_validity(4, false);
+  auto null_mask_iter = cudf::detail::make_counting_transform_iterator(
+    0, [&null_validity](cudf::size_type i) { return null_validity[i]; });
+  cudf::test::strings_column_wrapper null_strings(
+    strings.begin(), strings.begin() + 4, null_mask_iter);
+  cudf::test::strings_column_wrapper full_col(strings.begin() + 4, strings.end());
+  auto col_str_4 = cudf::slice(full_col, {0, 4});
 
   cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map{{0, 1, 2, 3}};
 
@@ -742,7 +752,7 @@ TEST_F(BatchGatherDegenerateTest, ZeroRowStringSourceNullifyParity)
   CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
   EXPECT_EQ(result->view().column(0).null_count(), 4);
 
-  cudf::table_view mixed({empty_str->view(), col_str});
+  cudf::table_view mixed({null_strings, col_str_4[0]});
   auto result_mixed    = run_batch_gather(mixed, gather_map, cudf::out_of_bounds_policy::NULLIFY);
   auto reference_mixed = run_reference(mixed, gather_map, cudf::out_of_bounds_policy::NULLIFY);
   CUDF_TEST_EXPECT_TABLES_EQUAL(reference_mixed->view(), result_mixed->view());

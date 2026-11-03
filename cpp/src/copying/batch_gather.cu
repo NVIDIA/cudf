@@ -195,37 +195,8 @@ size_type max_fused_data_element_size(table_view const& source_table)
 // wide tiles and the streaming tile keep R=1, where coarsening would square the register cost
 // for no benefit.
 constexpr size_type kDefaultRowsPerThread{1};
-
 constexpr size_type kSampleWindows{16};
 constexpr size_type kSampleWindowLen{8};
-
-/**
- * @brief Type-erased per-column parameters consumed by `batch_gather_kernel`.
- *
- * One descriptor per fixed-width LEAF, mask-only STRUCT node, or dictionary index payload — one
- * per NON-all-null fixed-width source column for the flat case: a column whose every row is null
- * has its destination pre-set ALL_NULL host-side and carries no descriptor at all, so the kernel
- * never sees a column it would only skip. All pointers are element bases, not byte bases: a
- * leaf's `src_data` comes from `column_view::data<T>()`, which has that view's own offset
- * pre-applied in element units, plus the accumulated offsets of the struct ancestors the leaf
- * sits under (applied exactly once here); `dst_data`/`dst_mask` belong to a freshly allocated
- * destination whose offset is zero. Nothing downstream may re-add an offset to these pointers.
- *
- * `src_data`/`dst_data` are nullptr for mask-only STRUCT node descriptors (`skip_data` true,
- * nothing to copy). `src_mask` is a mask BASE pointer (nullptr if the source is non-nullable);
- * `mask_offset` is the bit offset of the first row of the viewed range within that
- * base. Descriptors are pushed only for kernel-visible work; an all-null destination (mask
- * pre-set ALL_NULL) gets none — see `plan_destination_mask`'s `skip_data`.
- */
-struct alignas(16) column_descriptor {
-  void const* src_data;          // first source element; nullptr for mask-only struct nodes
-  void* dst_data;                // first destination element; nullptr for mask-only struct nodes
-  bitmask_type const* src_mask;  // source mask BASE pointer; nullptr if source non-nullable
-  bitmask_type* dst_mask;        // destination mask; nullptr if dst non-nullable or no mask
-  int64_t mask_offset;           // bit offset into src_mask (sum of the viewed range's offsets)
-  int32_t element_size;          // cudf::size_of(src.type()); one of {0, 1, 2, 4, 8, 16}
-  bool skip_data;                // mask-only node: no data copy (all-null leaves get no descriptor)
-};
 
 /**
  * @brief Descriptors of a small table, handed to the kernel as one by-value parameter.
@@ -260,8 +231,6 @@ static_assert(sizeof(descriptor_block<batch_gather_wide_by_value_descriptors>) =
 // kernel's template parameters, not the parameter block, so they add nothing here; both tier
 // blocks plus that slack stay inside the budget (the wide tier leaves 8'108 B).
 static_assert(sizeof(descriptor_block<batch_gather_small_by_value_descriptors>) + 64 <= 32'764,
-              "By-value descriptor block exceeds the kernel-parameter size limit");
-static_assert(sizeof(descriptor_block<batch_gather_wide_by_value_descriptors>) + 64 <= 32'764,
               "By-value descriptor block exceeds the kernel-parameter size limit");
 
 // Evict-first cache policy (PTX ISA 74, SM_70+ via the generated cuda::ptx builtins), active
@@ -950,63 +919,6 @@ MapType const* direct_map_data(column_view const& gather_map)
 {
   return static_cast<MapType const*>(cudf::type_dispatcher<dispatch_storage_type>(
     gather_map.type(), data_ptr_functor{}, gather_map));
-}
-
-// Enqueues the map-locality sample copies on the stream (a pitched D2H into pinned staging,
-// plus one endpoint-window copy when the window grid is not uniform — no kernel launch, no
-// sync). Returns a handle with empty staging for unclassifiable maps.
-sampled_map_locality enqueue_map_locality_sample(column_view const& gather_map,
-                                                 cuda::stream_ref stream)
-{
-  switch (gather_map.type().id()) {
-    case cudf::type_id::INT8:
-    case cudf::type_id::INT16:
-    case cudf::type_id::INT32:
-    case cudf::type_id::INT64:
-    case cudf::type_id::UINT8:
-    case cudf::type_id::UINT16:
-    case cudf::type_id::UINT32:
-    case cudf::type_id::UINT64: break;
-    default:
-      return sampled_map_locality::empty(
-        stream);  // Not an index type: unclassifiable, safe default.
-  }
-  auto const num_rows    = gather_map.size();
-  auto const elem_size   = static_cast<size_t>(cudf::size_of(gather_map.type()));
-  auto const window_size = static_cast<size_t>(kSampleWindowLen) * elem_size;
-  auto const last_start  = static_cast<int64_t>(num_rows) - static_cast<int64_t>(kSampleWindowLen);
-  // Old grid: window w starts at floor(last_start * w / (kSampleWindows - 1)) rows, with the
-  // last window at last_start (ending at num_rows - 1). That grid is uniform only when
-  // (kSampleWindows - 1) divides last_start; in the exact case one pitched copy with stride
-  // last_start / (kSampleWindows - 1) reproduces every window INCLUDING the endpoint, and
-  // otherwise the pitched copy carries windows 0..(kSampleWindows - 2) — each per-window
-  // shift from the old grid stays below kSampleWindows - 1 rows, which only feeds a routing
-  // heuristic — and the endpoint window keeps its own submission.
-  auto const pitch_rows = last_start / static_cast<int64_t>(kSampleWindows - 1);
-  bool const exact_grid = pitch_rows * static_cast<int64_t>(kSampleWindows - 1) == last_start;
-  // Uninitialized pinned staging: every byte is supplied by the D2H copies below, so the
-  // zero-init + alloc sync of the initializing vector factory buys nothing here. Deallocation
-  // rides the buffer's stored stream (same stream), so it stays stream-ordered with no new sync.
-  auto staging = cudf::detail::make_pinned_buffer_async<std::byte>(
-    static_cast<size_t>(kSampleWindows) * window_size, stream);
-  CUDF_CUDA_TRY(
-    cudaMemcpy2DAsync(staging.data(),           // contiguous rows: window-major
-                      window_size,              // dst pitch == one window
-                      gather_map.data<char>(),  // window 0 starts at row 0
-                      static_cast<size_t>(pitch_rows) * elem_size,
-                      window_size,
-                      static_cast<size_t>(exact_grid ? kSampleWindows : kSampleWindows - 1),
-                      cudaMemcpyDefault,
-                      stream.get()));
-  if (not exact_grid) {
-    // The endpoint window (rows last_start..num_rows - 1) is off the uniform grid.
-    CUDF_CUDA_TRY(cudf::detail::memcpy_async(
-      staging.data() + static_cast<size_t>(kSampleWindows - 1) * window_size,
-      gather_map.data<char>() + static_cast<size_t>(last_start) * elem_size,
-      window_size,
-      stream));
-  }
-  return sampled_map_locality{std::move(staging), gather_map.type().id(), elem_size};
 }
 
 // Classifies the staged windows. Requires the stream to already be synchronized: the caller's
@@ -2246,7 +2158,7 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
       }
       auto desc_staging_carve_mr =
         cuda::mr::make_shared_resource<carve_memory_resource>(temp_mr, stream, total_bytes);
-      d_descriptors.emplace(total_bytes, stream, desc_staging_carve_mr.get());
+      d_descriptors.emplace(total_bytes, stream, desc_staging_carve_mr);
       // Ordered upload: the batched copy's overlap-with-compute hint lets the driver run it
       // concurrently with the consumer kernel, which would read pre-staging descriptor bytes.
       CUDF_CUDA_TRY(

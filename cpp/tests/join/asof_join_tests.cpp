@@ -18,8 +18,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <rmm/device_uvector.hpp>
-
+#include <cuda/buffer>
 #include <cuda/stream>
 #include <cuda_runtime_api.h>
 
@@ -28,6 +27,7 @@
 #include <exception>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <thread>
 #include <vector>
 
@@ -39,7 +39,7 @@ using cudf::experimental::asof_join_strategy;
 using cudf::test::fixed_width_column_wrapper;
 using cudf::test::strings_column_wrapper;
 
-void expect_gather_map(rmm::device_uvector<cudf::size_type> const& actual,
+void expect_gather_map(cuda::device_buffer<cudf::size_type> const& actual,
                        std::vector<cudf::size_type> const& expected)
 {
   auto const host_actual = cudf::detail::make_std_vector(actual, cudf::get_default_stream());
@@ -73,7 +73,7 @@ TYPED_TEST(AsofJoinOrderedKeyTest, GroupedBackward)
                           asof_join_exact_matches::YES);
 
   expect_gather_map(
-    *result,
+    result,
     {cudf::JoinNoMatch, 1, 1, 3, 4, cudf::JoinNoMatch, 6, 7, cudf::JoinNoMatch, cudf::JoinNoMatch});
 }
 
@@ -88,7 +88,7 @@ TYPED_TEST(AsofJoinOrderedKeyTest, UngroupedBackward)
   auto result = join.join(
     cudf::table_view{}, left_on, asof_join_strategy::BACKWARD, asof_join_exact_matches::YES);
 
-  expect_gather_map(*result, {cudf::JoinNoMatch, 1, 1, 3, 4, cudf::JoinNoMatch});
+  expect_gather_map(result, {cudf::JoinNoMatch, 1, 1, 3, 4, cudf::JoinNoMatch});
 }
 
 TEST_F(AsofJoinTest, MultipleGroupingKeys)
@@ -106,7 +106,7 @@ TEST_F(AsofJoinTest, MultipleGroupingKeys)
                           asof_join_strategy::BACKWARD,
                           asof_join_exact_matches::YES);
 
-  expect_gather_map(*result, {3, cudf::JoinNoMatch, 1});
+  expect_gather_map(result, {3, cudf::JoinNoMatch, 1});
 }
 
 template <typename T>
@@ -213,7 +213,7 @@ TYPED_TEST(AsofJoinGroupingKeyTest, GroupedBackward)
                           asof_join_strategy::BACKWARD,
                           asof_join_exact_matches::YES);
 
-  expect_gather_map(*result, expected);
+  expect_gather_map(result, expected);
 }
 
 TEST_F(AsofJoinTest, ConcurrentMultiStreamProbes)
@@ -256,7 +256,7 @@ TEST_F(AsofJoinTest, ConcurrentMultiStreamProbes)
   asof_join join(cudf::table_view{{right_by}}, right_on, build_stream);
   build_stream.sync();
 
-  std::vector<std::unique_ptr<rmm::device_uvector<cudf::size_type>>> results(num_probes);
+  std::vector<std::optional<cuda::device_buffer<cudf::size_type>>> results(num_probes);
   std::vector<std::thread> threads;
   std::vector<std::exception_ptr> errors(num_probes);
   // `ready` lets the main thread wait until every worker is spawned and spinning, and `start`
@@ -309,12 +309,12 @@ TEST_F(AsofJoinTest, EmptyInputs)
   asof_join empty_right_join(cudf::table_view{}, empty);
   auto no_matches = empty_right_join.join(
     cudf::table_view{}, left_on, asof_join_strategy::BACKWARD, asof_join_exact_matches::YES);
-  expect_gather_map(*no_matches, {cudf::JoinNoMatch, cudf::JoinNoMatch});
+  expect_gather_map(no_matches, {cudf::JoinNoMatch, cudf::JoinNoMatch});
 
   asof_join join(cudf::table_view{}, left_on);
   auto empty_result = join.join(
     cudf::table_view{}, empty, asof_join_strategy::BACKWARD, asof_join_exact_matches::YES);
-  expect_gather_map(*empty_result, {});
+  expect_gather_map(empty_result, {});
 }
 
 TEST_F(AsofJoinTest, EmptyGroupedInputs)
@@ -330,12 +330,12 @@ TEST_F(AsofJoinTest, EmptyGroupedInputs)
   asof_join empty_right_join(empty_by, empty);
   auto no_matches = empty_right_join.join(
     nonempty_by, on, asof_join_strategy::BACKWARD, asof_join_exact_matches::YES);
-  expect_gather_map(*no_matches, {cudf::JoinNoMatch, cudf::JoinNoMatch});
+  expect_gather_map(no_matches, {cudf::JoinNoMatch, cudf::JoinNoMatch});
 
   asof_join join(nonempty_by, on);
   auto empty_result =
     join.join(empty_by, empty, asof_join_strategy::BACKWARD, asof_join_exact_matches::YES);
-  expect_gather_map(*empty_result, {});
+  expect_gather_map(empty_result, {});
 }
 
 TEST_F(AsofJoinTest, GroupedMemoryResources)
@@ -371,9 +371,9 @@ TEST_F(AsofJoinTest, GroupedMemoryResources)
                           stream,
                           mr);
       },
-      [](auto const& result) { return result->size() * sizeof(cudf::size_type); },
+      [](auto const& result) { return result.size() * sizeof(cudf::size_type); },
       [](auto const& result) {
-        expect_gather_map(*result, {2, 3, cudf::JoinNoMatch, cudf::JoinNoMatch, cudf::JoinNoMatch});
+        expect_gather_map(result, {2, 3, cudf::JoinNoMatch, cudf::JoinNoMatch, cudf::JoinNoMatch});
       },
       {cudf::test::output_allocation_expectation::EXACT,
        cudf::test::temporary_allocation_expectation::SOME},
@@ -430,10 +430,10 @@ TEST_F(AsofJoinTest, EmptyAndUngroupedMemoryResources)
                                 stream,
                                 mr);
             },
-            [](auto const& result) { return result->size() * sizeof(cudf::size_type); },
+            [](auto const& result) { return result.size() * sizeof(cudf::size_type); },
             [&](auto const& result) {
               expect_gather_map(
-                *result,
+                result,
                 empty_left    ? std::vector<cudf::size_type>{}
                 : empty_right ? std::vector<cudf::size_type>{cudf::JoinNoMatch, cudf::JoinNoMatch}
                               : std::vector<cudf::size_type>{0, 1});
@@ -475,7 +475,7 @@ TEST_F(AsofJoinTest, LeftKeyBetweenGroups)
                           asof_join_strategy::BACKWARD,
                           asof_join_exact_matches::YES);
 
-  expect_gather_map(*result, {cudf::JoinNoMatch, cudf::JoinNoMatch, cudf::JoinNoMatch});
+  expect_gather_map(result, {cudf::JoinNoMatch, cudf::JoinNoMatch, cudf::JoinNoMatch});
 }
 
 TEST_F(AsofJoinTest, NullOrderedKeyAtGroupFront)
@@ -491,7 +491,7 @@ TEST_F(AsofJoinTest, NullOrderedKeyAtGroupFront)
                           asof_join_strategy::BACKWARD,
                           asof_join_exact_matches::YES);
 
-  expect_gather_map(*result, {cudf::JoinNoMatch, 1});
+  expect_gather_map(result, {cudf::JoinNoMatch, 1});
 }
 
 TEST_F(AsofJoinTest, SlicedColumns)
@@ -507,7 +507,7 @@ TEST_F(AsofJoinTest, SlicedColumns)
   auto result = join.join(
     cudf::table_view{}, left_on, asof_join_strategy::BACKWARD, asof_join_exact_matches::YES);
 
-  expect_gather_map(*result, {cudf::JoinNoMatch, 1, 1, 3, cudf::JoinNoMatch});
+  expect_gather_map(result, {cudf::JoinNoMatch, 1, 1, 3, cudf::JoinNoMatch});
 }
 
 TEST_F(AsofJoinTest, SlicedGroupedColumns)
@@ -531,7 +531,7 @@ TEST_F(AsofJoinTest, SlicedGroupedColumns)
                           asof_join_strategy::BACKWARD,
                           asof_join_exact_matches::YES);
 
-  expect_gather_map(*result, {3, cudf::JoinNoMatch, 2, cudf::JoinNoMatch, cudf::JoinNoMatch});
+  expect_gather_map(result, {3, cudf::JoinNoMatch, 2, cudf::JoinNoMatch, cudf::JoinNoMatch});
 }
 
 TEST_F(AsofJoinTest, LargeMultiBlock)
@@ -568,5 +568,5 @@ TEST_F(AsofJoinTest, LargeMultiBlock)
   for (int32_t g = 0; g < num_groups; ++g) {
     expected[g] = g * group_size + group_size / 2;
   }
-  expect_gather_map(*result, expected);
+  expect_gather_map(result, expected);
 }

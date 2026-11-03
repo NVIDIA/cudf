@@ -60,13 +60,12 @@ asof_join_impl::asof_join_impl(table_view const& right_by,
   build_groups(stream, mr);
 }
 
-std::unique_ptr<rmm::device_uvector<size_type>> asof_join_impl::join(
-  table_view const& left_by,
-  column_view const& left_on,
-  asof_join_strategy strategy,
-  asof_join_exact_matches exact_matches,
-  cuda::stream_ref stream,
-  cudf::memory_resources mr) const
+cuda::device_buffer<size_type> asof_join_impl::join(table_view const& left_by,
+                                                    column_view const& left_on,
+                                                    asof_join_strategy strategy,
+                                                    asof_join_exact_matches exact_matches,
+                                                    cuda::stream_ref stream,
+                                                    cudf::memory_resources mr) const
 {
   cudf::scoped_range range{"asof_join::join"};
   CUDF_EXPECTS(strategy == asof_join_strategy::BACKWARD,
@@ -98,13 +97,12 @@ asof_join::asof_join(table_view const& right_by,
 {
 }
 
-std::unique_ptr<rmm::device_uvector<size_type>> asof_join::join(
-  table_view const& left_by,
-  column_view const& left_on,
-  asof_join_strategy strategy,
-  asof_join_exact_matches exact_matches,
-  cuda::stream_ref stream,
-  cudf::memory_resources mr) const
+cuda::device_buffer<size_type> asof_join::join(table_view const& left_by,
+                                               column_view const& left_on,
+                                               asof_join_strategy strategy,
+                                               asof_join_exact_matches exact_matches,
+                                               cuda::stream_ref stream,
+                                               cudf::memory_resources mr) const
 {
   return _impl->join(left_by, left_on, strategy, exact_matches, stream, mr);
 }

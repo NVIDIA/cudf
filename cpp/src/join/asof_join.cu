@@ -19,7 +19,6 @@
 #include <cudf/utilities/type_checks.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_select.cuh>
@@ -175,20 +174,18 @@ void asof_join_impl::build_groups(cuda::stream_ref stream, cudf::memory_resource
                                            stream));
 }
 
-std::unique_ptr<rmm::device_uvector<size_type>> asof_join_impl::probe(
-  table_view const& left_by,
-  column_view const& left_on,
-  cuda::stream_ref stream,
-  cudf::memory_resources mr) const
+cuda::device_buffer<size_type> asof_join_impl::probe(table_view const& left_by,
+                                                     column_view const& left_on,
+                                                     cuda::stream_ref stream,
+                                                     cudf::memory_resources mr) const
 {
-  auto result =
-    std::make_unique<rmm::device_uvector<size_type>>(left_on.size(), stream, mr.get_output_mr());
+  cuda::device_buffer<size_type> result(stream, mr.get_output_mr(), left_on.size(), cuda::no_init);
   if (left_on.is_empty()) { return result; }
 
   auto const temp_mr = mr.get_temporary_mr();
   if (_num_right_groups == 0) {
     thrust::fill(
-      rmm::exec_policy_nosync(stream, temp_mr), result->begin(), result->end(), JoinNoMatch);
+      rmm::exec_policy_nosync(stream, temp_mr), result.begin(), result.end(), JoinNoMatch);
     return result;
   }
 
@@ -247,7 +244,7 @@ std::unique_ptr<rmm::device_uvector<size_type>> asof_join_impl::probe(
                                        _right_group_offsets.data(),
                                        group_positions ? group_positions->data() : nullptr,
                                        _num_right_groups,
-                                       result->data(),
+                                       result.data(),
                                        stream,
                                        temp_mr});
   return result;

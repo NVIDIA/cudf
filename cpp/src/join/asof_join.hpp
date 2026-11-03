@@ -11,8 +11,6 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_uvector.hpp>
-
 #include <cuda/buffer>
 #include <cuda/stream>
 
@@ -46,18 +44,18 @@ class asof_join_impl {
                  cuda::stream_ref stream,
                  cudf::memory_resources mr);
 
-  std::unique_ptr<rmm::device_uvector<size_type>> join(table_view const& left_by,
-                                                       column_view const& left_on,
-                                                       asof_join_strategy strategy,
-                                                       asof_join_exact_matches exact_matches,
-                                                       cuda::stream_ref stream,
-                                                       cudf::memory_resources mr) const;
+  cuda::device_buffer<size_type> join(table_view const& left_by,
+                                      column_view const& left_on,
+                                      asof_join_strategy strategy,
+                                      asof_join_exact_matches exact_matches,
+                                      cuda::stream_ref stream,
+                                      cudf::memory_resources mr) const;
 
   // NVCC requires the enclosing function of extended device lambdas to be public.
-  std::unique_ptr<rmm::device_uvector<size_type>> probe(table_view const& left_by,
-                                                        column_view const& left_on,
-                                                        cuda::stream_ref stream,
-                                                        cudf::memory_resources mr) const;
+  cuda::device_buffer<size_type> probe(table_view const& left_by,
+                                       column_view const& left_on,
+                                       cuda::stream_ref stream,
+                                       cudf::memory_resources mr) const;
 
  private:
   void build_groups(cuda::stream_ref stream, cudf::memory_resources mr);

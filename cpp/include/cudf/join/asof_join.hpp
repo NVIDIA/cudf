@@ -13,8 +13,7 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_uvector.hpp>
-
+#include <cuda/buffer>
 #include <cuda/stream>
 
 #include <memory>
@@ -111,7 +110,9 @@ class asof_join {
    * @brief Returns the matching right-side row index for every left-side row.
    *
    * The result has one entry per left row in left input order. An entry is `cudf::JoinNoMatch` when
-   * no eligible right row exists in the same group or the left ordered key is null.
+   * no eligible right row exists in the same group or the left ordered key is null. Every left
+   * row is preserved, so no left-side index buffer is returned. Unmatched indices must be
+   * handled as missing rows when materializing right-side output columns.
    *
    * This method is thread-safe and can be called concurrently from multiple threads on the same
    * instance.
@@ -137,9 +138,9 @@ class asof_join {
    * @param exact_matches Whether equal ordered keys may match
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @param mr Device memory resources used for returned indices and temporary allocations
-   * @return Right-side gather map containing a row index or `cudf::JoinNoMatch` per left row
+   * @return Right-side row indices, with `cudf::JoinNoMatch` for unmatched left rows
    */
-  [[nodiscard]] std::unique_ptr<rmm::device_uvector<size_type>> join(
+  [[nodiscard]] cuda::device_buffer<size_type> join(
     table_view const& left_by,
     column_view const& left_on,
     asof_join_strategy strategy,

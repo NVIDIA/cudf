@@ -156,6 +156,7 @@ def test_review_pairs_rank_by_overlap_fraction() -> None:
         "tests/test_filter.py::test_filter",
     ]
     assert [pair["local_only_line_count"] for pair in pairs] == [0, 2]
+    assert [pair["shared_fraction"] for pair in pairs] == [0.8, 0.667]
 
 
 def test_candidate_context_filter_excludes_non_ordinary_behavior() -> None:

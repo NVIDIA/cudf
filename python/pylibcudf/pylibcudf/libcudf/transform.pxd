@@ -31,7 +31,7 @@ cdef extern from "cudf/udf.hpp" namespace "cudf" nogil:
     cdef cppclass lto_fragment:
         pass
 
-    ctypedef const lto_fragment const_lto_fragment
+ctypedef const lto_fragment const_lto_fragment
 
 
 cdef extern from "cudf/transform.hpp" namespace "cudf" nogil:

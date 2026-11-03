@@ -466,8 +466,9 @@ struct rolling_window_launcher {
 
     if constexpr (is_arg_minmax && std::is_same_v<InputType, cudf::struct_view>) {
       // Using comp_generator to create a LESS operator for finding ARGMIN/ARGMAX of structs.
-      auto const comp_generator =
-        cudf::reduction::detail::arg_minmax_binop_generator::create<op>(input, stream);
+      cudf::memory_resources mrs(mr);
+      auto const comp_generator = cudf::reduction::detail::arg_minmax_binop_generator::create<op>(
+        input, stream, mrs.as_temporary());
       auto const device_op =
         create_rolling_operator<InputType, op>{}(min_periods, comp_generator.binop());
       return do_rolling(device_op);

@@ -47,6 +47,7 @@ EXCLUDED_LOCAL_TERMS = (
     "out_of_bounds",
     "mismatch",
     "cuda_context",
+    "reconstruct",
 )
 GENERIC_NAME_TOKENS = frozenset({"test", "expr", "lazy", "frame", "polars"})
 

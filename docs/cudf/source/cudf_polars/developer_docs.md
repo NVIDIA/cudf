@@ -604,17 +604,33 @@ The command exits nonzero for drift or incomplete evidence. Review the diff
 before committing a replacement. New Polars versions require full discovery
 and matching list entries before selected PR runs can use them.
 
+### Comparing local and upstream test coverage
+
+With the supported Polars version installed and its matching `py-<version>`
+checkout in `polars/`, run `ci/run_cudf_polars_coverage_comparison.sh` inside
+the cudf devcontainer. The command runs both suites with per-test coverage
+contexts and writes separate coverage data, a line-level comparison, local-test
+classifications, and a ranked local-to-upstream review queue under
+`coverage-results/cudf-polars-comparison/`. The comparison JSON records the
+cuDF and Polars revisions and installed Polars version. The queue also marks
+whether each upstream node appears in the maintained default-SPMD
+GPU-execution list for that version.
+
+Review a queue entry's assertions and GPU-execution diagnostics before
+proposing any deletion. Shared source lines and similar test names only identify
+tests worth investigating; they do not establish equivalent behavior.
+
 ### Initial behavioral review candidates
 
-These pairs are starting points for review, not approved test removals. Recheck
-the upstream assertions and execution diagnostics on the current versions
-before acting on them.
+These Polars 2.1 nodes appear in the maintained GPU-execution list, but their
+assertions do not cover everything their local counterparts test. None is an
+approved removal.
 
-| Local test | Upstream lazy counterpart | Public contract to compare |
+| Local test | Upstream lazy counterpart | Review finding |
 | --- | --- | --- |
-| `tests/test_hconcat.py::test_hconcat` | `tests/unit/functions/test_concat.py::test_concat_lazyframe_horizontal` | Horizontal concatenation of equal-height inputs, including the local computed-column variant |
-| `tests/test_hconcat.py::test_hconcat_different_heights` | `tests/unit/functions/test_concat.py::test_concat_lazyframe_horizontal` | Null padding for unequal-height inputs |
-| `tests/test_join.py::test_join_where` | `tests/unit/lazyframe/test_lazyframe.py::test_join_where` | Non-equi joins with multiple predicates and unordered result comparison |
+| `tests/test_hconcat.py::test_hconcat` | `tests/unit/functions/test_concat.py::test_concat_lazyframe_horizontal` | Retain: the local case concatenates a computed column derived from the other input; upstream uses independent inputs. |
+| `tests/test_hconcat.py::test_hconcat_different_heights` | `tests/unit/functions/test_concat.py::test_concat_lazyframe_horizontal_extend` | Retain: both check null padding, but the local case also uses list and string columns. |
+| `tests/test_join.py::test_join_where` | `tests/unit/lazyframe/test_lazyframe.py::test_join_where` | Retain: upstream checks one fixed predicate pair; local cases vary predicates and also check slicing. |
 
 Keep strict-height error cases and tests that construct cudf-polars IR directly
 unless equivalent GPU error-path or internal-contract coverage is demonstrated.

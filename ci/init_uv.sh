@@ -7,4 +7,6 @@
 source "$(dirname "${BASH_SOURCE[0]}")/install_gha_tools.sh" || return
 # shellcheck source=ci/install_uv.sh
 source "$(dirname "${BASH_SOURCE[0]}")/install_uv.sh" || return
+# Constraint generators and local-wheel references need a shared writable file.
+source rapids-init-pip
 source rapids-init-uv

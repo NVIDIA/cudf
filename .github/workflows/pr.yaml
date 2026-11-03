@@ -341,7 +341,6 @@ jobs:
       id-token: write
       packages: read
       pull-requests: read
-    secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: rapidsai/shared-workflows/.github/workflows/wheels-build.yaml@main
     if: >
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_common ||

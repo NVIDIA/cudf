@@ -186,7 +186,6 @@ jobs:
       id-token: write
       packages: read
       pull-requests: read
-    secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: rapidsai/shared-workflows/.github/workflows/wheels-build.yaml@main
     with:
       build_type: ${{ inputs.build_type || 'branch' }}

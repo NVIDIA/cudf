@@ -91,6 +91,13 @@ class NativeChunkPackagingTest(unittest.TestCase):
         with self.assertRaises(ZstdIOException):
             native_chunks.verify(archive)
 
+    def test_required_chunks_reject_empty_archive(self):
+        archive = os.path.join(self.root, "empty.jar")
+        with zipfile.ZipFile(archive, "w") as jar:
+            jar.writestr("other.txt", "untouched")
+        with self.assertRaises(RuntimeError):
+            native_chunks.verify(archive, require_chunks=True)
+
 
 if __name__ == "__main__":
     unittest.main()

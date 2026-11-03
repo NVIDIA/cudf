@@ -294,7 +294,7 @@ def _copy_stream(source, output, buffer):
         output.write(buffer, 0, read)
 
 
-def verify(archive):
+def verify(archive, require_chunks=False):
     from com.github.luben.zstd import ZstdInputStreamNoFinalizer
     from jarray import zeros
     from java.util.jar import JarFile
@@ -373,6 +373,8 @@ def verify(archive):
                     checked += 1
         finally:
             native_jar.close()
+    if require_chunks and checked == 0:
+        raise RuntimeError("No zstd native chunks found in %s" % archive)
     return checked
 
 
@@ -391,6 +393,7 @@ def main():
     jar.add_argument("archive")
     check = sub.add_parser("verify")
     check.add_argument("archive")
+    check.add_argument("--require-chunks", action="store_true")
     args = parser.parse_args()
     if args.command is None:
         parser.error("A command is required")
@@ -403,9 +406,11 @@ def main():
                     "cuDF submodule must contain the zstd NativeDepsLoader"
                 )
             with open(args.require_loader) as loader:
-                if "CHUNK_COMPRESSION_KEY" not in loader.read():
+                source = loader.read()
+                if ("CHUNK_COMPRESSION_KEY" not in source or
+                        "ZstdChunkDecompressor.open(resourceStream)" not in source):
                     parser.error(
-                        "cuDF submodule must contain the zstd NativeDepsLoader"
+                        "cuDF submodule must contain the optional zstd NativeDepsLoader"
                     )
         sys.stdout.write(
             "Chunked native library: %s\n"
@@ -423,7 +428,8 @@ def main():
         )
     else:
         sys.stdout.write(
-            "Verified %d zstd native chunks\n" % verify(args.archive)
+            "Verified %d zstd native chunks\n" %
+            verify(args.archive, args.require_chunks)
         )
 
 

@@ -10,10 +10,12 @@
 #include <cudf/strings/string_view.hpp>
 #include <cudf/structs/struct_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 
+#include <cuda/std/concepts>
 #include <cuda/std/type_traits>
 
 #include <functional>
@@ -829,7 +831,7 @@ constexpr size_type ARGMIN_SENTINEL{-1};
  * @tparam Source The type on which the aggregation is computed
  * @tparam k The aggregation performed
  */
-template <typename Source, aggregation::Kind k, typename Enable = void>
+template <typename Source, aggregation::Kind k>
 struct target_type_impl {
   using type = void;
 };
@@ -877,20 +879,16 @@ struct target_type_impl<Source, aggregation::ALL> {
 };
 
 // Always use `double` for MEAN except for durations and fixed point types.
-template <typename Source, aggregation::Kind k>
-struct target_type_impl<
-  Source,
-  k,
-  std::enable_if_t<is_fixed_width<Source>() and not is_chrono<Source>() and
-                   not is_fixed_point<Source>() and (k == aggregation::MEAN)>> {
+template <cudf::concepts::arithmetic Source, aggregation::Kind k>
+  requires(k == aggregation::MEAN)
+struct target_type_impl<Source, k> {
   using type = double;
 };
 
 template <typename Source, aggregation::Kind k>
-struct target_type_impl<Source,
-                        k,
-                        std::enable_if_t<(is_duration<Source>() or is_fixed_point<Source>()) &&
-                                         (k == aggregation::MEAN)>> {
+  requires((cudf::concepts::duration<Source> or cudf::concepts::fixed_point<Source>) and
+           (k == aggregation::MEAN))
+struct target_type_impl<Source, k> {
   using type = Source;
 };
 
@@ -901,33 +899,30 @@ constexpr bool is_sum_product_agg(aggregation::Kind k)
 }
 
 // Summing/Multiplying integers of any type, always use int64_t accumulator
-template <typename Source, aggregation::Kind k>
-  requires(cuda::std::is_integral_v<Source> && is_sum_product_agg(k))
+template <cuda::std::integral Source, aggregation::Kind k>
+  requires(is_sum_product_agg(k))
 struct target_type_impl<Source, k> {
   using type = int64_t;
 };
 
 // Summing fixed_point numbers
-template <typename Source, aggregation::Kind k>
-struct target_type_impl<
-  Source,
-  k,
-  std::enable_if_t<cudf::is_fixed_point<Source>() && (k == aggregation::SUM)>> {
+template <cudf::concepts::fixed_point Source, aggregation::Kind k>
+  requires(k == aggregation::SUM)
+struct target_type_impl<Source, k> {
   using type = Source;
 };
 
 // Summing/Multiplying float/doubles, use same type accumulator
-template <typename Source, aggregation::Kind k>
-  requires(std::is_floating_point_v<Source> && is_sum_product_agg(k))
+template <cuda::std::floating_point Source, aggregation::Kind k>
+  requires(is_sum_product_agg(k))
 struct target_type_impl<Source, k> {
   using type = Source;
 };
 
 // Summing duration types, use same type accumulator
-template <typename Source, aggregation::Kind k>
-struct target_type_impl<Source,
-                        k,
-                        std::enable_if_t<is_duration<Source>() && (k == aggregation::SUM)>> {
+template <cudf::concepts::duration Source, aggregation::Kind k>
+  requires(k == aggregation::SUM)
+struct target_type_impl<Source, k> {
   using type = Source;
 };
 
@@ -938,8 +933,7 @@ struct target_type_impl<Source,
  */
 template <typename Source>
 concept sum_overflow_supported =
-  (cudf::is_integral_not_bool<Source>() && cudf::is_signed<Source>()) ||
-  cudf::is_fixed_point<Source>();
+  cuda::std::signed_integral<Source> or cudf::concepts::fixed_point<Source>;
 
 // SUM_OVERFLOW outputs a struct {sum: Source, overflow: bool} where the sum matches the input
 // type
@@ -1044,15 +1038,13 @@ struct target_type_impl<Source, aggregation::LAG> {
 };
 
 // Always use list for MERGE_LISTS
-template <typename Source>
-  requires cuda::std::is_same_v<Source, cudf::list_view>
+template <cudf::concepts::list_view Source>
 struct target_type_impl<Source, aggregation::MERGE_LISTS> {
   using type = list_view;
 };
 
 // Always use list for MERGE_SETS
-template <typename Source>
-  requires cuda::std::is_same_v<Source, cudf::list_view>
+template <cudf::concepts::list_view Source>
 struct target_type_impl<Source, aggregation::MERGE_SETS> {
   using type = list_view;
 };
@@ -1083,19 +1075,16 @@ struct target_type_impl<SourceType, aggregation::CORRELATION> {
 
 // Always use numeric types for TDIGEST
 template <typename Source>
-struct target_type_impl<Source,
-                        aggregation::TDIGEST,
-                        std::enable_if_t<(is_numeric<Source>() || is_fixed_point<Source>())>> {
+  requires(cudf::concepts::arithmetic<Source> or cudf::concepts::fixed_point<Source>)
+struct target_type_impl<Source, aggregation::TDIGEST> {
   using type = struct_view;
 };
 
 // TDIGEST_MERGE. The root column type for a tdigest column is a list_view. Strictly
 // speaking, this check is not sufficient to guarantee we are actually being given a
 // real tdigest column, but we will do further verification inside the aggregation code.
-template <typename Source>
-struct target_type_impl<Source,
-                        aggregation::MERGE_TDIGEST,
-                        std::enable_if_t<std::is_same_v<Source, cudf::struct_view>>> {
+template <cudf::concepts::struct_view Source>
+struct target_type_impl<Source, aggregation::MERGE_TDIGEST> {
   using type = struct_view;
 };
 
@@ -1106,16 +1095,13 @@ struct target_type_impl<SourceType, aggregation::HOST_UDF> {
 };
 
 // BITWISE_AGG returns the same type as input for integral types.
-template <typename Source>
-struct target_type_impl<Source,
-                        aggregation::BITWISE_AGG,
-                        std::enable_if_t<cuda::std::is_integral_v<Source>>> {
+template <cuda::std::integral Source>
+struct target_type_impl<Source, aggregation::BITWISE_AGG> {
   using type = Source;
 };
 
 // TOP_K returns a list_view
-template <typename Source>
-  requires(cudf::is_relationally_comparable<Source, Source>())
+template <cuda::std::totally_ordered Source>
 struct target_type_impl<Source, aggregation::TOP_K> {
   using type = list_view;
 };

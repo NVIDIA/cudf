@@ -1854,14 +1854,14 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
   for (size_type i = 0; i < source_table.num_columns(); ++i) {
     auto const& src = source_table.column(i);
     // Tall string columns ride the stock per-column fallback unless the batched-memcpy
-    // routing engine will be active for the call: the routed metadata path (tall-str1)
-    // removes the group-walk metadata work that made the fused path lose tall cells, but it
-    // only engages above `kBatchMemcpyRowThreshold` (the host routing walk keys off
-    // `chars_routing_active`). The seam band between the two thresholds is EXCLUDED: the
-    // engine wins the band cell when admitted (262144x100 −69.5%, engine-vs-stock) but the
-    // band route costs the tall regime — the band exclusion trades that one-cell win for
-    // keeping ≥524288-row strings on the routed-metadata path (tall-str1), the measured tall
-    // win (round-10, +26.7% headline) a wholesale exclusion would forfeit. Gathered row sizes
+    // routing engine will be active for the call: the routed metadata path removes the
+    // group-walk metadata work that made the fused path lose tall cells, but it only engages
+    // above `kBatchMemcpyRowThreshold` (the host routing walk keys off `chars_routing_active`).
+    // The seam band between the two thresholds is EXCLUDED: the engine wins the band cell when
+    // admitted (262144x100 −69.5%, engine-vs-stock) but the band route costs the tall regime —
+    // the band exclusion trades that one-cell win for keeping ≥524288-row strings on the
+    // routed-metadata path, the measured tall win a wholesale exclusion would forfeit. Gathered
+    // row sizes
     // are unknowable before the scan, so no stronger per-column proxy is possible here; the
     // exact post-totals routing still splits per column. Below the band `assemble_strings`
     // picks the engine for short-row shapes; an all-long-row below-band table falls to the

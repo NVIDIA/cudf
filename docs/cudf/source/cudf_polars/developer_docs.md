@@ -616,7 +616,9 @@ cuDF and Polars revisions and installed Polars version. The queue also marks
 whether each upstream node appears in the maintained default-SPMD
 GPU-execution list for that version. JSON samples up to 20 test contexts per
 source line and records the total count; the separate `.coverage.local` and
-`.coverage.upstream` files retain every context.
+`.coverage.upstream` files retain every context. The review queue puts
+GPU-observed upstream nodes first; its HTML shows the first 500 pairs, while
+the JSON retains the full ranking.
 
 Review a queue entry's assertions and GPU-execution diagnostics before
 proposing any deletion. Shared source lines and similar test names only identify

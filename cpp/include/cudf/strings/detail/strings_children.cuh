@@ -22,6 +22,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_memcpy.cuh>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/execution>
@@ -248,7 +249,8 @@ auto make_strings_children(SizeAndExecuteFunction size_and_exec_fn,
   };
 
   // Compute the output sizes
-  auto output_sizes        = rmm::device_uvector<size_type>(strings_count, stream);
+  auto output_sizes = cuda::device_buffer<size_type>(
+    stream, cudf::get_current_device_resource_ref(), strings_count, cuda::no_init);
   size_and_exec_fn.d_sizes = output_sizes.data();
   size_and_exec_fn.d_chars = nullptr;
   for_each_fn(size_and_exec_fn);

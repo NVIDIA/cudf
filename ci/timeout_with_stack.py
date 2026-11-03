@@ -431,10 +431,12 @@ def run_with_timeout(
             )
             print("\nTerminating process tree...")
             terminate_process_tree(process.pid)
-            # Sweep up anything that was re-parented away from the tree, but
-            # is still in the process group created for the command above.
-            with suppress(ProcessLookupError):
-                os.killpg(process.pid, signal.SIGKILL)
+        # Sweep up anything left in the process group created for the command
+        # above, whether or not SIGINT was enough. This includes processes that
+        # were re-parented away from the tree, or started after the descendant
+        # snapshot in interrupt_process was taken.
+        with suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)
     except KeyboardInterrupt:
         print("\nReceived keyboard interrupt")
         terminate_process_tree(process.pid)

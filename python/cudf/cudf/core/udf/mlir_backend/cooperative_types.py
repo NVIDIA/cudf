@@ -49,11 +49,15 @@ class CooperativeArrayType(Type):
 
 @register_model(CooperativeArrayType)
 class CooperativeArrayModel(PrimitiveModel):
-    """Block-cooperative array: {ptr meminfo, ptr data, i64 size}.
+    """Block-cooperative array: {ptr meminfo, ptr data, i64 size, ptr index}.
 
-    Field 0 (meminfo) is the NRT_MemInfo pointer (null for input views).
+    Field 0 (meminfo) is the NRT_MemInfo pointer. It is always null here: every
+    CooperativeArray is a non-owning view, so ``has_nrt_meminfo`` is False and no
+    NRT reference counting is emitted. The field is kept so the struct layout
+    need not change if an owning variant is added later.
     Field 1 (data) points to the element buffer.
     Field 2 (size) is the number of elements.
+    Field 3 (index) points to the group's int64 index slice (null if absent).
     """
 
     _fields = ("meminfo", "data", "size", "index")
@@ -70,10 +74,8 @@ class CooperativeArrayModel(PrimitiveModel):
         super().__init__(dmm, fe_type, be_type)
 
     def has_nrt_meminfo(self):
-        return True
-
-    def get_nrt_meminfo(self, value):
-        return llvm.extractvalue(llvm.PointerType.get(), value, [0])
+        # Views never own their buffer; meminfo is always null.
+        return False
 
     def get_field_position(self, name):
         return self._fields.index(name)

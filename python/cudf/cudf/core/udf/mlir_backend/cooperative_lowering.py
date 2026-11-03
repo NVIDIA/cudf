@@ -7,18 +7,18 @@ functions (see cooperative_device_funcs.py) and linked at link time.
 This module emits only declarations + func.call sites — no bodies — so
 the MLIR inliner cannot inline them.
 
-The struct layout mirrors mlir_string: non-owning views carry a null
-meminfo (bytes 0..7 of the {ptr meminfo, ptr data, i64 size, ptr index}
-struct); no NRT-managed array-returning operations are implemented.
+Every CooperativeArray is a non-owning view: meminfo (bytes 0..7 of the
+{ptr meminfo, ptr data, i64 size, ptr index} struct) is null and no
+NRT-managed, array-returning operations are implemented, so cooperative
+reductions pull in no NRT runtime.
 """
 
 from numba_cuda_mlir._mlir import ir
 from numba_cuda_mlir._mlir.extras import types as T
-from numba_cuda_mlir._mlir.dialects import arith, func, gpu, llvm, memref, scf
+from numba_cuda_mlir._mlir.dialects import arith, func, llvm, memref
 
 from numba_cuda_mlir.lowering_utilities import (
     DeferredMethodCall,
-    GEP_DYNAMIC_INDEX,
     get_or_insert_function,
 )
 from numba_cuda_mlir.extending import lowering_registry as registry
@@ -34,19 +34,8 @@ def _ptr():
     return llvm.PointerType.get()
 
 
-def _i64():
-    return ir.IntegerType.get_signless(64)
-
-
 def _const_i64(val):
     return arith.constant(T.i64(), val)
-
-
-def _const_index(val):
-    return arith.constant(T.index(), val)
-
-
-_MAX_BLOCK_SIZE = 1024
 
 
 def _dtype_mlir_type(dtype):
@@ -59,22 +48,6 @@ def _dtype_mlir_type(dtype):
     elif dtype == nb_types.int32:
         return ir.IntegerType.get_signless(32)
     raise NotImplementedError(f"Unsupported dtype {dtype}")
-
-
-def _dtype_byte_size(dtype):
-    if dtype in (nb_types.float64, nb_types.int64):
-        return 8
-    elif dtype in (nb_types.float32, nb_types.int32):
-        return 4
-    raise NotImplementedError(f"Unsupported dtype {dtype}")
-
-
-def _call_nrt(gpu_module, name, arg_types, result_types, args):
-    ft = ir.FunctionType.get(arg_types, result_types)
-    callee = get_or_insert_function(name, ft, gpu_module)
-    return func.call(
-        result=result_types, callee=callee.name.value, operands_=args,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -108,10 +81,6 @@ def build_cooperative_array(meminfo, data, size_i64, index_data=None):
     )
 
 
-def ca_extract_meminfo(val):
-    return llvm.extractvalue(_ptr(), val, [0])
-
-
 def ca_extract_data(val):
     return llvm.extractvalue(_ptr(), val, [1])
 
@@ -122,38 +91,6 @@ def ca_extract_size(val):
 
 def ca_extract_index(val):
     return llvm.extractvalue(_ptr(), val, [3])
-
-
-# ---------------------------------------------------------------------------
-# Helpers: thread/block IDs, GEP for typed arrays
-# ---------------------------------------------------------------------------
-
-def _tid_x():
-    return arith.index_castui(T.i64(), gpu.thread_id("x"))
-
-
-def _bdim_x():
-    return arith.index_castui(T.i64(), gpu.block_dim("x"))
-
-
-def _gep_typed(base_ptr, index_i64, elem_mlir_type):
-    return llvm.getelementptr(
-        _ptr(), base_ptr, [index_i64], [GEP_DYNAMIC_INDEX],
-        elem_mlir_type, None,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Block-cooperative NRT allocation (thread 0 allocates, broadcasts)
-#
-# Uses 2 pointer-sized slots in shared memory to broadcast
-# (meminfo, data) from thread 0 to all threads.
-# ---------------------------------------------------------------------------
-
-# Shared memory layout (fixed offsets):
-#   bytes 0..15:    reserved (meminfo slot for a future owning CooperativeArray)
-#   bytes 16..8207: reduction scratch (1024 x f64)
-_SHM_REDUCTION_OFFSET = 16
 
 
 def _shm_base_ptr(builder):
@@ -225,23 +162,11 @@ def _lower_sum(builder, target, args, kwargs):
     register_needed_func(builder.metadata, ("sum", _dtype_tag(dtype)))
 
 
-def _lower_sum_with_release(builder, target, args, kwargs):
-    """Run the sum, then release the extra reference taken at getattr time."""
-    self_var = args[0]
-    _lower_sum(builder, target, args, kwargs)
-    ca_val = builder.load_var(self_var)
-    mi = ca_extract_meminfo(ca_val)
-    _call_nrt(builder.mlir_gpu_module, "NRT_decref", [_ptr()], [], [mi])
-
-
 for _dt in _SUPPORTED_DTYPES:
     def _make_sum_lower(ca_type):
         @registry.lower_getattr(ca_type, "sum")
         def _lower_ca_sum_attr(context, builder, target, value, attr=None):
-            ca_val = builder.load_var(value)
-            mi = ca_extract_meminfo(ca_val)
-            _call_nrt(builder.mlir_gpu_module, "NRT_incref", [_ptr()], [], [mi])
-            builder.store_var(target, DeferredMethodCall(value, _lower_sum_with_release))
+            builder.store_var(target, DeferredMethodCall(value, _lower_sum))
     _make_sum_lower(CooperativeArrayType(_dt))
 
 
@@ -281,23 +206,11 @@ def _lower_mean(builder, target, args, kwargs):
     register_needed_func(builder.metadata, ("mean", _dtype_tag(dtype)))
 
 
-def _lower_mean_with_release(builder, target, args, kwargs):
-    """Run the mean, then release the extra reference taken at getattr time."""
-    self_var = args[0]
-    _lower_mean(builder, target, args, kwargs)
-    ca_val = builder.load_var(self_var)
-    mi = ca_extract_meminfo(ca_val)
-    _call_nrt(builder.mlir_gpu_module, "NRT_decref", [_ptr()], [], [mi])
-
-
 for _dt in _SUPPORTED_DTYPES:
     def _make_mean_lower(ca_type):
         @registry.lower_getattr(ca_type, "mean")
         def _lower_ca_mean_attr(context, builder, target, value, attr=None):
-            ca_val = builder.load_var(value)
-            mi = ca_extract_meminfo(ca_val)
-            _call_nrt(builder.mlir_gpu_module, "NRT_incref", [_ptr()], [], [mi])
-            builder.store_var(target, DeferredMethodCall(value, _lower_mean_with_release))
+            builder.store_var(target, DeferredMethodCall(value, _lower_mean))
     _make_mean_lower(CooperativeArrayType(_dt))
 
 
@@ -334,25 +247,17 @@ def _lower_min(builder, target, args, kwargs):
     register_needed_func(builder.metadata, ("min", _dtype_tag(dtype)))
 
 
-def _lower_min_with_release(builder, target, args, kwargs):
-    """Run the min, then release the extra reference taken at getattr time."""
-    self_var = args[0]
-    _lower_min(builder, target, args, kwargs)
-    ca_val = builder.load_var(self_var)
-    mi = ca_extract_meminfo(ca_val)
-    _call_nrt(builder.mlir_gpu_module, "NRT_decref", [_ptr()], [], [mi])
-
-
 for _dt in _SUPPORTED_DTYPES:
     def _make_min_lower(ca_type):
         @registry.lower_getattr(ca_type, "min")
         def _lower_ca_min_attr(context, builder, target, value, attr=None):
-            ca_val = builder.load_var(value)
-            mi = ca_extract_meminfo(ca_val)
-            _call_nrt(builder.mlir_gpu_module, "NRT_incref", [_ptr()], [], [mi])
-            builder.store_var(target, DeferredMethodCall(value, _lower_min_with_release))
+            builder.store_var(target, DeferredMethodCall(value, _lower_min))
     _make_min_lower(CooperativeArrayType(_dt))
 
+
+# ---------------------------------------------------------------------------
+# .max() reduction: thin call to separately-compiled device function
+# ---------------------------------------------------------------------------
 
 def _lower_max(builder, target, args, kwargs):
     """Emit a call to the outlined _coop_max_{dtype} device function."""
@@ -383,23 +288,11 @@ def _lower_max(builder, target, args, kwargs):
     register_needed_func(builder.metadata, ("max", _dtype_tag(dtype)))
 
 
-def _lower_max_with_release(builder, target, args, kwargs):
-    """Run the max, then release the extra reference taken at getattr time."""
-    self_var = args[0]
-    _lower_max(builder, target, args, kwargs)
-    ca_val = builder.load_var(self_var)
-    mi = ca_extract_meminfo(ca_val)
-    _call_nrt(builder.mlir_gpu_module, "NRT_decref", [_ptr()], [], [mi])
-
-
 for _dt in _SUPPORTED_DTYPES:
     def _make_max_lower(ca_type):
         @registry.lower_getattr(ca_type, "max")
         def _lower_ca_max_attr(context, builder, target, value, attr=None):
-            ca_val = builder.load_var(value)
-            mi = ca_extract_meminfo(ca_val)
-            _call_nrt(builder.mlir_gpu_module, "NRT_incref", [_ptr()], [], [mi])
-            builder.store_var(target, DeferredMethodCall(value, _lower_max_with_release))
+            builder.store_var(target, DeferredMethodCall(value, _lower_max))
     _make_max_lower(CooperativeArrayType(_dt))
 
 
@@ -438,25 +331,17 @@ def _lower_std(builder, target, args, kwargs):
     register_needed_func(builder.metadata, ("std", _dtype_tag(dtype)))
 
 
-def _lower_std_with_release(builder, target, args, kwargs):
-    """Run the std, then release the extra reference taken at getattr time."""
-    self_var = args[0]
-    _lower_std(builder, target, args, kwargs)
-    ca_val = builder.load_var(self_var)
-    mi = ca_extract_meminfo(ca_val)
-    _call_nrt(builder.mlir_gpu_module, "NRT_decref", [_ptr()], [], [mi])
-
-
 for _dt in _SUPPORTED_DTYPES:
     def _make_std_lower(ca_type):
         @registry.lower_getattr(ca_type, "std")
         def _lower_ca_std_attr(context, builder, target, value, attr=None):
-            ca_val = builder.load_var(value)
-            mi = ca_extract_meminfo(ca_val)
-            _call_nrt(builder.mlir_gpu_module, "NRT_incref", [_ptr()], [], [mi])
-            builder.store_var(target, DeferredMethodCall(value, _lower_std_with_release))
+            builder.store_var(target, DeferredMethodCall(value, _lower_std))
     _make_std_lower(CooperativeArrayType(_dt))
 
+
+# ---------------------------------------------------------------------------
+# .var() reduction: thin call to separately-compiled device function
+# ---------------------------------------------------------------------------
 
 def _lower_var(builder, target, args, kwargs):
     """Emit a call to the outlined _coop_var_{dtype} device function."""
@@ -489,23 +374,11 @@ def _lower_var(builder, target, args, kwargs):
     register_needed_func(builder.metadata, ("var", _dtype_tag(dtype)))
 
 
-def _lower_var_with_release(builder, target, args, kwargs):
-    """Run the var, then release the extra reference taken at getattr time."""
-    self_var = args[0]
-    _lower_var(builder, target, args, kwargs)
-    ca_val = builder.load_var(self_var)
-    mi = ca_extract_meminfo(ca_val)
-    _call_nrt(builder.mlir_gpu_module, "NRT_decref", [_ptr()], [], [mi])
-
-
 for _dt in _SUPPORTED_DTYPES:
     def _make_var_lower(ca_type):
         @registry.lower_getattr(ca_type, "var")
         def _lower_ca_var_attr(context, builder, target, value, attr=None):
-            ca_val = builder.load_var(value)
-            mi = ca_extract_meminfo(ca_val)
-            _call_nrt(builder.mlir_gpu_module, "NRT_incref", [_ptr()], [], [mi])
-            builder.store_var(target, DeferredMethodCall(value, _lower_var_with_release))
+            builder.store_var(target, DeferredMethodCall(value, _lower_var))
     _make_var_lower(CooperativeArrayType(_dt))
 
 
@@ -545,23 +418,11 @@ def _lower_corr(builder, target, args, kwargs):
     register_needed_func(builder.metadata, ("corr", _dtype_tag(dtype)))
 
 
-def _lower_corr_with_release(builder, target, args, kwargs):
-    """Run corr, then release the extra reference taken at getattr time."""
-    self_var = args[0]
-    _lower_corr(builder, target, args, kwargs)
-    ca_val = builder.load_var(self_var)
-    mi = ca_extract_meminfo(ca_val)
-    _call_nrt(builder.mlir_gpu_module, "NRT_decref", [_ptr()], [], [mi])
-
-
 for _dt in _SUPPORTED_DTYPES:
     def _make_corr_lower(ca_type):
         @registry.lower_getattr(ca_type, "corr")
         def _lower_ca_corr_attr(context, builder, target, value, attr=None):
-            ca_val = builder.load_var(value)
-            mi = ca_extract_meminfo(ca_val)
-            _call_nrt(builder.mlir_gpu_module, "NRT_incref", [_ptr()], [], [mi])
-            builder.store_var(target, DeferredMethodCall(value, _lower_corr_with_release))
+            builder.store_var(target, DeferredMethodCall(value, _lower_corr))
     _make_corr_lower(CooperativeArrayType(_dt))
 
 
@@ -599,41 +460,25 @@ def _lower_idx(builder, target, args, kwargs, *, is_max):
     register_needed_func(builder.metadata, (kind, _dtype_tag(dtype)))
 
 
-def _make_idx_with_release(is_max):
-    def _impl(builder, target, args, kwargs):
-        self_var = args[0]
-        _lower_idx(builder, target, args, kwargs, is_max=is_max)
-        ca_val = builder.load_var(self_var)
-        mi = ca_extract_meminfo(ca_val)
-        _call_nrt(builder.mlir_gpu_module, "NRT_decref", [_ptr()], [], [mi])
-    return _impl
+def _lower_idxmax(builder, target, args, kwargs):
+    _lower_idx(builder, target, args, kwargs, is_max=True)
 
 
-_lower_idxmax_with_release = _make_idx_with_release(True)
-_lower_idxmin_with_release = _make_idx_with_release(False)
+def _lower_idxmin(builder, target, args, kwargs):
+    _lower_idx(builder, target, args, kwargs, is_max=False)
 
 
 for _dt in _SUPPORTED_DTYPES:
     def _make_idx_lower(ca_type):
         @registry.lower_getattr(ca_type, "idxmax")
         def _lower_ca_idxmax_attr(context, builder, target, value, attr=None):
-            ca_val = builder.load_var(value)
-            mi = ca_extract_meminfo(ca_val)
-            _call_nrt(builder.mlir_gpu_module, "NRT_incref", [_ptr()], [], [mi])
             builder.store_var(
-                target,
-                DeferredMethodCall(value, _lower_idxmax_with_release),
-            )
+                target, DeferredMethodCall(value, _lower_idxmax))
 
         @registry.lower_getattr(ca_type, "idxmin")
         def _lower_ca_idxmin_attr(context, builder, target, value, attr=None):
-            ca_val = builder.load_var(value)
-            mi = ca_extract_meminfo(ca_val)
-            _call_nrt(builder.mlir_gpu_module, "NRT_incref", [_ptr()], [], [mi])
             builder.store_var(
-                target,
-                DeferredMethodCall(value, _lower_idxmin_with_release),
-            )
+                target, DeferredMethodCall(value, _lower_idxmin))
     _make_idx_lower(CooperativeArrayType(_dt))
 
 
@@ -702,11 +547,15 @@ _register_cooperative_array_constructor()
 def _install_cooperative_link_patch():
     """Link cooperative device-function PTX into the kernel at complete().
 
-    WORKAROUND (released numba-cuda-mlir): the fork wired
-    ``link_cooperative_funcs`` into ``mlir_optimization.optimize`` just before
-    ``linker.complete()``; the release has no such hook. Wrap ``optimize`` so
-    that, for kernels that requested cooperative device functions, the linker's
-    ``complete`` first adds the needed PTX. See mlir_upstream_notes.md item 4.
+    WORKAROUND (released numba-cuda-mlir): the released package exposes no hook
+    to add PTX to the linker before ``_Linker.complete()`` runs. We wrap
+    ``mlir_optimization.optimize`` and, only for kernels that requested
+    cooperative device functions, monkeypatch ``_Linker.complete`` at the class
+    level for the duration of that single ``optimize`` call. This class-level
+    patch is not thread-safe and should be removed once numba-cuda-mlir exposes
+    a pre-``complete()`` link hook.
+
+    TODO(cudf): replace with the upstream hook and link the tracking issue here.
     """
     import numba_cuda_mlir.mlir_optimization as _opt
     from numba_cuda_mlir.numba_cuda.cudadrv.driver import _Linker

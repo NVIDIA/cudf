@@ -2,7 +2,7 @@
 
 Grouped columns are modelled as ``CooperativeArrayType`` views. Only
 scalar-returning reductions (min/max/sum/mean/var/std/idxmin/idxmax/corr/
-count/size) are supported inside a JIT ``GroupBy.apply`` UDF; operators
+size) are supported inside a JIT ``GroupBy.apply`` UDF; operators
 applied directly to a grouped column are rejected (see below).
 """
 
@@ -129,8 +129,10 @@ class CoopCorrTemplate(AbstractTemplate):
         if not isinstance(other, CooperativeArrayType):
             return None
         dt = self.this.dtype
-        if not isinstance(dt, types.Integer):
-            # Correlation of floating types is not yet supported (#13839).
+        if not isinstance(dt, types.Integer) or other.dtype != dt:
+            # Only same-dtype integer correlation is supported: floating corr is
+            # not yet implemented (#13839), and a mismatched pair would read one
+            # buffer at the wrong element width in lowering.
             raise UDFError(
                 f"Series.corr(Series) is not supported for "
                 f"({dt}, {other.dtype}) within JIT GroupBy apply. "
@@ -220,9 +222,6 @@ class CooperativeArrayAttr(AttributeTemplate):
     def resolve_idxmin(self, mod):
         self._require_supported(mod)
         return types.BoundFunction(CoopIdxMinTemplate, mod)
-
-
-_ca_f64 = CooperativeArrayType(types.float64)
 
 
 # ---------------------------------------------------------------------------

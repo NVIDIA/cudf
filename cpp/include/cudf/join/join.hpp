@@ -77,7 +77,7 @@ enum class nullable_join : bool { YES = true, NO = false };
  * The value is set to the minimum possible value for `size_type` to ensure it's easily
  * distinguishable from valid row indices, which are always non-negative.
  */
-CUDF_HOST_DEVICE constexpr size_type JoinNoMatch = cuda::std::numeric_limits<size_type>::min();
+constexpr size_type JoinNoMatch = cuda::std::numeric_limits<size_type>::min();
 
 /**
  * @brief Holds context information about matches between tables during a join operation.

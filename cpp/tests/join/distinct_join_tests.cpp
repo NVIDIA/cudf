@@ -8,6 +8,7 @@
 #include <cudf_test/table_utilities.hpp>
 
 #include <cudf/column/column.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/filling.hpp>
 #include <cudf/join/distinct_hash_join.hpp>
 #include <cudf/sorting.hpp>
@@ -29,21 +30,21 @@ using strcol_wrapper = cudf::test::strings_column_wrapper;
 using CVector        = std::vector<std::unique_ptr<cudf::column>>;
 using Table          = cudf::table;
 
-std::unique_ptr<rmm::device_uvector<cudf::size_type>> get_left_indices(cudf::size_type size)
+auto get_left_indices(cudf::size_type size)
 {
   auto sequence = std::vector<cudf::size_type>(size);
   std::iota(sequence.begin(), sequence.end(), 0);
-  auto indices = cudf::detail::make_device_uvector(
+  auto indices = cudf::detail::make_device_buffer(
     sequence, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
-  return std::make_unique<rmm::device_uvector<cudf::size_type>>(std::move(indices));
+  return std::make_unique<decltype(indices)>(std::move(indices));
 }
 
 struct DistinctJoinTest : public cudf::test::BaseFixture {
+  template <typename LeftIndices, typename RightIndices>
   void compare_to_reference(
     cudf::table_view const& right_table,
     cudf::table_view const& left_table,
-    std::pair<std::unique_ptr<rmm::device_uvector<cudf::size_type>>,
-              std::unique_ptr<rmm::device_uvector<cudf::size_type>>> const& result,
+    std::pair<LeftIndices, RightIndices> const& result,
     cudf::table_view const& expected_table,
     cudf::out_of_bounds_policy oob_policy = cudf::out_of_bounds_policy::DONT_CHECK)
   {

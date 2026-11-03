@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -6,10 +6,11 @@ from __future__ import annotations
 import pytest
 
 import polars as pl
+from polars.testing import assert_frame_equal
 
 import pylibcudf as plc
 
-from cudf_polars.containers import Column, DataType
+from cudf_polars.containers import Column, DataFrame, DataType
 from cudf_polars.dsl.ir import broadcast
 from cudf_polars.utils.cuda_stream import get_cuda_stream
 
@@ -89,3 +90,21 @@ def test_broadcast_with_scalars(nrows):
     result = broadcast(*columns, stream=stream)
     assert [c.name for c in result] == [f"col{i}" for i in range(3)]
     assert all(column.size == nrows for column in result)
+
+
+@pytest.mark.parametrize("target", [1, 4])
+def test_broadcast_dictionary(target):
+    stream = get_cuda_stream()
+    dtype = pl.Enum(["a", "b"])
+    (column,) = DataFrame.from_polars(
+        pl.DataFrame({"a": pl.Series(["b"], dtype=dtype)}), stream=stream
+    ).columns
+
+    (result,) = broadcast(column, target_length=target, stream=stream)
+
+    assert result.obj.type().id() == plc.TypeId.DICTIONARY32
+    assert_frame_equal(
+        DataFrame([result], stream=stream).to_polars(),
+        pl.DataFrame({"a": pl.Series(["b"] * target, dtype=dtype)}),
+        check_dtypes=True,
+    )

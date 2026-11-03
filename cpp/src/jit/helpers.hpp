@@ -9,7 +9,9 @@
 #include <cudf/column/scalar_column_view.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 
 #include <jit/cache.hpp>
@@ -38,19 +40,9 @@ get_transform_base_column(std::vector<column_view> const& inputs);
 size_type get_projection_size(
   std::span<std::variant<column_view, scalar_column_view> const> inputs);
 
-template <typename T>
-rmm::device_uvector<T> to_device_vector(std::vector<T> const& host,
-                                        cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
-{
-  rmm::device_uvector<T> device{host.size(), stream, mr};
-  cudf::detail::cuda_memcpy_async<T>(device, host, stream);
-  return device;
-}
-
 template <typename DeviceView, typename ColumnView>
 std::tuple<std::vector<std::unique_ptr<DeviceView, std::function<void(DeviceView*)>>>,
-           rmm::device_uvector<DeviceView>>
+           cuda::device_buffer<DeviceView>>
 column_views_to_device(std::span<ColumnView const> views,
                        cuda::stream_ref stream,
                        rmm::device_async_resource_ref mr)
@@ -68,7 +60,7 @@ column_views_to_device(std::span<ColumnView const> views,
     host_array.push_back(*h);
   }
 
-  rmm::device_uvector<DeviceView> device_array{handles.size(), stream, mr};
+  cuda::device_buffer<DeviceView> device_array{stream, mr, handles.size(), cuda::no_init};
   cudf::detail::cuda_memcpy<DeviceView>(device_array, host_array, stream);
 
   return std::make_tuple(std::move(handles), std::move(device_array));

@@ -13,10 +13,10 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_transform.cuh>
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/functional>
 #include <cuda/stream>
@@ -35,7 +35,8 @@ template <bool has_nested_columns>
   auto const comparator = detail::row::equality::two_table_comparator{left, right, stream, temp_mr};
   auto const rows_equal = comparator.equal_to<has_nested_columns>(
     nullate::DYNAMIC{has_nested_nulls(left) or has_nested_nulls(right)}, nulls_equal);
-  rmm::device_uvector<bool> eq_rows{static_cast<std::size_t>(left.num_rows()), stream, temp_mr};
+  cuda::device_buffer<bool> eq_rows(
+    stream, temp_mr, static_cast<std::size_t>(left.num_rows()), cuda::no_init);
   CUDF_CUDA_TRY(cub::DeviceTransform::Transform(
     cuda::counting_iterator<size_type>{0},
     eq_rows.begin(),

@@ -177,6 +177,9 @@ def build_report(
     local_tests: dict[str, set[tuple[str, int]]] = defaultdict(set)
     upstream_tests: dict[str, set[tuple[str, int]]] = defaultdict(set)
     all_upstream_lines: dict[str, set[int]] = {}
+    context_maps: dict[
+        str, tuple[dict[int, set[str]], dict[int, set[str]]]
+    ] = {}
     for filename in files:
         if "/cudf_polars/" not in filename.replace("\\", "/"):
             continue
@@ -185,6 +188,7 @@ def build_report(
         all_upstream_lines[filename] = upstream_lines
         local_contexts = local.contexts_by_lineno(filename)
         upstream_contexts = upstream.contexts_by_lineno(filename)
+        context_maps[filename] = (local_contexts, upstream_contexts)
         classifications: dict[str, list[Any]] = {
             "local_only": [],
             "upstream_only": [],
@@ -226,6 +230,22 @@ def build_report(
     result["review_pairs"] = _review_pairs(
         local_tests, upstream_tests, all_upstream_lines
     )
+    for pair in result["review_pairs"]:
+        for example in pair["shared_lines"]:
+            local_contexts, upstream_contexts = context_maps[
+                example["source_file"]
+            ]
+            line = example["line"]
+            example["local_context"] = next(
+                context
+                for context in sorted(local_contexts[line])
+                if _nodeid(context) == pair["local_nodeid"]
+            )
+            example["upstream_context"] = next(
+                context
+                for context in sorted(upstream_contexts[line])
+                if _nodeid(context) == pair["upstream_nodeid"]
+            )
     return result
 
 

@@ -77,6 +77,8 @@ REVIEW_EXCLUDED_TERMS = (
 
 
 def _read_data(path: Path) -> CoverageData:
+    if not path.is_file() or not path.stat().st_size:
+        raise ValueError(f"Missing or empty coverage data: {path}")
     data = CoverageData(basename=str(path))
     data.read()
     return data

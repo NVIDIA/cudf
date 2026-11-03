@@ -1406,12 +1406,6 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
   }
 
   if (not descriptors.empty() and num_rows > 0) {
-    // THE single pre-launch synchronization: it resolves the enqueued locality sample (when the
-    // routed entry took one) and drains the stream, which is also what makes the pinned staging
-    // below safe to write from the host.
-    cudf::detail::sync_stream(stream);
-    auto const effective_tile_cols =
-      explicit_tile_cols.has_value() ? *explicit_tile_cols : classify_map_locality(sampled);
     auto const num_descs = static_cast<size_type>(descriptors.size());
     // Small tables ride in the kernel parameters instead of the device array. The by-value
     // tiers instantiate the tile widths the router can return (1, 2, 8) only, so the
@@ -1419,6 +1413,17 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
     // applies.
     auto const by_value_tier =
       explicit_tile_cols != size_type{4} ? batch_gather_descriptors_by_value_tier(num_descs) : 0;
+    // THE pre-launch synchronization, taken only where its work is owed: it resolves the enqueued
+    // locality sample (routed entry with a live sample) and drains the stream so the pinned
+    // staging below is safe to write from the host. A call with an explicit tile width AND a
+    // by-value tier has neither need — no sample to classify, no staging to write — and skips
+    // the wait, keeping the fill memsets and the launch prep overlapped with whatever the stream
+    // still holds (the pre-port ordering; the exposed wait was the measured short-cell cost).
+    auto const needs_pre_sync =
+      (not explicit_tile_cols.has_value() and not sampled.staging.empty()) or by_value_tier == 0;
+    if (needs_pre_sync) { cudf::detail::sync_stream(stream); }
+    auto const effective_tile_cols =
+      explicit_tile_cols.has_value() ? *explicit_tile_cols : classify_map_locality(sampled);
 
     // The mask-free instantiation is valid only when NO descriptor writes a destination mask or
     // reads a source mask. `kernel_masked_positions` covers the destination side only, so the

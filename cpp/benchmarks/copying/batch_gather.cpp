@@ -25,10 +25,10 @@
 // COPYING_NVBENCH binary: coalesced maps are reversed sequences, random maps are uniform.
 static void bench_batch_gather(nvbench::state& state)
 {
-  auto const num_rows        = static_cast<cudf::size_type>(state.get_int64("num_rows"));
-  auto const num_cols        = static_cast<cudf::size_type>(state.get_int64("num_cols"));
-  auto const nulls           = static_cast<double>(state.get_float64("nulls"));
-  auto const coalesce        = static_cast<bool>(state.get_int64("coalesce"));
+  auto const num_rows  = static_cast<cudf::size_type>(state.get_int64("num_rows"));
+  auto const num_cols  = static_cast<cudf::size_type>(state.get_int64("num_cols"));
+  auto const nulls     = static_cast<double>(state.get_float64("nulls"));
+  auto const coalesce  = static_cast<bool>(state.get_int64("coalesce"));
   auto const tile_cols = static_cast<cudf::size_type>(state.get_int64("tile_cols"));
 
   if (static_cast<long>(num_rows) * static_cast<long>(num_cols) >

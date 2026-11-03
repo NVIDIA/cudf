@@ -1314,14 +1314,13 @@ std::unique_ptr<cudf::table> run_batch_gather_tile(cudf::table_view const& sourc
                                                    cudf::size_type tile_cols,
                                                    cudf::out_of_bounds_policy bounds)
 {
-  return cudf::detail::batch_gather(
-               source,
-               map,
-               bounds,
-               cudf::negative_index_policy::NOT_ALLOWED,
-               cudf::get_default_stream(),
-               cudf::memory_resources{cudf::get_current_device_resource_ref()},
-               tile_cols);
+  return cudf::detail::batch_gather(source,
+                                    map,
+                                    bounds,
+                                    cudf::negative_index_policy::NOT_ALLOWED,
+                                    cudf::get_default_stream(),
+                                    cudf::memory_resources{cudf::get_current_device_resource_ref()},
+                                    tile_cols);
 }
 
 TEST_F(BatchGatherRoutingTest, ClassifierWorkGateSamplesTallFewColumnTables)

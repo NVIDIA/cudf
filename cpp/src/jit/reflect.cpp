@@ -58,10 +58,14 @@ std::string get_element_type_name(transform_input_spec const& spec, bool use_phy
     data_type{spec.type}, element_type_name_fn{}, spec, use_physical_type);
 }
 
+}  // namespace
+
 std::string reflect_input_element(transform_input_spec const& spec, bool use_physical_type)
 {
   return get_element_type_name(spec, use_physical_type);
 }
+
+namespace {
 
 std::string reflect_output_element(transform_output_spec const& spec, bool use_physical_type)
 {
@@ -70,6 +74,8 @@ std::string reflect_output_element(transform_output_spec const& spec, bool use_p
   }
   return get_element_type_name(transform_input_spec{.type = spec.type}, use_physical_type);
 }
+
+}  // namespace
 
 std::string reflect_input_value_type(transform_input_spec const& spec, bool use_physical_type)
 {
@@ -80,6 +86,8 @@ std::string reflect_input_value_type(transform_input_spec const& spec, bool use_
   return reflect_input_element(spec, use_physical_type);
 }
 
+namespace {
+
 std::string reflect_output_value_type(transform_output_spec const& spec, bool use_physical_type)
 {
   return reflect_output_element(spec, use_physical_type);
@@ -89,6 +97,8 @@ std::string reflect_input_column(transform_input_spec const&)
 {
   return "cudf::column_device_view_core";
 }
+
+}  // namespace
 
 std::string reflect_output_column(transform_output_spec const& spec)
 {
@@ -114,12 +124,14 @@ transform_input_spec make_input_spec(column_view const& column, bool is_scalar)
   return result;
 }
 
+namespace {
+
 transform_input_spec make_input_spec(transform_input const& input)
 {
   return std::visit(
     [](auto& value) {
-      return make_input_spec(as_column_view(value),
-                             std::is_same_v<std::decay_t<decltype(value)>, scalar_column_view>);
+      return cudf::jit::make_input_spec(
+        as_column_view(value), std::is_same_v<std::decay_t<decltype(value)>, scalar_column_view>);
     },
     input);
 }
@@ -143,6 +155,16 @@ transform_output_spec make_output_spec(mutable_strings_column const& output)
 }
 
 }  // namespace
+
+rtcx::binary_type as_rtcx_binary_type(lto_binary_type type)
+{
+  switch (type) {
+    case lto_binary_type::LTO_IR: return rtcx::binary_type::LTO_IR;
+    case lto_binary_type::FATBIN: return rtcx::binary_type::FATBIN;
+    case lto_binary_type::PTX: return rtcx::binary_type::PTX;
+  }
+  CUDF_UNREACHABLE("Unsupported compiled fragment type");
+}
 
 transform_reflection reflect(std::variant<udf_source_type, lto_binary_type> source_type,
                              std::span<transform_input_spec const> inputs,
@@ -283,7 +305,7 @@ std::string reflect_udf_signature(bool is_null_aware,
   std::vector<std::string> in_types;
 
   for (auto const& input : inputs) {
-    auto element = reflect_input_element(input, use_physical_types);
+    auto element = reflect_input_value_type(input, use_physical_types);
     in_types.push_back(is_null_aware ? std::format("cuda::std::optional<{}>", element) : element);
   }
 

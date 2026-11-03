@@ -8,6 +8,7 @@
 #include <cudf/ast/expressions.hpp>
 #include <cudf/column/scalar_column_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/udf.hpp>
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
@@ -282,14 +283,6 @@ std::unique_ptr<table> transform(
   std::optional<size_type> row_size,
   cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
-
-/**
- * @brief The type of LTO Binary
- */
-enum class lto_binary_type : uint8_t {
-  LTO_IR,  //< LTO-IR binary
-  FATBIN   //< FATBIN binary
-};
 
 /**
  * @brief Creates a new table by applying a transform function against every

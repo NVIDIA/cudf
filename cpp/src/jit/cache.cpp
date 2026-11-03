@@ -4,6 +4,7 @@
  */
 
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/udf.hpp>
 #include <cudf/utilities/error.hpp>
 
 #include <cuda_runtime.h>
@@ -20,6 +21,9 @@
 #include <format>
 #include <fstream>
 #include <future>
+#include <memory>
+#include <stdexcept>
+#include <utility>
 
 namespace CUDF_EXPORT cudf {
 
@@ -291,15 +295,14 @@ rtcx::blob compile_fragment(char const* name,
                             char const* cuda_code,
                             std::span<char const* const> extra_header_include_names,
                             std::span<char const* const> extra_headers,
-                            std::span<char const* const> name_expressions)
+                            std::span<char const* const> name_expressions,
+                            bool includes_cudf,
+                            std::span<char const* const> include_paths)
 {
   CUDF_FUNC_RANGE();
 
-  auto& ctx    = cudf::get_context();
-  auto& cfg    = ctx.config();
-  auto& bundle = ctx.jit_bundle();
-
-  auto include_dirs = bundle.get_include_directories();
+  auto& ctx = cudf::get_context();
+  auto& cfg = ctx.config();
 
   auto nvrtc_version = ctx.nvrtc_version().value();
 
@@ -308,8 +311,13 @@ rtcx::blob compile_fragment(char const* name,
 
   std::vector<std::string> options;
 
-  for (auto const& include_dir : include_dirs) {
+  for (auto const* include_dir : include_paths) {
     options.emplace_back(std::format("-I{}", include_dir));
+  }
+  if (includes_cudf) {
+    for (auto const& include_dir : ctx.jit_bundle().get_include_directories()) {
+      options.emplace_back(std::format("-I{}", include_dir));
+    }
   }
 
   options.emplace_back(std::format("--gpu-architecture=sm_{}", LTO_ARCHITECTURE));
@@ -363,11 +371,34 @@ rtcx::blob compile_fragment(char const* name,
                                      .name_expressions     = name_expressions,
                                      .target_type          = rtcx::binary_type::LTO_IR};
 
-  auto cubin = rtcx::compile(params);
-  return std::make_shared<rtcx::blob_t>(rtcx::blob_t::from_buffer(std::move(cubin)));
+  auto fragment = rtcx::compile(params);
+  return std::make_shared<rtcx::blob_t>(rtcx::blob_t::from_buffer(std::move(fragment)));
 }
 
 }  // namespace
+
+std::span<uint8_t const> compiled_fragment::view() const noexcept
+{
+  return blob_ ? blob_->view() : std::span<uint8_t const>{};
+}
+
+compiled_fragment compile_cuda_to_lto_ir(char const* source_code,
+                                         bool includes_cudf,
+                                         std::span<char const*> include_names,
+                                         std::span<char const*> includes,
+                                         std::span<char const* const> include_paths)
+{
+  CUDF_FUNC_RANGE();
+  CUDF_EXPECTS(source_code != nullptr, "CUDA source must not be null", std::invalid_argument);
+  CUDF_EXPECTS(include_names.size() == includes.size(),
+               "Header names and contents must have the same size",
+               std::invalid_argument);
+
+  compiled_fragment result;
+  result.blob_ = compile_fragment(
+    "cudf_udf.cu", source_code, include_names, includes, {}, includes_cudf, include_paths);
+  return result;
+}
 
 kernel get_kernel(std::string const& name,
                   std::string const& source_file_id,
@@ -481,7 +512,8 @@ kernel_instance={}
   auto compile = [&] {
     auto bundle_dir = cudf::get_context().jit_bundle().get_directory();
     auto source     = read_file_string(source_file.c_str());
-    return compile_fragment(name.c_str(), source.c_str(), header_include_names, headers, {});
+    return compile_fragment(
+      name.c_str(), source.c_str(), header_include_names, headers, {}, true, {});
   };
 
   auto fut = cache.get_or_add_blob(key, rtcx::blob_compile_func::from_functor(compile));

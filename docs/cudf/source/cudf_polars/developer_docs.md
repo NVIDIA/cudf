@@ -626,9 +626,29 @@ tests worth investigating; they do not establish equivalent behavior.
 
 ### Initial behavioral review candidates
 
-These Polars 2.1 nodes appear in the maintained GPU-execution list, but their
-assertions do not cover everything their local counterparts test. None is an
-approved removal.
+The Polars 2.0 coverage run identified one close behavioral match. Its local
+in-memory case and upstream case cover 829 of the same source lines; the 17
+local-only lines are all in the local assertion helper. The upstream node
+appears in the maintained GPU-execution list and asserts the expected values
+for the same grouped literal expressions. This is a candidate for a later
+pruning PR, not an approved deletion: it still needs passing upstream runs and
+confirmation on both supported Polars versions.
+
+| Local test | Upstream lazy counterpart | Review finding |
+| --- | --- | --- |
+| `tests/test_groupby.py::test_groupby_has_nulls_literal[in-memory]` | `tests/unit/operations/test_has_nulls.py::test_has_nulls_group_by_literal` | Candidate: both group the same input and assert null/non-null literal results. |
+
+Other apparent overlaps did not pass assertion review. In Polars 2.0,
+`tests/test_groupby.py::test_groupby_count_distinct_sql[in-memory]` pairs with
+`tests/unit/sql/test_distinct.py::test_distinct_with_group_by`, but the local
+case includes a null counted column and the upstream fixture does not.
+`tests/test_mapfunction.py::test_explode_reconstruct` pairs with an upstream
+explode/filter test through shared source lines, but checks IR reconstruction
+rather than public query results; it is excluded from the pruning queue.
+
+These Polars 2.1 nodes also appear in the maintained GPU-execution list, but
+their assertions do not cover everything their local counterparts test. None
+is an approved removal.
 
 | Local test | Upstream lazy counterpart | Review finding |
 | --- | --- | --- |
@@ -639,6 +659,10 @@ approved removal.
 Keep strict-height error cases and tests that construct cudf-polars IR directly
 unless equivalent GPU error-path or internal-contract coverage is demonstrated.
 Eager-only upstream counterparts cannot establish cudf-polars GPU coverage.
+The initial Polars 2.0 full upstream run had four failing join tests, so its
+comparison is provisional even though coverage data was produced for both
+upstream engine configurations. A historical GPU-execution-list entry alone
+does not establish a currently passing counterpart.
 
 # Debugging
 

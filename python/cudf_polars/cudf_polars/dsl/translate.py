@@ -37,6 +37,7 @@ from cudf_polars.dsl.utils.replace import replace
 from cudf_polars.dsl.utils.rolling import rewrite_rolling
 from cudf_polars.typing import Schema
 from cudf_polars.utils import config, sorting
+from cudf_polars.utils.uri import strip_file_uri
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Sequence
@@ -97,16 +98,6 @@ def _contains_categorical_key(keys: Sequence[expr.NamedExpr]) -> bool:
         _contains_dtype(k.value.dtype.polars_type, (pl.Categorical, pl.Enum))
         for k in keys
     )
-
-
-def _strip_file_uri(path: str) -> str:
-    # file:///foo/path is treated as a local path. Polars
-    # rejects file:// URIs with any non-empty host, so
-    # we don't need to handle file://host/foo/path paths
-    prefix = "file://"
-    if path.startswith(prefix):
-        return path[len(prefix) :]
-    return path
 
 
 def _check_compression(data: bytes) -> str | None:
@@ -591,7 +582,7 @@ def _(node: plrs._ir_nodes.Scan, translator: Translator, schema: Schema) -> ir.I
         for dtype in schema.values()
     ):
         raise NotImplementedError("Reading Categorical/Enum columns is not supported")
-    paths = [_strip_file_uri(p) for p in node.paths]
+    paths = [strip_file_uri(p) for p in node.paths]
     # Polars can produce a Scan with an empty ``node.paths`` (eg. the native
     # Iceberg reader on a table with no data files yet). In this case, polars returns an
     # empty DataFrame with the declared schema. Mirror that here by

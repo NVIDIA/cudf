@@ -40,6 +40,7 @@ from cudf_polars.streaming.base import (
 )
 from cudf_polars.streaming.dispatch import lower_ir_node
 from cudf_polars.streaming.utils import partition_range
+from cudf_polars.utils import cucascade
 from cudf_polars.utils.config import Cluster
 from cudf_polars.utils.cuda_stream import get_cuda_stream
 from cudf_polars.utils.dtypes import make_empty_column
@@ -291,8 +292,13 @@ def _read_with_hybrid_scan(
     with nvtx_annotate_cudf_polars(
         message="HybridScan", payload=(split_index + 1, total_splits)
     ):
+        # Remote files read through the cuCascade cache when it is enabled (`cache_sources` keeps the
+        # cache-backed sources alive for the fetches below).
+        cache_sources = cucascade.wrap_sources([cached_info.path], [cached_info.size])
         source_info = plc.io.SourceInfo(
-            [plc.io.types.FilepathSource(cached_info.path, cached_info.size)]
+            cache_sources
+            if cache_sources is not None
+            else [plc.io.types.FilepathSource(cached_info.path, cached_info.size)]
         )
         options = cached_info.default_reader_options()
         if with_columns is not None:

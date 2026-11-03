@@ -71,12 +71,14 @@ from cudf_polars.quent._runtime import (
 from cudf_polars.streaming.actor_graph.collectives.common import reserve_op_id
 from cudf_polars.streaming.actor_graph.utils import set_memory_resource
 from cudf_polars.unstable import unstable
+from cudf_polars.utils import cucascade
 from cudf_polars.utils.cleanup import run_cleanup_steps
 from cudf_polars.utils.config import (
     MemoryResourceConfig,
     SPMDContext,
     StreamingExecutor,
     configure_kvikio,
+    resolve_cucascade_cache_bytes,
     resolve_kvikio_executor_options,
     resolve_quent_context,
 )
@@ -614,6 +616,9 @@ class SPMDEngine(StreamingEngine):
     ) -> None:
         _check_engine_gpu_is_first()
         executor_options = resolve_kvikio_executor_options(executor_options or {})
+        executor_options.setdefault(
+            "cucascade_cache_bytes", resolve_cucascade_cache_bytes(executor_options)
+        )
         engine_options = engine_options or {}
 
         quent_context = resolve_quent_context(executor_options)
@@ -637,6 +642,7 @@ class SPMDEngine(StreamingEngine):
             request_ceiling=executor_options["kvikio_request_ceiling"],
         )
 
+        cucascade.configure_cucascade(executor_options["cucascade_cache_bytes"])
         self.rapidsmpf_options = resolve_rapidsmpf_options(rapidsmpf_options)
         mr_config: MemoryResourceConfig = engine_options.get(
             "memory_resource_config", MemoryResourceConfig.default()

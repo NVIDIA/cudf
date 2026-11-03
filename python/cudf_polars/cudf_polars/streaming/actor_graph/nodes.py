@@ -13,7 +13,7 @@ from cudf_streaming.table_chunk import (
     make_table_chunks_available_or_wait,
 )
 from rapidsmpf.memory.memory_reservation import opaque_memory_usage
-from rapidsmpf.streaming.core.actor import define_actor
+from rapidsmpf.streaming.core.actor import define_actor, when_all
 from rapidsmpf.streaming.core.fanout import FanoutPolicy, fanout
 
 from cudf_polars.dsl.ir import IR, Empty, HConcat
@@ -270,23 +270,25 @@ async def default_node_multi(
         await ch_out.drain(context)
 
 
-async def fanout_metadata_node(
+async def fanout_node(
     context: Context,
     ch_in: Channel[TableChunk],
-    *chs_out: Channel[TableChunk],
+    chs_out: Sequence[Channel[TableChunk]],
+    policy: FanoutPolicy,
+    *,
     trace_ir: IR,
     ir_context: IRExecutionContext,
 ) -> None:
     """
-    Forward channel metadata for a fanout node.
+    Broadcast a channel to several consumers, metadata included.
 
-    The rapidsmpf C++ fanout actor only broadcasts data messages, so
-    this actor forwards the metadata side-channel to every output.
+    The rapidsmpf C++ fanout actor only broadcasts data messages, so the
+    metadata is forwarded here first. The C++ actor is started only after
+    that, since it drains ``chs_out`` and shuts down ``ch_in`` (including
+    their metadata side-channels) when it finishes.
 
-    This is deliberately *not* wrapped in ``define_actor``: that wrapper
-    shuts down every channel argument when the actor returns, which would
-    kill the data path still being served by the C++ fanout actor. Channels
-    are only shut down on error, by ``shutdown_on_error``.
+    This is deliberately *not* wrapped in ``define_actor``: channels are
+    only shut down on error, by ``shutdown_on_error``.
 
     Parameters
     ----------
@@ -296,6 +298,8 @@ async def fanout_metadata_node(
         The input Channel[TableChunk].
     chs_out
         The output Channel[TableChunk]s.
+    policy
+        The fanout policy for the data messages.
     trace_ir
         The IR node to trace. Passed through to shutdown_on_error.
     ir_context
@@ -312,6 +316,7 @@ async def fanout_metadata_node(
         await gather_in_task_group(
             *(send_metadata(ch, context, metadata) for ch in chs_out)
         )
+        await when_all(context, [fanout(context, ch_in, list(chs_out), policy)])
 
 
 @generate_ir_sub_network.register(IR)
@@ -453,18 +458,16 @@ def generate_ir_sub_network_wrapper(
         )
         ch_in = channels[ir].reserve_output_slot()
         chs_out = [manager.reserve_input_slot() for _ in range(count)]
-        # Data messages: rapidsmpf C++ fanout. Metadata: Python actor.
         nodes[ir].append(
-            fanout_metadata_node(
+            fanout_node(
                 rec.state["context"],
                 ch_in,
-                *chs_out,
+                chs_out,
+                policy,
                 trace_ir=ir,
                 ir_context=ir_context_for_node(rec, ir),
             )
         )
-        fanout_node = fanout(rec.state["context"], ch_in, chs_out, policy)
-        nodes[ir].append(fanout_node)
         channels[ir] = manager
     return nodes, channels
 

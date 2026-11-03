@@ -7,6 +7,7 @@
 #include <cudf/detail/null_mask.cuh>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -25,6 +26,7 @@
 #include <cub/block/block_reduce.cuh>
 #include <cuda/atomic>
 #include <cuda/bit>
+#include <cuda/buffer>
 #include <cuda/memory_resource>
 #include <cuda/numeric>
 #include <cuda/std/execution>
@@ -58,7 +60,7 @@ std::size_t bitmask_allocation_size_words(size_type number_of_bits, std::size_t 
 {
   CUDF_EXPECTS(padding_boundary > 0, "Invalid padding boundary");
   auto necessary_words = num_bitmask_words(number_of_bits);
-  auto padded_words    = padding_boundary * cudf::util::div_rounding_up_safe<size_type>(
+  auto padded_words    = padding_boundary * cudf::detail::div_rounding_up_safe<size_type>(
                                            necessary_words, padding_boundary);
   return padded_words;
 }
@@ -66,8 +68,8 @@ std::size_t bitmask_allocation_size_words(size_type number_of_bits, std::size_t 
 // Computes number of *actual* bitmask_type elements needed
 size_type num_bitmask_words(size_type number_of_bits)
 {
-  return cudf::util::div_rounding_up_safe<size_type>(number_of_bits,
-                                                     detail::size_in_bits<bitmask_type>());
+  return cudf::detail::div_rounding_up_safe<size_type>(number_of_bits,
+                                                       detail::size_in_bits<bitmask_type>());
 }
 
 namespace detail {
@@ -224,7 +226,7 @@ void set_null_masks(cudf::host_span<bitmask_type*> bitmasks,
       // Handle overflow if any
       if (cuda::add_overflow<size_t>(cumulative_null_mask_words, num_words).overflow) {
         average_nullmask_words +=
-          cudf::util::div_rounding_up_safe<size_t>(cumulative_null_mask_words, num_bitmasks);
+          cudf::detail::div_rounding_up_safe<size_t>(cumulative_null_mask_words, num_bitmasks);
         cumulative_null_mask_words = 0;
       }
       // Add to cumulative null mask words
@@ -234,16 +236,16 @@ void set_null_masks(cudf::host_span<bitmask_type*> bitmasks,
 
   // Add the last cumulative null mask words to average
   average_nullmask_words +=
-    cudf::util::div_rounding_up_safe<size_t>(cumulative_null_mask_words, num_bitmasks);
+    cudf::detail::div_rounding_up_safe<size_t>(cumulative_null_mask_words, num_bitmasks);
 
-  // Create device vectors from host spans
+  // Create device buffers from host spans
   auto const mr           = cudf::get_current_device_resource_ref();
-  auto destinations       = cudf::detail::make_device_uvector_async(bitmasks, stream, mr);
-  auto const d_begin_bits = cudf::detail::make_device_uvector_async(begin_bits, stream, mr);
-  auto const d_end_bits   = cudf::detail::make_device_uvector_async(end_bits, stream, mr);
-  auto const d_valids     = cudf::detail::make_device_uvector_async(valids, stream, mr);
+  auto destinations       = cudf::detail::make_device_buffer_async(bitmasks, stream, mr);
+  auto const d_begin_bits = cudf::detail::make_device_buffer_async(begin_bits, stream, mr);
+  auto const d_end_bits   = cudf::detail::make_device_buffer_async(end_bits, stream, mr);
+  auto const d_valids     = cudf::detail::make_device_buffer_async(valids, stream, mr);
   auto const number_of_mask_words =
-    cudf::detail::make_device_uvector_async(h_number_of_mask_words, stream, mr);
+    cudf::detail::make_device_buffer_async(h_number_of_mask_words, stream, mr);
 
   // Compute block size using heuristic and launch kernel
   constexpr size_t max_words_per_thread  = 64;
@@ -497,10 +499,10 @@ std::vector<size_type> batch_count_set_bits(host_span<bitmask_type const* const>
   if (!has_bitmask) { return output; }
 
   auto const tmp_mr     = cudf::get_current_device_resource_ref();
-  auto const d_bitmasks = cudf::detail::make_device_uvector_async(bitmasks, stream, tmp_mr);
+  auto const d_bitmasks = cudf::detail::make_device_buffer_async(bitmasks, stream, tmp_mr);
   auto const num_words  = num_bitmask_words(num_bits_to_count);
   auto d_non_zero_count =
-    cudf::detail::make_zeroed_device_uvector_async<size_type>(num_bitmasks, stream, tmp_mr);
+    cudf::detail::make_zeroed_device_buffer_async<size_type>(num_bitmasks, stream, tmp_mr);
 
   constexpr size_type block_size{256};
   // We use a 2D grid to launch the kernel, where the first dimension is to access elements in each

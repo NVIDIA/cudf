@@ -3,18 +3,18 @@
     "context": "${localWorkspaceFolder}/.devcontainer",
     "dockerfile": "${localWorkspaceFolder}/.devcontainer/Dockerfile",
     "args": {
-      "CUDA": "13.3",
+      "CUDA": "13.4",
       "PYTHON_PACKAGE_MANAGER": "pip",
-      "BASE": "rapidsai/devcontainers:26.12-cpp-cuda13.3-ucx1.21.0-openmpi5.0.10"
+      "BASE": "rapidsai/devcontainers:26.12-cpp-cuda13.4-ucx1.21.0-openmpi5.0.10"
     },
     "cacheFrom": [
-      "ghcr.io/nvidia/cudf/devcontainer:26.12-cuda13.3-pip"
+      "ghcr.io/nvidia/cudf/devcontainer:26.12-cuda13.4-pip"
     ]
   },
   "runArgs": [
     "--rm",
     "--name",
-    "${localEnv:USER:anon}-rapids-${localWorkspaceFolderBasename}-26.12-cuda13.3-pip",
+    "${localEnv:USER:anon}-rapids-${localWorkspaceFolderBasename}-26.12-cuda13.4-pip",
     "--ulimit",
     "nofile=500000"
   ],
@@ -33,7 +33,7 @@
   "initializeCommand": [
     "/bin/bash",
     "-c",
-    "mkdir -m 0755 -p ${localWorkspaceFolder}/../.{aws,cache,config/pip,local/share/${localWorkspaceFolderBasename}-cuda13.3-venvs}"
+    "mkdir -m 0755 -p ${localWorkspaceFolder}/../.{aws,cache,config/pip,local/share/${localWorkspaceFolderBasename}-cuda13.4-venvs}"
   ],
   "postAttachCommand": [
     "/bin/bash",
@@ -46,7 +46,7 @@
     "source=${localWorkspaceFolder}/../.aws,target=/home/coder/.aws,type=bind,consistency=consistent",
     "source=${localWorkspaceFolder}/../.cache,target=/home/coder/.cache,type=bind,consistency=consistent",
     "source=${localWorkspaceFolder}/../.config,target=/home/coder/.config,type=bind,consistency=consistent",
-    "source=${localWorkspaceFolder}/../.local/share/${localWorkspaceFolderBasename}-cuda13.3-venvs,target=/home/coder/.local/share/venvs,type=bind,consistency=consistent"
+    "source=${localWorkspaceFolder}/../.local/share/${localWorkspaceFolderBasename}-cuda13.4-venvs,target=/home/coder/.local/share/venvs,type=bind,consistency=consistent"
   ],
   "customizations": {
     "vscode": {

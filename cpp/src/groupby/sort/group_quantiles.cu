@@ -14,13 +14,13 @@
 #include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/dictionary/detail/iterator.cuh>
 #include <cudf/dictionary/dictionary_column_view.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
-#include <cuda/std/type_traits>
 #include <cuda/stream>
 #include <thrust/execution_policy.h>
 #include <thrust/for_each.h>
@@ -72,7 +72,7 @@ struct calculate_quantile_fn {
 };
 
 struct quantiles_functor {
-  template <typename T>
+  template <cudf::concepts::arithmetic T>
   std::unique_ptr<column> operator()(column_view const& values,
                                      column_view const& group_sizes,
                                      cudf::device_span<size_type const> group_offsets,
@@ -81,7 +81,6 @@ struct quantiles_functor {
                                      interpolation interpolation,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
-    requires(cuda::std::is_arithmetic_v<T>)
   {
     using ResultType = cudf::detail::target_type_t<T, aggregation::QUANTILE>;
 
@@ -137,7 +136,7 @@ struct quantiles_functor {
 
   template <typename T, typename... Args>
   std::unique_ptr<column> operator()(Args&&...)
-    requires(!cuda::std::is_arithmetic_v<T>)
+    requires(not cudf::concepts::arithmetic<T>)
   {
     CUDF_FAIL("Only arithmetic types are supported in quantiles");
   }

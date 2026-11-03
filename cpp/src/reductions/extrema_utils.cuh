@@ -11,6 +11,7 @@
 #include <cudf/dictionary/detail/iterator.cuh>
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
@@ -78,11 +79,10 @@ class arg_minmax_dispatcher {
     return static_cast<size_type>(cuda::std::distance(it, pos));
   }
 
-  template <typename ElementType>
+  template <cudf::concepts::nested ElementType>
   [[nodiscard]] size_type find_arg_minmax(column_view const& input,
                                           cuda::stream_ref stream,
                                           cudf::memory_resources mr) const
-    requires(cudf::is_nested<ElementType>())
   {
     using Op = std::conditional_t<K == aggregation::ARGMIN,
                                   reduction::detail::op::min,
@@ -104,7 +104,6 @@ class arg_minmax_dispatcher {
   [[nodiscard]] size_type find_arg_minmax(column_view const& input,
                                           cuda::stream_ref stream,
                                           cudf::memory_resources mr) const
-    requires(not cudf::is_nested<ElementType>() and not cudf::is_numeric<ElementType>())
   {
     // Nulls are considered "greater" (ARGMIN), or "less" (ARGMAX) than non-null values.
     auto const null_orders =
@@ -120,11 +119,10 @@ class arg_minmax_dispatcher {
                              noinline_adapter_fn{std::move(d_comp)});
   }
 
-  template <typename ElementType>
+  template <cudf::concepts::arithmetic ElementType>  // integer + floating point numbers
   [[nodiscard]] size_type find_arg_minmax(column_view const& input,
                                           cuda::stream_ref stream,
                                           cudf::memory_resources mr) const
-    requires(cudf::is_numeric<ElementType>())  // integer + floating point numbers
   {
     using Op = std::conditional_t<K == aggregation::ARGMIN,
                                   reduction::detail::op::min,
@@ -179,7 +177,6 @@ class arg_minmax_dispatcher {
   std::unique_ptr<scalar> operator()(column_view const&,
                                      cuda::stream_ref,
                                      cudf::memory_resources) const
-    requires(not is_supported<ElementType>())
   {
     CUDF_FAIL("ARGMIN/ARGMAX is not supported for this type");
   }

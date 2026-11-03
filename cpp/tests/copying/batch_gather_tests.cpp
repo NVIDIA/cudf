@@ -2963,6 +2963,85 @@ TEST_F(StringFusedEngineParity, BandLongRowsKeepPayloadKernel)
   CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
 }
 
+// §5.7 Randomized differential against the stock gather (reference oracle).
+// ============================================================================
+
+class BatchGatherRandomizedTest : public cudf::test::BaseFixture {};
+
+std::vector<cudf::type_id> const& random_candidate_types()
+{
+  static std::vector<cudf::type_id> const candidates{cudf::type_id::INT8,
+                                                     cudf::type_id::INT16,
+                                                     cudf::type_id::INT32,
+                                                     cudf::type_id::INT64,
+                                                     cudf::type_id::UINT32,
+                                                     cudf::type_id::FLOAT32,
+                                                     cudf::type_id::FLOAT64,
+                                                     cudf::type_id::BOOL8,
+                                                     cudf::type_id::DECIMAL32,
+                                                     cudf::type_id::DECIMAL64,
+                                                     cudf::type_id::DECIMAL128,
+                                                     cudf::type_id::TIMESTAMP_NANOSECONDS,
+                                                     cudf::type_id::DURATION_MICROSECONDS,
+                                                     cudf::type_id::STRING};
+  return candidates;
+}
+
+template <typename T>
+std::unique_ptr<cudf::column> make_random_fixed(cudf::size_type num_rows,
+                                                double null_probability,
+                                                std::mt19937& rng)
+{
+  auto value_of = [&rng](cudf::size_type) {
+    return std::uniform_int_distribution<int64_t>(-1000, 1000)(rng);
+  };
+  auto valid_of = [&rng, null_probability](cudf::size_type) {
+    return std::uniform_real_distribution<double>(0.0, 1.0)(rng) >= null_probability;
+  };
+  return make_fixed_column<T>(num_rows, value_of, valid_of);
+}
+
+std::unique_ptr<cudf::column> make_random_column(cudf::type_id id,
+                                                 cudf::size_type num_rows,
+                                                 double null_probability,
+                                                 std::mt19937& rng)
+{
+  switch (id) {
+    case cudf::type_id::INT8: return make_random_fixed<int8_t>(num_rows, null_probability, rng);
+    case cudf::type_id::INT16: return make_random_fixed<int16_t>(num_rows, null_probability, rng);
+    case cudf::type_id::INT32: return make_random_fixed<int32_t>(num_rows, null_probability, rng);
+    case cudf::type_id::INT64: return make_random_fixed<int64_t>(num_rows, null_probability, rng);
+    case cudf::type_id::UINT32: return make_random_fixed<uint32_t>(num_rows, null_probability, rng);
+    case cudf::type_id::FLOAT32: return make_random_fixed<float>(num_rows, null_probability, rng);
+    case cudf::type_id::FLOAT64: return make_random_fixed<double>(num_rows, null_probability, rng);
+    case cudf::type_id::BOOL8: return make_random_fixed<bool>(num_rows, null_probability, rng);
+    case cudf::type_id::DECIMAL32:
+      return make_random_fixed<numeric::decimal32>(num_rows, null_probability, rng);
+    case cudf::type_id::DECIMAL64:
+      return make_random_fixed<numeric::decimal64>(num_rows, null_probability, rng);
+    case cudf::type_id::DECIMAL128:
+      return make_random_fixed<numeric::decimal128>(num_rows, null_probability, rng);
+    case cudf::type_id::TIMESTAMP_NANOSECONDS:
+      return make_random_fixed<cudf::timestamp_ns>(num_rows, null_probability, rng);
+    case cudf::type_id::DURATION_MICROSECONDS:
+      return make_random_fixed<cudf::duration_us>(num_rows, null_probability, rng);
+    case cudf::type_id::STRING: {
+      std::vector<std::string> strings;
+      std::vector<bool> valid;
+      strings.reserve(num_rows);
+      valid.reserve(num_rows);
+      for (cudf::size_type i = 0; i < num_rows; ++i) {
+        strings.push_back(std::to_string(std::uniform_int_distribution<int>(-1000, 1000)(rng)));
+        valid.push_back(std::uniform_real_distribution<double>(0.0, 1.0)(rng) >= null_probability);
+      }
+      auto validity = cudf::detail::make_counting_transform_iterator(
+        0, [&valid](cudf::size_type i) { return valid[i]; });
+      return cudf::test::strings_column_wrapper(strings.begin(), strings.end(), validity).release();
+    }
+    default: CUDF_FAIL("Unsupported type id in randomized test");
+  }
+}
+
 TEST_F(BatchGatherRandomizedTest, RandomizedDifferential)
 {
   for (int seed = 0; seed < 10; ++seed) {

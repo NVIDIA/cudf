@@ -55,6 +55,25 @@ using handle            = std::variant<
 
 namespace jit_transform {
 
+std::string make_cuda_source(std::string const& udf,
+                             udf_source_type source_type,
+                             std::string_view udf_expression,
+                             std::vector<std::string> const& ptx_input_types,
+                             std::vector<std::string> const& ptx_output_types,
+                             bool has_user_data)
+{
+  if (!udf_expression.empty()) {
+    return jit::define_operation(udf, "GENERIC_TRANSFORM_OP", udf_expression);
+  }
+  if (source_type == udf_source_type::PTX) {
+    return jit::parse_single_function_ptx(
+      udf,
+      "GENERIC_TRANSFORM_OP",
+      jit::build_ptx_params(ptx_output_types, ptx_input_types, has_user_data));
+  }
+  return jit::parse_single_function_cuda(udf, "GENERIC_TRANSFORM_OP");
+}
+
 kernel instantiate(bool is_null_aware,
                    bool has_user_data,
                    std::string const& ins,
@@ -62,15 +81,13 @@ kernel instantiate(bool is_null_aware,
                    std::vector<std::string> const& ptx_input_types,
                    std::vector<std::string> const& ptx_output_types,
                    std::string const& udf,
-                   udf_source_type source_type)
+                   udf_source_type source_type,
+                   std::string_view udf_expression,
+                   cudf::lto_fragments lto_fragments)
 {
   CUDF_FUNC_RANGE();
-  auto cuda_source = (source_type == udf_source_type::PTX)
-                       ? jit::parse_single_function_ptx(
-                           udf,
-                           "GENERIC_TRANSFORM_OP",
-                           jit::build_ptx_params(ptx_output_types, ptx_input_types, has_user_data))
-                       : jit::parse_single_function_cuda(udf, "GENERIC_TRANSFORM_OP");
+  auto cuda_source = make_cuda_source(
+    udf, source_type, udf_expression, ptx_input_types, ptx_output_types, has_user_data);
 
   auto kernel = rtcx::reflect_template("cudf::jit::transform_kernel",
                                        rtcx::reflect(is_null_aware),
@@ -78,7 +95,8 @@ kernel instantiate(bool is_null_aware,
                                        ins,
                                        outs);
 
-  return jit::get_udf_kernel("cudf/cpp/src/transform/jit/kernel.cu", kernel, cuda_source, {});
+  return jit::get_udf_kernel(
+    "cudf/cpp/src/transform/jit/kernel.cu", kernel, cuda_source, lto_fragments);
 }
 
 void launch(cudf::kernel const& kernel,
@@ -167,7 +185,9 @@ kernel get_kernel(bool is_null_aware,
                   std::span<input_column_view const> inputs,
                   std::span<output_column const> outputs,
                   std::string const& udf,
-                  udf_source_type source_type)
+                  udf_source_type source_type,
+                  std::string_view udf_expression,
+                  cudf::lto_fragments lto_fragments)
 {
   auto [in_types, out_types, ptx_in_types, ptx_out_types] =
     jit::reflect(source_type, inputs, outputs);
@@ -178,7 +198,9 @@ kernel get_kernel(bool is_null_aware,
                      ptx_in_types,
                      ptx_out_types,
                      udf,
-                     source_type);
+                     source_type,
+                     udf_expression,
+                     lto_fragments);
 }
 
 kernel get_kernel(bool is_null_aware,
@@ -186,7 +208,9 @@ kernel get_kernel(bool is_null_aware,
                   std::span<transform_input_spec const> inputs,
                   std::span<transform_output_spec const> outputs,
                   std::string const& udf,
-                  udf_source_type source_type)
+                  udf_source_type source_type,
+                  std::string_view udf_expression,
+                  cudf::lto_fragments lto_fragments)
 {
   auto [in_types, out_types, ptx_in_types, ptx_out_types] =
     jit::reflect(source_type, inputs, outputs);
@@ -197,31 +221,9 @@ kernel get_kernel(bool is_null_aware,
                      ptx_in_types,
                      ptx_out_types,
                      udf,
-                     source_type);
-}
-
-// The kernel for code that row IR generated from AST expressions. The code is compiled as it is,
-// called by the name of its generated function, and linked with the LTO callees it calls.
-kernel get_ast_kernel(bool is_null_aware,
-                      bool has_user_data,
-                      std::span<transform_input_spec const> inputs,
-                      std::span<transform_output_spec const> outputs,
-                      std::string const& udf,
-                      std::string_view udf_expression,
-                      cudf::lto_fragments lto_fragments)
-{
-  CUDF_FUNC_RANGE();
-  auto [in_types, out_types, ptx_in_types, ptx_out_types] =
-    jit::reflect(udf_source_type::CUDA, inputs, outputs);
-  auto kernel_name = rtcx::reflect_template("cudf::jit::transform_kernel",
-                                            rtcx::reflect(is_null_aware),
-                                            rtcx::reflect(has_user_data),
-                                            in_types,
-                                            out_types);
-  return jit::get_udf_kernel("cudf/cpp/src/transform/jit/kernel.cu",
-                             kernel_name,
-                             jit::define_operation(udf, "GENERIC_TRANSFORM_OP", udf_expression),
-                             lto_fragments);
+                     source_type,
+                     udf_expression,
+                     lto_fragments);
 }
 
 void run(bool is_null_aware,
@@ -235,9 +237,12 @@ void run(bool is_null_aware,
          std::string const& udf,
          udf_source_type source_type,
          cuda::stream_ref stream,
-         cudf::memory_resources mr)
+         cudf::memory_resources mr,
+         std::string_view udf_expression,
+         cudf::lto_fragments lto_fragments)
 {
-  auto kernel = get_kernel(is_null_aware, has_user_data, inputs, outputs, udf, source_type);
+  auto kernel = get_kernel(
+    is_null_aware, has_user_data, inputs, outputs, udf, source_type, udf_expression, lto_fragments);
   auto [cols, handles] = to_args(inputs, outputs, stream, mr.as_temporary());
   auto* input_cols     = reinterpret_cast<column_device_view_core const*>(cols.data());
   auto* output_cols =
@@ -796,7 +801,9 @@ std::unique_ptr<table> execute_transform(std::string const& udf,
                                          std::vector<std::unique_ptr<column>> string_offsets,
                                          kernel const* compiled_kernel,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
+                                         rmm::device_async_resource_ref mr,
+                                         std::string_view udf_expression,
+                                         cudf::lto_fragments lto_fragments)
 {
   auto row_size = in_row_size.has_value() ? *in_row_size : jit::get_projection_size(inputs);
   auto output_may_be_nullable    = get_null_transformation(is_null_aware, inputs, outputs);
@@ -827,7 +834,9 @@ std::unique_ptr<table> execute_transform(std::string const& udf,
                        udf,
                        source_type,
                        stream,
-                       mr);
+                       mr,
+                       udf_expression,
+                       lto_fragments);
   } else {
     jit_transform::run(*compiled_kernel,
                        row_size,
@@ -851,39 +860,6 @@ std::unique_ptr<table> execute_transform(std::string const& udf,
 
   auto finalized = finalize_outputs(is_null_aware, row_size, std::move(output_columns), stream, mr);
   return std::make_unique<table>(std::move(finalized));
-}
-
-// Runs the transform that row IR generated for AST expressions.
-std::unique_ptr<table> execute_ast_transform(detail::row_ir::transform_args&& args,
-                                             cuda::stream_ref stream,
-                                             rmm::device_async_resource_ref mr)
-{
-  perform_checks(args.source_type,
-                 args.is_null_aware,
-                 args.row_size,
-                 args.inputs,
-                 args.outputs,
-                 args.string_offsets);
-  auto input_specs  = jit::make_input_specs(args.inputs);
-  auto output_specs = jit::make_output_specs(args.outputs, args.string_offsets);
-  auto kernel       = jit_transform::get_ast_kernel(args.is_null_aware == null_aware::YES,
-                                              args.user_data.has_value(),
-                                              input_specs,
-                                              output_specs,
-                                              args.udf,
-                                              args.udf_expression,
-                                              args.lto_fragments);
-  return execute_transform(args.udf,
-                           args.source_type,
-                           args.is_null_aware,
-                           args.row_size,
-                           args.user_data,
-                           args.inputs,
-                           args.outputs,
-                           std::move(args.string_offsets),
-                           &kernel,
-                           stream,
-                           mr);
 }
 
 }  // namespace
@@ -911,7 +887,9 @@ std::unique_ptr<table> transform(std::string const& udf,
                            std::move(string_offsets),
                            nullptr,
                            stream,
-                           mr);
+                           mr,
+                           {},
+                           {});
 }
 
 std::unique_ptr<column> compute_column_jit(table_view const& table,
@@ -922,15 +900,7 @@ std::unique_ptr<column> compute_column_jit(table_view const& table,
 {
   CUDF_FUNC_RANGE();
   std::array<std::reference_wrapper<ast::expression const>, 1> expressions{expr};
-  auto args = detail::row_ir::ast_converter::compute_table(detail::row_ir::target::CUDA,
-                                                           expressions,
-                                                           fragments,
-                                                           table,
-                                                           {},
-                                                           "compute_operation",
-                                                           stream,
-                                                           mr);
-  auto cols = execute_ast_transform(std::move(args), stream, mr)->release();
+  auto cols = compute_table_jit(table, expressions, fragments, stream, mr)->release();
   return std::move(cols[0]);
 }
 
@@ -950,7 +920,25 @@ std::unique_ptr<table> compute_table_jit(
                                                            "compute_operation",
                                                            stream,
                                                            mr);
-  return execute_ast_transform(std::move(args), stream, mr);
+  perform_checks(args.source_type,
+                 args.is_null_aware,
+                 args.row_size,
+                 args.inputs,
+                 args.outputs,
+                 args.string_offsets);
+  return execute_transform(args.udf,
+                           args.source_type,
+                           args.is_null_aware,
+                           args.row_size,
+                           args.user_data,
+                           args.inputs,
+                           args.outputs,
+                           std::move(args.string_offsets),
+                           nullptr,
+                           stream,
+                           mr,
+                           args.udf_expression,
+                           args.lto_fragments);
 }
 
 // if we have a matching pre-compiled kernel fragment for the given transform configuration, return
@@ -1075,26 +1063,20 @@ struct transform_program::impl {
        std::optional<void*> user_data,
        std::vector<transform_input_spec> inputs,
        std::vector<transform_output_spec> outputs,
-       std::string_view udf_expression   = {},
-       cudf::lto_fragments lto_fragments = {})
+       std::string_view udf_expression,
+       cudf::lto_fragments lto_fragments)
     : reflection_{jit::reflect(source_type, inputs, outputs)},
       source_type_{source_type},
       is_null_aware_{is_null_aware},
       user_data_{user_data},
-      kernel_{udf_expression.empty()
-                ? jit_transform::get_kernel(is_null_aware_ == null_aware::YES,
-                                            user_data_.has_value(),
-                                            inputs,
-                                            outputs,
-                                            udf,
-                                            source_type_)
-                : jit_transform::get_ast_kernel(is_null_aware_ == null_aware::YES,
-                                                user_data_.has_value(),
-                                                inputs,
-                                                outputs,
-                                                udf,
-                                                udf_expression,
-                                                lto_fragments)}
+      kernel_{jit_transform::get_kernel(is_null_aware_ == null_aware::YES,
+                                        user_data_.has_value(),
+                                        inputs,
+                                        outputs,
+                                        udf,
+                                        source_type_,
+                                        udf_expression,
+                                        lto_fragments)}
   {
   }
 
@@ -1140,7 +1122,9 @@ transform_program::transform_program(std::string const& udf,
                            is_null_aware,
                            user_data,
                            std::vector<transform_input_spec>{inputs.begin(), inputs.end()},
-                           std::vector<transform_output_spec>{outputs.begin(), outputs.end()});
+                           std::vector<transform_output_spec>{outputs.begin(), outputs.end()},
+                           std::string_view{},
+                           cudf::lto_fragments{});
 }
 
 transform_program::transform_program(
@@ -1213,7 +1197,9 @@ std::unique_ptr<table> transform_program::run(std::span<transform_input const> i
                            std::move(string_offsets),
                            &impl_->kernel_,
                            stream,
-                           mr);
+                           mr,
+                           {},
+                           {});
 }
 
 std::unique_ptr<table> transform_program::run(table_view const& table,

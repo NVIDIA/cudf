@@ -12,6 +12,17 @@
 #include <cuda/std/optional>
 #include <cuda/std/type_traits>
 
+/**
+ * @brief Declares a generated local from an `expected`, returning any error to the caller.
+ */
+#define CUDF_ROW_IR_PROPAGATE_ERROR(type, name, ...)                           \
+  type name{};                                                                  \
+  do {                                                                          \
+    auto cudf_row_ir_result = (__VA_ARGS__);                                    \
+    if (!cudf_row_ir_result.has_value()) { return cudf_row_ir_result.error(); } \
+    name = cudf_row_ir_result.value();                                          \
+  } while (false)
+
 namespace CUDF_EXPORT cudf {
 namespace detail::row_ir {
 
@@ -307,24 +318,41 @@ __device__ constexpr auto evaluate(cuda::std::optional<T>... args)
  *
  * @tparam is_null_aware Whether generated inputs and results use optional values
  * @tparam is_callee_null_aware Whether the callee accepts and produces optional values
+ * @tparam error_policy Whether to propagate an error or convert it to a null result
  * @tparam F The consumer device function
  * @tparam R The non-optional output type
  * @return The value the callee wrote, or its error code. A null input skips a non-null-aware
- * callee and produces null; a null-aware callee receives null inputs directly.
+ * callee and produces null; a null-aware callee receives null inputs directly. NULLIFY returns
+ * an optional value; PROPAGATE returns an expected value carrying any error.
  */
-template <bool is_null_aware, bool is_callee_null_aware, auto F, typename R, typename... T>
+template <bool is_null_aware,
+          bool is_callee_null_aware,
+          cudf::error_policy error_policy,
+          auto F,
+          typename R,
+          typename... T>
 __device__ constexpr auto invoke_udf(T... args)
 {
   static_assert(!is_callee_null_aware || is_null_aware,
                 "A null-aware callee requires optional generated values");
   using output_t = cuda::std::conditional_t<is_callee_null_aware, cuda::std::optional<R>, R>;
   using value_t  = cuda::std::conditional_t<is_null_aware, cuda::std::optional<R>, R>;
-  using result_t = cuda::std::expected<value_t, cudf::errc>;
+  static_assert(error_policy != cudf::error_policy::NULLIFY || is_null_aware,
+                "NULLIFY requires optional generated values");
+  using result_t = cuda::std::conditional_t<error_policy == cudf::error_policy::NULLIFY,
+                                            value_t,
+                                            cuda::std::expected<value_t, cudf::errc>>;
 
   auto invoke = [](auto... values) -> result_t {
     output_t out{};
     auto const status = F(&out, values...);
-    if (status != cudf::errc::SUCCESS) { return cuda::std::unexpected{status}; }
+    if (status != cudf::errc::SUCCESS) {
+      if constexpr (error_policy == cudf::error_policy::NULLIFY) {
+        return {};
+      } else {
+        return cuda::std::unexpected{status};
+      }
+    }
     return out;
   };
 

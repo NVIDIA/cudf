@@ -190,7 +190,7 @@ expression const& jit::operation(ast::tree& tree,
 }
 
 expression const& jit::call(ast::tree& tree,
-                            ast::jit::function function,
+                            ast::jit::udf function,
                             std::vector<std::reference_wrapper<expression const>> args,
                             cudf::error_policy error_policy)
 {

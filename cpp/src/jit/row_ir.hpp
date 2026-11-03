@@ -290,11 +290,12 @@ struct [[nodiscard]] node {
 
   input_reference scale_reference_ = {};  ///< The index of the target scale as an IR input
 
+  std::optional<ast::jit::udf> udf_ = std::nullopt;  ///< The callee of a `UDF_CALL` node
+
   bool emitted_ = false;  ///< Whether the IR node has been emitted into the generated function
 
   node const* alias_ = nullptr;  ///< The equivalent IR node that this IR aliases, if any. This is
                                  ///< used to avoid emitting duplicate code for equivalent IR nodes.
-  std::optional<ast::jit::function> udf_ = std::nullopt;  ///< The callee of a `UDF_CALL` node
 
   /**
    * @brief Computes the structural hash of this node and its arguments.
@@ -384,7 +385,7 @@ struct [[nodiscard]] node {
    * @param error_policy How a row whose call fails is handled
    * @param args The arguments of the call
    */
-  node(ast::jit::function udf, error_policy error_policy, std::vector<std::unique_ptr<node>> args);
+  node(ast::jit::udf udf, error_policy error_policy, std::vector<std::unique_ptr<node>> args);
 
   /**
    * @brief Construct a new output reference IR node
@@ -455,7 +456,7 @@ struct [[nodiscard]] node {
    *
    * @return The callee, or std::nullopt for any other node
    */
-  [[nodiscard]] std::optional<ast::jit::function> get_udf() const;
+  [[nodiscard]] std::optional<ast::jit::udf> get_udf() const;
 
   /**
    * @brief Returns `false` if this node forwards nulls from its inputs to its output.

@@ -117,7 +117,7 @@ struct udf_call : public ast::expression {
    * @param args The arguments for this call
    * @param error_policy How a row whose call fails is handled
    */
-  udf_call(ast::jit::function function,
+  udf_call(ast::jit::udf function,
            std::vector<std::reference_wrapper<expression const>> args,
            cudf::error_policy error_policy)
     : function_{std::move(function)}, args_{std::move(args)}, error_policy_{error_policy}
@@ -135,7 +135,7 @@ struct udf_call : public ast::expression {
    *
    * @return The device function
    */
-  [[nodiscard]] ast::jit::function const& get_function() const { return function_; }
+  [[nodiscard]] ast::jit::udf const& get_function() const { return function_; }
 
   /**
    * @brief Get the type of the value the function writes.
@@ -183,7 +183,7 @@ struct udf_call : public ast::expression {
     cudf::detail::row_ir::ast_converter& visitor) const override;
 
  private:
-  ast::jit::function function_;
+  ast::jit::udf function_;
   std::vector<std::reference_wrapper<expression const>> args_;
   cudf::error_policy error_policy_ = cudf::error_policy::PROPAGATE;
 };

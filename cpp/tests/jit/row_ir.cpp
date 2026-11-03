@@ -239,11 +239,7 @@ TEST_F(RowIRCudaCodeGenTest, BinaryOperationOverflow)
 
     auto expected_code =
       R"***(int32_t tmp_0 = in_0;
-auto expected__tmp_1 = cudf::detail::row_ir::evaluate<cudf::detail::row_ir::opcode::ADD_OVERFLOW, cudf::error_policy::PROPAGATE>(tmp_0, tmp_0);
-if(!expected__tmp_1.has_value()) {
- return expected__tmp_1.error();
-}
-int32_t tmp_1 = expected__tmp_1.value();
+CUDF_ROW_IR_PROPAGATE_ERROR(int32_t, tmp_1, cudf::detail::row_ir::evaluate<cudf::detail::row_ir::opcode::ADD_OVERFLOW, cudf::error_policy::PROPAGATE>(tmp_0, tmp_0));
 )***";
 
     EXPECT_EQ(sink.get_code(), expected_code);
@@ -488,7 +484,7 @@ TEST_F(RowIRCudaCodeGenTest, UdfCallCSE)
   // of a pure callee share one evaluation; separate calls of an impure one are never merged.
   auto ref      = cudf::ast::column_reference{3};
   auto code_for = [&](bool is_pure) {
-    auto const function = cudf::ast::jit::function{
+    auto const function = cudf::ast::jit::udf{
       "f", is_pure, cudf::data_type{cudf::type_id::INT32}, {cudf::data_type{cudf::type_id::INT32}}};
     auto tree = cudf::ast::tree{};
     auto& one = cudf::ast::jit::call(tree, function, {ref});
@@ -506,11 +502,7 @@ TEST_F(RowIRCudaCodeGenTest, UdfCallCSE)
 __device__ cudf::errc compute_operation(int32_t* out_0, int32_t in_0)
 {
 int32_t tmp_0 = in_0;
-auto expected__tmp_1 = cudf::detail::row_ir::invoke_udf<false, false, &::f, int32_t>(tmp_0);
-if(!expected__tmp_1.has_value()) {
- return expected__tmp_1.error();
-}
-int32_t tmp_1 = expected__tmp_1.value();
+CUDF_ROW_IR_PROPAGATE_ERROR(int32_t, tmp_1, cudf::detail::row_ir::invoke_udf<false, false, cudf::error_policy::PROPAGATE, &::f, int32_t>(tmp_0));
 int32_t tmp_2 = cudf::detail::row_ir::evaluate<cudf::detail::row_ir::opcode::ADD, cudf::error_policy::PROPAGATE>(tmp_1, tmp_1);
 int32_t tmp_3 = tmp_2;
 *out_0 = tmp_3;
@@ -521,16 +513,8 @@ return cudf::errc::SUCCESS;
 __device__ cudf::errc compute_operation(int32_t* out_0, int32_t in_0)
 {
 int32_t tmp_0 = in_0;
-auto expected__tmp_1 = cudf::detail::row_ir::invoke_udf<false, false, &::f, int32_t>(tmp_0);
-if(!expected__tmp_1.has_value()) {
- return expected__tmp_1.error();
-}
-int32_t tmp_1 = expected__tmp_1.value();
-auto expected__tmp_2 = cudf::detail::row_ir::invoke_udf<false, false, &::f, int32_t>(tmp_0);
-if(!expected__tmp_2.has_value()) {
- return expected__tmp_2.error();
-}
-int32_t tmp_2 = expected__tmp_2.value();
+CUDF_ROW_IR_PROPAGATE_ERROR(int32_t, tmp_1, cudf::detail::row_ir::invoke_udf<false, false, cudf::error_policy::PROPAGATE, &::f, int32_t>(tmp_0));
+CUDF_ROW_IR_PROPAGATE_ERROR(int32_t, tmp_2, cudf::detail::row_ir::invoke_udf<false, false, cudf::error_policy::PROPAGATE, &::f, int32_t>(tmp_0));
 int32_t tmp_3 = cudf::detail::row_ir::evaluate<cudf::detail::row_ir::opcode::ADD, cudf::error_policy::PROPAGATE>(tmp_1, tmp_2);
 int32_t tmp_4 = tmp_3;
 *out_0 = tmp_4;

@@ -49,8 +49,12 @@ namespace jit {
  *
  * Supply the modules defining the function when evaluating the expression or constructing a
  * transform program. Modules may define any number of functions and reference other modules.
- * Their signatures must match this declaration; a mismatch has undefined behavior. Functions
- * must be row-local, without warp collectives, shared memory, or synchronization.
+ * Their signatures must match this declaration; a mismatch has undefined behavior. All calls to
+ * a given symbol in a JIT kernel must use a consistent ABI: the output pointer type and the
+ * number, order, and device types of input arguments must match, including the optional wrapping
+ * selected by `is_null_aware`.
+ *
+ * Functions must be row-local, without warp collectives, shared memory, or synchronization.
  *
  * Pure functions return equal results for equal arguments and have no required side effects.
  * Equal pure calls may share one evaluation. Set `is_pure` to false for functions that read a
@@ -61,14 +65,14 @@ namespace jit {
  * reporting. Codes at or above `errc::USER_RESERVED` belong to the consumer and are preserved
  * by `evaluation_error`.
  */
-struct function {
+struct udf {
   std::string symbol;                         ///< Unmangled device function name
   bool is_pure                       = true;  ///< Whether equal calls may share an evaluation
   data_type output_type              = {};    ///< Type written through the output pointer
   std::vector<data_type> input_types = {};    ///< Argument types, in order
   null_aware is_null_aware           = null_aware::NO;  ///< Whether the ABI uses optional values
 
-  bool operator==(function const&) const = default;
+  bool operator==(udf const&) const = default;
 };
 
 /**
@@ -88,7 +92,7 @@ struct function {
 [[gnu::no_dangling]]
 #endif
 expression const& call(ast::tree& tree,
-                       ast::jit::function function,
+                       ast::jit::udf function,
                        std::vector<std::reference_wrapper<expression const>> args,
                        cudf::error_policy error_policy = cudf::error_policy::PROPAGATE);
 }  // namespace jit

@@ -70,7 +70,7 @@ to get up-and-running with cuDF.
    cudf_polars/index
    libcudf/index
    pylibcudf/index
-   java/index
+   Java <java/index>
 
 .. toctree::
    :maxdepth: 1

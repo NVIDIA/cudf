@@ -6,8 +6,12 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from coverage import CoverageData
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -168,3 +172,52 @@ def test_candidate_context_filter_excludes_non_ordinary_behavior() -> None:
     assert not analyzer._is_review_context(
         "tests/unit/operations/test_group_by.py::test_group_by_skew_kurtosis|run"
     )
+
+
+def test_main_writes_provenance_and_contexts(tmp_path, monkeypatch) -> None:
+    analyzer = _load_analyzer()
+    source = str(tmp_path / "cudf_polars" / "dsl" / "translate.py")
+    local_path = tmp_path / ".coverage.local"
+    upstream_path = tmp_path / ".coverage.upstream"
+    local = CoverageData(basename=str(local_path))
+    local.set_context("tests/test_join.py::test_join|run")
+    local.add_lines({source: {10, 11}})
+    local.write()
+    upstream = CoverageData(basename=str(upstream_path))
+    upstream.set_context("tests/unit/test_join.py::test_join|run")
+    upstream.add_lines({source: {10, 12}})
+    upstream.write()
+    output = tmp_path / "reports"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "analyze_cudf_polars_coverage.py",
+            "--local-data",
+            str(local_path),
+            "--upstream-data",
+            str(upstream_path),
+            "--output-dir",
+            str(output),
+            "--cudf-sha",
+            "cudf-sha",
+            "--polars-sha",
+            "polars-sha",
+            "--polars-version",
+            "2.1.0",
+        ],
+    )
+
+    analyzer.main()
+
+    report = json.loads((output / "coverage-comparison.json").read_text())
+    assert report["provenance"] == {
+        "cudf_sha": "cudf-sha",
+        "polars_sha": "polars-sha",
+        "polars_version": "2.1.0",
+    }
+    assert report["files"][source]["both"][0]["local_contexts"] == [
+        "tests/test_join.py::test_join|run"
+    ]
+    assert (output / "index.html").is_file()
+    assert (output / "upstream-review-candidates.html").is_file()

@@ -1774,7 +1774,13 @@ struct descriptor_path_builder {
     auto plan = plan_destination_mask(src, nullify, num_rows, bands_enabled);
     // Strings are NOT carved (chars bytes unknowable until the scan readback); their
     // destination masks keep the stock allocation regime.
-    if (plan.skip_data) {
+    // A zero-row source is excluded from the live cohort by the assemble step, so its
+    // UNINITIALIZED plan (NULLIFY on a source with no nulls) never reaches the kernel that
+    // would write its mask: the empty-source completion would build a garbage mask with a
+    // placeholder 0 null count where stock yields all-null. Every gathered row is
+    // out-of-bounds for such a source, so it is exactly an all-null destination: build it
+    // inline like the all-null case.
+    if (plan.skip_data or src.size() == 0) {
       // All-null source: ALL_NULL mask, undefined payload, no scan entry. The
       // destination must still be a full strings column (full-size offsets
       // child, empty chars) — `allocate_like` is fixed-width-only, so the

@@ -423,69 +423,6 @@ def _read_with_hybrid_scan(
     ).select(list(schema.keys()))
 
 
-def _read_lake_file_with_hybrid_scan(
-    base_scan: Scan,
-    paths: list[str],
-    hive_parts: PerPathValues | None,
-    lake_options: LakehouseScanOptions,
-    cached_info: CachedParquetInfo,
-    row_group_indices: list[int],
-    parquet_options: ParquetOptions,
-    stream: Stream,
-    *,
-    split_index: int,
-    total_splits: int,
-) -> DataFrame:
-    """Hybrid scan read of one Iceberg or Delta data file onto the table schema."""
-    assert base_scan.predicate is not None
-    hive_names = frozenset(hive_parts.names) if hive_parts is not None else frozenset()
-    file_schema = {
-        name: dtype
-        for name, dtype in base_scan.schema.items()
-        if name not in hive_names
-    }
-
-    def hybrid_read(
-        column_names: list[str], plc_filter: plc_expr.Expression
-    ) -> tuple[Sequence[plc.Column], list[plc.io.types.ColumnNameSpec]] | None:
-        return _hybrid_scan_columns(
-            paths,
-            column_names,
-            column_names,
-            plc_filter,
-            row_group_indices,
-            stream,
-            cached_info,
-            split_index=split_index,
-            total_splits=total_splits,
-            stats_pruning=parquet_options._hybrid_scan_stats_pruning,
-        )
-
-    df, _, _, exact = read_lake_files(
-        paths,
-        lake_options,
-        file_schema,
-        base_scan.with_columns,
-        [cached_info],
-        base_scan.predicate.value,
-        hybrid_read=hybrid_read,
-        stream=stream,
-    )
-    partition_values = (
-        Scan._lake_partition_values(lake_options, file_schema, base_scan.with_columns)
-        if lake_options.partition_values
-        else None
-    )
-    for parts in (partition_values, hive_parts):
-        if parts is not None:
-            df = df.with_columns(
-                parts.broadcast(df.num_rows, stream=stream), stream=stream
-            )
-    return apply_predicate(
-        df.select(list(base_scan.schema)), None if exact else base_scan.predicate
-    )
-
-
 class ParquetScanTaskBounds(NamedTuple):
     """
     Read bounds for a parquet scan task.
@@ -840,19 +777,6 @@ class ParquetScanTask(ScanTask):
             assert base_scan.predicate is not None
             assert task_parquet_info is not None
             stream = context.get_cuda_stream()
-            if lake_options is not None:
-                return _read_lake_file_with_hybrid_scan(
-                    base_scan,
-                    paths,
-                    hive_parts,
-                    lake_options,
-                    task_parquet_info[0],
-                    bounds.row_groups[0],
-                    parquet_options,
-                    stream,
-                    split_index=split_index,
-                    total_splits=total_splits,
-                )
             hive_names = (
                 frozenset(hive_parts.names) if hive_parts is not None else frozenset()
             )
@@ -861,6 +785,55 @@ class ParquetScanTask(ScanTask):
                 for name, dtype in base_scan.schema.items()
                 if name not in hive_names
             }
+            if lake_options is not None:
+                cached_info = task_parquet_info[0]
+                row_group_indices = bounds.row_groups[0]
+
+                def hybrid_read(
+                    column_names: list[str], plc_filter: plc_expr.Expression
+                ) -> (
+                    tuple[Sequence[plc.Column], list[plc.io.types.ColumnNameSpec]]
+                    | None
+                ):
+                    return _hybrid_scan_columns(
+                        paths,
+                        column_names,
+                        column_names,
+                        plc_filter,
+                        row_group_indices,
+                        stream,
+                        cached_info,
+                        split_index=split_index,
+                        total_splits=total_splits,
+                        stats_pruning=parquet_options._hybrid_scan_stats_pruning,
+                    )
+
+                df, _, _, exact = read_lake_files(
+                    paths,
+                    lake_options,
+                    file_schema,
+                    base_scan.with_columns,
+                    [cached_info],
+                    base_scan.predicate.value,
+                    hybrid_read=hybrid_read,
+                    stream=stream,
+                )
+                partition_values = (
+                    Scan._lake_partition_values(
+                        lake_options, file_schema, base_scan.with_columns
+                    )
+                    if lake_options.partition_values
+                    else None
+                )
+                for parts in (partition_values, hive_parts):
+                    if parts is not None:
+                        df = df.with_columns(
+                            parts.broadcast(df.num_rows, stream=stream), stream=stream
+                        )
+                return apply_predicate(
+                    df.select(list(base_scan.schema)),
+                    None if exact else base_scan.predicate,
+                )
             file_columns = (
                 None
                 if base_scan.with_columns is None

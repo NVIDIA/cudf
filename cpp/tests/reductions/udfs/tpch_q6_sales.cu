@@ -63,4 +63,39 @@ __device__ errc tpch_q6_sales_finalize(optional_int64* out_sum,
   return errc::SUCCESS;
 }
 
+__device__ errc tpch_q6_sales_segment_init(size_type, optional_int64* sum, optional_int64* count)
+{
+  return tpch_q6_sales_init(sum, count);
+}
+
+__device__ errc tpch_q6_sales_segment_update(size_type,
+                                             size_type row,
+                                             optional_int64* sum,
+                                             optional_int64* count,
+                                             cuda::std::optional<int32_t> price,
+                                             cuda::std::optional<int32_t> quantity,
+                                             cuda::std::optional<bool> active)
+{
+  return tpch_q6_sales_update(row, sum, count, price, quantity, active);
+}
+
+__device__ errc tpch_q6_sales_segment_merge(size_type,
+                                            optional_int64* sum,
+                                            optional_int64* count,
+                                            optional_int64 other_sum,
+                                            optional_int64 other_count)
+{
+  return tpch_q6_sales_merge(sum, count, other_sum, other_count);
+}
+
+__device__ errc tpch_q6_sales_segment_finalize(size_type,
+                                               optional_int64* out_sum,
+                                               optional_int64* out_count,
+                                               cuda::std::optional<double>* out_average,
+                                               optional_int64 sum,
+                                               optional_int64 count)
+{
+  return tpch_q6_sales_finalize(out_sum, out_count, out_average, sum, count);
+}
+
 }  // extern "C"

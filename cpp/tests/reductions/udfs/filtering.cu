@@ -47,6 +47,20 @@ __device__ errc checked_mask_update(
   return checked_update(row, sum, count, value);
 }
 
+__device__ errc segment_mask_filter(
+  size_type segment, size_type row, bool* selected, optional_int32 value, void* user_data)
+{
+  auto const error = mask_filter(row, selected, value, user_data);
+  *selected        = *selected && segment != 1;
+  return error;
+}
+
+__device__ errc checked_segment_mask_update(
+  size_type, size_type row, optional_int64* sum, optional_int64* count, optional_int32 value, void*)
+{
+  return checked_update(row, sum, count, value);
+}
+
 __device__ errc raw_mask_filter(size_type row, bool* selected, int32_t value, void* user_data)
 {
   return mask_filter(row, selected, value, user_data);

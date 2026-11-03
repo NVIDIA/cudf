@@ -12,7 +12,6 @@ shared memory base pointer as their last argument.  gpu.dynamic_shared_memory
 only works inside kernels; device functions must receive it externally.
 """
 
-import operator
 from functools import lru_cache
 
 from numba_cuda_mlir._mlir import ir
@@ -27,9 +26,7 @@ from numba_cuda_mlir.numba_cuda import types as nb_types
 # Shared-memory layout (must match cooperative.py)
 # ---------------------------------------------------------------------------
 
-_SHM_BROADCAST_OFFSET = 0   # bytes 0..7:  data ptr slot
-_SHM_MI_SLOT = 8            # bytes 8..15: meminfo ptr slot
-_SHM_REDUCTION_OFFSET = 16  # bytes 16+:   reduction scratch
+_SHM_REDUCTION_OFFSET = 16  # bytes 16+:   reduction scratch (0..15 reserved)
 _MAX_BLOCK_SIZE = 1024
 
 
@@ -73,11 +70,6 @@ def _dtype_tag(dtype):
             nb_types.int64: "i64", nb_types.int32: "i32"}[dtype]
 
 
-def _op_tag(op):
-    return {operator.add: "add", operator.sub: "sub", operator.mul: "mul",
-            operator.truediv: "div"}[op]
-
-
 def _zero_val(mlir_ty):
     if isinstance(mlir_ty, ir.F64Type): return arith.constant(mlir_ty, 0.0)
     if isinstance(mlir_ty, ir.F32Type): return arith.constant(mlir_ty, 0.0)
@@ -111,43 +103,9 @@ def _bdim_x():
     return arith.index_castui(T.i64(), gpu.block_dim("x"))
 
 
-def _call_nrt(gpu_mod, name, arg_types, result_types, args):
-    ft = ir.FunctionType.get(arg_types, result_types)
-    callee = get_or_insert_function(name, ft, gpu_mod)
-    return func.call(
-        result=result_types, callee=callee.name.value, operands_=args,
-    )
-
-
-def _shm_ptr_at(base_ptr, byte_offset):
-    """GEP from raw shm base to a specific byte offset (generic addr space)."""
-    return llvm.getelementptr(
-        _ptr(), base_ptr, [_const_i64(byte_offset)],
-        [GEP_DYNAMIC_INDEX], T.i8(), None,
-    )
-
-
-def _arith_op_emit(op, lhs, rhs, mlir_ty):
-    if isinstance(mlir_ty, (ir.F64Type, ir.F32Type)):
-        if op is operator.add: return arith.addf(lhs, rhs)
-        if op is operator.sub: return arith.subf(lhs, rhs)
-        if op is operator.mul: return arith.mulf(lhs, rhs)
-        if op is operator.truediv: return arith.divf(lhs, rhs)
-    elif isinstance(mlir_ty, ir.IntegerType):
-        if op is operator.add: return arith.addi(lhs, rhs)
-        if op is operator.sub: return arith.subi(lhs, rhs)
-        if op is operator.mul: return arith.muli(lhs, rhs)
-        if op is operator.truediv: return arith.divsi(lhs, rhs)
-    raise NotImplementedError
-
-
 # ---------------------------------------------------------------------------
 # Function name convention
 # ---------------------------------------------------------------------------
-
-def binop_func_name(op, dtype):
-    return f"_coop_{_op_tag(op)}_{_dtype_tag(dtype)}"
-
 
 def sum_func_name(dtype):
     return f"_coop_sum_{_dtype_tag(dtype)}"
@@ -185,18 +143,6 @@ def idxmin_func_name(dtype):
     return f"_coop_idxmin_{_dtype_tag(dtype)}"
 
 
-def exp_func_name(dtype):
-    return f"_coop_exp_{_dtype_tag(dtype)}"
-
-
-def scalar_binop_func_name(op, dtype):
-    return f"_coop_s{_op_tag(op)}_{_dtype_tag(dtype)}"
-
-
-def scalar_rbinop_func_name(op, dtype):
-    return f"_coop_rs{_op_tag(op)}_{_dtype_tag(dtype)}"
-
-
 # ---------------------------------------------------------------------------
 # Shared-memory helpers for address-space-3 access in device functions
 # ---------------------------------------------------------------------------
@@ -213,68 +159,6 @@ def _shm3_base(shm_generic_ptr, byte_offset):
 # ---------------------------------------------------------------------------
 # Module builders: each returns a complete MLIR module string
 # ---------------------------------------------------------------------------
-
-def _build_binop_module(op, dtype):
-    """Build MLIR module for _coop_{op}_{dtype}(ptr lhs, ptr rhs, i64 size, ptr shm) -> void.
-
-    Results written to shm:
-        shm[0..7]  = data pointer (broadcast from thread 0)
-        shm[8..15] = meminfo pointer (thread 0 only)
-    """
-    elem_bytes = _dtype_byte_size(dtype)
-    name = binop_func_name(op, dtype)
-
-    with context.get_context(), ir.Location.unknown():
-        elem_ty = _dtype_mlir_type(dtype)
-        module = ir.Module.create()
-        with ir.InsertionPoint(module.body):
-            gpu_mod = gpu.GPUModuleOp(sym_name=f"{name}_module")
-
-        body = gpu_mod.bodyRegion.blocks.append()
-        ft = ir.FunctionType.get([_ptr(), _ptr(), T.i64(), _ptr()], [])
-        with ir.InsertionPoint(body):
-            fn = func.FuncOp(name=name, type=ft, visibility="public")
-            entry = fn.add_entry_block()
-
-        with ir.InsertionPoint(entry):
-            lhs_data, rhs_data, size, shm_base = fn.arguments
-
-            data_slot = _shm_ptr_at(shm_base, _SHM_BROADCAST_OFFSET)
-            mi_slot = _shm_ptr_at(shm_base, _SHM_MI_SLOT)
-
-            tid = _tid_x()
-            is_t0 = arith.cmpi(arith.CmpIPredicate.eq, tid, _const_i64(0))
-            alloc_bytes = arith.muli(size, _const_i64(elem_bytes))
-            alloc_bytes = arith.maxui(alloc_bytes, _const_i64(1))
-
-            t0_if = scf.IfOp(is_t0, results_=[], has_else=False)
-            with ir.InsertionPoint(t0_if.then_block):
-                mi_val = _call_nrt(gpu_mod, "NRT_MemInfo_new_varsize",
-                                   [T.i64()], [_ptr()], [alloc_bytes])
-                data_val = _call_nrt(gpu_mod, "NRT_MemInfo_data_fast",
-                                     [_ptr()], [_ptr()], [mi_val])
-                llvm.store(data_val, data_slot)
-                llvm.store(mi_val, mi_slot)
-                scf.YieldOp([])
-            gpu.barrier()
-
-            out_data = llvm.load(_ptr(), data_slot)
-            bdim = _bdim_x()
-            loop = scf.ForOp(tid, size, bdim, [])
-            with ir.InsertionPoint(loop.body):
-                i = loop.induction_variable
-                a = llvm.load(elem_ty, _gep_typed(lhs_data, i, elem_ty))
-                b = llvm.load(elem_ty, _gep_typed(rhs_data, i, elem_ty))
-                r = _arith_op_emit(op, a, b, elem_ty)
-                llvm.store(r, _gep_typed(out_data, i, elem_ty))
-                scf.YieldOp([])
-            gpu.barrier()
-
-            func.ReturnOp([])
-
-        return str(module)
-
-
 def _build_sum_module(dtype):
     """Build MLIR module for _coop_sum_{dtype}(ptr data, i64 size, ptr shm) -> scalar.
 
@@ -945,191 +829,6 @@ def _build_idxmax_module(dtype):
 
 def _build_idxmin_module(dtype):
     return _build_idx_module(dtype, is_max=False)
-
-
-def _build_exp_module(dtype):
-    """Build MLIR module for _coop_exp_{dtype}(ptr data, i64 size, ptr shm) -> void.
-
-    Element-wise: out[i] = exp(in[i]).
-    Results written to shm (same layout as binop).
-    """
-    elem_bytes = _dtype_byte_size(dtype)
-    name = exp_func_name(dtype)
-
-    with context.get_context(), ir.Location.unknown():
-        from numba_cuda_mlir._mlir.dialects import math as mlir_math
-
-        elem_ty = _dtype_mlir_type(dtype)
-        module = ir.Module.create()
-        with ir.InsertionPoint(module.body):
-            gpu_mod = gpu.GPUModuleOp(sym_name=f"{name}_module")
-
-        body = gpu_mod.bodyRegion.blocks.append()
-        ft = ir.FunctionType.get([_ptr(), T.i64(), _ptr()], [])
-        with ir.InsertionPoint(body):
-            fn = func.FuncOp(name=name, type=ft, visibility="public")
-            entry = fn.add_entry_block()
-
-        with ir.InsertionPoint(entry):
-            in_data, size, shm_base = fn.arguments
-
-            data_slot = _shm_ptr_at(shm_base, _SHM_BROADCAST_OFFSET)
-            mi_slot = _shm_ptr_at(shm_base, _SHM_MI_SLOT)
-
-            tid = _tid_x()
-            is_t0 = arith.cmpi(arith.CmpIPredicate.eq, tid, _const_i64(0))
-            alloc_bytes = arith.muli(size, _const_i64(elem_bytes))
-            alloc_bytes = arith.maxui(alloc_bytes, _const_i64(1))
-
-            t0_if = scf.IfOp(is_t0, results_=[], has_else=False)
-            with ir.InsertionPoint(t0_if.then_block):
-                mi_val = _call_nrt(gpu_mod, "NRT_MemInfo_new_varsize",
-                                   [T.i64()], [_ptr()], [alloc_bytes])
-                data_val = _call_nrt(gpu_mod, "NRT_MemInfo_data_fast",
-                                     [_ptr()], [_ptr()], [mi_val])
-                llvm.store(data_val, data_slot)
-                llvm.store(mi_val, mi_slot)
-                scf.YieldOp([])
-            gpu.barrier()
-
-            out_data = llvm.load(_ptr(), data_slot)
-            bdim = _bdim_x()
-            loop = scf.ForOp(tid, size, bdim, [])
-            with ir.InsertionPoint(loop.body):
-                i = loop.induction_variable
-                a = llvm.load(elem_ty, _gep_typed(in_data, i, elem_ty))
-                if isinstance(elem_ty, (ir.F64Type, ir.F32Type)):
-                    r = mlir_math.exp(a)
-                else:
-                    a_f = arith.sitofp(elem_ty, a)
-                    r = mlir_math.exp(a_f)
-                llvm.store(r, _gep_typed(out_data, i, elem_ty))
-                scf.YieldOp([])
-            gpu.barrier()
-
-            func.ReturnOp([])
-
-        return str(module)
-
-
-def _build_scalar_binop_module(op, dtype):
-    """Build MLIR module for _coop_s{op}_{dtype}(ptr arr, scalar, i64 size, ptr shm) -> void.
-
-    Element-wise: out[i] = arr[i] op scalar.
-    Results written to shm (same layout as binop).
-    """
-    elem_bytes = _dtype_byte_size(dtype)
-    name = scalar_binop_func_name(op, dtype)
-
-    with context.get_context(), ir.Location.unknown():
-        elem_ty = _dtype_mlir_type(dtype)
-        module = ir.Module.create()
-        with ir.InsertionPoint(module.body):
-            gpu_mod = gpu.GPUModuleOp(sym_name=f"{name}_module")
-
-        body = gpu_mod.bodyRegion.blocks.append()
-        ft = ir.FunctionType.get([_ptr(), elem_ty, T.i64(), _ptr()], [])
-        with ir.InsertionPoint(body):
-            fn = func.FuncOp(name=name, type=ft, visibility="public")
-            entry = fn.add_entry_block()
-
-        with ir.InsertionPoint(entry):
-            arr_data, scalar_val, size, shm_base = fn.arguments
-
-            data_slot = _shm_ptr_at(shm_base, _SHM_BROADCAST_OFFSET)
-            mi_slot = _shm_ptr_at(shm_base, _SHM_MI_SLOT)
-
-            tid = _tid_x()
-            is_t0 = arith.cmpi(arith.CmpIPredicate.eq, tid, _const_i64(0))
-            alloc_bytes = arith.muli(size, _const_i64(elem_bytes))
-            alloc_bytes = arith.maxui(alloc_bytes, _const_i64(1))
-
-            t0_if = scf.IfOp(is_t0, results_=[], has_else=False)
-            with ir.InsertionPoint(t0_if.then_block):
-                mi_val = _call_nrt(gpu_mod, "NRT_MemInfo_new_varsize",
-                                   [T.i64()], [_ptr()], [alloc_bytes])
-                data_val = _call_nrt(gpu_mod, "NRT_MemInfo_data_fast",
-                                     [_ptr()], [_ptr()], [mi_val])
-                llvm.store(data_val, data_slot)
-                llvm.store(mi_val, mi_slot)
-                scf.YieldOp([])
-            gpu.barrier()
-
-            out_data = llvm.load(_ptr(), data_slot)
-            bdim = _bdim_x()
-            loop = scf.ForOp(tid, size, bdim, [])
-            with ir.InsertionPoint(loop.body):
-                i = loop.induction_variable
-                a = llvm.load(elem_ty, _gep_typed(arr_data, i, elem_ty))
-                r = _arith_op_emit(op, a, scalar_val, elem_ty)
-                llvm.store(r, _gep_typed(out_data, i, elem_ty))
-                scf.YieldOp([])
-            gpu.barrier()
-
-            func.ReturnOp([])
-
-        return str(module)
-
-
-def _build_scalar_rbinop_module(op, dtype):
-    """Build MLIR module for _coop_rs{op}_{dtype}(ptr arr, scalar, i64 size, ptr shm) -> void.
-
-    Reversed element-wise: out[i] = scalar op arr[i].
-    Needed for non-commutative ops (sub, div) when scalar is on the LHS.
-    """
-    elem_bytes = _dtype_byte_size(dtype)
-    name = scalar_rbinop_func_name(op, dtype)
-
-    with context.get_context(), ir.Location.unknown():
-        elem_ty = _dtype_mlir_type(dtype)
-        module = ir.Module.create()
-        with ir.InsertionPoint(module.body):
-            gpu_mod = gpu.GPUModuleOp(sym_name=f"{name}_module")
-
-        body = gpu_mod.bodyRegion.blocks.append()
-        ft = ir.FunctionType.get([_ptr(), elem_ty, T.i64(), _ptr()], [])
-        with ir.InsertionPoint(body):
-            fn = func.FuncOp(name=name, type=ft, visibility="public")
-            entry = fn.add_entry_block()
-
-        with ir.InsertionPoint(entry):
-            arr_data, scalar_val, size, shm_base = fn.arguments
-
-            data_slot = _shm_ptr_at(shm_base, _SHM_BROADCAST_OFFSET)
-            mi_slot = _shm_ptr_at(shm_base, _SHM_MI_SLOT)
-
-            tid = _tid_x()
-            is_t0 = arith.cmpi(arith.CmpIPredicate.eq, tid, _const_i64(0))
-            alloc_bytes = arith.muli(size, _const_i64(elem_bytes))
-            alloc_bytes = arith.maxui(alloc_bytes, _const_i64(1))
-
-            t0_if = scf.IfOp(is_t0, results_=[], has_else=False)
-            with ir.InsertionPoint(t0_if.then_block):
-                mi_val = _call_nrt(gpu_mod, "NRT_MemInfo_new_varsize",
-                                   [T.i64()], [_ptr()], [alloc_bytes])
-                data_val = _call_nrt(gpu_mod, "NRT_MemInfo_data_fast",
-                                     [_ptr()], [_ptr()], [mi_val])
-                llvm.store(data_val, data_slot)
-                llvm.store(mi_val, mi_slot)
-                scf.YieldOp([])
-            gpu.barrier()
-
-            out_data = llvm.load(_ptr(), data_slot)
-            bdim = _bdim_x()
-            loop = scf.ForOp(tid, size, bdim, [])
-            with ir.InsertionPoint(loop.body):
-                i = loop.induction_variable
-                a = llvm.load(elem_ty, _gep_typed(arr_data, i, elem_ty))
-                r = _arith_op_emit(op, scalar_val, a, elem_ty)
-                llvm.store(r, _gep_typed(out_data, i, elem_ty))
-                scf.YieldOp([])
-            gpu.barrier()
-
-            func.ReturnOp([])
-
-        return str(module)
-
-
 # ---------------------------------------------------------------------------
 # Compilation: MLIR module string -> PTX bytes
 # ---------------------------------------------------------------------------
@@ -1182,13 +881,7 @@ def _compile_cooperative_func(func_key, cc):
     Returns PTX bytes.
     """
     kind = func_key[0]
-    if kind == "binop":
-        _, op_name, dtype_name = func_key
-        op = {"add": operator.add, "sub": operator.sub, "mul": operator.mul,
-              "div": operator.truediv}[op_name]
-        dtype = _TAG_TO_DTYPE[dtype_name]
-        mlir_str = _build_binop_module(op, dtype)
-    elif kind == "sum":
+    if kind == "sum":
         _, dtype_name = func_key
         dtype = _TAG_TO_DTYPE[dtype_name]
         mlir_str = _build_sum_module(dtype)
@@ -1224,22 +917,6 @@ def _compile_cooperative_func(func_key, cc):
         _, dtype_name = func_key
         dtype = _TAG_TO_DTYPE[dtype_name]
         mlir_str = _build_idxmin_module(dtype)
-    elif kind == "exp":
-        _, dtype_name = func_key
-        dtype = _TAG_TO_DTYPE[dtype_name]
-        mlir_str = _build_exp_module(dtype)
-    elif kind == "scalar_binop":
-        _, op_name, dtype_name = func_key
-        op = {"add": operator.add, "sub": operator.sub, "mul": operator.mul,
-              "div": operator.truediv}[op_name]
-        dtype = _TAG_TO_DTYPE[dtype_name]
-        mlir_str = _build_scalar_binop_module(op, dtype)
-    elif kind == "scalar_rbinop":
-        _, op_name, dtype_name = func_key
-        op = {"add": operator.add, "sub": operator.sub, "mul": operator.mul,
-              "div": operator.truediv}[op_name]
-        dtype = _TAG_TO_DTYPE[dtype_name]
-        mlir_str = _build_scalar_rbinop_module(op, dtype)
     else:
         raise ValueError(f"Unknown func_key kind: {kind}")
 

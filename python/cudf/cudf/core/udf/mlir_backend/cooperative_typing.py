@@ -256,29 +256,3 @@ def _make_unsupported_op_template(op):
 
 for _op in (*arith_ops, *comparison_ops, *bitwise_ops, *unary_ops):
     registry.register_global(_op)(_make_unsupported_op_template(_op))
-
-
-# ---------------------------------------------------------------------------
-# Factory stub: cooperative_array_from_ptr(data_ptr, size) -> CooperativeArray
-# ---------------------------------------------------------------------------
-
-def _cooperative_array_from_ptr_stub(data_ptr, size):
-    """Sentinel: construct a non-owning CooperativeArray from raw pointer and element count."""
-    raise NotImplementedError("device-only")
-
-
-class CoopFromPtrTemplate(AbstractTemplate):
-    key = _cooperative_array_from_ptr_stub
-
-    def generic(self, args, kws):
-        if len(args) == 2 and not kws:
-            if isinstance(args[0], types.Integer) and isinstance(args[1], types.Integer):
-                return nb_signature(_ca_f64, types.int64, types.int64)
-
-
-registry.register_global(
-    _cooperative_array_from_ptr_stub,
-    types.Function(CoopFromPtrTemplate),
-)
-
-cooperative_array_from_ptr = _cooperative_array_from_ptr_stub

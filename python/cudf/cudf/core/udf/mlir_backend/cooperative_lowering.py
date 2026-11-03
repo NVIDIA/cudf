@@ -1,16 +1,16 @@
 """
 Lowerings for CooperativeArrayType operations.
 
-Element-wise binops, .sum(), and .mean() are compiled as separate device
+Cooperative block reductions (.sum(), .mean(), .min(), .max(), .std(),
+.var(), .corr(), .idxmin(), .idxmax()) are compiled as separate device
 functions (see cooperative_device_funcs.py) and linked at link time.
 This module emits only declarations + func.call sites — no bodies — so
-the MLIR inliner cannot inline them.  This keeps kernel compilation
-O(N) instead of O(N²) for N binops.
+the MLIR inliner cannot inline them.
 
-The struct layout mirrors mlir_string: {ptr meminfo, ptr data, i64 size}.
+The struct layout mirrors mlir_string: non-owning views carry a null
+meminfo (bytes 0..7 of the {ptr meminfo, ptr data, i64 size, ptr index}
+struct); no NRT-managed array-returning operations are implemented.
 """
-
-import operator
 
 from numba_cuda_mlir._mlir import ir
 from numba_cuda_mlir._mlir.extras import types as T
@@ -151,15 +151,9 @@ def _gep_typed(base_ptr, index_i64, elem_mlir_type):
 # ---------------------------------------------------------------------------
 
 # Shared memory layout (fixed offsets):
-#   bytes 0..7:    data pointer slot (broadcast from thread 0)
-#   bytes 8..15:   meminfo pointer slot (thread 0 writes)
+#   bytes 0..15:    reserved (meminfo slot for a future owning CooperativeArray)
 #   bytes 16..8207: reduction scratch (1024 x f64)
-_SHM_BROADCAST_OFFSET = 0
-_SHM_MI_SLOT = 8
 _SHM_REDUCTION_OFFSET = 16
-
-
-_MEMINFO_SIZEOF = 40  # must match nrt_mlir._MEMINFO_SIZEOF
 
 
 def _shm_base_ptr(builder):
@@ -176,80 +170,8 @@ def _shm_base_ptr(builder):
     return llvm.addrspacecast(_ptr(), ptr3)
 
 
-def _shm_ptr_at_offset(builder, byte_offset):
-    """Get a raw generic llvm.ptr to dynamic shared memory + byte offset."""
-    base = _shm_base_ptr(builder)
-    return llvm.getelementptr(
-        _ptr(), base, [_const_i64(byte_offset)],
-        [GEP_DYNAMIC_INDEX], T.i8(), None,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Element-wise binary ops: thin call to separately-compiled device function
-# ---------------------------------------------------------------------------
-
-def _lower_binop(builder, target, args, kwargs, op):
-    """Emit a call to the outlined _coop_{op}_{dtype} device function.
-
-    The function is compiled to a separate PTX module and linked at
-    link time.  Only a declaration is inserted into the kernel's
-    gpu.module — no body for the inliner to see.
-    """
-    from cudf.core.udf.mlir_backend.cooperative_device_funcs import (
-        binop_func_name, register_needed_func, _op_tag, _dtype_tag,
-    )
-
-    lhs_val = builder.load_var(args[0])
-    rhs_val = builder.load_var(args[1])
-    target_type = builder.get_numba_type(target.name)
-    dtype = target_type.dtype
-
-    lhs_data = ca_extract_data(lhs_val)
-    rhs_data = ca_extract_data(rhs_val)
-    size = ca_extract_size(lhs_val)
-
-    shm = _shm_base_ptr(builder)
-    fname = binop_func_name(op, dtype)
-    ft = ir.FunctionType.get([_ptr(), _ptr(), T.i64(), _ptr()], [])
-    gm = builder.mlir_gpu_module
-    callee = get_or_insert_function(fname, ft, gm)
-    func.call(result=[], callee=callee.name.value,
-              operands_=[lhs_data, rhs_data, size, shm])
-
-    # The outlined function writes data ptr to shm[0] and meminfo to shm[8].
-    # Read them back here.
-    data_slot = _shm_ptr_at_offset(builder, _SHM_BROADCAST_OFFSET)
-    mi_slot = _shm_ptr_at_offset(builder, _SHM_MI_SLOT)
-    out_data = llvm.load(_ptr(), data_slot)
-
-    tid = _tid_x()
-    is_t0 = arith.cmpi(arith.CmpIPredicate.eq, tid, _const_i64(0))
-    null_ptr = llvm.ZeroOp(_ptr())
-    mi_if = scf.IfOp(is_t0, results_=[_ptr()], has_else=True)
-    with ir.InsertionPoint(mi_if.then_block):
-        scf.YieldOp([llvm.load(_ptr(), mi_slot)])
-    with ir.InsertionPoint(mi_if.else_block):
-        scf.YieldOp([null_ptr])
-    out_mi = mi_if.results[0]
-
-    result = build_cooperative_array(out_mi, out_data, size)
-    builder.store_var(target, result)
-
-    register_needed_func(builder.metadata,
-                         ("binop", _op_tag(op), _dtype_tag(dtype)))
-
-
+# Dtypes with cooperative reduction support.
 _SUPPORTED_DTYPES = (nb_types.float64, nb_types.float32, nb_types.int64, nb_types.int32)
-
-for _dt in _SUPPORTED_DTYPES:
-    _ca = CooperativeArrayType(_dt)
-    for _op in (operator.add, operator.sub, operator.mul, operator.truediv):
-        def _make_lower(op, ca_type):
-            @registry.lower(op, ca_type, ca_type)
-            def _lower(builder, target, args, kwargs, _op=op):
-                _lower_binop(builder, target, args, kwargs, _op)
-        _make_lower(_op, _ca)
 
 
 # ---------------------------------------------------------------------------
@@ -713,169 +635,6 @@ for _dt in _SUPPORTED_DTYPES:
                 DeferredMethodCall(value, _lower_idxmin_with_release),
             )
     _make_idx_lower(CooperativeArrayType(_dt))
-
-
-# ---------------------------------------------------------------------------
-# .exp() element-wise: thin call to separately-compiled device function
-# ---------------------------------------------------------------------------
-
-def _lower_exp(builder, target, args, kwargs):
-    """Emit a call to the outlined _coop_exp_{dtype} device function."""
-    from cudf.core.udf.mlir_backend.cooperative_device_funcs import (
-        exp_func_name, register_needed_func, _dtype_tag,
-    )
-
-    self_var = args[0]
-    ca_val = builder.load_var(self_var)
-    ca_type = builder.get_numba_type(self_var.name)
-    dtype = ca_type.dtype
-
-    data = ca_extract_data(ca_val)
-    size = ca_extract_size(ca_val)
-
-    shm = _shm_base_ptr(builder)
-    fname = exp_func_name(dtype)
-    ft = ir.FunctionType.get([_ptr(), T.i64(), _ptr()], [])
-    gm = builder.mlir_gpu_module
-    callee = get_or_insert_function(fname, ft, gm)
-    func.call(result=[], callee=callee.name.value,
-              operands_=[data, size, shm])
-
-    data_slot = _shm_ptr_at_offset(builder, _SHM_BROADCAST_OFFSET)
-    mi_slot = _shm_ptr_at_offset(builder, _SHM_MI_SLOT)
-    out_data = llvm.load(_ptr(), data_slot)
-
-    tid = _tid_x()
-    is_t0 = arith.cmpi(arith.CmpIPredicate.eq, tid, _const_i64(0))
-    null_ptr = llvm.ZeroOp(_ptr())
-    mi_if = scf.IfOp(is_t0, results_=[_ptr()], has_else=True)
-    with ir.InsertionPoint(mi_if.then_block):
-        scf.YieldOp([llvm.load(_ptr(), mi_slot)])
-    with ir.InsertionPoint(mi_if.else_block):
-        scf.YieldOp([null_ptr])
-    out_mi = mi_if.results[0]
-
-    result = build_cooperative_array(out_mi, out_data, size)
-    builder.store_var(target, result)
-
-    register_needed_func(builder.metadata, ("exp", _dtype_tag(dtype)))
-
-
-def _lower_exp_with_release(builder, target, args, kwargs):
-    self_var = args[0]
-    _lower_exp(builder, target, args, kwargs)
-    ca_val = builder.load_var(self_var)
-    mi = ca_extract_meminfo(ca_val)
-    _call_nrt(builder.mlir_gpu_module, "NRT_decref", [_ptr()], [], [mi])
-
-
-for _dt in _SUPPORTED_DTYPES:
-    def _make_exp_lower(ca_type):
-        @registry.lower_getattr(ca_type, "exp")
-        def _lower_ca_exp_attr(context, builder, target, value, attr=None):
-            ca_val = builder.load_var(value)
-            mi = ca_extract_meminfo(ca_val)
-            _call_nrt(builder.mlir_gpu_module, "NRT_incref", [_ptr()], [], [mi])
-            builder.store_var(target, DeferredMethodCall(value, _lower_exp_with_release))
-    _make_exp_lower(CooperativeArrayType(_dt))
-
-
-# ---------------------------------------------------------------------------
-# Scalar broadcast binops: CooperativeArray op scalar -> CooperativeArray
-# ---------------------------------------------------------------------------
-
-def _lower_scalar_binop(builder, target, args, kwargs, op, arr_is_lhs):
-    """Emit a call to the outlined scalar binop device function."""
-    from cudf.core.udf.mlir_backend.cooperative_device_funcs import (
-        scalar_binop_func_name, scalar_rbinop_func_name,
-        register_needed_func, _op_tag, _dtype_tag,
-    )
-
-    if arr_is_lhs:
-        arr_val = builder.load_var(args[0])
-        scalar_val = builder.load_var(args[1])
-    else:
-        scalar_val = builder.load_var(args[0])
-        arr_val = builder.load_var(args[1])
-
-    target_type = builder.get_numba_type(target.name)
-    dtype = target_type.dtype
-    elem_ty = _dtype_mlir_type(dtype)
-
-    arr_data = ca_extract_data(arr_val)
-    size = ca_extract_size(arr_val)
-
-    from numba_cuda_mlir.lowering_utilities import convert
-    scalar_cast = convert(scalar_val, elem_ty)
-
-    use_reversed = (not arr_is_lhs) and op in (operator.sub, operator.truediv)
-
-    shm = _shm_base_ptr(builder)
-    if use_reversed:
-        fname = scalar_rbinop_func_name(op, dtype)
-        func_key = ("scalar_rbinop", _op_tag(op), _dtype_tag(dtype))
-    else:
-        fname = scalar_binop_func_name(op, dtype)
-        func_key = ("scalar_binop", _op_tag(op), _dtype_tag(dtype))
-    ft = ir.FunctionType.get([_ptr(), elem_ty, T.i64(), _ptr()], [])
-    gm = builder.mlir_gpu_module
-    callee = get_or_insert_function(fname, ft, gm)
-    func.call(result=[], callee=callee.name.value,
-              operands_=[arr_data, scalar_cast, size, shm])
-
-    data_slot = _shm_ptr_at_offset(builder, _SHM_BROADCAST_OFFSET)
-    mi_slot = _shm_ptr_at_offset(builder, _SHM_MI_SLOT)
-    out_data = llvm.load(_ptr(), data_slot)
-
-    tid = _tid_x()
-    is_t0 = arith.cmpi(arith.CmpIPredicate.eq, tid, _const_i64(0))
-    null_ptr = llvm.ZeroOp(_ptr())
-    mi_if = scf.IfOp(is_t0, results_=[_ptr()], has_else=True)
-    with ir.InsertionPoint(mi_if.then_block):
-        scf.YieldOp([llvm.load(_ptr(), mi_slot)])
-    with ir.InsertionPoint(mi_if.else_block):
-        scf.YieldOp([null_ptr])
-    out_mi = mi_if.results[0]
-
-    result = build_cooperative_array(out_mi, out_data, size)
-    builder.store_var(target, result)
-
-    register_needed_func(builder.metadata, func_key)
-
-
-for _dt in _SUPPORTED_DTYPES:
-    _ca = CooperativeArrayType(_dt)
-    for _op in (operator.add, operator.sub, operator.mul, operator.truediv):
-        for _scalar_ty in (nb_types.int64, nb_types.int32, nb_types.float64, nb_types.float32):
-            def _make_scalar_lower(op, ca_type, scalar_type):
-                @registry.lower(op, ca_type, scalar_type)
-                def _lower_arr_op_scalar(builder, target, args, kwargs, _op=op):
-                    _lower_scalar_binop(builder, target, args, kwargs, _op, arr_is_lhs=True)
-
-                @registry.lower(op, scalar_type, ca_type)
-                def _lower_scalar_op_arr(builder, target, args, kwargs, _op=op):
-                    _lower_scalar_binop(builder, target, args, kwargs, _op, arr_is_lhs=False)
-            _make_scalar_lower(_op, _ca, _scalar_ty)
-
-
-# ---------------------------------------------------------------------------
-# Factory: cooperative_array_from_ptr(data_ptr, size) -> CooperativeArray(f64)
-# ---------------------------------------------------------------------------
-
-def _register_cooperative_array_from_ptr():
-    from cudf.core.udf.mlir_backend.cooperative_typing import cooperative_array_from_ptr as _stub
-
-    @registry.lower(_stub, nb_types.int64, nb_types.int64)
-    def _lower_from_ptr(builder, target, args, kwargs):
-        data_i64 = builder.load_var(args[0])
-        size_i64 = builder.load_var(args[1])
-        data_ptr = llvm.inttoptr(_ptr(), data_i64)
-        null_ptr = llvm.ZeroOp(_ptr())
-        result = build_cooperative_array(null_ptr, data_ptr, size_i64)
-        builder.store_var(target, result)
-
-
-_register_cooperative_array_from_ptr()
 
 
 # ---------------------------------------------------------------------------

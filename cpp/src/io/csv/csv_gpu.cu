@@ -197,14 +197,14 @@ CUDF_KERNEL void __launch_bounds__(csvparse_block_dim)
     if (column_flags[col] & column_parse::inferred) {
       // points to last character in the field
       auto const field_len = static_cast<size_t>(next_delimiter - field_start);
-      auto unquoted_field  = trim_quotes(field_start, next_delimiter, opts.quotechar);
-      if (opts.detect_whitespace_around_quotes) {
-        auto const trimmed  = trim_whitespaces(field_start, next_delimiter);
-        auto const unquoted = trim_quotes(trimmed.first, trimmed.second, opts.quotechar);
-        if (unquoted.first != trimmed.first) { unquoted_field = unquoted; }
+      // A quote only counts if it opens the field (as in seek_field_end): 5" is not a number
+      auto unquoted_field = trim_whitespaces(field_start, next_delimiter);
+      if (opts.detect_whitespace_around_quotes or unquoted_field.first == field_start) {
+        unquoted_field = trim_quotes(unquoted_field.first, unquoted_field.second, opts.quotechar);
       }
       auto const unquoted_len = static_cast<size_t>(unquoted_field.second - unquoted_field.first);
-      if (serialized_trie_contains(opts.trie_na, {field_start, field_len})) {
+      if (serialized_trie_contains(opts.trie_na, {field_start, field_len}) ||
+          serialized_trie_contains(opts.trie_na, {unquoted_field.first, unquoted_len})) {
         atomicAdd(&d_column_data[actual_col].null_count, 1);
       } else if (serialized_trie_contains(opts.trie_true, {unquoted_field.first, unquoted_len}) ||
                  serialized_trie_contains(opts.trie_false, {unquoted_field.first, unquoted_len})) {
@@ -222,15 +222,8 @@ CUDF_KERNEL void __launch_bounds__(csvparse_block_dim)
         long count_string    = 0;
         long count_exponent  = 0;
 
-        // Modify field_start & end to ignore whitespace and quotechars
-        // This could possibly result in additional empty fields
-        // As in seek_field_end, a quote only counts if it opens the field: 5" is not a number
-        auto trimmed_field_range = trim_whitespaces(field_start, next_delimiter);
-        if (opts.detect_whitespace_around_quotes || trimmed_field_range.first == field_start) {
-          trimmed_field_range =
-            trim_quotes(trimmed_field_range.first, trimmed_field_range.second, opts.quotechar);
-        }
-        auto const trimmed_field_len = trimmed_field_range.second - trimmed_field_range.first;
+        auto const trimmed_field_range = unquoted_field;
+        auto const trimmed_field_len   = unquoted_field.second - unquoted_field.first;
 
         if (trimmed_field_len == 0) {
           cuda::atomic_ref<cudf::size_type, cuda::thread_scope_device> ref{
@@ -359,9 +352,19 @@ CUDF_KERNEL void __launch_bounds__(csvparse_block_dim)
     auto next_delimiter = cudf::io::gpu::seek_field_end(field_start, row_end, options);
 
     if (column_flags[col] & column_parse::enabled) {
-      // check if the entire field is a NaN string - consistent with pandas
-      auto const is_valid = !serialized_trie_contains(
-        options.trie_na, {field_start, static_cast<size_t>(next_delimiter - field_start)});
+      auto unquoted_field = trim_whitespaces(field_start, next_delimiter);
+      if (options.detect_whitespace_around_quotes or unquoted_field.first == field_start) {
+        unquoted_field =
+          trim_quotes(unquoted_field.first, unquoted_field.second, options.quotechar);
+      }
+      // Match both raw and unquoted NA tokens, as in type inference.
+      auto const is_valid =
+        !serialized_trie_contains(
+          options.trie_na, {field_start, static_cast<size_t>(next_delimiter - field_start)}) &&
+        !serialized_trie_contains(
+          options.trie_na,
+          {unquoted_field.first,
+           static_cast<size_t>(unquoted_field.second - unquoted_field.first)});
 
       // Modify field_start & end to ignore whitespace and quotechars
       auto field_end = next_delimiter;

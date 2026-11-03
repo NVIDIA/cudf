@@ -15,6 +15,7 @@ from cudf_streaming.table_chunk import (
     TableChunk,
     make_table_chunks_available_or_wait,
 )
+from rapidsmpf.memory.buffer import MemoryType
 
 from cudf_polars.containers import DataFrame, DataType
 from cudf_polars.streaming.actor_graph.collectives import slice_exchange
@@ -76,7 +77,16 @@ def test_sparse_exchange_sends_slice_and_chunk(spmd_engine) -> None:
                     source = _chunk([0, 1, 2, 3], context, stream)
                     await exchange.insert_slices(source, (SliceRoute(1, 1, 3),))
                     assert _values(source) == [0, 1, 2, 3]
-                    await exchange.insert_chunk(1, _chunk([4, 5], context, stream))
+                    whole = _chunk([4, 5], context, stream)
+                    reservation = await context.memory(
+                        MemoryType.DEVICE
+                    ).reserve_or_wait(whole.into_packed_data_cost(), net_memory_delta=0)
+                    await exchange.insert_chunk(
+                        1,
+                        TableChunk.from_packed_data(
+                            whole.into_packed_data(reservation), context.br()
+                        ),
+                    )
                 await exchange.finish()
                 if rank == 1:
                     remote = exchange.extract(0)
@@ -94,8 +104,8 @@ def test_sparse_exchange_sends_slice_and_chunk(spmd_engine) -> None:
     asyncio.run(run())
 
 
-def test_sparse_exchange_finish_survives_cancellation(monkeypatch) -> None:
-    """Wait for exchange completion even after repeated cancellation."""
+def test_sparse_exchange_close_survives_cancellation(monkeypatch) -> None:
+    """Finish before releasing the exchange despite repeated cancellation."""
 
     async def run() -> None:
         started = asyncio.Event()
@@ -114,10 +124,10 @@ def test_sparse_exchange_finish_survives_cancellation(monkeypatch) -> None:
             lambda *_args, **_kwargs: DelayedExchange(),
         )
         exchange = SparseExchange(
-            Mock(), Mock(rank=0, nranks=2), 0, sources=(), destinations=(1,)
+            Mock(), Mock(rank=0, nranks=2), 0, sources=(1,), destinations=()
         )
 
-        task = asyncio.create_task(exchange.finish())
+        task = asyncio.create_task(exchange.aclose())
         try:
             await asyncio.wait_for(started.wait(), timeout=5)
             task.cancel()

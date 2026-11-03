@@ -14,6 +14,7 @@ from cudf_streaming.table_chunk import (
     TableChunk,
     make_table_chunks_available_or_wait,
 )
+from rapidsmpf.memory.buffer import MemoryType
 from rapidsmpf.streaming.coll.sparse_alltoall import SparseAlltoall
 from rapidsmpf.streaming.core.message import Message
 
@@ -153,12 +154,18 @@ class SparseExchange:
     async def _insert_chunk(self, destination: int, chunk: TableChunk) -> None:
         """Pack and insert one whole chunk."""
         assert self._exchange is not None
-        chunk, reservation = await make_table_chunks_available_or_wait(
-            self.context,
-            chunk,
-            reserve_extra=chunk.into_packed_data_cost(),
-            net_memory_delta=0,
-        )
+        pack_cost = chunk.into_packed_data_cost()
+        if pack_cost:
+            chunk, reservation = await make_table_chunks_available_or_wait(
+                self.context,
+                chunk,
+                reserve_extra=pack_cost,
+                net_memory_delta=0,
+            )
+        else:
+            reservation = await self.context.memory(MemoryType.DEVICE).reserve_or_wait(
+                0, net_memory_delta=0
+            )
         self._exchange.insert(destination, chunk.into_packed_data(reservation))
 
     async def finish(self) -> None:
@@ -215,10 +222,6 @@ class SparseExchange:
         try:
             await self.finish()
         finally:
-            if self._exchange is not None and self._finished:
-                for source in tuple(self._pending_sources):
-                    with suppress(Exception):
-                        self._exchange.extract(source)
             self._closed = True
             self._exchange = None
             self._pending_sources.clear()

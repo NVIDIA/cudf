@@ -69,7 +69,7 @@ jobs:
       node_type: cpu16
       script: ci/build_cpp.sh
       sha: ${{ inputs.sha }}
-      matrix_type: cuda-13-4-nightly
+      matrix_type: nightly
   python-build:
     needs: ["build-details", "cpp-build"]
     permissions:
@@ -89,7 +89,7 @@ jobs:
       sha: ${{ inputs.sha }}
       # Build a conda package for each CUDA x ARCH x minimum supported Python version
       matrix_filter: group_by({CUDA_VER, ARCH}) | map(min_by(.PY_VER | split(".") | map(tonumber)))
-      matrix_type: cuda-13-4-nightly
+      matrix_type: nightly
   python-build-noarch:
     needs: ["build-details"]
     permissions:
@@ -108,7 +108,7 @@ jobs:
       script: ci/build_python_noarch.sh
       sha: ${{ inputs.sha }}
       pure-conda: cuda_major
-      matrix_type: cuda-13-4-nightly
+      matrix_type: nightly
   upload-conda:
     needs: [cpp-build, python-build, python-build-noarch]
     permissions:
@@ -133,7 +133,7 @@ jobs:
     with:
       build_type: ${{ inputs.build_type || 'branch' }}
       matrix_name: docs-build
-      matrix_type: cuda-13-4-nightly
+      matrix_type: nightly
   docs-build:
     if: github.ref_type == 'branch'
     needs: [docs-build-matrix, python-build, python-build-noarch]
@@ -197,7 +197,7 @@ jobs:
       sha: ${{ inputs.sha }}
       date: ${{ inputs.date }}
       node_type: cpu16
-      matrix_type: cuda-13-4-nightly
+      matrix_type: nightly
   wheel-publish-libcudf:
     needs: wheel-build
     permissions:
@@ -316,7 +316,7 @@ jobs:
       date: ${{ inputs.date }}
       node_type: cpu8
       pure-wheel: true
-      matrix_type: cuda-13-4-nightly
+      matrix_type: nightly
   wheel-publish-dask-cudf:
     needs: wheel-python-build-noarch
     permissions:

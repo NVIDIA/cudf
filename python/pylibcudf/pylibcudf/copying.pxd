@@ -43,6 +43,15 @@ cpdef Table gather(
     DeviceMemoryResource mr=*,
 )
 
+cpdef Table gather_every(
+    Table source_table,
+    size_type step,
+    object start = *,
+    object stop = *,
+    object stream = *,
+    DeviceMemoryResource mr=*,
+)
+
 cpdef Table scatter(
     TableOrListOfScalars source: Table | list[Scalar],
     Column scatter_map,

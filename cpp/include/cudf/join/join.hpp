@@ -537,8 +537,8 @@ filter_join_indices_jit(cudf::table_view const& left,
                         cudf::ast::expression const& predicate,
                         cudf::join_kind join_kind,
                         cudf::lto_fragments fragments = {},
-                        cuda::stream_ref stream   = cudf::get_default_stream(),
-                        cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+                        cuda::stream_ref stream       = cudf::get_default_stream(),
+                        cudf::memory_resources mr     = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 

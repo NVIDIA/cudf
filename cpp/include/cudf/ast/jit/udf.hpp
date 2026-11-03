@@ -72,7 +72,12 @@ struct udf {
   std::vector<data_type> input_types = {};    ///< Argument types, in order
   null_aware is_null_aware           = null_aware::NO;  ///< Whether the ABI uses optional values
 
-  bool operator==(udf const&) const = default;
+  /**
+   * @brief Compares the symbol, signature, null handling, and purity of two UDF declarations.
+   * @param other The declaration to compare
+   * @return Whether both declarations are equal
+   */
+  bool operator==(udf const& other) const = default;
 };
 
 /**

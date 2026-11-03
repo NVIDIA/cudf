@@ -80,8 +80,8 @@ std::span<uint8_t const> ast_udf_callees()
 auto const int32_type = cudf::data_type{cudf::type_id::INT32};
 
 cudf::ast::jit::udf callee(char const* symbol,
-                                cudf::data_type output = int32_type,
-                                bool is_pure           = true)
+                           cudf::data_type output = int32_type,
+                           bool is_pure           = true)
 {
   auto input = std::string_view{symbol} == "lto_week_start_ns" ? output : int32_type;
   return {symbol, is_pure, output, {input}};

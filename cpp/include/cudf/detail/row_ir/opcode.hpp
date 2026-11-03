@@ -15,7 +15,7 @@
 /**
  * @brief Declares a generated local from an `expected`, returning any error to the caller.
  */
-#define CUDF_ROW_IR_PROPAGATE_ERROR(type, name, ...)                           \
+#define CUDF_ROW_IR_PROPAGATE_ERROR(type, name, ...)                            \
   type name{};                                                                  \
   do {                                                                          \
     auto cudf_row_ir_result = (__VA_ARGS__);                                    \

@@ -1063,10 +1063,9 @@ TEST_F(MixedInnerJoinTest2, UdfCallPredicate)
   auto hash_result = hash_joiner.inner_join(left_equality);
 
   // transform/fragments/ast_udf_callees.cu
-  auto const range     = cudf_test_fragments::file_ranges[cudf_test_fragments::ast_udf_callees];
-  auto const fragments = std::array{
-    cudf::lto_fragment{cudf_test_fragments::files.subspan(range[0], range[1]),
-                       cudf::lto_binary_type::FATBIN}};
+  auto const range        = cudf_test_fragments::file_ranges[cudf_test_fragments::ast_udf_callees];
+  auto const fragments    = std::array{cudf::lto_fragment{
+    cudf_test_fragments::files.subspan(range[0], range[1]), cudf::lto_binary_type::FATBIN}};
   auto const type         = cudf::data_type{cudf::type_id::INT32};
   auto const xor_popcount = cudf::ast::jit::udf{"lto_xor_popcount", true, type, {type, type}};
 

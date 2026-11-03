@@ -1116,15 +1116,14 @@ transform_program::transform_program(std::string const& udf,
                                      std::span<transform_output_spec const> outputs)
 {
   CUDF_FUNC_RANGE();
-  impl_ =
-    std::make_unique<impl>(udf,
-                           source_type,
-                           is_null_aware,
-                           user_data,
-                           std::vector<transform_input_spec>{inputs.begin(), inputs.end()},
-                           std::vector<transform_output_spec>{outputs.begin(), outputs.end()},
-                           std::string_view{},
-                           cudf::lto_fragments{});
+  impl_ = std::make_unique<impl>(udf,
+                                 source_type,
+                                 is_null_aware,
+                                 user_data,
+                                 std::vector<transform_input_spec>{inputs.begin(), inputs.end()},
+                                 std::vector<transform_output_spec>{outputs.begin(), outputs.end()},
+                                 std::string_view{},
+                                 cudf::lto_fragments{});
 }
 
 transform_program::transform_program(

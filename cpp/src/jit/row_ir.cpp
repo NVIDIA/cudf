@@ -584,9 +584,7 @@ node::node(input_reference input)
   hash_ = compute_hash();
 }
 
-node::node(ast::jit::udf udf,
-           error_policy error_policy,
-           std::vector<std::unique_ptr<node>> args)
+node::node(ast::jit::udf udf, error_policy error_policy, std::vector<std::unique_ptr<node>> args)
   : op_{opcode::UDF_CALL}, error_policy_{error_policy}, args_{std::move(args)}, udf_{std::move(udf)}
 {
   hash_ = compute_hash();

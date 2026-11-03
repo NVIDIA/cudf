@@ -915,7 +915,8 @@ class StreamingOptions:
             help=textwrap.dedent("""\
                 Multi-partition Sort strategy: "in-memory" (default) or "external"
                 (stream into the shuffler; external merge sort per partition with
-                runs on disk). Env: CUDF_POLARS__EXECUTOR__SORT_STRATEGY."""),
+                runs under --disk-spill-dir, or in host memory without one).
+                Env: CUDF_POLARS__EXECUTOR__SORT_STRATEGY."""),
         )
         g.add_argument(
             "--dynamic-planning",

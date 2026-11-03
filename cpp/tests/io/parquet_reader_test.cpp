@@ -2311,10 +2311,9 @@ TEST_F(ParquetReaderTest, StructByteArray)
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
 }
 
-// cudf cannot write FILE groups yet, so retag written struct groups as FILE in the footer
+// cudf cannot write FILE groups yet, so retag a written struct group as FILE in the footer
 TEST_F(ParquetReaderTest, FileLogicalType)
 {
-  using cudf::io::parquet::FieldRepetitionType;
   using cudf::io::parquet::LogicalType;
   namespace pq_experimental = cudf::io::parquet::experimental;
 
@@ -2322,24 +2321,14 @@ TEST_F(ParquetReaderTest, FileLogicalType)
   column_wrapper<int64_t> offset_col{0, 10, 20, 30};
   cudf::test::strings_column_wrapper inline_col{"a", "bc", "hello", "d"};
   auto file_col = cudf::test::structs_column_wrapper{{uri_col, offset_col, inline_col}};
-  // `files` is written as a non-nullable list of non-nullable structs so that collapsing its
-  // `list` and `element` nodes into a REPEATED group below keeps the same definition levels
-  auto const files_col =
-    cudf::make_lists_column(4,
-                            column_wrapper<cudf::size_type>{0, 2, 2, 3, 4}.release(),
-                            std::make_unique<cudf::column>(file_col),
-                            0,
-                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
-  auto const input = table_view{{file_col, *files_col}};
+  auto const input = table_view{{file_col}};
   cudf::io::table_input_metadata input_metadata(input);
   // FILE children must be OPTIONAL and `inline` must be an unannotated BYTE_ARRAY
-  for (auto* file_metadata : {&input_metadata.column_metadata[0].set_name("file"),
-                              &input_metadata.column_metadata[1].set_name("files").child(1)}) {
-    file_metadata->child(0).set_name("uri").set_nullability(true);
-    file_metadata->child(1).set_name("offset").set_nullability(true);
-    file_metadata->child(2).set_name("inline").set_nullability(true).set_output_as_binary(true);
-  }
+  auto& file_metadata = input_metadata.column_metadata[0].set_name("file");
+  file_metadata.child(0).set_name("uri").set_nullability(true);
+  file_metadata.child(1).set_name("offset").set_nullability(true);
+  file_metadata.child(2).set_name("inline").set_nullability(true).set_output_as_binary(true);
 
   std::vector<char> buffer;
   cudf::io::write_parquet(
@@ -2353,26 +2342,9 @@ TEST_F(ParquetReaderTest, FileLogicalType)
   auto const footer_begin = buffer.size() - ender_size - footer_size;
   auto fmd                = pq_experimental::read_parquet_footer_bytes(
     {reinterpret_cast<uint8_t const*>(buffer.data()) + footer_begin, footer_size});
-
-  // Schema: file{uri, offset, inline}, files(LIST){list{element{uri, offset, inline}}}
-  auto& schema = fmd.schema;
-  ASSERT_EQ(schema.size(), 11);
-  ASSERT_EQ(schema[1].name, "file");
-  ASSERT_EQ(schema[5].repetition_type, FieldRepetitionType::REQUIRED);
-  ASSERT_EQ(schema[7].repetition_type, FieldRepetitionType::REQUIRED);
-  schema[1].logical_type = LogicalType{LogicalType::FILE};
-  // Collapse `files` into a legacy `repeated group files (FILE) {uri, offset, inline}`
-  schema[5].repetition_type = FieldRepetitionType::REPEATED;
-  schema[5].converted_type  = std::nullopt;
-  schema[5].logical_type    = LogicalType{LogicalType::FILE};
-  schema[5].num_children    = 3;
-  schema.erase(schema.begin() + 6, schema.begin() + 8);
-  for (auto& row_group : fmd.row_groups) {
-    for (auto& chunk : row_group.columns) {
-      auto& path = chunk.meta_data.path_in_schema;
-      if (path.front() == "files") { path.erase(path.begin() + 1, path.begin() + 3); }
-    }
-  }
+  ASSERT_EQ(fmd.schema[1].name, "file");
+  ASSERT_EQ(fmd.schema[4].name, "inline");
+  fmd.schema[1].logical_type = LogicalType{LogicalType::FILE};
 
   // Reads the file with `fmd` spliced in as its footer: data + footer + length + "PAR1"
   auto const read_with_footer = [&](cudf::size_type num_rows) {
@@ -2391,37 +2363,25 @@ TEST_F(ParquetReaderTest, FileLogicalType)
 
   cudf::test::lists_column_wrapper<uint8_t> inline_bytes{
     {'a'}, {'b', 'c'}, {'h', 'e', 'l', 'l', 'o'}, {'d'}};
-  auto expected_file = cudf::test::structs_column_wrapper{{uri_col, offset_col, inline_bytes}};
-  auto const expected_files =
-    cudf::make_lists_column(4,
-                            column_wrapper<cudf::size_type>{0, 2, 2, 3, 4}.release(),
-                            std::make_unique<cudf::column>(expected_file),
-                            0,
-                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
-  auto const expected = table_view{{expected_file, *expected_files}};
-  auto const empty    = cudf::empty_like(expected);
+  auto expected    = cudf::test::structs_column_wrapper{{uri_col, offset_col, inline_bytes}};
+  auto const empty = cudf::empty_like(expected);
 
-  // `inline` reads as binary and the structs are marked FILE, including in a zero-row read
-  for (auto const& expected_tbl : {expected, empty->view()}) {
-    auto const result = read_with_footer(expected_tbl.num_rows());
-    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_tbl.column(0), result.tbl->view().column(0));
-    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_tbl.column(1), result.tbl->view().column(1));
+  // `inline` reads as binary and the struct is marked FILE, including in a zero-row read
+  for (auto const& expected_col : {cudf::column_view{expected}, empty->view()}) {
+    auto const result = read_with_footer(expected_col.size());
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_col, result.tbl->view().column(0));
 
-    auto const& file_info  = result.metadata.schema_info[0];
-    auto const& files_info = result.metadata.schema_info[1].children[1];
-    for (auto const& info : {file_info, files_info}) {
-      EXPECT_EQ(info.is_file, true);
-      ASSERT_EQ(info.children.size(), 3);
-      EXPECT_FALSE(info.children[0].is_binary.has_value());
-      EXPECT_EQ(info.children[2].is_binary, true);
-    }
+    auto const& file_info = result.metadata.schema_info[0];
+    EXPECT_EQ(file_info.is_file, true);
+    ASSERT_EQ(file_info.children.size(), 3);
+    EXPECT_FALSE(file_info.children[0].is_binary.has_value());
+    EXPECT_EQ(file_info.children[2].is_binary, true);
   }
 
   // An annotated `inline` breaks the FILE spec, so the group is read as a plain struct
-  ASSERT_EQ(schema[4].name, "inline");
-  schema[4].logical_type = LogicalType{LogicalType::STRING};
-  auto const result      = read_with_footer(input.num_rows());
-  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_file, result.tbl->view().column(0));
+  fmd.schema[4].logical_type = LogicalType{LogicalType::STRING};
+  auto const result          = read_with_footer(input.num_rows());
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, result.tbl->view().column(0));
   EXPECT_FALSE(result.metadata.schema_info[0].is_file.has_value());
 }
 

@@ -613,6 +613,52 @@ def test_parquet_reader_spark_decimals(datadir):
     assert_eq(expect, got)
 
 
+def test_parquet_reader_file_logical_type(datadir):
+    # Written with arrow-rs: a `file` FILE group and a legacy `repeated group
+    # files (FILE)`. pyarrow cannot open FILE groups yet, so read from a buffer
+    # to skip its dataset discovery.
+    fname = datadir / "file_logical_type.parquet"
+    got = cudf.read_parquet(BytesIO(fname.read_bytes()))
+
+    # FILE groups read as structs with the `inline` child read as binary
+    inline_type = pa.list_(pa.uint8())
+    file_type = pa.struct(
+        [
+            ("uri", pa.string()),
+            ("offset", pa.int64()),
+            ("size", pa.int64()),
+            ("inline", inline_type),
+        ]
+    )
+    files_type = pa.list_(
+        pa.struct([("uri", pa.string()), ("inline", inline_type)])
+    )
+    expect = pa.table(
+        {
+            "file": pa.array(
+                [
+                    {"uri": "s3://bucket/a.png", "offset": 0, "size": 3},
+                    {"inline": [0xFF, 0x00, 0x01]},
+                    None,
+                    {"uri": "s3://bucket/b.bin", "offset": 16, "size": 4},
+                ],
+                type=file_type,
+            ),
+            "files": pa.array(
+                [
+                    [{"uri": "s3://x/1"}, {"inline": [0x61]}],
+                    [],
+                    [{"inline": [0xFE]}],
+                    [{"uri": "s3://x/2"}],
+                ],
+                type=files_type,
+            ),
+        }
+    )
+
+    assert_eq(cudf.DataFrame.from_arrow(expect), got)
+
+
 @pytest.mark.parametrize("columns", [["a"], ["b", "a"], None])
 def test_parquet_reader_decimal128(datadir, columns):
     fname = datadir / "nested_decimal128_file.parquet"

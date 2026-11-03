@@ -7,7 +7,7 @@
 set -euo pipefail
 
 repo_root="$(dirname "$(realpath "${BASH_SOURCE[0]}")")/.."
-output_dir="${1:-${repo_root}/coverage-results/cudf-polars-comparison}"
+output_dir=$(realpath -m "${1:-${repo_root}/coverage-results/cudf-polars-comparison}")
 config="${repo_root}/ci/cudf_polars_coverage_analysis.toml"
 polars_dir="${POLARS_DIR:-${repo_root}/polars}"
 

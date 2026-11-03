@@ -9,9 +9,9 @@ read through cuCascade's REST backend and its host-memory cache, so a column rea
 one query is served from host memory by the next. With it unset, every function here
 is a no-op and the standard read path is used.
 
-The compiled glue (``_cucascade_io``, a cuCascade ``datasource`` wrapped for
-pylibcudf) must be importable, and ``AWS_ACCESS_KEY_ID`` and
-``AWS_SECRET_ACCESS_KEY`` (and, if used, ``AWS_SESSION_TOKEN``) must be set.
+The ``cucascade`` package (cuCascade's pylibcudf bindings) must be importable, and
+``AWS_ACCESS_KEY_ID`` and ``AWS_SECRET_ACCESS_KEY`` (and, if used,
+``AWS_SESSION_TOKEN``) must be set.
 """
 
 from __future__ import annotations
@@ -63,18 +63,18 @@ def configure_cucascade(cache_bytes: int) -> None:
         if _module is not None:
             return
         try:
-            module = importlib.import_module("_cucascade_io")
+            module = importlib.import_module("cucascade")
         except ImportError as err:
             raise RuntimeError(
-                "cucascade_cache_bytes is set but the cuCascade glue module "
-                "`_cucascade_io` cannot be imported."
+                "cucascade_cache_bytes is set but the `cucascade` package "
+                "cannot be imported."
             ) from err
         region = (
             os.environ.get("AWS_DEFAULT_REGION")
             or os.environ.get("AWS_REGION")
             or "us-east-1"
         )
-        module.init(
+        module.start(
             cache_bytes=cache_bytes,
             endpoint=f"https://s3.{region}.amazonaws.com",
             region=region,
@@ -169,7 +169,7 @@ def register_layouts(infos: Sequence[Any]) -> None:
             columns, col_index, offsets, sizes = _layout(info)
         except Exception:
             continue
-        _module.register_layout(
+        _module.register(
             path, path.rsplit("/", 1)[0], columns, col_index, offsets, sizes
         )
 
@@ -209,19 +209,17 @@ def register_layouts_from_sources(paths: Sequence[str], sources: Sequence[Any]) 
     )
 
 
-def wrap_sources(
-    paths: Sequence[str], sizes: Sequence[int | None] | None = None
-) -> list[Any] | None:
+def wrap_sources(paths: Sequence[str]) -> list[Any] | None:
     """
     Return cuCascade-backed data sources for ``paths``.
+
+    Opening a file the first time resolves its size and footer with one request;
+    later opens of it need none.
 
     Parameters
     ----------
     paths
         File paths.
-    sizes
-        File sizes in bytes, where known. Opening a file whose size is unknown
-        costs one suffix-range request, which also fetches its footer.
 
     Returns
     -------
@@ -231,10 +229,8 @@ def wrap_sources(
     """
     if _module is None or not paths or not all(_is_remote(p) for p in paths):
         return None
-    sizes = sizes if sizes is not None else [None] * len(paths)
-    args = [(str(p), int(s or 0)) for p, s in zip(paths, sizes, strict=True)]
-    if len(args) == 1:
-        return [_module.CucascadeDatasource(*args[0])]
+    if len(paths) == 1:
+        return [_module.CucascadeDatasource(str(paths[0]))]
     # Opening a source (size lookup plus footer read) releases the GIL.
-    with ThreadPoolExecutor(min(_MAX_OPEN_THREADS, len(args))) as pool:
-        return list(pool.map(lambda a: _module.CucascadeDatasource(*a), args))
+    with ThreadPoolExecutor(min(_MAX_OPEN_THREADS, len(paths))) as pool:
+        return list(pool.map(lambda p: _module.CucascadeDatasource(str(p)), paths))

@@ -1448,8 +1448,7 @@ class Scan(IR):
                 # Remote paths read through the cuCascade cache when enabled; `cache_sources`
                 # keeps the cache-backed sources alive for the reads below.
                 cache_sources = cucascade.wrap_sources(
-                    [info.path for info in cached_parquet_info],
-                    [info.size for info in cached_parquet_info],
+                    [info.path for info in cached_parquet_info]
                 )
                 source_info = plc.io.SourceInfo(
                     cache_sources if cache_sources is not None else filepath_sources

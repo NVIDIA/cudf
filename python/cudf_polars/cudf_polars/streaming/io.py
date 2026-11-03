@@ -294,7 +294,7 @@ def _read_with_hybrid_scan(
     ):
         # Remote files read through the cuCascade cache when it is enabled (`cache_sources` keeps the
         # cache-backed sources alive for the fetches below).
-        cache_sources = cucascade.wrap_sources([cached_info.path], [cached_info.size])
+        cache_sources = cucascade.wrap_sources([cached_info.path])
         source_info = plc.io.SourceInfo(
             cache_sources
             if cache_sources is not None

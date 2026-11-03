@@ -340,87 +340,42 @@ void assemble_strings_impl(std::vector<staged_string>& staged_strings,
     carve_device_vector(host_span<string_work_item const>{staging_items}, stream, staging_carve_mr);
 
   if (any_batched_memcpy) {
-    // (source ptr, destination ptr, byte size) per row over the routed columns' flat
-    // (column, row) domain, built as on-the-fly transform iterators exactly like stock's
-    // own Batched call (`strings::detail::gather`'s engine): NO staging arrays and no
-    // extra pass — each of CUB's three iterators re-runs the resolve lambda instead. The
-    // lambda replicates the kernel chars-phase gate verbatim (resolve/validity/size>0),
-    // nullptr/0 for dead rows; the routed-column table is `d_memcpy_live` (device copy of
-    // the host list), and the buffer count is the flat routed row count.
+    // The routed flat (column, row) domain, served by one cub::DeviceMemcpy::Batched
+    // (`strings::detail::gather`'s engine split): destination and size read the scanned
+    // prefixes in `dst_scratch` directly and the row's map/validity/source resolve runs
+    // once per buffer, in the src iterator (`routed_memcpy_iterators` above) — no staging
+    // arrays and no per-operator resolve chains. CUB classifies buffers from the sizes
+    // iterator before dereferencing either pointer iterator, so a size-0 buffer's
+    // nullptr src/dst is never dereferenced.
     // Pinned staging copy of the routed cohort; dies stream-ordered with the call.
     auto staging_memcpy_live =
       cudf::detail::make_pinned_vector_async<size_type>(memcpy_live.size(), stream);
     std::copy(memcpy_live.begin(), memcpy_live.end(), staging_memcpy_live.begin());
     auto const d_memcpy_live = carve_device_vector(
       host_span<size_type const>{staging_memcpy_live}, stream, staging_carve_mr);
-    // Hoist the member `num_rows` into a local: a `__device__` lambda inside this member
-    // function cannot capture `this`, so the unqualified member name would be ill-formed
-    // in the capture lists below.
-    auto const num_rows_local = num_rows;
-    auto const num_buffers    = static_cast<int64_t>(memcpy_live.size()) * num_rows_local;
-    auto const d_routed       = d_memcpy_live.data();
-    auto const d_items_ptr    = d_payload_items.data();
-    auto const src_addrs_it   = cuda::make_transform_iterator(
+    auto const num_buffers =
+      static_cast<int64_t>(memcpy_live.size()) * static_cast<int64_t>(num_rows);
+    auto const d_routed     = d_memcpy_live.data();
+    auto const d_items_ptr  = d_payload_items.data();
+    auto const lean_iters   = routed_memcpy_iterators{d_items_ptr,
+                                                    d_routed,
+                                                    map_begin,
+                                                    num_source_rows,
+                                                    check_bounds,
+                                                    negative_allowed,
+                                                    scan_layout};
+    auto const src_addrs_it = cuda::make_transform_iterator(
       cuda::counting_iterator<int64_t>{0},
-      cuda::proclaim_return_type<char const*>([d_routed,
-                                               d_items_ptr,
-                                               num_rows_local,
-                                               num_source_rows,
-                                               check_bounds,
-                                               negative_allowed,
-                                               map_begin] __device__(int64_t flat) -> char const* {
-        auto const col  = static_cast<size_type>(flat / num_rows_local);
-        auto const row  = static_cast<size_type>(flat % num_rows_local);
-        auto const item = d_items_ptr[d_routed[col]];
-        auto const src =
-          resolve_gathered_row(map_begin, row, num_source_rows, check_bounds, negative_allowed);
-        if (src < 0 or not string_row_valid(item, src)) {
-          return static_cast<char const*>(nullptr);
-        }
-        auto const s = static_cast<size_type>(src);
-        return item.src_offsets[s + 1] - item.src_offsets[s] > 0
-                   ? item.src_chars + item.src_offsets[s]
-                   : static_cast<char const*>(nullptr);
-      }));
+      cuda::proclaim_return_type<char const*>(
+        [lean_iters] __device__(int64_t flat) -> char const* { return lean_iters.src_of(flat); }));
     auto const dst_addrs_it = cuda::make_transform_iterator(
       cuda::counting_iterator<int64_t>{0},
-      cuda::proclaim_return_type<char*>([d_routed,
-                                         d_items_ptr,
-                                         num_rows_local,
-                                         num_source_rows,
-                                         check_bounds,
-                                         negative_allowed,
-                                         map_begin] __device__(int64_t flat) -> char* {
-        auto const col  = static_cast<size_type>(flat / num_rows_local);
-        auto const row  = static_cast<size_type>(flat % num_rows_local);
-        auto const item = d_items_ptr[d_routed[col]];
-        auto const src =
-          resolve_gathered_row(map_begin, row, num_source_rows, check_bounds, negative_allowed);
-        if (src < 0 or not string_row_valid(item, src)) { return static_cast<char*>(nullptr); }
-        auto const s = static_cast<size_type>(src);
-        return item.src_offsets[s + 1] - item.src_offsets[s] > 0
-                 ? item.dst_chars + item.dst_scratch[row]
-                 : static_cast<char*>(nullptr);
-      }));
+      cuda::proclaim_return_type<char*>(
+        [lean_iters] __device__(int64_t flat) -> char* { return lean_iters.dst_of(flat); }));
     auto const copy_sizes_it = cuda::make_transform_iterator(
       cuda::counting_iterator<int64_t>{0},
-      cuda::proclaim_return_type<int64_t>([d_routed,
-                                           d_items_ptr,
-                                           num_rows_local,
-                                           num_source_rows,
-                                           check_bounds,
-                                           negative_allowed,
-                                           map_begin] __device__(int64_t flat) -> int64_t {
-        auto const col  = static_cast<size_type>(flat / num_rows_local);
-        auto const row  = static_cast<size_type>(flat % num_rows_local);
-        auto const item = d_items_ptr[d_routed[col]];
-        auto const src =
-          resolve_gathered_row(map_begin, row, num_source_rows, check_bounds, negative_allowed);
-        if (src < 0 or not string_row_valid(item, src)) { return int64_t{0}; }
-        auto const s     = static_cast<size_type>(src);
-        auto const bytes = item.src_offsets[s + 1] - item.src_offsets[s];
-        return bytes > 0 ? bytes : int64_t{0};
-      }));
+      cuda::proclaim_return_type<int64_t>(
+        [lean_iters] __device__(int64_t flat) -> int64_t { return lean_iters.size_of(flat); }));
     // The env-overload routes CUB's temporary storage to `temp_mr` (not the wrapper's
     // default-resource form), matching `strings::detail::gather`'s own batched call.
     // Explicit template args: the CTAD form trips nvcc 13.3 in TUs that lack an

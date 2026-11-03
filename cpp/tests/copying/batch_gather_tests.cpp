@@ -8,6 +8,7 @@
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/cudf_gtest.hpp>
 #include <cudf_test/iterator_utilities.hpp>
+#include <cudf_test/memory_resource_utilities.hpp>
 #include <cudf_test/table_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
@@ -2588,6 +2589,290 @@ TEST_F(StringFusedEngineParity, BelowGateLongRowsKeepPayloadKernel)
   auto result    = run_batch_gather(source_table, gather_map);
   auto reference = run_reference(source_table, gather_map);
   CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// ============================================================================
+// §5.6d Lean CUB virtual iterators: at the batched-memcpy gate the routed columns' chars ride
+// cub::DeviceMemcpy::Batched over virtual iterators whose destination/size come from the
+// scanned prefixes and whose resolve chain runs once per buffer. These shapes are ≥524288
+// rows, so the routed-metadata path serves them and the lean iterators are LIVE: every test
+// compares the gate-exact shape against the stock gather (the CUB engine is stock's own
+// engine at these shapes, so CUDF_TEST_EXPECT_TABLES_EQUAL is exact).
+// ============================================================================
+
+class StringLeanIteratorsParity : public cudf::test::BaseFixture {};
+
+// Column factory for gate shapes: rows are all at or under the block-copy gate (so a column
+// whose total passes the routing predicate is routed to CUB), with sizes in [min_len,
+// min_len + spread] and an optional per-row validity pattern.
+cudf::test::strings_column_wrapper gate_shape_strings(cudf::size_type num_rows,
+                                                      int const seed,
+                                                      bool const nullable,
+                                                      int const min_len,
+                                                      int const spread)
+{
+  std::vector<std::string> strings;
+  std::vector<bool> valid;
+  strings.reserve(num_rows);
+  valid.reserve(num_rows);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    strings.push_back(std::string(static_cast<std::size_t>(min_len + (i * seed + i / 97) % spread),
+                                  static_cast<char>('a' + (i * seed) % 26)));
+    valid.push_back(not nullable or i % 5 != 0);
+  }
+  auto validity = cudf::detail::make_counting_transform_iterator(
+    0, [&valid](cudf::size_type i) { return valid[i]; });
+  return cudf::test::strings_column_wrapper(strings.begin(), strings.end(), validity);
+}
+
+// The core lean-iterator shape: two routed short columns, shuffled map with repeated indices
+// (duplicate source rows land under distinct destinations), nulls in both columns.
+TEST_F(StringLeanIteratorsParity, RoutedAllShortStringsParity)
+{
+  constexpr cudf::size_type num_rows{524'288};  // exactly the gate
+  auto col_a = gate_shape_strings(num_rows, 3, true, 0, 33);
+  auto col_b = gate_shape_strings(num_rows, 11, true, 0, 33);
+
+  std::vector<cudf::size_type> host_map;
+  host_map.reserve(num_rows);
+  std::mt19937 rng(5);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    // Shuffled with deliberate repeats: every 3rd row re-reads the previous destination's
+    // source (the prefix deltas of repeated rows are identical).
+    host_map.push_back(i % 3 == 0 and i > 0 ? host_map[i - 1]
+                                            : static_cast<cudf::size_type>(rng() % num_rows));
+  }
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  cudf::table_view source_table({col_a, col_b});
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// Routed column with a dense band of EMPTY valid rows interleaved with short rows: the
+// prefix delta is 0 for empty rows, so their src/dst operators return nullptr (never
+// dereferenced) while the column's nonzero total keeps dst_chars allocated for the live
+// rows — the zero-delta and resolve gates must agree with stock's outcome.
+TEST_F(StringLeanIteratorsParity, RoutedZeroSizeRowsParity)
+{
+  constexpr cudf::size_type num_rows{524'288};
+  std::vector<std::string> strings;
+  std::vector<bool> valid;
+  strings.reserve(num_rows);
+  valid.reserve(num_rows);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    // Every other row empty; the rest 1-8 bytes: average well under the gate.
+    strings.push_back(i % 2 == 0 ? std::string{}
+                                 : std::string(static_cast<std::size_t>(1 + i % 8),
+                                               static_cast<char>('a' + i % 26)));
+    valid.push_back(i % 7 != 0);
+  }
+  auto validity = cudf::detail::make_counting_transform_iterator(
+    0, [&valid](cudf::size_type i) { return valid[i]; });
+  cudf::test::strings_column_wrapper col_str(strings.begin(), strings.end(), validity);
+
+  cudf::table_view source_table({col_str});
+  auto const host_map = shuffled_iota(num_rows, 13);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// A routed column whose every OTHER row is DEAD under NULLIFY (out-of-bounds map)
+// interleaves zero-delta dead rows with live rows: the dead rows' prefix deltas are 0
+// (their src/dst operators return nullptr, never dereferenced) while the live rows ride
+// the single resolve chain — all against stock's identical outcome.
+// (An ALL-dead routed column is impossible by construction: an all-dead column's total is
+// 0, which fails the routing predicate and keeps the column out of the CUB domain.)
+TEST_F(StringLeanIteratorsParity, RoutedInterleavedDeadRowsParity)
+{
+  constexpr cudf::size_type num_rows{524'288};
+  auto col_a = gate_shape_strings(num_rows, 7, true, 0, 33);
+  auto col_b = gate_shape_strings(num_rows, 9, false, 0, 33);
+
+  std::vector<cudf::size_type> host_map;
+  host_map.reserve(num_rows);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    host_map.push_back(i % 2 == 0 ? static_cast<cudf::size_type>(i)
+                                  : num_rows + static_cast<cudf::size_type>(i % 991));
+  }
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  cudf::table_view source_table({col_a, col_b});
+  auto result    = run_batch_gather(source_table, gather_map, cudf::out_of_bounds_policy::NULLIFY);
+  auto reference = run_reference(source_table, gather_map, cudf::out_of_bounds_policy::NULLIFY);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// Duplicate-map amplification of ONE source row across the whole routed column: every
+// destination row carries the same prefix delta, and the single resolve chain reads the
+// same source span once per buffer.
+TEST_F(StringLeanIteratorsParity, RoutedDuplicatesParity)
+{
+  constexpr cudf::size_type num_rows{524'288};
+  cudf::test::strings_column_wrapper col_src{"nine-bytes"};
+
+  std::vector<cudf::size_type> host_map(num_rows, 0);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  cudf::table_view source_table({col_src});
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// Sliced source at the gate: the offsets iterator carries the view offset while chars are
+// addressed from the unsliced base — the lean iterators inherit that addressing unchanged.
+TEST_F(StringLeanIteratorsParity, RoutedSlicedSourceParity)
+{
+  constexpr cudf::size_type num_rows{524'288};
+  auto const full = gate_shape_strings(num_rows + 1000, 17, true, 0, 33);
+  auto sliced     = cudf::slice(full, {500, 500 + num_rows});
+
+  cudf::table_view source_table({sliced[0]});
+  auto const host_map = shuffled_iota(num_rows, 23);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// NULLIFY out-of-bounds and negative-index-ALLOWED maps over routed columns: both policy
+// branches run inside the single resolve of the lean src operator.
+TEST_F(StringLeanIteratorsParity, RoutedNullifyAndNegativeParity)
+{
+  constexpr cudf::size_type num_rows{524'288};
+  auto col_str = gate_shape_strings(num_rows, 21, true, 0, 33);
+
+  // NULLIFY: every 16th entry out of bounds.
+  std::vector<cudf::size_type> host_map;
+  host_map.reserve(num_rows);
+  std::mt19937 rng(29);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    host_map.push_back(i % 16 == 0 ? num_rows + static_cast<cudf::size_type>(rng() % 2048)
+                                   : static_cast<cudf::size_type>(rng() % num_rows));
+  }
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> map_nullify(host_map.begin(),
+                                                                      host_map.end());
+  cudf::table_view source_table({col_str});
+  auto result_nullify =
+    run_batch_gather(source_table, map_nullify, cudf::out_of_bounds_policy::NULLIFY);
+  auto reference_nullify =
+    run_reference(source_table, map_nullify, cudf::out_of_bounds_policy::NULLIFY);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference_nullify->view(), result_nullify->view());
+
+  // Negative ALLOWED: every 8th entry wraps below zero.
+  std::vector<cudf::size_type> host_map_neg;
+  host_map_neg.reserve(num_rows);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    host_map_neg.push_back(i % 8 == 0 ? -(1 + static_cast<cudf::size_type>(i / 8) % num_rows)
+                                      : static_cast<cudf::size_type>((i * 37) % num_rows));
+  }
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> map_neg(host_map_neg.begin(),
+                                                                  host_map_neg.end());
+  auto result_neg    = run_batch_gather(source_table,
+                                     map_neg,
+                                     cudf::out_of_bounds_policy::DONT_CHECK,
+                                     cudf::negative_index_policy::ALLOWED);
+  auto reference_neg = run_reference(source_table,
+                                     map_neg,
+                                     cudf::out_of_bounds_policy::DONT_CHECK,
+                                     cudf::negative_index_policy::ALLOWED);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference_neg->view(), result_neg->view());
+}
+
+// Routed (short rows) next to UNROUTED (long rows) at the gate: CUB serves one column's
+// chars through the lean iterators while the payload kernel serves the other's — the
+// per-item engine split rides the same items table both engines read.
+TEST_F(StringLeanIteratorsParity, RoutedMixedRoutedUnroutedParity)
+{
+  constexpr cudf::size_type num_rows{524'288};
+  auto col_short = gate_shape_strings(num_rows, 2, true, 0, 33);   // avg <= 32 B: routed
+  auto col_long  = gate_shape_strings(num_rows, 4, true, 40, 17);  // avg > 32 B: kernel
+
+  cudf::table_view source_table({col_short, col_long});
+  auto const host_map = shuffled_iota(num_rows, 31);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                     host_map.end());
+
+  auto result    = run_batch_gather(source_table, gather_map);
+  auto reference = run_reference(source_table, gather_map);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+}
+
+// Boundary triple around the batched-memcpy gate: one below, at, and one above — the lean
+// iterators must behave exactly like the pre-lean engine at and above the gate and stay
+// out of the picture below it.
+TEST_F(StringLeanIteratorsParity, RoutedBoundaryRowsParity)
+{
+  for (auto const num_rows :
+       {cudf::size_type{524'287}, cudf::size_type{524'288}, cudf::size_type{524'289}}) {
+    SCOPED_TRACE("num_rows=" + std::to_string(num_rows));
+    auto col_str = gate_shape_strings(num_rows, 8, true, 0, 33);
+    auto col_i32 = make_fixed_column<int32_t>(
+      num_rows, [](cudf::size_type i) { return i; }, [](cudf::size_type) { return true; });
+
+    cudf::table_view source_table({col_i32->view(), col_str});
+    auto const host_map = shuffled_iota(num_rows, 3);
+    cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(host_map.begin(),
+                                                                       host_map.end());
+
+    auto result    = run_batch_gather(source_table, gather_map);
+    auto reference = run_reference(source_table, gather_map);
+    CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
+  }
+}
+
+// Separate temp/output resources: the CUB env takes the temporary resource (the engine's
+// scratch) while every destination buffer rides the output resource; allocations must
+// release with the call. The validator's oracle is a stock gather built on the SETUP
+// resource (so the failing current resource never sees it), not the source column — a
+// random map gathers a permutation, not the source itself.
+TEST_F(StringLeanIteratorsParity, RoutedSeparateResourcesParity)
+{
+  auto harness = cudf::test::memory_resource_test_harness{};
+  auto stream  = cudf::test::get_default_stream();
+  auto setup   = cudf::memory_resources{harness.setup_mr(), harness.setup_mr()};
+
+  constexpr cudf::size_type num_rows{524'288};
+  std::vector<cudf::size_type> host_map;
+  host_map.reserve(num_rows);
+  std::mt19937 rng(11);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    host_map.push_back(static_cast<cudf::size_type>(rng() % num_rows));
+  }
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map(
+    host_map.begin(), host_map.end(), stream, setup);
+  auto source_column = gate_shape_strings(num_rows, 6, true, 0, 33);
+  cudf::table_view source_table({source_column});
+
+  // Stock oracle: DONT_CHECK + NOT_ALLOWED, same as the batch_gather call below.
+  auto expected = run_reference(source_table, gather_map);
+
+  cudf::test::expect_api_uses_memory_resources(
+    harness,
+    [&](cudf::memory_resources mr) {
+      return cudf::detail::batch_gather(source_table,
+                                        gather_map,
+                                        cudf::out_of_bounds_policy::DONT_CHECK,
+                                        cudf::negative_index_policy::NOT_ALLOWED,
+                                        stream,
+                                        mr);
+    },
+    [](auto const& result) { return result->alloc_size(); },
+    [&](auto const& result) { CUDF_TEST_EXPECT_TABLES_EQUAL(expected->view(), result->view()); },
+    {cudf::test::output_allocation_expectation::AT_LEAST_LIVE,
+     cudf::test::temporary_allocation_expectation::SOME},
+    stream);
 }
 
 // §5.7 Randomized differential against the stock gather (reference oracle).

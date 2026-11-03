@@ -36,17 +36,13 @@ COVERAGE_FILE="${output_dir}/.coverage.local" \
     "${repo_root}/ci/run_cudf_polars_pytests.sh" \
     --numprocesses=4 --dist=worksteal \
     --cov=cudf_polars --cov-context=test --cov-config="${config}" --cov-report=
-COVERAGE_FILE="${output_dir}/.coverage.local" \
-    python -m coverage combine --keep "${output_dir}"
 
-# The broad runner performs the in-memory and SPMD runs. --cov-append keeps
-# both engine contexts in the upstream data file.
+# pytest-cov merges xdist data itself. --cov-append keeps both upstream engine
+# runs in one file without mixing their data with the local suite.
 POLARS_DIR="${polars_dir}" COVERAGE_FILE="${output_dir}/.coverage.upstream" \
     "${repo_root}/ci/run_cudf_polars_polars_tests.sh" \
     --cov=cudf_polars --cov-context=test --cov-config="${config}" \
     --cov-report= --cov-append
-COVERAGE_FILE="${output_dir}/.coverage.upstream" \
-    python -m coverage combine --keep "${output_dir}"
 
 python -m pytest --import-mode=importlib --collect-only -q \
     "${repo_root}/python/cudf_polars/tests" > "${output_dir}/local-test-nodeids.txt"

@@ -835,9 +835,6 @@ dependencies:
           - wheel
   build_python_common:
     common:
-      - output_types: [conda, requirements]
-        packages:
-          - uv>=0.12.0
       - output_types: [conda, requirements, constraints, pyproject]
         packages:
 

@@ -113,7 +113,6 @@ dependencies:
 - sysroot_linux-aarch64==2.28
 - typing_extensions>=4.0.0
 - ucxx==0.53.*,>=0.0.0a0
-- uv>=0.12.0
 - zlib>=1.2.13
 - zstandard
 - pip:

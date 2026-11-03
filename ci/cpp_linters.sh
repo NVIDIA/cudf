@@ -17,7 +17,7 @@ rapids-dependency-file-generator \
   --file-key clang_tidy \
   --matrix "cuda=${RAPIDS_CUDA_VERSION%.*};arch=$(arch);py=${RAPIDS_PY_VERSION}" | tee "${ENV_YAML_DIR}/env.yaml"
 
-./ci/create_conda_env.sh "${ENV_YAML_DIR}/env.yaml" -n clang_tidy
+rapids-mamba-retry env create --yes -f "${ENV_YAML_DIR}/env.yaml" -n clang_tidy
 
 # Temporarily allow unbound variables for conda activation.
 set +u

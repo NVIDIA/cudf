@@ -8,8 +8,7 @@ set -euo pipefail
 CI_DIR="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
 cd "${CI_DIR}/../"
 
-# shellcheck source=ci/init_uv.sh
-source ./ci/init_uv.sh
+source rapids-init-pip
 
 # Common setup steps shared by Python test jobs
 source ./ci/test_python_common.sh test_python_narwhals
@@ -25,7 +24,7 @@ rapids-logger "pytest narwhals"
 NARWHALS_VERSION=$(python -c "import narwhals; print(narwhals.__version__)")
 git clone https://github.com/narwhals-dev/narwhals.git --depth=1 -b "v${NARWHALS_VERSION}" narwhals
 pushd narwhals
-uv pip install --python "$(command -v python)" -U -e . --no-build-isolation
+rapids-pip-retry install -U -e . --no-build-isolation
 
 rapids-logger "Check narwhals versions"
 python -c "import narwhals; print(narwhals.show_versions())"

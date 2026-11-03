@@ -159,10 +159,6 @@ conda activate cudf_dev
   `cmake --build -j` and defaults to `nproc`. Lowering it reduces peak memory use at the cost of
   longer C++ build times.
 
-Python package builds require `uv>=0.12.0`. The generated conda development environments include
-it; for other environments, follow the [uv installation instructions](https://docs.astral.sh/uv/getting-started/installation/)
-before running `build.sh` with Python targets.
-
 ```bash
 cd $CUDF_HOME
 

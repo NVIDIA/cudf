@@ -1475,7 +1475,22 @@ def _translate_function(
                 expr.Literal(dtype, base.value),
             )
         elif name == "pow":
-            return expr.BinOp(dtype, plc.binaryop.BinaryOperator.POW, *children)
+            base, exponent = children
+            # POW computes in double, which cannot hold every integer above
+            # 2**53. Polars multiplies in the base's integer type, as INT_POW does.
+            integer_pow = (
+                dtype == base.dtype
+                and plc.traits.is_integral_not_bool(dtype.plc_type)
+                and plc.traits.is_integral_not_bool(exponent.dtype.plc_type)
+            )
+            return expr.BinOp(
+                dtype,
+                plc.binaryop.BinaryOperator.INT_POW
+                if integer_pow
+                else plc.binaryop.BinaryOperator.POW,
+                base,
+                exponent,
+            )
         elif name == "decimal_mul":
             return expr.BinOp(dtype, plc.binaryop.BinaryOperator.MUL, *children)
         elif name == "product":

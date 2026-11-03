@@ -1670,6 +1670,44 @@ def test_string_astype_int_invalid_underscores_raises(data, dtype):
 
 
 @pytest.mark.parametrize(
+    "data",
+    [
+        ["1_2.3_4"],
+        ["1_2e3_4"],
+        ["1_2_3"],
+        ["123.4", "5.6"],
+    ],
+)
+@pytest.mark.parametrize("dtype", ["float32", "float64"])
+def test_string_astype_float_pep515_underscores(data, dtype):
+    got = cudf.Series(data).astype(dtype)
+    expect = pd.Series(data).astype(dtype)
+    assert_eq(expect, got)
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        ["_1.2"],
+        ["1.2_"],
+        ["1__2.3"],
+        ["1_.2"],
+        ["1._2"],
+        ["1.2_e3"],
+        ["1e_2"],
+    ],
+)
+@pytest.mark.parametrize("dtype", ["float32", "float64"])
+def test_string_astype_float_invalid_underscores_raises(data, dtype):
+    assert_exceptions_equal(
+        lfunc=pd.Series(data).astype,
+        rfunc=cudf.Series(data).astype,
+        lfunc_args_and_kwargs=((), {"dtype": dtype}),
+        rfunc_args_and_kwargs=((), {"dtype": dtype}),
+    )
+
+
+@pytest.mark.parametrize(
     "data, src_dtype, masked_dtype",
     [
         ([1.0, 2.0, float("nan")], "float64", pd.Float64Dtype()),

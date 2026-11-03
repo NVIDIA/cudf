@@ -41,6 +41,16 @@ class _CoverageData:
         return self.data.get(filename, {})
 
 
+def test_missing_or_empty_coverage_data_fails(tmp_path) -> None:
+    analyzer = _load_analyzer()
+    path = tmp_path / ".coverage.local"
+    with pytest.raises(ValueError, match="Missing or empty coverage data"):
+        analyzer._read_data(path)
+    path.touch()
+    with pytest.raises(ValueError, match="Missing or empty coverage data"):
+        analyzer._read_data(path)
+
+
 def test_build_report_emits_focused_upstream_unit_candidates() -> None:
     analyzer = _load_analyzer()
     source = "/work/cudf_polars/dsl/translate.py"

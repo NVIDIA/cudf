@@ -13,6 +13,13 @@ enable_testing()
 include(rapids-test)
 rapids_test_init()
 rapids_cmake_install_lib_dir(lib_dir)
+configure_file(run_cudf_test.sh run_cudf_test.sh COPYONLY)
+install(
+  PROGRAMS run_cudf_test.sh
+  DESTINATION bin/gtests/libcudf
+  COMPONENT testing
+  EXCLUDE_FROM_ALL
+)
 
 # ##################################################################################################
 # **Note about test memory usage:**
@@ -85,9 +92,16 @@ function(ConfigureTest CMAKE_TEST_NAME)
                                $<TARGET_NAME_IF_EXISTS:conda_env> "${_CUDF_TEST_EXTRA_LIBS}"
   )
   rapids_cuda_set_runtime(${CMAKE_TEST_NAME} USE_STATIC ON)
+  set(test_stream_checker "-")
+  if(CUDF_BUILD_STREAMS_TEST_UTIL)
+    set(test_stream_checker
+        "$<TARGET_FILE:cudf_identify_stream_usage_mode_${_CUDF_TEST_STREAM_MODE}>"
+    )
+  endif()
   rapids_test_add(
     NAME ${CMAKE_TEST_NAME}
-    COMMAND ${CMAKE_TEST_NAME}
+    COMMAND bash ./run_cudf_test.sh $<TARGET_FILE:${CMAKE_TEST_NAME}> "${test_stream_checker}"
+            INSTALL_TARGET ${CMAKE_TEST_NAME}
     GPUS ${_CUDF_TEST_GPUS}
     PERCENT ${_CUDF_TEST_PERCENT}
     INSTALL_COMPONENT_SET testing
@@ -95,10 +109,8 @@ function(ConfigureTest CMAKE_TEST_NAME)
 
   if(CUDF_BUILD_STREAMS_TEST_UTIL)
     set_tests_properties(
-      ${CMAKE_TEST_NAME}
-      PROPERTIES
-        ENVIRONMENT
-        "GTEST_CUDF_STREAM_MODE=new_${_CUDF_TEST_STREAM_MODE}_default;LD_PRELOAD=$<TARGET_FILE:cudf_identify_stream_usage_mode_${_CUDF_TEST_STREAM_MODE}>"
+      ${CMAKE_TEST_NAME} PROPERTIES ENVIRONMENT
+                                    "GTEST_CUDF_STREAM_MODE=new_${_CUDF_TEST_STREAM_MODE}_default"
     )
   endif()
 endfunction()

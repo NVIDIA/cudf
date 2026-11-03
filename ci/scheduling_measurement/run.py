@@ -55,7 +55,7 @@ with tempfile.TemporaryDirectory(
             "--output",
             str(output),
             "--regime",
-            "initial",
+            "warm",
             "--pairs",
             "3",
         ],

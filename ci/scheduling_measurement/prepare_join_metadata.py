@@ -45,6 +45,41 @@ for test in original["tests"]:
         ]
     else:
         baseline = deepcopy(test)
+    command = baseline.get("command", [])
+    launch_index = next(
+        (
+            i
+            for i, value in enumerate(command)
+            if value.startswith("-Dcommand_to_run=")
+        ),
+        None,
+    )
+    if (
+        launch_index is not None
+        and command[launch_index] == "-Dcommand_to_run=bash"
+    ):
+        argument_index = next(
+            i
+            for i, value in enumerate(command)
+            if value.startswith("-Dcommand_args=")
+        )
+        arguments = command[argument_index].split("=", 1)[1].split(";")
+        assert arguments[0] == "./run_cudf_test.sh" and len(arguments) >= 3
+        command[launch_index] = "-Dcommand_to_run=" + arguments[1]
+        command[argument_index] = "-Dcommand_args=" + ";".join(arguments[3:])
+        if arguments[2] != "-":
+            environment = next(
+                (
+                    prop
+                    for prop in baseline["properties"]
+                    if prop["name"] == "ENVIRONMENT"
+                ),
+                None,
+            )
+            if environment is None:
+                environment = dict(name="ENVIRONMENT", value=[])
+                baseline["properties"].append(environment)
+            environment["value"].append("LD_PRELOAD=" + arguments[2])
     if name == "DATA_CHUNK_SOURCE_TEST":
         groups = next(
             prop["value"]

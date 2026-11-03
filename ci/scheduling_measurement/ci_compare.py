@@ -243,6 +243,20 @@ def binary_identity():
             ),
             test["command"][0],
         )
+        if executable == "bash":
+            arguments = next(
+                argument.split("=", 1)[1]
+                for argument in test["command"]
+                if argument.startswith("-Dcommand_args=")
+            ).split(";")
+            assert arguments[0] == "./run_cudf_test.sh" and len(arguments) >= 3
+            files.add((working_directory / arguments[0]).resolve())
+            executable = arguments[1]
+            if arguments[2] != "-":
+                checker = Path(arguments[2])
+                if not checker.is_absolute():
+                    checker = working_directory / checker
+                files.add(checker.resolve())
         path = Path(executable)
         if not path.is_absolute():
             path = working_directory / path

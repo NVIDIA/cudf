@@ -114,18 +114,13 @@ struct udf_call : public ast::expression {
   /**
    * @brief Construct a new udf_call object.
    * @param function The device function to call
-   * @param output_type The type of the value the function writes
    * @param args The arguments for this call
    * @param error_policy How a row whose call fails is handled
    */
-  udf_call(device_binary function,
-           data_type output_type,
+  udf_call(ast::jit::function function,
            std::vector<std::reference_wrapper<expression const>> args,
            cudf::error_policy error_policy)
-    : function_{std::move(function)},
-      output_type_{output_type},
-      args_{std::move(args)},
-      error_policy_{error_policy}
+    : function_{std::move(function)}, args_{std::move(args)}, error_policy_{error_policy}
   {
   }
 
@@ -140,14 +135,14 @@ struct udf_call : public ast::expression {
    *
    * @return The device function
    */
-  [[nodiscard]] device_binary const& get_function() const { return function_; }
+  [[nodiscard]] ast::jit::function const& get_function() const { return function_; }
 
   /**
    * @brief Get the type of the value the function writes.
    *
    * @return The output type
    */
-  [[nodiscard]] data_type get_output_type() const { return output_type_; }
+  [[nodiscard]] data_type get_output_type() const { return function_.output_type; }
 
   /**
    * @brief Get the arguments.
@@ -188,8 +183,7 @@ struct udf_call : public ast::expression {
     cudf::detail::row_ir::ast_converter& visitor) const override;
 
  private:
-  device_binary function_;
-  data_type output_type_;
+  ast::jit::function function_;
   std::vector<std::reference_wrapper<expression const>> args_;
   cudf::error_policy error_policy_ = cudf::error_policy::PROPAGATE;
 };

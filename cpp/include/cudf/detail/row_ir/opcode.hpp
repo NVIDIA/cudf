@@ -8,6 +8,10 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/export.hpp>
 
+#include <cuda/std/expected>
+#include <cuda/std/optional>
+#include <cuda/std/type_traits>
+
 namespace CUDF_EXPORT cudf {
 namespace detail::row_ir {
 
@@ -299,37 +303,37 @@ __device__ constexpr auto evaluate(cuda::std::optional<T>... args)
 }
 
 /**
- * @brief Calls a consumer device function `F` with the signature `cudf::errc F(R* out, T... in)`.
+ * @brief Calls a consumer device function, adapting the generated values to its null ABI.
  *
- * @return The value `F` wrote, or the error code it returned
+ * @tparam is_null_aware Whether generated inputs and results use optional values
+ * @tparam is_callee_null_aware Whether the callee accepts and produces optional values
+ * @tparam F The consumer device function
+ * @tparam R The non-optional output type
+ * @return The value the callee wrote, or its error code. A null input skips a non-null-aware
+ * callee and produces null; a null-aware callee receives null inputs directly.
  */
-template <auto F, typename R, typename... T>
-__device__ constexpr cuda::std::expected<R, cudf::errc> invoke_udf(T... args)
+template <bool is_null_aware, bool is_callee_null_aware, auto F, typename R, typename... T>
+__device__ constexpr auto invoke_udf(T... args)
 {
-  R out{};
-  auto const status = F(&out, args...);
-  if (status != cudf::errc::SUCCESS) { return cuda::std::unexpected{status}; }
-  return out;
-}
+  static_assert(!is_callee_null_aware || is_null_aware,
+                "A null-aware callee requires optional generated values");
+  using output_t = cuda::std::conditional_t<is_callee_null_aware, cuda::std::optional<R>, R>;
+  using value_t  = cuda::std::conditional_t<is_null_aware, cuda::std::optional<R>, R>;
+  using result_t = cuda::std::expected<value_t, cudf::errc>;
 
-// UDF call over non-nullable values.
-template <auto F, typename R, typename... T>
-__device__ constexpr cuda::std::expected<R, cudf::errc> evaluate_udf(T... args)
-  requires(!cudf::detail::ops::nullable<T> && ...)
-{
-  return invoke_udf<F, R>(args...);
-}
+  auto invoke = [](auto... values) -> result_t {
+    output_t out{};
+    auto const status = F(&out, values...);
+    if (status != cudf::errc::SUCCESS) { return cuda::std::unexpected{status}; }
+    return out;
+  };
 
-// UDF call over nullable values: a row with a null argument skips the call, and its result is null.
-template <auto F, typename R, typename... T>
-__device__ constexpr cuda::std::expected<cuda::std::optional<R>, cudf::errc> evaluate_udf(
-  cuda::std::optional<T>... args)
-{
-  using result_t = cuda::std::expected<cuda::std::optional<R>, cudf::errc>;
-  if ((!args.has_value() || ...)) { return result_t{cuda::std::optional<R>{}}; }
-  auto result = invoke_udf<F, R>(args.value()...);
-  if (!result.has_value()) { return result_t{cuda::std::unexpected{result.error()}}; }
-  return result_t{cuda::std::optional<R>{*result}};
+  if constexpr (is_null_aware && !is_callee_null_aware) {
+    if ((!args.has_value() || ...)) { return result_t{}; }
+    return invoke(args.value()...);
+  } else {
+    return invoke(args...);
+  }
 }
 
 }  // namespace detail::row_ir

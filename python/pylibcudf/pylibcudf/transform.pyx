@@ -160,7 +160,8 @@ cpdef Column compute_column_jit(
     cdef table_view c_input = input.view()
     with nogil:
         c_result = cpp_transform.compute_column_jit(
-            c_input, dereference(expr.c_obj.get()), _cs, mr.get_mr()
+            c_input, dereference(expr.c_obj.get()),
+            span[cpp_transform.const_lto_fragment](), _cs, mr.get_mr()
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)

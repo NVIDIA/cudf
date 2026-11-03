@@ -85,14 +85,6 @@ struct column_input {
 using input = std::variant<scalar_input, column_input>;
 
 /**
- * @brief An LTO-IR or fatbin fragment that a generated kernel must be linked with.
- */
-struct [[nodiscard]] udf_fragment {
-  std::span<uint8_t const> data = {};                       ///< The fragment's bytes
-  lto_binary_type type          = lto_binary_type::LTO_IR;  ///< What `data` holds
-};
-
-/**
  * @brief The arguments needed to invoke a `cudf::transform`
  */
 struct [[nodiscard]] transform_args {
@@ -109,7 +101,8 @@ struct [[nodiscard]] transform_args {
   std::vector<std::unique_ptr<column>> string_offsets      = {};
   std::optional<size_type> row_size                        = std::nullopt;
   std::string udf_expression = {};  ///< The generated function, which the kernel calls by name
-  std::vector<udf_fragment> udf_fragments = {};  ///< LTO callees the kernel is linked with
+  // Borrowed modules: descriptors and their bytes must stay valid until the kernel is retrieved.
+  cudf::lto_fragments lto_fragments = {};
 };
 
 struct node;
@@ -128,8 +121,6 @@ struct [[nodiscard]] instance_context {
   std::vector<var_info> input_vars_;           ///< The input variables for the IR
   std::vector<untyped_var_info> output_vars_;  ///< The output variables for the IR
   std::unordered_multimap<size_t, node const*> cse_nodes_;  ///< multimap of IR nodes
-  std::unordered_map<ast::jit::detail::udf_call const*, node const*>
-    udf_calls_;  ///< The first IR node converted from each AST call of a device function
   cuda::stream_ref stream_;  ///< The CUDA stream for any device operations during IR generation
   rmm::device_async_resource_ref
     mr_;  ///< The device memory resource for any device memory allocation during IR generation
@@ -277,25 +268,6 @@ struct [[nodiscard]] output_reference {
   constexpr bool operator!=(output_reference const& other) const { return index != other.index; }
 };
 
-/**
- * @brief A consumer-supplied device function called by a `UDF_CALL` node.
- */
-struct [[nodiscard]] udf_info {
-  std::string symbol;                      ///< The function's unmangled name
-  std::span<uint8_t const> fragment = {};  ///< The LTO-IR or fatbin that defines the function
-  lto_binary_type fragment_type     = lto_binary_type::LTO_IR;  ///< What `fragment` holds
-  data_type output_type             = {};    ///< The type of the value the function writes
-  bool is_pure                      = true;  ///< Whether equal calls may share one evaluation
-
-  /// Whether two calls run the same function with the same output.
-  [[nodiscard]] bool operator==(udf_info const& other) const
-  {
-    return symbol == other.symbol && fragment.data() == other.fragment.data() &&
-           fragment.size() == other.fragment.size() && fragment_type == other.fragment_type &&
-           output_type == other.output_type && is_pure == other.is_pure;
-  }
-};
-
 struct [[nodiscard]] node {
  private:
   std::variant<std::monostate, input_reference, output_reference> reference_ =
@@ -322,9 +294,7 @@ struct [[nodiscard]] node {
 
   node const* alias_ = nullptr;  ///< The equivalent IR node that this IR aliases, if any. This is
                                  ///< used to avoid emitting duplicate code for equivalent IR nodes.
-  std::shared_ptr<udf_info const> udf_ = nullptr;  ///< The callee of a `UDF_CALL` node
-  ast::jit::detail::udf_call const* call_site_ =
-    nullptr;  ///< The AST call that a `UDF_CALL` node was converted from
+  std::optional<ast::jit::function> udf_ = std::nullopt;  ///< The callee of a `UDF_CALL` node
 
   /**
    * @brief Computes the structural hash of this node and its arguments.
@@ -411,14 +381,10 @@ struct [[nodiscard]] node {
    * @brief Construct a node that calls a consumer-supplied device function.
    *
    * @param udf The function to call
-   * @param call_site The AST call this node is converted from
    * @param error_policy How a row whose call fails is handled
    * @param args The arguments of the call
    */
-  node(udf_info udf,
-       ast::jit::detail::udf_call const& call_site,
-       error_policy error_policy,
-       std::vector<std::unique_ptr<node>> args);
+  node(ast::jit::function udf, error_policy error_policy, std::vector<std::unique_ptr<node>> args);
 
   /**
    * @brief Construct a new output reference IR node
@@ -487,16 +453,9 @@ struct [[nodiscard]] node {
   /**
    * @brief Get the function a `UDF_CALL` node calls.
    *
-   * @return The callee, or nullptr for any other node
+   * @return The callee, or std::nullopt for any other node
    */
-  [[nodiscard]] udf_info const* get_udf() const;
-
-  /**
-   * @brief Get the AST call a `UDF_CALL` node was converted from.
-   *
-   * @return The AST call, or nullptr for any other node
-   */
-  [[nodiscard]] ast::jit::detail::udf_call const* get_call_site() const;
+  [[nodiscard]] std::optional<ast::jit::function> get_udf() const;
 
   /**
    * @brief Returns `false` if this node forwards nulls from its inputs to its output.
@@ -538,10 +497,9 @@ struct [[nodiscard]] ast_converter {
   cuda::stream_ref stream_;  ///< CUDA stream used for device memory operations and kernel launches.
   rmm::device_async_resource_ref
     mr_;  ///< Device memory resource used to allocate the returned table's device memory
-  instance_context instance_;                ///< The instance context used during the IR generation
-  table_view left_table_;                    ///< The left input table for the expression
-  table_view right_table_;                   ///< The right input table for the expression
-  std::vector<udf_fragment> udf_fragments_;  ///< LTO callees found by generate_code
+  instance_context instance_;  ///< The instance context used during the IR generation
+  table_view left_table_;      ///< The left input table for the expression
+  table_view right_table_;     ///< The right input table for the expression
 
  public:
   /**
@@ -606,6 +564,7 @@ struct [[nodiscard]] ast_converter {
    * @brief Converts AST expressions to arguments for a multi-output `cudf::transform`.
    * @param target The target for which the IR is generated
    * @param expressions AST expressions, one for each output column
+   * @param fragments Device modules to link into the generated kernel
    * @param left_table The left input table for the expression
    * @param right_table The right input table for the expression
    * @param function_name The name of the generated function, which kernels call it by (see
@@ -617,6 +576,7 @@ struct [[nodiscard]] ast_converter {
   static transform_args compute_table(
     target target,
     std::span<std::reference_wrapper<ast::expression const> const> expressions,
+    cudf::lto_fragments fragments,
     table_view const& left_table,
     table_view const& right_table,
     std::string_view function_name,
@@ -637,6 +597,7 @@ struct [[nodiscard]] ast_converter {
    */
   static transform_args filter(target target,
                                ast::expression const& expr,
+                               cudf::lto_fragments fragments,
                                table_view const& left_table,
                                table_view const& right_table,
                                std::string_view function_name,

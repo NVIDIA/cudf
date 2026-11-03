@@ -736,6 +736,10 @@ add_fragment(
   cudf_test_fragments FRAGMENT ast_udf_callees SOURCE transform/fragments/ast_udf_callees.cu
 )
 
+add_fragment(
+  cudf_test_fragments FRAGMENT ast_udf_dependency SOURCE transform/fragments/ast_udf_dependency.cu
+)
+
 rtcx_embed(
   cudf_test_fragments COMPRESSION none OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/rtcx_embed"
 )

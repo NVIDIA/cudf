@@ -3,15 +3,20 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-// Device functions that AST JIT expressions call (cudf::ast::jit::call with a device_binary), in
-// tests/ast/jit_expressions_tests.cpp and tests/join/mixed_join_tests.cu.
+// Device functions that AST JIT expressions call (cudf::ast::jit::call with an ast::jit::function),
+// in tests/ast/jit_expressions_tests.cpp and tests/join/mixed_join_tests.cu.
 
 #include <cudf/errc.hpp>
+#include <cudf/strings/string_view.cuh>
 #include <cudf/wrappers/timestamps.hpp>
+
+#include <cuda/std/optional>
+
+extern "C" __device__ int32_t lto_increment(int32_t);
 
 extern "C" __device__ cudf::errc lto_add_one(int32_t* out, int32_t a)
 {
-  *out = a + 1;
+  *out = lto_increment(a);
   return cudf::errc::SUCCESS;
 }
 
@@ -49,7 +54,7 @@ extern "C" __device__ cudf::errc lto_fail_with(int32_t* out, int32_t code)
 // Named like a parameter and a local of the generated function, which must not hide them.
 extern "C" __device__ cudf::errc in_0(int32_t* out, int32_t a)
 {
-  *out = a + 1;
+  *out = lto_increment(a);
   return cudf::errc::SUCCESS;
 }
 
@@ -85,5 +90,48 @@ extern "C" __device__ cudf::errc lto_week_start_ns(cudf::timestamp_ns* out, cudf
   auto weeks         = shifted / 7;
   if (shifted % 7 != 0 && shifted < 0) { --weeks; }
   *out = cudf::timestamp_ns{cudf::duration_ns{(weeks * 7 - 3) * ticks_per_day}};
+  return cudf::errc::SUCCESS;
+}
+
+extern "C" __device__ cudf::errc lto_constant(int32_t* out)
+{
+  *out = 42;
+  return cudf::errc::SUCCESS;
+}
+
+extern "C" __device__ cudf::errc lto_fill_null(cuda::std::optional<int32_t>* out,
+                                               cuda::std::optional<int32_t> input)
+{
+  *out = input.value_or(42);
+  return cudf::errc::SUCCESS;
+}
+
+extern "C" __device__ cudf::errc lto_nullable_constant(cuda::std::optional<int32_t>* out)
+{
+  *out = cuda::std::nullopt;
+  return cudf::errc::SUCCESS;
+}
+
+extern "C" __device__ cudf::errc lto_string_length(int32_t* out, cudf::string_view input)
+{
+  *out = input.length();
+  return cudf::errc::SUCCESS;
+}
+
+extern "C" __device__ cudf::errc lto_nullable_string_length(
+  cuda::std::optional<int32_t>* out, cuda::std::optional<cudf::string_view> input)
+{
+  *out = input.has_value() ? input->length() : -1;
+  return cudf::errc::SUCCESS;
+}
+
+// The counter is supplied by the caller so its storage is shared across linked kernel modules.
+extern "C" __device__ cudf::errc lto_counted_add(int32_t* out,
+                                                 uint64_t counter_address,
+                                                 int32_t a,
+                                                 int32_t b)
+{
+  atomicAdd(reinterpret_cast<int32_t*>(counter_address), 1);
+  *out = a + b;
   return cudf::errc::SUCCESS;
 }

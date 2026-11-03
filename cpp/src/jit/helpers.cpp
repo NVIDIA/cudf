@@ -86,55 +86,28 @@ std::map<uint32_t, std::string> build_ptx_params(std::span<std::string const> ou
 
 kernel get_udf_kernel(std::string const& source_file,
                       std::string const& kernel_name,
-                      std::string const& cuda_source)
-{
-  CUDF_FUNC_RANGE();
-
-  auto kernel_instance_source = std::format(R"***(
- #define CUDF_KERNEL_INSTANCE {}
- )***",
-                                            kernel_name);
-  char const* include_names[] =  // NOLINT(modernize-avoid-c-arrays)
-    {"cudf/detail/operation_udf.cuh", "cudf/detail/kernel_instance.cuh"};
-  char const* include_headers[] =  // NOLINT(modernize-avoid-c-arrays)
-    {cuda_source.c_str(), kernel_instance_source.c_str()};
-
-  return get_kernel(source_file, source_file, include_names, include_headers, kernel_name);
-}
-
-rtcx::blob get_udf_source_kernel_fragment(std::string const& source_file,
-                                          std::string const& kernel_name,
-                                          std::string const& cuda_source)
-{
-  CUDF_FUNC_RANGE();
-
-  auto kernel_instance_source = std::format(R"***(
- #define CUDF_KERNEL_INSTANCE {}
- )***",
-                                            kernel_name);
-  char const* include_names[] =  // NOLINT(modernize-avoid-c-arrays)
-    {"cudf/detail/operation_udf.cuh", "cudf/detail/kernel_instance.cuh"};
-  char const* include_headers[] =  // NOLINT(modernize-avoid-c-arrays)
-    {cuda_source.c_str(), kernel_instance_source.c_str()};
-
-  return get_kernel_fragment(source_file, source_file, include_names, include_headers, kernel_name);
-}
-
-kernel get_udf_kernel(std::string const& source_file,
-                      std::string const& kernel_name,
                       std::string const& cuda_source,
-                      std::span<detail::row_ir::udf_fragment const> callee_fragments)
+                      cudf::lto_fragments link_fragments)
 {
-  if (callee_fragments.empty()) { return get_udf_kernel(source_file, kernel_name, cuda_source); }
-
   CUDF_FUNC_RANGE();
-  auto kernel_fragment = get_udf_source_kernel_fragment(source_file, kernel_name, cuda_source);
 
-  // Unnamed fragments are cached by their bytes and binary type, so a linked kernel is reused only
-  // for the exact fragments it was linked from.
+  auto kernel_instance_source = std::format(R"***(
+ #define CUDF_KERNEL_INSTANCE {}
+ )***",
+                                            kernel_name);
+  char const* include_names[] =  // NOLINT(modernize-avoid-c-arrays)
+    {"cudf/detail/operation_udf.cuh", "cudf/detail/kernel_instance.cuh"};
+  char const* include_headers[] =  // NOLINT(modernize-avoid-c-arrays)
+    {cuda_source.c_str(), kernel_instance_source.c_str()};
+
+  if (link_fragments.empty()) {
+    return get_kernel(source_file, source_file, include_names, include_headers, kernel_name);
+  }
+  auto kernel_fragment =
+    get_kernel_fragment(source_file, source_file, include_names, include_headers, kernel_name);
   std::vector<rtcx::memory_fragment> fragments{
     {.data = kernel_fragment->view(), .type = rtcx::binary_type::LTO_IR, .name = nullptr}};
-  for (auto const& fragment : callee_fragments) {
+  for (auto const& fragment : link_fragments) {
     fragments.push_back({.data = fragment.data,
                          .type = fragment.type == lto_binary_type::LTO_IR
                                    ? rtcx::binary_type::LTO_IR

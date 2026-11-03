@@ -185,7 +185,7 @@ kernel instantiate(bool is_null_aware,
                                        ins,
                                        outs);
 
-  return jit::get_udf_kernel("cudf/cpp/src/transform/jit/kernel.cu", kernel, cuda_source);
+  return jit::get_udf_kernel("cudf/cpp/src/transform/jit/kernel.cu", kernel, cuda_source, {});
 }
 
 void launch(cudf::kernel const& kernel,
@@ -585,7 +585,7 @@ kernel get_ast_kernel(bool is_null_aware,
                       std::span<transform_output_spec const> outputs,
                       std::string const& udf,
                       std::string_view udf_expression,
-                      std::span<detail::row_ir::udf_fragment const> udf_fragments)
+                      cudf::lto_fragments lto_fragments)
 {
   CUDF_FUNC_RANGE();
   auto [in_types, out_types, ptx_in_types, ptx_out_types] =
@@ -598,7 +598,7 @@ kernel get_ast_kernel(bool is_null_aware,
   return jit::get_udf_kernel("cudf/cpp/src/transform/jit/kernel.cu",
                              kernel_name,
                              jit::define_operation(udf, "GENERIC_TRANSFORM_OP", udf_expression),
-                             udf_fragments);
+                             lto_fragments);
 }
 
 void run(bool is_null_aware,
@@ -1248,7 +1248,7 @@ std::unique_ptr<table> execute_ast_transform(detail::row_ir::transform_args&& ar
                                               output_specs,
                                               args.udf,
                                               args.udf_expression,
-                                              args.udf_fragments);
+                                              args.lto_fragments);
   return execute_transform(args.udf,
                            args.source_type,
                            args.is_null_aware,
@@ -1334,13 +1334,20 @@ std::unique_ptr<column> transform_extended(std::span<transform_input const> inpu
 
 std::unique_ptr<column> compute_column_jit(table_view const& table,
                                            ast::expression const& expr,
+                                           cudf::lto_fragments fragments,
                                            cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   std::array<std::reference_wrapper<ast::expression const>, 1> expressions{expr};
-  auto args = detail::row_ir::ast_converter::compute_table(
-    detail::row_ir::target::CUDA, expressions, table, {}, "compute_operation", stream, mr);
+  auto args = detail::row_ir::ast_converter::compute_table(detail::row_ir::target::CUDA,
+                                                           expressions,
+                                                           fragments,
+                                                           table,
+                                                           {},
+                                                           "compute_operation",
+                                                           stream,
+                                                           mr);
   auto cols = execute_ast_transform(std::move(args), stream, mr)->release();
   return std::move(cols[0]);
 }
@@ -1348,12 +1355,19 @@ std::unique_ptr<column> compute_column_jit(table_view const& table,
 std::unique_ptr<table> compute_table_jit(
   table_view const& table,
   std::span<std::reference_wrapper<ast::expression const> const> expressions,
+  cudf::lto_fragments fragments,
   cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
-  auto args = detail::row_ir::ast_converter::compute_table(
-    detail::row_ir::target::CUDA, expressions, table, {}, "compute_operation", stream, mr);
+  auto args = detail::row_ir::ast_converter::compute_table(detail::row_ir::target::CUDA,
+                                                           expressions,
+                                                           fragments,
+                                                           table,
+                                                           {},
+                                                           "compute_operation",
+                                                           stream,
+                                                           mr);
   return execute_ast_transform(std::move(args), stream, mr);
 }
 
@@ -1480,8 +1494,8 @@ struct transform_program::impl {
        std::optional<void*> user_data,
        std::vector<transform_input_spec> inputs,
        std::vector<transform_output_spec> outputs,
-       std::string_view udf_expression                             = {},
-       std::span<detail::row_ir::udf_fragment const> udf_fragments = {})
+       std::string_view udf_expression   = {},
+       cudf::lto_fragments lto_fragments = {})
     : reflection_{jit_transform::reflect(source_type, inputs, outputs)},
       source_type_{source_type},
       is_null_aware_{is_null_aware},
@@ -1499,7 +1513,7 @@ struct transform_program::impl {
                                                 outputs,
                                                 udf,
                                                 udf_expression,
-                                                udf_fragments)}
+                                                lto_fragments)}
   {
   }
 
@@ -1552,12 +1566,19 @@ transform_program::transform_program(std::string const& udf,
 transform_program::transform_program(
   table_view const& table,
   std::span<std::reference_wrapper<ast::expression const> const> expressions,
+  cudf::lto_fragments fragments,
   cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
-  auto args = detail::row_ir::ast_converter::compute_table(
-    detail::row_ir::target::CUDA, expressions, table, {}, "compute_operation", stream, mr);
+  auto args = detail::row_ir::ast_converter::compute_table(detail::row_ir::target::CUDA,
+                                                           expressions,
+                                                           fragments,
+                                                           table,
+                                                           {},
+                                                           "compute_operation",
+                                                           stream,
+                                                           mr);
   impl_ =
     std::make_unique<impl>(args.udf,
                            args.source_type,
@@ -1566,7 +1587,7 @@ transform_program::transform_program(
                            jit_transform::make_input_specs(args.inputs),
                            jit_transform::make_output_specs(args.outputs, args.string_offsets),
                            args.udf_expression,
-                           args.udf_fragments);
+                           args.lto_fragments);
   CUDF_EXPECTS(args.inputs.size() == args.input_column_indices.size(),
                "AST transform input metadata size mismatch");
   for (auto i = std::size_t{0}; i < args.inputs.size(); ++i) {

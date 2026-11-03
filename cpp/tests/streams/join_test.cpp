@@ -218,6 +218,7 @@ TEST_F(JoinTest, FullJoinWithPostFilter)
                                                   right_indices,
                                                   predicate,
                                                   cudf::join_kind::FULL_JOIN,
+                                                      {},
                                                   stream);
   EXPECT_EQ(size, table0.num_rows() + table1.num_rows());
   EXPECT_EQ(result.first->size(), table0.num_rows() + table1.num_rows());

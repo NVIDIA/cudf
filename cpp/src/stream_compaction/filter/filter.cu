@@ -78,15 +78,12 @@ std::unique_ptr<table> filter(table_view const& predicate_table,
 {
   auto args = cudf::detail::row_ir::ast_converter::filter(cudf::detail::row_ir::target::CUDA,
                                                           predicate_expr,
+                                                          {},
                                                           predicate_table,
                                                           {},
                                                           "filter_operation",
                                                           stream,
                                                           mr);
-  CUDF_EXPECTS(args.udf_fragments.empty(),
-               "The AST filter does not support JIT UDF calls; use compute_column_jit with "
-               "apply_retention_mask instead",
-               std::invalid_argument);
 
   return detail::filter(args.udf,
                         args.source_type,

@@ -30,7 +30,18 @@ export GTEST_OUTPUT=xml:${RAPIDS_TESTS_DIR}/
 
 SUITEERROR=0
 
+# TEMP: WSL diagnostics
+nproc; free -g; cat /proc/meminfo | head -5
+(while true; do nvidia-smi --query-gpu=timestamp,memory.used,memory.total,utilization.gpu,pstate,clocks.sm,temperature.gpu,power.draw --format=csv,noheader; free -m | sed -n 2p; cat /proc/loadavg; sleep 30; done) > "${RAPIDS_TESTS_DIR:-/tmp}/../wsl-monitor.log" 2>&1 &
+WSL_MON_PID=$!
+
 if [[ "${RUN_LIBCUDF_TESTS}" == "true" ]]; then
+    rapids-logger "TEMP: run slow tests alone"
+    for t in REDUCTIONS_TEST GROUPBY_TEST ORC_TEST; do
+        start=$(date +%s)
+        timeout 10m ./ci/run_cudf_ctests.sh -R "^${t}$"
+        echo "TEMP-TIMING ${t} alone: $(( $(date +%s) - start ))s"
+    done
     rapids-logger "Run libcudf gtests"
     timeout 30m ./ci/run_cudf_ctests.sh -j20
     SUITEERROR=$?
@@ -63,5 +74,7 @@ if (( SUITEERROR == 0 )) && [[ "${RUN_LIBCUDF_STREAMING_TESTS}" == "true" ]]; th
     export GTEST_OUTPUT="${saved_gtest_output}"
 fi
 
+kill "${WSL_MON_PID}" || true
+cat "${RAPIDS_TESTS_DIR:-/tmp}/../wsl-monitor.log"
 rapids-logger "Test script exiting with value: $EXITCODE"
 exit ${EXITCODE}

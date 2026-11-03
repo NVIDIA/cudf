@@ -13,6 +13,7 @@
 #include <cudf/detail/device_scalar.hpp>
 #include <cudf/dictionary/detail/iterator.cuh>
 #include <cudf/dictionary/dictionary_column_view.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
@@ -21,7 +22,6 @@
 
 #include <cuda/buffer>
 #include <cuda/iterator>
-#include <cuda/std/type_traits>
 #include <cuda/stream>
 #include <thrust/for_each.h>
 #include <thrust/transform.h>
@@ -91,7 +91,7 @@ void reduce_by_key_fn(column_device_view const& values,
 }
 
 struct var_functor {
-  template <typename T>
+  template <cudf::concepts::arithmetic T>
   std::unique_ptr<column> operator()(column_view const& values,
                                      column_view const& group_means,
                                      column_view const& group_sizes,
@@ -99,7 +99,6 @@ struct var_functor {
                                      size_type ddof,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
-    requires(cuda::std::is_arithmetic_v<T>)
   {
     using ResultType = cudf::detail::target_type_t<T, aggregation::Kind::VARIANCE>;
 
@@ -157,7 +156,7 @@ struct var_functor {
 
   template <typename T, typename... Args>
   std::unique_ptr<column> operator()(Args&&...)
-    requires(!cuda::std::is_arithmetic_v<T>)
+    requires(not cudf::concepts::arithmetic<T>)
   {
     CUDF_FAIL("Only numeric types are supported in std/variance");
   }

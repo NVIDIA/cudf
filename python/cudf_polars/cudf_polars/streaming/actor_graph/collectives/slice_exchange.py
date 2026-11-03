@@ -38,10 +38,10 @@ class SliceRoute:
 
 class SparseExchange:
     """
-    Remote-only sparse exchange with safe packing and cleanup.
+    Send remote row slices and whole chunks through a sparse all-to-all.
 
-    Every destination on one rank must name that rank as a source. Callers
-    must derive both peer sets from the same collective plan.
+    Each destination must list the sender as a source. Callers must derive
+    both peer sets from the same collective plan.
     """
 
     def __init__(
@@ -55,15 +55,6 @@ class SparseExchange:
     ) -> None:
         sources = tuple(sources)
         destinations = tuple(destinations)
-        if len(set(sources)) != len(sources) or len(set(destinations)) != len(
-            destinations
-        ):
-            raise ValueError("Sparse-exchange peers must be unique")
-        if comm.rank in sources or comm.rank in destinations:
-            raise ValueError("SparseExchange does not route data to the local rank")
-        if any(not 0 <= rank < comm.nranks for rank in (*sources, *destinations)):
-            raise ValueError("Sparse-exchange peer is not a valid rank")
-
         self.context = context
         self.destinations = frozenset(destinations)
         self._pending_sources = set(sources)

@@ -23,6 +23,7 @@
 #include <cudf/strings/detail/strings_children.cuh>
 #include <cudf/strings/detail/strings_column_factories.cuh>
 #include <cudf/strings/detail/utilities.cuh>
+#include <cudf/strings/detail/utilities.hpp>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
@@ -215,7 +216,7 @@ struct character_normalizer::character_normalizer_impl {
   cuda::device_buffer<aux_codepoint_data_type> aux_table;
   bool do_lower_case;
   std::unique_ptr<cudf::column> special_tokens;
-  rmm::device_uvector<cudf::string_view> special_tokens_view;
+  cuda::device_buffer<cudf::string_view> special_tokens_view;
 
   cudf::device_span<cudf::string_view const> get_special_tokens() const
   {
@@ -226,7 +227,7 @@ struct character_normalizer::character_normalizer_impl {
                             cuda::device_buffer<aux_codepoint_data_type>&& aux_table,
                             bool do_lower_case,
                             std::unique_ptr<cudf::column>&& special_tokens,
-                            rmm::device_uvector<cudf::string_view>&& special_tokens_view)
+                            cuda::device_buffer<cudf::string_view>&& special_tokens_view)
     : cp_metadata(std::move(cp_metadata)),
       aux_table(std::move(aux_table)),
       do_lower_case{do_lower_case},

@@ -34,6 +34,7 @@
 #include <cub/device/device_select.cuh>
 #include <cub/device/device_transform.cuh>
 #include <cuda/buffer>
+#include <cuda/cmath>
 #include <cuda/iterator>
 #include <cuda/std/algorithm>
 #include <cuda/std/bit>
@@ -157,34 +158,17 @@ struct search_fenwick_tree_functor {
   };
 
   /**
-   * @brief Checks if a value is a power of two
-   *
-   * @param value Value to check
-   * @return Boolean indicating if the value is a power of two
-   */
-  __device__ bool inline constexpr is_power_of_two(cudf::size_type value) const noexcept
-  {
-    return (value & (value - 1)) == 0;
-  }
-
-  /**
    * @brief Finds the smallest power of two in the range [start, end). If no power of two is
    * found, returns a zero.
    *
    * @param start Range start
    * @param end Range end
-   * @return Largest power of two in the range [start, end) or a zero if no power of two is found
+   * @return Smallest power of two in the range [start, end) or a zero if no power of two is found
    */
   __device__ cudf::size_type inline constexpr smallest_power_of_two_in_range(
     cudf::size_type start, cudf::size_type end) const noexcept
   {
-    start--;
-    start |= start >> 1;
-    start |= start >> 2;
-    start |= start >> 4;
-    start |= start >> 8;
-    start |= start >> 16;
-    auto const result = start + 1;
+    auto const result = cuda::next_power_of_two(start);
     return result < end ? result : 0;
   }
 
@@ -199,8 +183,7 @@ struct search_fenwick_tree_functor {
   __device__ size_type inline constexpr largest_power_of_two_in_range(size_type start,
                                                                       size_type end) const noexcept
   {
-    auto constexpr nbits = cudf::detail::size_in_bits<size_type>() - 1;
-    auto const result    = size_type{1} << (nbits - cuda::std::countl_zero<uint32_t>(end));
+    auto const result = cuda::prev_power_of_two(end);
     return result > start ? result : 0;
   }
 
@@ -217,7 +200,7 @@ struct search_fenwick_tree_functor {
                                                         cudf::size_type end) const noexcept
   {
     if constexpr (Boundary == boundary::START) {
-      if (start == 0 or is_power_of_two(start)) {
+      if (start == 0 or cuda::is_power_of_two(start)) {
         auto const block_size =
           cuda::std::max<size_type>(start & -start, largest_power_of_two_in_range(start, end));
         auto const tree_level = cuda::std::countr_zero<uint32_t>(block_size);
@@ -228,7 +211,7 @@ struct search_fenwick_tree_functor {
       }
     } else {
       auto block_size = end & -end;
-      if (start > 0 and is_power_of_two(end)) {
+      if (start > 0 and cuda::is_power_of_two(end)) {
         auto const next_alignment = cuda::std::max(smallest_power_of_two_in_range(start, end),
                                                    largest_power_of_two_in_range(0, end - start));
         block_size                = end - next_alignment;
@@ -336,7 +319,7 @@ std::vector<size_type> compute_fenwick_tree_level_offsets(cudf::size_type level0
   std::vector<size_type> tree_level_offsets;
   tree_level_offsets.push_back(0);
 
-  cudf::size_type current_level_size = cudf::util::div_rounding_up_safe(level0_size, 2);
+  cudf::size_type current_level_size = cudf::detail::div_rounding_up_safe(level0_size, 2);
   cudf::size_type current_level      = 1;
 
   while (current_level_size > 0) {
@@ -344,7 +327,7 @@ std::vector<size_type> compute_fenwick_tree_level_offsets(cudf::size_type level0
     if (std::cmp_greater(block_size, max_page_size)) { break; }
     tree_level_offsets.push_back(tree_level_offsets.back() + current_level_size);
     current_level_size =
-      current_level_size == 1 ? 0 : cudf::util::div_rounding_up_safe(current_level_size, 2);
+      current_level_size == 1 ? 0 : cudf::detail::div_rounding_up_safe(current_level_size, 2);
     current_level++;
   }
   return tree_level_offsets;
@@ -630,7 +613,7 @@ thrust::host_vector<bool> compute_row_range_selection_mask(
     cuda::counting_iterator<cudf::size_type>{0},
     cuda::counting_iterator<cudf::size_type>{num_levels - 1},
     [&](auto const prev_level) {
-      auto const current_level_size = cudf::util::div_rounding_up_safe(prev_level_size, 2);
+      auto const current_level_size = cudf::detail::div_rounding_up_safe(prev_level_size, 2);
       thrust::for_each(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                        cuda::counting_iterator<cudf::size_type>{0},
                        cuda::counting_iterator{current_level_size},

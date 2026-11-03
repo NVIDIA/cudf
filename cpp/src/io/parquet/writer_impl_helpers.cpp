@@ -108,7 +108,7 @@ std::optional<size_type> compute_smaller_fragment_size(
       // Scale the row span down by the overshoot, then halve it again so that columns with
       // uneven row lengths are less likely to need another pass. Halving also bounds the number
       // of passes to the width of `size_type`.
-      auto const scaled_row_span = util::div_rounding_up_safe<size_t>(
+      auto const scaled_row_span = cudf::detail::div_rounding_up_safe<size_t>(
         static_cast<size_t>(frag.num_rows) * MAX_PARQUET_PAGE_SIZE, page_size * 2);
       fragment_size = std::min<size_type>(fragment_size, std::max<size_t>(1, scaled_row_span));
     }
